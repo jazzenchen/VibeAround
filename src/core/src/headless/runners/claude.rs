@@ -1,12 +1,13 @@
 //! Claude CLI headless runner: run a prompt via `claude -p "..."` and return full text or stream segments.
 //! Parses stream-json: content_block_start, content_block_delta, content_block_stop, message_stop.
 //! Segments are organized by Claude type and stop markers (one TextPart per text block).
+//! Implements HeadlessRunner for unified dispatch.
 
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 
-use crate::headless::chat_working_dir;
+use crate::headless::{self, chat_working_dir};
 
 /// Progress event from Claude stream-json. Use to show "Thinking...", "Using tool: X" on Telegram.
 #[derive(Debug, Clone, PartialEq)]
@@ -288,4 +289,24 @@ where
     }
     let _ = child.wait().await;
     Ok(())
+}
+
+/// Claude runner instance. Implements HeadlessRunner for unified management and dispatch.
+#[derive(Debug, Default)]
+pub struct ClaudeRunner;
+
+#[async_trait::async_trait]
+impl headless::HeadlessRunner for ClaudeRunner {
+    fn name(&self) -> &'static str {
+        "claude"
+    }
+
+    async fn run_to_stream(
+        &self,
+        prompt: &str,
+        cwd: Option<std::path::PathBuf>,
+        on_segment: &mut (dyn FnMut(headless::RunnerSegment) + Send),
+    ) -> Result<(), headless::RunnerError> {
+        run_claude_prompt_to_stream_parts(prompt, |seg| on_segment(seg), cwd).await
+    }
 }

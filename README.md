@@ -45,7 +45,7 @@ VibeAround/src/
 
 **Requirements:** Bun 1.3+ and Rust 1.78+ (update Rust with `rustup update stable` if needed).
 
-**`.env` (optional):** To enable the Telegram bot, copy `src/.env.example` to `src/.env` and set `TELEGRAM_BOT_TOKEN` (get a token from [@BotFather](https://t.me/BotFather)). If `TELEGRAM_BOT_TOKEN` is not set, the desktop app still runs but the Telegram bot is disabled. The `.env` file is gitignored and will not be committed.
+**Configuration:** All runtime config (tunnel, Telegram, Feishu, working dir) is read from **`src/settings.json`**. This file is gitignored. Copy `src/settings.json.example` to `src/settings.json` and fill in the values you need. See [Configuration (settings.json)](#configuration-settingsjson) below for the full structure.
 
 **Steps (first-time or after pulling changes):**
 
@@ -64,11 +64,13 @@ bun run prebuild
 
 (This runs `desktop-tray:build` then `web:build` and produces `web/dist` and `desktop-tray/dist`.)
 
-3. **Run the app** — starts the Tauri desktop process (tray, web server, Localtunnel, Telegram bot):
+3. **Run the app** — starts the Tauri desktop process (tray, web server, tunnel, IM bots):
 
 ```bash
 bun run dev
 ```
+
+If you use **Feishu**, you need the **tunnel URL** from this step before you can set the webhook in the Feishu open platform. See [Feishu setup flow](#feishu-setup-flow-public-url-first-then-backend) below.
 
 After the app is running:
 
@@ -99,33 +101,117 @@ The dashboard will be at `http://127.0.0.1:5182`. The standalone server does **n
 
 ---
 
+## Configuration (settings.json)
+
+Config file path: **`src/settings.json`** (create from `src/settings.json.example`). The file is gitignored.
+
+**Structure:**
+
+| Path | Description |
+|------|-------------|
+| `tunnel.provider` | `"localtunnel"` (default), `"ngrok"`, or `"cloudflare"` |
+| `tunnel.ngrok.auth_token` | Ngrok auth token (required if provider is ngrok) |
+| `tunnel.ngrok.domain` | Optional reserved ngrok domain (e.g. `myapp.ngrok.io`) |
+| `tunnel.preview_base_url` | Optional base URL for preview links (overrides domain when set) |
+| `channels.telegram.bot_token` | Telegram bot token from [@BotFather](https://t.me/BotFather); omit to disable Telegram |
+| `channels.feishu.app_id` | Feishu/Lark app ID (from open platform); omit to disable Feishu |
+| `channels.feishu.app_secret` | Feishu app secret |
+| `working_dir` | Root for job workspaces (default: `~/test`) |
+
+**Minimal example** (Telegram + Localtunnel only):
+
+```json
+{
+  "tunnel": { "provider": "localtunnel" },
+  "channels": {
+    "telegram": { "bot_token": "YOUR_TELEGRAM_BOT_TOKEN" }
+  }
+}
+```
+
+**With Feishu and ngrok:**
+
+```json
+{
+  "tunnel": {
+    "provider": "ngrok",
+    "ngrok": {
+      "auth_token": "YOUR_NGROK_AUTH_TOKEN",
+      "domain": "your-reserved.ngrok.io"
+    }
+  },
+  "channels": {
+    "telegram": { "bot_token": "YOUR_TELEGRAM_BOT_TOKEN" },
+    "feishu": {
+      "app_id": "YOUR_FEISHU_APP_ID",
+      "app_secret": "YOUR_FEISHU_APP_SECRET"
+    }
+  }
+}
+```
+
+---
+
+### Feishu setup flow (public URL first, then backend)
+
+Feishu sends events to your server via **webhook**. The webhook URL must be a **public HTTPS URL**. So you need a public domain (tunnel) running before you can complete Feishu configuration in the open platform.
+
+1. **Get a public URL**
+   - Run the app (`bun run dev`). It will start a tunnel (Localtunnel by default, or Ngrok if configured).
+   - Note the **Tunnel URL** from the terminal (e.g. `https://xxx.loca.lt`) or from the tray → Open tunnel URL.
+   - If you use Ngrok, you can set `tunnel.ngrok.domain` to a reserved domain so the URL is stable.
+
+2. **Create a Feishu/Lark app**
+   - Go to [Feishu Open Platform](https://open.feishu.cn/app) (or [Lark](https://open.larksuite.com/app) for international).
+   - Create an app, then open **Credentials & Basic Info**: copy **App ID** and **App Secret** into `settings.json` under `channels.feishu.app_id` and `channels.feishu.app_secret`.
+
+3. **Subscribe to events and set request URL**
+   - In the app console, open **Event Subscriptions**.
+   - Enable **Request URL (Config)**.
+   - Set **Request URL** to:
+     ```
+     https://<YOUR-PUBLIC-DOMAIN>/api/im/feishu/event
+     ```
+     Example: if your tunnel URL is `https://abc123.loca.lt`, use `https://abc123.loca.lt/api/im/feishu/event`.
+   - Feishu will send a `url_verification` request; the server responds with `{"challenge":"<challenge>"}`. After verification, save the configuration.
+   - Under **Subscribe to events**, add **im.message.receive_v1** (receive user messages).
+
+4. **Permissions and availability**
+   - In **Permissions**, grant **Contact** (read user info) and **Send and receive messages** (e.g. `im:message:send_as_bot`, `im:message:receive_v1`) as required.
+   - Under **Availability**, enable **Bot** and make the app available to your organization or to specific users.
+
+5. **Restart and use**
+   - Restart the app so it loads `settings.json` with Feishu credentials. The web server will accept POSTs at `/api/im/feishu/event`. Open a chat with your bot in Feishu and send a message to test.
+
+**Note:** If you change the tunnel URL (e.g. new Localtunnel subdomain), update the Feishu Request URL to the new `https://<new-domain>/api/im/feishu/event`.
+
+---
+
 ## Roadmap
 
 The evolution of VibeAround transitions from a basic Proof of Concept (POC) to a highly configurable, extensible orchestrator.
 
 **Phase 1: Foundation (Current)**
 
-- **CLI Engine Integration:** Seamless execution support for leading AI coding tools, currently targeting Claude Code.
-- **IM Connectivity:** Core implementation of Telegram Bot integration for fluid instruction dispatching from mobile or desktop.
-- **Out-of-the-box Tunneling:** Localtunnel exposes the Web Dashboard (port 5182) to a public URL so you can open the control plane from mobile; tunnel URL and password are available from the tray and console.
+- **Remote PTY terminal:** Access your local terminal from a web browser remotely, support multiple sessions, and open Claude, Gemini, or Codex directly.
+- **IM:** Send vibe coding tasks through Telegram and Feishu, Claude Code only for now.
+- **Tunnel:** Ngrok and Localtunnel for inner-network penetration, provide a public URL for access (e.g. dashboard and Feishu webhook).
 
 **Phase 2: Core Productization**
 
-- **Dynamic Workspace Management:** Allow users to seamlessly switch, set, and manage multiple local project directories directly via IM commands or the Web Dashboard.
-- **Advanced Agent Configuration:** Dedicated interfaces to manage API keys, select preferred models, and adjust generation parameters for the underlying CLI tools.
-- **Skills & Context Injection:** Support for importing custom "Skills" (Standard Operating Procedures), prompt templates, and global context rules to tailor the AI's behavior to specific project guidelines.
-- **Comprehensive IM Management:** Multi-account and multi-channel configurations, allowing users to bind specific Telegram chats or groups to designated local workspaces.
-- **Session Persistence:** SQLite-backed history tracking to allow resuming past conversations, reviewing task logs, and recovering from unexpected interruptions.
+- **Workspaces:** Switch and manage project folders via IM or the Web Dashboard.
+- **Agent settings:** Configure API keys, model choice, and generation options.
+- **Skills and context:** Custom procedures, prompt templates, and project rules for the AI.
+- **IM and workspaces:** Support multiple accounts and bind specific chats to specific workspaces.
+- **History:** SQLite-backed conversations and task logs, resume and review anytime.
 
 **Phase 3: Ecosystem & Extensibility**
 
-- **Bring Your Own CLI (BYOC):** Configuration-driven support allowing users to easily register and switch between different AI tools like Gemini CLI, Codex, or OpenDevin without modifying core code.
-- **Automated Port Discovery:** Automatically detect and tunnel newly spawned local development servers without hardcoded port configurations.
-- **Broader Messaging Support:** Extending control interfaces to other popular collaboration platforms such as Discord, Slack, and enterprise messaging systems.
-- **Developer Plugin Ecosystem:** A secure, isolated environment allowing the community to build and share custom adapters, log sanitizers, and workflow plugins.
-- **Built-in Safety & Routing Agents:**
-  - **Router Agent:** Natural language intent parsing to automatically assign tasks to the most suitable underlying AI tool.
-  - **Git Sentinel:** Automated workspace snapshotting and branch creation prior to executing high-risk, AI-generated code modifications.
+- **More CLI tools:** Add or switch between Gemini, Codex, OpenDevin, and others via config.
+- **Port discovery:** Detect new dev servers and tunnel them automatically.
+- **More messaging:** Discord, Slack (Feishu already in Phase 1).
+- **Plugins:** Community adapters, log sanitizers, and workflow plugins.
+- **Safety and routing:** Router picks the right AI by intent, Git Sentinel snapshots before risky edits.
 
 ---
 

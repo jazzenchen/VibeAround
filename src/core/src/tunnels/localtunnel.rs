@@ -78,6 +78,23 @@ pub async fn start_web_tunnel() -> Result<(super::TunnelGuard, String), Box<dyn 
     start(PORT).await
 }
 
+/// Localtunnel backend. Implements TunnelBackend for unified dispatch.
+pub struct LocaltunnelBackend;
+
+#[async_trait::async_trait]
+impl crate::tunnels::TunnelBackend for LocaltunnelBackend {
+    fn name(&self) -> &'static str {
+        "localtunnel"
+    }
+
+    async fn start_web_tunnel(
+        &self,
+        _config: &crate::config::Config,
+    ) -> Result<(super::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
+        start_web_tunnel().await
+    }
+}
+
 /// URL to obtain tunnel password when running on this machine (loca.lt returns your public IP as the password).
 pub const TUNNEL_PASSWORD_URL: &str = "https://loca.lt/mytunnelpassword";
 

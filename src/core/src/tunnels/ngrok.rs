@@ -8,11 +8,10 @@ use url::Url;
 const PORT: u16 = 5182;
 
 /// Start ngrok tunnel using the Rust SDK. Returns (guard, public URL).
-/// No CLI or 4040 API; the SDK creates the tunnel and we get the URL from the forwarder.
-/// Token is read from the global config (loaded from .env at startup).
+/// Uses the given config for auth token and optional static domain.
 pub async fn start_web_tunnel(
+    config: &crate::config::Config,
 ) -> Result<(super::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
-    let config = crate::config::ensure_loaded();
     let token = config.ngrok_auth_token.as_deref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -55,4 +54,21 @@ pub async fn start_web_tunnel(
     });
 
     Ok((super::TunnelGuard::Sdk(handle), url))
+}
+
+/// Ngrok backend. Implements TunnelBackend for unified dispatch.
+pub struct NgrokBackend;
+
+#[async_trait::async_trait]
+impl crate::tunnels::TunnelBackend for NgrokBackend {
+    fn name(&self) -> &'static str {
+        "ngrok"
+    }
+
+    async fn start_web_tunnel(
+        &self,
+        config: &crate::config::Config,
+    ) -> Result<(super::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
+        start_web_tunnel(config).await
+    }
 }

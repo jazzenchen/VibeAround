@@ -1,5 +1,7 @@
 //! Tunnels module: expose the web dashboard over the internet via a public URL.
-//! Providers: Localtunnel (default), Ngrok, Cloudflare — use the default or select by config.
+//! Each provider (Localtunnel, Ngrok, Cloudflare) implements TunnelBackend for unified management and dispatch.
+
+use async_trait::async_trait;
 
 mod cloudflare;
 mod localtunnel;
@@ -32,6 +34,28 @@ impl TunnelProvider {
             _ => TunnelProvider::Localtunnel,
         }
     }
+
+    /// Return the backend for this provider (for unified start_web_tunnel).
+    fn backend(&self) -> &'static dyn TunnelBackend {
+        match self {
+            TunnelProvider::Localtunnel => &localtunnel::LocaltunnelBackend,
+            TunnelProvider::Ngrok => &ngrok::NgrokBackend,
+            TunnelProvider::Cloudflare => &cloudflare::CloudflareBackend,
+        }
+    }
+}
+
+/// Unified tunnel backend trait: same interface for all providers so we can manage and dispatch uniformly.
+#[async_trait]
+pub trait TunnelBackend: Send + Sync {
+    /// Provider id (e.g. "localtunnel", "ngrok") for config and logging.
+    fn name(&self) -> &'static str;
+
+    /// Start the web tunnel; config supplies credentials and options. Caller keeps the guard and awaits wait().
+    async fn start_web_tunnel(
+        &self,
+        config: &crate::config::Config,
+    ) -> Result<(TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Guard that keeps the tunnel alive. Await `wait()` until the tunnel is done (e.g. process exit or SDK session closed).
@@ -56,21 +80,19 @@ impl TunnelGuard {
     }
 }
 
-/// Start the web tunnel using the default provider (Localtunnel).
+/// Start the web tunnel using the default provider (Localtunnel) and global config.
 /// Returns (guard, public URL). Caller must keep the guard and await `guard.wait()` to keep the tunnel alive.
 pub async fn start_web_tunnel() -> Result<(TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
-    start_web_tunnel_with_provider(TunnelProvider::default()).await
+    let config = crate::config::ensure_loaded();
+    start_web_tunnel_with_provider(TunnelProvider::default(), config).await
 }
 
-/// Start the web tunnel with the given provider.
+/// Start the web tunnel with the given provider and config (unified dispatch via TunnelBackend).
 pub async fn start_web_tunnel_with_provider(
     provider: TunnelProvider,
+    config: &crate::config::Config,
 ) -> Result<(TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
-    match provider {
-        TunnelProvider::Localtunnel => localtunnel::start_web_tunnel().await,
-        TunnelProvider::Ngrok => ngrok::start_web_tunnel().await,
-        TunnelProvider::Cloudflare => cloudflare::start_web_tunnel().await,
-    }
+    provider.backend().start_web_tunnel(config).await
 }
 
 // Re-export Localtunnel-specific API (used when default provider is Localtunnel).

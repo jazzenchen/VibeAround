@@ -7,8 +7,11 @@ pub mod channels;
 pub mod commands;
 pub mod daemon;
 pub mod log;
+pub mod spec;
 pub mod transport;
 pub mod worker;
 
 /// Re-export channels so `common::im::telegram::run_telegram_bot` and `common::im::channels::feishu::run_feishu_bot` work.
 pub use channels::{feishu, telegram};
+/// Channel kind and unified build-from-config for management and dispatch.
+pub use spec::ImChannelKind;

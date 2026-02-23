@@ -41,7 +41,8 @@ fn main() {
                 let provider = tunnel_provider;
                 async move {
                     eprintln!("[VibeAround] Tunnel ({})", provider.as_str());
-                    match tunnels::start_web_tunnel_with_provider(provider).await {
+                    let config = config::ensure_loaded();
+                    match tunnels::start_web_tunnel_with_provider(provider, config).await {
                         Ok((guard, url)) => {
                             if let Ok(mut w) = tunnel_url.write() {
                                 *w = Some(url.clone());
