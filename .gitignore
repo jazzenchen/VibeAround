@@ -1,0 +1,55 @@
+# Dependencies & build (repo-wide; subprojects have their own .gitignore)
+node_modules/
+dist/
+*.local
+
+# Rust / Cargo (workspace target lives under src/)
+src/target/
+
+# Tauri (desktop app generated files)
+src/desktop/WixTools/
+src/desktop/gen/
+
+# VibeAround job workspace (if working_dir ever points into repo)
+projects.json
+projects.json.tmp
+workspaces/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+src/settings.json
+
+# Logs & test
+*.log
+npm-debug.log*
+coverage/
+.nyc_output/
+logs/
+
+# Temp & cache
+*.tmp
+*.temp
+.turbo
+.vite/
+
+# Tooling
+*.tsbuildinfo
+
+# Exclude from commit (tooling / temp)
+.claude/
+.specstory/

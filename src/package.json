@@ -1,0 +1,19 @@
+{
+  "name": "vibearound",
+  "private": true,
+  "workspaces": ["desktop-tray", "web", "desktop"],
+  "scripts": {
+    "prebuild": "bun run desktop-tray:build && bun run web:build",
+    "build": "bun run desktop:build",
+    "dev": "bun run desktop:dev",
+    "desktop-tray:dev": "bun run --filter @vibearound/desktop-tray dev",
+    "desktop-tray:build": "bun run --cwd desktop-tray build",
+    "web:dev": "bun run --filter @vibearound/web dev",
+    "web:build": "bun run --cwd web build",
+    "server:dev": "cargo run -p server -- --port 5182 --dist web/dist",
+    "server:build": "cargo build -p server",
+    "desktop:dev": "bun run --filter @vibearound/tauri dev",
+    "desktop:build": "bun run --filter @vibearound/tauri build"
+  },
+  "devDependencies": {}
+}

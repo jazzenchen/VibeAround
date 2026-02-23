@@ -1,0 +1,24 @@
+[package]
+name = "server"
+version = "0.0.1"
+description = "VibeAround HTTP/WebSocket server: SPA, /ws, /api/sessions"
+edition = "2021"
+rust-version = "1.82"
+
+[[bin]]
+name = "vibearound-server"
+path = "src/main.rs"
+
+[dependencies]
+common = { path = "../core" }
+axum = { version = "0.8", features = ["json", "ws", "tokio"] }
+tower-http = { version = "0.6", features = ["fs"] }
+tokio = { version = "1.49", features = ["full"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+bytes = "1.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.11", features = ["v4", "serde"] }
+dashmap = "6.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+mime_guess = "2.0"

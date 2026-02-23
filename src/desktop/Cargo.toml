@@ -1,0 +1,22 @@
+[package]
+name = "vibearound-desktop"
+version = "0.0.1"
+description = "VibeAround Desktop — Tray-first AI coding orchestrator"
+edition = "2021"
+rust-version = "1.82"
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+common = { path = "../core" }
+server = { path = "../server" }
+tauri = { version = "2.10", features = ["tray-icon", "image-png"] }
+tauri-plugin-shell = "2"
+tokio = { version = "1.49", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+open = "1.7"
+
+[features]
+default = []

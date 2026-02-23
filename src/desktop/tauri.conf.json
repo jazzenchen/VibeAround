@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VibeAround",
+  "version": "0.0.1",
+  "identifier": "com.vibearound.app",
+  "build": {
+"beforeDevCommand": "bun run --cwd ../desktop-tray dev",
+"devUrl": "http://localhost:5180",
+"beforeBuildCommand": "bun run --cwd ../desktop-tray build && bun run --cwd ../web build",
+"frontendDist": "../desktop-tray/dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "security": {
+      "capabilities": [
+        "default"
+      ]
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "VibeAround",
+        "width": 320,
+        "height": 420,
+        "resizable": true,
+        "visible": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": [],
+    "externalBin": [],
+    "copyright": "",
+    "category": "DeveloperTool",
+    "shortDescription": "Daemon AI coding orchestrator",
+    "longDescription": "Tray-first AI coding agent scheduler with Web dashboard and PTY tool adapters.",
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "frameworks": []
+    },
+    "windows": {}
+  },
+  "plugins": {}
+}

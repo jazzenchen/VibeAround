@@ -1,0 +1,13 @@
+{
+  "tunnel": {
+    "provider": "ngrok",
+    "ngrok": {
+      "auth_token": "YOUR_NGROK_AUTH_TOKEN",
+      "domain": "your-reserved.ngrok.io"
+    }
+  },
+  "channels": {
+    "telegram": { "bot_token": "YOUR_TELEGRAM_BOT_TOKEN" },
+    "feishu": { "app_id": "YOUR_FEISHU_APP_ID", "app_secret": "YOUR_FEISHU_APP_SECRET" }
+  }
+}

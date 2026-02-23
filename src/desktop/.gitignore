@@ -1,0 +1,10 @@
+# Tauri generated (icons, schemas, installer tools)
+gen/
+WixTools/
+
+# Env
+.env
+.env.local
+
+# IDE / OS
+.DS_Store

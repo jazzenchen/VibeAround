@@ -1,0 +1,23 @@
+[package]
+name = "common"
+version = "0.0.1"
+description = "VibeAround shared logic: PTY, session registry, tunnel, headless CLI, IM (Telegram)"
+edition = "2021"
+rust-version = "1.82"
+
+[dependencies]
+portable-pty = "0.9"
+tokio = { version = "1.49", features = ["process", "io-util", "sync", "rt-multi-thread", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.11", features = ["v4", "serde"] }
+dashmap = "6.0"
+bytes = "1.9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+regex = "1.11"
+ngrok = "0.18"
+url = "2.5"
+async-trait = "0.1"
+teloxide = { version = "0.17", default-features = false, features = ["macros", "ctrlc_handler"] }
+rustls = "0.23"
+chrono = "0.4"
