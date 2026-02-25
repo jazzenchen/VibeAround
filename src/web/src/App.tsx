@@ -544,7 +544,7 @@ function GridContent({
               </div>
               <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
                 {group.sessions.map((session) => (
-                  <div key={session.id} className="h-[320px] lg:h-[360px]">
+                  <div key={session.id} className="h-[480px] lg:h-[520px]">
                     <TerminalPanel
                       session={session}
                       isActive

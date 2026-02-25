@@ -1,9 +1,11 @@
 "use client";
 
 import { Maximize2, Minimize2, X } from "lucide-react";
+import { useCallback, useState } from "react";
 import type { TerminalSession, TerminalStatus, ToolType, ViewMode } from "@/lib/terminal-types";
 import { toolThemes } from "@/lib/terminal-types";
 import { TerminalView } from "./TerminalView";
+import { MobileInputBar } from "./MobileInputBar";
 import { Button } from "@/components/ui/button";
 
 interface TerminalPanelProps {
@@ -35,6 +37,17 @@ export function TerminalPanel({
 }: TerminalPanelProps) {
   const theme = toolThemes[session.tool];
   const status = statusConfig[session.status];
+
+  // Mobile: hold sendInput callback from TerminalView's WebSocket.
+  const [isMobile] = useState(() =>
+    typeof navigator !== "undefined" && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+  );
+  const [sendInput, setSendInput] = useState<((data: string) => void) | null>(null);
+
+  const handleSendInputReady = useCallback((fn: (data: string) => void) => {
+    // Wrap in arrow so React setState doesn't call fn as an updater.
+    setSendInput(() => fn);
+  }, []);
 
   return (
     <div
@@ -126,8 +139,12 @@ export function TerminalPanel({
         className="flex-1 min-h-0 overflow-hidden"
         style={{ overscrollBehavior: "contain" }}
       >
-        <TerminalView session={session} isActive={isActive} viewMode={viewMode} onSessionState={onSessionState} />
+        <TerminalView session={session} isActive={isActive} viewMode={viewMode} onSessionState={onSessionState} onSendInputReady={handleSendInputReady} />
       </div>
+      {/* Mobile shortcut bar + prompt overlay */}
+      {isMobile && sendInput && (
+        <MobileInputBar sendInput={sendInput} />
+      )}
       <div
         className="flex items-center gap-2 px-3 py-1"
         style={{

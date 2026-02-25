@@ -26,9 +26,11 @@ interface TerminalViewProps {
   isActive: boolean;
   viewMode?: ViewMode;
   onSessionState?: (tool: ToolType, status: TerminalStatus) => void;
+  /** Expose a way for parent to send raw data to the PTY WebSocket (used by MobileInputBar). */
+  onSendInputReady?: (sendInput: (data: string) => void) => void;
 }
 
-export function TerminalView({ session, isActive, viewMode, onSessionState }: TerminalViewProps) {
+export function TerminalView({ session, isActive, viewMode, onSessionState, onSendInputReady }: TerminalViewProps) {
   /** Element passed to term.open(); ResizeObserver watches this so fit uses the same box. */
   const fitTargetRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTermTerminal | null>(null);
@@ -38,6 +40,8 @@ export function TerminalView({ session, isActive, viewMode, onSessionState }: Te
   const initializedRef = useRef(false);
   const onSessionStateRef = useRef(onSessionState);
   onSessionStateRef.current = onSessionState;
+  const onSendInputReadyRef = useRef(onSendInputReady);
+  onSendInputReadyRef.current = onSendInputReady;
 
   const theme = toolThemes[session.tool];
 
@@ -86,7 +90,7 @@ export function TerminalView({ session, isActive, viewMode, onSessionState }: Te
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: "bar",
-      fontSize: 12,
+      fontSize: isMobile ? 11 : 12,
       fontFamily: "JetBrains Mono, ui-monospace, monospace",
       lineHeight: XTERM_RENDERER !== "dom" ? 1.35 : 1.1,
       theme: themeOption(theme),
@@ -106,6 +110,41 @@ export function TerminalView({ session, isActive, viewMode, onSessionState }: Te
       term.loadAddon(new WebglAddon());
     }
     termRef.current = term;
+
+    // Mobile: bridge touch → term.scrollLines() (xterm.js doesn't natively handle touch scroll with WebGL/Canvas).
+    let removeTouchScroll: (() => void) | null = null;
+    if (isMobile && fitTargetRef.current) {
+      const touchEl = fitTargetRef.current;
+      let startY = 0;
+      let accum = 0;
+      const rowPx = () => {
+        const dims = fitAddon.proposeDimensions();
+        if (dims && dims.rows > 0) return touchEl.clientHeight / dims.rows;
+        return 18;
+      };
+      const onTouchStart = (e: TouchEvent) => {
+        startY = e.touches[0].clientY;
+        accum = 0;
+      };
+      const onTouchMove = (e: TouchEvent) => {
+        const dy = startY - e.touches[0].clientY;
+        startY = e.touches[0].clientY;
+        accum += dy;
+        const rh = rowPx();
+        const lines = Math.trunc(accum / rh);
+        if (lines !== 0) {
+          term.scrollLines(lines);
+          accum -= lines * rh;
+        }
+        e.preventDefault();
+      };
+      touchEl.addEventListener("touchstart", onTouchStart, { passive: true });
+      touchEl.addEventListener("touchmove", onTouchMove, { passive: false });
+      removeTouchScroll = () => {
+        touchEl.removeEventListener("touchstart", onTouchStart);
+        touchEl.removeEventListener("touchmove", onTouchMove);
+      };
+    }
     // Sync fit once after mount so cols/rows match the visible area (layout may not be final yet).
     const syncFit = () => {
       try {
@@ -126,6 +165,11 @@ export function TerminalView({ session, isActive, viewMode, onSessionState }: Te
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     let dumpReceived = false;
+
+    // Expose sendInput to parent so MobileInputBar can write to PTY.
+    onSendInputReadyRef.current?.((data: string) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
 
     // Send cols/rows to PTY (already account for padding: fit target is inner div inside padded outer).
     const sendResize = () => {
@@ -201,6 +245,7 @@ export function TerminalView({ session, isActive, viewMode, onSessionState }: Te
     });
 
     cleanupRef.current = () => {
+      removeTouchScroll?.();
       dispose.dispose();
       ws.close();
     };
