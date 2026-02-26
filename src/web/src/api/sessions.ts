@@ -13,11 +13,13 @@ export interface SessionListItem {
   status: string;
   created_at: number;
   project_path?: string;
+  tmux_session?: string;
 }
 
 export interface CreateSessionBody {
   tool: string;
   project_path?: string;
+  tmux_session?: string;
 }
 
 export interface CreateSessionResponse {
@@ -25,6 +27,11 @@ export interface CreateSessionResponse {
   tool: string;
   created_at: number;
   project_path?: string;
+}
+
+export interface TmuxSessionsResponse {
+  available: boolean;
+  sessions: string[];
 }
 
 export async function getSessions(): Promise<SessionListItem[]> {
@@ -49,4 +56,10 @@ export async function createSession(body: CreateSessionBody): Promise<CreateSess
 export async function deleteSession(sessionId: string): Promise<void> {
   const res = await fetch(`${getBaseUrl()}/api/sessions/${sessionId}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(`DELETE /api/sessions: ${res.status}`);
+}
+
+export async function getTmuxSessions(): Promise<TmuxSessionsResponse> {
+  const res = await fetch(`${getBaseUrl()}/api/tmux/sessions`);
+  if (!res.ok) throw new Error(`GET /api/tmux/sessions: ${res.status}`);
+  return res.json();
 }

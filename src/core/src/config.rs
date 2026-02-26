@@ -38,6 +38,8 @@ pub struct Config {
     pub working_dir: PathBuf,
     /// Optional base URL for preview links (e.g. https://xxx.ngrok-free.app). Overrides ngrok_domain when set.
     pub preview_base_url: Option<String>,
+    /// When attaching to a tmux session, detach other clients first (`tmux attach -d`). Default: true.
+    pub tmux_detach_others: bool,
 }
 
 /// Ensure config is loaded (idempotent). Loads settings.json on first call; returns the same instance afterwards.
@@ -112,6 +114,12 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
+    let tmux_detach_others = root
+        .get("tmux")
+        .and_then(|t| t.get("detach_others"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
     Config {
         tunnel_provider,
         ngrok_auth_token,
@@ -121,6 +129,7 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         feishu_app_secret,
         working_dir,
         preview_base_url,
+        tmux_detach_others,
     }
 }
 
@@ -153,6 +162,7 @@ impl Default for Config {
             feishu_app_secret: None,
             working_dir: default_working_dir(),
             preview_base_url: None,
+            tmux_detach_others: true,
         }
     }
 }

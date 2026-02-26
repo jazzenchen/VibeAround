@@ -176,7 +176,7 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
       try {
         fitAddon.fit();
         if (ws.readyState === WebSocket.OPEN) {
-          const cols = term.cols-1;
+          const cols = term.cols;
           const rows = term.rows;
           ws.send(JSON.stringify({ type: "resize", cols, rows }));
         }
@@ -198,6 +198,8 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
         if (!dumpReceived) {
           term.reset();
           dumpReceived = true;
+          // After dump, sync size so tmux re-renders with correct dimensions.
+          requestAnimationFrame(() => sendResize());
         }
         term.write(bytes);
         return;
@@ -208,6 +210,7 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
           if (!dumpReceived) {
             term.reset();
             dumpReceived = true;
+            requestAnimationFrame(() => sendResize());
           }
           term.write(bytes);
         });
@@ -277,14 +280,8 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
   }, [theme, themeOption, session.status]);
 
   useEffect(() => {
-    if (isActive && fitAddonRef.current) {
-      const t = setTimeout(() => {
-        try {
-          fitAddonRef.current?.fit();
-        } catch {
-          /* ignore */
-        }
-      }, 100);
+    if (isActive) {
+      const t = setTimeout(fitAndSendResize, 100);
       return () => clearTimeout(t);
     }
   }, [isActive]);
@@ -297,7 +294,7 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
     try {
       fitAddon?.fit();
       if (ws?.readyState === WebSocket.OPEN && term) {
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols - 1, rows: term.rows }));
+        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       }
     } catch {
       /* ignore */

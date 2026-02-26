@@ -31,6 +31,9 @@ pub struct SessionMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_path: Option<String>,
     pub tool: PtyTool,
+    /// If this session is attached to a tmux session, its name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tmux_session: Option<String>,
 }
 
 /// Fixed-capacity circular scrollback buffer (bytes). New data appends; when over capacity, oldest bytes are dropped.
@@ -80,15 +83,6 @@ pub struct SessionContext {
     pub buffer: Arc<CircularBuffer>,
     /// Sender for live PTY output. Subscribers receive after connecting (after they get Dump Buffer).
     pub live_tx: broadcast::Sender<Bytes>,
-}
-
-impl SessionContext {
-    /// Send bytes to all current subscribers (and push to buffer). Called by ghost reader.
-    #[allow(dead_code)]
-    pub fn broadcast_output(&self, bytes: Bytes) {
-        self.buffer.push(bytes.as_ref());
-        let _ = self.live_tx.send(bytes);
-    }
 }
 
 /// Global registry of all active sessions. Injected into routes (e.g. axum::Extension).

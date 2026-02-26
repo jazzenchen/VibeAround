@@ -22,7 +22,7 @@ use tokio::sync::broadcast;
 
 use common::config;
 use common::headless::{run_claude_prompt_to_stream_parts, wire, ClaudeSegment};
-use common::pty::{PtyRunState, PtyTool};
+use common::pty::{PtyRunState, PtyTool, list_tmux_sessions, tmux_available};
 use common::session::{
     CircularBuffer, Registry, SessionContext, SessionId, SessionMetadata, LIVE_BROADCAST_CAP,
     unix_now_secs,
@@ -44,7 +44,6 @@ struct ResizeMessage {
 #[derive(serde::Deserialize)]
 struct WsQuery {
     session_id: Option<String>,
-    tool: Option<String>,
 }
 
 /// Shared app state: registry, SPA fallback path, working dir for jobs, optional Feishu webhook state.
@@ -65,6 +64,9 @@ struct CreateSessionBody {
     /// If set, session PTY runs in this job's workspace directory.
     #[serde(default)]
     job_id: Option<String>,
+    /// If set, spawn inside a tmux session with this name (attach-or-create).
+    #[serde(default)]
+    tmux_session: Option<String>,
 }
 
 /// POST /api/jobs body.
@@ -84,6 +86,8 @@ struct SessionListItem {
     created_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     project_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tmux_session: Option<String>,
 }
 
 fn parse_tool(s: Option<&String>) -> PtyTool {
@@ -157,6 +161,7 @@ pub async fn run_web_server(
     let app = Router::new()
         .route("/api/sessions", get(list_sessions_handler).post(create_session_handler))
         .route("/api/sessions/{id}", delete(delete_session_handler))
+        .route("/api/tmux/sessions", get(list_tmux_sessions_handler))
         .route("/api/jobs", get(list_jobs_handler).post(create_job_handler))
         .route("/api/im/feishu/event", post(feishu_webhook_handler))
         .route("/preview/{job_id}", get(preview_page_handler))
@@ -205,8 +210,10 @@ async fn ws_handler(State(state): State<AppState>, Query(query): Query<WsQuery>,
             return ws.on_upgrade(move |socket| handle_socket_attach(socket, session_id, registry));
         }
     }
-    let tool = parse_tool(query.tool.as_ref());
-    ws.on_upgrade(move |socket| handle_socket(socket, tool))
+    // session_id is required; reject bare /ws connections.
+    ws.on_upgrade(|mut socket| async move {
+        let _ = socket.send(Message::Text("Missing or invalid session_id".into())).await;
+    })
 }
 
 async fn create_session_handler(
@@ -214,6 +221,11 @@ async fn create_session_handler(
     Json(body): Json<CreateSessionBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let tool = parse_tool(Some(&body.tool));
+
+    // Note: no server-side dedup for tmux sessions. The frontend checks if a tab
+    // already exists and switches to it. When the user explicitly requests a new
+    // attach (e.g. after rebuild or to re-detach others), we always spawn a fresh PTY.
+
     let (cwd, project_path) = if let Some(ref job_id) = body.job_id {
         match workspace::job_workspace_path(&state.working_dir, job_id) {
             Some(p) => (Some(p.clone()), Some(p.to_string_lossy().into_owned())),
@@ -228,7 +240,7 @@ async fn create_session_handler(
         (None, body.project_path.clone())
     };
     let (bridge, mut pty_rx, resize_tx, mut state_rx) =
-        common::pty::spawn_pty(tool, cwd).map_err(|e| {
+        common::pty::spawn_pty(tool, cwd, body.tmux_session.clone()).map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to start PTY: {}", e))
         })?;
     let created_at = unix_now_secs();
@@ -236,6 +248,7 @@ async fn create_session_handler(
         created_at,
         project_path,
         tool,
+        tmux_session: body.tmux_session.clone(),
     };
     let buffer = Arc::new(CircularBuffer::new());
     let (live_tx, _) = broadcast::channel::<Bytes>(LIVE_BROADCAST_CAP);
@@ -411,6 +424,16 @@ async fn raw_job_path_handler(
     raw_job_impl(state, job_id, Some(path)).await
 }
 
+/// GET /api/tmux/sessions — list active tmux sessions and whether tmux is available.
+async fn list_tmux_sessions_handler() -> Json<serde_json::Value> {
+    let available = tmux_available();
+    let sessions = if available { list_tmux_sessions() } else { vec![] };
+    Json(serde_json::json!({
+        "available": available,
+        "sessions": sessions,
+    }))
+}
+
 async fn list_sessions_handler(State(state): State<AppState>) -> Json<Vec<SessionListItem>> {
     let list: Vec<_> = state
         .registry
@@ -431,6 +454,7 @@ async fn list_sessions_handler(State(state): State<AppState>) -> Json<Vec<Sessio
                 status: status.to_string(),
                 created_at: ctx.metadata.created_at,
                 project_path: ctx.metadata.project_path.clone(),
+                tmux_session: ctx.metadata.tmux_session.clone(),
             }
         })
         .collect();
@@ -605,94 +629,5 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
         let _ = ws_tx
             .send(Message::Text(wire::done_json().into()))
             .await;
-    }
-}
-
-async fn handle_socket(mut socket: WebSocket, tool: PtyTool) {
-    let (bridge, mut pty_rx, resize_tx, mut state_rx) = match common::pty::spawn_pty(tool, None) {
-        Ok(b) => b,
-        Err(e) => {
-            let _ = socket
-                .send(Message::Text(format!("Failed to start PTY: {}\r\n", e).into()))
-                .await;
-            return;
-        }
-    };
-    let writer = bridge.writer.clone();
-    let (mut ws_tx, mut ws_rx) = socket.split();
-
-    let pty_to_ws = async move {
-        loop {
-            tokio::select! {
-                data = pty_rx.recv() => {
-                    match data {
-                        Some(d) => {
-                            if ws_tx.send(Message::Binary(Bytes::from(d))).await.is_err() {
-                                break;
-                            }
-                        }
-                        None => break,
-                    }
-                }
-                Some(state) = state_rx.recv() => {
-                    if let Ok(json) = serde_json::to_string(&state) {
-                        if ws_tx.send(Message::Text(json.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    };
-
-    let ws_to_pty = async move {
-        while let Some(Ok(msg)) = ws_rx.next().await {
-            match &msg {
-                Message::Text(t) => {
-                    if let Ok(resize) = serde_json::from_str::<ResizeMessage>(t) {
-                        if resize.ty == "resize" {
-                            let _ = resize_tx.send((resize.cols, resize.rows));
-                            continue;
-                        }
-                    }
-                    let to_write = t.as_bytes().to_vec();
-                    let w = writer.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        if let Ok(mut guard) = w.lock() {
-                            let _ = guard.write_all(&to_write);
-                            let _ = guard.flush();
-                        }
-                    })
-                    .await;
-                }
-                Message::Binary(b) => {
-                    let to_write = b.to_vec();
-                    let w = writer.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
-                        if let Ok(mut guard) = w.lock() {
-                            let _ = guard.write_all(&to_write);
-                            let _ = guard.flush();
-                        }
-                    })
-                    .await;
-                }
-                _ => {}
-            }
-        }
-    };
-
-    let mut pty_handle = tokio::spawn(pty_to_ws);
-    let mut ws_to_pty = std::pin::pin!(ws_to_pty);
-    tokio::select! {
-        _ = &mut pty_handle => {
-            ws_to_pty.await;
-        }
-        _ = &mut ws_to_pty => {}
-    }
-
-    if let Err(e) = bridge.kill() {
-        eprintln!("[VibeAround] Failed to kill PTY process on WS close: {}", e);
-    } else {
-        println!("[VibeAround] WebSocket closed, PTY process killed.");
     }
 }

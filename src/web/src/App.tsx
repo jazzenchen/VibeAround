@@ -4,13 +4,14 @@ import type { ViewMode, TerminalGroup, TerminalSession, TerminalStatus, ToolType
 import { getGroupColor, TOOL_OPTIONS } from "@/lib/terminal-types";
 import { TerminalPanel } from "@/components/TerminalPanel";
 import { ChatView } from "@/components/chat";
-import { getSessions, createSession, deleteSession, type SessionListItem } from "@/api/sessions";
+import { getSessions, createSession, deleteSession, getTmuxSessions, type SessionListItem } from "@/api/sessions";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -40,7 +41,7 @@ function mapApiTool(s: string): ToolType {
 function sessionListItemToSession(item: SessionListItem): TerminalSession {
   return {
     id: item.session_id,
-    name: sessionToName(item.tool),
+    name: item.tmux_session ? `tmux: ${item.tmux_session}` : sessionToName(item.tool),
     group: DEFAULT_GROUP_ID,
     tool: mapApiTool(item.tool),
     status: mapApiStatus(item.status),
@@ -48,6 +49,7 @@ function sessionListItemToSession(item: SessionListItem): TerminalSession {
     cwd: item.project_path ?? "—",
     startedAt: item.created_at * 1000,
     createdAt: item.created_at,
+    tmuxSession: item.tmux_session,
   };
 }
 
@@ -149,6 +151,64 @@ function App() {
       console.error("[VibeAround] createSession:", e);
     }
   }, []);
+
+  // tmux: available flag + session list. Pre-fetch on mount so the dropdown has data immediately.
+  const [tmuxAvailable, setTmuxAvailable] = useState<boolean | null>(null);
+  const [tmuxSessions, setTmuxSessions] = useState<string[]>([]);
+
+  const refreshTmux = useCallback(async () => {
+    try {
+      const res = await getTmuxSessions();
+      setTmuxAvailable(res.available);
+      setTmuxSessions(res.sessions);
+    } catch {
+      setTmuxAvailable(false);
+      setTmuxSessions([]);
+    }
+  }, []);
+
+  // Pre-fetch tmux state on mount.
+  useEffect(() => {
+    refreshTmux();
+  }, [refreshTmux]);
+
+  const handleAttachTmux = useCallback(async (sessionName: string) => {
+    try {
+      // If there's already a tab attached to this tmux session, just switch to it.
+      const allSessions = groups.flatMap((g) => g.sessions);
+      const existingTab = allSessions.find(
+        (s) => s.tmuxSession === sessionName && s.status === "running"
+      );
+      if (existingTab) {
+        setActiveTabId(existingTab.id);
+        return;
+      }
+
+      const res = await createSession({ tool: "generic", tmux_session: sessionName });
+      const session = sessionListItemToSession({
+        session_id: res.session_id,
+        tool: "generic",
+        status: "running",
+        created_at: res.created_at,
+        project_path: res.project_path,
+        tmux_session: sessionName,
+      });
+      setGroups((prev) =>
+        prev.map((g) =>
+          g.id === DEFAULT_GROUP_ID
+            ? { ...g, sessions: [...g.sessions, session] }
+            : g
+        )
+      );
+      setActiveTabId(session.id);
+      refreshTmux();
+    } catch (e) {
+      console.error("[VibeAround] attachTmux:", e);
+    }
+  }, [refreshTmux, groups]);
+
+  // State for the "new tmux session" inline input.
+  const [newTmuxName, setNewTmuxName] = useState("");
 
   const toggleMaximize = useCallback((sessionId: string) => {
     setMaximizedSession((prev) => (prev === sessionId ? null : sessionId));
@@ -349,7 +409,7 @@ function App() {
               );
             })}
             <div className="relative flex items-center shrink-0 pl-1 overflow-visible">
-              <DropdownMenu>
+              <DropdownMenu onOpenChange={(open) => open && refreshTmux()}>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="outline"
@@ -374,6 +434,55 @@ function App() {
                       {sessionToName(tool)}
                     </DropdownMenuItem>
                   ))}
+                  {tmuxAvailable && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        tmux sessions
+                      </DropdownMenuLabel>
+                      {tmuxSessions.map((name) => (
+                        <DropdownMenuItem
+                          key={`tmux-${name}`}
+                          onSelect={() => handleAttachTmux(name)}
+                        >
+                          ⎈ {name}
+                        </DropdownMenuItem>
+                      ))}
+                      <div
+                        className="flex items-center gap-1 px-2 py-1.5"
+                        onKeyDown={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="text"
+                          placeholder="session name…"
+                          value={newTmuxName}
+                          onChange={(e) => setNewTmuxName(e.target.value)}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === "Enter" && newTmuxName.trim()) {
+                              handleAttachTmux(newTmuxName.trim());
+                              setNewTmuxName("");
+                            }
+                          }}
+                          className="flex-1 min-w-0 bg-transparent border border-border/40 rounded px-1.5 py-0.5 text-[11px] font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary/50"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="shrink-0 h-5 w-5 text-muted-foreground/60 hover:text-primary"
+                          disabled={!newTmuxName.trim()}
+                          onClick={() => {
+                            if (newTmuxName.trim()) {
+                              handleAttachTmux(newTmuxName.trim());
+                              setNewTmuxName("");
+                            }
+                          }}
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -423,7 +532,7 @@ function App() {
                 <p className="text-sm text-muted-foreground/40 font-mono">
                   No sessions yet. Add a CLI to start.
                 </p>
-                <DropdownMenu>
+                <DropdownMenu onOpenChange={(open) => open && refreshTmux()}>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="sm" className="gap-1.5 font-mono text-xs text-primary border-primary/30 hover:bg-primary/10">
                       <Plus className="h-3.5 w-3.5" />
@@ -443,6 +552,55 @@ function App() {
                         {sessionToName(tool)}
                       </DropdownMenuItem>
                     ))}
+                    {tmuxAvailable && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          tmux sessions
+                        </DropdownMenuLabel>
+                        {tmuxSessions.map((name) => (
+                          <DropdownMenuItem
+                            key={`tmux-${name}`}
+                            onSelect={() => handleAttachTmux(name)}
+                          >
+                            ⎈ {name}
+                          </DropdownMenuItem>
+                        ))}
+                        <div
+                          className="flex items-center gap-1 px-2 py-1.5"
+                          onKeyDown={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="text"
+                            placeholder="session name…"
+                            value={newTmuxName}
+                            onChange={(e) => setNewTmuxName(e.target.value)}
+                            onKeyDown={(e) => {
+                              e.stopPropagation();
+                              if (e.key === "Enter" && newTmuxName.trim()) {
+                                handleAttachTmux(newTmuxName.trim());
+                                setNewTmuxName("");
+                              }
+                            }}
+                            className="flex-1 min-w-0 bg-transparent border border-border/40 rounded px-1.5 py-0.5 text-sm font-mono text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary/50"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="shrink-0 h-5 w-5 text-muted-foreground/60 hover:text-primary"
+                            disabled={!newTmuxName.trim()}
+                            onClick={() => {
+                              if (newTmuxName.trim()) {
+                                handleAttachTmux(newTmuxName.trim());
+                                setNewTmuxName("");
+                              }
+                            }}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

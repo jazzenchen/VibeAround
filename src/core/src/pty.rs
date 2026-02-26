@@ -30,35 +30,58 @@ fn shell_command() -> CommandBuilder {
 
 /// Exec string for each tool when wrapping with cd (bash -c "cd ... && exec ...").
 /// Claude code runs with acceptEdits so file writes are auto-approved in headless/PTY.
-fn tool_exec_argv(tool: PtyTool) -> &'static str {
+fn tool_exec_argv(tool: PtyTool, tmux_session: Option<&str>) -> String {
+    if let Some(name) = tmux_session {
+        let escaped = name.replace('\'', "'\"'\"'");
+        let detach = crate::config::ensure_loaded().tmux_detach_others;
+        return if detach {
+            format!("tmux attach -d -t '{}'", escaped)
+        } else {
+            format!("tmux attach -t '{}'", escaped)
+        };
+    }
     match tool {
-        PtyTool::Generic => "bash -l",
-        PtyTool::Claude => "claude code --permission-mode acceptEdits",
-        PtyTool::ClaudeChat => "claude",
-        PtyTool::Gemini => "gemini",
-        PtyTool::Codex => "codex",
+        PtyTool::Generic => "bash -l".to_string(),
+        PtyTool::Claude => "claude code --permission-mode acceptEdits".to_string(),
+        PtyTool::Gemini => "gemini".to_string(),
+        PtyTool::Codex => "codex".to_string(),
     }
 }
 
 /// Build command for direct spawn by tool. Generic = login shell; others = CLI (claude code, gemini, codex).
 /// If cwd is Some, wraps in a shell that `cd`s there then execs the tool (so PTY runs in that directory).
-fn command_for_tool(tool: PtyTool, cwd: Option<&Path>) -> CommandBuilder {
+/// If tmux_session is Some, spawns `tmux new-session -A -s <name>` instead of the tool directly.
+fn command_for_tool(tool: PtyTool, cwd: Option<&Path>, tmux_session: Option<&str>) -> CommandBuilder {
     if let Some(dir) = cwd {
         #[cfg(unix)]
         {
             let path = dir.to_string_lossy();
             let escaped = path.replace('\'', "'\"'\"'");
-            let exec = tool_exec_argv(tool);
+            let exec = tool_exec_argv(tool, tmux_session);
             let line = format!("cd '{}' && exec {}", escaped, exec);
             let mut wrap = CommandBuilder::new("bash");
             wrap.arg("-c");
             wrap.arg(line);
             wrap.env("TERM", "xterm-256color");
             wrap.env("COLORTERM", "truecolor");
+            // Unset TMUX to avoid "sessions should be nested with care" when attaching from inside tmux.
+            wrap.env_remove("TMUX");
             return wrap;
         }
         #[cfg(not(unix))]
         let _ = dir;
+    }
+
+    // tmux mode without cwd
+    if tmux_session.is_some() {
+        let exec = tool_exec_argv(tool, tmux_session);
+        let mut wrap = CommandBuilder::new("bash");
+        wrap.arg("-c");
+        wrap.arg(exec);
+        wrap.env("TERM", "xterm-256color");
+        wrap.env("COLORTERM", "truecolor");
+        wrap.env_remove("TMUX");
+        return wrap;
     }
 
     let mut c = match tool {
@@ -68,7 +91,6 @@ fn command_for_tool(tool: PtyTool, cwd: Option<&Path>) -> CommandBuilder {
             cmd.arg("code");
             cmd
         }
-        PtyTool::ClaudeChat => CommandBuilder::new("claude"),
         PtyTool::Gemini => CommandBuilder::new("gemini"),
         PtyTool::Codex => CommandBuilder::new("codex"),
     };
@@ -92,8 +114,6 @@ pub enum PtyRunState {
 pub enum PtyTool {
     Generic,
     Claude,
-    /// Claude CLI chat mode (no "code" subcommand); used by /ws/chat.
-    ClaudeChat,
     Gemini,
     Codex,
 }
@@ -109,9 +129,11 @@ pub type ResizeSender = sync::mpsc::Sender<(u16, u16)>;
 
 /// Spawn a process in a PTY: either shell (Generic) or direct CLI (Claude/Gemini/Codex). Returns bridge, PTY stdout receiver, resize sender, and state receiver (async).
 /// If `cwd` is Some, the process runs in that directory (via a shell wrapper on Unix).
+/// If `tmux_session` is Some, spawns `tmux new-session -A -s <name>` (attach-or-create) instead of the tool directly.
 pub fn spawn_pty(
     tool: PtyTool,
     cwd: Option<std::path::PathBuf>,
+    tmux_session: Option<String>,
 ) -> Result<(PtyBridge, mpsc::Receiver<Vec<u8>>, ResizeSender, mpsc::Receiver<PtyRunState>), Box<dyn std::error::Error + Send + Sync>> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
@@ -121,7 +143,7 @@ pub fn spawn_pty(
         pixel_height: 0,
     })?;
 
-    let cmd = command_for_tool(tool, cwd.as_deref());
+    let cmd = command_for_tool(tool, cwd.as_deref(), tmux_session.as_deref());
     let child = pair.slave.spawn_command(cmd)?;
 
     let mut reader = pair.master.try_clone_reader()?;
@@ -212,8 +234,28 @@ impl PtyBridge {
     }
 }
 
-/// Spawn a login shell in a PTY (same as spawn_pty(PtyTool::Generic, None)). Use spawn_pty(tool, cwd) for direct CLI (e.g. Claude/Gemini/Codex).
-#[allow(dead_code)]
-pub fn spawn_shell() -> Result<(PtyBridge, mpsc::Receiver<Vec<u8>>, ResizeSender, mpsc::Receiver<PtyRunState>), Box<dyn std::error::Error + Send + Sync>> {
-    spawn_pty(PtyTool::Generic, None)
+/// List active tmux sessions (name only). Returns empty vec if tmux is not installed or no sessions exist.
+pub fn list_tmux_sessions() -> Vec<String> {
+    let output = std::process::Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect()
+        }
+        _ => vec![],
+    }
+}
+
+/// Check whether tmux is available on this system.
+pub fn tmux_available() -> bool {
+    std::process::Command::new("tmux")
+        .arg("-V")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
