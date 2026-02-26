@@ -14,7 +14,9 @@
 
 ---
 
-**VibeAround** is an ambient vibe coding partner that runs on your own machine. Talk to it over the channels you already use (e.g. Telegram) and direct AI to vibe code from anywhere, at any time. It sits in the system tray as a lightweight daemon, runs a local server, and opens a web dashboard when you need it. 
+**VibeAround** is an ambient vibe coding partner that runs on your own machine. Talk to it over the channels you already use (e.g. Telegram) and direct AI to vibe code from anywhere, at any time. It sits in the system tray as a lightweight daemon, runs a local server, and opens a web dashboard when you need it.
+
+**tmux-native by default** — terminal sessions can attach to tmux, so you can take unfinished work with you across devices. Start on your PC, pick it up on your phone, then resume on another machine — nothing is lost.
 
 ---
 
@@ -23,8 +25,9 @@
 - Vibe Coding Everywhere!
 - Small and fast from day one — Bun and Rust for a portable, always-on vibe partner.
 - A context-aware programming companion in the background, without disrupting your workflow.
+- **Seamless device switching:** tmux sessions persist across connections — PC → mobile → another PC → back again, zero friction.
 - **Dual-track** control:
-  - **Remote terminal:** attach to a live PTY from the web dashboard.
+  - **Remote terminal:** attach to a live PTY from the web dashboard, with tmux session persistence.
   - **Conversational vibe coding:** send instructions via IM; AI writes, refactors, and reviews code asynchronously.
 
 **IM scope (current):** For the foreseeable future we only consider **one-on-one (1:1) conversations** with users. Broadcasting, group messaging, and multi-chat fan-out are explicitly out of scope and will be addressed in a later phase.
@@ -116,6 +119,7 @@ Config file path: **`src/settings.json`** (create from `src/settings.json.exampl
 | `channels.telegram.bot_token` | Telegram bot token from [@BotFather](https://t.me/BotFather); omit to disable Telegram |
 | `channels.feishu.app_id` | Feishu/Lark app ID (from open platform); omit to disable Feishu |
 | `channels.feishu.app_secret` | Feishu app secret |
+| `tmux.detach_others` | Detach other clients when attaching to a tmux session (default: `true`) |
 | `working_dir` | Root for job workspaces (default: `~/test`) |
 
 **Minimal example** (Telegram + Localtunnel only):
@@ -187,13 +191,52 @@ Feishu sends events to your server via **webhook**. The webhook URL must be a **
 
 ---
 
+## tmux & seamless device switching
+
+VibeAround supports attaching to tmux sessions, so you can take unfinished work with you. Start a coding session on one device, detach, and pick it up from another — the web dashboard, a different browser, or a native terminal client via SSH.
+
+### How it works
+
+When you create a session in the web dashboard, you can choose to attach it to a tmux session on the host machine. If you close the browser tab or lose connectivity, the tmux session keeps running in the background. Reconnect from any device and you're right back where you left off.
+
+By default, attaching to a session detaches other clients (`tmux attach -d`). This gives you clean single-viewer semantics — open the dashboard on your phone and the previous browser tab gracefully disconnects. To allow multiple viewers on the same session, set `tmux.detach_others` to `false` in `settings.json`.
+
+### Recommended: iTerm2 with tmux -CC integration
+
+For the best experience when working from a Mac, use [iTerm2](https://iterm2.com)'s native tmux integration mode. Instead of rendering tmux inside a terminal emulator, iTerm2 maps each tmux window/pane to a native iTerm2 tab/split — giving you native scrollback, native copy-paste, and native keyboard shortcuts while still backed by a persistent tmux session on the remote host.
+
+**Quick start:**
+
+```bash
+# SSH into your VibeAround host and attach with tmux -CC
+ssh your-host -t "tmux -CC attach -t my-session"
+```
+
+Or from an existing SSH session:
+
+```bash
+tmux -CC attach -t my-session
+```
+
+iTerm2 will detect the `-CC` flag and switch to its native integration mode automatically.
+
+**Why this matters for VibeAround:**
+
+- Start a vibe coding session from the web dashboard on your PC at work.
+- On the go, check progress or send quick instructions from your phone via the web dashboard or Telegram.
+- At home, SSH into the same machine with `tmux -CC` from iTerm2 and get a fully native terminal experience — same session, same state, zero context loss.
+
+The workflow is: **PC → mobile → another PC → back again**, all seamless.
+
+---
+
 ## Roadmap
 
 The evolution of VibeAround transitions from a basic Proof of Concept (POC) to a highly configurable, extensible orchestrator.
 
 **Phase 1: Foundation (Current)**
 
-- **Remote PTY terminal:** Access your local terminal from a web browser remotely, support multiple sessions, and open Claude, Gemini, or Codex directly.
+- **Remote PTY terminal:** Access your local terminal from a web browser remotely, support multiple sessions, and open Claude, Gemini, or Codex directly. tmux-backed for persistent, device-portable sessions.
 - **IM:** Send vibe coding tasks through Telegram and Feishu, Claude Code only for now.
 - **Tunnel:** Ngrok and Localtunnel for inner-network penetration, provide a public URL for access (e.g. dashboard and Feishu webhook).
 
