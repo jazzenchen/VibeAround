@@ -28,6 +28,54 @@ pub use runners::claude::{
 /// Error from running a headless prompt (spawn failure, stream parse, etc.).
 pub type RunnerError = String;
 
+/// Unified JSON wire format for streaming headless output to any consumer (WS chat, IM, etc.).
+/// Both IM worker and WebSocket chat handler use these to produce consistent messages.
+pub mod wire {
+    use super::{ClaudeProgress, ClaudeSegment};
+
+    /// Format a ClaudeSegment::Progress as a JSON string.
+    /// e.g. `{"progress":"Thinking..."}` or `{"progress":"Using tool: Read..."}`
+    pub fn progress_json(p: &ClaudeProgress) -> String {
+        let label = match p {
+            ClaudeProgress::Thinking => "Thinking...".to_string(),
+            ClaudeProgress::ToolUse { name } => format!("Using tool: {}...", name),
+        };
+        serde_json::json!({ "progress": label }).to_string()
+    }
+
+    /// Format a ClaudeSegment::TextPart as a JSON string.
+    /// e.g. `{"text":"Here is the answer..."}`
+    pub fn text_json(text: &str) -> String {
+        serde_json::json!({ "text": text }).to_string()
+    }
+
+    /// Format a stream-done marker.
+    /// e.g. `{"done":true}`
+    pub fn done_json() -> String {
+        serde_json::json!({ "done": true }).to_string()
+    }
+
+    /// Format an error message.
+    /// e.g. `{"error":"Failed to run claude: ..."}`
+    pub fn error_json(msg: &str) -> String {
+        serde_json::json!({ "error": msg }).to_string()
+    }
+
+    /// Format a job creation event (job_id + preview path).
+    /// e.g. `{"job_id":"abc","preview":"/preview/abc"}`
+    pub fn job_json(job_id: &str, preview: &str) -> String {
+        serde_json::json!({ "job_id": job_id, "preview": preview }).to_string()
+    }
+
+    /// Convert a ClaudeSegment to its wire JSON string.
+    pub fn segment_to_json(seg: &ClaudeSegment) -> String {
+        match seg {
+            ClaudeSegment::Progress(p) => progress_json(p),
+            ClaudeSegment::TextPart(text) => text_json(text),
+        }
+    }
+}
+
 /// Unified runner trait: same fields and methods for all implementations (Claude, future plugins).
 /// Enables single dispatch and config-driven runner selection.
 #[async_trait]

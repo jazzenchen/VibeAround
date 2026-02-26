@@ -21,7 +21,7 @@ use tower_http::services::ServeDir;
 use tokio::sync::broadcast;
 
 use common::config;
-use common::headless::{run_claude_prompt_to_stream_parts, ClaudeSegment};
+use common::headless::{run_claude_prompt_to_stream_parts, wire, ClaudeSegment};
 use common::pty::{PtyRunState, PtyTool};
 use common::session::{
     CircularBuffer, Registry, SessionContext, SessionId, SessionMetadata, LIVE_BROADCAST_CAP,
@@ -549,19 +549,15 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
                     job_id = Some(record.job_id.clone());
                     let preview = format!("/preview/{}", record.job_id);
                     let _ = ws_tx
-                        .send(Message::Text(
-                            serde_json::json!({ "job_id": record.job_id, "preview": preview }).to_string().into(),
-                        ))
+                        .send(Message::Text(wire::job_json(&record.job_id, &preview).into()))
                         .await;
                 }
                 Err(e) => {
                     let _ = ws_tx
-                        .send(Message::Text(
-                            serde_json::json!({ "error": format!("Failed to create job: {}", e) }).to_string().into(),
-                        ))
+                        .send(Message::Text(wire::error_json(&format!("Failed to create job: {}", e)).into()))
                         .await;
                     let _ = ws_tx
-                        .send(Message::Text(serde_json::json!({ "done": true }).to_string().into()))
+                        .send(Message::Text(wire::done_json().into()))
                         .await;
                     continue;
                 }
@@ -572,9 +568,7 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
             Some(p) => p,
             None => {
                 let _ = ws_tx
-                    .send(Message::Text(
-                        serde_json::json!({ "error": "Job workspace not found" }).to_string().into(),
-                    ))
+                    .send(Message::Text(wire::error_json("Job workspace not found").into()))
                     .await;
                 continue;
             }
@@ -590,42 +584,26 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
         });
 
         while let Some(seg) = seg_rx.recv().await {
-            match seg {
-                ClaudeSegment::Progress(p) => {
-                    let s = match &p {
-                        common::headless::ClaudeProgress::Thinking => "Thinking...".to_string(),
-                        common::headless::ClaudeProgress::ToolUse { name } => format!("Using tool: {}...", name),
-                    };
-                    let _ = ws_tx.send(Message::Text(serde_json::json!({ "progress": s }).to_string().into())).await;
-                }
-                ClaudeSegment::TextPart(text) => {
-                    if !text.is_empty() {
-                        let _ = ws_tx.send(Message::Text(text.into())).await;
-                    }
-                }
-            }
+            let json = wire::segment_to_json(&seg);
+            let _ = ws_tx.send(Message::Text(json.into())).await;
         }
 
         match run_result.await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 let _ = ws_tx
-                    .send(Message::Text(
-                        serde_json::json!({ "error": format!("Failed to run claude: {}", e) }).to_string().into(),
-                    ))
+                    .send(Message::Text(wire::error_json(&format!("Failed to run claude: {}", e)).into()))
                     .await;
             }
             Err(e) => {
                 let _ = ws_tx
-                    .send(Message::Text(
-                        serde_json::json!({ "error": format!("Task join error: {}", e) }).to_string().into(),
-                    ))
+                    .send(Message::Text(wire::error_json(&format!("Task join error: {}", e)).into()))
                     .await;
             }
         }
 
         let _ = ws_tx
-            .send(Message::Text(serde_json::json!({ "done": true }).to_string().into()))
+            .send(Message::Text(wire::done_json().into()))
             .await;
     }
 }
