@@ -80,12 +80,12 @@ fn truncate_to_max(text: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// Run the Telegram receiver (long polling). Pushes (channel_id, prompt) to inbound_tx when the
+/// Run the Telegram receiver (long polling). Pushes InboundMessage to inbound_tx when the
 /// chat is not busy; pushes (channel_id, "Please wait...") to outbound when busy. All actual
 /// sending goes through the per-channel daemon (OutboundHub). Returns when the bot stops (e.g. Ctrl+C).
 pub async fn run_telegram_receiver(
     bot: Bot,
-    inbound_tx: mpsc::Sender<(String, String)>,
+    inbound_tx: mpsc::Sender<crate::im::worker::InboundMessage>,
     outbound: Arc<crate::im::daemon::OutboundHub<TelegramTransport>>,
     busy_set: Arc<DashMap<String, ()>>,
 ) {
@@ -125,7 +125,7 @@ pub async fn run_telegram_receiver(
                 return Ok(());
             }
 
-            let _ = inbound_tx.send((channel_id, text)).await;
+            let _ = inbound_tx.send(crate::im::worker::InboundMessage::text_only(channel_id, text)).await;
             Ok(())
         }
     })
@@ -208,6 +208,7 @@ pub async fn run_telegram_bot() {
         inbound_rx,
         outbound.clone(),
         busy_set.clone(),
+        None,
     ));
 
     run_telegram_receiver(bot, inbound_tx, outbound, busy_set).await;
