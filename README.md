@@ -34,6 +34,16 @@
 
 ---
 
+## Screenshots
+
+Web dashboard on desktop and mobile — same session, any device.
+
+| Desktop | Mobile |
+|---------|--------|
+| <img src="image/README/screenshot-pc.png" width="600" alt="VibeAround web dashboard on desktop" /> | <img src="image/README/screenshot-mobile.jpg" width="200" alt="VibeAround web dashboard on mobile" /> |
+
+---
+
 ## Preferred setup
 
 **TL;DR** (from repo root): `cd src` → `bun install` → `bun run prebuild` → `bun run dev`. Then tray menu → **Open Web Dashboard**; tunnel URL and password are in the terminal.
