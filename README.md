@@ -20,6 +20,16 @@
 
 ---
 
+## Screenshots
+
+Web dashboard on desktop and mobile — same session, any device.
+
+| Desktop | Mobile |
+|---------|--------|
+| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-pc.webp" width="600" alt="VibeAround web dashboard on desktop" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-mobile.webp" width="200" alt="VibeAround web dashboard on mobile" /> |
+
+---
+
 **Goals**
 
 - Vibe Coding Everywhere!
@@ -34,83 +44,16 @@
 
 ---
 
-## Screenshots
-
-Web dashboard on desktop and mobile — same session, any device.
-
-| Desktop | Mobile |
-|---------|--------|
-| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-pc.webp" width="600" alt="VibeAround web dashboard on desktop" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-mobile.webp" width="200" alt="VibeAround web dashboard on mobile" /> |
-
----
-
-## Preferred setup
-
-**TL;DR** (from repo root): `cd src` → `bun install` → `bun run prebuild` → `bun run dev`. Then tray menu → **Open Web Dashboard**; tunnel URL and password are in the terminal.
-
----
-
-**Install path:** Clone the repo, then use the `src/` directory as your working path:
+## Quick Start
 
 ```
-VibeAround/src/
-```
-
-**Requirements:** Bun 1.3+ and Rust 1.78+ (update Rust with `rustup update stable` if needed).
-
-**Configuration:** All runtime config (tunnel, Telegram, Feishu, working dir) is read from **`src/settings.json`**. This file is gitignored. Copy `src/settings.json.example` to `src/settings.json` and fill in the values you need. See [Configuration (settings.json)](#configuration-settingsjson) below for the full structure.
-
-**Steps (first-time or after pulling changes):**
-
-1. **Install dependencies** — installs workspace deps for `web`, `desktop-tray`, and `desktop`:
-
-```bash
 cd src
 bun install
-```
-
-2. **Build web dashboard and tray UI** — required so the local server can serve the dashboard and the desktop app can load the tray:
-
-```bash
 bun run prebuild
-```
-
-(This runs `desktop-tray:build` then `web:build` and produces `web/dist` and `desktop-tray/dist`.)
-
-3. **Run the app** — starts the Tauri desktop process (tray, web server, tunnel, IM bots):
-
-```bash
 bun run dev
 ```
 
-If you use **Feishu**, you need the **tunnel URL** from this step before you can set the webhook in the Feishu open platform. See [Feishu setup flow](#feishu-setup-flow-public-url-first-then-backend) below.
-
-After the app is running:
-
-- Use the tray menu → **Open Web Dashboard** to open the browser. The server will be at:
-
-```
-http://127.0.0.1:5182
-```
-
-- **Tunnel URL and password:** The desktop app starts Localtunnel automatically. Check the **terminal** for lines like `[VibeAround] Tunnel URL: https://xxx.loca.lt` and the tunnel password (or the link to fetch it). You can also use the tray menu → **Open tunnel URL** to open the public dashboard link.
-
-**Note:** After the first run, you usually only need `bun run dev` unless you changed code in `web` or `desktop-tray`; then run `bun run prebuild` again before `bun run dev`. Use `bun run build` when you want to produce the full desktop app bundle (Tauri build).
-
----
-
-### Run without desktop (standalone server)
-
-If you prefer not to run the Tauri desktop app (no tray, no tunnel), you can run only the HTTP server and use the web dashboard locally:
-
-1. From `src/`, run `bun run prebuild` so `web/dist` exists.
-2. Start the server:
-
-```bash
-bun run server:dev
-```
-
-The dashboard will be at `http://127.0.0.1:5182`. The standalone server does **not** start Localtunnel or the Telegram bot; it is for local-only use (e.g. on a headless machine or when you only need the web UI).
+Then tray menu → Open Web Dashboard; tunnel URL and password are in the terminal.
 
 ---
 
@@ -166,38 +109,73 @@ Config file path: **`src/settings.json`** (create from `src/settings.json.exampl
 
 ---
 
-### Feishu setup flow (public URL first, then backend)
+## Preferred setup
 
-Feishu sends events to your server via **webhook**. The webhook URL must be a **public HTTPS URL**. So you need a public domain (tunnel) running before you can complete Feishu configuration in the open platform.
+**TL;DR** (from repo root): `cd src` → `bun install` → `bun run prebuild` → `bun run dev`. Then tray menu → **Open Web Dashboard**; tunnel URL and password are in the terminal.
 
-1. **Get a public URL**
-   - Run the app (`bun run dev`). It will start a tunnel (Localtunnel by default, or Ngrok if configured).
-   - Note the **Tunnel URL** from the terminal (e.g. `https://xxx.loca.lt`) or from the tray → Open tunnel URL.
-   - If you use Ngrok, you can set `tunnel.ngrok.domain` to a reserved domain so the URL is stable.
+---
 
-2. **Create a Feishu/Lark app**
-   - Go to [Feishu Open Platform](https://open.feishu.cn/app) (or [Lark](https://open.larksuite.com/app) for international).
-   - Create an app, then open **Credentials & Basic Info**: copy **App ID** and **App Secret** into `settings.json` under `channels.feishu.app_id` and `channels.feishu.app_secret`.
+**Install path:** Clone the repo, then use the `src/` directory as your working path:
 
-3. **Subscribe to events and set request URL**
-   - In the app console, open **Event Subscriptions**.
-   - Enable **Request URL (Config)**.
-   - Set **Request URL** to:
-     ```
-     https://<YOUR-PUBLIC-DOMAIN>/api/im/feishu/event
-     ```
-     Example: if your tunnel URL is `https://abc123.loca.lt`, use `https://abc123.loca.lt/api/im/feishu/event`.
-   - Feishu will send a `url_verification` request; the server responds with `{"challenge":"<challenge>"}`. After verification, save the configuration.
-   - Under **Subscribe to events**, add **im.message.receive_v1** (receive user messages).
+```
+VibeAround/src/
+```
 
-4. **Permissions and availability**
-   - In **Permissions**, grant **Contact** (read user info) and **Send and receive messages** (e.g. `im:message:send_as_bot`, `im:message:receive_v1`) as required.
-   - Under **Availability**, enable **Bot** and make the app available to your organization or to specific users.
+**Requirements:** Bun 1.3+ and Rust 1.78+ (update Rust with `rustup update stable` if needed).
 
-5. **Restart and use**
-   - Restart the app so it loads `settings.json` with Feishu credentials. The web server will accept POSTs at `/api/im/feishu/event`. Open a chat with your bot in Feishu and send a message to test.
+**Configuration:** All runtime config (tunnel, Telegram, Feishu, working dir) is read from **`src/settings.json`**. This file is gitignored. Copy `src/settings.json.example` to `src/settings.json` and fill in the values you need. See [Configuration (settings.json)](#configuration-settingsjson) above for the full structure.
 
-**Note:** If you change the tunnel URL (e.g. new Localtunnel subdomain), update the Feishu Request URL to the new `https://<new-domain>/api/im/feishu/event`.
+**Steps (first-time or after pulling changes):**
+
+1. **Install dependencies** — installs workspace deps for `web`, `desktop-tray`, and `desktop`:
+
+```bash
+cd src
+bun install
+```
+
+2. **Build web dashboard and tray UI** — required so the local server can serve the dashboard and the desktop app can load the tray:
+
+```bash
+bun run prebuild
+```
+
+(This runs `desktop-tray:build` then `web:build` and produces `web/dist` and `desktop-tray/dist`.)
+
+3. **Run the app** — starts the Tauri desktop process (tray, web server, tunnel, IM bots):
+
+```bash
+bun run dev
+```
+
+If you use **Feishu**, you need the **tunnel URL** from this step before you can set the webhook in the Feishu open platform.
+
+After the app is running:
+
+- Use the tray menu → **Open Web Dashboard** to open the browser. The server will be at:
+
+```
+http://127.0.0.1:5182
+```
+
+- **Tunnel URL and password:** The desktop app starts Localtunnel automatically. Check the **terminal** for lines like `[VibeAround] Tunnel URL: https://xxx.loca.lt` and the tunnel password (or the link to fetch it). You can also use the tray menu → **Open tunnel URL** to open the public dashboard link.
+
+**Note:** After the first run, you usually only need `bun run dev` unless you changed code in `web` or `desktop-tray`; then run `bun run prebuild` again before `bun run dev`. Use `bun run build` when you want to produce the full desktop app bundle (Tauri build).
+
+---
+
+### Run without desktop (standalone server)
+
+If you prefer not to run the Tauri desktop app (no tray, no tunnel), you can run only the HTTP server and use the web dashboard locally:
+
+1. From `src/`, run `bun run prebuild` so `web/dist` exists.
+2. Start the server:
+
+```bash
+bun run server:dev
+```
+
+The dashboard will be at `http://127.0.0.1:5182`. The standalone server does **not** start Localtunnel or the Telegram bot; it is for local-only use (e.g. on a headless machine or when you only need the web UI).
 
 ---
 
