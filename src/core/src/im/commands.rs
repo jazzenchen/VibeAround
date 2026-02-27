@@ -1,4 +1,6 @@
-//! Slash commands handled by code (no AI). E.g. /list-project lists workspace projects with openable links.
+//! Slash commands handled by code (no AI).
+//! Legacy module — command parsing is now in router.rs, handling in worker.rs.
+//! Kept for backward compatibility with web_server /list-project endpoint.
 
 use std::path::Path;
 
@@ -23,16 +25,13 @@ pub fn format_list_projects(working_dir: &Path) -> String {
     let lines: Vec<String> = jobs
         .into_iter()
         .map(|j| {
-            let url = base
-                .as_ref()
-                .map(|b| format!("{}/preview/{}", b.trim_end_matches('/'), j.job_id))
-                .unwrap_or_else(|| format!("/preview/{}", j.job_id));
-            let name = if j.name.is_empty() { j.job_id.clone() } else { j.name };
-            format!("• {}: {}", name, url)
+            let link = match &base {
+                Some(b) => format!("{}/preview/{}", b.trim_end_matches('/'), j.job_id),
+                None => format!("/preview/{}", j.job_id),
+            };
+            format!("{} — {}", j.name, link)
         })
         .collect();
 
-    let header = "Projects (click link to preview):";
-    let body = lines.join("\n");
-    format!("{}\n{}", header, body)
+    lines.join("\n")
 }

@@ -144,7 +144,7 @@ impl ImTransport for FeishuTransport {
         }
     }
 
-    async fn send(&self, channel_id: &str, text: &str) -> Result<Option<i32>, SendError> {
+    async fn send(&self, channel_id: &str, text: &str) -> Result<Option<String>, SendError> {
         let chat_id = Self::parse_chat_id(channel_id)?;
         let text = if text.len() > FEISHU_MAX_MESSAGE_LEN {
             text[..FEISHU_MAX_MESSAGE_LEN].to_string()
@@ -184,10 +184,12 @@ impl ImTransport for FeishuTransport {
             eprintln!("{} chat_id={} direction=send error=code={} body={}", prefix_channel("feishu"), chat_id, code, text_res);
             return Err(SendError::Other(format!("send message API code={} body={}", code, text_res)));
         }
-        Ok(None)
+        // Extract message_id from response: { "data": { "message_id": "om_xxx" } }
+        let message_id = json.pointer("/data/message_id").and_then(|v| v.as_str()).map(String::from);
+        Ok(message_id)
     }
 
-    async fn edit_message(&self, _channel_id: &str, _message_id: i32, _text: &str) -> Result<(), SendError> {
+    async fn edit_message(&self, _channel_id: &str, _message_id: &str, _text: &str) -> Result<(), SendError> {
         Ok(())
     }
 }
@@ -258,6 +260,7 @@ pub async fn handle_webhook_body(
         None => return (200, "{}".to_string()),
     };
     let message_id = message.get("message_id").and_then(|m| m.as_str()).unwrap_or("");
+    let parent_id = message.get("parent_id").and_then(|p| p.as_str()).filter(|s| !s.is_empty()).map(String::from);
     let msg_type = message.get("message_type").and_then(|t| t.as_str()).unwrap_or("text");
     let content_str = match message.get("content").and_then(|c| c.as_str()) {
         Some(c) => c,
@@ -290,6 +293,7 @@ pub async fn handle_webhook_body(
                     file_name: file_name.to_string(),
                     resource_type: "file".to_string(),
                 }],
+                parent_id: parent_id.clone(),
             }
         }
         "image" => {
@@ -308,6 +312,7 @@ pub async fn handle_webhook_body(
                     file_name: image_name,
                     resource_type: "image".to_string(),
                 }],
+                parent_id: parent_id.clone(),
             }
         }
         _ => {
@@ -321,7 +326,12 @@ pub async fn handle_webhook_body(
             if text.is_empty() {
                 return (200, "{}".to_string());
             }
-            InboundMessage::text_only(channel_id.clone(), text)
+            InboundMessage {
+                channel_id: channel_id.clone(),
+                text,
+                attachments: vec![],
+                parent_id: parent_id.clone(),
+            }
         }
     };
 

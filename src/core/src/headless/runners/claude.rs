@@ -224,27 +224,44 @@ where
 /// Text blocks are flushed on content_block_stop and message_stop (organized by Claude type/stop).
 /// Use for channels that send one message per segment (e.g. Feishu) with a response FIFO.
 /// If `cwd` is Some, Claude runs in that directory (e.g. job workspace); otherwise uses chat_working_dir().
+/// `session` controls session creation/resume; None = no session management.
+/// Returns the session_id parsed from the stream-json init event, if any.
 pub async fn run_claude_prompt_to_stream_parts<F>(
     prompt: &str,
     mut on_segment: F,
     cwd: Option<std::path::PathBuf>,
-) -> Result<(), String>
+    session: Option<headless::SessionMode>,
+) -> Result<headless::RunnerResult, String>
 where
     F: FnMut(ClaudeSegment),
 {
     let cwd = cwd.unwrap_or_else(chat_working_dir);
+    let mut args = vec![
+        "-p".to_string(),
+        prompt.to_string(),
+        "--output-format".to_string(),
+        "stream-json".to_string(),
+        "--verbose".to_string(),
+        "--include-partial-messages".to_string(),
+        "--allowedTools".to_string(),
+        "Read,Edit,Bash".to_string(),
+        "--dangerously-skip-permissions".to_string(),
+    ];
+    // Session management flags
+    if let Some(ref sm) = session {
+        match sm {
+            headless::SessionMode::New(id) => {
+                args.push("--session-id".to_string());
+                args.push(id.clone());
+            }
+            headless::SessionMode::Resume(id) => {
+                args.push("--resume".to_string());
+                args.push(id.clone());
+            }
+        }
+    }
     let mut child = TokioCommand::new("claude")
-        .args([
-            "-p",
-            prompt,
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--allowedTools",
-            "Read,Edit,Bash",
-            "--dangerously-skip-permissions",
-        ])
+        .args(&args)
         .current_dir(&cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -259,8 +276,19 @@ where
 
     let mut text_buffer = String::new();
     let mut in_text_block = false;
+    let mut parsed_session_id: Option<String> = None;
     let mut reader = BufReader::new(stdout).lines();
     while let Ok(Some(line)) = reader.next_line().await {
+        // Try to extract session_id from the init event (first line)
+        if parsed_session_id.is_none() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                if v.get("type").and_then(|t| t.as_str()) == Some("system")
+                    && v.get("subtype").and_then(|t| t.as_str()) == Some("init")
+                {
+                    parsed_session_id = v.get("session_id").and_then(|s| s.as_str()).map(String::from);
+                }
+            }
+        }
         let r = stream_json_parse_line(&line);
         if let Some(p) = r.progress {
             on_segment(ClaudeSegment::Progress(p));
@@ -288,7 +316,7 @@ where
         }
     }
     let _ = child.wait().await;
-    Ok(())
+    Ok(headless::RunnerResult { session_id: parsed_session_id })
 }
 
 /// Claude runner instance. Implements HeadlessRunner for unified management and dispatch.
@@ -301,12 +329,116 @@ impl headless::HeadlessRunner for ClaudeRunner {
         "claude"
     }
 
+    fn supports_native_resume(&self) -> bool {
+        true
+    }
+
     async fn run_to_stream(
         &self,
         prompt: &str,
         cwd: Option<std::path::PathBuf>,
+        session: Option<headless::SessionMode>,
         on_segment: &mut (dyn FnMut(headless::RunnerSegment) + Send),
-    ) -> Result<(), headless::RunnerError> {
-        run_claude_prompt_to_stream_parts(prompt, |seg| on_segment(seg), cwd).await
+    ) -> Result<headless::RunnerResult, headless::RunnerError> {
+        run_claude_prompt_to_stream_parts(prompt, |seg| on_segment(seg), cwd, session).await
+    }
+
+    async fn classify_intent(
+        &self,
+        context: &headless::ClassifyContext,
+        cwd: Option<std::path::PathBuf>,
+    ) -> Result<headless::IntentResult, headless::RunnerError> {
+        let cwd = cwd.unwrap_or_else(chat_working_dir);
+
+        // Build the classification prompt
+        let projects_desc = if context.projects.is_empty() {
+            "No existing projects.".to_string()
+        } else {
+            context.projects.iter()
+                .map(|p| format!("- id: {}, name: {}", p.project_id, p.name))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let current_session_desc = match &context.current_session {
+            Some(info) => format!(
+                "Currently active session in project '{}'. Recent context: {}",
+                info.project_name, info.recent_summary
+            ),
+            None => "No active session.".to_string(),
+        };
+
+        let classify_prompt = format!(
+            r#"You are a routing assistant. Given a user message and context, decide the action.
+
+User message: "{}"
+
+Current state: {}
+
+Existing projects:
+{}
+
+Respond with ONLY a JSON object (no markdown, no explanation):
+{{
+  "action": "continue" | "switch_to_existing" | "new_project",
+  "project_id": "<id if action is switch_to_existing, else empty string>",
+  "suggested_name": "<name if action is new_project, else empty string>",
+  "reason": "<brief explanation in the user's language>"
+}}
+
+Rules:
+- "continue": the message is about the current session's topic
+- "switch_to_existing": the message is about a different existing project
+- "new_project": the message starts a new topic not matching any existing project
+- If no active session and no matching project, use "new_project""#,
+            context.user_prompt, current_session_desc, projects_desc
+        );
+
+        let mut child = TokioCommand::new("claude")
+            .args(["-p", &classify_prompt, "--output-format", "json"])
+            .current_dir(&cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("classify_intent spawn: {}", e))?;
+
+        let stdout = child.stdout.take().ok_or("classify_intent: no stdout")?;
+        let mut output = String::new();
+        let mut reader = tokio::io::BufReader::new(stdout);
+        tokio::io::AsyncReadExt::read_to_string(&mut reader, &mut output)
+            .await
+            .map_err(|e| format!("classify_intent read: {}", e))?;
+        let _ = child.wait().await;
+
+        // Parse the JSON response
+        let v: serde_json::Value = serde_json::from_str(output.trim())
+            .or_else(|_| {
+                // Sometimes the output is wrapped in the result field
+                serde_json::from_str::<serde_json::Value>(output.trim())
+                    .and_then(|v| {
+                        if let Some(r) = v.get("result") {
+                            Ok(r.clone())
+                        } else {
+                            Ok(v)
+                        }
+                    })
+            })
+            .map_err(|e| format!("classify_intent parse: {} output={}", e, output.trim()))?;
+
+        let action = v.get("action").and_then(|a| a.as_str()).unwrap_or("new_project");
+        let reason = v.get("reason").and_then(|r| r.as_str()).unwrap_or("").to_string();
+
+        match action {
+            "continue" => Ok(headless::IntentResult::ContinueCurrent { reason }),
+            "switch_to_existing" => {
+                let project_id = v.get("project_id").and_then(|p| p.as_str()).unwrap_or("").to_string();
+                Ok(headless::IntentResult::ExistingProject { project_id, reason })
+            }
+            _ => {
+                let name = v.get("suggested_name").and_then(|n| n.as_str()).unwrap_or("untitled").to_string();
+                Ok(headless::IntentResult::NewProject { suggested_name: name, reason })
+            }
+        }
     }
 }

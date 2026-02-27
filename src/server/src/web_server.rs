@@ -604,7 +604,7 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
         let run_result = tokio::spawn(async move {
             run_claude_prompt_to_stream_parts(&prompt, move |seg| {
                 let _ = seg_tx.try_send(seg);
-            }, cwd).await
+            }, cwd, None).await
         });
 
         while let Some(seg) = seg_rx.recv().await {
@@ -613,7 +613,7 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
         }
 
         match run_result.await {
-            Ok(Ok(())) => {}
+            Ok(Ok(_runner_result)) => {}
             Ok(Err(e)) => {
                 let _ = ws_tx
                     .send(Message::Text(wire::error_json(&format!("Failed to run claude: {}", e)).into()))

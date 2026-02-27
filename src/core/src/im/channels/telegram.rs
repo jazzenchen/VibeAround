@@ -37,7 +37,7 @@ impl ImTransport for TelegramTransport {
         }
     }
 
-    async fn send(&self, channel_id: &str, text: &str) -> Result<Option<i32>, SendError> {
+    async fn send(&self, channel_id: &str, text: &str) -> Result<Option<String>, SendError> {
         let chat_id = parse_chat_id(channel_id)?;
         let text = truncate_to_max(text).into_owned();
 
@@ -46,13 +46,14 @@ impl ImTransport for TelegramTransport {
             .send_message(chat_id, text.as_str())
             .await
             .map_err(|e| SendError::Other(e.to_string()))?;
-        Ok(Some(msg.id.0))
+        Ok(Some(msg.id.0.to_string()))
     }
 
-    async fn edit_message(&self, channel_id: &str, message_id: i32, text: &str) -> Result<(), SendError> {
+    async fn edit_message(&self, channel_id: &str, message_id: &str, text: &str) -> Result<(), SendError> {
         let chat_id = parse_chat_id(channel_id)?;
         let text = truncate_to_max(text).into_owned();
-        let message_id = teloxide::types::MessageId(message_id);
+        let mid: i32 = message_id.parse().map_err(|_| SendError::Other(format!("invalid message_id: {}", message_id)))?;
+        let message_id = teloxide::types::MessageId(mid);
 
         self.bot
             .edit_message_text(chat_id, message_id, text.as_str())

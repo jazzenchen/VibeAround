@@ -13,8 +13,9 @@ pub enum SendError {
     Other(String),
 }
 
-/// Result of sending a message. If the channel supports stream-edit, returns Some(message_id).
-pub type SendResult = Option<i32>;
+/// Result of sending a message. Returns Some(message_id) if the platform provides one.
+/// message_id is a String to accommodate different platforms (Feishu: "om_xxx", Telegram: "123").
+pub type SendResult = Option<String>;
 
 /// Unified channel capabilities defined at IM level. Each channel (Telegram, Feishu, etc.)
 /// declares these so the daemon can branch: e.g. only use edit_message when supports_stream_edit.
@@ -46,7 +47,7 @@ pub trait ImTransport: Send + Sync {
     async fn send(&self, channel_id: &str, text: &str) -> Result<SendResult, SendError>;
 
     /// Edit an existing message. Only called when supports_stream_edit and send returned Some(message_id).
-    async fn edit_message(&self, channel_id: &str, message_id: i32, text: &str) -> Result<(), SendError>;
+    async fn edit_message(&self, channel_id: &str, message_id: &str, text: &str) -> Result<(), SendError>;
 }
 
 /// Split text into chunks of at most `max_len` characters, trying to break at newlines.

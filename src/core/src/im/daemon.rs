@@ -32,7 +32,10 @@ pub enum OutboundMsg {
 struct ChannelSendState {
     last_send: Option<Instant>,
     retry_after: Option<Instant>,
-    stream_message_id: Option<i32>,
+    /// Whether the initial stream message has been sent (regardless of whether we got a message_id).
+    stream_sent: bool,
+    /// The message_id of the initial stream message (for edit_message). None if platform didn't return one.
+    stream_message_id: Option<String>,
     last_edit: Option<Instant>,
     /// Edit path: accumulated text from StreamPart; shown in place. Progress labels (StreamProgress) shown only when this is empty.
     pending_stream_text: Option<String>,
@@ -126,6 +129,7 @@ async fn run_send_daemon_for_channel<T>(
     let mut state = ChannelSendState {
         last_send: None,
         retry_after: None,
+        stream_sent: false,
         stream_message_id: None,
         last_edit: None,
         pending_stream_text: None,
@@ -144,15 +148,14 @@ async fn run_send_daemon_for_channel<T>(
                         .last_edit
                         .map(|t| now.duration_since(t) >= MIN_EDIT_INTERVAL)
                         .unwrap_or(true);
-                    if state.stream_message_id.is_none() {
-                        if let Ok(Some(mid)) = transport.send(&channel_id, to_show).await {
-                            state.stream_message_id = Some(mid);
+                    if !state.stream_sent {
+                        if let Ok(mid) = transport.send(&channel_id, to_show).await {
+                            state.stream_sent = true;
+                            state.stream_message_id = mid;
                             state.last_edit = Some(Instant::now());
-                        } else if let Ok(None) = transport.send(&channel_id, to_show).await {
-                            state.stream_message_id = Some(-1);
                         }
-                    } else if let Some(mid) = state.stream_message_id {
-                        if mid >= 0 && can_edit {
+                    } else if let Some(ref mid) = state.stream_message_id {
+                        if can_edit {
                             let _ = transport.edit_message(&channel_id, mid, to_show).await;
                             state.last_edit = Some(Instant::now());
                         }
@@ -171,15 +174,14 @@ async fn run_send_daemon_for_channel<T>(
                         .last_edit
                         .map(|t| now.duration_since(t) >= MIN_EDIT_INTERVAL)
                         .unwrap_or(true);
-                    if state.stream_message_id.is_none() {
-                        if let Ok(Some(mid)) = transport.send(&channel_id, to_show).await {
-                            state.stream_message_id = Some(mid);
+                    if !state.stream_sent {
+                        if let Ok(mid) = transport.send(&channel_id, to_show).await {
+                            state.stream_sent = true;
+                            state.stream_message_id = mid;
                             state.last_edit = Some(Instant::now());
-                        } else if let Ok(None) = transport.send(&channel_id, to_show).await {
-                            state.stream_message_id = Some(-1);
                         }
-                    } else if let Some(mid) = state.stream_message_id {
-                        if mid >= 0 && can_edit {
+                    } else if let Some(ref mid) = state.stream_message_id {
+                        if can_edit {
                             let _ = transport.edit_message(&channel_id, mid, to_show).await;
                             state.last_edit = Some(Instant::now());
                         }
@@ -197,11 +199,7 @@ async fn run_send_daemon_for_channel<T>(
                     {}
                     continue;
                 }
-                if let Some(mid) = state.stream_message_id {
-                    if mid == -1 {
-                        state.pending_stream_text = Some(text);
-                        continue;
-                    }
+                if let Some(ref mid) = state.stream_message_id {
                     let now = Instant::now();
                     let can_edit = state
                         .last_edit
@@ -225,15 +223,15 @@ async fn run_send_daemon_for_channel<T>(
                     } else {
                         state.pending_stream_text = Some(text);
                     }
+                } else if state.stream_sent {
+                    // Sent but no message_id (no edit support) — just buffer
+                    state.pending_stream_text = Some(text);
                 } else {
                     match transport.send(&channel_id, &text).await {
-                        Ok(Some(mid)) => {
-                            state.stream_message_id = Some(mid);
+                        Ok(mid) => {
+                            state.stream_sent = true;
+                            state.stream_message_id = mid;
                             state.last_edit = Some(Instant::now());
-                            state.pending_stream_text = None;
-                        }
-                        Ok(None) => {
-                            state.stream_message_id = Some(-1);
                             state.pending_stream_text = None;
                         }
                         Err(SendError::RateLimited { retry_after_secs }) => {
@@ -264,14 +262,14 @@ async fn run_send_daemon_for_channel<T>(
                 let pending = state.pending_stream_text.take();
                 state.pending_stream_text = None;
                 state.last_progress = None;
+                state.stream_sent = false;
                 if let (Some(mid), Some(pending)) = (mid, pending) {
-                    if mid >= 0 {
-                        let _ = transport.edit_message(&channel_id, mid, &pending).await;
-                    }
+                    let _ = transport.edit_message(&channel_id, &mid, &pending).await;
                 }
             }
             OutboundMsg::Send(_, text) => {
                 state.stream_message_id = None;
+                state.stream_sent = false;
                 state.pending_stream_text = None;
                 state.last_progress = None;
                 state.response_parts.clear();
