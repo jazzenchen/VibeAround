@@ -40,7 +40,7 @@ Web dashboard on desktop and mobile — same session, any device.
 
 | Desktop | Mobile |
 |---------|--------|
-| <img src="image/README/screenshot-pc.png" width="600" alt="VibeAround web dashboard on desktop" /> | <img src="image/README/screenshot-mobile.jpg" width="200" alt="VibeAround web dashboard on mobile" /> |
+| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-pc.webp" width="600" alt="VibeAround web dashboard on desktop" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-mobile.webp" width="200" alt="VibeAround web dashboard on mobile" /> |
 
 ---
 
