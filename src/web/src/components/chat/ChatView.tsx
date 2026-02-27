@@ -113,7 +113,7 @@ export function ChatView() {
         return;
       }
 
-      // {"job_id":"...","preview":"..."} — job created, ignore for now (could show link later)
+      // {"project_id":"...","preview":"..."} — project created, ignore for now (could show link later)
     };
 
     /** Append text to the last assistant message (or create one). */

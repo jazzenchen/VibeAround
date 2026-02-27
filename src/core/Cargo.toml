@@ -17,6 +17,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 regex = "1.11"
 ngrok = "0.18"
 url = "2.5"
+urlencoding = "2.1"
 async-trait = "0.1"
 teloxide = { version = "0.17", default-features = false, features = ["macros", "ctrlc_handler"] }
 rustls = "0.23"

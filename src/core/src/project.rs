@@ -8,6 +8,9 @@ use rusqlite::Connection;
 
 const WORKSPACES_DIR: &str = "workspaces";
 
+/// Name of the fallback project used for per-channel default sessions (chat-only, no explicit project).
+pub const GENERAL_PROJECT_NAME: &str = "general";
+
 #[derive(Debug, Clone)]
 pub struct Project {
     pub project_id: String,
@@ -30,6 +33,31 @@ pub fn create_project(conn: &Connection, working_dir: &Path, name: String) -> ru
     )?;
 
     Ok(Project { project_id, name, path: rel_path, created_at: now })
+}
+
+/// Get a project by name (first match).
+pub fn get_project_by_name(conn: &Connection, name: &str) -> rusqlite::Result<Option<Project>> {
+    let mut stmt = conn.prepare(
+        "SELECT project_id, name, path, created_at FROM projects WHERE name = ?1 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![name])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(Project {
+            project_id: row.get(0)?,
+            name: row.get(1)?,
+            path: row.get(2)?,
+            created_at: row.get(3)?,
+        })),
+        None => Ok(None),
+    }
+}
+
+/// Ensure the general (fallback) project exists; create if not. Used for default session per channel.
+pub fn ensure_general_project(conn: &Connection, working_dir: &Path) -> rusqlite::Result<Project> {
+    if let Some(p) = get_project_by_name(conn, GENERAL_PROJECT_NAME)? {
+        return Ok(p);
+    }
+    create_project(conn, working_dir, GENERAL_PROJECT_NAME.to_string())
 }
 
 /// Get a project by ID.

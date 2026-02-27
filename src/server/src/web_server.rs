@@ -1,6 +1,6 @@
 //! Axum HTTP + WebSocket server: serves Web SPA (from given dist path), WS at /ws for xterm ↔ PTY,
-//! session registry API (POST/GET/DELETE /api/sessions), job workspace API (/api/jobs),
-//! and static preview (/preview/:job_id, /raw/:job_id/*). /ws?session_id=xxx attaches to a session.
+//! session registry API (POST/GET/DELETE /api/sessions), project API (/api/projects),
+//! and static preview (/preview/:project_id, /raw/:project_id/*). /ws?session_id=xxx attaches to a session.
 
 use axum::{
     extract::{Path, Query, State, ws::{Message, WebSocket, WebSocketUpgrade}},
@@ -27,7 +27,8 @@ use common::session::{
     CircularBuffer, Registry, SessionContext, SessionId, SessionMetadata, LIVE_BROADCAST_CAP,
     unix_now_secs,
 };
-use common::workspace::{self, JobRecord};
+use common::project;
+use rusqlite::Connection;
 
 const DELAYED_RELEASE_SECS: u64 = 600; // 10 minutes after Exited before removing from registry
 
@@ -46,12 +47,13 @@ struct WsQuery {
     session_id: Option<String>,
 }
 
-/// Shared app state: registry, SPA fallback path, working dir for jobs, optional Feishu webhook state.
+/// Shared app state: registry, SPA fallback path, working dir, DB, optional Feishu webhook state.
 #[derive(Clone)]
 struct AppState {
     registry: Registry,
     dist_for_fallback: PathBuf,
     working_dir: PathBuf,
+    db: Arc<std::sync::Mutex<Connection>>,
     feishu: Option<common::im::channels::feishu::FeishuWebhookState>,
 }
 
@@ -61,20 +63,12 @@ struct CreateSessionBody {
     tool: String,
     #[serde(default)]
     project_path: Option<String>,
-    /// If set, session PTY runs in this job's workspace directory.
+    /// If set, session PTY runs in this project's workspace directory.
     #[serde(default)]
-    job_id: Option<String>,
+    project_id: Option<String>,
     /// If set, spawn inside a tmux session with this name (attach-or-create).
     #[serde(default)]
     tmux_session: Option<String>,
-}
-
-/// POST /api/jobs body.
-#[derive(serde::Deserialize)]
-struct CreateJobBody {
-    name: String,
-    #[serde(default)]
-    description: String,
 }
 
 /// Session list item (GET /api/sessions).
@@ -148,13 +142,16 @@ pub async fn run_web_server(
 
     let assets_dir = web_dist.join("assets");
     let working_dir = config::ensure_loaded().working_dir.clone();
-    if let Err(e) = workspace::ensure_workspace_dirs(&working_dir) {
+    if let Err(e) = project::ensure_workspace_dirs(&working_dir) {
         eprintln!("[VibeAround] Failed to create workspaces dir: {}", e);
     }
+    let db = common::db::open_db(&working_dir)
+        .expect("Failed to open SQLite database");
     let state = AppState {
         registry: Arc::new(dashmap::DashMap::new()),
         dist_for_fallback: web_dist.clone(),
         working_dir,
+        db: Arc::new(std::sync::Mutex::new(db)),
         feishu: feishu_state,
     };
 
@@ -162,11 +159,11 @@ pub async fn run_web_server(
         .route("/api/sessions", get(list_sessions_handler).post(create_session_handler))
         .route("/api/sessions/{id}", delete(delete_session_handler))
         .route("/api/tmux/sessions", get(list_tmux_sessions_handler))
-        .route("/api/jobs", get(list_jobs_handler).post(create_job_handler))
+        .route("/api/projects", get(list_projects_handler))
         .route("/api/im/feishu/event", post(feishu_webhook_handler))
-        .route("/preview/{job_id}", get(preview_page_handler))
-        .route("/raw/{job_id}", get(raw_job_root_handler))
-        .route("/raw/{job_id}/{*path}", get(raw_job_path_handler))
+        .route("/preview/{project_id}", get(preview_page_handler))
+        .route("/raw/{project_id}", get(raw_root_handler))
+        .route("/raw/{project_id}/{*path}", get(raw_path_handler))
         .route("/ws", get(ws_handler))
         .route("/ws/chat", get(ws_chat_handler))
         .nest_service("/assets", ServeDir::new(assets_dir))
@@ -226,16 +223,15 @@ async fn create_session_handler(
     // already exists and switches to it. When the user explicitly requests a new
     // attach (e.g. after rebuild or to re-detach others), we always spawn a fresh PTY.
 
-    let (cwd, project_path) = if let Some(ref job_id) = body.job_id {
-        match workspace::job_workspace_path(&state.working_dir, job_id) {
-            Some(p) => (Some(p.clone()), Some(p.to_string_lossy().into_owned())),
-            None => {
-                return Err((
-                    StatusCode::NOT_FOUND,
-                    format!("Job not found: {}", job_id),
-                ));
-            }
+    let (cwd, project_path) = if let Some(ref project_id) = body.project_id {
+        let p = project::project_workspace_path(&state.working_dir, project_id);
+        if !p.exists() {
+            return Err((
+                StatusCode::NOT_FOUND,
+                format!("Project not found: {}", project_id),
+            ));
         }
+        (Some(p.clone()), Some(p.to_string_lossy().into_owned()))
     } else {
         (None, body.project_path.clone())
     };
@@ -305,32 +301,30 @@ async fn create_session_handler(
     })))
 }
 
-async fn list_jobs_handler(State(state): State<AppState>) -> Json<Vec<JobRecord>> {
-    let list = workspace::list_jobs(&state.working_dir);
-    Json(list)
+async fn list_projects_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let conn = state.db.lock().unwrap();
+    let projects = project::list_projects(&conn).unwrap_or_default();
+    let list: Vec<serde_json::Value> = projects.iter().map(|p| {
+        serde_json::json!({
+            "project_id": p.project_id,
+            "name": p.name,
+            "path": p.path,
+            "created_at": p.created_at,
+        })
+    }).collect();
+    Json(serde_json::json!(list))
 }
 
-async fn create_job_handler(
-    State(state): State<AppState>,
-    Json(body): Json<CreateJobBody>,
-) -> Result<Json<JobRecord>, (StatusCode, String)> {
-    let record = workspace::create_job(
-        &state.working_dir,
-        body.name,
-        body.description,
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(record))
-}
-
-/// GET /preview/:job_id — HTML page with iframe pointing to /raw/:job_id/
+/// GET /preview/:project_id — HTML page with iframe pointing to /raw/:project_id/
 async fn preview_page_handler(
     State(state): State<AppState>,
-    Path(job_id): Path<String>,
+    Path(project_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let _job = workspace::get_job(&state.working_dir, &job_id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Job not found: {}", job_id)))?;
-    let iframe_src = format!("/raw/{}", job_id);
+    let p = project::project_workspace_path(&state.working_dir, &project_id);
+    if !p.exists() {
+        return Err((StatusCode::NOT_FOUND, format!("Project not found: {}", project_id)));
+    }
+    let iframe_src = format!("/raw/{}", project_id);
     let html = format!(
         r#"<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview</title></head>
 <body style="margin:0;overflow:hidden"><iframe src="{}" style="width:100%;height:100vh;border:0"></iframe></body></html>"#,
@@ -343,13 +337,15 @@ async fn preview_page_handler(
         .unwrap())
 }
 
-async fn raw_job_impl(
+async fn raw_impl(
     state: AppState,
-    job_id: String,
+    project_id: String,
     path: Option<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let base = workspace::job_workspace_path(&state.working_dir, &job_id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Job not found: {}", job_id)))?;
+    let base = project::project_workspace_path(&state.working_dir, &project_id);
+    if !base.exists() {
+        return Err((StatusCode::NOT_FOUND, format!("Project not found: {}", project_id)));
+    }
     let base = base
         .canonicalize()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -358,7 +354,7 @@ async fn raw_job_impl(
         .canonicalize()
         .unwrap_or_else(|_| state.working_dir.join("workspaces"));
     if !base.starts_with(&workspaces_root) {
-        return Err((StatusCode::FORBIDDEN, "Invalid job path".into()));
+        return Err((StatusCode::FORBIDDEN, "Invalid project path".into()));
     }
     let sub = path.as_deref().unwrap_or("").trim_start_matches('/');
     let requested = if sub.is_empty() {
@@ -408,20 +404,20 @@ async fn raw_job_impl(
         .unwrap())
 }
 
-/// GET /raw/:job_id — serve index.html from job workspace.
-async fn raw_job_root_handler(
+/// GET /raw/:project_id — serve index.html from project workspace.
+async fn raw_root_handler(
     State(state): State<AppState>,
-    Path(job_id): Path<String>,
+    Path(project_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    raw_job_impl(state, job_id, None).await
+    raw_impl(state, project_id, None).await
 }
 
-/// GET /raw/:job_id/*path — serve static file from job workspace (directory traversal safe).
-async fn raw_job_path_handler(
+/// GET /raw/:project_id/*path — serve static file from project workspace (directory traversal safe).
+async fn raw_path_handler(
     State(state): State<AppState>,
-    Path((job_id, path)): Path<(String, String)>,
+    Path((project_id, path)): Path<(String, String)>,
 ) -> Result<Response, (StatusCode, String)> {
-    raw_job_impl(state, job_id, Some(path)).await
+    raw_impl(state, project_id, Some(path)).await
 }
 
 /// GET /api/tmux/sessions — list active tmux sessions and whether tmux is available.
@@ -475,7 +471,8 @@ async fn delete_session_handler(
 
 async fn ws_chat_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     let working_dir = state.working_dir.clone();
-    ws.on_upgrade(move |socket| handle_chat_socket(socket, working_dir))
+    let db = state.db.clone();
+    ws.on_upgrade(move |socket| handle_chat_socket(socket, working_dir, db))
 }
 
 async fn handle_socket_attach(mut socket: WebSocket, session_id: SessionId, registry: Registry) {
@@ -554,9 +551,9 @@ async fn handle_socket_attach(mut socket: WebSocket, session_id: SessionId, regi
     }
 }
 
-async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
+async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, db: Arc<std::sync::Mutex<Connection>>) {
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let mut job_id: Option<String> = None;
+    let mut project_id: Option<String> = None;
 
     while let Some(Ok(msg)) = ws_rx.next().await {
         let Message::Text(user_msg) = msg else { continue };
@@ -565,20 +562,24 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
             continue;
         }
 
-        if job_id.is_none() {
+        if project_id.is_none() {
             let name = prompt.chars().take(50).collect::<String>();
             let name = if name.is_empty() { "Chat".into() } else { name };
-            match workspace::create_job(&working_dir, name, String::new()) {
-                Ok(record) => {
-                    job_id = Some(record.job_id.clone());
-                    let preview = format!("/preview/{}", record.job_id);
+            let proj = {
+                let conn = db.lock().unwrap();
+                project::create_project(&conn, &working_dir, name)
+            };
+            match proj {
+                Ok(proj) => {
+                    project_id = Some(proj.project_id.clone());
+                    let preview = format!("/preview/{}", proj.project_id);
                     let _ = ws_tx
-                        .send(Message::Text(wire::job_json(&record.job_id, &preview).into()))
+                        .send(Message::Text(wire::project_json(&proj.project_id, &preview).into()))
                         .await;
                 }
                 Err(e) => {
                     let _ = ws_tx
-                        .send(Message::Text(wire::error_json(&format!("Failed to create job: {}", e)).into()))
+                        .send(Message::Text(wire::error_json(&format!("Failed to create project: {}", e)).into()))
                         .await;
                     let _ = ws_tx
                         .send(Message::Text(wire::done_json().into()))
@@ -588,11 +589,12 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
             }
         }
 
-        let cwd = match job_id.as_ref().and_then(|id| workspace::job_workspace_path(&working_dir, id)) {
-            Some(p) => p,
-            None => {
+        let cwd = project_id.as_ref().map(|pid| project::project_workspace_path(&working_dir, pid));
+        let cwd = match cwd {
+            Some(p) if p.exists() => p,
+            _ => {
                 let _ = ws_tx
-                    .send(Message::Text(wire::error_json("Job workspace not found").into()))
+                    .send(Message::Text(wire::error_json("Project workspace not found").into()))
                     .await;
                 continue;
             }

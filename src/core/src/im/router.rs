@@ -1,7 +1,9 @@
 //! Session router: decides which session to use for each incoming IM message.
 //! Routes based on: slash commands > quote-reply (parent_id) > Runner classify_intent.
+//! A single default session (general project) is used when no session; in-memory only, shared by all channels.
 
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
 use rusqlite::Connection;
@@ -23,6 +25,10 @@ pub enum SessionAction {
     CreateNew { project_id: String, reason: String },
     /// Create a new project and a new session.
     CreateNewProject { suggested_name: String, reason: String },
+    /// Chat-only: no project/session create or switch. Some(session) = use it; None = use default session.
+    ChatOnly(Option<ChatSession>),
+    /// Use the channel's default session (general project). Worker resolves via get_or_create_default_session.
+    UseDefaultSession,
     /// A slash command was detected; worker should handle it directly.
     Command(CommandAction),
 }
@@ -42,6 +48,8 @@ pub struct SessionResolver {
     db: Arc<Mutex<Connection>>,
     /// channel_id -> session_id (in-memory, not persisted)
     pub active_sessions: Arc<DashMap<String, String>>,
+    /// Single default session (general project), shared by all channels. In-memory only; lifecycle ends when process exits.
+    default_session_id: Arc<RwLock<Option<String>>>,
 }
 
 impl SessionResolver {
@@ -49,7 +57,35 @@ impl SessionResolver {
         Self {
             db,
             active_sessions: Arc::new(DashMap::new()),
+            default_session_id: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Get or create the single default session (under general project). Shared by all channels.
+    pub fn get_or_create_default_session(&self, working_dir: &Path) -> Result<ChatSession, String> {
+        {
+            let guard = self.default_session_id.read().unwrap();
+            if let Some(ref sid) = *guard {
+                let conn = self.db.lock().unwrap();
+                if let Ok(Some(session)) = session_store::get_session(&conn, sid) {
+                    return Ok(session);
+                }
+            }
+        }
+        let (session_id, session) = {
+            let conn = self.db.lock().unwrap();
+            let proj = project::ensure_general_project(&conn, working_dir).map_err(|e| e.to_string())?;
+            let cwd = project::project_workspace_path(working_dir, &proj.project_id);
+            let _ = std::fs::create_dir_all(&cwd);
+            let session = session_store::create_session(&conn, &proj.project_id, &cwd.to_string_lossy())
+                .map_err(|e| e.to_string())?;
+            (session.session_id.clone(), session)
+        };
+        {
+            let mut guard = self.default_session_id.write().unwrap();
+            *guard = Some(session_id);
+        }
+        Ok(session)
     }
 
     /// Main entry: resolve an incoming message to a SessionAction.
@@ -89,13 +125,76 @@ impl SessionResolver {
 
         // 3. Call Runner classify_intent
         let (projects, current_session_info) = self.build_classify_context(channel_id);
+        let active_session_id = self.active_sessions.get(channel_id).map(|e| e.value().clone());
+        eprintln!(
+            "[VibeAround][im][router] channel={} before_classify active_session={} projects_count={}",
+            channel_id,
+            active_session_id.as_deref().unwrap_or("None"),
+            projects.len()
+        );
         let context = ClassifyContext {
             user_prompt: text.to_string(),
             projects: projects.clone(),
             current_session: current_session_info,
         };
 
-        match runner.classify_intent(&context, None).await {
+        const CLASSIFY_TIMEOUT_SECS: u64 = 60;
+        eprintln!(
+            "[VibeAround][im][router] channel={} calling classify_intent (timeout {}s)...",
+            channel_id, CLASSIFY_TIMEOUT_SECS
+        );
+        let intent_result = match tokio::time::timeout(
+            std::time::Duration::from_secs(CLASSIFY_TIMEOUT_SECS),
+            runner.classify_intent(&context, None),
+        )
+        .await
+        {
+            Ok(Ok(r)) => Ok(r),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                eprintln!(
+                    "[VibeAround][im][router] channel={} classify_intent timed out after {}s, using default session",
+                    channel_id, CLASSIFY_TIMEOUT_SECS
+                );
+                return SessionAction::UseDefaultSession;
+            }
+        };
+
+        // Log intent classification result for debugging
+        match &intent_result {
+            Ok(IntentResult::ContinueCurrent { reason }) => {
+                eprintln!(
+                    "[VibeAround][im][router] channel={} intent=ContinueCurrent reason=\"{}\"",
+                    channel_id, reason
+                );
+            }
+            Ok(IntentResult::ExistingProject { project_id, reason }) => {
+                eprintln!(
+                    "[VibeAround][im][router] channel={} intent=ExistingProject project_id={} reason=\"{}\"",
+                    channel_id, project_id, reason
+                );
+            }
+            Ok(IntentResult::NewProject { suggested_name, reason }) => {
+                eprintln!(
+                    "[VibeAround][im][router] channel={} intent=NewProject suggested_name=\"{}\" reason=\"{}\"",
+                    channel_id, suggested_name, reason
+                );
+            }
+            Ok(IntentResult::ChatOnly { reason }) => {
+                eprintln!(
+                    "[VibeAround][im][router] channel={} intent=ChatOnly reason=\"{}\"",
+                    channel_id, reason
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[VibeAround][im][router] channel={} intent=Err error=\"{}\"",
+                    channel_id, e
+                );
+            }
+        }
+
+        match intent_result {
             Ok(IntentResult::ContinueCurrent { .. }) => {
                 // Continue current session if one exists
                 if let Some(entry) = self.active_sessions.get(channel_id) {
@@ -108,11 +207,8 @@ impl SessionResolver {
                         return SessionAction::Continue(session);
                     }
                 }
-                // No active session — fall through to create new
-                SessionAction::CreateNewProject {
-                    suggested_name: "untitled".to_string(),
-                    reason: "No active session".to_string(),
-                }
+                // No active session — use channel's default session (general project)
+                SessionAction::UseDefaultSession
             }
             Ok(IntentResult::ExistingProject { project_id, reason }) => {
                 // Check if this channel already has an active session for this project
@@ -145,6 +241,20 @@ impl SessionResolver {
             Ok(IntentResult::NewProject { suggested_name, reason }) => {
                 SessionAction::CreateNewProject { suggested_name, reason }
             }
+            Ok(IntentResult::ChatOnly { .. }) => {
+                // No project/session create or switch. Use current session if any.
+                if let Some(entry) = self.active_sessions.get(channel_id) {
+                    let sid = entry.value().clone();
+                    let session = {
+                        let conn = self.db.lock().unwrap();
+                        session_store::get_session(&conn, &sid).ok().flatten()
+                    };
+                    if let Some(session) = session {
+                        return SessionAction::ChatOnly(Some(session));
+                    }
+                }
+                SessionAction::ChatOnly(None)
+            }
             Err(_) => {
                 // Fallback: if classify fails, try to continue current session
                 if let Some(entry) = self.active_sessions.get(channel_id) {
@@ -157,10 +267,7 @@ impl SessionResolver {
                         return SessionAction::Continue(session);
                     }
                 }
-                SessionAction::CreateNewProject {
-                    suggested_name: "untitled".to_string(),
-                    reason: "New conversation".to_string(),
-                }
+                SessionAction::UseDefaultSession
             }
         }
     }

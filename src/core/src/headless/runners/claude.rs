@@ -380,20 +380,22 @@ Existing projects:
 
 Respond with ONLY a JSON object (no markdown, no explanation):
 {{
-  "action": "continue" | "switch_to_existing" | "new_project",
+  "action": "continue" | "switch_to_existing" | "new_project" | "chat_only",
   "project_id": "<id if action is switch_to_existing, else empty string>",
   "suggested_name": "<name if action is new_project, else empty string>",
   "reason": "<brief explanation in the user's language>"
 }}
 
 Rules:
-- "continue": the message is about the current session's topic
+- "continue": the message is about the current session's topic (continue in same project)
 - "switch_to_existing": the message is about a different existing project
-- "new_project": the message starts a new topic not matching any existing project
-- If no active session and no matching project, use "new_project""#,
+- "new_project": the message starts a new topic not matching any existing project; need a new project folder
+- "chat_only": simple chat or question (greetings, who are you, small talk, one-off questions). No project/session create or switch. Use when the user is just chatting or asking something that does not require a code workspace.
+- If no active session and no matching project, use "new_project" only when the user clearly wants to start a coding task; otherwise use "chat_only""#,
             context.user_prompt, current_session_desc, projects_desc
         );
 
+        eprintln!("[VibeAround][im][claude] classify_intent spawning claude subprocess...");
         let mut child = TokioCommand::new("claude")
             .args(["-p", &classify_prompt, "--output-format", "json"])
             .current_dir(&cwd)
@@ -411,20 +413,27 @@ Rules:
             .map_err(|e| format!("classify_intent read: {}", e))?;
         let _ = child.wait().await;
 
-        // Parse the JSON response
-        let v: serde_json::Value = serde_json::from_str(output.trim())
-            .or_else(|_| {
-                // Sometimes the output is wrapped in the result field
-                serde_json::from_str::<serde_json::Value>(output.trim())
-                    .and_then(|v| {
-                        if let Some(r) = v.get("result") {
-                            Ok(r.clone())
-                        } else {
-                            Ok(v)
-                        }
-                    })
-            })
-            .map_err(|e| format!("classify_intent parse: {} output={}", e, output.trim()))?;
+        // Log raw output to verify if Claude actually returned (empty = likely not ran or failed)
+        let raw = output.trim();
+        let preview = if raw.len() > 400 { &raw[..400] } else { raw };
+        eprintln!(
+            "[VibeAround][im][claude] classify_intent raw_output_len={} preview=\"{}\"",
+            raw.len(),
+            preview.replace('\n', " ")
+        );
+        if raw.is_empty() {
+            return Err("classify_intent: subprocess returned empty output".into());
+        }
+
+        // Parse the JSON response (outer wrapper may have "result" as string containing inner JSON)
+        let outer: serde_json::Value = serde_json::from_str(raw)
+            .map_err(|e| format!("classify_intent parse outer: {} output={}", e, raw))?;
+        let v: serde_json::Value = match outer.get("result") {
+            Some(serde_json::Value::String(s)) => serde_json::from_str(s)
+                .map_err(|e| format!("classify_intent parse inner result: {} result_str={}", e, s))?,
+            Some(other) => other.clone(),
+            None => outer,
+        };
 
         let action = v.get("action").and_then(|a| a.as_str()).unwrap_or("new_project");
         let reason = v.get("reason").and_then(|r| r.as_str()).unwrap_or("").to_string();
@@ -435,6 +444,7 @@ Rules:
                 let project_id = v.get("project_id").and_then(|p| p.as_str()).unwrap_or("").to_string();
                 Ok(headless::IntentResult::ExistingProject { project_id, reason })
             }
+            "chat_only" => Ok(headless::IntentResult::ChatOnly { reason }),
             _ => {
                 let name = v.get("suggested_name").and_then(|n| n.as_str()).unwrap_or("untitled").to_string();
                 Ok(headless::IntentResult::NewProject { suggested_name: name, reason })

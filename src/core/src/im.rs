@@ -1,10 +1,9 @@
 //! IM (instant messaging) adapters: Telegram, Feishu, etc.
 //! Unified send daemon + per-IM transport (teloxide only in channels::telegram).
-//! Slash commands (e.g. /list-project) are handled in commands and do not call AI.
+//! Slash commands are handled in router.rs, dispatched in worker.rs.
 //! Log format: [VibeAround][im][channel] chat_id=... message_id=... content=...
 
 pub mod channels;
-pub mod commands;
 pub mod daemon;
 pub mod log;
 pub mod router;

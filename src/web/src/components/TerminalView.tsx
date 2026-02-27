@@ -280,8 +280,14 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
   }, [theme, themeOption, session.status]);
 
   useEffect(() => {
-    if (isActive) {
-      const t = setTimeout(fitAndSendResize, 100);
+    if (isActive && fitAddonRef.current) {
+      const t = setTimeout(() => {
+        try {
+          fitAddonRef.current?.fit();
+        } catch {
+          /* ignore */
+        }
+      }, 100);
       return () => clearTimeout(t);
     }
   }, [isActive]);

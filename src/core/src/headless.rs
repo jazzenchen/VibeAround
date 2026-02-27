@@ -80,6 +80,8 @@ pub enum IntentResult {
     ExistingProject { project_id: String, reason: String },
     /// Create a new project.
     NewProject { suggested_name: String, reason: String },
+    /// Chat-only: no project/session create or switch. Use current session if any; else run without project.
+    ChatOnly { reason: String },
 }
 
 /// Unified JSON wire format for streaming headless output to any consumer (WS chat, IM, etc.).
@@ -111,9 +113,9 @@ pub mod wire {
         serde_json::json!({ "error": msg }).to_string()
     }
 
-    /// Format a job creation event (job_id + preview path).
-    pub fn job_json(job_id: &str, preview: &str) -> String {
-        serde_json::json!({ "job_id": job_id, "preview": preview }).to_string()
+    /// Format a project-created event (project_id + preview path) for /ws/chat.
+    pub fn project_json(project_id: &str, preview: &str) -> String {
+        serde_json::json!({ "project_id": project_id, "preview": preview }).to_string()
     }
 
     /// Convert a ClaudeSegment to its wire JSON string.

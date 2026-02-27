@@ -97,6 +97,53 @@ impl FeishuTransport {
             .ok_or_else(|| SendError::Other("invalid channel_id (expected feishu:CHAT_ID)".into()))
     }
 
+    /// Get a single message by id (e.g. to fetch quoted message content/attachments).
+    /// GET /open-apis/im/v1/messages/{message_id}?receive_id_type=chat_id&receive_id={chat_id}
+    /// Returns (message_type, content_json) or error if not found / no permission.
+    pub async fn get_message(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+    ) -> Result<(String, serde_json::Value), SendError> {
+        let token = self.get_token().await?;
+        let url = format!(
+            "{}/im/v1/messages/{}?receive_id_type=chat_id&receive_id={}",
+            FEISHU_API_BASE,
+            message_id,
+            urlencoding::encode(chat_id)
+        );
+        let res = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| SendError::Other(format!("get_message request: {}", e)))?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            return Err(SendError::Other(format!("get_message status={} body={}", status, body)));
+        }
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| SendError::Other(format!("get_message parse: {}", e)))?;
+        let data = json.get("data").ok_or_else(|| SendError::Other("get_message: no data".into()))?;
+        // Support both list response (data.items[0]) and single-message response (data.body)
+        let (msg_type, content) = if let Some(items) = data.get("items").and_then(|i| i.as_array()) {
+            let msg = items.first().ok_or_else(|| SendError::Other("get_message: empty items".into()))?;
+            let t = msg.get("message_type").or_else(|| msg.get("msg_type")).and_then(|t| t.as_str()).unwrap_or("text").to_string();
+            let body = msg.get("body").ok_or_else(|| SendError::Other("get_message: no body".into()))?;
+            let content_str = body.get("content").and_then(|c| c.as_str()).unwrap_or("{}");
+            (t, serde_json::from_str(content_str).unwrap_or(serde_json::Value::Null))
+        } else if data.get("body").is_some() {
+            let t = data.get("message_type").or_else(|| data.get("msg_type")).and_then(|t| t.as_str()).unwrap_or("text").to_string();
+            let content_str = data.get("body").and_then(|b| b.get("content")).and_then(|c| c.as_str()).unwrap_or("{}");
+            (t, serde_json::from_str(content_str).unwrap_or(serde_json::Value::Null))
+        } else {
+            return Err(SendError::Other("get_message: data has no items nor body".into()));
+        };
+        Ok((msg_type, content))
+    }
+
     /// Download a message resource (file/image) from Feishu API.
     /// GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type={type}
     /// `resource_type` is "file" or "image".
@@ -200,6 +247,8 @@ pub struct FeishuWebhookState {
     pub inbound_tx: mpsc::Sender<crate::im::worker::InboundMessage>,
     pub outbound: Arc<OutboundHub<FeishuTransport>>,
     pub busy_set: Arc<DashMap<String, ()>>,
+    /// Transport reference for fetching parent (quoted) message content/attachments.
+    pub transport: Arc<FeishuTransport>,
 }
 
 /// Handle Feishu webhook body: url_verification returns {"challenge": "<challenge>"}; event_callback parses im.message.receive_v1.
@@ -276,7 +325,7 @@ pub async fn handle_webhook_body(
     use crate::im::worker::{FeishuAttachment, InboundMessage};
 
     // Build InboundMessage based on msg_type
-    let inbound = match msg_type {
+    let mut inbound = match msg_type {
         "file" => {
             let file_key = content.get("file_key").and_then(|k| k.as_str()).unwrap_or("");
             let file_name = content.get("file_name").and_then(|n| n.as_str()).unwrap_or("unknown");
@@ -335,6 +384,44 @@ pub async fn handle_webhook_body(
         }
     };
 
+    // If this message quotes another, fetch the parent message and merge any file/image attachments from it
+    if let Some(pid) = &parent_id {
+        match st.transport.get_message(chat_id, pid).await {
+            Ok((ref msg_type, ref content)) if msg_type == "file" => {
+                if let (Some(file_key), Some(file_name)) = (
+                    content.get("file_key").and_then(|k| k.as_str()),
+                    content.get("file_name").and_then(|n| n.as_str()),
+                ) {
+                    if !file_key.is_empty() {
+                        inbound.attachments.push(FeishuAttachment {
+                            message_id: pid.clone(),
+                            file_key: file_key.to_string(),
+                            file_name: file_name.to_string(),
+                            resource_type: "file".to_string(),
+                        });
+                        eprintln!("{} merged attachment from quoted message parent_id={} file_name={}", P, pid, file_name);
+                    }
+                }
+            }
+            Ok((ref msg_type, ref content)) if msg_type == "image" => {
+                if let Some(image_key) = content.get("image_key").and_then(|k| k.as_str()) {
+                    if !image_key.is_empty() {
+                        let image_name = format!("{}.png", &image_key.chars().take(16).collect::<String>());
+                        inbound.attachments.push(FeishuAttachment {
+                            message_id: pid.clone(),
+                            file_key: image_key.to_string(),
+                            file_name: image_name.clone(),
+                            resource_type: "image".to_string(),
+                        });
+                        eprintln!("{} merged attachment from quoted message parent_id={} image_key={}", P, pid, image_key);
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("{} get_message parent_id={} err={:?}", P, pid, e),
+        }
+    }
+
     eprintln!("{} chat_id={} message_id={} direction=incoming content={} attachments={}", P, chat_id, message_id, truncate_content_default(&inbound.text), inbound.attachments.len());
 
     if st.busy_set.contains_key(&channel_id) {
@@ -379,7 +466,7 @@ pub async fn run_feishu_bot() -> Option<FeishuWebhookState> {
         inbound_rx,
         outbound.clone(),
         busy_set.clone(),
-        Some(transport),
+        Some(transport.clone()),
     ));
 
     eprintln!("{} event=bot_ready webhook=/api/im/feishu/event", prefix_channel("feishu"));
@@ -387,5 +474,6 @@ pub async fn run_feishu_bot() -> Option<FeishuWebhookState> {
         inbound_tx,
         outbound,
         busy_set,
+        transport,
     })
 }
