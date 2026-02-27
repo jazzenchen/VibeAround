@@ -94,8 +94,8 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
       fontFamily: "JetBrains Mono, ui-monospace, monospace",
       lineHeight: XTERM_RENDERER !== "dom" ? 1.35 : 1.1,
       theme: themeOption(theme),
-      scrollback: 5000,
-      convertEol: true,
+      scrollback: session.tmuxSession ? 0 : 5000,
+      convertEol: session.tmuxSession ? false : true,
       allowProposedApi: true,
       disableStdin: isMobile,
     });

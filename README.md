@@ -201,6 +201,19 @@ When you create a session in the web dashboard, you can choose to attach it to a
 
 By default, attaching to a session detaches other clients (`tmux attach -d`). This gives you clean single-viewer semantics — open the dashboard on your phone and the previous browser tab gracefully disconnects. To allow multiple viewers on the same session, set `tmux.detach_others` to `false` in `settings.json`.
 
+### Tmux pane and split operations
+
+The web terminal supports the following tmux-style pane and split operations. The prefix key is **Ctrl+b** (press Ctrl+b, release, then press the key below).
+
+| Action | Shortcut |
+|--------|----------|
+| **Vertical split** | **Ctrl+b** then **%** |
+| **Horizontal split** | **Ctrl+b** then **"** |
+| **Move focus** (pane navigation) | **Ctrl+b** then **↑** **↓** **←** **→** (arrow keys) |
+| **Cycle through panes** | **Ctrl+b** then **o** (cycles to the next pane) |
+| **Show pane numbers** | **Ctrl+b** then **q** (numbers flash on screen; press the corresponding number to jump to that pane) |
+| **Close current pane** | **Ctrl+b** then **x** |
+
 ### Recommended: iTerm2 with tmux -CC integration
 
 For the best experience when working from a Mac, use [iTerm2](https://iterm2.com)'s native tmux integration mode. Instead of rendering tmux inside a terminal emulator, iTerm2 maps each tmux window/pane to a native iTerm2 tab/split — giving you native scrollback, native copy-paste, and native keyboard shortcuts while still backed by a persistent tmux session on the remote host.
