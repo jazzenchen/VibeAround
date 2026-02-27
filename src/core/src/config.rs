@@ -34,7 +34,7 @@ pub struct Config {
     pub telegram_bot_token: Option<String>,
     pub feishu_app_id: Option<String>,
     pub feishu_app_secret: Option<String>,
-    /// Root for job workspaces and projects.json. Default: ~/test.
+    /// Root for job workspaces and projects.json. Absolute path. Default: {user_home}/VibeAround when not set.
     pub working_dir: PathBuf,
     /// Optional base URL for preview links (e.g. https://xxx.ngrok-free.app). Overrides ngrok_domain when set.
     pub preview_base_url: Option<String>,
@@ -143,12 +143,12 @@ pub fn preview_base_url() -> Option<String> {
         .or_else(|| cfg.ngrok_domain.as_ref().map(|d| format!("https://{}", d.trim())))
 }
 
-/// Default working directory for job workspaces: ~/test.
+/// Default working directory when not set in settings: {user_home}/VibeAround.
 fn default_working_dir() -> PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join("test")
+    PathBuf::from(home).join("VibeAround")
 }
 
 impl Default for Config {

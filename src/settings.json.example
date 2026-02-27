@@ -1,4 +1,5 @@
 {
+  "working_dir": "",
   "tunnel": {
     "provider": "ngrok",
     "ngrok": {
@@ -8,6 +9,9 @@
   },
   "channels": {
     "telegram": { "bot_token": "YOUR_TELEGRAM_BOT_TOKEN" },
-    "feishu": { "app_id": "YOUR_FEISHU_APP_ID", "app_secret": "YOUR_FEISHU_APP_SECRET" }
+    "feishu": {
+      "app_id": "YOUR_FEISHU_APP_ID",
+      "app_secret": "YOUR_FEISHU_APP_SECRET"
+    }
   }
 }

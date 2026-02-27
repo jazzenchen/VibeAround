@@ -130,7 +130,7 @@ Config file path: **`src/settings.json`** (create from `src/settings.json.exampl
 | `channels.feishu.app_id` | Feishu/Lark app ID (from open platform); omit to disable Feishu |
 | `channels.feishu.app_secret` | Feishu app secret |
 | `tmux.detach_others` | Detach other clients when attaching to a tmux session (default: `true`) |
-| `working_dir` | Root for job workspaces (default: `~/test`) |
+| `working_dir` | Root for job workspaces, absolute path. Default: `{user_home}/VibeAround` when not set. |
 
 **Minimal example** (Telegram + Localtunnel only):
 
