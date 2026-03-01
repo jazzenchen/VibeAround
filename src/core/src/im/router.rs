@@ -42,6 +42,8 @@ pub enum CommandAction {
     ProjectUse(String),
     ProjectList,
     ListProjects,
+    /// Switch the active agent backend (e.g. `/cli claude`, `/cli gemini`).
+    SwitchAgent(crate::agent::AgentKind),
 }
 
 pub struct SessionResolver {
@@ -314,6 +316,13 @@ fn parse_command(text: &str) -> Option<CommandAction> {
     if text.eq_ignore_ascii_case("/list-project") {
         return Some(CommandAction::ListProjects);
     }
+    // /cli <agent> — switch active agent backend
+    if let Some(rest) = text.strip_prefix("/cli ").or_else(|| text.strip_prefix("/cli\t")) {
+        let agent_name = rest.trim();
+        if let Some(kind) = crate::agent::AgentKind::from_str_loose(agent_name) {
+            return Some(CommandAction::SwitchAgent(kind));
+        }
+    }
     if let Some(rest) = text.strip_prefix("/switch ").or_else(|| text.strip_prefix("/switch\t")) {
         let target = rest.trim().to_string();
         if !target.is_empty() {
@@ -338,4 +347,9 @@ fn parse_command(text: &str) -> Option<CommandAction> {
         }
     }
     None
+}
+
+/// Public wrapper for `parse_command` — used by worker.rs to intercept commands before routing.
+pub fn parse_command_public(text: &str) -> Option<CommandAction> {
+    parse_command(text)
 }

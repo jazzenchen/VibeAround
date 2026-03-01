@@ -1,5 +1,6 @@
 //! VibeAround core: PTY, session registry, tunnels, headless CLI, IM, workspace. No UI, no HTTP.
 
+pub mod agent;
 pub mod config;
 pub mod db;
 pub mod headless;
