@@ -169,36 +169,8 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
       }
     );
 
-    // OSC 10/11 handlers: TUI apps (opencode, vim, etc.) query terminal
-    // foreground (OSC 10) and background (OSC 11) colors via "\e]10;?\e\\"
-    // / "\e]11;?\e\\" to detect light/dark mode. xterm.js doesn't reply by
-    // default, so we intercept and respond with the actual theme colors.
-    // Convert "#rrggbb" to "rgb:rr00/gg00/bb00" (X11 color format).
-    const hexToX11 = (hex: string) => {
-      const r = hex.slice(1, 3);
-      const g = hex.slice(3, 5);
-      const b = hex.slice(5, 7);
-      return `rgb:${r}${r}/${g}${g}/${b}${b}`;
-    };
-    const curTheme = themeOption(theme);
-    const fgX11 = hexToX11(curTheme.foreground ?? (isDark ? "#c8c8d8" : "#1e293b"));
-    const bgX11 = hexToX11(curTheme.background ?? (isDark ? "#0d0d0d" : "#ffffff"));
-    // OSC 10 ; ? ST  →  reply OSC 10 ; <fg color> ST
-    term.parser.registerOscHandler(10, (data) => {
-      if (data === "?") {
-        term.input(`\x1b]10;${fgX11}\x1b\\`, false);
-        return true;
-      }
-      return false;
-    });
-    // OSC 11 ; ? ST  →  reply OSC 11 ; <bg color> ST
-    term.parser.registerOscHandler(11, (data) => {
-      if (data === "?") {
-        term.input(`\x1b]11;${bgX11}\x1b\\`, false);
-        return true;
-      }
-      return false;
-    });
+    // OSC 10/11 color queries are intercepted server-side in pty.rs (OscColorResponder)
+    // so TUI apps get instant replies without waiting for the WebSocket round-trip.
 
     // Mobile: bridge touch → term.scrollLines() (xterm.js doesn't natively handle touch scroll with WebGL/Canvas).
     let removeTouchScroll: (() => void) | null = null;

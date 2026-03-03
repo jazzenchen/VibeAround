@@ -52,8 +52,8 @@ fn tool_exec_argv(tool: PtyTool, tmux_session: Option<&str>) -> String {
 }
 
 /// Set standard PTY env: TERM, COLORTERM, COLORFGBG, and COLOR_THEME for light/dark hint.
-/// Primary theme detection is via the frontend's OSC 10/11 handlers in xterm.js;
-/// COLORFGBG and COLOR_THEME are fallbacks for programs that don't query OSC.
+/// These env vars are a secondary signal; the primary mechanism is OscColorResponder
+/// which intercepts OSC 10/11 queries in the PTY reader thread.
 fn set_pty_env(c: &mut CommandBuilder, theme: Option<&str>) {
     c.env("TERM", "xterm-256color");
     c.env("COLORTERM", "truecolor");
@@ -79,9 +79,6 @@ fn bash_wrapper(script: &str, theme: Option<&str>) -> CommandBuilder {
     wrap
 }
 
-/// Build command for direct spawn by tool. Generic = login shell; others = CLI (claude code, gemini, codex).
-/// If cwd is Some, wraps in a shell that `cd`s there then execs the tool (so PTY runs in that directory).
-/// If tmux_session is Some, spawns `tmux new-session -A -s <name>` instead of the tool directly.
 /// Build command for direct spawn by tool. Generic = login shell; others = CLI.
 /// If cwd is Some, wraps in a shell that `cd`s there then execs the tool.
 /// If tmux_session is Some, spawns tmux attach-or-create instead of the tool directly.
@@ -157,6 +154,71 @@ pub struct PtyBridge {
 /// Sender to request PTY resize (cols, rows). Send from WebSocket handler; a dedicated thread runs master.resize().
 pub type ResizeSender = sync::mpsc::Sender<(u16, u16)>;
 
+/// OSC 10/11 color query interceptor for TUI programs (opencode, gemini, etc.).
+///
+/// Many TUI apps send OSC 10 (foreground) / OSC 11 (background) queries to detect
+/// terminal light/dark mode. In our architecture the PTY output goes through a
+/// WebSocket to xterm.js in the browser, so the round-trip can be too slow (especially
+/// via ngrok) and the query times out before the reply arrives.
+///
+/// This struct sits in the PTY reader thread and pattern-matches OSC queries in the
+/// raw byte stream, writing the response directly back into the PTY master — zero
+/// network latency, the child process gets an instant reply.
+struct OscColorResponder {
+    /// Pre-built OSC 10 response bytes, e.g. "\x1b]10;rgb:1e1e/2929/3b3b\x1b\\"
+    osc10: Vec<u8>,
+    /// Pre-built OSC 11 response bytes.
+    osc11: Vec<u8>,
+    /// Shared PTY writer to send responses back to the child process.
+    writer: Arc<std::sync::Mutex<Box<dyn Write + Send>>>,
+}
+
+impl OscColorResponder {
+    /// Build a responder from theme name. Returns None if theme is not "light"/"dark".
+    fn new(theme: &str, writer: Arc<std::sync::Mutex<Box<dyn Write + Send>>>) -> Option<Self> {
+        let (fg, bg) = match theme {
+            // fg/bg as hex pairs matching the xterm.js theme in TerminalView.tsx.
+            "light" => ("1e293b", "ffffff"),
+            "dark"  => ("c8c8d8", "0d0d0d"),
+            _ => return None,
+        };
+        // X11 color format: rgb:RR00/GG00/BB00 (16-bit per channel, we duplicate the 8-bit value).
+        let osc10 = format!(
+            "\x1b]10;rgb:{r}{r}/{g}{g}/{b}{b}\x1b\\",
+            r = &fg[0..2], g = &fg[2..4], b = &fg[4..6],
+        ).into_bytes();
+        let osc11 = format!(
+            "\x1b]11;rgb:{r}{r}/{g}{g}/{b}{b}\x1b\\",
+            r = &bg[0..2], g = &bg[2..4], b = &bg[4..6],
+        ).into_bytes();
+        Some(Self { osc10, osc11, writer })
+    }
+
+    /// Scan a chunk of PTY output for OSC 10/11 queries and reply instantly.
+    /// Both ST (\x1b\\) and BEL (\x07) terminators are matched.
+    fn intercept(&self, chunk: &[u8]) {
+        const OSC10_ST:  &[u8] = b"\x1b]10;?\x1b\\";
+        const OSC10_BEL: &[u8] = b"\x1b]10;?\x07";
+        const OSC11_ST:  &[u8] = b"\x1b]11;?\x1b\\";
+        const OSC11_BEL: &[u8] = b"\x1b]11;?\x07";
+
+        let has = |needle: &[u8]| chunk.windows(needle.len()).any(|w| w == needle);
+
+        if has(OSC10_ST) || has(OSC10_BEL) {
+            if let Ok(mut w) = self.writer.lock() {
+                let _ = w.write_all(&self.osc10);
+                let _ = w.flush();
+            }
+        }
+        if has(OSC11_ST) || has(OSC11_BEL) {
+            if let Ok(mut w) = self.writer.lock() {
+                let _ = w.write_all(&self.osc11);
+                let _ = w.flush();
+            }
+        }
+    }
+}
+
 /// Spawn a process in a PTY. Returns bridge, PTY stdout receiver, resize sender, and state receiver.
 /// `theme`: "dark"/"light" — sets COLORFGBG env hint for programs that don't query OSC 10/11.
 pub fn spawn_pty(
@@ -190,15 +252,24 @@ pub fn spawn_pty(
     let (state_tx, state_rx) = mpsc::channel::<PtyRunState>(10);
 
     let child = Arc::new(Mutex::new(child));
+    let writer = Arc::new(std::sync::Mutex::new(writer));
 
-    // Blocking thread: read PTY stdout and send to async side.
+    // Build OSC responder so the reader thread can reply to color queries instantly.
+    let osc_responder = theme.as_deref()
+        .and_then(|t| OscColorResponder::new(t, Arc::clone(&writer)));
+
+    // Blocking thread: read PTY stdout, intercept OSC color queries, forward to frontend.
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    if tx.blocking_send(buf[..n].to_vec()).is_err() {
+                    let chunk = &buf[..n];
+                    if let Some(ref resp) = osc_responder {
+                        resp.intercept(chunk);
+                    }
+                    if tx.blocking_send(chunk.to_vec()).is_err() {
                         break;
                     }
                 }
@@ -252,7 +323,7 @@ pub fn spawn_pty(
     });
 
     let bridge = PtyBridge {
-        writer: Arc::new(std::sync::Mutex::new(writer)),
+        writer,
         child,
     };
     Ok((bridge, rx, resize_tx, state_rx))
