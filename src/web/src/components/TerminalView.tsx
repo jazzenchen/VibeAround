@@ -13,7 +13,7 @@ const XTERM_RENDERER: "dom" | "canvas" | "webgl" = "webgl";
 /** Backend sends this when PTY run state changes (child try_wait). */
 interface SessionStateMessage {
   type: "running" | "exited";
-  tool: "generic" | "claude" | "gemini" | "codex";
+  tool: "generic" | "claude" | "codex" | "gemini" | "opencode";
   exit_code?: number;
 }
 

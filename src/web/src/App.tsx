@@ -21,8 +21,9 @@ const DEFAULT_GROUP_ID = "default";
 function sessionToName(tool: string): string {
   const t = tool.toLowerCase();
   if (t === "claude") return "Claude";
-  if (t === "gemini") return "Gemini";
   if (t === "codex") return "Codex";
+  if (t === "gemini") return "Gemini";
+  if (t === "opencode") return "OpenCode";
   return "Terminal";
 }
 
@@ -34,7 +35,7 @@ function mapApiStatus(s: string): TerminalStatus {
 
 function mapApiTool(s: string): ToolType {
   const t = s.toLowerCase();
-  if (t === "claude" || t === "gemini" || t === "codex" || t === "generic") return t as ToolType;
+  if (t === "claude" || t === "codex" || t === "gemini" || t === "opencode" || t === "generic") return t as ToolType;
   return "generic";
 }
 

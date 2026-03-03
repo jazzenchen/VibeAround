@@ -26,7 +26,8 @@ Web dashboard on desktop and mobile — same session, any device.
 
 | Desktop | Mobile |
 |---------|--------|
-| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-pc.webp" width="600" alt="VibeAround web dashboard on desktop" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-mobile.webp" width="200" alt="VibeAround web dashboard on mobile" /> |
+| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/pc.webp" width="720" alt="VibeAround web dashboard on desktop" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/mobile-claude.webp" width="200" alt="VibeAround web dashboard on mobile" /> |
+
 
 ---
 
@@ -237,7 +238,7 @@ The evolution of VibeAround transitions from a basic Proof of Concept (POC) to a
 
 **Phase 1: Foundation (Current)**
 
-- **Remote PTY terminal:** Access your local terminal from a web browser remotely, support multiple sessions, and open Claude, Gemini, or Codex directly. tmux-backed for persistent, device-portable sessions.
+- **Remote PTY terminal:** Access your local terminal from a web browser remotely, support multiple sessions, and open Claude, Gemini, Codex or OpenCode directly. tmux-backed for persistent, device-portable sessions.
 - **IM:** Send vibe coding tasks through Telegram and Feishu, Claude Code only for now.
 - **Tunnel:** Ngrok and Localtunnel for inner-network penetration, provide a public URL for access (e.g. dashboard and Feishu webhook).
 

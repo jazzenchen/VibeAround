@@ -30,14 +30,21 @@ fn shell_command() -> CommandBuilder {
 
 /// Exec string for each tool when wrapping with cd (bash -c "cd ... && exec ...").
 /// Claude code runs with acceptEdits so file writes are auto-approved in headless/PTY.
+/// For tmux: if session exists, attach (with -d when tmux_detach_others); otherwise create new session.
 fn tool_exec_argv(tool: PtyTool, tmux_session: Option<&str>) -> String {
     if let Some(name) = tmux_session {
         let escaped = name.replace('\'', "'\"'\"'");
         let detach = crate::config::ensure_loaded().tmux_detach_others;
         return if detach {
-            format!("tmux attach -d -t '{}'", escaped)
+            format!(
+                "tmux has-session -t '{}' 2>/dev/null && exec tmux attach -d -t '{}' || exec tmux new-session -s '{}'",
+                escaped, escaped, escaped
+            )
         } else {
-            format!("tmux attach -t '{}'", escaped)
+            format!(
+                "tmux has-session -t '{}' 2>/dev/null && exec tmux attach -t '{}' || exec tmux new-session -s '{}'",
+                escaped, escaped, escaped
+            )
         };
     }
     match tool {
@@ -45,6 +52,7 @@ fn tool_exec_argv(tool: PtyTool, tmux_session: Option<&str>) -> String {
         PtyTool::Claude => "claude code --permission-mode acceptEdits".to_string(),
         PtyTool::Gemini => "gemini".to_string(),
         PtyTool::Codex => "codex".to_string(),
+        PtyTool::OpenCode => "opencode".to_string(),
     }
 }
 
@@ -93,6 +101,7 @@ fn command_for_tool(tool: PtyTool, cwd: Option<&Path>, tmux_session: Option<&str
         }
         PtyTool::Gemini => CommandBuilder::new("gemini"),
         PtyTool::Codex => CommandBuilder::new("codex"),
+        PtyTool::OpenCode => CommandBuilder::new("opencode"),
     };
     c.env("TERM", "xterm-256color");
     c.env("COLORTERM", "truecolor");
@@ -114,8 +123,9 @@ pub enum PtyRunState {
 pub enum PtyTool {
     Generic,
     Claude,
-    Gemini,
     Codex,
+    Gemini,
+    OpenCode,
 }
 
 /// PTY bridge: writer for stdin; reader runs in a thread. Resize via `resize_tx`. Child kept so process stays alive; a separate thread polls try_wait().

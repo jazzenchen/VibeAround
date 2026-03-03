@@ -88,8 +88,9 @@ fn parse_tool(s: Option<&String>) -> PtyTool {
     let t = s.as_deref().map(|x| x.to_lowercase());
     match t.as_deref() {
         Some("claude") => PtyTool::Claude,
-        Some("gemini") => PtyTool::Gemini,
         Some("codex") => PtyTool::Codex,
+        Some("gemini") => PtyTool::Gemini,
+        Some("opencode") => PtyTool::OpenCode,
         _ => PtyTool::Generic,
     }
 }
