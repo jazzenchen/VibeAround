@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { LayoutGrid, Rows3, Minimize2, MessageSquare, Plus, X } from "lucide-react";
+import { LayoutGrid, Rows3, Minimize2, MessageSquare, Plus, X, Sun, Moon } from "lucide-react";
 import type { ViewMode, TerminalGroup, TerminalSession, TerminalStatus, ToolType } from "@/lib/terminal-types";
 import { getGroupColor, TOOL_OPTIONS } from "@/lib/terminal-types";
 import { TerminalPanel } from "@/components/TerminalPanel";
@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ThemeContext, getResolvedTheme, toggleTheme as applyThemeToggle, type Theme } from "@/lib/theme";
 
 const DEFAULT_GROUP_ID = "default";
 
@@ -68,6 +69,7 @@ function App() {
   const [maximizedSession, setMaximizedSession] = useState<string | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [pingMs, setPingMs] = useState<number | null>(null);
+  const [theme, setTheme] = useState<Theme>(() => getResolvedTheme());
 
   // Ping backend every 10s to show network latency next to "connected".
   useEffect(() => {
@@ -132,7 +134,7 @@ function App() {
 
   const handleAddCli = useCallback(async (tool: ToolType) => {
     try {
-      const res = await createSession({ tool });
+      const res = await createSession({ tool, theme });
       const session = sessionListItemToSession({
         session_id: res.session_id,
         tool: res.tool,
@@ -151,7 +153,7 @@ function App() {
     } catch (e) {
       console.error("[VibeAround] createSession:", e);
     }
-  }, []);
+  }, [theme]);
 
   // tmux: available flag + session list. Pre-fetch on mount so the dropdown has data immediately.
   const [tmuxAvailable, setTmuxAvailable] = useState<boolean | null>(null);
@@ -185,7 +187,7 @@ function App() {
         return;
       }
 
-      const res = await createSession({ tool: "generic", tmux_session: sessionName });
+      const res = await createSession({ tool: "generic", tmux_session: sessionName, theme });
       const session = sessionListItemToSession({
         session_id: res.session_id,
         tool: "generic",
@@ -206,7 +208,7 @@ function App() {
     } catch (e) {
       console.error("[VibeAround] attachTmux:", e);
     }
-  }, [refreshTmux, groups]);
+  }, [refreshTmux, groups, theme]);
 
   // State for the "new tmux session" inline input.
   const [newTmuxName, setNewTmuxName] = useState("");
@@ -243,15 +245,10 @@ function App() {
   );
 
   return (
+    <ThemeContext.Provider value={theme}>
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       {/* Header: VibeAround + view toggle. No tab bar here. */}
-      <header
-        className="flex items-center justify-between px-3 py-1.5 shrink-0"
-        style={{
-          backgroundColor: "oklch(0.10 0.005 260)",
-          borderBottom: "1px solid oklch(0.20 0.01 260)",
-        }}
-      >
+      <header className="flex items-center justify-between px-3 py-1.5 shrink-0 bg-muted/50 dark:bg-background border-b border-border">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="inline-block h-2 w-2 rounded-sm bg-primary" />
@@ -266,8 +263,7 @@ function App() {
             type="single"
             value={page}
             onValueChange={(v) => v && setPage(v as AppPage)}
-            className="flex items-center gap-0.5 rounded-md p-0.5 border-l border-border/20 ml-3 pl-3 font-mono text-xs"
-            style={{ backgroundColor: "oklch(0.15 0.005 260)" }}
+            className="flex items-center gap-0.5 rounded-md p-0.5 border-l border-border/20 ml-3 pl-3 font-mono text-xs bg-muted/80 dark:bg-muted"
           >
             <ToggleGroupItem value="terminal" aria-label="Terminal" className="rounded px-2 py-1 gap-1.5 data-[state=on]:bg-primary/15 data-[state=on]:text-primary text-muted-foreground/50 hover:text-foreground">
               <Rows3 className="h-3 w-3" />
@@ -293,28 +289,34 @@ function App() {
             </span>
           </div>
         </div>
-        <ToggleGroup
-          type="single"
-          value={viewMode}
-          onValueChange={(v) => v && setViewMode(v as ViewMode)}
-          className={`flex items-center gap-0.5 rounded-md p-0.5 font-mono text-xs ${page === "terminal" ? "" : "hidden"}`}
-          style={{ backgroundColor: "oklch(0.15 0.005 260)" }}
-        >
-          <ToggleGroupItem value="tabs" aria-label="Tab view" className="rounded px-2 py-1 data-[state=on]:bg-primary/15 data-[state=on]:text-primary text-muted-foreground/50 hover:text-foreground">
-            <Rows3 className="h-3 w-3" />
-          </ToggleGroupItem>
-          <ToggleGroupItem value="grid" aria-label="Grid view" className="rounded px-2 py-1 data-[state=on]:bg-primary/15 data-[state=on]:text-primary text-muted-foreground/50 hover:text-foreground">
-            <LayoutGrid className="h-3 w-3" />
-          </ToggleGroupItem>
-        </ToggleGroup>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setTheme(applyThemeToggle(theme))}
+            className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+          <ToggleGroup
+            type="single"
+            value={viewMode}
+            onValueChange={(v) => v && setViewMode(v as ViewMode)}
+            className={`flex items-center gap-0.5 rounded-md p-0.5 font-mono text-xs bg-muted/80 dark:bg-muted ${page === "terminal" ? "" : "hidden"}`}
+          >
+            <ToggleGroupItem value="tabs" aria-label="Tab view" className="rounded px-2 py-1 data-[state=on]:bg-primary/15 data-[state=on]:text-primary text-muted-foreground/50 hover:text-foreground">
+              <Rows3 className="h-3 w-3" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="grid" aria-label="Grid view" className="rounded px-2 py-1 data-[state=on]:bg-primary/15 data-[state=on]:text-primary text-muted-foreground/50 hover:text-foreground">
+              <LayoutGrid className="h-3 w-3" />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
       </header>
 
       {/* Tab bar: only in tabs view and terminal page. Hidden in grid (flat) view. */}
       {page === "terminal" && viewMode === "tabs" && (
-        <nav
-          className="flex items-stretch overflow-x-auto scrollbar-none shrink-0"
-          style={{ backgroundColor: "oklch(0.12 0.005 260)" }}
-        >
+        <nav className="flex items-stretch overflow-x-auto scrollbar-none shrink-0 bg-muted/40 dark:bg-muted/60">
           <div className="flex items-stretch min-w-0">
             {groups.map((group) => {
               const gc = getGroupColor(group.color);
@@ -413,9 +415,9 @@ function App() {
               <DropdownMenu onOpenChange={(open) => open && refreshTmux()}>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
-                    className="h-auto gap-1 px-2.5 py-2 text-[11px] font-mono text-muted-foreground hover:text-foreground border-transparent hover:border-border/30"
+                    className="h-auto gap-1 px-2.5 py-2 text-[11px] font-mono text-muted-foreground hover:text-foreground"
                     aria-label="Add CLI session"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -535,7 +537,7 @@ function App() {
                 </p>
                 <DropdownMenu onOpenChange={(open) => open && refreshTmux()}>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1.5 font-mono text-xs text-primary border-primary/30 hover:bg-primary/10">
+                    <Button variant="ghost" size="sm" className="gap-1.5 font-mono text-xs text-primary hover:bg-primary/10">
                       <Plus className="h-3.5 w-3.5" />
                       Add CLI
                     </Button>
@@ -619,13 +621,7 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer
-        className="flex items-center justify-between px-3 py-1 shrink-0"
-        style={{
-          backgroundColor: "oklch(0.09 0.005 260)",
-          borderTop: "1px solid oklch(0.18 0.01 260)",
-        }}
-      >
+      <footer className="flex items-center justify-between px-3 py-1 shrink-0 bg-muted/60 dark:bg-muted/40 border-t border-border">
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-muted-foreground/40 font-mono truncate max-w-[180px]" title="WebSocket follows page host (tunnel works on phone)">
             WS: {typeof window !== "undefined" ? (window.location.protocol === "https:" ? "wss" : "ws") + "://" + window.location.host + "/ws" : "—"}
@@ -655,6 +651,7 @@ function App() {
         </div>
       </footer>
     </div>
+    </ThemeContext.Provider>
   );
 }
 

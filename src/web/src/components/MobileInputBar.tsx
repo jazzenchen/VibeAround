@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useTheme } from "@/lib/theme";
 
 interface MobileInputBarProps {
   sendInput: (data: string) => void;
@@ -12,25 +13,60 @@ const B =
 /** Wider monospace font with slight letter-spacing */
 const _FONT = { fontFamily: "Menlo, 'JetBrains Mono', 'Courier New', monospace", letterSpacing: "0.05em" };
 
-const S: React.CSSProperties = {
+const S_DARK: React.CSSProperties = {
   ..._FONT,
   backgroundColor: "oklch(0.20 0.01 260)",
   color: "oklch(0.80 0.005 260)",
   border: "1px solid oklch(0.28 0.01 260)",
 };
 
-const S_CTRL: React.CSSProperties = {
+const S_LIGHT: React.CSSProperties = {
+  ..._FONT,
+  backgroundColor: "oklch(0.96 0.005 260)",
+  color: "oklch(0.25 0.02 260)",
+  border: "1px solid oklch(0.88 0.01 260)",
+};
+
+const S_CTRL_DARK: React.CSSProperties = {
   ..._FONT,
   backgroundColor: "oklch(0.25 0.08 270)",
   color: "oklch(0.92 0.04 270)",
   border: "1px solid oklch(0.40 0.12 270)",
 };
 
-const S_CANCEL: React.CSSProperties = {
+const S_CTRL_LIGHT: React.CSSProperties = {
+  ..._FONT,
+  backgroundColor: "oklch(0.85 0.06 270)",
+  color: "oklch(0.30 0.06 270)",
+  border: "1px solid oklch(0.65 0.10 270)",
+};
+
+const S_CANCEL_DARK: React.CSSProperties = {
   ..._FONT,
   backgroundColor: "oklch(0.22 0.06 15)",
   color: "oklch(0.85 0.06 15)",
   border: "1px solid oklch(0.35 0.08 15)",
+};
+
+const S_CANCEL_LIGHT: React.CSSProperties = {
+  ..._FONT,
+  backgroundColor: "oklch(0.95 0.04 15)",
+  color: "oklch(0.45 0.10 15)",
+  border: "1px solid oklch(0.70 0.08 15)",
+};
+
+const S_PROMPT_DARK: React.CSSProperties = {
+  ..._FONT,
+  backgroundColor: "oklch(0.22 0.04 180)",
+  color: "oklch(0.90 0.04 180)",
+  border: "1px solid oklch(0.35 0.06 180)",
+};
+
+const S_PROMPT_LIGHT: React.CSSProperties = {
+  ..._FONT,
+  backgroundColor: "oklch(0.88 0.06 180)",
+  color: "oklch(0.28 0.06 180)",
+  border: "1px solid oklch(0.55 0.12 180)",
 };
 
 // QWERTY rows
@@ -59,6 +95,13 @@ function useVisualViewportHeight() {
 }
 
 export function MobileInputBar({ sendInput }: MobileInputBarProps) {
+  const theme = useTheme();
+  const isDark = theme === "dark";
+  const S = isDark ? S_DARK : S_LIGHT;
+  const S_CTRL = isDark ? S_CTRL_DARK : S_CTRL_LIGHT;
+  const S_CANCEL = isDark ? S_CANCEL_DARK : S_CANCEL_LIGHT;
+  const S_PROMPT = isDark ? S_PROMPT_DARK : S_PROMPT_LIGHT;
+
   const [promptOpen, setPromptOpen] = useState(false);
   const [promptText, setPromptText] = useState("");
   const [ctrl, setCtrl] = useState(false);
@@ -103,11 +146,7 @@ export function MobileInputBar({ sendInput }: MobileInputBarProps) {
 
     return (
       <div
-        className="shrink-0 flex flex-col gap-1.5 px-2 py-2"
-        style={{
-          backgroundColor: "oklch(0.12 0.005 260)",
-          borderTop: "1px solid oklch(0.22 0.01 260)",
-        }}
+        className="shrink-0 flex flex-col gap-1.5 px-2 py-2 bg-muted/80 dark:bg-muted/60 border-t border-border"
         onTouchMove={(e) => e.stopPropagation()}
       >
         <div className="flex gap-1 justify-center">
@@ -135,11 +174,7 @@ export function MobileInputBar({ sendInput }: MobileInputBarProps) {
   return (
     <>
       <div
-        className="shrink-0 flex flex-col gap-1.5 px-2 py-2"
-        style={{
-          backgroundColor: "oklch(0.12 0.005 260)",
-          borderTop: "1px solid oklch(0.22 0.01 260)",
-        }}
+        className="shrink-0 flex flex-col gap-1.5 px-2 py-2 bg-muted/80 dark:bg-muted/60 border-t border-border"
         onTouchMove={(e) => e.stopPropagation()}
       >
         {/* Row 1: Esc + navigation */}
@@ -170,12 +205,7 @@ export function MobileInputBar({ sendInput }: MobileInputBarProps) {
           <button
             type="button"
             className={`${B} flex-[2]`}
-            style={{
-              ..._FONT,
-              backgroundColor: "oklch(0.22 0.04 180)",
-              color: "oklch(0.90 0.04 180)",
-              border: "1px solid oklch(0.35 0.06 180)",
-            }}
+            style={S_PROMPT}
             onClick={() => { setPromptOpen(true); textareaRef.current?.focus(); }}
           >
             ✍️ Prompt
@@ -186,21 +216,17 @@ export function MobileInputBar({ sendInput }: MobileInputBarProps) {
 
       {/* ── Prompt overlay ── */}
       <div
-        className="fixed left-0 right-0 z-50 flex flex-col"
+        className="fixed left-0 right-0 z-50 flex flex-col bg-background"
         style={{
           top: 0,
           height: promptOpen ? `${vpH}px` : "0px",
           overflow: "hidden",
-          backgroundColor: "oklch(0.10 0.005 260)",
           transition: "height 0.2s ease-out",
           opacity: promptOpen ? 1 : 0,
           pointerEvents: promptOpen ? "auto" : "none",
         }}
       >
-        <div
-          className="flex items-center justify-between px-4 py-3 shrink-0"
-          style={{ borderBottom: "1px solid oklch(0.22 0.01 260)" }}
-        >
+        <div className="flex items-center justify-between px-4 py-3 shrink-0 border-b border-border">
           <span className="text-sm font-mono font-medium text-foreground">Prompt</span>
           <button
             type="button"
@@ -216,11 +242,9 @@ export function MobileInputBar({ sendInput }: MobileInputBarProps) {
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}
             placeholder="Type text to send to terminal…"
-            className="w-full h-full resize-none rounded-lg p-3 font-mono text-foreground placeholder:text-muted-foreground/30 focus:outline-none"
+            className="w-full h-full resize-none rounded-lg p-3 font-mono text-foreground placeholder:text-muted-foreground/30 focus:outline-none bg-muted/50 dark:bg-muted border border-border"
             style={{
               fontSize: "16px", lineHeight: "1.5",
-              backgroundColor: "oklch(0.14 0.01 260)",
-              border: "1px solid oklch(0.25 0.01 260)",
               overflowX: "hidden", wordBreak: "break-word", overflowWrap: "break-word",
             }}
             onKeyDown={(e) => {
@@ -228,15 +252,10 @@ export function MobileInputBar({ sendInput }: MobileInputBarProps) {
             }}
           />
         </div>
-        <div className="shrink-0 px-3 py-2" style={{ borderTop: "1px solid oklch(0.22 0.01 260)" }}>
+        <div className="shrink-0 px-3 py-2 border-t border-border">
           <button
             type="button"
-            className="w-full rounded-lg py-2.5 font-mono font-semibold active:scale-[0.98] transition-transform"
-            style={{
-              fontSize: "15px",
-              backgroundColor: promptText.trim() ? "oklch(0.72 0.15 180)" : "oklch(0.25 0.01 260)",
-              color: promptText.trim() ? "oklch(0.13 0.005 260)" : "oklch(0.50 0.01 260)",
-            }}
+            className="w-full rounded-lg py-2.5 font-mono font-semibold active:scale-[0.98] transition-transform text-[15px] disabled:opacity-60 disabled:cursor-not-allowed bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
             disabled={!promptText.trim()}
             onClick={handleSend}
           >

@@ -42,12 +42,21 @@ export interface ToolTheme {
   selectionBg: string;
 }
 
-export const toolThemes: Record<ToolType, ToolTheme> = {
+export type AppThemeMode = "light" | "dark";
+
+/** Terminal background: only light vs dark (like iTerm), not per-tool. */
+const TERMINAL_BG_LIGHT = "#ffffff";
+const TERMINAL_BG_DARK = "#0d0d0d";
+const TERMINAL_HEADER_BG_LIGHT = "#f5f5f5";
+const TERMINAL_HEADER_BG_DARK = "#1a1a1a";
+
+/** Per-tool: accent, label, cursor, selection. bg/headerBg come from app theme only. */
+export const toolThemes: Record<ToolType, Omit<ToolTheme, "bg" | "headerBg"> & { bg: string; headerBg: string }> = {
   claude: {
     accent: "#d97706",
     accentFg: "#fef3c7",
-    bg: "#0f0c08",
-    headerBg: "#1a1508",
+    bg: TERMINAL_BG_DARK,
+    headerBg: TERMINAL_HEADER_BG_DARK,
     borderColor: "#d9770640",
     label: "Claude",
     cursorColor: "#d97706",
@@ -56,8 +65,8 @@ export const toolThemes: Record<ToolType, ToolTheme> = {
   gemini: {
     accent: "#3b82f6",
     accentFg: "#dbeafe",
-    bg: "#080a10",
-    headerBg: "#0c1020",
+    bg: TERMINAL_BG_DARK,
+    headerBg: TERMINAL_HEADER_BG_DARK,
     borderColor: "#3b82f640",
     label: "Gemini",
     cursorColor: "#3b82f6",
@@ -66,8 +75,8 @@ export const toolThemes: Record<ToolType, ToolTheme> = {
   codex: {
     accent: "#10b981",
     accentFg: "#d1fae5",
-    bg: "#080f0c",
-    headerBg: "#0c1a14",
+    bg: TERMINAL_BG_DARK,
+    headerBg: TERMINAL_HEADER_BG_DARK,
     borderColor: "#10b98140",
     label: "Codex",
     cursorColor: "#10b981",
@@ -76,8 +85,8 @@ export const toolThemes: Record<ToolType, ToolTheme> = {
   opencode: {
     accent: "#71717a",
     accentFg: "#e4e4e7",
-    bg: "#0c0c0f",
-    headerBg: "#18181b",
+    bg: TERMINAL_BG_DARK,
+    headerBg: TERMINAL_HEADER_BG_DARK,
     borderColor: "#71717a40",
     label: "OpenCode",
     cursorColor: "#71717a",
@@ -86,14 +95,23 @@ export const toolThemes: Record<ToolType, ToolTheme> = {
   generic: {
     accent: "#64748b",
     accentFg: "#e2e8f0",
-    bg: "#0c0c14",
-    headerBg: "#14141e",
+    bg: TERMINAL_BG_DARK,
+    headerBg: TERMINAL_HEADER_BG_DARK,
     borderColor: "#64748b40",
     label: "Terminal",
     cursorColor: "#64748b",
     selectionBg: "#64748b33",
   },
 };
+
+export function getToolTheme(tool: ToolType, appTheme: AppThemeMode): ToolTheme {
+  const t = toolThemes[tool];
+  return {
+    ...t,
+    bg: appTheme === "light" ? TERMINAL_BG_LIGHT : TERMINAL_BG_DARK,
+    headerBg: appTheme === "light" ? TERMINAL_HEADER_BG_LIGHT : TERMINAL_HEADER_BG_DARK,
+  };
+}
 
 export const GROUP_COLOR_PRESETS = [
   { name: "Amber", hex: "#d97706" },

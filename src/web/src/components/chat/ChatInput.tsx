@@ -3,7 +3,8 @@
 import { useEffect, useRef } from "react";
 import { Send, Square } from "lucide-react";
 import type { ToolType } from "@/lib/terminal-types";
-import { toolThemes } from "@/lib/terminal-types";
+import { getToolTheme } from "@/lib/terminal-types";
+import { useTheme } from "@/lib/theme";
 import { Button } from "@/components/ui/button";
 
 const TEXTAREA_MAX_HEIGHT_PX = 128;
@@ -53,14 +54,14 @@ export function ChatInput({
 
   const canSend = !disabled && !!value.trim();
   const showStop = isStreaming && onStop;
-  const accentColor = toolThemes[targetTool].accent;
+  const appTheme = useTheme();
+  const accentColor = getToolTheme(targetTool, appTheme).accent;
 
   // One bordered group: textarea (grows) + addon bar with button inside. Focus on textarea highlights the whole box (like Apple Data Analysis Demo input-group).
   return (
     <div
       data-slot="chat-input"
-      className={`bg-background p-4 ${className ?? ""}`}
-      style={{ borderTop: "1px solid oklch(0.20 0.01 260)" }}
+      className={`bg-background p-4 border-t border-border ${className ?? ""}`}
     >
       <div
         role="group"

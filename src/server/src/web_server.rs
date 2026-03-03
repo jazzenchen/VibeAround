@@ -69,6 +69,9 @@ struct CreateSessionBody {
     /// If set, spawn inside a tmux session with this name (attach-or-create).
     #[serde(default)]
     tmux_session: Option<String>,
+    /// If "dark" or "light", sets COLORFGBG in PTY env as fallback for programs that don't query OSC 10/11.
+    #[serde(default)]
+    theme: Option<String>,
 }
 
 /// Session list item (GET /api/sessions).
@@ -237,7 +240,7 @@ async fn create_session_handler(
         (None, body.project_path.clone())
     };
     let (bridge, mut pty_rx, resize_tx, mut state_rx) =
-        common::pty::spawn_pty(tool, cwd, body.tmux_session.clone()).map_err(|e| {
+        common::pty::spawn_pty(tool, cwd, body.tmux_session.clone(), body.theme.clone()).map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to start PTY: {}", e))
         })?;
     let created_at = unix_now_secs();

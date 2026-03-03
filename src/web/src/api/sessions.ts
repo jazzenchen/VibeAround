@@ -20,6 +20,8 @@ export interface CreateSessionBody {
   tool: string;
   project_path?: string;
   tmux_session?: string;
+  /** "dark" | "light" — sets COLORFGBG in PTY env as fallback for non-OSC programs. */
+  theme?: string;
 }
 
 export interface CreateSessionResponse {

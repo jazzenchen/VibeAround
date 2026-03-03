@@ -3,7 +3,8 @@
 import { Maximize2, Minimize2, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import type { TerminalSession, TerminalStatus, ToolType, ViewMode } from "@/lib/terminal-types";
-import { toolThemes } from "@/lib/terminal-types";
+import { getToolTheme } from "@/lib/terminal-types";
+import { useTheme } from "@/lib/theme";
 import { TerminalView } from "./TerminalView";
 import { MobileInputBar } from "./MobileInputBar";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,8 @@ export function TerminalPanel({
   onClose,
   onSessionState,
 }: TerminalPanelProps) {
-  const theme = toolThemes[session.tool];
+  const appTheme = useTheme();
+  const theme = getToolTheme(session.tool, appTheme);
   const status = statusConfig[session.status];
 
   // Mobile: hold sendInput callback from TerminalView's WebSocket.

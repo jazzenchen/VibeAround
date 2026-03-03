@@ -9,22 +9,17 @@ use std::path::Path;
 use std::sync::{self, Arc, Mutex};
 use tokio::sync::mpsc;
 
-/// Shell command: login shell on Unix, cmd on Windows.
-/// Injects TERM and COLORTERM so the PTY session is seen as a modern 256/truecolor terminal (matches xterm.js).
+/// Shell command: login shell on Unix, cmd on Windows. Caller must set PTY env (set_pty_env).
 #[cfg(unix)]
 fn shell_command() -> CommandBuilder {
     let mut c = CommandBuilder::new("bash");
     c.arg("-l");
-    c.env("TERM", "xterm-256color");
-    c.env("COLORTERM", "truecolor");
     c
 }
 
 #[cfg(windows)]
 fn shell_command() -> CommandBuilder {
     let mut c = CommandBuilder::new("cmd.exe");
-    c.env("TERM", "xterm-256color");
-    c.env("COLORTERM", "truecolor");
     c
 }
 
@@ -56,10 +51,46 @@ fn tool_exec_argv(tool: PtyTool, tmux_session: Option<&str>) -> String {
     }
 }
 
+/// Set standard PTY env: TERM, COLORTERM, COLORFGBG, and COLOR_THEME for light/dark hint.
+/// Primary theme detection is via the frontend's OSC 10/11 handlers in xterm.js;
+/// COLORFGBG and COLOR_THEME are fallbacks for programs that don't query OSC.
+fn set_pty_env(c: &mut CommandBuilder, theme: Option<&str>) {
+    c.env("TERM", "xterm-256color");
+    c.env("COLORTERM", "truecolor");
+    if let Some(t) = theme {
+        match t {
+            "light" | "dark" => {
+                c.env("COLOR_THEME", t);
+                // COLORFGBG: de-facto standard "fg;bg" ANSI color index (0=black, 15=white).
+                c.env("COLORFGBG", if t == "light" { "0;15" } else { "15;0" });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Bash wrapper for `bash -c "<script>"` with PTY env and TMUX unset.
+fn bash_wrapper(script: &str, theme: Option<&str>) -> CommandBuilder {
+    let mut wrap = CommandBuilder::new("bash");
+    wrap.arg("-c");
+    wrap.arg(script);
+    set_pty_env(&mut wrap, theme);
+    wrap.env_remove("TMUX");
+    wrap
+}
+
 /// Build command for direct spawn by tool. Generic = login shell; others = CLI (claude code, gemini, codex).
 /// If cwd is Some, wraps in a shell that `cd`s there then execs the tool (so PTY runs in that directory).
 /// If tmux_session is Some, spawns `tmux new-session -A -s <name>` instead of the tool directly.
-fn command_for_tool(tool: PtyTool, cwd: Option<&Path>, tmux_session: Option<&str>) -> CommandBuilder {
+/// Build command for direct spawn by tool. Generic = login shell; others = CLI.
+/// If cwd is Some, wraps in a shell that `cd`s there then execs the tool.
+/// If tmux_session is Some, spawns tmux attach-or-create instead of the tool directly.
+fn command_for_tool(
+    tool: PtyTool,
+    cwd: Option<&Path>,
+    tmux_session: Option<&str>,
+    theme: Option<&str>,
+) -> CommandBuilder {
     if let Some(dir) = cwd {
         #[cfg(unix)]
         {
@@ -67,33 +98,23 @@ fn command_for_tool(tool: PtyTool, cwd: Option<&Path>, tmux_session: Option<&str
             let escaped = path.replace('\'', "'\"'\"'");
             let exec = tool_exec_argv(tool, tmux_session);
             let line = format!("cd '{}' && exec {}", escaped, exec);
-            let mut wrap = CommandBuilder::new("bash");
-            wrap.arg("-c");
-            wrap.arg(line);
-            wrap.env("TERM", "xterm-256color");
-            wrap.env("COLORTERM", "truecolor");
-            // Unset TMUX to avoid "sessions should be nested with care" when attaching from inside tmux.
-            wrap.env_remove("TMUX");
-            return wrap;
+            return bash_wrapper(&line, theme);
         }
         #[cfg(not(unix))]
         let _ = dir;
     }
 
-    // tmux mode without cwd
     if tmux_session.is_some() {
         let exec = tool_exec_argv(tool, tmux_session);
-        let mut wrap = CommandBuilder::new("bash");
-        wrap.arg("-c");
-        wrap.arg(exec);
-        wrap.env("TERM", "xterm-256color");
-        wrap.env("COLORTERM", "truecolor");
-        wrap.env_remove("TMUX");
-        return wrap;
+        return bash_wrapper(&exec, theme);
     }
 
     let mut c = match tool {
-        PtyTool::Generic => return shell_command(),
+        PtyTool::Generic => {
+            let mut cmd = shell_command();
+            set_pty_env(&mut cmd, theme);
+            return cmd;
+        }
         PtyTool::Claude => {
             let mut cmd = CommandBuilder::new("claude");
             cmd.arg("code");
@@ -103,8 +124,7 @@ fn command_for_tool(tool: PtyTool, cwd: Option<&Path>, tmux_session: Option<&str
         PtyTool::Codex => CommandBuilder::new("codex"),
         PtyTool::OpenCode => CommandBuilder::new("opencode"),
     };
-    c.env("TERM", "xterm-256color");
-    c.env("COLORTERM", "truecolor");
+    set_pty_env(&mut c, theme);
     c
 }
 
@@ -137,13 +157,13 @@ pub struct PtyBridge {
 /// Sender to request PTY resize (cols, rows). Send from WebSocket handler; a dedicated thread runs master.resize().
 pub type ResizeSender = sync::mpsc::Sender<(u16, u16)>;
 
-/// Spawn a process in a PTY: either shell (Generic) or direct CLI (Claude/Gemini/Codex). Returns bridge, PTY stdout receiver, resize sender, and state receiver (async).
-/// If `cwd` is Some, the process runs in that directory (via a shell wrapper on Unix).
-/// If `tmux_session` is Some, spawns `tmux new-session -A -s <name>` (attach-or-create) instead of the tool directly.
+/// Spawn a process in a PTY. Returns bridge, PTY stdout receiver, resize sender, and state receiver.
+/// `theme`: "dark"/"light" — sets COLORFGBG env hint for programs that don't query OSC 10/11.
 pub fn spawn_pty(
     tool: PtyTool,
     cwd: Option<std::path::PathBuf>,
     tmux_session: Option<String>,
+    theme: Option<String>,
 ) -> Result<(PtyBridge, mpsc::Receiver<Vec<u8>>, ResizeSender, mpsc::Receiver<PtyRunState>), Box<dyn std::error::Error + Send + Sync>> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
@@ -153,7 +173,12 @@ pub fn spawn_pty(
         pixel_height: 0,
     })?;
 
-    let cmd = command_for_tool(tool, cwd.as_deref(), tmux_session.as_deref());
+    let cmd = command_for_tool(
+        tool,
+        cwd.as_deref(),
+        tmux_session.as_deref(),
+        theme.as_deref(),
+    );
     let child = pair.slave.spawn_command(cmd)?;
 
     let mut reader = pair.master.try_clone_reader()?;

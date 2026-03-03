@@ -1,7 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { initTheme } from "./lib/theme";
 import "./index.css";
+
+initTheme();
 
 // Bypass loca.lt tunnel reminder: add header or non-standard User-Agent on same-origin fetch.
 // See: https://loca.lt — "Set bypass-tunnel-reminder request header with any value" or custom User-Agent.
