@@ -21,11 +21,11 @@
 
 ---
 
-**VibeAround** is an ambient vibe coding partner that runs on your own machine. Talk to it over the channels you already use (Telegram, Feishu) and direct AI agents to vibe code from anywhere, at any time. It sits in the system tray as a lightweight daemon, runs a local server, and opens a web dashboard when you need it.
+**VibeAround** is an ambient vibe coding partner that runs on your own machine. It provides two ways to interact with AI coding agents — a browser-based remote terminal and IM bots (Telegram, Feishu) — so you can vibe code from anywhere, at any time.
 
-**Four AI agents, one interface** — switch between Claude Code, Gemini CLI, OpenCode, and Codex with a single `/cli_` command or a tap on the agent picker card. All agents communicate through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/), giving you a unified experience regardless of which AI is doing the work.
+**Four AI agents, one interface** — Claude Code, Gemini CLI, OpenCode, and Codex, all connected through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/). Switch agents via IM commands.
 
-**tmux-native by default** — terminal sessions can attach to tmux, so you can take unfinished work with you across devices. Start on your PC, pick it up on your phone, then resume on another machine — nothing is lost.
+**Browser-based remote terminal** — open a shell, attach to tmux, or quick-launch any of the four agents right from the web dashboard. Sessions persist across devices — start on your PC, check progress on your phone.
 
 ---
 

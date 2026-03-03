@@ -1,75 +1,64 @@
 <div align="center">
 
-# VibeAround — 随时随地 Vibe Coding！
+# VibeAround — 无处不在的 Vibe 编程！
 
-[English](README.md) | [简体中文](README_CN.md)
+[English](README.md) | [简体中文](https://www.google.com/search?q=README_CN.md)
 
 <p>
-  <img src="Logo.png" width="120" alt="VibeAround" />
+<img src="Logo.png" width="120" alt="VibeAround" />
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Bun-1.3+-000?style=flat-square&logo=bun&logoColor=fff" alt="Bun" />
-  <img src="https://img.shields.io/badge/Rust-1.78+-000?style=flat-square&logo=rust&logoColor=fff" alt="Rust" />
-  <img src="https://img.shields.io/badge/Vite-6-646CFF?style=flat-square&logo=vite&logoColor=fff" alt="Vite" />
-  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=000" alt="React" />
-  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/ACP-Agent_Client_Protocol-8B5CF6?style=flat-square" alt="ACP" />
+<img src="https://img.shields.io/badge/Bun-1.3+-000?style=flat-square&logo=bun&logoColor=fff" alt="Bun" />
+<img src="https://img.shields.io/badge/Rust-1.78+-000?style=flat-square&logo=rust&logoColor=fff" alt="Rust" />
+<img src="https://img.shields.io/badge/Vite-6-646CFF?style=flat-square&logo=vite&logoColor=fff" alt="Vite" />
+<img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=000" alt="React" />
+<img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License: MIT" />
+<img src="https://img.shields.io/badge/ACP-Agent_Client_Protocol-8B5CF6?style=flat-square" alt="ACP" />
 </p>
 
 </div>
 
+**VibeAround** 是一款运行在您本地设备上的常驻 Vibe 编程工具。它提供了两种与 AI 编程智能体交互的方式——基于浏览器的远程终端和即时通讯（IM）机器人（Telegram、飞书）——让您可以随时随地进行 Vibe 编程。
 
----
+**四个 AI 智能体，统一的交互界面** —— Claude Code、Gemini CLI、OpenCode 和 Codex，均通过 [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) 连接。您可以通过 IM 命令随时切换智能体。
 
-**VibeAround** 是一个运行在你自己机器上的 AI 编程伙伴。通过你日常使用的 IM（Telegram、飞书）与它对话，随时随地指挥 AI 写代码。它以轻量守护进程的形式驻留在系统托盘，运行本地服务器，需要时打开 Web 仪表盘。
+**基于浏览器的远程终端** —— 直接从 Web 控制台打开 Shell、附加到 tmux 会话，或快速启动这四个智能体中的任何一个。会话跨设备保持不变——在电脑上开始任务，在手机上查看进度。
 
-**四个 AI Agent，一个入口** — 在 Claude Code、Gemini CLI、OpenCode、Codex 之间一键切换。所有 Agent 通过 [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) 统一通信，无论哪个 AI 在干活，体验都是一致的。
+## 界面截图
 
-**原生 tmux 支持** — 终端会话可以挂载到 tmux，跨设备无缝衔接。在 PC 上开始，手机上查看进度，换台电脑继续 — 什么都不会丢。
-
----
-
-## 截图
-
-Web 仪表盘在桌面和移动端 — 同一个会话，任何设备。
+桌面端与移动端 Web 控制台 —— 同一会话，多端同步。
 
 | 桌面端 | 移动端 |
-|--------|--------|
-| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-pc.webp" width="600" alt="桌面端 Web 仪表盘" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/terminal-mobile.webp" width="200" alt="移动端 Web 仪表盘" /> |
+| --- | --- |
+| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/pc.webp" width="720" alt="桌面端 VibeAround Web 控制台" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/mobile-claude.webp" width="200" alt="移动端 VibeAround Web 控制台" /> |
 
----
+## 支持的智能体
 
-## 支持的 Agent
+VibeAround 通过 [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) 连接 AI 编程智能体。您可以随时通过 IM 命令或交互式卡片切换当前使用的智能体。
 
-VibeAround 通过 [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) 连接 AI 编程 Agent。随时通过 IM 命令或交互卡片切换。
-
-| Agent | 命令 | 连接方式 | 前置依赖 |
-|-------|------|---------|---------|
+| 智能体 | 命令 | 连接方式 | 前置要求 |
+| --- | --- | --- | --- |
 | Claude Code | `/cli_claude` | 进程内 ACP 桥接 → `claude` CLI | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) |
 | Gemini CLI | `/cli_gemini` | `gemini --experimental-acp`（原生 ACP） | [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
 | OpenCode | `/cli_opencode` | `opencode acp`（原生 ACP） | [OpenCode](https://github.com/opencode-ai/opencode) |
 | Codex | `/cli_codex` | `npx @zed-industries/codex-acp`（ACP 桥接） | Node.js 18+, [codex-acp](https://github.com/zed-industries/codex-acp) |
 
-发送 `/start` 打开交互式 Agent 选择卡片，`/help` 查看所有命令。
+发送 `/start` 可以获取交互式智能体选择卡片，或发送 `/help` 查看所有可用命令。
 
----
+**核心目标**
 
-## 设计目标
+- 随时随地 Vibe 编程！
+- 自发布起即保持轻量极速 —— 结合 Bun 与 Rust，打造便携、全天候在线的 Vibe 编程伴侣。
+- 在后台默默运行的具备上下文感知的编程助手，绝不打断您的现有工作流。
+- **多智能体支持：** Claude Code、Gemini CLI、OpenCode、Codex —— 全部基于 ACP 接入，支持随时无缝切换。
+- **设备无缝切换：** tmux 会话跨连接持久化 —— 电脑 → 手机 → 另一台电脑 → 随时切回，零摩擦体验。
+- **双轨**控制模式：
 
-- 随时随地 Vibe Coding！
-- 从第一天起就追求小巧和快速 — Bun + Rust 打造便携的、始终在线的编程伙伴。
-- 一个在后台运行的上下文感知编程助手，不打断你的工作流。
-- **多 Agent 支持：** Claude Code、Gemini CLI、OpenCode、Codex — 全部通过 ACP 接入，随时切换。
-- **无缝设备切换：** tmux 会话跨连接持久化 — PC → 手机 → 另一台 PC → 再回来，零摩擦。
-- **双轨控制：**
-  - **远程终端：** 从 Web 仪表盘连接到实时 PTY，支持 tmux 会话持久化。
-  - **对话式编程：** 通过 IM 发送指令；AI 异步编写、重构、审查代码。
+- **远程终端：** 从 Web 控制台附加到实时 PTY（伪终端），并支持 tmux 会话持久化。
+- **对话式 Vibe 编程：** 通过 IM（即时通讯）发送指令；AI 会在后台异步编写、重构和审查代码。
 
-**IM 范围（当前）：** 目前只考虑与用户的一对一（1:1）对话。群聊、广播、多聊天分发明确不在当前范围内。
-
-
----
+**IM 功能范围（当前）：** 在可预见的未来，我们仅考虑与用户的**一对一 (1:1) 对话**。广播、群组消息以及多聊天分发等功能明确不在当前讨论范围内，这些将在后续阶段解决。
 
 ## 快速开始
 
@@ -78,48 +67,48 @@ cd src
 bun install
 bun run prebuild
 bun run dev
+
 ```
 
-然后托盘菜单 → 打开 Web 仪表盘；隧道 URL 和密码会显示在终端中。
+随后点击系统托盘菜单 → **Open Web Dashboard**（打开 Web 控制台）；内网穿透（Tunnel）的 URL 及密码将显示在终端日志中。
 
----
+## 配置说明 (settings.json)
 
-## 配置（settings.json）
+配置文件路径：**`src/settings.json`**（请从 `src/settings.json.example` 复制创建）。该文件已被 Git 忽略，不会被提交。
 
-配置文件路径：**`src/settings.json`**（从 `src/settings.json.example` 复制）。该文件已被 gitignore。
+**结构说明：**
 
-**结构：**
-
-| 路径 | 说明 |
-|------|------|
+| 配置路径 | 描述 |
+| --- | --- |
 | `tunnel.provider` | `"localtunnel"`（默认）、`"ngrok"` 或 `"cloudflare"` |
-| `tunnel.ngrok.auth_token` | Ngrok 认证令牌（使用 ngrok 时必填） |
-| `tunnel.ngrok.domain` | 可选的 ngrok 保留域名（如 `myapp.ngrok.io`） |
-| `tunnel.preview_base_url` | 可选的预览链接基础 URL（设置后覆盖 domain） |
-| `channels.telegram.bot_token` | Telegram bot token，从 [@BotFather](https://t.me/BotFather) 获取；留空则禁用 Telegram |
-| `channels.feishu.app_id` | 飞书应用 ID（从开放平台获取）；留空则禁用飞书 |
-| `channels.feishu.app_secret` | 飞书应用密钥 |
-| `channels.feishu.verbose.show_thinking` | 在飞书中显示 Agent 思考过程（默认：`false`） |
-| `channels.feishu.verbose.show_tool_use` | 在飞书中显示工具调用/结果（默认：`false`） |
-| `channels.telegram.verbose.show_thinking` | 在 Telegram 中显示 Agent 思考过程（默认：`false`） |
-| `channels.telegram.verbose.show_tool_use` | 在 Telegram 中显示工具调用/结果（默认：`false`） |
-| `tmux.detach_others` | 连接 tmux 会话时断开其他客户端（默认：`true`） |
-| `working_dir` | 工作区根目录，绝对路径。未设置时默认：`{user_home}/VibeAround` |
+| `tunnel.ngrok.auth_token` | Ngrok 认证 Token（若提供商为 ngrok 则必填） |
+| `tunnel.ngrok.domain` | 可选的保留 ngrok 域名（例如：`myapp.ngrok.io`） |
+| `tunnel.preview_base_url` | 可选的预览链接基础 URL（设置后将覆盖 domain 配置） |
+| `channels.telegram.bot_token` | 来自 [@BotFather](https://t.me/BotFather) 的 Telegram 机器人 Token；若留空则禁用 Telegram 机器人 |
+| `channels.feishu.app_id` | 飞书应用 ID（来自开放平台）；若留空则禁用飞书机器人 |
+| `channels.feishu.app_secret` | 飞书应用密钥 (App Secret) |
+| `channels.feishu.verbose.show_thinking` | 在飞书中显示智能体的思考过程块（默认：`false`） |
+| `channels.feishu.verbose.show_tool_use` | 在飞书中显示工具调用记录及结果（默认：`false`） |
+| `channels.telegram.verbose.show_thinking` | 在 Telegram 中显示智能体的思考过程块（默认：`false`） |
+| `channels.telegram.verbose.show_tool_use` | 在 Telegram 中显示工具调用记录及结果（默认：`false`） |
+| `tmux.detach_others` | 附加至 tmux 会话时，分离其他已连接的客户端（默认：`true`） |
+| `working_dir` | 任务工作区的根目录，需为绝对路径。未设置时默认为：`{user_home}/VibeAround` |
 
-**最小配置示例**（仅 Telegram + Localtunnel）：
+**最简配置示例**（仅启用 Telegram + Localtunnel）：
 
-```json
+```
 {
   "tunnel": { "provider": "localtunnel" },
   "channels": {
     "telegram": { "bot_token": "YOUR_TELEGRAM_BOT_TOKEN" }
   }
 }
+
 ```
 
-**飞书 + ngrok 配置：**
+**启用飞书与 ngrok 的配置示例：**
 
-```json
+```
 {
   "tunnel": {
     "provider": "ngrok",
@@ -136,164 +125,161 @@ bun run dev
     }
   }
 }
+
 ```
 
----
+## 推荐的安装与运行方式
 
-## 推荐的运行方式
+**简而言之（在仓库根目录下执行）：** `cd src` → `bun install` → `bun run prebuild` → `bun run dev`。随后点击系统托盘菜单 → **Open Web Dashboard**；内网穿透 URL 和密码将显示在终端中。
 
-**简要步骤**（从仓库根目录）：`cd src` → `bun install` → `bun run prebuild` → `bun run dev`。然后托盘菜单 → **打开 Web 仪表盘**；隧道 URL 和密码在终端中。
-
----
-
-**安装路径：** 克隆仓库后，以 `src/` 目录作为工作路径：
+**安装路径：** 克隆本仓库，随后将 `src/` 目录作为您的工作路径：
 
 ```
 VibeAround/src/
+
 ```
 
-**环境要求：** Bun 1.3+ 和 Rust 1.78+（如需更新 Rust：`rustup update stable`）。
+**环境要求：** Bun 1.3+ 以及 Rust 1.78+（如果需要，请使用 `rustup update stable` 更新 Rust）。
 
-**配置：** 所有运行时配置（隧道、Telegram、飞书、工作目录）从 **`src/settings.json`** 读取。该文件已被 gitignore。将 `src/settings.json.example` 复制为 `src/settings.json` 并填入所需值。完整结构见上方 [配置（settings.json）](#配置settingsjson)。
+**配置：** 所有的运行时配置（内网穿透、Telegram、飞书、工作目录）都读取自 **`src/settings.json`**。该文件已被 Git 忽略。请将 `src/settings.json.example` 复制一份命名为 `src/settings.json` 并填入您所需的值。完整结构请参阅上方的[配置说明 (settings.json)](https://www.google.com/search?q=%23%E9%85%8D%E7%BD%AE%E8%AF%B4%E6%98%8E-settingsjson)。
 
-**步骤（首次运行或拉取更新后）：**
+**操作步骤（首次运行或拉取更新后）：**
 
-1. **安装依赖** — 安装 `web`、`desktop-tray` 和 `desktop` 的工作区依赖：
+1. **安装依赖** —— 此操作将为 `web`、`desktop-tray` 和 `desktop` 安装工作区依赖：
 
-```bash
+```
 cd src
 bun install
+
 ```
 
-2. **构建 Web 仪表盘和托盘 UI** — 本地服务器需要仪表盘，桌面应用需要托盘：
+1. **构建 Web 控制台和托盘 UI** —— 此步骤必不可少，以确保本地服务器能提供控制台服务，并且桌面端程序能够加载托盘菜单：
 
-```bash
+```
 bun run prebuild
+
 ```
 
-（会依次运行 `desktop-tray:build` 和 `web:build`，产出 `web/dist` 和 `desktop-tray/dist`。）
+（该命令会依次执行 `desktop-tray:build` 和 `web:build`，并生成 `web/dist` 和 `desktop-tray/dist` 产物目录。）
 
-3. **运行应用** — 启动 Tauri 桌面进程（托盘、Web 服务器、隧道、IM 机器人）：
+1. **运行应用** —— 启动 Tauri 桌面端进程（包含系统托盘、Web 服务器、内网穿透和 IM 机器人）：
 
-```bash
+```
 bun run dev
-```
-
-如果使用**飞书**，需要在这一步获取**隧道 URL**，然后到飞书开放平台设置 webhook。
-
-应用运行后：
-
-- 托盘菜单 → **打开 Web 仪表盘**，在浏览器中打开。服务器地址：
 
 ```
-http://127.0.0.1:5182
+
+如果您使用**飞书**，需要在此步骤获取**内网穿透 URL (tunnel URL)**，之后才能在飞书开放平台中配置 Webhook。
+
+应用启动后：
+
+- 使用托盘菜单 → 点击 **Open Web Dashboard** 以在浏览器中打开控制台。本地服务器的默认地址为：
+
+```
+[http://127.0.0.1:5182](http://127.0.0.1:5182)
+
 ```
 
-- **隧道 URL 和密码：** 桌面应用会自动启动 Localtunnel。在**终端**中查找 `[VibeAround] Tunnel URL: https://xxx.loca.lt` 和隧道密码。也可以通过托盘菜单 → **打开隧道 URL** 打开公网仪表盘链接。
+- **内网穿透 URL 与密码：** 桌面端应用会自动启动 Localtunnel。请留意终端输出的类似于 `[VibeAround] Tunnel URL: https://xxx.loca.lt` 的信息，以及穿透密码（或获取密码的链接）。您也可以直接使用托盘菜单 → 点击 **Open tunnel URL** 来打开可通过公网访问的控制台链接。
 
-**注意：** 首次运行后，通常只需 `bun run dev`，除非修改了 `web` 或 `desktop-tray` 的代码；那时需要先 `bun run prebuild` 再 `bun run dev`。使用 `bun run build` 来生成完整的桌面应用包（Tauri 构建）。
+**注意：** 首次运行后，日常开发和使用只需执行 `bun run dev` 即可；但如果您修改了 `web` 或 `desktop-tray` 目录下的代码，请在运行前再次执行 `bun run prebuild`。当您需要打包出完整的桌面端应用程序（Tauri 构建）时，请使用 `bun run build`。
 
----
+### 无桌面端运行（独立服务器模式）
 
-### 不使用桌面应用运行（独立服务器）
+如果您不想运行 Tauri 桌面端程序（不需要托盘和内网穿透功能），您可以仅启动 HTTP 服务器，在本地使用 Web 控制台：
 
-如果不想运行 Tauri 桌面应用（无托盘、无隧道），可以只运行 HTTP 服务器，在本地使用 Web 仪表盘：
+1. 在 `src/` 目录下，运行 `bun run prebuild`，确保生成了 `web/dist`。
+1. 启动服务器：
 
-1. 在 `src/` 下运行 `bun run prebuild`，确保 `web/dist` 存在。
-2. 启动服务器：
-
-```bash
+```
 bun run server:dev
+
 ```
 
-仪表盘地址：`http://127.0.0.1:5182`。独立服务器**不会**启动 Localtunnel 或 Telegram 机器人；仅供本地使用（如无头机器或只需 Web UI 的场景）。
-
----
+控制台的访问地址将是 `http://127.0.0.1:5182`。独立服务器**不会**启动 Localtunnel 或 Telegram 机器人；它仅供本地网络使用（例如，运行在无头服务器上，或当您仅仅需要 Web UI 时）。
 
 ## tmux 与无缝设备切换
 
-VibeAround 支持挂载 tmux 会话，让你可以随身带走未完成的工作。在一台设备上开始编程会话，断开后在另一台设备上继续 — Web 仪表盘、另一个浏览器、或通过 SSH 的原生终端客户端都行。
+VibeAround 支持附加（attach）到 tmux 会话，让您可以随时带走未完成的工作。在一台设备上开始编程会话，断开连接，然后在另一台设备上继续——无论是在 Web 控制台、其他浏览器，还是通过 SSH 连接的原生终端客户端。
 
-### 工作原理
+### 它的工作原理
 
-在 Web 仪表盘创建会话时，可以选择将其挂载到宿主机的 tmux 会话。关闭浏览器标签或断网后，tmux 会话在后台继续运行。从任何设备重新连接，一切都在原来的地方。
+当您在 Web 控制台中创建一个会话时，可以选择将其附加到宿主机的 tmux 会话中。如果您关闭了浏览器标签页或网络断开，tmux 会话仍将在后台继续运行。从任何设备重新连接后，您都能立刻回到刚才离开时的状态。
 
-默认情况下，连接会话会断开其他客户端（`tmux attach -d`）。这提供了干净的单查看者语义 — 在手机上打开仪表盘，之前的浏览器标签会优雅断开。如需允许多个查看者同时连接同一会话，在 `settings.json` 中将 `tmux.detach_others` 设为 `false`。
+默认情况下，附加到一个会话会断开其他客户端的连接（`tmux attach -d`）。这保证了清晰的“单一查看者”逻辑——在手机上打开控制台，之前电脑上的浏览器标签页会自动优雅地断开。如果您允许多个查看者共享同一个会话，可以在 `settings.json` 中将 `tmux.detach_others` 设置为 `false`。
 
-### tmux 面板和分屏操作
+### Tmux 窗格与分屏操作
 
-Web 终端支持以下 tmux 风格的面板和分屏操作。前缀键是 **Ctrl+b**（按下 Ctrl+b，松开，再按下面的键）。
+Web 终端支持以下类似 tmux 的窗格与分屏操作。前缀键是 **Ctrl+b**（先按下 Ctrl+b，松开后，再按以下列表中的按键）。
 
 | 操作 | 快捷键 |
-|------|--------|
-| **垂直分屏** | **Ctrl+b** 然后 **%** |
-| **水平分屏** | **Ctrl+b** 然后 **"** |
-| **移动焦点**（面板导航） | **Ctrl+b** 然后 **↑** **↓** **←** **→**（方向键） |
-| **循环切换面板** | **Ctrl+b** 然后 **o**（切换到下一个面板） |
-| **显示面板编号** | **Ctrl+b** 然后 **q**（编号闪现；按对应数字跳转） |
-| **关闭当前面板** | **Ctrl+b** 然后 **x** |
+| --- | --- |
+| **垂直分屏** | **Ctrl+b** 随后按 **%** |
+| **水平分屏** | **Ctrl+b** 随后按 **"** |
+| **移动焦点**（切换窗格） | **Ctrl+b** 随后按 **↑** **↓** **←** **→**（方向键） |
+| **循环切换窗格** | **Ctrl+b** 随后按 **o**（跳转至下一个窗格） |
+| **显示窗格编号** | **Ctrl+b** 随后按 **q**（编号会在屏幕上短暂闪现；按下对应的数字即可跳转至该窗格） |
+| **关闭当前窗格** | **Ctrl+b** 随后按 **x** |
 
-### 推荐：iTerm2 + tmux -CC 集成
+### 强烈推荐：使用支持 tmux -CC 集成的 iTerm2
 
-在 Mac 上使用时，推荐 [iTerm2](https://iterm2.com) 的原生 tmux 集成模式。iTerm2 不会在终端模拟器内渲染 tmux，而是将每个 tmux 窗口/面板映射为原生 iTerm2 标签/分屏 — 原生滚动、原生复制粘贴、原生快捷键，同时底层仍由持久化的 tmux 会话支撑。
+对于 Mac 用户，为了获得最佳体验，我们推荐使用 [iTerm2](https://iterm2.com) 原生的 tmux 集成模式。iTerm2 不会在终端模拟器内部渲染 tmux 界面，而是将每个 tmux 窗口/窗格映射为原生的 iTerm2 标签页/分屏——这为您提供了原生的历史滚动、原生的复制粘贴以及原生的键盘快捷键体验，同时依然由远程主机上持久化的 tmux 会话作为后端支撑。
 
 **快速开始：**
 
-```bash
-# SSH 到你的 VibeAround 主机，用 tmux -CC 连接
+```
+# 通过 SSH 登录您的 VibeAround 宿主机，并使用 tmux -CC 附加会话
 ssh your-host -t "tmux -CC attach -t my-session"
+
 ```
 
-或在已有的 SSH 会话中：
+或者在已有的 SSH 会话中执行：
 
-```bash
+```
 tmux -CC attach -t my-session
+
 ```
 
-iTerm2 会自动检测 `-CC` 标志并切换到原生集成模式。
+iTerm2 会自动检测到 `-CC` 标志，并无缝切换至其原生集成模式。
 
-**对 VibeAround 的意义：**
+**为什么这对 VibeAround 来说很重要：**
 
-- 在公司 PC 上通过 Web 仪表盘开始 Vibe Coding 会话。
-- 在路上，通过手机的 Web 仪表盘或 Telegram 查看进度、发送快速指令。
-- 回到家，用 iTerm2 通过 `tmux -CC` SSH 到同一台机器，获得完全原生的终端体验 — 同一个会话，同一个状态，零上下文丢失。
+- 在公司电脑上，通过 Web 控制台开启一个 Vibe 编程会话。
+- 在通勤路上，通过手机上的 Web 控制台或 Telegram 查看进度，发送简短的指令。
+- 回到家中，在 Mac 上通过 iTerm2 执行带有 `tmux -CC` 的 SSH 命令登录同一台机器，获得完全原生的终端体验——同一个会话，同样的状态，零上下文丢失。
 
-工作流：**PC → 手机 → 另一台 PC → 再回来**，全程无缝。
+整体工作流即是：**电脑 → 手机 → 另一台电脑 → 随时切回**，全程无缝衔接。
 
----
+## 开发路线图
 
-## 路线图
-
-- [x] 远程 PTY 终端 + Web 仪表盘，多会话，tmux 持久化
-- [x] 隧道支持（Ngrok、Localtunnel、Cloudflare）公网 URL 访问
+- [x] 带有 Web 控制台的远程 PTY 终端，支持多会话和 tmux 持久化
+- [x] 内网穿透支持（Ngrok、Localtunnel、Cloudflare）以提供公网 URL 访问
 - [x] Telegram 机器人集成
-- [x] 飞书机器人集成（webhook + 交互卡片）
-- [x] 多 Agent ACP 接入：Claude Code、Gemini CLI、OpenCode、Codex
-- [x] 通过 `/cli_` 命令和 `/start` 卡片切换 Agent
-- [x] 缓冲流式输出 + 消息反应（processing / done）
-- [x] 按渠道配置 verbose（show_thinking、show_tool_use）
-- [ ] 工作区：通过 IM 或 Web 仪表盘切换和管理项目文件夹
-- [ ] Agent 设置：模型选择、API 密钥、每个 Agent 的生成选项
-- [ ] 技能与上下文：自定义流程、提示词模板、项目规则
-- [ ] IM 多账号：将特定聊天绑定到特定工作区
-- [ ] 历史记录：SQLite 支持的对话和任务日志
-- [ ] 端口发现：检测新的开发服务器并自动建立隧道
-- [ ] 更多 IM：Discord、Slack
-- [ ] 插件：社区适配器、日志清理器、工作流插件
-- [ ] 安全与路由：基于意图的 Agent 选择、Git Sentinel 快照
+- [x] 飞书机器人集成（Webhook + 交互式消息卡片）
+- [x] 基于 ACP 的多智能体支持：Claude Code、Gemini CLI、OpenCode、Codex
+- [x] 通过 `/cli_` 命令和 `/start` 卡片自由切换智能体
+- [x] 带有状态反馈（处理中/已完成）的缓冲流式输出
+- [x] 按渠道配置的详细输出项（显示思考过程、显示工具使用情况）
+- [ ] 工作区管理：通过 IM 或 Web 控制台切换和管理项目文件夹
+- [ ] 智能体设置：为每个智能体独立配置模型选择、API 密钥和生成选项
+- [ ] 技能与上下文：自定义流程、提示词模板、项目级规则
+- [ ] IM 多账户支持：将特定聊天绑定到特定工作区
+- [ ] 历史记录：基于 SQLite 的对话与任务日志
+- [ ] 端口发现：自动检测新的开发服务器并为其自动建立内网穿透
+- [ ] 更多消息平台支持：Discord、Slack
+- [ ] 插件系统：社区适配器、日志净化器、工作流插件
+- [ ] 安全与路由：基于意图的智能体选择，Git 哨兵自动快照
 
----
+## 项目状态与贡献指南
 
-## 项目状态与贡献
+**VibeAround 目前正处于早期的概念验证 (POC) 阶段。**
 
-**VibeAround 目前处于早期概念验证（POC）阶段。**
+本项目源代码基于 MIT 协议开源，旨在保持透明、促进技术交流并分享产品愿景。**我们当前暂不接受 Pull Request (PR) 和新功能请求 (Feature Request)。** 架构、核心组件和 API 目前迭代迅速，并可能包含破坏性更新；这样做的目的是避免您将宝贵的时间浪费在可能与内部路线图冲突的 PR 上。随着项目趋于稳定（进入第 2/3 阶段），我们将在后续开放社区贡献。
 
-源代码以 MIT 许可证开放，旨在透明、教育和分享愿景。**目前不接受 Pull Request 和功能请求。** 架构、核心组件和 API 正在快速变化，可能有破坏性更改；目的是避免你在可能与内部路线图冲突的 PR 上浪费时间。项目稳定后（Phase 2/3）可能会开放社区贡献。
+**关于 AI 生成代码（内部实践/Dogfooding）：** VibeAround 的很大一部分代码正是使用 AI 编程工具生成的（这正是我们所倡导的 "Vibe 编程" 工作流）。我们相信，这有力地证明了 AI 辅助编排的强大威力。
 
-**关于 AI 生成（Dogfooding）：** VibeAround 的大量代码是使用 AI 编程工具生成的（正是我们所倡导的 "Vibe Coding" 工作流）。我们认为这证明了 AI 辅助编排的力量。
+欢迎随时 Fork 本项目，探索代码并在您自己的环境中进行实验。
 
-欢迎 fork 项目、探索代码、自由实验。
+## 开源协议
 
-## 许可证
-
-本项目基于 [MIT 许可证](LICENSE) 开源。
+本项目基于 [MIT 协议](https://www.google.com/search?q=LICENSE) 开源。
