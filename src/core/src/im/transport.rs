@@ -31,6 +31,9 @@ pub struct InteractiveOption {
     pub label: String,
     pub value: String,
     pub style: ButtonStyle,
+    /// Row group index. Buttons with the same group are placed on the same row.
+    /// Different groups are separated visually (e.g. hr in Feishu cards).
+    pub group: u8,
 }
 
 /// Unified channel capabilities defined at IM level. Each channel (Telegram, Feishu, etc.)

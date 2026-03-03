@@ -211,18 +211,30 @@ pub async fn handle_card_callback(
     body: &str,
     state: Option<&FeishuWebhookState>,
 ) -> (u16, String) {
+    eprintln!("[VibeAround][im][feishu] card_callback received body={}", &body[..body.len().min(500)]);
+
     let root: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return (200, "{}".to_string()),
     };
 
+    // Handle challenge verification (sent when configuring the callback URL)
+    let ty = root.get("type").or_else(|| root.get("Type")).and_then(|t| t.as_str());
+    if ty == Some("url_verification") {
+        let challenge = root.get("challenge").and_then(|c| c.as_str()).unwrap_or("");
+        return (200, serde_json::json!({ "challenge": challenge }).to_string());
+    }
+
     let Some(st) = state else { return (200, "{}".to_string()); };
 
-    // Extract action value and chat context
-    let action_value = root.pointer("/action/value");
-    let chat_id = root.pointer("/context/open_chat_id").and_then(|v| v.as_str());
+    // v2 callback: action in /event/action/value, chat_id in /event/context/open_chat_id
+    let action_value = root.pointer("/event/action/value");
+    let chat_id = root.pointer("/event/context/open_chat_id").and_then(|v| v.as_str());
 
-    let Some(chat_id) = chat_id else { return (200, "{}".to_string()); };
+    let Some(chat_id) = chat_id else {
+        eprintln!("[VibeAround][im][feishu] card_callback missing open_chat_id");
+        return (200, "{}".to_string());
+    };
 
     // The action value contains {"action": "/cli claude"} or similar
     let command = action_value
@@ -233,6 +245,7 @@ pub async fn handle_card_callback(
         .to_string();
 
     if command.is_empty() {
+        eprintln!("[VibeAround][im][feishu] card_callback empty command");
         return (200, "{}".to_string());
     }
 

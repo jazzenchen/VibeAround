@@ -7,7 +7,11 @@
 
 pub mod claude_acp;
 pub mod claude_sdk;
+pub mod codex_acp;
+pub mod codex_jsonl;
 pub mod gemini_acp;
+pub mod opencode_acp;
+pub mod opencode_jsonl;
 
 use std::fmt;
 use std::path::Path;
@@ -17,6 +21,8 @@ use std::path::Path;
 pub enum AgentKind {
     Claude,
     Gemini,
+    OpenCode,
+    Codex,
 }
 
 impl fmt::Display for AgentKind {
@@ -24,6 +30,8 @@ impl fmt::Display for AgentKind {
         match self {
             AgentKind::Claude => write!(f, "claude"),
             AgentKind::Gemini => write!(f, "gemini"),
+            AgentKind::OpenCode => write!(f, "opencode"),
+            AgentKind::Codex => write!(f, "codex"),
         }
     }
 }
@@ -33,7 +41,26 @@ impl AgentKind {
         match s.trim().to_lowercase().as_str() {
             "claude" | "claude-code" => Some(Self::Claude),
             "gemini" | "gemini-cli" => Some(Self::Gemini),
+            "opencode" | "open-code" => Some(Self::OpenCode),
+            "codex" | "openai-codex" => Some(Self::Codex),
             _ => None,
+        }
+    }
+
+    /// All available agent kinds.
+    pub fn all() -> &'static [AgentKind] {
+        &[AgentKind::Claude, AgentKind::Gemini, AgentKind::OpenCode, AgentKind::Codex]
+    }
+
+    /// Emoji icon for this agent.
+
+    /// Short description of this agent.
+    pub fn description(&self) -> &'static str {
+        match self {
+            AgentKind::Claude => "Anthropic Claude Code",
+            AgentKind::Gemini => "Google Gemini CLI",
+            AgentKind::OpenCode => "OpenCode AI Agent",
+            AgentKind::Codex => "OpenAI Codex CLI",
         }
     }
 }
@@ -81,12 +108,13 @@ pub trait AgentBackend: Send + Sync {
 }
 
 /// Create a new (unstarted) agent backend for the given kind.
-/// Both return an ACP-backed implementation.
+/// All four agents now use the unified ACP backend:
+/// - Claude: in-process ACP bridge via claude_sdk
+/// - Gemini: `gemini --experimental-acp` subprocess
+/// - OpenCode: `opencode acp` subprocess (native ACP over stdio)
+/// - Codex: `codex-acp` subprocess (ACP bridge from cola-io/codex-acp)
 pub fn create_backend(kind: AgentKind) -> Box<dyn AgentBackend> {
-    match kind {
-        AgentKind::Claude => Box::new(AcpBackend::new(AgentKind::Claude)),
-        AgentKind::Gemini => Box::new(AcpBackend::new(AgentKind::Gemini)),
-    }
+    Box::new(AcpBackend::new(kind))
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +269,14 @@ async fn acp_session_loop(
             let (r, w) = gemini_acp::spawn_gemini_process(&cwd)?;
             (r, w, None)
         }
+        AgentKind::OpenCode => {
+            let (r, w) = opencode_acp::spawn_opencode_process(&cwd)?;
+            (r, w, None)
+        }
+        AgentKind::Codex => {
+            let (r, w) = codex_acp::spawn_codex_process(&cwd)?;
+            (r, w, None)
+        }
     };
 
     // --- Create ACP ClientSideConnection ---
@@ -258,6 +294,7 @@ async fn acp_session_loop(
     tokio::task::spawn_local(handle_io);
 
     // --- Initialize ---
+    eprintln!("[{}-acp] sending initialize...", agent_kind);
     let _init_resp = conn
         .initialize(
             acp::InitializeRequest::new(acp::ProtocolVersion::V1)
@@ -265,8 +302,10 @@ async fn acp_session_loop(
         )
         .await
         .map_err(|e| format!("ACP initialize failed: {}", e))?;
+    eprintln!("[{}-acp] initialize ok", agent_kind);
 
     // --- Create session ---
+    eprintln!("[{}-acp] creating session in {:?}...", agent_kind, &cwd);
     let session_resp = conn
         .new_session(acp::NewSessionRequest::new(cwd))
         .await
@@ -285,6 +324,7 @@ async fn acp_session_loop(
         };
         match cmd {
             AcpCmd::Prompt { text, done_tx } => {
+                eprintln!("[{}-acp] sending prompt: {}...", agent_kind, &text[..text.len().min(80)]);
                 let text_content = acp::ContentBlock::Text(acp::TextContent::new(text));
                 let result = conn
                     .prompt(acp::PromptRequest::new(
@@ -292,6 +332,7 @@ async fn acp_session_loop(
                         vec![text_content],
                     ))
                     .await;
+                eprintln!("[{}-acp] prompt returned: {:?}", agent_kind, result.is_ok());
                 match result {
                     Ok(_) => {
                         let _ = event_tx.send(AgentEvent::TurnComplete {
@@ -461,5 +502,126 @@ impl agent_client_protocol::Client for SharedAcpClientHandler {
         _: agent_client_protocol::ExtNotification,
     ) -> agent_client_protocol::Result<()> {
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JSONL-based backend — for Codex (per-prompt subprocess with --json output)
+// and OpenCode (opencode run --format json, per-prompt subprocess)
+// ---------------------------------------------------------------------------
+
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+/// Subprocess-per-prompt agent backend for OpenCode and Codex.
+/// Each `send_message` spawns a new subprocess, reads JSONL/text from stdout,
+/// and waits for it to exit before returning.
+pub struct JsonlBackend {
+    agent_kind: AgentKind,
+    event_tx: broadcast::Sender<AgentEvent>,
+    cwd: Option<PathBuf>,
+}
+
+impl JsonlBackend {
+    pub fn new(agent_kind: AgentKind) -> Self {
+        let (event_tx, _) = broadcast::channel(256);
+        Self { agent_kind, event_tx, cwd: None }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentBackend for JsonlBackend {
+    async fn start(&mut self, cwd: &Path) -> Result<(), String> {
+        // Just verify the CLI exists
+        let cmd = match self.agent_kind {
+            AgentKind::OpenCode => "opencode",
+            AgentKind::Codex => "codex",
+            _ => unreachable!(),
+        };
+        let check = tokio::process::Command::new("which")
+            .arg(cmd)
+            .output()
+            .await
+            .map_err(|e| format!("Failed to check {}: {}", cmd, e))?;
+        if !check.status.success() {
+            return Err(format!("{} not found in PATH", cmd));
+        }
+        self.cwd = Some(cwd.to_path_buf());
+        eprintln!("[{}-jsonl] ready (per-prompt mode)", self.agent_kind);
+        Ok(())
+    }
+
+    async fn send_message(&self, text: &str) -> Result<(), String> {
+        let cwd = self.cwd.as_ref().ok_or("Agent not started")?;
+        let event_tx = self.event_tx.clone();
+        let agent_kind = self.agent_kind;
+
+        let (cmd, args): (&str, Vec<String>) = match agent_kind {
+            AgentKind::OpenCode => ("opencode", vec![
+                "run".into(), "--format".into(), "json".into(), "--".into(), text.to_string(),
+            ]),
+            AgentKind::Codex => ("codex", vec![
+                "exec".into(), "--json".into(), "--full-auto".into(), text.to_string(),
+            ]),
+            _ => unreachable!(),
+        };
+
+        eprintln!("[{}-jsonl] spawning: {} {:?}", agent_kind, cmd, &args[..args.len().min(3)]);
+
+        let mut child = tokio::process::Command::new(cmd)
+            .args(&args)
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Failed to spawn {}: {}", cmd, e))?;
+
+        let stdout = child.stdout.take().ok_or("No stdout")?;
+
+        // Read JSONL lines from stdout, parse into AgentEvents
+        let reader = BufReader::new(stdout);
+        let mut lines = reader.lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.trim().is_empty() { continue; }
+            let msg: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => {
+                    // Not JSON — treat as plain text output
+                    if !line.trim().is_empty() {
+                        let _ = event_tx.send(AgentEvent::Text(line));
+                    }
+                    continue;
+                }
+            };
+            match agent_kind {
+                AgentKind::OpenCode => opencode_jsonl::parse_event(&msg, &event_tx),
+                AgentKind::Codex => codex_jsonl::parse_event(&msg, &event_tx),
+                _ => {}
+            }
+        }
+
+        // Wait for process to exit
+        let status = child.wait().await.map_err(|e| format!("{} wait: {}", cmd, e))?;
+        eprintln!("[{}-jsonl] process exited: {}", agent_kind, status);
+
+        // Emit TurnComplete so the worker's event loop knows we're done
+        let _ = event_tx.send(AgentEvent::TurnComplete { session_id: None, cost_usd: None });
+
+        Ok(())
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
+        self.event_tx.subscribe()
+    }
+
+    async fn shutdown(&mut self) {
+        self.cwd = None;
+        eprintln!("[{}-jsonl] shutdown", self.agent_kind);
+    }
+
+    fn kind(&self) -> AgentKind {
+        self.agent_kind
     }
 }

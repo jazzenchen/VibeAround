@@ -65,6 +65,13 @@ pub async fn run_worker<T>(
             continue;
         }
 
+        // --- /start command: quick agent picker ---
+        if msg.text.trim() == "/start" {
+            send_start(&channel_id, &outbound).await;
+            busy_set.remove(&channel_id);
+            continue;
+        }
+
         // --- /cli command: switch agent ---
         if let Some(kind) = parse_cli_command(&msg.text) {
             switch_agent(&mut active_agent, kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref()).await;
@@ -90,11 +97,10 @@ pub async fn run_worker<T>(
     }
 }
 
-/// Parse `/cli <agent>` command. Returns the AgentKind if matched.
+/// Parse `/cli_<agent>` command. Returns the AgentKind if matched.
 fn parse_cli_command(text: &str) -> Option<AgentKind> {
     let text = text.trim();
-    let rest = text.strip_prefix("/cli ")
-        .or_else(|| text.strip_prefix("/cli\t"))?;
+    let rest = text.strip_prefix("/cli_")?;
     AgentKind::from_str_loose(rest.trim())
 }
 
@@ -160,7 +166,8 @@ fn truncate_tool_output(text: &str, max_len: usize) -> String {
 
 /// Send a message to the active agent and stream events back to IM.
 /// Emits all agent output: text, thinking, tool calls, tool results.
-/// Uses reactions to indicate processing state and reply-quotes the user message.
+/// Uses reactions on bot messages to indicate processing/done state.
+/// Replies to the user's message for the first block.
 async fn run_with_agent<T>(
     agent: &dyn AgentBackend,
     msg: &InboundMessage,
@@ -173,24 +180,16 @@ async fn run_with_agent<T>(
     let caps = outbound.capabilities();
     let mut rx = agent.subscribe();
 
-    // Add a reaction to indicate we're processing (if user_message_id available)
-    let reaction_info: Option<(String, Option<String>)> = if let Some(ref user_mid) = msg.user_message_id {
-        let _ = outbound.send(channel_id, OutboundMsg::AddReaction(
-            channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
-        )).await;
-        // Set reply_to so buffer flush will quote the user's message
+    // Set reply_to so the first flushed bot message quotes the user's message
+    if let Some(ref user_mid) = msg.user_message_id {
         outbound.set_reply_to(channel_id, user_mid.clone()).await;
-        Some((user_mid.clone(), None))
-    } else {
-        None
-    };
+    }
 
     if let Err(e) = agent.send_message(&msg.text).await {
         let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
             channel_id.to_string(), format!("[Agent error: {}]", e),
         )).await;
-        let _ = outbound.send(channel_id, OutboundMsg::StreamEnd(channel_id.to_string())).await;
-        remove_processing_reaction(channel_id, &reaction_info, outbound).await;
+        let _ = outbound.send(channel_id, OutboundMsg::StreamDone(channel_id.to_string())).await;
         return;
     }
 
@@ -223,7 +222,6 @@ async fn run_with_agent<T>(
                 }
                 AgentEvent::Thinking(text) => {
                     if !verbose.show_thinking {
-                        // Skip thinking blocks entirely when not configured to show them
                         continue;
                     }
                     if current_block != Block::Thinking {
@@ -273,7 +271,6 @@ async fn run_with_agent<T>(
                     if !verbose.show_tool_use {
                         continue;
                     }
-                    // Tool result always flushes previous block and sends as its own message
                     if current_block != Block::None {
                         flush_block(channel_id, outbound).await;
                     }
@@ -320,30 +317,37 @@ async fn run_with_agent<T>(
         }
     }
 
-    let _ = outbound.send(channel_id, OutboundMsg::StreamEnd(channel_id.to_string())).await;
-
-    // Remove processing reaction
-    remove_processing_reaction(channel_id, &reaction_info, outbound).await;
+    // StreamDone: flush final block + remove processing reaction + add done reaction on last bot msg
+    let _ = outbound.send(channel_id, OutboundMsg::StreamDone(channel_id.to_string())).await;
 }
 
-/// Remove the 👀 processing reaction when done.
-async fn remove_processing_reaction<T>(
+/// Send a /help card with all commands and descriptions (card format, no buttons).
+async fn send_help<T>(
     channel_id: &str,
-    reaction_info: &Option<(String, Option<String>)>,
     outbound: &Arc<OutboundHub<T>>,
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
-    if let Some((ref user_mid, ref reaction_id)) = reaction_info {
-        let rid = reaction_id.as_deref().unwrap_or("👀");
-        let _ = outbound.send(channel_id, OutboundMsg::RemoveReaction(
-            channel_id.to_string(), user_mid.clone(), rid.to_string(),
-        )).await;
-    }
+    let prompt = concat!(
+        "`/cli_claude` — Anthropic Claude Code\n",
+        "`/cli_gemini` — Google Gemini CLI\n",
+        "`/cli_opencode` — OpenCode AI Agent\n",
+        "`/cli_codex` — OpenAI Codex CLI\n",
+        "🚀 `/start` — Quick agent picker\n",
+        "❓ `/help` — Show this help",
+    );
+
+    // Send as interactive card with no buttons (prompt-only card)
+    let _ = outbound.send(channel_id, OutboundMsg::SendInteractive {
+        channel_id: channel_id.to_string(),
+        prompt: prompt.to_string(),
+        options: vec![],
+        reply_to: None,
+    }).await;
 }
 
-/// Send a /help interactive card with all supported commands as clickable buttons.
-async fn send_help<T>(
+/// Send a /start interactive card — compact agent picker with help button on separate row.
+async fn send_start<T>(
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
 ) where
@@ -351,23 +355,13 @@ async fn send_help<T>(
 {
     use crate::im::transport::{ButtonStyle, InteractiveOption};
 
-    let prompt = "**VibeAround Commands**\n\nClick a button or type the command directly:";
+    let prompt = "**Select an agent to start:**";
     let options = vec![
-        InteractiveOption {
-            label: "🤖 Switch to Claude".into(),
-            value: "/cli claude".into(),
-            style: ButtonStyle::Primary,
-        },
-        InteractiveOption {
-            label: "✨ Switch to Gemini".into(),
-            value: "/cli gemini".into(),
-            style: ButtonStyle::Default,
-        },
-        InteractiveOption {
-            label: "❓ Help".into(),
-            value: "/help".into(),
-            style: ButtonStyle::Default,
-        },
+        InteractiveOption { label: "Claude".into(), value: "/cli_claude".into(), style: ButtonStyle::Primary, group: 0 },
+        InteractiveOption { label: "Gemini".into(), value: "/cli_gemini".into(), style: ButtonStyle::Default, group: 0 },
+        InteractiveOption { label: "OpenCode".into(), value: "/cli_opencode".into(), style: ButtonStyle::Default, group: 0 },
+        InteractiveOption { label: "Codex".into(), value: "/cli_codex".into(), style: ButtonStyle::Default, group: 0 },
+        InteractiveOption { label: "❓ Help".into(), value: "/help".into(), style: ButtonStyle::Default, group: 1 },
     ];
 
     let _ = outbound.send(channel_id, OutboundMsg::SendInteractive {

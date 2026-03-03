@@ -22,8 +22,10 @@ pub enum OutboundMsg {
     StreamPart(String, String),
     /// Legacy: single content update (edit channel). Throttled.
     StreamEdit(String, String),
-    /// End stream: flush buffer or drain response FIFO.
+    /// End of one content block: flush buffer. More blocks may follow.
     StreamEnd(String),
+    /// End of the entire agent turn: flush final block, remove processing reaction, add done reaction.
+    StreamDone(String),
     /// Send as a new message. Rate-limited.
     Send(String, String),
     /// Send as a reply to a specific message.
@@ -66,6 +68,8 @@ struct ChannelSendState {
     last_reaction_id: Option<String>,
     /// The message_id that the last reaction was added to.
     last_reaction_message_id: Option<String>,
+    /// The message_id of the last bot message sent (for post-turn done reaction).
+    last_bot_message_id: Option<String>,
 }
 
 const MIN_INTERVAL: Duration = Duration::from_secs(1);
@@ -138,20 +142,25 @@ async fn drain_one_response_part<T: ImTransport>(
 }
 
 /// Flush buffered content: join all buffer_parts, chunk, and send (first as reply if reply_to set).
+/// Returns the message_id of the last sent message (if any).
+/// When `is_final` is true, the done reaction is added directly (skipping the intermediate processing reaction).
 async fn flush_buffer<T: ImTransport>(
     channel_id: &str,
     state: &mut ChannelSendState,
     transport: &Arc<T>,
+    caps: &ImChannelCapabilities,
     max_len: usize,
-) {
+    is_final: bool,
+) -> Option<String> {
     if state.buffer_parts.is_empty() {
-        return;
+        return None;
     }
     let full_text = state.buffer_parts.drain(..).collect::<String>();
     if full_text.trim().is_empty() {
-        return;
+        return None;
     }
     let chunks = transport::chunk_message(&full_text, max_len);
+    let mut last_sent_id: Option<String> = None;
     for (i, chunk) in chunks.iter().enumerate() {
         // Rate limit
         let now = Instant::now();
@@ -178,9 +187,10 @@ async fn flush_buffer<T: ImTransport>(
             transport.send(channel_id, chunk).await
         };
         match result {
-            Ok(_) => {
+            Ok(mid) => {
                 state.last_send = Some(Instant::now());
                 state.retry_after = None;
+                last_sent_id = mid;
             }
             Err(SendError::RateLimited { retry_after_secs }) => {
                 state.retry_after = Some(Instant::now() + Duration::from_secs_f64(retry_after_secs));
@@ -199,6 +209,29 @@ async fn flush_buffer<T: ImTransport>(
         }
     }
     state.reply_to_message_id = None;
+
+    // If we got a message_id for the sent message, manage reactions:
+    // - intermediate flush: remove old processing reaction, add new processing reaction
+    // - final flush: remove old processing reaction, add done reaction directly
+    if let Some(ref new_mid) = last_sent_id {
+        // Remove processing reaction from previous bot message
+        if let Some(ref prev_mid) = state.last_bot_message_id.clone() {
+            if let Some(rid) = state.last_reaction_id.take() {
+                let _ = transport.remove_reaction(channel_id, prev_mid, &rid).await;
+                state.last_reaction_message_id = None;
+            }
+        }
+        let reaction_emoji = if is_final { caps.done_reaction } else { caps.processing_reaction };
+        match transport.add_reaction(channel_id, new_mid, reaction_emoji).await {
+            Ok(Some(rid)) => { state.last_reaction_id = Some(rid); }
+            Ok(None) => { state.last_reaction_id = Some(reaction_emoji.to_string()); }
+            Err(e) => { eprintln!("{} chat_id={} direction=add_reaction({}) error={:?}", prefix(channel_id), channel_id, if is_final { "done" } else { "intermediate" }, e); }
+        }
+        state.last_reaction_message_id = Some(new_mid.clone());
+        state.last_bot_message_id = Some(new_mid.clone());
+    }
+
+    last_sent_id
 }
 
 /// One send daemon for a single channel: drains that channel's FIFO queue, applies rate limit and stream-edit.
@@ -229,6 +262,7 @@ async fn run_send_daemon_for_channel<T>(
         reply_to_message_id: None,
         last_reaction_id: None,
         last_reaction_message_id: None,
+        last_bot_message_id: None,
     };
 
     while let Some(msg) = rx.recv().await {
@@ -353,8 +387,8 @@ async fn run_send_daemon_for_channel<T>(
             }
             OutboundMsg::StreamEnd(_) => {
                 if caps.buffer_stream {
-                    // Buffer mode: flush all accumulated content
-                    flush_buffer(&channel_id, &mut state, &transport, max_len).await;
+                    // Buffer mode: flush this block (intermediate — more may follow)
+                    flush_buffer(&channel_id, &mut state, &transport, &caps, max_len, false).await;
                     // Also drain any remaining response_parts
                     while !state.response_parts.is_empty() {
                         if !drain_one_response_part(&channel_id, &mut state, &transport, max_len).await {
@@ -377,6 +411,62 @@ async fn run_send_daemon_for_channel<T>(
                     }
                     if !state.response_parts.is_empty() {
                         let _ = tx.send(OutboundMsg::StreamEnd(channel_id.clone())).await;
+                    }
+                    continue;
+                }
+                let mid = state.stream_message_id.take();
+                let pending = state.pending_stream_text.take();
+                state.pending_stream_text = None;
+                state.last_progress = None;
+                state.stream_sent = false;
+                if let (Some(mid), Some(pending)) = (mid, pending) {
+                    let _ = transport.edit_message(&channel_id, &mid, &pending).await;
+                }
+            }
+            OutboundMsg::StreamDone(_) => {
+                if caps.buffer_stream {
+                    // Flush the final block — flush_buffer with is_final=true adds done reaction directly
+                    flush_buffer(&channel_id, &mut state, &transport, &caps, max_len, true).await;
+                    while !state.response_parts.is_empty() {
+                        if !drain_one_response_part(&channel_id, &mut state, &transport, max_len).await {
+                            break;
+                        }
+                    }
+                    state.buffer_parts.clear();
+                    state.stream_sent = false;
+                    state.stream_message_id = None;
+                    state.pending_stream_text = None;
+                    state.last_progress = None;
+
+                    // If flush_buffer had nothing to flush (empty final block),
+                    // the done reaction was already placed by the last intermediate flush's message.
+                    // In that case, swap processing → done on the last bot message.
+                    if state.last_bot_message_id.is_some() {
+                        // Check if the last reaction is still a processing reaction (not yet swapped to done)
+                        if let Some(ref last_mid) = state.last_bot_message_id.clone() {
+                            if state.last_reaction_id.is_some() {
+                                // Still has a processing reaction — swap to done
+                                if let Some(rid) = state.last_reaction_id.take() {
+                                    let _ = transport.remove_reaction(&channel_id, last_mid, &rid).await;
+                                    state.last_reaction_message_id = None;
+                                }
+                                match transport.add_reaction(&channel_id, last_mid, caps.done_reaction).await {
+                                    Ok(Some(rid)) => { state.last_reaction_id = Some(rid); state.last_reaction_message_id = Some(last_mid.clone()); }
+                                    Ok(None) => {}
+                                    Err(e) => { eprintln!("{} chat_id={} direction=add_reaction(done_fallback) error={:?}", prefix(&channel_id), channel_id, e); }
+                                }
+                            }
+                        }
+                    }
+                    state.last_bot_message_id = None;
+                    continue;
+                }
+                // Non-buffer: treat same as StreamEnd
+                if !caps.supports_stream_edit {
+                    while !state.response_parts.is_empty() {
+                        if !drain_one_response_part(&channel_id, &mut state, &transport, max_len).await {
+                            break;
+                        }
                     }
                     continue;
                 }
