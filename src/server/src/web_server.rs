@@ -165,6 +165,7 @@ pub async fn run_web_server(
         .route("/api/tmux/sessions", get(list_tmux_sessions_handler))
         .route("/api/projects", get(list_projects_handler))
         .route("/api/im/feishu/event", post(feishu_webhook_handler))
+        .route("/api/im/feishu/card", post(feishu_card_callback_handler))
         .route("/preview/{project_id}", get(preview_page_handler))
         .route("/raw/{project_id}", get(raw_root_handler))
         .route("/raw/{project_id}/{*path}", get(raw_path_handler))
@@ -190,6 +191,25 @@ async fn feishu_webhook_handler(
     body: String,
 ) -> Response {
     let (status_code, body_str) = common::im::channels::feishu::handle_webhook_body(
+        &body,
+        state.feishu.as_ref(),
+    )
+    .await;
+    let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    (
+        status,
+        [("Content-Type", "application/json; charset=utf-8")],
+        body_str,
+    )
+        .into_response()
+}
+
+/// POST /api/im/feishu/card: Feishu card button click callback.
+async fn feishu_card_callback_handler(
+    State(state): State<AppState>,
+    body: String,
+) -> Response {
+    let (status_code, body_str) = common::im::channels::feishu::handle_card_callback(
         &body,
         state.feishu.as_ref(),
     )

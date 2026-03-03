@@ -53,3 +53,4 @@ logs/
 # Exclude from commit (tooling / temp)
 .claude/
 .specstory/
+.docs/

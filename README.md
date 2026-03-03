@@ -1,6 +1,10 @@
+<div align="center">
+
 # VibeAround — Vibe Coding Everywhere!
 
-<p align="center">
+[English](README.md) | [简体中文](README_CN.md)
+
+<p>
   <img src="Logo.png" width="120" alt="VibeAround" />
 </p>
 
@@ -10,11 +14,16 @@
   <img src="https://img.shields.io/badge/Vite-6-646CFF?style=flat-square&logo=vite&logoColor=fff" alt="Vite" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=000" alt="React" />
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License: MIT" />
+  <img src="https://img.shields.io/badge/ACP-Agent_Client_Protocol-8B5CF6?style=flat-square" alt="ACP" />
 </p>
+
+</div>
 
 ---
 
-**VibeAround** is an ambient vibe coding partner that runs on your own machine. Talk to it over the channels you already use (e.g. Telegram) and direct AI to vibe code from anywhere, at any time. It sits in the system tray as a lightweight daemon, runs a local server, and opens a web dashboard when you need it.
+**VibeAround** is an ambient vibe coding partner that runs on your own machine. Talk to it over the channels you already use (Telegram, Feishu) and direct AI agents to vibe code from anywhere, at any time. It sits in the system tray as a lightweight daemon, runs a local server, and opens a web dashboard when you need it.
+
+**Four AI agents, one interface** — switch between Claude Code, Gemini CLI, OpenCode, and Codex with a single `/cli_` command or a tap on the agent picker card. All agents communicate through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/), giving you a unified experience regardless of which AI is doing the work.
 
 **tmux-native by default** — terminal sessions can attach to tmux, so you can take unfinished work with you across devices. Start on your PC, pick it up on your phone, then resume on another machine — nothing is lost.
 
@@ -31,11 +40,27 @@ Web dashboard on desktop and mobile — same session, any device.
 
 ---
 
+## Supported Agents
+
+VibeAround connects to AI coding agents through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/). Switch agents at any time via IM commands or the interactive card.
+
+| Agent | Command | How it connects | Prerequisites |
+|-------|---------|----------------|---------------|
+| Claude Code | `/cli_claude` | In-process ACP bridge → `claude` CLI | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) |
+| Gemini CLI | `/cli_gemini` | `gemini --experimental-acp` (native ACP) | [Gemini CLI](https://github.com/google-gemini/gemini-cli) |
+| OpenCode | `/cli_opencode` | `opencode acp` (native ACP) | [OpenCode](https://github.com/opencode-ai/opencode) |
+| Codex | `/cli_codex` | `npx @zed-industries/codex-acp` (ACP bridge) | Node.js 18+, [codex-acp](https://github.com/zed-industries/codex-acp) |
+
+Use `/start` for an interactive agent picker card, or `/help` to see all commands.
+
+---
+
 **Goals**
 
 - Vibe Coding Everywhere!
 - Small and fast from day one — Bun and Rust for a portable, always-on vibe partner.
 - A context-aware programming companion in the background, without disrupting your workflow.
+- **Multi-agent:** Claude Code, Gemini CLI, OpenCode, Codex — all via ACP, switchable on the fly.
 - **Seamless device switching:** tmux sessions persist across connections — PC → mobile → another PC → back again, zero friction.
 - **Dual-track** control:
   - **Remote terminal:** attach to a live PTY from the web dashboard, with tmux session persistence.
@@ -73,6 +98,10 @@ Config file path: **`src/settings.json`** (create from `src/settings.json.exampl
 | `channels.telegram.bot_token` | Telegram bot token from [@BotFather](https://t.me/BotFather); omit to disable Telegram |
 | `channels.feishu.app_id` | Feishu/Lark app ID (from open platform); omit to disable Feishu |
 | `channels.feishu.app_secret` | Feishu app secret |
+| `channels.feishu.verbose.show_thinking` | Show agent thinking blocks in Feishu (default: `false`) |
+| `channels.feishu.verbose.show_tool_use` | Show tool calls/results in Feishu (default: `false`) |
+| `channels.telegram.verbose.show_thinking` | Show agent thinking blocks in Telegram (default: `false`) |
+| `channels.telegram.verbose.show_tool_use` | Show tool calls/results in Telegram (default: `false`) |
 | `tmux.detach_others` | Detach other clients when attaching to a tmux session (default: `true`) |
 | `working_dir` | Root for job workspaces, absolute path. Default: `{user_home}/VibeAround` when not set. |
 
@@ -234,29 +263,23 @@ The workflow is: **PC → mobile → another PC → back again**, all seamless.
 
 ## Roadmap
 
-The evolution of VibeAround transitions from a basic Proof of Concept (POC) to a highly configurable, extensible orchestrator.
-
-**Phase 1: Foundation (Current)**
-
-- **Remote PTY terminal:** Access your local terminal from a web browser remotely, support multiple sessions, and open Claude, Gemini, Codex or OpenCode directly. tmux-backed for persistent, device-portable sessions.
-- **IM:** Send vibe coding tasks through Telegram and Feishu, Claude Code only for now.
-- **Tunnel:** Ngrok and Localtunnel for inner-network penetration, provide a public URL for access (e.g. dashboard and Feishu webhook).
-
-**Phase 2: Core Productization**
-
-- **Workspaces:** Switch and manage project folders via IM or the Web Dashboard.
-- **Agent settings:** Configure API keys, model choice, and generation options.
-- **Skills and context:** Custom procedures, prompt templates, and project rules for the AI.
-- **IM and workspaces:** Support multiple accounts and bind specific chats to specific workspaces.
-- **History:** SQLite-backed conversations and task logs, resume and review anytime.
-
-**Phase 3: Ecosystem & Extensibility**
-
-- **More CLI tools:** Add or switch between Gemini, Codex, OpenDevin, and others via config.
-- **Port discovery:** Detect new dev servers and tunnel them automatically.
-- **More messaging:** Discord, Slack (Feishu already in Phase 1).
-- **Plugins:** Community adapters, log sanitizers, and workflow plugins.
-- **Safety and routing:** Router picks the right AI by intent, Git Sentinel snapshots before risky edits.
+- [x] Remote PTY terminal with web dashboard, multiple sessions, tmux persistence
+- [x] Tunnel support (Ngrok, Localtunnel, Cloudflare) for public URL access
+- [x] Telegram bot integration
+- [x] Feishu bot integration (webhook + interactive cards)
+- [x] Multi-agent via ACP: Claude Code, Gemini CLI, OpenCode, Codex
+- [x] Agent switching via `/cli_` commands and `/start` card
+- [x] Buffered streaming output with reactions (processing / done)
+- [x] Per-channel verbose config (show_thinking, show_tool_use)
+- [ ] Workspaces: switch and manage project folders via IM or Web Dashboard
+- [ ] Agent settings: model selection, API keys, generation options per agent
+- [ ] Skills and context: custom procedures, prompt templates, project rules
+- [ ] IM multi-account: bind specific chats to specific workspaces
+- [ ] History: SQLite-backed conversations and task logs
+- [ ] Port discovery: detect new dev servers and tunnel them automatically
+- [ ] More messaging: Discord, Slack
+- [ ] Plugins: community adapters, log sanitizers, workflow plugins
+- [ ] Safety and routing: intent-based agent selection, Git Sentinel snapshots
 
 ---
 

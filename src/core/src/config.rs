@@ -25,6 +25,21 @@ fn ensure_rustls_provider() {
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
+/// Per-channel verbose/output settings for IM.
+#[derive(Debug, Clone)]
+pub struct ImVerboseConfig {
+    /// Show agent thinking/reasoning blocks in IM output. Default: false.
+    pub show_thinking: bool,
+    /// Show tool use (call + result) blocks in IM output. Default: false.
+    pub show_tool_use: bool,
+}
+
+impl Default for ImVerboseConfig {
+    fn default() -> Self {
+        Self { show_thinking: false, show_tool_use: false }
+    }
+}
+
 /// Cached config from settings.json.
 pub struct Config {
     pub tunnel_provider: TunnelProvider,
@@ -40,6 +55,10 @@ pub struct Config {
     pub preview_base_url: Option<String>,
     /// When attaching to a tmux session, detach other clients first (`tmux attach -d`). Default: true.
     pub tmux_detach_others: bool,
+    /// Per-channel verbose settings for Feishu.
+    pub feishu_verbose: ImVerboseConfig,
+    /// Per-channel verbose settings for Telegram.
+    pub telegram_verbose: ImVerboseConfig,
 }
 
 /// Ensure config is loaded (idempotent). Loads settings.json on first call; returns the same instance afterwards.
@@ -120,6 +139,9 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
+    let feishu_verbose = parse_verbose_config(channels.and_then(|c| c.get("feishu")));
+    let telegram_verbose = parse_verbose_config(channels.and_then(|c| c.get("telegram")));
+
     Config {
         tunnel_provider,
         ngrok_auth_token,
@@ -130,6 +152,8 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         working_dir,
         preview_base_url,
         tmux_detach_others,
+        feishu_verbose,
+        telegram_verbose,
     }
 }
 
@@ -141,6 +165,21 @@ pub fn preview_base_url() -> Option<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .or_else(|| cfg.ngrok_domain.as_ref().map(|d| format!("https://{}", d.trim())))
+}
+
+/// Parse verbose config from a channel JSON object (e.g. channels.feishu or channels.telegram).
+fn parse_verbose_config(channel_obj: Option<&serde_json::Value>) -> ImVerboseConfig {
+    let verbose = channel_obj.and_then(|c| c.get("verbose"));
+    ImVerboseConfig {
+        show_thinking: verbose
+            .and_then(|v| v.get("show_thinking"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        show_tool_use: verbose
+            .and_then(|v| v.get("show_tool_use"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+    }
 }
 
 /// Default working directory when not set in settings: {user_home}/VibeAround.
@@ -163,6 +202,8 @@ impl Default for Config {
             working_dir: default_working_dir(),
             preview_base_url: None,
             tmux_detach_others: true,
+            feishu_verbose: ImVerboseConfig::default(),
+            telegram_verbose: ImVerboseConfig::default(),
         }
     }
 }

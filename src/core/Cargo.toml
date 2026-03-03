@@ -23,3 +23,6 @@ teloxide = { version = "0.17", default-features = false, features = ["macros", "
 rustls = "0.23"
 chrono = "0.4"
 rusqlite = { version = "0.31", features = ["bundled"] }
+agent-client-protocol = "0.9"
+tokio-util = { version = "0.7", features = ["compat"] }
+anyhow = "1"
