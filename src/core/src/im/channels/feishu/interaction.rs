@@ -54,7 +54,7 @@ pub fn build_card(title: &str, prompt: &str, options: &[InteractiveOption]) -> S
 
     let card = serde_json::json!({
         "schema": "2.0",
-        "config": { "wide_screen_mode": true, "update_multi": true },
+        "config": { "update_multi": true },
         "header": {
             "title": { "tag": "plain_text", "content": title },
             "template": "blue"

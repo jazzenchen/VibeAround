@@ -1,6 +1,8 @@
 //! IM transport abstraction: "send one message" and "edit message" for the unified send daemon.
 //! Each channel declares unified capabilities at IM level; daemon branches on these when processing.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 
 /// Error from sending/editing a message. Rate-limited responses can be retried after a delay.
@@ -42,17 +44,14 @@ pub struct InteractiveOption {
 pub struct ImChannelCapabilities {
     /// Whether this channel supports updating a message in place (send then edit for stream).
     pub supports_stream_edit: bool,
-    /// Whether to buffer all stream parts and send as complete messages on StreamEnd.
-    /// IM channels (Feishu, Telegram) set true; web chat sets false for real-time streaming.
-    pub buffer_stream: bool,
     /// Max length for a single message (truncation and chunking).
     pub max_message_len: usize,
     /// Prefix for channel_id (e.g. "telegram", "feishu") for routing and logging.
     pub channel_id_prefix: &'static str,
     /// Reaction to add when processing starts (platform-specific identifier).
     pub processing_reaction: &'static str,
-    /// Reaction to add when an operation completes successfully.
-    pub done_reaction: &'static str,
+    /// Minimum interval between edit_message calls (throttle). Platforms have different rate limits.
+    pub min_edit_interval: Duration,
 }
 
 /// Transport that can send and optionally edit messages. Implemented per IM channel.
@@ -90,6 +89,15 @@ pub trait ImTransport: Send + Sync {
     /// Remove a reaction from a message (e.g. when processing completes).
     async fn remove_reaction(&self, _channel_id: &str, _message_id: &str, _reaction_id: &str) -> Result<(), SendError> {
         Ok(()) // default no-op
+    }
+
+    /// Finalize a streaming session: convert draft/streaming preview into a permanent message.
+    /// Called by daemon at StreamEnd/StreamDone after the last edit_message.
+    /// - Telegram: materialize draft via sendMessage
+    /// - Feishu: disable streaming_mode on the card
+    /// Default: no-op (for channels that don't need finalization).
+    async fn finalize_stream(&self, _channel_id: &str, _message_id: &str, _final_text: &str) -> Result<(), SendError> {
+        Ok(())
     }
 
     /// Send an interactive card/inline keyboard for user input (e.g. tool approval).

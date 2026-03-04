@@ -1,18 +1,60 @@
-//! Telegram transport: send, edit, reply, reactions, inline keyboard.
-//! All teloxide types stay inside this module.
+//! Telegram transport: send, edit (via sendMessageDraft), reply, reactions, inline keyboard.
+//! Uses sendMessageDraft for streaming (typewriter effect), sendMessage for final commit.
+//! teloxide is used for non-streaming operations; raw HTTP for sendMessageDraft (not in teloxide).
+
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::im::transport::{ImChannelCapabilities, ImTransport, InteractiveOption, SendError};
 
 pub const TELEGRAM_MAX_MESSAGE_LEN: usize = 4096;
 
 /// Telegram send implementation: parses channel_id as "telegram:CHAT_ID" and calls send_message.
+/// Streaming uses sendMessageDraft API (raw HTTP) for typewriter effect.
 pub struct TelegramTransport {
     pub(crate) bot: teloxide::Bot,
+    client: reqwest::Client,
+    token: String,
+    /// Monotonically increasing draft_id counter for sendMessageDraft.
+    draft_counter: AtomicI64,
 }
 
 impl TelegramTransport {
     pub fn new(bot: teloxide::Bot) -> Self {
-        Self { bot }
+        let token = bot.token().to_string();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .expect("reqwest client");
+        Self { bot, client, token, draft_counter: AtomicI64::new(1) }
+    }
+
+    fn next_draft_id(&self) -> i64 {
+        self.draft_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Call sendMessageDraft via raw HTTP (not in teloxide).
+    async fn send_message_draft(&self, chat_id: i64, draft_id: i64, text: &str) -> Result<(), SendError> {
+        let url = format!("https://api.telegram.org/bot{}/sendMessageDraft", self.token);
+        let body = serde_json::json!({
+            "chat_id": chat_id,
+            "draft_id": draft_id,
+            "text": text,
+        });
+        let res = self.client.post(&url).json(&body).send().await
+            .map_err(|e| SendError::Other(format!("sendMessageDraft: {}", e)))?;
+        let status = res.status();
+        if status.as_u16() == 429 {
+            let text = res.text().await.unwrap_or_default();
+            let retry: f64 = serde_json::from_str::<serde_json::Value>(&text).ok()
+                .and_then(|v| v.pointer("/parameters/retry_after").and_then(|r| r.as_f64()))
+                .unwrap_or(1.0);
+            return Err(SendError::RateLimited { retry_after_secs: retry });
+        }
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            return Err(SendError::Other(format!("sendMessageDraft status={} body={}", status, body)));
+        }
+        Ok(())
     }
 }
 
@@ -21,32 +63,52 @@ impl ImTransport for TelegramTransport {
     fn capabilities(&self) -> ImChannelCapabilities {
         ImChannelCapabilities {
             supports_stream_edit: true,
-            buffer_stream: true,
             max_message_len: TELEGRAM_MAX_MESSAGE_LEN,
             channel_id_prefix: "telegram",
-            // Telegram reactions must be from the allowed emoji list:
-            // https://core.telegram.org/bots/api#reactiontypeemoji
             processing_reaction: "👀",
-            done_reaction: "🎉",
+            min_edit_interval: std::time::Duration::ZERO,
         }
     }
 
+    /// Start a new streaming draft. Returns "draft:{chat_id}:{draft_id}" as the message_id
+    /// so edit_message can continue pushing updates via sendMessageDraft.
     async fn send(&self, channel_id: &str, text: &str) -> Result<Option<String>, SendError> {
-        use teloxide::prelude::*;
         let chat_id = parse_chat_id(channel_id)?;
-        let text = truncate_to_max(text).into_owned();
-        let msg = self.bot.send_message(chat_id, text.as_str()).await
-            .map_err(|e| SendError::Other(e.to_string()))?;
-        Ok(Some(msg.id.0.to_string()))
+        let draft_id = self.next_draft_id();
+        let text = truncate_to_max(text);
+        self.send_message_draft(chat_id.0, draft_id, &text).await?;
+        // Encode draft context so edit_message can reuse it
+        Ok(Some(format!("draft:{}:{}", chat_id.0, draft_id)))
     }
 
-    async fn edit_message(&self, channel_id: &str, message_id: &str, text: &str) -> Result<(), SendError> {
+    /// Update the streaming draft with new text.
+    async fn edit_message(&self, _channel_id: &str, message_id: &str, text: &str) -> Result<(), SendError> {
+        let text = truncate_to_max(text);
+        // Parse "draft:{chat_id}:{draft_id}"
+        let parts: Vec<&str> = message_id.splitn(3, ':').collect();
+        if parts.len() != 3 || parts[0] != "draft" {
+            return Err(SendError::Other(format!("invalid draft message_id: {}", message_id)));
+        }
+        let chat_id: i64 = parts[1].parse()
+            .map_err(|_| SendError::Other(format!("invalid chat_id in draft: {}", message_id)))?;
+        let draft_id: i64 = parts[2].parse()
+            .map_err(|_| SendError::Other(format!("invalid draft_id: {}", message_id)))?;
+
+        self.send_message_draft(chat_id, draft_id, &text).await
+    }
+
+    /// Materialize the draft into a permanent message via sendMessage.
+    async fn finalize_stream(&self, _channel_id: &str, message_id: &str, final_text: &str) -> Result<(), SendError> {
         use teloxide::prelude::*;
-        let chat_id = parse_chat_id(channel_id)?;
-        let text = truncate_to_max(text).into_owned();
-        let mid: i32 = message_id.parse()
-            .map_err(|_| SendError::Other(format!("invalid message_id: {}", message_id)))?;
-        self.bot.edit_message_text(chat_id, teloxide::types::MessageId(mid), text.as_str()).await
+        let text = truncate_to_max(final_text);
+        let parts: Vec<&str> = message_id.splitn(3, ':').collect();
+        if parts.len() != 3 || parts[0] != "draft" {
+            return Ok(()); // not a draft, nothing to materialize
+        }
+        let chat_id: i64 = parts[1].parse()
+            .map_err(|_| SendError::Other(format!("invalid chat_id in draft: {}", message_id)))?;
+        let tg_chat_id = teloxide::types::ChatId(chat_id);
+        self.bot.send_message(tg_chat_id, text.as_ref()).await
             .map_err(|e| SendError::Other(e.to_string()))?;
         Ok(())
     }
@@ -54,11 +116,11 @@ impl ImTransport for TelegramTransport {
     async fn reply(&self, channel_id: &str, reply_to_message_id: &str, text: &str) -> Result<Option<String>, SendError> {
         use teloxide::prelude::*;
         let chat_id = parse_chat_id(channel_id)?;
-        let text = truncate_to_max(text).into_owned();
+        let text = truncate_to_max(text);
         let reply_mid: i32 = reply_to_message_id.parse()
             .map_err(|_| SendError::Other(format!("invalid reply_to message_id: {}", reply_to_message_id)))?;
         let reply_params = teloxide::types::ReplyParameters::new(teloxide::types::MessageId(reply_mid));
-        let msg = self.bot.send_message(chat_id, text.as_str())
+        let msg = self.bot.send_message(chat_id, text.as_ref())
             .reply_parameters(reply_params)
             .await
             .map_err(|e| SendError::Other(e.to_string()))?;
@@ -100,7 +162,6 @@ impl ImTransport for TelegramTransport {
         use teloxide::prelude::*;
         let chat_id = parse_chat_id(channel_id)?;
 
-        // Build inline keyboard rows (2 buttons per row)
         let mut rows: Vec<Vec<teloxide::types::InlineKeyboardButton>> = Vec::new();
         let mut current_row = Vec::new();
         for opt in options {

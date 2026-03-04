@@ -1,5 +1,6 @@
 {
   "working_dir": "",
+  "default_agent": "opencode",
   "tunnel": {
     "provider": "ngrok",
     "ngrok": {
@@ -11,16 +12,16 @@
     "telegram": {
       "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
       "verbose": {
-        "show_thinking": false,
-        "show_tool_use": false
+        "show_thinking": true,
+        "show_tool_use": true
       }
     },
     "feishu": {
       "app_id": "YOUR_FEISHU_APP_ID",
       "app_secret": "YOUR_FEISHU_APP_SECRET",
       "verbose": {
-        "show_thinking": false,
-        "show_tool_use": false
+        "show_thinking": true,
+        "show_tool_use": true
       }
     }
   }

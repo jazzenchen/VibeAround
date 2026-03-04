@@ -59,6 +59,9 @@ pub struct Config {
     pub feishu_verbose: ImVerboseConfig,
     /// Per-channel verbose settings for Telegram.
     pub telegram_verbose: ImVerboseConfig,
+    /// Default agent to start on first message (e.g. "claude", "gemini", "opencode", "codex").
+    /// Default: "claude".
+    pub default_agent: String,
 }
 
 /// Ensure config is loaded (idempotent). Loads settings.json on first call; returns the same instance afterwards.
@@ -141,6 +144,12 @@ fn load_settings_from(path: &std::path::Path) -> Config {
 
     let feishu_verbose = parse_verbose_config(channels.and_then(|c| c.get("feishu")));
     let telegram_verbose = parse_verbose_config(channels.and_then(|c| c.get("telegram")));
+    let default_agent = root
+        .get("default_agent")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "claude".to_string());
 
     Config {
         tunnel_provider,
@@ -154,6 +163,7 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         tmux_detach_others,
         feishu_verbose,
         telegram_verbose,
+        default_agent,
     }
 }
 
@@ -204,6 +214,7 @@ impl Default for Config {
             tmux_detach_others: true,
             feishu_verbose: ImVerboseConfig::default(),
             telegram_verbose: ImVerboseConfig::default(),
+            default_agent: "claude".to_string(),
         }
     }
 }

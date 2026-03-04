@@ -192,7 +192,10 @@ pub async fn run_feishu_bot() -> Option<FeishuWebhookState> {
 
     let (inbound_tx, inbound_rx) = mpsc::channel(64);
     let busy_set: Arc<DashMap<String, ()>> = Arc::new(DashMap::new());
-    let transport = Arc::new(FeishuTransport::new(app_id, app_secret));
+    let transport = Arc::new(FeishuTransport::new(
+        app_id,
+        app_secret,
+    ));
     let outbound = OutboundHub::new(transport.clone());
 
     tokio::spawn(crate::im::worker::run_worker(

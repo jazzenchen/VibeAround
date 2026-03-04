@@ -85,14 +85,19 @@ bun run dev
 | `tunnel.ngrok.domain` | 可选的保留 ngrok 域名（例如：`myapp.ngrok.io`） |
 | `tunnel.preview_base_url` | 可选的预览链接基础 URL（设置后将覆盖 domain 配置） |
 | `channels.telegram.bot_token` | 来自 [@BotFather](https://t.me/BotFather) 的 Telegram 机器人 Token；若留空则禁用 Telegram 机器人 |
+| `channels.telegram.streaming.enable` | 启用通过消息编辑实现的流式输出（默认：`false`） |
+| `channels.telegram.streaming.edit_interval_ms` | 流式输出时 edit_message 调用的最小间隔毫秒数（默认：`100`） |
 | `channels.feishu.app_id` | 飞书应用 ID（来自开放平台）；若留空则禁用飞书机器人 |
 | `channels.feishu.app_secret` | 飞书应用密钥 (App Secret) |
+| `channels.feishu.streaming.enable` | 启用通过消息编辑实现的流式输出（默认：`false`） |
+| `channels.feishu.streaming.edit_interval_ms` | 流式输出时 edit_message 调用的最小间隔毫秒数（默认：`200`） |
 | `channels.feishu.verbose.show_thinking` | 在飞书中显示智能体的思考过程块（默认：`false`） |
 | `channels.feishu.verbose.show_tool_use` | 在飞书中显示工具调用记录及结果（默认：`false`） |
 | `channels.telegram.verbose.show_thinking` | 在 Telegram 中显示智能体的思考过程块（默认：`false`） |
 | `channels.telegram.verbose.show_tool_use` | 在 Telegram 中显示工具调用记录及结果（默认：`false`） |
 | `tmux.detach_others` | 附加至 tmux 会话时，分离其他已连接的客户端（默认：`true`） |
 | `working_dir` | 任务工作区的根目录，需为绝对路径。未设置时默认为：`{user_home}/VibeAround` |
+| `default_agent` | 首条消息时默认启动的 Agent：`claude`、`gemini`、`opencode`、`codex`（默认：`claude`） |
 
 **最简配置示例**（仅启用 Telegram + Localtunnel）：
 
@@ -122,6 +127,32 @@ bun run dev
     "feishu": {
       "app_id": "YOUR_FEISHU_APP_ID",
       "app_secret": "YOUR_FEISHU_APP_SECRET"
+    }
+  }
+}
+
+```
+
+**启用流式输出的配置示例：**
+
+```
+{
+  "tunnel": {
+    "provider": "ngrok",
+    "ngrok": {
+      "auth_token": "YOUR_NGROK_AUTH_TOKEN",
+      "domain": "your-reserved.ngrok.io"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+      "streaming": { "enable": true, "edit_interval_ms": 100 }
+    },
+    "feishu": {
+      "app_id": "YOUR_FEISHU_APP_ID",
+      "app_secret": "YOUR_FEISHU_APP_SECRET",
+      "streaming": { "enable": true, "edit_interval_ms": 200 }
     }
   }
 }

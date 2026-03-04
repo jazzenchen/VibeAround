@@ -41,7 +41,10 @@ impl ImChannelKind {
                 if app_id.is_empty() || app_secret.is_empty() {
                     return None;
                 }
-                Some(Arc::new(feishu::FeishuTransport::new(app_id, app_secret)))
+                Some(Arc::new(feishu::FeishuTransport::new(
+                    app_id,
+                    app_secret,
+                )))
             }
         }
     }

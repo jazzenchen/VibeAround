@@ -1,5 +1,5 @@
 //! Feishu transport: HTTP API with tenant_access_token.
-//! Send, reply, reactions, interactive cards.
+//! Uses CardKit Streaming API for typewriter-effect updates.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 
 use crate::im::log::prefix_channel;
-use crate::im::transport::{ImChannelCapabilities, ImTransport, InteractiveOption, SendError};
+use crate::im::transport::{ImChannelCapabilities, ImTransport, InteractiveOption, SendError, SendResult};
 
 pub const FEISHU_MAX_MESSAGE_LEN: usize = 4000;
 
@@ -15,17 +15,22 @@ pub(crate) const FEISHU_API_BASE: &str = "https://open.feishu.cn/open-apis";
 const TOKEN_URL: &str = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 const TOKEN_REFRESH_MARGIN_SECS: u64 = 300;
 
+/// The element_id used for the main markdown body in streaming cards.
+const STREAM_ELEMENT_ID: &str = "stream_md";
+
 struct TokenCache {
     token: String,
     expires_at: Instant,
 }
 
-/// Feishu transport: app_id + app_secret, tenant_access_token, send via HTTP.
+/// Feishu transport: always uses CardKit Streaming API for card messages.
 pub struct FeishuTransport {
     app_id: String,
     app_secret: String,
     pub(crate) client: reqwest::Client,
     token_cache: Arc<tokio::sync::RwLock<Option<TokenCache>>>,
+    /// Monotonically increasing sequence number for CardKit streaming API calls.
+    sequence: std::sync::atomic::AtomicU64,
 }
 
 impl FeishuTransport {
@@ -39,6 +44,7 @@ impl FeishuTransport {
             app_secret,
             client,
             token_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            sequence: std::sync::atomic::AtomicU64::new(1),
         }
     }
 
@@ -80,7 +86,11 @@ impl FeishuTransport {
             .ok_or_else(|| SendError::Other("invalid channel_id (expected feishu:CHAT_ID)".into()))
     }
 
-    /// Get a single message by id (e.g. to fetch quoted message content/attachments).
+    fn next_sequence(&self) -> u64 {
+        self.sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get a single message by id.
     pub async fn get_message(
         &self, chat_id: &str, message_id: &str,
     ) -> Result<(String, serde_json::Value), SendError> {
@@ -138,32 +148,47 @@ impl FeishuTransport {
         res.bytes().await.map(|b| b.to_vec())
             .map_err(|e| SendError::Other(format!("download_resource read bytes: {}", e)))
     }
-}
 
-#[async_trait]
-impl ImTransport for FeishuTransport {
-    fn capabilities(&self) -> ImChannelCapabilities {
-        ImChannelCapabilities {
-            supports_stream_edit: false,
-            buffer_stream: true,
-            max_message_len: FEISHU_MAX_MESSAGE_LEN,
-            channel_id_prefix: "feishu",
-            processing_reaction: "OneSecond",
-            done_reaction: "CheckMark",
+    // ── CardKit Streaming API ──────────────────────────────────────────
+
+    /// Create a card entity with streaming_mode enabled. Returns card_id.
+    async fn create_card_entity(&self, card_json: &str) -> Result<String, SendError> {
+        let token = self.get_token().await?;
+        let body = serde_json::json!({
+            "type": "card_json",
+            "data": card_json,
+        });
+        let url = format!("{}/cardkit/v1/cards", FEISHU_API_BASE);
+        let res = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json; charset=utf-8")
+            .json(&body).send().await
+            .map_err(|e| SendError::Other(format!("create_card: {}", e)))?;
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        if code != 0 {
+            eprintln!("{} direction=create_card error=code={} body={}",
+                prefix_channel("feishu"), code, text);
+            return Err(SendError::Other(format!("create_card API code={} body={}", code, text)));
         }
+        json.pointer("/data/card_id")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| SendError::Other("create_card: missing card_id".into()))
     }
 
-    async fn send(&self, channel_id: &str, text: &str) -> Result<Option<String>, SendError> {
-        let chat_id = Self::parse_chat_id(channel_id)?;
-        let text = if text.len() > FEISHU_MAX_MESSAGE_LEN {
-            text[..FEISHU_MAX_MESSAGE_LEN].to_string()
-        } else { text.to_string() };
+    /// Send a card entity as a message.
+    async fn send_card_entity(&self, chat_id: &str, card_id: &str) -> Result<Option<String>, SendError> {
         let token = self.get_token().await?;
-        let content_json = serde_json::json!({ "text": text });
+        let content = serde_json::json!({
+            "type": "card",
+            "data": { "card_id": card_id }
+        });
         let body = serde_json::json!({
             "receive_id": chat_id,
-            "msg_type": "text",
-            "content": content_json.to_string(),
+            "msg_type": "interactive",
+            "content": content.to_string(),
         });
         let url = format!("{}/im/v1/messages?receive_id_type=chat_id", FEISHU_API_BASE);
         let res = self.client.post(&url)
@@ -172,36 +197,133 @@ impl ImTransport for FeishuTransport {
             .json(&body).send().await
             .map_err(|e| SendError::Other(e.to_string()))?;
         if res.status() == 429 {
-            let retry_after = res.headers().get("Retry-After")
+            let ra = res.headers().get("Retry-After")
                 .and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(60.0);
-            return Err(SendError::RateLimited { retry_after_secs: retry_after });
+            return Err(SendError::RateLimited { retry_after_secs: ra });
         }
-        let text_res = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
-        let json: serde_json::Value = serde_json::from_str(&text_res).unwrap_or(serde_json::Value::Null);
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
         let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
         if code != 0 {
-            eprintln!("{} chat_id={} direction=send error=code={} body={}",
-                prefix_channel("feishu"), chat_id, code, text_res);
-            return Err(SendError::Other(format!("send message API code={} body={}", code, text_res)));
+            eprintln!("{} chat_id={} direction=send_card error=code={} body={}",
+                prefix_channel("feishu"), chat_id, code, text);
+            return Err(SendError::Other(format!("send_card API code={} body={}", code, text)));
         }
-        let message_id = json.pointer("/data/message_id").and_then(|v| v.as_str()).map(String::from);
-        Ok(message_id)
+        Ok(json.pointer("/data/message_id").and_then(|v| v.as_str()).map(String::from))
     }
 
-    async fn edit_message(&self, _channel_id: &str, _message_id: &str, _text: &str) -> Result<(), SendError> {
+    /// Push full text to a streaming card element (typewriter effect).
+    async fn streaming_update_text(&self, card_id: &str, element_id: &str, content: &str) -> Result<(), SendError> {
+        let token = self.get_token().await?;
+        let seq = self.next_sequence();
+        let body = serde_json::json!({ "content": content, "sequence": seq });
+        let url = format!("{}/cardkit/v1/cards/{}/elements/{}/content",
+            FEISHU_API_BASE, card_id, element_id);
+        let res = self.client.put(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json; charset=utf-8")
+            .json(&body).send().await
+            .map_err(|e| SendError::Other(format!("streaming_update_text: {}", e)))?;
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        if code != 0 {
+            eprintln!("{} card_id={} element_id={} direction=streaming_update error=code={} body={}",
+                prefix_channel("feishu"), card_id, element_id, code, text);
+            return Err(SendError::Other(format!("streaming_update_text code={} body={}", code, text)));
+        }
         Ok(())
     }
 
-    async fn reply(&self, channel_id: &str, reply_to_message_id: &str, text: &str) -> Result<Option<String>, SendError> {
-        let _chat_id = Self::parse_chat_id(channel_id)?;
-        let text = if text.len() > FEISHU_MAX_MESSAGE_LEN {
-            text[..FEISHU_MAX_MESSAGE_LEN].to_string()
-        } else { text.to_string() };
+    /// Update card settings (e.g. disable streaming_mode when done).
+    async fn update_card_settings(&self, card_id: &str, streaming_mode: bool) -> Result<(), SendError> {
         let token = self.get_token().await?;
-        let content_json = serde_json::json!({ "text": text });
+        let seq = self.next_sequence();
+        let settings = serde_json::json!({ "config": { "streaming_mode": streaming_mode } });
+        let body = serde_json::json!({ "settings": settings.to_string(), "sequence": seq });
+        let url = format!("{}/cardkit/v1/cards/{}/settings", FEISHU_API_BASE, card_id);
+        let res = self.client.put(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json; charset=utf-8")
+            .json(&body).send().await
+            .map_err(|e| SendError::Other(format!("update_card_settings: {}", e)))?;
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        if code != 0 {
+            eprintln!("{} card_id={} direction=update_settings streaming={} error=code={} body={}",
+                prefix_channel("feishu"), card_id, streaming_mode, code, text);
+        }
+        Ok(())
+    }
+}
+
+/// Build a minimal streaming card JSON (no header, just a markdown body element).
+fn build_streaming_card() -> String {
+    let card = serde_json::json!({
+        "schema": "2.0",
+        "config": {
+            "update_multi": true,
+            "streaming_mode": true,
+            "summary": { "content": "[Generating]" }
+        },
+        "streaming_config": {
+            "print_strategy": "fast"
+        },
+        "body": {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": "...",
+                    "element_id": STREAM_ELEMENT_ID
+                }
+            ]
+        }
+    });
+    card.to_string()
+}
+
+#[async_trait]
+impl ImTransport for FeishuTransport {
+    fn capabilities(&self) -> ImChannelCapabilities {
+        ImChannelCapabilities {
+            supports_stream_edit: true,
+            max_message_len: FEISHU_MAX_MESSAGE_LEN,
+            channel_id_prefix: "feishu",
+            processing_reaction: "OnIt",
+            min_edit_interval: Duration::ZERO,
+        }
+    }
+
+    async fn send(&self, channel_id: &str, text: &str) -> Result<SendResult, SendError> {
+        let chat_id = Self::parse_chat_id(channel_id)?;
+        // Create streaming card → send card entity → return card_id
+        let card_json = build_streaming_card();
+        let card_id = self.create_card_entity(&card_json).await?;
+        self.send_card_entity(chat_id, &card_id).await?;
+        // Push initial text
+        let _ = self.streaming_update_text(&card_id, STREAM_ELEMENT_ID, text).await;
+        Ok(Some(card_id))
+    }
+
+    async fn edit_message(&self, _channel_id: &str, card_id: &str, text: &str) -> Result<(), SendError> {
+        // Push full text to the streaming card element
+        self.streaming_update_text(card_id, STREAM_ELEMENT_ID, text).await
+    }
+
+    async fn finalize_stream(&self, _channel_id: &str, card_id: &str, _final_text: &str) -> Result<(), SendError> {
+        // End streaming mode on the card (stops typewriter animation)
+        self.update_card_settings(card_id, false).await
+    }
+
+    async fn reply(&self, channel_id: &str, reply_to_message_id: &str, text: &str) -> Result<SendResult, SendError> {
+        let chat_id = Self::parse_chat_id(channel_id)?;
+        let token = self.get_token().await?;
+        let content = serde_json::json!({ "text": text });
         let body = serde_json::json!({
+            "receive_id": chat_id,
             "msg_type": "text",
-            "content": content_json.to_string(),
+            "content": content.to_string(),
         });
         let url = format!("{}/im/v1/messages/{}/reply", FEISHU_API_BASE, reply_to_message_id);
         let res = self.client.post(&url)
@@ -209,94 +331,86 @@ impl ImTransport for FeishuTransport {
             .header("Content-Type", "application/json; charset=utf-8")
             .json(&body).send().await
             .map_err(|e| SendError::Other(e.to_string()))?;
-        if res.status() == 429 {
-            let retry_after = res.headers().get("Retry-After")
-                .and_then(|v| v.to_str().ok()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(60.0);
-            return Err(SendError::RateLimited { retry_after_secs: retry_after });
-        }
-        let text_res = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
-        let json: serde_json::Value = serde_json::from_str(&text_res).unwrap_or(serde_json::Value::Null);
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
         let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
         if code != 0 {
-            return Err(SendError::Other(format!("reply API code={} body={}", code, text_res)));
+            return Err(SendError::Other(format!("reply API code={} body={}", code, text)));
         }
-        let message_id = json.pointer("/data/message_id").and_then(|v| v.as_str()).map(String::from);
-        Ok(message_id)
+        Ok(json.pointer("/data/message_id").and_then(|v| v.as_str()).map(String::from))
     }
 
     async fn add_reaction(&self, channel_id: &str, message_id: &str, emoji: &str) -> Result<Option<String>, SendError> {
-        let _chat_id = Self::parse_chat_id(channel_id)?;
+        let _ = Self::parse_chat_id(channel_id)?;
         let token = self.get_token().await?;
-        // Feishu uses its own emoji_type identifiers — pass through directly (e.g. "OneSecond", "CheckMark").
-        let emoji_type = emoji;
-        let body = serde_json::json!({ "reaction_type": { "emoji_type": emoji_type } });
+        let body = serde_json::json!({ "reaction_type": { "emoji_type": emoji } });
         let url = format!("{}/im/v1/messages/{}/reactions", FEISHU_API_BASE, message_id);
-        eprintln!("{} direction=add_reaction message_id={} emoji_type={} url={}",
-            prefix_channel("feishu"), message_id, emoji_type, url);
         let res = self.client.post(&url)
             .header("Authorization", format!("Bearer {}", token))
             .header("Content-Type", "application/json; charset=utf-8")
             .json(&body).send().await
             .map_err(|e| SendError::Other(e.to_string()))?;
-        let status = res.status();
-        let text_res = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
-        let json: serde_json::Value = serde_json::from_str(&text_res).unwrap_or(serde_json::Value::Null);
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
         let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
         if code != 0 {
-            eprintln!("{} direction=add_reaction error: status={} code={} body={}",
-                prefix_channel("feishu"), status, code, text_res);
-            return Err(SendError::Other(format!("add_reaction API code={} body={}", code, text_res)));
+            return Err(SendError::Other(format!("add_reaction code={} body={}", code, text)));
         }
         let reaction_id = json.pointer("/data/reaction_id").and_then(|v| v.as_str()).map(String::from);
-        eprintln!("{} direction=add_reaction success reaction_id={:?}",
-            prefix_channel("feishu"), reaction_id);
         Ok(reaction_id)
     }
 
-    async fn remove_reaction(&self, channel_id: &str, message_id: &str, reaction_id: &str) -> Result<(), SendError> {
-        let _chat_id = Self::parse_chat_id(channel_id)?;
+    async fn remove_reaction(&self, _channel_id: &str, message_id: &str, reaction_id: &str) -> Result<(), SendError> {
         let token = self.get_token().await?;
         let url = format!("{}/im/v1/messages/{}/reactions/{}", FEISHU_API_BASE, message_id, reaction_id);
-        let _ = self.client.delete(&url)
+        let res = self.client.delete(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send().await
             .map_err(|e| SendError::Other(e.to_string()))?;
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        if code != 0 {
+            eprintln!("{} direction=remove_reaction error=code={} body={}",
+                prefix_channel("feishu"), code, text);
+        }
         Ok(())
     }
 
     async fn send_interactive(
-        &self, channel_id: &str, prompt: &str, options: &[InteractiveOption], reply_to: Option<&str>,
-    ) -> Result<Option<String>, SendError> {
+        &self,
+        channel_id: &str,
+        prompt: &str,
+        options: &[InteractiveOption],
+        reply_to: Option<&str>,
+    ) -> Result<SendResult, SendError> {
         let chat_id = Self::parse_chat_id(channel_id)?;
         let token = self.get_token().await?;
-
-        let content = super::interaction::build_card("VibeAround", prompt, options);
-        eprintln!("{} direction=send_interactive card_content={}", prefix_channel("feishu"), &content);
-
-        let (url, body) = if let Some(reply_mid) = reply_to {
-            let url = format!("{}/im/v1/messages/{}/reply", FEISHU_API_BASE, reply_mid);
-            let b = serde_json::json!({ "msg_type": "interactive", "content": content });
-            (url, b)
+        let card_json = super::interaction::build_card("VibeAround", prompt, options);
+        // Send as interactive card directly (not CardKit streaming)
+        let body = serde_json::json!({
+            "receive_id": chat_id,
+            "msg_type": "interactive",
+            "content": card_json,
+        });
+        let url = if let Some(reply_id) = reply_to {
+            format!("{}/im/v1/messages/{}/reply", FEISHU_API_BASE, reply_id)
         } else {
-            let url = format!("{}/im/v1/messages?receive_id_type=chat_id", FEISHU_API_BASE);
-            let b = serde_json::json!({ "receive_id": chat_id, "msg_type": "interactive", "content": content });
-            (url, b)
+            format!("{}/im/v1/messages?receive_id_type=chat_id", FEISHU_API_BASE)
         };
-
         let res = self.client.post(&url)
             .header("Authorization", format!("Bearer {}", token))
             .header("Content-Type", "application/json; charset=utf-8")
             .json(&body).send().await
             .map_err(|e| SendError::Other(e.to_string()))?;
-        let text_res = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
-        eprintln!("{} direction=send_interactive response={}", prefix_channel("feishu"), text_res);
-        let json: serde_json::Value = serde_json::from_str(&text_res).unwrap_or(serde_json::Value::Null);
-        let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
         if code != 0 {
-            eprintln!("{} direction=send_interactive error=code={} body={}",
-                prefix_channel("feishu"), code, text_res);
+            eprintln!("{} chat_id={} direction=send_interactive error=code={} body={}",
+                prefix_channel("feishu"), chat_id, code, text);
+            return Err(SendError::Other(format!("send_interactive code={} body={}", code, text)));
         }
-        let message_id = json.pointer("/data/message_id").and_then(|v| v.as_str()).map(String::from);
-        Ok(message_id)
+        Ok(json.pointer("/data/message_id").and_then(|v| v.as_str()).map(String::from))
     }
 }

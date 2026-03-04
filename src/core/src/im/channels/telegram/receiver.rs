@@ -203,7 +203,9 @@ pub async fn run_telegram_bot() {
 
     let (inbound_tx, inbound_rx) = mpsc::channel(64);
     let busy_set: Arc<DashMap<String, ()>> = Arc::new(DashMap::new());
-    let transport = Arc::new(TelegramTransport::new(bot.clone()));
+    let transport = Arc::new(TelegramTransport::new(
+        bot.clone(),
+    ));
     let outbound = crate::im::daemon::OutboundHub::new(transport);
 
     tokio::spawn(crate::im::worker::run_worker(

@@ -79,10 +79,12 @@ pub async fn run_worker<T>(
             continue;
         }
 
-        // --- Ensure an agent is running (lazy start Claude on first message) ---
+        // --- Ensure an agent is running (lazy start default agent on first message) ---
         if active_agent.is_none() {
-            eprintln!("[VibeAround][im][worker] no active agent, starting default (claude)...");
-            switch_agent(&mut active_agent, AgentKind::Claude, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref()).await;
+            let default_kind = agent::AgentKind::from_str_loose(&config::ensure_loaded().default_agent)
+                .unwrap_or(AgentKind::Claude);
+            eprintln!("[VibeAround][im][worker] no active agent, starting default ({})...", default_kind);
+            switch_agent(&mut active_agent, default_kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref()).await;
             if active_agent.is_none() {
                 busy_set.remove(&channel_id);
                 continue;
@@ -112,15 +114,12 @@ async fn switch_agent<T>(
     working_dir: &std::path::Path,
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
-    user_message_id: Option<&str>,
+    _user_message_id: Option<&str>,
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
-    let caps = outbound.capabilities();
-
     // Send an immediate status message so the user sees something right away.
-    // We call transport directly (bypassing the queue) to get back the message_id.
-    let status_msg = format!("⏳ Starting {} agent...", kind);
+    let status_msg = format!("Starting {} agent...", kind);
     let status_message_id: Option<String> = outbound.send_direct(channel_id, &status_msg).await;
 
     // Shut down existing agent
@@ -130,29 +129,26 @@ async fn switch_agent<T>(
 
     // Start new agent
     let mut backend = agent::create_backend(kind);
-    let success = match backend.start(working_dir).await {
+    match backend.start(working_dir).await {
         Ok(()) => {
             *active_agent = Some(backend);
-            true
+            // Edit the status message to show success
+            if let Some(ref mid) = status_message_id {
+                outbound.edit_direct(channel_id, mid, &format!("{} agent started ✅", kind)).await;
+            }
         }
         Err(e) => {
-            let _ = outbound.send(channel_id, OutboundMsg::Send(
-                channel_id.to_string(),
-                format!("✗ Failed to start {} agent: {}", kind, e),
-            )).await;
-            false
+            // Edit the status message to show failure, or send a new one if no message_id
+            let err_msg = format!("Failed to start {} agent: {}", kind, e);
+            if let Some(ref mid) = status_message_id {
+                outbound.edit_direct(channel_id, mid, &err_msg).await;
+            } else {
+                let _ = outbound.send(channel_id, OutboundMsg::Send(
+                    channel_id.to_string(), err_msg,
+                )).await;
+            }
         }
     };
-
-    // Mark the status message done via reaction (or fall back to user's message).
-    let reaction_target = status_message_id.as_deref().or(user_message_id);
-    if let Some(mid) = reaction_target {
-        if success {
-            let _ = outbound.send(channel_id, OutboundMsg::AddReaction(
-                channel_id.to_string(), mid.to_string(), caps.done_reaction.to_string(),
-            )).await;
-        }
-    }
 }
 
 /// Truncate tool output for display in IM (avoid flooding).
@@ -185,11 +181,24 @@ async fn run_with_agent<T>(
         outbound.set_reply_to(channel_id, user_mid.clone()).await;
     }
 
+    // Add processing reaction to the user's message to indicate we're working on it
+    if let Some(ref user_mid) = msg.user_message_id {
+        let _ = outbound.send(channel_id, OutboundMsg::AddReaction(
+            channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
+        )).await;
+    }
+
     if let Err(e) = agent.send_message(&msg.text).await {
         let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
             channel_id.to_string(), format!("[Agent error: {}]", e),
         )).await;
         let _ = outbound.send(channel_id, OutboundMsg::StreamDone(channel_id.to_string())).await;
+        // Remove processing reaction on error
+        if let Some(ref user_mid) = msg.user_message_id {
+            let _ = outbound.send(channel_id, OutboundMsg::RemoveReaction(
+                channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
+            )).await;
+        }
         return;
     }
 
@@ -230,19 +239,12 @@ async fn run_with_agent<T>(
                         }
                         current_block = Block::Thinking;
                         let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                            channel_id.to_string(), "💭 *Thinking...*\n".to_string(),
+                            channel_id.to_string(), "🧠 Thinking...\n".to_string(),
                         )).await;
                     }
-                    if caps.buffer_stream {
-                        let summary = truncate_tool_output(&text, 200);
-                        let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                            channel_id.to_string(), format!("> {}\n", summary),
-                        )).await;
-                    } else {
-                        let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                            channel_id.to_string(), text,
-                        )).await;
-                    }
+                    let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
+                        channel_id.to_string(), text,
+                    )).await;
                 }
                 AgentEvent::Progress(status) => {
                     let _ = outbound.send(channel_id, OutboundMsg::StreamProgress(
@@ -288,15 +290,7 @@ async fn run_with_agent<T>(
                         channel_id.to_string(), result_msg,
                     )).await;
                 }
-                AgentEvent::TurnComplete { cost_usd, .. } => {
-                    if let Some(cost) = cost_usd {
-                        if current_block != Block::None {
-                            flush_block(channel_id, outbound).await;
-                        }
-                        let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                            channel_id.to_string(), format!("💰 ${:.4}", cost),
-                        )).await;
-                    }
+                AgentEvent::TurnComplete { .. } => {
                     break;
                 }
                 AgentEvent::Error(err) => {
@@ -317,8 +311,15 @@ async fn run_with_agent<T>(
         }
     }
 
-    // StreamDone: flush final block + remove processing reaction + add done reaction on last bot msg
+    // StreamDone: flush final block
     let _ = outbound.send(channel_id, OutboundMsg::StreamDone(channel_id.to_string())).await;
+
+    // Remove processing reaction from the user's message now that we're done
+    if let Some(ref user_mid) = msg.user_message_id {
+        let _ = outbound.send(channel_id, OutboundMsg::RemoveReaction(
+            channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
+        )).await;
+    }
 }
 
 /// Send a /help card with all commands and descriptions (card format, no buttons).

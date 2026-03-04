@@ -96,14 +96,19 @@ Config file path: **`src/settings.json`** (create from `src/settings.json.exampl
 | `tunnel.ngrok.domain` | Optional reserved ngrok domain (e.g. `myapp.ngrok.io`) |
 | `tunnel.preview_base_url` | Optional base URL for preview links (overrides domain when set) |
 | `channels.telegram.bot_token` | Telegram bot token from [@BotFather](https://t.me/BotFather); omit to disable Telegram |
+| `channels.telegram.streaming.enable` | Enable streaming output via message editing (default: `false`) |
+| `channels.telegram.streaming.edit_interval_ms` | Minimum milliseconds between edit_message calls when streaming (default: `100`) |
 | `channels.feishu.app_id` | Feishu/Lark app ID (from open platform); omit to disable Feishu |
 | `channels.feishu.app_secret` | Feishu app secret |
+| `channels.feishu.streaming.enable` | Enable streaming output via message editing (default: `false`) |
+| `channels.feishu.streaming.edit_interval_ms` | Minimum milliseconds between edit_message calls when streaming (default: `200`) |
 | `channels.feishu.verbose.show_thinking` | Show agent thinking blocks in Feishu (default: `false`) |
 | `channels.feishu.verbose.show_tool_use` | Show tool calls/results in Feishu (default: `false`) |
 | `channels.telegram.verbose.show_thinking` | Show agent thinking blocks in Telegram (default: `false`) |
 | `channels.telegram.verbose.show_tool_use` | Show tool calls/results in Telegram (default: `false`) |
 | `tmux.detach_others` | Detach other clients when attaching to a tmux session (default: `true`) |
 | `working_dir` | Root for job workspaces, absolute path. Default: `{user_home}/VibeAround` when not set. |
+| `default_agent` | Default agent to start on first message: `claude`, `gemini`, `opencode`, `codex` (default: `claude`) |
 
 **Minimal example** (Telegram + Localtunnel only):
 
@@ -132,6 +137,31 @@ Config file path: **`src/settings.json`** (create from `src/settings.json.exampl
     "feishu": {
       "app_id": "YOUR_FEISHU_APP_ID",
       "app_secret": "YOUR_FEISHU_APP_SECRET"
+    }
+  }
+}
+```
+
+**With streaming enabled:**
+
+```json
+{
+  "tunnel": {
+    "provider": "ngrok",
+    "ngrok": {
+      "auth_token": "YOUR_NGROK_AUTH_TOKEN",
+      "domain": "your-reserved.ngrok.io"
+    }
+  },
+  "channels": {
+    "telegram": {
+      "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+      "streaming": { "enable": true, "edit_interval_ms": 100 }
+    },
+    "feishu": {
+      "app_id": "YOUR_FEISHU_APP_ID",
+      "app_secret": "YOUR_FEISHU_APP_SECRET",
+      "streaming": { "enable": true, "edit_interval_ms": 200 }
     }
   }
 }
