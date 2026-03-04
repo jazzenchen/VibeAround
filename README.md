@@ -2,7 +2,7 @@
 
 # VibeAround — Vibe Coding Everywhere!
 
-[English](README.md) | [简体中文](README_CN.md)
+[English](README.md) | [简体中文](README_CN.md) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki)
 
 <p>
   <img src="Logo.png" width="120" alt="VibeAround" />
@@ -81,213 +81,18 @@ bun run dev
 
 Then tray menu → Open Web Dashboard; tunnel URL and password are in the terminal.
 
----
-
-## Configuration (settings.json)
-
-Config file path: **`src/settings.json`** (create from `src/settings.json.example`). The file is gitignored.
-
-**Structure:**
-
-| Path | Description |
-|------|-------------|
-| `tunnel.provider` | `"localtunnel"` (default), `"ngrok"`, or `"cloudflare"` |
-| `tunnel.ngrok.auth_token` | Ngrok auth token (required if provider is ngrok) |
-| `tunnel.ngrok.domain` | Optional reserved ngrok domain (e.g. `myapp.ngrok.io`) |
-| `tunnel.preview_base_url` | Optional base URL for preview links (overrides domain when set) |
-| `channels.telegram.bot_token` | Telegram bot token from [@BotFather](https://t.me/BotFather); omit to disable Telegram |
-| `channels.telegram.streaming.enable` | Enable streaming output via message editing (default: `false`) |
-| `channels.telegram.streaming.edit_interval_ms` | Minimum milliseconds between edit_message calls when streaming (default: `100`) |
-| `channels.feishu.app_id` | Feishu/Lark app ID (from open platform); omit to disable Feishu |
-| `channels.feishu.app_secret` | Feishu app secret |
-| `channels.feishu.streaming.enable` | Enable streaming output via message editing (default: `false`) |
-| `channels.feishu.streaming.edit_interval_ms` | Minimum milliseconds between edit_message calls when streaming (default: `200`) |
-| `channels.feishu.verbose.show_thinking` | Show agent thinking blocks in Feishu (default: `false`) |
-| `channels.feishu.verbose.show_tool_use` | Show tool calls/results in Feishu (default: `false`) |
-| `channels.telegram.verbose.show_thinking` | Show agent thinking blocks in Telegram (default: `false`) |
-| `channels.telegram.verbose.show_tool_use` | Show tool calls/results in Telegram (default: `false`) |
-| `tmux.detach_others` | Detach other clients when attaching to a tmux session (default: `true`) |
-| `working_dir` | Root for job workspaces, absolute path. Default: `{user_home}/VibeAround` when not set. |
-| `default_agent` | Default agent to start on first message: `claude`, `gemini`, `opencode`, `codex` (default: `claude`) |
-
-**Minimal example** (Telegram + Localtunnel only):
-
-```json
-{
-  "tunnel": { "provider": "localtunnel" },
-  "channels": {
-    "telegram": { "bot_token": "YOUR_TELEGRAM_BOT_TOKEN" }
-  }
-}
-```
-
-**With Feishu and ngrok:**
-
-```json
-{
-  "tunnel": {
-    "provider": "ngrok",
-    "ngrok": {
-      "auth_token": "YOUR_NGROK_AUTH_TOKEN",
-      "domain": "your-reserved.ngrok.io"
-    }
-  },
-  "channels": {
-    "telegram": { "bot_token": "YOUR_TELEGRAM_BOT_TOKEN" },
-    "feishu": {
-      "app_id": "YOUR_FEISHU_APP_ID",
-      "app_secret": "YOUR_FEISHU_APP_SECRET"
-    }
-  }
-}
-```
-
-**With streaming enabled:**
-
-```json
-{
-  "tunnel": {
-    "provider": "ngrok",
-    "ngrok": {
-      "auth_token": "YOUR_NGROK_AUTH_TOKEN",
-      "domain": "your-reserved.ngrok.io"
-    }
-  },
-  "channels": {
-    "telegram": {
-      "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
-      "streaming": { "enable": true, "edit_interval_ms": 100 }
-    },
-    "feishu": {
-      "app_id": "YOUR_FEISHU_APP_ID",
-      "app_secret": "YOUR_FEISHU_APP_SECRET",
-      "streaming": { "enable": true, "edit_interval_ms": 200 }
-    }
-  }
-}
-```
+For detailed setup instructions, configuration options, and standalone server mode, see the [Setup Guide](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide) in the wiki.
 
 ---
 
-## Preferred setup
+## 📖 Wiki
 
-**TL;DR** (from repo root): `cd src` → `bun install` → `bun run prebuild` → `bun run dev`. Then tray menu → **Open Web Dashboard**; tunnel URL and password are in the terminal.
+Full configuration docs and usage guides have moved to the [Wiki](https://github.com/jazzenchen/VibeAround/wiki):
 
----
-
-**Install path:** Clone the repo, then use the `src/` directory as your working path:
-
-```
-VibeAround/src/
-```
-
-**Requirements:** Bun 1.3+ and Rust 1.78+ (update Rust with `rustup update stable` if needed).
-
-**Configuration:** All runtime config (tunnel, Telegram, Feishu, working dir) is read from **`src/settings.json`**. This file is gitignored. Copy `src/settings.json.example` to `src/settings.json` and fill in the values you need. See [Configuration (settings.json)](#configuration-settingsjson) above for the full structure.
-
-**Steps (first-time or after pulling changes):**
-
-1. **Install dependencies** — installs workspace deps for `web`, `desktop-tray`, and `desktop`:
-
-```bash
-cd src
-bun install
-```
-
-2. **Build web dashboard and tray UI** — required so the local server can serve the dashboard and the desktop app can load the tray:
-
-```bash
-bun run prebuild
-```
-
-(This runs `desktop-tray:build` then `web:build` and produces `web/dist` and `desktop-tray/dist`.)
-
-3. **Run the app** — starts the Tauri desktop process (tray, web server, tunnel, IM bots):
-
-```bash
-bun run dev
-```
-
-If you use **Feishu**, you need the **tunnel URL** from this step before you can set the webhook in the Feishu open platform.
-
-After the app is running:
-
-- Use the tray menu → **Open Web Dashboard** to open the browser. The server will be at:
-
-```
-http://127.0.0.1:5182
-```
-
-- **Tunnel URL and password:** The desktop app starts Localtunnel automatically. Check the **terminal** for lines like `[VibeAround] Tunnel URL: https://xxx.loca.lt` and the tunnel password (or the link to fetch it). You can also use the tray menu → **Open tunnel URL** to open the public dashboard link.
-
-**Note:** After the first run, you usually only need `bun run dev` unless you changed code in `web` or `desktop-tray`; then run `bun run prebuild` again before `bun run dev`. Use `bun run build` when you want to produce the full desktop app bundle (Tauri build).
-
----
-
-### Run without desktop (standalone server)
-
-If you prefer not to run the Tauri desktop app (no tray, no tunnel), you can run only the HTTP server and use the web dashboard locally:
-
-1. From `src/`, run `bun run prebuild` so `web/dist` exists.
-2. Start the server:
-
-```bash
-bun run server:dev
-```
-
-The dashboard will be at `http://127.0.0.1:5182`. The standalone server does **not** start Localtunnel or the Telegram bot; it is for local-only use (e.g. on a headless machine or when you only need the web UI).
-
----
-
-## tmux & seamless device switching
-
-VibeAround supports attaching to tmux sessions, so you can take unfinished work with you. Start a coding session on one device, detach, and pick it up from another — the web dashboard, a different browser, or a native terminal client via SSH.
-
-### How it works
-
-When you create a session in the web dashboard, you can choose to attach it to a tmux session on the host machine. If you close the browser tab or lose connectivity, the tmux session keeps running in the background. Reconnect from any device and you're right back where you left off.
-
-By default, attaching to a session detaches other clients (`tmux attach -d`). This gives you clean single-viewer semantics — open the dashboard on your phone and the previous browser tab gracefully disconnects. To allow multiple viewers on the same session, set `tmux.detach_others` to `false` in `settings.json`.
-
-### Tmux pane and split operations
-
-The web terminal supports the following tmux-style pane and split operations. The prefix key is **Ctrl+b** (press Ctrl+b, release, then press the key below).
-
-| Action | Shortcut |
-|--------|----------|
-| **Vertical split** | **Ctrl+b** then **%** |
-| **Horizontal split** | **Ctrl+b** then **"** |
-| **Move focus** (pane navigation) | **Ctrl+b** then **↑** **↓** **←** **→** (arrow keys) |
-| **Cycle through panes** | **Ctrl+b** then **o** (cycles to the next pane) |
-| **Show pane numbers** | **Ctrl+b** then **q** (numbers flash on screen; press the corresponding number to jump to that pane) |
-| **Close current pane** | **Ctrl+b** then **x** |
-
-### Recommended: iTerm2 with tmux -CC integration
-
-For the best experience when working from a Mac, use [iTerm2](https://iterm2.com)'s native tmux integration mode. Instead of rendering tmux inside a terminal emulator, iTerm2 maps each tmux window/pane to a native iTerm2 tab/split — giving you native scrollback, native copy-paste, and native keyboard shortcuts while still backed by a persistent tmux session on the remote host.
-
-**Quick start:**
-
-```bash
-# SSH into your VibeAround host and attach with tmux -CC
-ssh your-host -t "tmux -CC attach -t my-session"
-```
-
-Or from an existing SSH session:
-
-```bash
-tmux -CC attach -t my-session
-```
-
-iTerm2 will detect the `-CC` flag and switch to its native integration mode automatically.
-
-**Why this matters for VibeAround:**
-
-- Start a vibe coding session from the web dashboard on your PC at work.
-- On the go, check progress or send quick instructions from your phone via the web dashboard or Telegram.
-- At home, SSH into the same machine with `tmux -CC` from iTerm2 and get a fully native terminal experience — same session, same state, zero context loss.
-
-The workflow is: **PC → mobile → another PC → back again**, all seamless.
+- [Setup Guide](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide) — Installation, configuration, and running the app
+- [Channel Configuration](https://github.com/jazzenchen/VibeAround/wiki/Channel-Configuration) — Telegram and Feishu bot setup
+- [Tunnel Configuration](https://github.com/jazzenchen/VibeAround/wiki/Tunnel-Configuration) — Localtunnel, Ngrok, and Cloudflare tunnel setup
+- [tmux Guide](https://github.com/jazzenchen/VibeAround/wiki/Tmux-Guide) — tmux sessions, pane operations, and seamless device switching
 
 ---
 

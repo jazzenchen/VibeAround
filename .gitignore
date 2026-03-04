@@ -54,3 +54,6 @@ logs/
 .claude/
 .specstory/
 .docs/
+
+# GitHub Wiki (独立仓库，本地编辑用)
+wiki/
