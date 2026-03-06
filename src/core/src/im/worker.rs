@@ -53,6 +53,8 @@ pub async fn run_worker<T>(
 
     // Default agent: Claude, started lazily on first message.
     let mut active_agent: Option<Box<dyn AgentBackend>> = None;
+    // Track the last /start card message_id so we can update it in place after agent switch.
+    let mut start_card_message_id: Option<String> = None;
 
     while let Some(msg) = inbound_rx.recv().await {
         let channel_id = msg.channel_id.clone();
@@ -67,14 +69,14 @@ pub async fn run_worker<T>(
 
         // --- /start command: quick agent picker ---
         if msg.text.trim() == "/start" {
-            send_start(&channel_id, &outbound).await;
+            start_card_message_id = send_start(&channel_id, &outbound).await;
             busy_set.remove(&channel_id);
             continue;
         }
 
         // --- /cli command: switch agent ---
         if let Some(kind) = parse_cli_command(&msg.text) {
-            switch_agent(&mut active_agent, kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref()).await;
+            switch_agent(&mut active_agent, kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref(), start_card_message_id.as_deref()).await;
             busy_set.remove(&channel_id);
             continue;
         }
@@ -84,7 +86,7 @@ pub async fn run_worker<T>(
             let default_kind = agent::AgentKind::from_str_loose(&config::ensure_loaded().default_agent)
                 .unwrap_or(AgentKind::Claude);
             eprintln!("[VibeAround][im][worker] no active agent, starting default ({})...", default_kind);
-            switch_agent(&mut active_agent, default_kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref()).await;
+            switch_agent(&mut active_agent, default_kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref(), start_card_message_id.as_deref()).await;
             if active_agent.is_none() {
                 busy_set.remove(&channel_id);
                 continue;
@@ -93,21 +95,36 @@ pub async fn run_worker<T>(
 
         // --- Send message to agent ---
         let agent = active_agent.as_ref().unwrap();
-        run_with_agent(agent.as_ref(), &msg, &channel_id, &outbound, &verbose).await;
+        let agent_died = run_with_agent(agent.as_ref(), &msg, &channel_id, &outbound, &verbose).await;
+
+        // --- Auto-restart if agent process died ---
+        if agent_died {
+            let kind = active_agent.as_ref().unwrap().kind();
+            eprintln!("[VibeAround][im][worker] agent {} died, attempting restart...", kind);
+            let _ = outbound.send_direct(&channel_id, &format!("⚠️ {} agent crashed, restarting...", kind)).await;
+            switch_agent(&mut active_agent, kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref(), start_card_message_id.as_deref()).await;
+            if active_agent.is_some() {
+                // Retry the message on the restarted agent (don't restart again if it fails)
+                let agent = active_agent.as_ref().unwrap();
+                let _ = run_with_agent(agent.as_ref(), &msg, &channel_id, &outbound, &verbose).await;
+            }
+        }
 
         busy_set.remove(&channel_id);
     }
 }
 
-/// Parse `/cli_<agent>` command. Returns the AgentKind if matched.
+/// Parse `/cli_<agent>` command. Returns the AgentKind if matched and enabled.
 fn parse_cli_command(text: &str) -> Option<AgentKind> {
     let text = text.trim();
     let rest = text.strip_prefix("/cli_")?;
-    AgentKind::from_str_loose(rest.trim())
+    let kind = AgentKind::from_str_loose(rest.trim())?;
+    if kind.is_enabled() { Some(kind) } else { None }
 }
 
 /// Shut down the current agent (if any) and start a new one.
 /// Sends an immediate status message, then marks it done (reaction) when complete.
+
 async fn switch_agent<T>(
     active_agent: &mut Option<Box<dyn AgentBackend>>,
     kind: AgentKind,
@@ -115,6 +132,7 @@ async fn switch_agent<T>(
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
     _user_message_id: Option<&str>,
+    start_card_mid: Option<&str>,
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
@@ -136,6 +154,10 @@ async fn switch_agent<T>(
             if let Some(ref mid) = status_message_id {
                 outbound.edit_direct(channel_id, mid, &format!("{} agent started ✅", kind)).await;
             }
+            // Update the existing /start card in place (if we have its message_id)
+            if let Some(card_mid) = start_card_mid {
+                update_agent_picker(channel_id, card_mid, kind, outbound).await;
+            }
         }
         Err(e) => {
             // Edit the status message to show failure, or send a new one if no message_id
@@ -151,6 +173,7 @@ async fn switch_agent<T>(
     };
 }
 
+
 /// Truncate tool output for display in IM (avoid flooding).
 fn truncate_tool_output(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
@@ -161,20 +184,20 @@ fn truncate_tool_output(text: &str, max_len: usize) -> String {
 }
 
 /// Send a message to the active agent and stream events back to IM.
-/// Emits all agent output: text, thinking, tool calls, tool results.
-/// Uses reactions on bot messages to indicate processing/done state.
-/// Replies to the user's message for the first block.
+/// Returns `true` if the agent process died (caller should restart).
 async fn run_with_agent<T>(
     agent: &dyn AgentBackend,
     msg: &InboundMessage,
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
     verbose: &ImVerboseConfig,
-) where
+) -> bool
+where
     T: crate::im::transport::ImTransport + 'static,
 {
     let caps = outbound.capabilities();
     let mut rx = agent.subscribe();
+    let mut agent_died = false;
 
     // Set reply_to so the first flushed bot message quotes the user's message
     if let Some(ref user_mid) = msg.user_message_id {
@@ -189,6 +212,7 @@ async fn run_with_agent<T>(
     }
 
     if let Err(e) = agent.send_message(&msg.text).await {
+        let is_shutdown = e.contains("shut down") || e.contains("gone") || e.contains("ACP thread");
         let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
             channel_id.to_string(), format!("[Agent error: {}]", e),
         )).await;
@@ -199,7 +223,7 @@ async fn run_with_agent<T>(
                 channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
             )).await;
         }
-        return;
+        return is_shutdown;
     }
 
     // Track current block type so we can flush buffer between different content types.
@@ -306,6 +330,7 @@ async fn run_with_agent<T>(
                 let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
                     channel_id.to_string(), "[Agent process ended unexpectedly]\n".to_string(),
                 )).await;
+                agent_died = true;
                 break;
             }
         }
@@ -320,6 +345,8 @@ async fn run_with_agent<T>(
             channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
         )).await;
     }
+
+    agent_died
 }
 
 /// Send a /help card with all commands and descriptions (card format, no buttons).
@@ -329,46 +356,99 @@ async fn send_help<T>(
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
-    let prompt = concat!(
-        "`/cli_claude` — Anthropic Claude Code\n",
-        "`/cli_gemini` — Google Gemini CLI\n",
-        "`/cli_opencode` — OpenCode AI Agent\n",
-        "`/cli_codex` — OpenAI Codex CLI\n",
-        "🚀 `/start` — Quick agent picker\n",
-        "❓ `/help` — Show this help",
-    );
+    let mut lines = Vec::new();
+    for kind in AgentKind::enabled() {
+        lines.push(format!("`/cli_{}` — {}", kind, kind.description()));
+    }
+    lines.push("🚀 `/start` — Quick agent picker".to_string());
+    lines.push("❓ `/help` — Show this help".to_string());
+    let prompt = lines.join("\n");
 
     // Send as interactive card with no buttons (prompt-only card)
     let _ = outbound.send(channel_id, OutboundMsg::SendInteractive {
         channel_id: channel_id.to_string(),
-        prompt: prompt.to_string(),
+        prompt,
         options: vec![],
         reply_to: None,
     }).await;
 }
 
 /// Send a /start interactive card — compact agent picker with help button on separate row.
+
+/// Send a /start interactive card — compact agent picker with help button on separate row.
+/// Returns the message_id of the card (if the platform provides one) for later in-place updates.
 async fn send_start<T>(
     channel_id: &str,
+    outbound: &Arc<OutboundHub<T>>,
+) -> Option<String>
+where
+    T: crate::im::transport::ImTransport + 'static,
+{
+    use crate::im::transport::{ButtonStyle, InteractiveOption};
+
+    let default_kind = AgentKind::from_str_loose(&config::ensure_loaded().default_agent)
+        .unwrap_or(AgentKind::Claude);
+
+    let prompt = "**Select an agent to start:**";
+    let mut options: Vec<InteractiveOption> = AgentKind::enabled()
+        .iter()
+        .map(|kind| {
+            let style = if *kind == default_kind { ButtonStyle::Primary } else { ButtonStyle::Default };
+            InteractiveOption {
+                label: format!("{}", kind).to_string(),
+                value: format!("/cli_{}", kind),
+                style,
+                group: 0,
+            }
+        })
+        .collect();
+    // Capitalize first letter of label
+    for opt in &mut options {
+        if let Some(first) = opt.label.get_mut(..1) {
+            first.make_ascii_uppercase();
+        }
+    }
+    options.push(InteractiveOption { label: "❓ Help".into(), value: "/help".into(), style: ButtonStyle::Default, group: 1 });
+
+    outbound.send_interactive_direct(channel_id, prompt, &options, None).await
+}
+
+
+/// Send an agent picker card with the current (active) agent highlighted.
+/// Called after a successful agent switch so the user sees which agent is active.
+
+/// Update an existing agent picker card in place with the current agent highlighted.
+async fn update_agent_picker<T>(
+    channel_id: &str,
+    message_id: &str,
+    current_kind: AgentKind,
     outbound: &Arc<OutboundHub<T>>,
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
     use crate::im::transport::{ButtonStyle, InteractiveOption};
 
-    let prompt = "**Select an agent to start:**";
-    let options = vec![
-        InteractiveOption { label: "Claude".into(), value: "/cli_claude".into(), style: ButtonStyle::Primary, group: 0 },
-        InteractiveOption { label: "Gemini".into(), value: "/cli_gemini".into(), style: ButtonStyle::Default, group: 0 },
-        InteractiveOption { label: "OpenCode".into(), value: "/cli_opencode".into(), style: ButtonStyle::Default, group: 0 },
-        InteractiveOption { label: "Codex".into(), value: "/cli_codex".into(), style: ButtonStyle::Default, group: 0 },
-        InteractiveOption { label: "❓ Help".into(), value: "/help".into(), style: ButtonStyle::Default, group: 1 },
-    ];
+    let prompt = format!("**Current agent: {}**", current_kind);
+    let mut options: Vec<InteractiveOption> = AgentKind::enabled()
+        .iter()
+        .map(|kind| {
+            let style = if *kind == current_kind { ButtonStyle::Primary } else { ButtonStyle::Default };
+            InteractiveOption {
+                label: format!("{}", kind).to_string(),
+                value: format!("/cli_{}", kind),
+                style,
+                group: 0,
+            }
+        })
+        .collect();
+    for opt in &mut options {
+        if let Some(first) = opt.label.get_mut(..1) {
+            first.make_ascii_uppercase();
+        }
+    }
+    options.push(InteractiveOption { label: "❓ Help".into(), value: "/help".into(), style: ButtonStyle::Default, group: 1 });
 
-    let _ = outbound.send(channel_id, OutboundMsg::SendInteractive {
-        channel_id: channel_id.to_string(),
-        prompt: prompt.to_string(),
-        options,
-        reply_to: None,
-    }).await;
+    outbound.update_interactive_direct(channel_id, message_id, &prompt, &options).await;
 }
+
+

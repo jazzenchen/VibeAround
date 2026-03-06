@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Send, Square } from "lucide-react";
+import { ChevronDown, Send, Square } from "lucide-react";
 import type { ToolType } from "@/lib/terminal-types";
 import { getToolTheme } from "@/lib/terminal-types";
 import { useTheme } from "@/lib/theme";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import type { AgentInfo } from "@/api/agents";
 
 const TEXTAREA_MAX_HEIGHT_PX = 128;
 
@@ -21,6 +28,10 @@ export interface ChatInputProps {
   targetLabel?: string;
   /** Tool type for accent color (claude/gemini/codex/generic). */
   targetTool?: ToolType;
+  /** Available agents for the selector dropdown. */
+  agents?: AgentInfo[];
+  /** Called when user picks a different agent from the dropdown. */
+  onAgentChange?: (agentId: string) => void;
   className?: string;
 }
 
@@ -34,6 +45,8 @@ export function ChatInput({
   placeholder = "Message Claude…",
   targetLabel = "Claude Code",
   targetTool = "claude",
+  agents,
+  onAgentChange,
   className,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -57,7 +70,8 @@ export function ChatInput({
   const appTheme = useTheme();
   const accentColor = getToolTheme(targetTool, appTheme).accent;
 
-  // One bordered group: textarea (grows) + addon bar with button inside. Focus on textarea highlights the whole box (like Apple Data Analysis Demo input-group).
+  const hasMultipleAgents = agents && agents.length > 1 && onAgentChange;
+
   return (
     <div
       data-slot="chat-input"
@@ -79,10 +93,40 @@ export function ChatInput({
           style={{ height: "2.5rem" }}
         />
         <div className="flex shrink-0 items-center justify-between gap-2 px-2 py-1.5">
-          <span className="flex items-center gap-1 truncate min-w-0 text-xs font-medium" title={`Chat with ${targetLabel}`}>
-            <span className="text-muted-foreground shrink-0">Chat with</span>
-            <span className="truncate" style={{ color: accentColor }}>{targetLabel}</span>
-          </span>
+          {hasMultipleAgents ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 truncate min-w-0 text-xs font-medium cursor-pointer rounded px-1 py-0.5 hover:bg-muted/60 transition-colors"
+                  title={`Chat with ${targetLabel}`}
+                >
+                  <span className="text-muted-foreground shrink-0">Chat with</span>
+                  <span className="truncate" style={{ color: accentColor }}>{targetLabel}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="min-w-[160px]">
+                {agents!.map((agent) => (
+                  <DropdownMenuItem
+                    key={agent.id}
+                    onClick={() => onAgentChange!(agent.id)}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span className="capitalize">{agent.id}</span>
+                    {agent.id === targetTool && (
+                      <span className="text-xs text-muted-foreground">current</span>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <span className="flex items-center gap-1 truncate min-w-0 text-xs font-medium" title={`Chat with ${targetLabel}`}>
+              <span className="text-muted-foreground shrink-0">Chat with</span>
+              <span className="truncate" style={{ color: accentColor }}>{targetLabel}</span>
+            </span>
+          )}
           <Button
             type="button"
             size="icon"

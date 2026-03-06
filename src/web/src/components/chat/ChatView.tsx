@@ -12,6 +12,9 @@ import { MessageResponse } from "./MessageResponse";
 import { ChatInput } from "./ChatInput";
 
 import { getWebSocketUrl } from "@/lib/ws-url";
+import type { ToolType } from "@/lib/terminal-types";
+import { toolThemes } from "@/lib/terminal-types";
+import type { AgentInfo } from "@/api/agents";
 
 /** Max number of previous messages to include as context (client-side context memory). */
 const CONTEXT_MESSAGE_LIMIT = 20;
@@ -23,6 +26,17 @@ function buildPromptWithContext(messages: ChatMessage[], newUserMessage: string)
   return `Previous conversation:\n\n${lines.join("\n\n")}\n\nUser: ${newUserMessage}`;
 }
 
+/** Map agent id to ToolType for theming. Falls back to "generic". */
+function agentIdToToolType(id: string): ToolType {
+  if (id in toolThemes) return id as ToolType;
+  return "generic";
+}
+
+/** Capitalize first letter. */
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 export type ChatMessage = { role: "user" | "assistant"; content: string; progress?: string };
 
 export function ChatView() {
@@ -30,7 +44,14 @@ export function ChatView() {
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [streaming, setStreaming] = useState(false);
+
+  // Agent state
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [currentAgent, setCurrentAgent] = useState<string>("claude");
   const wsRef = useRef<WebSocket | null>(null);
+
+  const toolType = agentIdToToolType(currentAgent);
+  const agentLabel = capitalize(currentAgent);
 
   // Connect on mount, close on unmount
   useEffect(() => {
@@ -48,19 +69,31 @@ export function ChatView() {
       if (typeof event.data !== "string") return;
       const s = event.data as string;
 
-      // All messages from backend are JSON (unified wire format).
       let j: Record<string, unknown>;
       try {
         j = JSON.parse(s);
       } catch {
-        // Shouldn't happen with the new wire format, but treat as raw text fallback.
         appendToAssistant(s);
+        return;
+      }
+
+      // {"type":"config","agents":[...],"default_agent":"claude"} — agent config push on connect
+      if (j.type === "config" && Array.isArray(j.agents)) {
+        setAgents(j.agents as AgentInfo[]);
+        if (typeof j.default_agent === "string") {
+          setCurrentAgent(j.default_agent as string);
+        }
+        return;
+      }
+
+      // {"type":"agent_switched","agent":"opencode"} — backend confirmed agent switch
+      if (j.type === "agent_switched" && typeof j.agent === "string") {
+        setCurrentAgent(j.agent as string);
         return;
       }
 
       // {"done":true} — stream finished
       if (j.done === true) {
-        // Clear progress indicator on the last assistant message.
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant" && last.progress) {
@@ -112,11 +145,8 @@ export function ChatView() {
         appendToAssistant(j.text as string);
         return;
       }
-
-      // {"project_id":"...","preview":"..."} — project created, ignore for now (could show link later)
     };
 
-    /** Append text to the last assistant message (or create one). */
     function appendToAssistant(text: string) {
       if (!text) return;
       setMessages((prev) => {
@@ -152,14 +182,23 @@ export function ChatView() {
     wsRef.current.send(prompt);
   }, [input, messages]);
 
+  const handleAgentChange = useCallback((agentId: string) => {
+    if (agentId === currentAgent) return;
+    setCurrentAgent(agentId);
+    // Send /cli_<agent> command to switch backend
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(`/cli_${agentId}`);
+    }
+  }, [currentAgent]);
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       <Conversation className="flex-1">
         <ConversationContent>
           {messages.length === 0 ? (
             <ConversationEmptyState
-              title="Chat with Claude"
-              description="Backed by Claude CLI headless (-p). Send a message to start."
+              title={`Chat with ${agentLabel}`}
+              description="Send a message to start."
             />
           ) : (
             messages.map((msg, i) => (
@@ -200,7 +239,11 @@ export function ChatView() {
         onSubmit={sendMessage}
         disabled={!connected}
         isStreaming={streaming}
-        placeholder={connected ? "Message Claude…" : "Connecting…"}
+        placeholder={connected ? `Message ${agentLabel}…` : "Connecting…"}
+        targetLabel={agentLabel}
+        targetTool={toolType}
+        agents={agents}
+        onAgentChange={handleAgentChange}
       />
     </div>
   );

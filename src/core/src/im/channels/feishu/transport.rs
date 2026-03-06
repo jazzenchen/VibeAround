@@ -413,4 +413,35 @@ impl ImTransport for FeishuTransport {
         }
         Ok(json.pointer("/data/message_id").and_then(|v| v.as_str()).map(String::from))
     }
+
+    async fn update_interactive(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        prompt: &str,
+        options: &[InteractiveOption],
+    ) -> Result<(), SendError> {
+        let _chat_id = Self::parse_chat_id(channel_id)?;
+        let token = self.get_token().await?;
+        let card_json = super::interaction::build_card("VibeAround", prompt, options);
+        let body = serde_json::json!({
+            "msg_type": "interactive",
+            "content": card_json,
+        });
+        let url = format!("{}/im/v1/messages/{}", FEISHU_API_BASE, message_id);
+        let res = self.client.patch(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json; charset=utf-8")
+            .json(&body).send().await
+            .map_err(|e| SendError::Other(e.to_string()))?;
+        let text = res.text().await.map_err(|e| SendError::Other(e.to_string()))?;
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let code = json.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        if code != 0 {
+            eprintln!("{} chat_id={} direction=update_interactive message_id={} error=code={} body={}",
+                prefix_channel("feishu"), _chat_id, message_id, code, text);
+            return Err(SendError::Other(format!("update_interactive code={} body={}", code, text)));
+        }
+        Ok(())
+    }
 }

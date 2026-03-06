@@ -1,6 +1,7 @@
 {
   "working_dir": "",
   "default_agent": "opencode",
+  "enabled_agents": ["claude", "gemini", "opencode", "codex"],
   "tunnel": {
     "provider": "ngrok",
     "ngrok": {

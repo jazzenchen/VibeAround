@@ -21,7 +21,7 @@ use tower_http::services::ServeDir;
 use tokio::sync::broadcast;
 
 use common::config;
-use common::headless::{run_claude_prompt_to_stream_parts, wire, ClaudeSegment};
+use common::headless::wire;
 use common::pty::{PtyRunState, PtyTool, list_tmux_sessions, tmux_available};
 use common::session::{
     CircularBuffer, Registry, SessionContext, SessionId, SessionMetadata, LIVE_BROADCAST_CAP,
@@ -163,6 +163,7 @@ pub async fn run_web_server(
         .route("/api/sessions", get(list_sessions_handler).post(create_session_handler))
         .route("/api/sessions/{id}", delete(delete_session_handler))
         .route("/api/tmux/sessions", get(list_tmux_sessions_handler))
+        .route("/api/agents", get(list_agents_handler))
         .route("/api/projects", get(list_projects_handler))
         .route("/api/im/feishu/event", post(feishu_webhook_handler))
         .route("/api/im/feishu/card", post(feishu_card_callback_handler))
@@ -454,6 +455,22 @@ async fn list_tmux_sessions_handler() -> Json<serde_json::Value> {
     }))
 }
 
+/// GET /api/agents — list enabled agents and default agent for frontend agent selector.
+async fn list_agents_handler() -> Json<serde_json::Value> {
+    let cfg = config::ensure_loaded();
+    let agents: Vec<serde_json::Value> = cfg.enabled_agents.iter().map(|kind| {
+        serde_json::json!({
+            "id": kind.to_string(),
+            "description": kind.description(),
+        })
+    }).collect();
+    Json(serde_json::json!({
+        "agents": agents,
+        "default_agent": cfg.default_agent,
+    }))
+}
+
+
 async fn list_sessions_handler(State(state): State<AppState>) -> Json<Vec<SessionListItem>> {
     let list: Vec<_> = state
         .registry
@@ -575,9 +592,47 @@ async fn handle_socket_attach(mut socket: WebSocket, session_id: SessionId, regi
     }
 }
 
-async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, db: Arc<std::sync::Mutex<Connection>>) {
+
+async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, _db: Arc<std::sync::Mutex<Connection>>) {
+    use common::agent::{self, AgentBackend, AgentEvent, AgentKind};
+
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let mut project_id: Option<String> = None;
+
+    // Push enabled agents config to client on connect
+    let default_agent_str = {
+        let cfg = config::ensure_loaded();
+        let agents: Vec<serde_json::Value> = cfg.enabled_agents.iter().map(|kind| {
+            serde_json::json!({
+                "id": kind.to_string(),
+                "description": kind.description(),
+            })
+        }).collect();
+        let config_msg = serde_json::json!({
+            "type": "config",
+            "agents": agents,
+            "default_agent": cfg.default_agent,
+        });
+        let _ = ws_tx.send(Message::Text(config_msg.to_string().into())).await;
+        cfg.default_agent.clone()
+    };
+
+    let mut active_agent: Option<Box<dyn AgentBackend>> = None;
+
+    /// Start or switch agent backend. Returns true on success.
+    async fn start_agent(
+        active_agent: &mut Option<Box<dyn AgentBackend>>,
+        kind: AgentKind,
+        cwd: &std::path::Path,
+    ) -> Result<(), String> {
+        // Shut down existing
+        if let Some(mut old) = active_agent.take() {
+            old.shutdown().await;
+        }
+        let mut backend = agent::create_backend(kind);
+        backend.start(cwd).await?;
+        *active_agent = Some(backend);
+        Ok(())
+    }
 
     while let Some(Ok(msg)) = ws_rx.next().await {
         let Message::Text(user_msg) = msg else { continue };
@@ -586,74 +641,138 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, db: Arc<std
             continue;
         }
 
-        if project_id.is_none() {
-            let name = prompt.chars().take(50).collect::<String>();
-            let name = if name.is_empty() { "Chat".into() } else { name };
-            let proj = {
-                let conn = db.lock().unwrap();
-                project::create_project(&conn, &working_dir, name)
-            };
-            match proj {
-                Ok(proj) => {
-                    project_id = Some(proj.project_id.clone());
-                    let preview = format!("/preview/{}", proj.project_id);
-                    let _ = ws_tx
-                        .send(Message::Text(wire::project_json(&proj.project_id, &preview).into()))
-                        .await;
-                }
-                Err(e) => {
-                    let _ = ws_tx
-                        .send(Message::Text(wire::error_json(&format!("Failed to create project: {}", e)).into()))
-                        .await;
-                    let _ = ws_tx
-                        .send(Message::Text(wire::done_json().into()))
-                        .await;
+        // Handle /cli_<agent> command — switch agent
+        if let Some(rest) = prompt.strip_prefix("/cli_") {
+            if let Some(kind) = AgentKind::from_str_loose(rest.trim()) {
+                if kind.is_enabled() {
+                    let _ = ws_tx.send(Message::Text(
+                        wire::text_json(&format!("Switching to {} agent...\n", kind)).into()
+                    )).await;
+                    match start_agent(&mut active_agent, kind, &working_dir).await {
+                        Ok(()) => {
+                            let _ = ws_tx.send(Message::Text(
+                                wire::text_json(&format!("{} agent started ✅\n", kind)).into()
+                            )).await;
+                            // Notify frontend of the switch
+                            let switch_msg = serde_json::json!({
+                                "type": "agent_switched",
+                                "agent": kind.to_string(),
+                            });
+                            let _ = ws_tx.send(Message::Text(switch_msg.to_string().into())).await;
+                        }
+                        Err(e) => {
+                            let _ = ws_tx.send(Message::Text(
+                                wire::error_json(&format!("Failed to start {}: {}", kind, e)).into()
+                            )).await;
+                        }
+                    }
+                    let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
                     continue;
                 }
             }
+            // Unknown or disabled agent
+            let _ = ws_tx.send(Message::Text(
+                wire::error_json("Unknown or disabled agent").into()
+            )).await;
+            let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
+            continue;
         }
 
-        let cwd = project_id.as_ref().map(|pid| project::project_workspace_path(&working_dir, pid));
-        let cwd = match cwd {
-            Some(p) if p.exists() => p,
-            _ => {
-                let _ = ws_tx
-                    .send(Message::Text(wire::error_json("Project workspace not found").into()))
-                    .await;
+        // Lazy-start default agent on first real message
+        if active_agent.is_none() {
+            let default_kind = AgentKind::from_str_loose(&default_agent_str)
+                .unwrap_or(AgentKind::Claude);
+            if let Err(e) = start_agent(&mut active_agent, default_kind, &working_dir).await {
+                let _ = ws_tx.send(Message::Text(
+                    wire::error_json(&format!("Failed to start default agent: {}", e)).into()
+                )).await;
+                let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
                 continue;
             }
-        };
-
-        let (seg_tx, mut seg_rx) = tokio::sync::mpsc::channel::<ClaudeSegment>(64);
-        let prompt = prompt.clone();
-        let cwd = Some(cwd);
-        let run_result = tokio::spawn(async move {
-            run_claude_prompt_to_stream_parts(&prompt, move |seg| {
-                let _ = seg_tx.try_send(seg);
-            }, cwd, None).await
-        });
-
-        while let Some(seg) = seg_rx.recv().await {
-            let json = wire::segment_to_json(&seg);
-            let _ = ws_tx.send(Message::Text(json.into())).await;
         }
 
-        match run_result.await {
-            Ok(Ok(_runner_result)) => {}
-            Ok(Err(e)) => {
-                let _ = ws_tx
-                    .send(Message::Text(wire::error_json(&format!("Failed to run claude: {}", e)).into()))
-                    .await;
-            }
-            Err(e) => {
-                let _ = ws_tx
-                    .send(Message::Text(wire::error_json(&format!("Task join error: {}", e)).into()))
-                    .await;
+        // Send message to active agent and stream events back
+        let agent = active_agent.as_ref().unwrap();
+        let mut rx = agent.subscribe();
+
+        if let Err(e) = agent.send_message(&prompt).await {
+            // Check if agent died — try to restart
+            let is_dead = e.contains("shut down") || e.contains("gone") || e.contains("ACP thread");
+            let _ = ws_tx.send(Message::Text(
+                wire::error_json(&e).into()
+            )).await;
+            if is_dead {
+                let kind = agent.kind();
+                let _ = ws_tx.send(Message::Text(
+                    wire::text_json(&format!("⚠️ {} agent crashed, restarting...\n", kind)).into()
+                )).await;
+                if let Ok(()) = start_agent(&mut active_agent, kind, &working_dir).await {
+                    let _ = ws_tx.send(Message::Text(
+                        wire::text_json(&format!("{} agent restarted ✅\n", kind)).into()
+                    )).await;
+                    // Retry the message
+                    let agent = active_agent.as_ref().unwrap();
+                    if let Err(e2) = agent.send_message(&prompt).await {
+                        let _ = ws_tx.send(Message::Text(wire::error_json(&e2).into())).await;
+                        let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
+                        continue;
+                    }
+                    // Re-subscribe after restart
+                    rx = agent.subscribe();
+                } else {
+                    let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
+                    continue;
+                }
+            } else {
+                let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
+                continue;
             }
         }
 
-        let _ = ws_tx
-            .send(Message::Text(wire::done_json().into()))
-            .await;
+        // Stream agent events to WebSocket
+        loop {
+            match rx.recv().await {
+                Ok(event) => match event {
+                    AgentEvent::Text(text) => {
+                        let _ = ws_tx.send(Message::Text(wire::text_json(&text).into())).await;
+                    }
+                    AgentEvent::Thinking(_) => {
+                        // Web chat doesn't show thinking blocks for now
+                    }
+                    AgentEvent::Progress(status) => {
+                        let json = serde_json::json!({ "progress": status }).to_string();
+                        let _ = ws_tx.send(Message::Text(json.into())).await;
+                    }
+                    AgentEvent::ToolUse { name, .. } => {
+                        let json = serde_json::json!({ "progress": format!("Using tool: {}...", name) }).to_string();
+                        let _ = ws_tx.send(Message::Text(json.into())).await;
+                    }
+                    AgentEvent::ToolResult { .. } => {}
+                    AgentEvent::TurnComplete { .. } => {
+                        break;
+                    }
+                    AgentEvent::Error(err) => {
+                        let _ = ws_tx.send(Message::Text(wire::error_json(&err).into())).await;
+                    }
+                },
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("[VibeAround][ws/chat] event stream lagged by {}", n);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    let _ = ws_tx.send(Message::Text(
+                        wire::error_json("Agent process ended unexpectedly").into()
+                    )).await;
+                    break;
+                }
+            }
+        }
+
+        let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
+    }
+
+    // Clean up agent on disconnect
+    if let Some(mut agent) = active_agent.take() {
+        agent.shutdown().await;
     }
 }
+

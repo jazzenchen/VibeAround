@@ -112,6 +112,18 @@ pub trait ImTransport: Send + Sync {
         // Default: fall back to plain text with numbered options
         Ok(None)
     }
+
+    /// Update an existing interactive card in place (e.g. highlight the selected agent).
+    /// Only works if the platform supports editing interactive messages.
+    async fn update_interactive(
+        &self,
+        _channel_id: &str,
+        _message_id: &str,
+        _prompt: &str,
+        _options: &[InteractiveOption],
+    ) -> Result<(), SendError> {
+        Ok(()) // default no-op
+    }
 }
 
 /// Split text into chunks of at most `max_len` characters, trying to break at newlines.

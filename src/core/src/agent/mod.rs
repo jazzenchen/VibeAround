@@ -52,6 +52,17 @@ impl AgentKind {
         &[AgentKind::Claude, AgentKind::Gemini, AgentKind::OpenCode, AgentKind::Codex]
     }
 
+    /// Only agents enabled in config (settings.json `enabled_agents`).
+    /// Falls back to all agents if not configured.
+    pub fn enabled() -> Vec<AgentKind> {
+        crate::config::ensure_loaded().enabled_agents.clone()
+    }
+
+    /// Whether this agent kind is enabled in config.
+    pub fn is_enabled(&self) -> bool {
+        crate::config::ensure_loaded().enabled_agents.contains(self)
+    }
+
     /// Emoji icon for this agent.
 
     /// Short description of this agent.

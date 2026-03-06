@@ -41,6 +41,13 @@ pub enum OutboundMsg {
         options: Vec<InteractiveOption>,
         reply_to: Option<String>,
     },
+    /// Update an existing interactive card in place.
+    UpdateInteractive {
+        channel_id: String,
+        message_id: String,
+        prompt: String,
+        options: Vec<InteractiveOption>,
+    },
 }
 
 /// Per-channel state.
@@ -271,6 +278,14 @@ async fn run_send_daemon_for_channel<T>(
                     }
                 }
             }
+            OutboundMsg::UpdateInteractive { message_id, prompt, options, .. } => {
+                match transport.update_interactive(&channel_id, &message_id, &prompt, &options).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        eprintln!("{} chat_id={} direction=update_interactive error={:?}", prefix(&channel_id), channel_id, e);
+                    }
+                }
+            }
         }
     }
 }
@@ -320,6 +335,28 @@ where T: ImTransport + 'static,
     /// Send a message directly (bypassing the queue) and return the message_id.
     pub async fn send_direct(&self, channel_id: &str, text: &str) -> Option<String> {
         self.transport.send(channel_id, text).await.ok().flatten()
+    }
+
+    /// Send an interactive card directly (bypassing queue). Returns message_id if available.
+    pub async fn send_interactive_direct(
+        &self,
+        channel_id: &str,
+        prompt: &str,
+        options: &[crate::im::transport::InteractiveOption],
+        reply_to: Option<&str>,
+    ) -> Option<String> {
+        self.transport.send_interactive(channel_id, prompt, options, reply_to).await.ok().flatten()
+    }
+
+    /// Update an existing interactive card directly (bypassing queue).
+    pub async fn update_interactive_direct(
+        &self,
+        channel_id: &str,
+        message_id: &str,
+        prompt: &str,
+        options: &[crate::im::transport::InteractiveOption],
+    ) {
+        let _ = self.transport.update_interactive(channel_id, message_id, prompt, options).await;
     }
 
     /// Edit a message directly (bypassing the queue).

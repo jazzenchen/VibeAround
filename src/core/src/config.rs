@@ -66,6 +66,8 @@ pub struct Config {
     /// Default agent to start on first message (e.g. "claude", "gemini", "opencode", "codex").
     /// Default: "claude".
     pub default_agent: String,
+    /// Which agents are enabled (shown in UI / IM). Empty = all agents enabled.
+    pub enabled_agents: Vec<crate::agent::AgentKind>,
 }
 
 /// Ensure config is loaded (idempotent). Loads settings.json on first call; returns the same instance afterwards.
@@ -167,6 +169,18 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "claude".to_string());
 
+    let enabled_agents = root
+        .get("enabled_agents")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(crate::agent::AgentKind::from_str_loose)
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| crate::agent::AgentKind::all().to_vec());
+
     Config {
         tunnel_provider,
         ngrok_auth_token,
@@ -182,6 +196,7 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         feishu_verbose,
         telegram_verbose,
         default_agent,
+        enabled_agents,
     }
 }
 
@@ -236,6 +251,7 @@ impl Default for Config {
             feishu_verbose: ImVerboseConfig::default(),
             telegram_verbose: ImVerboseConfig::default(),
             default_agent: "claude".to_string(),
+            enabled_agents: crate::agent::AgentKind::all().to_vec(),
         }
     }
 }

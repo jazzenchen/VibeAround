@@ -320,7 +320,9 @@ fn parse_command(text: &str) -> Option<CommandAction> {
     if let Some(rest) = text.strip_prefix("/cli ").or_else(|| text.strip_prefix("/cli\t")) {
         let agent_name = rest.trim();
         if let Some(kind) = crate::agent::AgentKind::from_str_loose(agent_name) {
-            return Some(CommandAction::SwitchAgent(kind));
+            if kind.is_enabled() {
+                return Some(CommandAction::SwitchAgent(kind));
+            }
         }
     }
     if let Some(rest) = text.strip_prefix("/switch ").or_else(|| text.strip_prefix("/switch\t")) {
