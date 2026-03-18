@@ -226,11 +226,13 @@ pub fn spawn_pty(
     cwd: Option<std::path::PathBuf>,
     tmux_session: Option<String>,
     theme: Option<String>,
+    initial_size: Option<(u16, u16)>,
 ) -> Result<(PtyBridge, mpsc::Receiver<Vec<u8>>, ResizeSender, mpsc::Receiver<PtyRunState>), Box<dyn std::error::Error + Send + Sync>> {
     let pty_system = native_pty_system();
+    let (cols, rows) = initial_size.unwrap_or((80, 24));
     let pair = pty_system.openpty(PtySize {
-        rows: 24,
-        cols: 80,
+        rows,
+        cols,
         pixel_width: 0,
         pixel_height: 0,
     })?;

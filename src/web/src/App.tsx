@@ -19,6 +19,17 @@ import { ThemeContext, getResolvedTheme, toggleTheme as applyThemeToggle, type T
 
 const DEFAULT_GROUP_ID = "default";
 
+/** Estimate terminal cols/rows from viewport so PTY spawns at the right size (avoids TUI rendering glitches on mobile). */
+function estimateTerminalSize(): { cols: number; rows: number } {
+  const charW = 7.2;   // approx px per char at fontSize 11–12 with JetBrains Mono
+  const lineH = 16.2;  // approx px per line at lineHeight ~1.35
+  const padH = 48;     // header + padding
+  const padW = 16;     // horizontal padding
+  const cols = Math.max(20, Math.floor((window.innerWidth - padW) / charW));
+  const rows = Math.max(5, Math.floor((window.innerHeight - padH) / lineH));
+  return { cols, rows };
+}
+
 function sessionToName(tool: string): string {
   const t = tool.toLowerCase();
   if (t === "claude") return "Claude";
@@ -134,7 +145,8 @@ function App() {
 
   const handleAddCli = useCallback(async (tool: ToolType) => {
     try {
-      const res = await createSession({ tool, theme });
+      const { cols, rows } = estimateTerminalSize();
+      const res = await createSession({ tool, theme, cols, rows });
       const session = sessionListItemToSession({
         session_id: res.session_id,
         tool: res.tool,
@@ -187,7 +199,8 @@ function App() {
         return;
       }
 
-      const res = await createSession({ tool: "generic", tmux_session: sessionName, theme });
+      const { cols, rows } = estimateTerminalSize();
+      const res = await createSession({ tool: "generic", tmux_session: sessionName, theme, cols, rows });
       const session = sessionListItemToSession({
         session_id: res.session_id,
         tool: "generic",

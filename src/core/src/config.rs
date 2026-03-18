@@ -1,6 +1,6 @@
 //! Global config singleton. Load settings.json once; desktop and server both call
 //! `ensure_loaded()` so the first caller does the work, later callers get the same instance.
-//! All config (tunnel, ngrok, telegram, feishu) comes from settings.json.
+//! All config (tunnel, ngrok, telegram, feishu) comes from ~/.vibearound/settings.json.
 
 use std::path::PathBuf;
 use std::sync::Once;
@@ -8,9 +8,43 @@ use std::sync::OnceLock;
 
 use crate::tunnels::TunnelProvider;
 
-/// Root directory for config: settings.json lives here (workspace src/ when common is in src/core).
-fn config_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+/// Default server port for both standalone server and desktop-spawned server.
+pub const DEFAULT_PORT: u16 = 12358;
+
+/// Minimal default settings.json content, embedded at compile time.
+const DEFAULT_SETTINGS_JSON: &str = r#"{
+  "working_dir": ""
+}"#;
+
+/// Data directory: ~/.vibearound
+pub fn data_dir() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/tmp".into());
+    PathBuf::from(home).join(".vibearound")
+}
+
+/// Ensure ~/.vibearound/ exists with settings.json and workspaces/.
+/// Called once before loading config. Safe to call multiple times (idempotent).
+fn init_data_dir() {
+    let dir = data_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("[VibeAround] Failed to create data dir {:?}: {}", dir, e);
+        return;
+    }
+    // Seed settings.json if missing
+    let settings_path = dir.join("settings.json");
+    if !settings_path.exists() {
+        eprintln!("[VibeAround] Creating default settings.json at {:?}", settings_path);
+        if let Err(e) = std::fs::write(&settings_path, DEFAULT_SETTINGS_JSON) {
+            eprintln!("[VibeAround] Failed to write settings.json: {}", e);
+        }
+    }
+    // Ensure workspaces/ dir
+    let ws_dir = dir.join("workspaces");
+    if let Err(e) = std::fs::create_dir_all(&ws_dir) {
+        eprintln!("[VibeAround] Failed to create workspaces dir: {}", e);
+    }
 }
 
 /// Install rustls default crypto provider once (required by rustls 0.22+ before any TLS use, e.g. ngrok SDK).
@@ -53,7 +87,7 @@ pub struct Config {
     pub telegram_bot_token: Option<String>,
     pub feishu_app_id: Option<String>,
     pub feishu_app_secret: Option<String>,
-    /// Root for job workspaces and projects.json. Absolute path. Default: {user_home}/VibeAround when not set.
+    /// Root for job workspaces and projects.json. Absolute path. Default: ~/.vibearound when not set.
     pub working_dir: PathBuf,
     /// Optional base URL for preview links (e.g. https://xxx.ngrok-free.app). Overrides ngrok_domain when set.
     pub preview_base_url: Option<String>,
@@ -70,11 +104,13 @@ pub struct Config {
     pub enabled_agents: Vec<crate::agent::AgentKind>,
 }
 
-/// Ensure config is loaded (idempotent). Loads settings.json on first call; returns the same instance afterwards.
+/// Ensure config is loaded (idempotent). Initialises ~/.vibearound/ on first call,
+/// then loads settings.json. Returns the same instance on subsequent calls.
 pub fn ensure_loaded() -> &'static Config {
     ensure_rustls_provider();
     CONFIG.get_or_init(|| {
-        let path = config_root().join("settings.json");
+        init_data_dir();
+        let path = data_dir().join("settings.json");
         load_settings_from(&path)
     })
 }
@@ -226,12 +262,9 @@ fn parse_verbose_config(channel_obj: Option<&serde_json::Value>) -> ImVerboseCon
     }
 }
 
-/// Default working directory when not set in settings: {user_home}/VibeAround.
+/// Default working directory when not set in settings: ~/.vibearound (same as data_dir).
 fn default_working_dir() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join("VibeAround")
+    data_dir()
 }
 
 impl Default for Config {

@@ -3,7 +3,7 @@
  */
 
 function getBaseUrl(): string {
-  if (typeof window === "undefined") return "http://127.0.0.1:5182";
+  if (typeof window === "undefined") return "http://127.0.0.1:12358";
   return window.location.origin;
 }
 
@@ -22,6 +22,10 @@ export interface CreateSessionBody {
   tmux_session?: string;
   /** "dark" | "light" — sets COLORFGBG in PTY env as fallback for non-OSC programs. */
   theme?: string;
+  /** Initial terminal columns (from client fit). Server falls back to 80 if absent. */
+  cols?: number;
+  /** Initial terminal rows (from client fit). Server falls back to 24 if absent. */
+  rows?: number;
 }
 
 export interface CreateSessionResponse {

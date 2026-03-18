@@ -3,7 +3,7 @@
  */
 
 function getBaseUrl(): string {
-  if (typeof window === "undefined") return "http://127.0.0.1:5182";
+  if (typeof window === "undefined") return "http://127.0.0.1:12358";
   return window.location.origin;
 }
 

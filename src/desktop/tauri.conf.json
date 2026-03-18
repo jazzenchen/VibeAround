@@ -4,13 +4,13 @@
   "version": "0.0.1",
   "identifier": "com.vibearound.app",
   "build": {
-"beforeDevCommand": "bun run --cwd ../desktop-tray dev",
-"devUrl": "http://localhost:5180",
-"beforeBuildCommand": "bun run --cwd ../desktop-tray build && bun run --cwd ../web build",
-"frontendDist": "../desktop-tray/dist"
+    "beforeDevCommand": "bun run --cwd ../desktop-ui dev",
+    "devUrl": "http://localhost:5181",
+    "beforeBuildCommand": "bun run --cwd ../desktop-ui build && bun run --cwd ../web build",
+    "frontendDist": "../desktop-ui/dist"
   },
   "app": {
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
     "security": {
       "capabilities": [
         "default"
@@ -20,8 +20,9 @@
       {
         "label": "main",
         "title": "VibeAround",
-        "width": 320,
-        "height": 420,
+        "url": "/",
+        "width": 960,
+        "height": 640,
         "resizable": true,
         "visible": false
       }

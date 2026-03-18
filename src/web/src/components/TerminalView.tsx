@@ -135,8 +135,26 @@ export function TerminalView({ session, isActive, viewMode, onSessionState, onSe
       const { CanvasAddon } = await import("@xterm/addon-canvas");
       term.loadAddon(new CanvasAddon());
     } else if (XTERM_RENDERER === "webgl") {
-      const { WebglAddon } = await import("@xterm/addon-webgl");
-      term.loadAddon(new WebglAddon());
+      try {
+        const { WebglAddon } = await import("@xterm/addon-webgl");
+        const webgl = new WebglAddon();
+        // WebGL context loss (common on mobile) — fall back to canvas/dom.
+        webgl.onContextLoss(() => {
+          webgl.dispose();
+          try {
+            import("@xterm/addon-canvas").then(({ CanvasAddon }) => {
+              term.loadAddon(new CanvasAddon());
+            });
+          } catch { /* dom fallback is automatic */ }
+        });
+        term.loadAddon(webgl);
+      } catch {
+        // WebGL not available (mobile Safari, low-end devices) — try canvas, else dom.
+        try {
+          const { CanvasAddon } = await import("@xterm/addon-canvas");
+          term.loadAddon(new CanvasAddon());
+        } catch { /* dom renderer is the built-in fallback */ }
+      }
     }
     termRef.current = term;
 

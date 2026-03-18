@@ -72,6 +72,12 @@ struct CreateSessionBody {
     /// If "dark" or "light", sets COLORFGBG in PTY env as fallback for programs that don't query OSC 10/11.
     #[serde(default)]
     theme: Option<String>,
+    /// Initial terminal columns (from client fit). Falls back to 80 if absent.
+    #[serde(default)]
+    cols: Option<u16>,
+    /// Initial terminal rows (from client fit). Falls back to 24 if absent.
+    #[serde(default)]
+    rows: Option<u16>,
 }
 
 /// Session list item (GET /api/sessions).
@@ -260,8 +266,12 @@ async fn create_session_handler(
     } else {
         (None, body.project_path.clone())
     };
+    let initial_size = match (body.cols, body.rows) {
+        (Some(c), Some(r)) if c > 0 && r > 0 => Some((c, r)),
+        _ => None,
+    };
     let (bridge, mut pty_rx, resize_tx, mut state_rx) =
-        common::pty::spawn_pty(tool, cwd, body.tmux_session.clone(), body.theme.clone()).map_err(|e| {
+        common::pty::spawn_pty(tool, cwd, body.tmux_session.clone(), body.theme.clone(), initial_size).map_err(|e| {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to start PTY: {}", e))
         })?;
     let created_at = unix_now_secs();

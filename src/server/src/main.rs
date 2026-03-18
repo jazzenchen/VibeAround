@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use common::config;
 use common::tunnels::{self, TunnelProvider, TUNNEL_PASSWORD_URL};
 
-const DEFAULT_PORT: u16 = 5182;
+const DEFAULT_PORT: u16 = common::config::DEFAULT_PORT;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = config::ensure_loaded();
