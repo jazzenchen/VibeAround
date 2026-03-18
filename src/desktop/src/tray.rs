@@ -5,8 +5,8 @@ use crate::TunnelState;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItemBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, AppHandle, Manager, Runtime,
+    tray::TrayIconBuilder,
+    App, Manager, Runtime,
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -31,7 +31,7 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
         .icon_as_template(true)
         .tooltip("VibeAround")
         .menu(&menu)
-        .menu_on_left_click(true)
+        .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show_desktop" => {
                 if let Some(w) = app.get_webview_window(MAIN_WINDOW_LABEL) {

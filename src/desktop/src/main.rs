@@ -10,6 +10,7 @@ use std::sync::RwLock;
 use common::config;
 use common::tunnels::{self, TunnelProvider, TUNNEL_PASSWORD_URL};
 use server::{run_telegram_bot, run_web_server};
+use tauri::Manager;
 
 /// Shared tunnel URL (set when tunnel is ready). Used by tray to open/copy public URL.
 pub struct TunnelState(pub Arc<RwLock<Option<String>>>);
@@ -23,6 +24,15 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Another instance tried to start — show and focus the main window.
+            eprintln!("[VibeAround] Another instance detected, focusing existing window");
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .manage(TunnelState(Arc::clone(&tunnel_url)))
         .setup(move |app| {
             tray::setup(app)?;
