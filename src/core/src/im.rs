@@ -9,6 +9,7 @@ pub mod event_log;
 pub mod log;
 pub mod router;
 pub mod session;
+pub mod session_store;
 pub mod spec;
 pub mod transport;
 pub mod worker;

@@ -56,10 +56,23 @@ pub async fn run_worker<T>(
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
-    // Start event logger
+    // Start event logger — create a session file for the Manager
     let event_log_tx = {
-        let db_path = config::data_dir().join("vibearound.db");
-        Some(super::event_log::spawn_logger(db_path))
+        let sessions_dir = super::session_store::manager_sessions_dir();
+        match super::session_store::SessionWriter::create(
+            &sessions_dir,
+            crate::agent::AgentKind::Claude, // will be updated when Manager spawns
+            "manager",
+            &config::data_dir().to_string_lossy(),
+            None,
+            None,
+        ) {
+            Ok(writer) => Some(super::event_log::spawn_logger(writer)),
+            Err(e) => {
+                eprintln!("[worker] failed to create session file: {}", e);
+                None
+            }
+        }
     };
 
     // Current target agent id — None until Manager is spawned on first message.
