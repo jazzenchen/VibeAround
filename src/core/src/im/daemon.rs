@@ -198,10 +198,18 @@ async fn run_send_daemon_for_channel<T>(
             }
             OutboundMsg::StreamDone(_) => {
                 eprintln!("[daemon] StreamDone channel={} pending={:?}", channel_id, state.pending_stream_text.as_deref());
-                // Turn is done. Delete the trailing Working placeholder from the last StreamEnd.
+                // Flush any pending content to the message
                 if let Some(ref mid) = state.stream_message_id {
-                    if state.pending_stream_text.as_deref() == Some("⏳ Working...") {
-                        let _ = transport.edit_message(&channel_id, mid, "").await;
+                    match state.pending_stream_text.as_deref() {
+                        Some("⏳ Working...") | None => {
+                            // Trailing placeholder — clear it
+                            let _ = transport.edit_message(&channel_id, mid, "").await;
+                        }
+                        Some(text) => {
+                            // Real content that wasn't flushed yet — finalize it
+                            let _ = transport.edit_message(&channel_id, mid, text).await;
+                            let _ = transport.finalize_stream(&channel_id, mid, text).await;
+                        }
                     }
                 }
                 state.stream_message_id = None;
