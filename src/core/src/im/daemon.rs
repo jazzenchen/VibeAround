@@ -124,6 +124,7 @@ async fn run_send_daemon_for_channel<T>(
                 let now = Instant::now();
                 let can_edit = state.last_edit.map(|t| now.duration_since(t) >= caps.min_edit_interval).unwrap_or(true);
                 if !state.stream_sent {
+                    eprintln!("[daemon] StreamPart send new channel={}", channel_id);
                     if let Ok(mid) = transport.send(&channel_id, to_show).await {
                         state.stream_sent = true;
                         state.stream_message_id = mid;
@@ -131,8 +132,11 @@ async fn run_send_daemon_for_channel<T>(
                     }
                 } else if let Some(ref mid) = state.stream_message_id {
                     if can_edit {
+                        eprintln!("[daemon] StreamPart edit channel={}", channel_id);
                         let _ = transport.edit_message(&channel_id, mid, to_show).await;
                         state.last_edit = Some(Instant::now());
+                    } else {
+                        eprintln!("[daemon] StreamPart skipped (rate limit) channel={}", channel_id);
                     }
                 }
             }
@@ -202,11 +206,11 @@ async fn run_send_daemon_for_channel<T>(
                 if let Some(ref mid) = state.stream_message_id {
                     match state.pending_stream_text.as_deref() {
                         Some("⏳ Working...") | None => {
-                            // Trailing placeholder — clear it
+                            eprintln!("[daemon] StreamDone clear placeholder channel={}", channel_id);
                             let _ = transport.edit_message(&channel_id, mid, "").await;
                         }
                         Some(text) => {
-                            // Real content that wasn't flushed yet — finalize it
+                            eprintln!("[daemon] StreamDone flush pending channel={} len={}", channel_id, text.len());
                             let _ = transport.edit_message(&channel_id, mid, text).await;
                             let _ = transport.finalize_stream(&channel_id, mid, text).await;
                         }
