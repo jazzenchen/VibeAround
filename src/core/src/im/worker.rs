@@ -513,6 +513,17 @@ where
                 )).await;
             }
             AgentEvent::ToolUse { name, id: _, input } => {
+                // Special handling for dispatch_task: show a placeholder instead of raw tool call
+                if name == "dispatch_task" {
+                    if current_block != Block::None {
+                        flush_block(channel_id, outbound).await;
+                    }
+                    current_block = Block::Tool;
+                    let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
+                        channel_id.to_string(), "⏳ Dispatching task to worker...\n".to_string(),
+                    )).await;
+                    continue;
+                }
                 if !verbose.show_tool_use { continue; }
                 if current_block != Block::None {
                     flush_block(channel_id, outbound).await;

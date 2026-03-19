@@ -962,7 +962,7 @@ fn mcp_tools_list(id: Option<serde_json::Value>) -> Json<serde_json::Value> {
                 "properties": {
                     "workspace": {
                         "type": "string",
-                        "description": "Absolute path to the project directory"
+                        "description": "Absolute path to the project workspace directory (e.g. ~/.vibearound/workspaces/my-project/). Must be a project-specific directory, NOT the root ~/.vibearound/ directory. Create the directory first if it does not exist."
                     },
                     "message": {
                         "type": "string",
@@ -1005,6 +1005,22 @@ async fn mcp_tools_call(
         Some(w) => std::path::PathBuf::from(w),
         None => return jsonrpc_err(id, -32602, "Missing required argument: workspace"),
     };
+
+    // Guard: reject if workspace is the vibearound root directory
+    let data_dir = common::config::data_dir();
+    if workspace == data_dir || workspace == data_dir.join("") {
+        return jsonrpc_ok(id, serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": format!(
+                    "Error: workspace must be a project-specific directory under {}/workspaces/<project-name>/, \
+                     not the root data directory. Please create the workspace directory first.",
+                    data_dir.display()
+                )
+            }],
+            "isError": true
+        }));
+    }
     let message = match arguments.get("message").and_then(|v| v.as_str()) {
         Some(m) => m,
         None => return jsonrpc_err(id, -32602, "Missing required argument: message"),
@@ -1017,10 +1033,14 @@ async fn mcp_tools_call(
     // Dispatch to registry
     match common::agent::registry::dispatch_task(&state.services, workspace, message, kind).await {
         Ok(result) => {
+            let summary = format!(
+                "Task completed by worker {}. The user already saw the worker's output in real-time — do NOT repeat it.",
+                result.agent_id
+            );
             jsonrpc_ok(id, serde_json::json!({
                 "content": [{
                     "type": "text",
-                    "text": result.output
+                    "text": summary
                 }],
                 "isError": false,
                 "_meta": {

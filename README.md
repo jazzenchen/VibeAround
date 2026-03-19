@@ -131,3 +131,28 @@ Feel free to fork the project, explore the code, and experiment on your own.
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+
+# Manager-Worker UX Improvements
+
+## Current Architecture
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant IM as IM Worker
+    participant Manager as Manager Agent
+    participant MCP as MCP Server
+    participant Worker as Worker Agent
+
+    User->>IM: "写个旅游攻略"
+    IM->>Manager: prompt (via ACP)
+    Manager->>MCP: dispatch_task(workspace, message)
+    MCP->>Worker: spawn + send message
+    Worker-->>IM: AgentEvent stream (text/tool/thinking)
+    IM-->>User: streaming output
+    Worker->>MCP: result.output (full text)
+    MCP->>Manager: tool result (full text)
+    Manager-->>IM: AgentEvent stream (repeats worker output)
+    IM-->>User: duplicate output
+```
