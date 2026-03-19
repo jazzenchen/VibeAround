@@ -7,8 +7,6 @@ pub mod channels;
 pub mod daemon;
 pub mod log;
 pub mod message_hub;
-pub mod router;
-pub mod session;
 pub mod session_store;
 pub mod spec;
 pub mod transport;

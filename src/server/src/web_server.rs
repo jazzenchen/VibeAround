@@ -1,6 +1,6 @@
 //! Axum HTTP + WebSocket server: serves Web SPA (from given dist path), WS at /ws for xterm ↔ PTY,
-//! session registry API (POST/GET/DELETE /api/sessions), project API (/api/projects),
-//! and static preview (/preview/:project_id, /raw/:project_id/*). /ws?session_id=xxx attaches to a session.
+//! agent chat WS at /ws/chat, static preview (/preview/:project_id, /raw/:project_id/*),
+//! and MCP endpoint at /mcp.
 
 use axum::{
     extract::{Path, Query, State, ws::{Message, WebSocket, WebSocketUpgrade}},
@@ -16,21 +16,14 @@ use futures_util::SinkExt;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tower_http::services::ServeDir;
-use tokio::sync::broadcast;
 
 use common::config;
 use common::headless::wire;
-use common::pty::{PtyRunState, PtyTool, list_tmux_sessions, tmux_available};
-use common::session::{
-    CircularBuffer, Registry, SessionContext, SessionId, SessionMetadata, LIVE_BROADCAST_CAP,
-    unix_now_secs,
-};
-use common::project;
-use rusqlite::Connection;
+use common::pty::{list_tmux_sessions, tmux_available};
+use common::session::{Registry, SessionId};
 
-const DELAYED_RELEASE_SECS: u64 = 600; // 10 minutes after Exited before removing from registry
 
 /// Client sends this as JSON over Text frame to resize the PTY (e.g. after xterm-addon-fit).
 #[derive(serde::Deserialize)]
@@ -47,63 +40,17 @@ struct WsQuery {
     session_id: Option<String>,
 }
 
-/// Shared app state: registry, SPA fallback path, working dir, DB, optional Feishu webhook state, service manager.
+/// Shared app state: registry, SPA fallback path, working dir, optional Feishu webhook state, service manager.
 #[derive(Clone)]
 struct AppState {
     registry: Registry,
     dist_for_fallback: PathBuf,
     working_dir: PathBuf,
-    db: Arc<std::sync::Mutex<Connection>>,
     feishu: Option<common::im::channels::feishu::FeishuWebhookState>,
     services: Arc<common::service::ServiceManager>,
 }
 
-/// POST /api/sessions body.
-#[derive(serde::Deserialize)]
-struct CreateSessionBody {
-    tool: String,
-    #[serde(default)]
-    project_path: Option<String>,
-    /// If set, session PTY runs in this project's workspace directory.
-    #[serde(default)]
-    project_id: Option<String>,
-    /// If set, spawn inside a tmux session with this name (attach-or-create).
-    #[serde(default)]
-    tmux_session: Option<String>,
-    /// If "dark" or "light", sets COLORFGBG in PTY env as fallback for programs that don't query OSC 10/11.
-    #[serde(default)]
-    theme: Option<String>,
-    /// Initial terminal columns (from client fit). Falls back to 80 if absent.
-    #[serde(default)]
-    cols: Option<u16>,
-    /// Initial terminal rows (from client fit). Falls back to 24 if absent.
-    #[serde(default)]
-    rows: Option<u16>,
-}
 
-/// Session list item (GET /api/sessions).
-#[derive(serde::Serialize)]
-struct SessionListItem {
-    session_id: String,
-    tool: String,
-    status: String, // "running" | "exited"
-    created_at: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    project_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tmux_session: Option<String>,
-}
-
-fn parse_tool(s: Option<&String>) -> PtyTool {
-    let t = s.as_deref().map(|x| x.to_lowercase());
-    match t.as_deref() {
-        Some("claude") => PtyTool::Claude,
-        Some("codex") => PtyTool::Codex,
-        Some("gemini") => PtyTool::Gemini,
-        Some("opencode") => PtyTool::OpenCode,
-        _ => PtyTool::Generic,
-    }
-}
 
 /// Ensure web dist exists (build web first).
 fn verify_web_dist(web_dist: &std::path::Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -154,26 +101,17 @@ pub async fn run_web_server(
 
     let assets_dir = web_dist.join("assets");
     let working_dir = config::ensure_loaded().working_dir.clone();
-    if let Err(e) = project::ensure_workspace_dirs(&working_dir) {
-        eprintln!("[VibeAround] Failed to create workspaces dir: {}", e);
-    }
-    let db = common::db::open_db(&working_dir)
-        .expect("Failed to open SQLite database");
     let state = AppState {
         registry: Arc::clone(&services.pty),
         dist_for_fallback: web_dist.clone(),
         working_dir,
-        db: Arc::new(std::sync::Mutex::new(db)),
         feishu: feishu_state,
         services,
     };
 
     let app = Router::new()
-        .route("/api/sessions", get(list_sessions_handler).post(create_session_handler))
-        .route("/api/sessions/{id}", delete(delete_session_handler))
         .route("/api/tmux/sessions", get(list_tmux_sessions_handler))
         .route("/api/agents", get(list_agents_handler))
-        .route("/api/projects", get(list_projects_handler))
         .route("/api/im/feishu/event", post(feishu_webhook_handler))
         .route("/api/im/feishu/card", post(feishu_card_callback_handler))
         .route("/preview/{project_id}", get(preview_page_handler))
@@ -265,118 +203,13 @@ async fn ws_handler(State(state): State<AppState>, Query(query): Query<WsQuery>,
     })
 }
 
-async fn create_session_handler(
-    State(state): State<AppState>,
-    Json(body): Json<CreateSessionBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let tool = parse_tool(Some(&body.tool));
-
-    // Note: no server-side dedup for tmux sessions. The frontend checks if a tab
-    // already exists and switches to it. When the user explicitly requests a new
-    // attach (e.g. after rebuild or to re-detach others), we always spawn a fresh PTY.
-
-    let (cwd, project_path) = if let Some(ref project_id) = body.project_id {
-        let p = project::project_workspace_path(&state.working_dir, project_id);
-        if !p.exists() {
-            return Err((
-                StatusCode::NOT_FOUND,
-                format!("Project not found: {}", project_id),
-            ));
-        }
-        (Some(p.clone()), Some(p.to_string_lossy().into_owned()))
-    } else {
-        (None, body.project_path.clone())
-    };
-    let initial_size = match (body.cols, body.rows) {
-        (Some(c), Some(r)) if c > 0 && r > 0 => Some((c, r)),
-        _ => None,
-    };
-    let (bridge, mut pty_rx, resize_tx, mut state_rx) =
-        common::pty::spawn_pty(tool, cwd, body.tmux_session.clone(), body.theme.clone(), initial_size).map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to start PTY: {}", e))
-        })?;
-    let created_at = unix_now_secs();
-    let metadata = SessionMetadata {
-        created_at,
-        project_path,
-        tool,
-        tmux_session: body.tmux_session.clone(),
-    };
-    let buffer = Arc::new(CircularBuffer::new());
-    let (live_tx, _) = broadcast::channel::<Bytes>(LIVE_BROADCAST_CAP);
-    let run_state = Arc::new(RwLock::new(PtyRunState::Running { tool }));
-    let session_id = SessionId::new();
-    let ctx = SessionContext {
-        bridge,
-        resize_tx: resize_tx.clone(),
-        state: run_state.clone(),
-        metadata: metadata.clone(),
-        buffer: buffer.clone(),
-        live_tx: live_tx.clone(),
-    };
-    state.registry.insert(session_id, ctx);
-
-    tokio::spawn({
-        let buffer = Arc::clone(&buffer);
-        let live_tx = live_tx.clone();
-        async move {
-            while let Some(d) = pty_rx.recv().await {
-                buffer.push(&d);
-                let _ = live_tx.send(Bytes::from(d));
-            }
-        }
-    });
-    tokio::spawn({
-        let registry = state.registry.clone();
-        let run_state = run_state.clone();
-        async move {
-            while let Some(s) = state_rx.recv().await {
-                if let Ok(mut g) = run_state.write() {
-                    *g = s.clone();
-                }
-                if let PtyRunState::Exited { .. } = s {
-                    let sid = session_id;
-                    let reg = registry.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(DELAYED_RELEASE_SECS)).await;
-                        if let Some((_, ctx)) = reg.remove(&sid) {
-                            let _ = ctx.bridge.kill();
-                        }
-                    });
-                    break;
-                }
-            }
-        }
-    });
-
-    Ok(Json(serde_json::json!({
-        "session_id": session_id.to_string(),
-        "tool": format!("{:?}", tool).to_lowercase(),
-        "created_at": created_at,
-        "project_path": metadata.project_path,
-    })))
-}
-
-async fn list_projects_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let conn = state.db.lock().unwrap();
-    let projects = project::list_projects(&conn).unwrap_or_default();
-    let list: Vec<serde_json::Value> = projects.iter().map(|p| {
-        serde_json::json!({
-            "project_id": p.project_id,
-            "name": p.name,
-            "path": p.path,
-            "created_at": p.created_at,
-        })
-    }).collect();
-    Json(serde_json::json!(list))
-}
 
 /// GET /preview/:project_id — HTML page with iframe pointing to /raw/:project_id/
 async fn preview_page_handler(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let p = project::project_workspace_path(&state.working_dir, &project_id);
+    let p = state.working_dir.join("workspaces").join(&project_id);
     if !p.exists() {
         return Err((StatusCode::NOT_FOUND, format!("Project not found: {}", project_id)));
     }
@@ -398,7 +231,7 @@ async fn raw_impl(
     project_id: String,
     path: Option<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let base = project::project_workspace_path(&state.working_dir, &project_id);
+    let base = state.working_dir.join("workspaces").join(&project_id);
     if !base.exists() {
         return Err((StatusCode::NOT_FOUND, format!("Project not found: {}", project_id)));
     }
@@ -502,44 +335,6 @@ async fn list_agents_handler() -> Json<serde_json::Value> {
 }
 
 
-async fn list_sessions_handler(State(state): State<AppState>) -> Json<Vec<SessionListItem>> {
-    let list: Vec<_> = state
-        .registry
-        .iter()
-        .map(|r| {
-            let id = r.key();
-            let ctx = r.value();
-            let status = match ctx.state.read() {
-                Ok(g) => match &*g {
-                    PtyRunState::Running { .. } => "running",
-                    PtyRunState::Exited { .. } => "exited",
-                },
-                _ => "unknown",
-            };
-            SessionListItem {
-                session_id: id.to_string(),
-                tool: format!("{:?}", ctx.metadata.tool).to_lowercase(),
-                status: status.to_string(),
-                created_at: ctx.metadata.created_at,
-                project_path: ctx.metadata.project_path.clone(),
-                tmux_session: ctx.metadata.tmux_session.clone(),
-            }
-        })
-        .collect();
-    Json(list)
-}
-
-async fn delete_session_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid session_id".into()))?;
-    let sid = SessionId(uuid);
-    if let Some((_, ctx)) = state.registry.remove(&sid) {
-        let _ = ctx.bridge.kill();
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
 
 // ---------------------------------------------------------------------------
 // WebSocket: /ws/services — real-time service status push
@@ -607,8 +402,7 @@ async fn ws_services_session(
 
 async fn ws_chat_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     let working_dir = state.working_dir.clone();
-    let db = state.db.clone();
-    ws.on_upgrade(move |socket| handle_chat_socket(socket, working_dir, db))
+    ws.on_upgrade(move |socket| handle_chat_socket(socket, working_dir))
 }
 
 async fn handle_socket_attach(mut socket: WebSocket, session_id: SessionId, registry: Registry) {
@@ -688,7 +482,7 @@ async fn handle_socket_attach(mut socket: WebSocket, session_id: SessionId, regi
 }
 
 
-async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, _db: Arc<std::sync::Mutex<Connection>>) {
+async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
     use common::agent::{self, AgentBackend, AgentEvent, AgentKind};
 
     let (mut ws_tx, mut ws_rx) = socket.split();

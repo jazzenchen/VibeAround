@@ -4428,7 +4428,6 @@ dependencies = [
  "futures-util",
  "mime_guess",
  "reqwest 0.12.28",
- "rusqlite",
  "serde",
  "serde_json",
  "tokio",

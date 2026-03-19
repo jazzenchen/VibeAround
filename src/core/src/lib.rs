@@ -2,10 +2,8 @@
 
 pub mod agent;
 pub mod config;
-pub mod db;
 pub mod headless;
 pub mod im;
-pub mod project;
 pub mod pty;
 pub mod service;
 pub mod session;

@@ -6,14 +6,11 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
-use crate::config;
-
-pub mod context;
 pub mod runners;
 
 /// Working directory for headless chat (no PTY). Read from settings.json `working_dir`, default is user home.
 pub fn chat_working_dir() -> PathBuf {
-    config::ensure_loaded().working_dir.clone()
+    crate::config::ensure_loaded().working_dir.clone()
 }
 
 // Re-export segment types as the unified runner output (same shape for all runners).
