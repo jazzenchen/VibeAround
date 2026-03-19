@@ -171,7 +171,7 @@ async fn run_send_daemon_for_channel<T>(
                 }
             }
             OutboundMsg::StreamEnd(_) => {
-                // Block boundary — finalize current message, reset state for next block.
+                // Block boundary — finalize current message, send Working placeholder for next block.
                 let mid = state.stream_message_id.take();
                 let pending = state.pending_stream_text.take();
                 state.last_progress = None;
@@ -180,11 +180,21 @@ async fn run_send_daemon_for_channel<T>(
                     let _ = transport.edit_message(&channel_id, &mid, &pending).await;
                     let _ = transport.finalize_stream(&channel_id, &mid, &pending).await;
                 }
+                // Placeholder for the next block
+                if let Ok(mid) = transport.send(&channel_id, "⏳ Working...").await {
+                    state.stream_sent = true;
+                    state.stream_message_id = mid;
+                    state.last_edit = Some(Instant::now());
+                    state.pending_stream_text = Some("⏳ Working...".to_string());
+                }
             }
             OutboundMsg::StreamDone(_) => {
-                // Entire turn is done. Nothing to do — the last StreamEnd already
-                // finalized content and sent a "Working..." which will be naturally
-                // replaced by the next turn's first StreamPart.
+                // Turn is done. Delete the trailing Working placeholder from the last StreamEnd.
+                if let Some(ref mid) = state.stream_message_id {
+                    if state.pending_stream_text.as_deref() == Some("⏳ Working...") {
+                        let _ = transport.edit_message(&channel_id, mid, "").await;
+                    }
+                }
                 state.stream_message_id = None;
                 state.pending_stream_text = None;
                 state.last_progress = None;
