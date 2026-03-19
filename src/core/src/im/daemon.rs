@@ -189,21 +189,14 @@ async fn run_send_daemon_for_channel<T>(
                 }
             }
             OutboundMsg::StreamDone(_) => {
-                // Entire turn is done — finalize current block and reset.
+                // Entire turn is done. The last StreamEnd already sent a "Working..." placeholder.
+                // Edit it to "Done" and reset.
                 let mid = state.stream_message_id.take();
-                let pending = state.pending_stream_text.take();
+                state.pending_stream_text = None;
                 state.last_progress = None;
                 state.stream_sent = false;
-                // If the last message is a placeholder, edit it to "Done"
                 if let Some(mid) = mid {
-                    let final_text = pending.as_deref().unwrap_or("");
-                    if final_text == "⏳ Working..." {
-                        let _ = transport.edit_message(&channel_id, &mid, "✅ Done").await;
-                        let _ = transport.finalize_stream(&channel_id, &mid, "✅ Done").await;
-                    } else if let Some(ref text) = pending {
-                        let _ = transport.edit_message(&channel_id, &mid, text).await;
-                        let _ = transport.finalize_stream(&channel_id, &mid, text).await;
-                    }
+                    let _ = transport.edit_message(&channel_id, &mid, "✅ Done").await;
                 }
             }
             OutboundMsg::Send(_, text) => {
