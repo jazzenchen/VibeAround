@@ -180,6 +180,13 @@ async fn run_send_daemon_for_channel<T>(
                     let _ = transport.edit_message(&channel_id, &mid, &pending).await;
                     let _ = transport.finalize_stream(&channel_id, &mid, &pending).await;
                 }
+                // Send a "Working..." placeholder for the next block
+                if let Ok(mid) = transport.send(&channel_id, "⏳ Working...").await {
+                    state.stream_sent = true;
+                    state.stream_message_id = mid;
+                    state.last_edit = Some(Instant::now());
+                    state.pending_stream_text = Some("⏳ Working...".to_string());
+                }
             }
             OutboundMsg::StreamDone(_) => {
                 // Entire turn is done — finalize current block and reset.
@@ -187,9 +194,16 @@ async fn run_send_daemon_for_channel<T>(
                 let pending = state.pending_stream_text.take();
                 state.last_progress = None;
                 state.stream_sent = false;
-                if let (Some(mid), Some(pending)) = (mid, pending) {
-                    let _ = transport.edit_message(&channel_id, &mid, &pending).await;
-                    let _ = transport.finalize_stream(&channel_id, &mid, &pending).await;
+                // If the last message is a placeholder, edit it to "Done"
+                if let Some(mid) = mid {
+                    let final_text = pending.as_deref().unwrap_or("");
+                    if final_text == "⏳ Working..." {
+                        let _ = transport.edit_message(&channel_id, &mid, "✅ Done").await;
+                        let _ = transport.finalize_stream(&channel_id, &mid, "✅ Done").await;
+                    } else if let Some(ref text) = pending {
+                        let _ = transport.edit_message(&channel_id, &mid, text).await;
+                        let _ = transport.finalize_stream(&channel_id, &mid, text).await;
+                    }
                 }
             }
             OutboundMsg::Send(_, text) => {

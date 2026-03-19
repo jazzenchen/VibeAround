@@ -40,6 +40,15 @@ impl ServerDaemon {
     /// 3. Telegram IM bot
     /// 4. Tunnel (cloudflare / localtunnel / ngrok)
     pub async fn start(&self, dist_path: PathBuf) -> Result<(), String> {
+        // Check if another instance is already running on the same port
+        if let Ok(_) = tokio::net::TcpStream::connect(("127.0.0.1", self.port)).await {
+            eprintln!(
+                "[VibeAround] ⚠️  Another instance is already running on port {}. \
+                 The new instance will fail to bind.",
+                self.port
+            );
+        }
+
         let cfg = config::ensure_loaded();
         let services = &self.services;
 

@@ -195,7 +195,15 @@ pub async fn run_web_server(
                 .allow_headers(tower_http::cors::Any),
         );
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AddrInUse {
+            eprintln!(
+                "[VibeAround] ⚠️  Port {} is already in use — is another VibeAround instance running?",
+                port
+            );
+        }
+        e
+    })?;
     println!("[VibeAround] Web server listening on http://127.0.0.1:{}", port);
     axum::serve(listener, app).await?;
     Ok(())

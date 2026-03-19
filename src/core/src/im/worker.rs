@@ -343,19 +343,17 @@ where
         rx
     };
 
-    // Send a "Working..." placeholder so the user knows the system is processing
-    let placeholder_mid = outbound.send_direct(channel_id, "⏳ Working...").await;
+    // Send a "Working..." placeholder via stream progress so the user sees immediate feedback.
+    // This integrates with the daemon's state machine — the first real StreamPart will replace it.
+    let _ = outbound.send(channel_id, OutboundMsg::StreamProgress(
+        channel_id.to_string(), "⏳ Working...".to_string(),
+    )).await;
 
     // Stream all agent events (Manager + Workers) back to IM in real-time
     let agent_died = stream_all_agent_events(
         services, agent_id, manager_rx, channel_id, outbound, verbose,
         msg.user_message_id.as_deref(), event_log_tx,
     ).await;
-
-    // Remove the placeholder once streaming is done (edit to empty or delete)
-    if let Some(mid) = placeholder_mid {
-        outbound.edit_direct(channel_id, &mid, "✅ Done").await;
-    }
 
     agent_died
 }
