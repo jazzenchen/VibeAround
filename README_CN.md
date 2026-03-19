@@ -117,6 +117,20 @@ bun run dev
 
 欢迎随时 Fork 本项目，探索代码并在您自己的环境中进行实验。
 
+---
+
+## 更新日志（近期）
+
+### 会话持久化修复
+
+此前，每一轮对话（用户消息 → 智能体回复）都会创建一个**新的** JSONL 会话文件，原因是 `SessionWriter` 在 `TurnComplete` 时被丢弃。现在消息中心（message hub）会记住每个智能体上次的会话文件路径，并在后续轮次中重新打开同一文件进行追加写入，从而将连续对话持久化到单个会话文件中。`/new` 命令仍会按预期开启全新会话。
+
+### Gemini ACP / MCP 工具发现
+
+调查发现，Gemini CLI 在 `--experimental-acp` 模式下运行时，**不会**从 `.gemini/settings.json` 文件中发现 MCP 服务器。MCP 服务器必须通过 ACP 的 `session/new` 请求中的 `mcpServers` 数组参数注入。这是 Gemini 无法获取 `dispatch_task` 工具的根本原因。修复方案：需要在 `acp_session_loop` 中将 MCP 服务器配置传入 `NewSessionRequest`。
+
+---
+
 ## 开源协议
 
 本项目基于 [MIT 协议](LICENSE) 开源。
