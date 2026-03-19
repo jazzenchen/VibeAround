@@ -7,6 +7,7 @@ pub mod headless;
 pub mod im;
 pub mod project;
 pub mod pty;
+pub mod service;
 pub mod session;
 pub mod tunnels;
 pub mod workspace;

@@ -1,17 +1,23 @@
-//! IM worker: receive InboundMessage, dispatch to active ACP agent, stream events back to IM.
+//! IM worker: receive InboundMessage, dispatch to agents via ServiceManager.
 //!
-//! All legacy session/project/classify_intent routing has been removed.
-//! The worker starts a default Claude agent on first message and sends everything directly to it.
-//! Use `/cli claude` or `/cli gemini` to switch agents.
+//! Architecture:
+//! - A Manager Agent is auto-spawned on first message (default CLI agent with manager prompt).
+//! - All messages route to the current target agent (Manager by default).
+//! - `/switch <worker_id>` routes subsequent messages to a specific Worker Agent.
+//! - `/back` returns routing to the Manager Agent.
+//! - `/workers` lists all agents. `/spawn` creates a new worker. `/kill` stops one.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
 use super::daemon::{OutboundHub, OutboundMsg};
-use crate::agent::{self, AgentBackend, AgentEvent, AgentKind};
+use crate::agent::{self, AgentEvent, AgentKind};
+use crate::agent::registry::{self, AgentId};
 use crate::config::{self, ImVerboseConfig};
+use crate::service::{AgentRole, ServiceManager};
 
 /// Attachment metadata from Feishu file/image messages.
 #[derive(Debug, Clone)]
@@ -46,67 +52,148 @@ pub async fn run_worker<T>(
     busy_set: Arc<DashMap<String, ()>>,
     _feishu_transport: Option<Arc<crate::im::channels::feishu::FeishuTransport>>,
     verbose: ImVerboseConfig,
+    services: Arc<ServiceManager>,
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
-    let working_dir = config::ensure_loaded().working_dir.clone();
+    // Start event logger
+    let event_log_tx = {
+        let db_path = config::data_dir().join("vibearound.db");
+        Some(super::event_log::spawn_logger(db_path))
+    };
 
-    // Default agent: Claude, started lazily on first message.
-    let mut active_agent: Option<Box<dyn AgentBackend>> = None;
-    // Track the last /start card message_id so we can update it in place after agent switch.
-    let mut start_card_message_id: Option<String> = None;
+    // Current target agent id — None until Manager is spawned on first message.
+    let mut current_target: Option<AgentId> = None;
+    // Manager agent id — set once on first spawn.
+    let mut manager_id: Option<AgentId> = None;
 
     while let Some(msg) = inbound_rx.recv().await {
         let channel_id = msg.channel_id.clone();
         busy_set.insert(channel_id.clone(), ());
 
-        // --- /help command ---
-        if msg.text.trim() == "/help" {
+        // --- Command routing ---
+        let text = msg.text.trim();
+
+        if text == "/help" {
             send_help(&channel_id, &outbound).await;
             busy_set.remove(&channel_id);
             continue;
         }
 
-        // --- /start command: quick agent picker ---
-        if msg.text.trim() == "/start" {
-            start_card_message_id = send_start(&channel_id, &outbound).await;
+        if text == "/start" {
+            send_start(&channel_id, &outbound).await;
             busy_set.remove(&channel_id);
             continue;
         }
 
-        // --- /cli command: switch agent ---
-        if let Some(kind) = parse_cli_command(&msg.text) {
-            switch_agent(&mut active_agent, kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref(), start_card_message_id.as_deref()).await;
+        if text == "/workers" {
+            send_workers_list(&channel_id, &outbound, &services).await;
             busy_set.remove(&channel_id);
             continue;
         }
 
-        // --- Ensure an agent is running (lazy start default agent on first message) ---
-        if active_agent.is_none() {
+        if text == "/back" {
+            if let Some(ref mid) = manager_id {
+                current_target = Some(mid.clone());
+                let _ = outbound.send_direct(&channel_id, "Switched back to Manager Agent ✅").await;
+            } else {
+                let _ = outbound.send_direct(&channel_id, "No Manager Agent running yet.").await;
+            }
+            busy_set.remove(&channel_id);
+            continue;
+        }
+
+        if let Some(rest) = text.strip_prefix("/switch ") {
+            let worker_id = rest.trim();
+            if services.agents.contains_key(worker_id) {
+                current_target = Some(worker_id.to_string());
+                let _ = outbound.send_direct(&channel_id, &format!("Switched to `{}` ✅", worker_id)).await;
+            } else {
+                let _ = outbound.send_direct(&channel_id, &format!("Worker `{}` not found. Use /workers to list.", worker_id)).await;
+            }
+            busy_set.remove(&channel_id);
+            continue;
+        }
+
+        if let Some(rest) = text.strip_prefix("/spawn ") {
+            handle_spawn_command(rest, &channel_id, &outbound, &services).await;
+            busy_set.remove(&channel_id);
+            continue;
+        }
+
+        if let Some(rest) = text.strip_prefix("/kill ") {
+            handle_kill_command(rest.trim(), &channel_id, &outbound, &services).await;
+            busy_set.remove(&channel_id);
+            continue;
+        }
+
+        // --- Legacy /cli_<agent> command: spawn as worker in default workspace ---
+        if let Some(kind) = parse_cli_command(text) {
+            let workspace = config::ensure_loaded().working_dir.clone();
+            match registry::spawn_agent(&services, kind, workspace, AgentRole::Worker).await {
+                Ok(id) => {
+                    current_target = Some(id.clone());
+                    let _ = outbound.send_direct(&channel_id, &format!("{} worker started, switched to it ✅", kind)).await;
+                }
+                Err(e) => {
+                    let _ = outbound.send_direct(&channel_id, &format!("Failed to start {} worker: {}", kind, e)).await;
+                }
+            }
+            busy_set.remove(&channel_id);
+            continue;
+        }
+
+        // --- Ensure Manager Agent is running (lazy start on first message) ---
+        if current_target.is_none() {
             let default_kind = agent::AgentKind::from_str_loose(&config::ensure_loaded().default_agent)
                 .unwrap_or(AgentKind::Claude);
-            eprintln!("[VibeAround][im][worker] no active agent, starting default ({})...", default_kind);
-            switch_agent(&mut active_agent, default_kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref(), start_card_message_id.as_deref()).await;
-            if active_agent.is_none() {
-                busy_set.remove(&channel_id);
-                continue;
+            let workspace = config::data_dir(); // Manager works in ~/.vibearound/
+            let status_mid = outbound.send_direct(&channel_id, &format!("Starting {} Manager Agent...", default_kind)).await;
+            match registry::spawn_agent(&services, default_kind, workspace, AgentRole::Manager).await {
+                Ok(id) => {
+                    manager_id = Some(id.clone());
+                    current_target = Some(id);
+                    if let Some(ref mid) = status_mid {
+                        outbound.edit_direct(&channel_id, mid, &format!("{} Manager Agent started ✅", default_kind)).await;
+                    }
+                }
+                Err(e) => {
+                    if let Some(ref mid) = status_mid {
+                        outbound.edit_direct(&channel_id, mid, &format!("Failed to start Manager Agent: {}", e)).await;
+                    }
+                    busy_set.remove(&channel_id);
+                    continue;
+                }
             }
         }
 
-        // --- Send message to agent ---
-        let agent = active_agent.as_ref().unwrap();
-        let agent_died = run_with_agent(agent.as_ref(), &msg, &channel_id, &outbound, &verbose).await;
+        // --- Send message to current target agent ---
+        let target_id = current_target.as_ref().unwrap();
+        let agent_died = run_with_agent_from_registry(
+            &services, target_id, &msg, &channel_id, &outbound, &verbose, &event_log_tx,
+        ).await;
 
         // --- Auto-restart if agent process died ---
         if agent_died {
-            let kind = active_agent.as_ref().unwrap().kind();
-            eprintln!("[VibeAround][im][worker] agent {} died, attempting restart...", kind);
-            let _ = outbound.send_direct(&channel_id, &format!("⚠️ {} agent crashed, restarting...", kind)).await;
-            switch_agent(&mut active_agent, kind, &working_dir, &channel_id, &outbound, msg.user_message_id.as_deref(), start_card_message_id.as_deref()).await;
-            if active_agent.is_some() {
-                // Retry the message on the restarted agent (don't restart again if it fails)
-                let agent = active_agent.as_ref().unwrap();
-                let _ = run_with_agent(agent.as_ref(), &msg, &channel_id, &outbound, &verbose).await;
+            let _ = outbound.send_direct(&channel_id, "⚠️ Agent crashed, attempting restart...").await;
+            // Try to get the kind and workspace from the entry before removing
+            let restart_info = services.agents.get(target_id).map(|e| (e.kind, e.workspace.clone(), e.role));
+            if let Some((kind, workspace, role)) = restart_info {
+                // Remove stale entry
+                services.agents.remove(target_id);
+                match registry::spawn_agent(&services, kind, workspace, role).await {
+                    Ok(new_id) => {
+                        if role == AgentRole::Manager {
+                            manager_id = Some(new_id.clone());
+                        }
+                        current_target = Some(new_id);
+                        let _ = outbound.send_direct(&channel_id, &format!("{} agent restarted ✅", kind)).await;
+                    }
+                    Err(e) => {
+                        let _ = outbound.send_direct(&channel_id, &format!("Failed to restart agent: {}", e)).await;
+                        current_target = None;
+                    }
+                }
             }
         }
 
@@ -122,249 +209,414 @@ fn parse_cli_command(text: &str) -> Option<AgentKind> {
     if kind.is_enabled() { Some(kind) } else { None }
 }
 
-/// Shut down the current agent (if any) and start a new one.
-/// Sends an immediate status message, then marks it done (reaction) when complete.
-
-async fn switch_agent<T>(
-    active_agent: &mut Option<Box<dyn AgentBackend>>,
-    kind: AgentKind,
-    working_dir: &std::path::Path,
+/// Handle `/spawn <kind> <workspace>` command.
+async fn handle_spawn_command<T>(
+    args: &str,
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
-    _user_message_id: Option<&str>,
-    start_card_mid: Option<&str>,
+    services: &Arc<ServiceManager>,
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
-    // Send an immediate status message so the user sees something right away.
-    let status_msg = format!("Starting {} agent...", kind);
-    let status_message_id: Option<String> = outbound.send_direct(channel_id, &status_msg).await;
-
-    // Shut down existing agent
-    if let Some(mut old) = active_agent.take() {
-        old.shutdown().await;
+    let parts: Vec<&str> = args.trim().splitn(2, ' ').collect();
+    if parts.is_empty() {
+        let _ = outbound.send_direct(channel_id, "Usage: `/spawn <kind> [workspace_path]`").await;
+        return;
     }
+    let kind = match AgentKind::from_str_loose(parts[0]) {
+        Some(k) => k,
+        None => {
+            let _ = outbound.send_direct(channel_id, &format!("Unknown agent kind: `{}`", parts[0])).await;
+            return;
+        }
+    };
+    let workspace = if parts.len() > 1 {
+        PathBuf::from(parts[1].trim())
+    } else {
+        // Default: create a new workspace under ~/.vibearound/workspaces/
+        let name = format!("workspace-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+        config::data_dir().join("workspaces").join(name)
+    };
 
-    // Start new agent
-    let mut backend = agent::create_backend(kind);
-    match backend.start(working_dir).await {
-        Ok(()) => {
-            *active_agent = Some(backend);
-            // Edit the status message to show success
-            if let Some(ref mid) = status_message_id {
-                outbound.edit_direct(channel_id, mid, &format!("{} agent started ✅", kind)).await;
-            }
-            // Update the existing /start card in place (if we have its message_id)
-            if let Some(card_mid) = start_card_mid {
-                update_agent_picker(channel_id, card_mid, kind, outbound).await;
+    let status_mid = outbound.send_direct(channel_id, &format!("Spawning {} worker at `{}`...", kind, workspace.display())).await;
+    match registry::spawn_agent(services, kind, workspace, AgentRole::Worker).await {
+        Ok(id) => {
+            if let Some(ref mid) = status_mid {
+                outbound.edit_direct(channel_id, mid, &format!("Worker `{}` started ✅", id)).await;
             }
         }
         Err(e) => {
-            // Edit the status message to show failure, or send a new one if no message_id
-            let err_msg = format!("Failed to start {} agent: {}", kind, e);
-            if let Some(ref mid) = status_message_id {
-                outbound.edit_direct(channel_id, mid, &err_msg).await;
-            } else {
-                let _ = outbound.send(channel_id, OutboundMsg::Send(
-                    channel_id.to_string(), err_msg,
-                )).await;
+            if let Some(ref mid) = status_mid {
+                outbound.edit_direct(channel_id, mid, &format!("Failed to spawn worker: {}", e)).await;
             }
         }
-    };
-}
-
-
-/// Truncate tool output for display in IM (avoid flooding).
-fn truncate_tool_output(text: &str, max_len: usize) -> String {
-    if text.len() <= max_len {
-        text.to_string()
-    } else {
-        format!("{}…({} bytes)", &text[..max_len], text.len())
     }
 }
 
-/// Send a message to the active agent and stream events back to IM.
+/// Handle `/kill <worker_id>` command.
+async fn handle_kill_command<T>(
+    worker_id: &str,
+    channel_id: &str,
+    outbound: &Arc<OutboundHub<T>>,
+    services: &Arc<ServiceManager>,
+) where
+    T: crate::im::transport::ImTransport + 'static,
+{
+    match registry::kill_agent(services, worker_id).await {
+        Ok(()) => {
+            let _ = outbound.send_direct(channel_id, &format!("Worker `{}` killed ✅", worker_id)).await;
+        }
+        Err(e) => {
+            let _ = outbound.send_direct(channel_id, &format!("Failed to kill `{}`: {}", worker_id, e)).await;
+        }
+    }
+}
+
+/// Send a /workers list showing all agents and their status.
+async fn send_workers_list<T>(
+    channel_id: &str,
+    outbound: &Arc<OutboundHub<T>>,
+    services: &Arc<ServiceManager>,
+) where
+    T: crate::im::transport::ImTransport + 'static,
+{
+    let agents = registry::list_agents(services);
+    if agents.is_empty() {
+        let _ = outbound.send_direct(channel_id, "No agents running.").await;
+        return;
+    }
+    let mut lines = Vec::new();
+    for a in &agents {
+        let role_icon = match a.role {
+            AgentRole::Manager => "👑",
+            AgentRole::Worker => "🔧",
+        };
+        let status_icon = if a.status == "running" { "●" } else { "○" };
+        lines.push(format!(
+            "{} {} `{}` — {} {} ({}s)",
+            role_icon, status_icon, a.id, a.kind, a.status, a.uptime_secs
+        ));
+    }
+    let _ = outbound.send_direct(channel_id, &lines.join("\n")).await;
+}
+
+/// Send a message to an agent from the registry and stream events back to IM.
+/// Subscribes to ALL agents (Manager + Workers) so worker activity is visible too.
 /// Returns `true` if the agent process died (caller should restart).
-async fn run_with_agent<T>(
-    agent: &dyn AgentBackend,
+async fn run_with_agent_from_registry<T>(
+    services: &Arc<ServiceManager>,
+    agent_id: &str,
     msg: &InboundMessage,
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
     verbose: &ImVerboseConfig,
+    event_log_tx: &Option<mpsc::UnboundedSender<super::event_log::TaggedEvent>>,
 ) -> bool
 where
     T: crate::im::transport::ImTransport + 'static,
 {
+    // Subscribe to the target agent + fire prompt
+    let manager_rx = {
+        let entry = match services.agents.get(agent_id) {
+            Some(e) => e,
+            None => {
+                let _ = outbound.send_direct(channel_id, &format!("Agent `{}` not found", agent_id)).await;
+                return false;
+            }
+        };
+        let backend = match entry.backend.as_ref() {
+            Some(b) => b,
+            None => {
+                let _ = outbound.send_direct(channel_id, &format!("Agent `{}` has no backend", agent_id)).await;
+                return false;
+            }
+        };
+        let rx = backend.subscribe();
+        if let Err(e) = backend.send_message_fire(&msg.text).await {
+            let is_shutdown = e.contains("shut down") || e.contains("gone") || e.contains("ACP thread");
+            let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
+                channel_id.to_string(), format!("[Agent error: {}]", e),
+            )).await;
+            let _ = outbound.send(channel_id, OutboundMsg::StreamDone(channel_id.to_string())).await;
+            return is_shutdown;
+        }
+        rx
+    };
+
+    // Stream all agent events (Manager + Workers) back to IM in real-time
+    stream_all_agent_events(
+        services, agent_id, manager_rx, channel_id, outbound, verbose,
+        msg.user_message_id.as_deref(), event_log_tx,
+    ).await
+}
+
+/// Stream events from ALL agents (Manager + Workers) back to IM.
+/// Watches for new agents via ServiceManager change notifications.
+/// Returns `true` if the primary agent died.
+async fn stream_all_agent_events<T>(
+    services: &Arc<ServiceManager>,
+    primary_agent_id: &str,
+    primary_rx: tokio::sync::broadcast::Receiver<AgentEvent>,
+    channel_id: &str,
+    outbound: &Arc<OutboundHub<T>>,
+    verbose: &ImVerboseConfig,
+    user_message_id: Option<&str>,
+    event_log_tx: &Option<mpsc::UnboundedSender<super::event_log::TaggedEvent>>,
+) -> bool
+where
+    T: crate::im::transport::ImTransport + 'static,
+{
+    use tokio::sync::broadcast::error::RecvError;
+
     let caps = outbound.capabilities();
-    let mut rx = agent.subscribe();
     let mut agent_died = false;
 
-    // Set reply_to so the first flushed bot message quotes the user's message
-    if let Some(ref user_mid) = msg.user_message_id {
-        outbound.set_reply_to(channel_id, user_mid.clone()).await;
+    if let Some(user_mid) = user_message_id {
+        outbound.set_reply_to(channel_id, user_mid.to_string()).await;
     }
-
-    // Add processing reaction to the user's message to indicate we're working on it
-    if let Some(ref user_mid) = msg.user_message_id {
+    if let Some(user_mid) = user_message_id {
         let _ = outbound.send(channel_id, OutboundMsg::AddReaction(
-            channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
+            channel_id.to_string(), user_mid.to_string(), caps.processing_reaction.to_string(),
         )).await;
     }
 
-    if let Err(e) = agent.send_message(&msg.text).await {
-        let is_shutdown = e.contains("shut down") || e.contains("gone") || e.contains("ACP thread");
-        let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-            channel_id.to_string(), format!("[Agent error: {}]", e),
-        )).await;
-        let _ = outbound.send(channel_id, OutboundMsg::StreamDone(channel_id.to_string())).await;
-        // Remove processing reaction on error
-        if let Some(ref user_mid) = msg.user_message_id {
-            let _ = outbound.send(channel_id, OutboundMsg::RemoveReaction(
-                channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
-            )).await;
-        }
-        return is_shutdown;
-    }
-
-    // Track current block type so we can flush buffer between different content types.
-    // Each block (thinking, text, tool_use, tool_result) becomes a separate IM message.
     #[derive(PartialEq, Clone, Copy)]
     enum Block { None, Thinking, Text, Tool }
     let mut current_block = Block::None;
 
-    /// Flush the current buffer block (sends StreamEnd so daemon flushes accumulated parts).
     async fn flush_block<T2: crate::im::transport::ImTransport + 'static>(
         channel_id: &str, outbound: &Arc<OutboundHub<T2>>,
     ) {
         let _ = outbound.send(channel_id, OutboundMsg::StreamEnd(channel_id.to_string())).await;
     }
 
-    loop {
-        match rx.recv().await {
-            Ok(event) => match event {
-                AgentEvent::Text(text) => {
-                    if current_block != Block::Text {
-                        if current_block != Block::None {
-                            flush_block(channel_id, outbound).await;
+    // Merge channel: all agent events funnel through here, tagged with agent_id
+    let (merge_tx, mut merge_rx) = mpsc::unbounded_channel::<(String, AgentEvent)>();
+
+    // Spawn reader for the primary (Manager) agent
+    {
+        let tx = merge_tx.clone();
+        let aid = primary_agent_id.to_string();
+        let mut rx = primary_rx;
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => { let _ = tx.send((aid.clone(), event)); }
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
+    // Track which agents we've already subscribed to
+    let subscribed = Arc::new(tokio::sync::Mutex::new({
+        let mut s = std::collections::HashSet::new();
+        s.insert(primary_agent_id.to_string());
+        s
+    }));
+
+    // Watch for new agents appearing in the registry
+    let mut change_rx = services.change_tx.subscribe();
+    let merge_tx_w = merge_tx.clone();
+    let services_w = services.clone();
+    let subscribed_w = subscribed.clone();
+    tokio::spawn(async move {
+        loop {
+            match change_rx.recv().await {
+                Ok(_) => {
+                    let mut sub = subscribed_w.lock().await;
+                    for entry in services_w.agents.iter() {
+                        let aid = entry.key().clone();
+                        if sub.contains(&aid) { continue; }
+                        if let Some(backend) = entry.backend.as_ref() {
+                            let rx = backend.subscribe();
+                            sub.insert(aid.clone());
+                            let tx = merge_tx_w.clone();
+                            tokio::spawn(async move {
+                                let mut rx = rx;
+                                loop {
+                                    match rx.recv().await {
+                                        Ok(event) => { let _ = tx.send((aid.clone(), event)); }
+                                        Err(RecvError::Lagged(_)) => continue,
+                                        Err(RecvError::Closed) => break,
+                                    }
+                                }
+                            });
                         }
-                        current_block = Block::Text;
                     }
-                    let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                        channel_id.to_string(), text,
-                    )).await;
                 }
-                AgentEvent::Thinking(text) => {
-                    if !verbose.show_thinking {
-                        continue;
-                    }
-                    if current_block != Block::Thinking {
-                        if current_block != Block::None {
-                            flush_block(channel_id, outbound).await;
-                        }
-                        current_block = Block::Thinking;
-                        let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                            channel_id.to_string(), "🧠 Thinking...\n".to_string(),
-                        )).await;
-                    }
-                    let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                        channel_id.to_string(), text,
-                    )).await;
-                }
-                AgentEvent::Progress(status) => {
-                    let _ = outbound.send(channel_id, OutboundMsg::StreamProgress(
-                        channel_id.to_string(), status,
-                    )).await;
-                }
-                AgentEvent::ToolUse { name, id: _, input } => {
-                    if !verbose.show_tool_use {
-                        continue;
-                    }
+                Err(RecvError::Lagged(_)) => continue,
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
+
+    // Drop our copy so merge_rx eventually closes when all senders are gone
+    drop(merge_tx);
+
+    let mut last_agent_id = primary_agent_id.to_string();
+
+    while let Some((agent_id, event)) = merge_rx.recv().await {
+        // Log every event
+        if let Some(ref log_tx) = event_log_tx {
+            let _ = log_tx.send(super::event_log::TaggedEvent {
+                chat_id: channel_id.to_string(),
+                agent_id: agent_id.clone(),
+                event: event.clone(),
+            });
+        }
+
+        // Show agent label when switching between agents
+        if agent_id != last_agent_id {
+            if current_block != Block::None {
+                flush_block(channel_id, outbound).await;
+                current_block = Block::None;
+            }
+            let label = format!("── {} ──\n", short_agent_label(&agent_id));
+            let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
+                channel_id.to_string(), label,
+            )).await;
+            last_agent_id = agent_id.clone();
+        }
+
+        match event {
+            AgentEvent::Text(text) => {
+                if current_block != Block::Text {
                     if current_block != Block::None {
                         flush_block(channel_id, outbound).await;
                     }
-                    current_block = Block::Tool;
-                    let mut tool_msg = format!("🔧 **{}**", name);
-                    if let Some(ref inp) = input {
-                        let summary = truncate_tool_output(inp, 300);
-                        tool_msg.push_str(&format!("\n```\n{}\n```", summary));
-                    }
-                    tool_msg.push('\n');
-                    let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                        channel_id.to_string(), tool_msg,
-                    )).await;
+                    current_block = Block::Text;
                 }
-                AgentEvent::ToolResult { id: _, output, is_error } => {
-                    if !verbose.show_tool_use {
-                        continue;
-                    }
+                let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
+                    channel_id.to_string(), text,
+                )).await;
+            }
+            AgentEvent::Thinking(text) => {
+                if !verbose.show_thinking { continue; }
+                if current_block != Block::Thinking {
                     if current_block != Block::None {
                         flush_block(channel_id, outbound).await;
                     }
-                    current_block = Block::Tool;
-                    let pfx = if is_error { "❌" } else { "✅" };
-                    let mut result_msg = format!("{} Tool result", pfx);
-                    if let Some(ref out) = output {
-                        let summary = truncate_tool_output(out, 500);
-                        if !summary.is_empty() {
-                            result_msg.push_str(&format!(":\n```\n{}\n```", summary));
-                        }
-                    }
-                    result_msg.push('\n');
+                    current_block = Block::Thinking;
                     let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                        channel_id.to_string(), result_msg,
+                        channel_id.to_string(), "🧠 Thinking...\n".to_string(),
                     )).await;
                 }
-                AgentEvent::TurnComplete { .. } => {
+                let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
+                    channel_id.to_string(), text,
+                )).await;
+            }
+            AgentEvent::Progress(status) => {
+                let _ = outbound.send(channel_id, OutboundMsg::StreamProgress(
+                    channel_id.to_string(), status,
+                )).await;
+            }
+            AgentEvent::ToolUse { name, id: _, input } => {
+                if !verbose.show_tool_use { continue; }
+                if current_block != Block::None {
+                    flush_block(channel_id, outbound).await;
+                }
+                current_block = Block::Tool;
+                let mut tool_msg = format!("🔧 **{}**", name);
+                if let Some(ref inp) = input {
+                    if !inp.is_empty() {
+                        tool_msg.push_str(&format!("\n```\n{}\n```", inp));
+                    }
+                }
+                tool_msg.push('\n');
+                let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
+                    channel_id.to_string(), tool_msg,
+                )).await;
+            }
+            AgentEvent::ToolResult { id: _, output, is_error } => {
+                if !verbose.show_tool_use { continue; }
+                if current_block != Block::None {
+                    flush_block(channel_id, outbound).await;
+                }
+                current_block = Block::Tool;
+                let pfx = if is_error { "❌" } else { "✅" };
+                let mut result_msg = format!("{} Tool result", pfx);
+                if let Some(ref out) = output {
+                    if !out.is_empty() {
+                        result_msg.push_str(&format!(":\n```\n{}\n```", out));
+                    }
+                }
+                result_msg.push('\n');
+                let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
+                    channel_id.to_string(), result_msg,
+                )).await;
+            }
+            AgentEvent::TurnComplete { .. } => {
+                if agent_id == primary_agent_id {
                     break;
                 }
-                AgentEvent::Error(err) => {
-                    let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                        channel_id.to_string(), format!("[Error: {}]\n", err),
-                    )).await;
+                // Worker turn complete — flush block, continue waiting for Manager
+                if current_block != Block::None {
+                    flush_block(channel_id, outbound).await;
+                    current_block = Block::None;
                 }
-            },
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                eprintln!("[VibeAround][im][worker] agent event stream lagged by {}", n);
             }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+            AgentEvent::Error(err) => {
                 let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                    channel_id.to_string(), "[Agent process ended unexpectedly]\n".to_string(),
+                    channel_id.to_string(), format!("[Error: {}]\n", err),
                 )).await;
-                agent_died = true;
-                break;
+                if agent_id == primary_agent_id {
+                    agent_died = true;
+                    break;
+                }
             }
         }
     }
 
-    // StreamDone: flush final block
     let _ = outbound.send(channel_id, OutboundMsg::StreamDone(channel_id.to_string())).await;
 
-    // Remove processing reaction from the user's message now that we're done
-    if let Some(ref user_mid) = msg.user_message_id {
+    if let Some(user_mid) = user_message_id {
         let _ = outbound.send(channel_id, OutboundMsg::RemoveReaction(
-            channel_id.to_string(), user_mid.clone(), caps.processing_reaction.to_string(),
+            channel_id.to_string(), user_mid.to_string(), caps.processing_reaction.to_string(),
         )).await;
     }
 
     agent_died
 }
 
-/// Send a /help card with all commands and descriptions (card format, no buttons).
+/// Short human-readable label for an agent_id like "claude:/path/to/workspace"
+fn short_agent_label(agent_id: &str) -> String {
+    if let Some((kind, path)) = agent_id.split_once(':') {
+        let dir = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string());
+        format!("🤖 {} ({})", kind, dir)
+    } else {
+        format!("🤖 {}", agent_id)
+    }
+}
+
+/// Send a /help card with all commands.
 async fn send_help<T>(
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
-    let mut lines = Vec::new();
+    let mut lines = vec![
+        "**Commands:**".to_string(),
+        "`/workers` — List all agents and their status".to_string(),
+        "`/spawn <kind> [workspace]` — Create a new worker agent".to_string(),
+        "`/switch <worker_id>` — Talk directly to a worker".to_string(),
+        "`/back` — Return to Manager Agent".to_string(),
+        "`/kill <worker_id>` — Stop a worker agent".to_string(),
+        "`/start` — Quick agent picker".to_string(),
+        "`/help` — Show this help".to_string(),
+        String::new(),
+        "**Legacy:**".to_string(),
+    ];
     for kind in AgentKind::enabled() {
-        lines.push(format!("`/cli_{}` — {}", kind, kind.description()));
+        lines.push(format!("`/cli_{}` — Spawn {} worker in default workspace", kind, kind));
     }
-    lines.push("🚀 `/start` — Quick agent picker".to_string());
-    lines.push("❓ `/help` — Show this help".to_string());
     let prompt = lines.join("\n");
 
-    // Send as interactive card with no buttons (prompt-only card)
     let _ = outbound.send(channel_id, OutboundMsg::SendInteractive {
         channel_id: channel_id.to_string(),
         prompt,
@@ -373,15 +625,11 @@ async fn send_help<T>(
     }).await;
 }
 
-/// Send a /start interactive card — compact agent picker with help button on separate row.
-
-/// Send a /start interactive card — compact agent picker with help button on separate row.
-/// Returns the message_id of the card (if the platform provides one) for later in-place updates.
+/// Send a /start interactive card — compact agent picker.
 async fn send_start<T>(
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
-) -> Option<String>
-where
+) where
     T: crate::im::transport::ImTransport + 'static,
 {
     use crate::im::transport::{ButtonStyle, InteractiveOption};
@@ -402,7 +650,6 @@ where
             }
         })
         .collect();
-    // Capitalize first letter of label
     for opt in &mut options {
         if let Some(first) = opt.label.get_mut(..1) {
             first.make_ascii_uppercase();
@@ -410,45 +657,5 @@ where
     }
     options.push(InteractiveOption { label: "❓ Help".into(), value: "/help".into(), style: ButtonStyle::Default, group: 1 });
 
-    outbound.send_interactive_direct(channel_id, prompt, &options, None).await
+    let _ = outbound.send_interactive_direct(channel_id, prompt, &options, None).await;
 }
-
-
-/// Send an agent picker card with the current (active) agent highlighted.
-/// Called after a successful agent switch so the user sees which agent is active.
-
-/// Update an existing agent picker card in place with the current agent highlighted.
-async fn update_agent_picker<T>(
-    channel_id: &str,
-    message_id: &str,
-    current_kind: AgentKind,
-    outbound: &Arc<OutboundHub<T>>,
-) where
-    T: crate::im::transport::ImTransport + 'static,
-{
-    use crate::im::transport::{ButtonStyle, InteractiveOption};
-
-    let prompt = format!("**Current agent: {}**", current_kind);
-    let mut options: Vec<InteractiveOption> = AgentKind::enabled()
-        .iter()
-        .map(|kind| {
-            let style = if *kind == current_kind { ButtonStyle::Primary } else { ButtonStyle::Default };
-            InteractiveOption {
-                label: format!("{}", kind).to_string(),
-                value: format!("/cli_{}", kind),
-                style,
-                group: 0,
-            }
-        })
-        .collect();
-    for opt in &mut options {
-        if let Some(first) = opt.label.get_mut(..1) {
-            first.make_ascii_uppercase();
-        }
-    }
-    options.push(InteractiveOption { label: "❓ Help".into(), value: "/help".into(), style: ButtonStyle::Default, group: 1 });
-
-    outbound.update_interactive_direct(channel_id, message_id, &prompt, &options).await;
-}
-
-

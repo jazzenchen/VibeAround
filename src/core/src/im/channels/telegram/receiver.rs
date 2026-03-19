@@ -172,7 +172,7 @@ async fn check_telegram_api(token: &str) -> Result<(), String> {
 
 /// Run the Telegram bot: create channels, spawn send daemon and worker, then run the receiver.
 /// No-op if telegram.bot_token not set in settings.json.
-pub async fn run_telegram_bot() {
+pub async fn run_telegram_bot(services: Arc<crate::service::ServiceManager>) {
     let config = crate::config::ensure_loaded();
     let token = match config.telegram_bot_token.as_deref() {
         Some(t) if !t.trim().is_empty() => t.to_string(),
@@ -214,6 +214,7 @@ pub async fn run_telegram_bot() {
         busy_set.clone(),
         None,
         config.telegram_verbose.clone(),
+        services,
     ));
 
     run_telegram_receiver(bot, inbound_tx, outbound, busy_set).await;

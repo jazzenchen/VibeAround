@@ -10,8 +10,10 @@ pub mod claude_sdk;
 pub mod codex_acp;
 pub mod codex_jsonl;
 pub mod gemini_acp;
+pub mod manager_prompt;
 pub mod opencode_acp;
 pub mod opencode_jsonl;
+pub mod registry;
 
 use std::fmt;
 use std::path::Path;
@@ -105,8 +107,14 @@ pub trait AgentBackend: Send + Sync {
     /// Spawn the agent subprocess, establish ACP connection, create session.
     async fn start(&mut self, cwd: &Path) -> Result<(), String>;
 
-    /// Send a user message via ACP `prompt()`. Events are delivered via `subscribe()`.
+    /// Send a user message via ACP `prompt()`. Blocks until the turn completes.
+    /// Events are delivered via `subscribe()`.
     async fn send_message(&self, text: &str) -> Result<(), String>;
+
+    /// Fire a prompt without waiting for the turn to complete.
+    /// Returns immediately after the command is queued.
+    /// Use `subscribe()` to consume events; the turn ends with `AgentEvent::TurnComplete`.
+    async fn send_message_fire(&self, text: &str) -> Result<(), String>;
 
     /// Subscribe to the agent's event stream.
     fn subscribe(&self) -> tokio::sync::broadcast::Receiver<AgentEvent>;
@@ -200,6 +208,20 @@ impl AgentBackend for AcpBackend {
             .await
             .map_err(|_| "ACP thread gone".to_string())?;
         done_rx.await.map_err(|_| "ACP thread gone".to_string())?
+    }
+
+    async fn send_message_fire(&self, text: &str) -> Result<(), String> {
+        let cmd_tx = self.cmd_tx.as_ref().ok_or("Agent not started")?;
+        let (done_tx, _done_rx) = oneshot::channel();
+        cmd_tx
+            .send(AcpCmd::Prompt {
+                text: text.to_string(),
+                done_tx,
+            })
+            .await
+            .map_err(|_| "ACP thread gone".to_string())?;
+        // Return immediately — caller uses event stream to detect completion
+        Ok(())
     }
 
     fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
@@ -619,6 +641,69 @@ impl AgentBackend for JsonlBackend {
 
         // Emit TurnComplete so the worker's event loop knows we're done
         let _ = event_tx.send(AgentEvent::TurnComplete { session_id: None, cost_usd: None });
+
+        Ok(())
+    }
+
+    async fn send_message_fire(&self, text: &str) -> Result<(), String> {
+        let cwd = self.cwd.as_ref().ok_or("Agent not started")?.clone();
+        let event_tx = self.event_tx.clone();
+        let agent_kind = self.agent_kind;
+        let text = text.to_string();
+
+        tokio::spawn(async move {
+            let (cmd, args): (&str, Vec<String>) = match agent_kind {
+                AgentKind::OpenCode => ("opencode", vec![
+                    "run".into(), "--format".into(), "json".into(), "--".into(), text,
+                ]),
+                AgentKind::Codex => ("codex", vec![
+                    "exec".into(), "--json".into(), "--full-auto".into(), text,
+                ]),
+                _ => unreachable!(),
+            };
+
+            eprintln!("[{}-jsonl] spawning (fire): {} {:?}", agent_kind, cmd, &args[..args.len().min(3)]);
+
+            let mut child = match tokio::process::Command::new(cmd)
+                .args(&args)
+                .current_dir(&cwd)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(AgentEvent::Error(format!("Failed to spawn {}: {}", cmd, e)));
+                    let _ = event_tx.send(AgentEvent::TurnComplete { session_id: None, cost_usd: None });
+                    return;
+                }
+            };
+
+            if let Some(stdout) = child.stdout.take() {
+                let reader = BufReader::new(stdout);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if line.trim().is_empty() { continue; }
+                    match serde_json::from_str::<serde_json::Value>(&line) {
+                        Ok(msg) => match agent_kind {
+                            AgentKind::OpenCode => opencode_jsonl::parse_event(&msg, &event_tx),
+                            AgentKind::Codex => codex_jsonl::parse_event(&msg, &event_tx),
+                            _ => {}
+                        },
+                        Err(_) => {
+                            if !line.trim().is_empty() {
+                                let _ = event_tx.send(AgentEvent::Text(line));
+                            }
+                        }
+                    }
+                }
+            }
+
+            let _ = child.wait().await;
+            let _ = event_tx.send(AgentEvent::TurnComplete { session_id: None, cost_usd: None });
+        });
 
         Ok(())
     }

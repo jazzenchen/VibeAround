@@ -43,6 +43,16 @@ fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             session_id  TEXT NOT NULL REFERENCES chat_sessions(session_id),
             PRIMARY KEY (channel_id, message_id)
         );
+
+        CREATE TABLE IF NOT EXISTS event_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id     TEXT NOT NULL,
+            agent_id    TEXT NOT NULL,
+            event_type  TEXT NOT NULL,
+            content     TEXT,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_event_log_chat ON event_log(chat_id, created_at);
         ",
     )
 }

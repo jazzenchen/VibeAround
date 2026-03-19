@@ -252,8 +252,30 @@ fn translate_content_block(session_id: &str, block: &ContentBlock) -> acp::Sessi
                 )),
             ),
         ),
-        ContentBlock::ToolUse { id, name } => {
-            let fields = acp::ToolCallUpdateFields::new().title(name.clone());
+        ContentBlock::ToolUse { id, name, input } => {
+            let mut fields = acp::ToolCallUpdateFields::new().title(name.clone());
+            if let Some(inp) = input {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(inp) {
+                    fields = fields.raw_input(v);
+                }
+            }
+            acp::SessionNotification::new(
+                session_id.to_string(),
+                acp::SessionUpdate::ToolCallUpdate(
+                    acp::ToolCallUpdate::new(id.clone(), fields),
+                ),
+            )
+        }
+        ContentBlock::ToolResult { id, output, is_error } => {
+            let status = if *is_error {
+                acp::ToolCallStatus::Failed
+            } else {
+                acp::ToolCallStatus::Completed
+            };
+            let mut fields = acp::ToolCallUpdateFields::new().status(status);
+            if let Some(out) = output {
+                fields = fields.raw_output(serde_json::Value::String(out.clone()));
+            }
             acp::SessionNotification::new(
                 session_id.to_string(),
                 acp::SessionUpdate::ToolCallUpdate(

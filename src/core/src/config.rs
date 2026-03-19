@@ -45,6 +45,8 @@ fn init_data_dir() {
     if let Err(e) = std::fs::create_dir_all(&ws_dir) {
         eprintln!("[VibeAround] Failed to create workspaces dir: {}", e);
     }
+    // Ensure manager prompt dir with default files
+    crate::agent::manager_prompt::ensure_manager_prompt_dir();
 }
 
 /// Install rustls default crypto provider once (required by rustls 0.22+ before any TLS use, e.g. ngrok SDK).

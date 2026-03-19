@@ -5,27 +5,22 @@ mod tray;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::RwLock;
 
 use common::config;
-use common::tunnels::{self, TunnelProvider, TUNNEL_PASSWORD_URL};
-use server::{run_telegram_bot, run_web_server};
 use tauri::Manager;
 
-/// Shared tunnel URL (set when tunnel is ready). Used by tray to open/copy public URL.
-pub struct TunnelState(pub Arc<RwLock<Option<String>>>);
-
-const WEB_DASHBOARD_PORT: u16 = common::config::DEFAULT_PORT;
+/// Shared ServiceManager, injected into Tauri state for tray and IPC access.
+pub struct AppServiceManager(pub Arc<common::service::ServiceManager>);
 
 fn main() {
-    let config = config::ensure_loaded();
-    let tunnel_url: Arc<RwLock<Option<String>>> = Arc::new(RwLock::new(None));
-    let tunnel_provider = config.tunnel_provider;
+    let _config = config::ensure_loaded();
+
+    let daemon = server::ServerDaemon::new(common::config::DEFAULT_PORT);
+    let services = daemon.services();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Another instance tried to start — show and focus the main window.
             eprintln!("[VibeAround] Another instance detected, focusing existing window");
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
@@ -33,52 +28,18 @@ fn main() {
                 let _ = w.set_focus();
             }
         }))
-        .manage(TunnelState(Arc::clone(&tunnel_url)))
+        .manage(AppServiceManager(services))
         .setup(move |app| {
             tray::setup(app)?;
-            // Run web server (SPA + WebSocket + session API) on Tauri's async runtime.
+
+            // Start the full ServerDaemon (web server + IM bots + tunnel)
             let dist_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web/dist");
             tauri::async_runtime::spawn(async move {
-                let feishu_state = common::im::channels::feishu::run_feishu_bot().await;
-                if let Err(e) = run_web_server(WEB_DASHBOARD_PORT, dist_path, feishu_state).await {
-                    eprintln!("[VibeAround] Web server error: {}", e);
+                if let Err(e) = daemon.start(dist_path).await {
+                    eprintln!("[VibeAround] Daemon error: {}", e);
                 }
             });
-            // Start tunnel
-            tauri::async_runtime::spawn({
-                let tunnel_url = Arc::clone(&tunnel_url);
-                let provider = tunnel_provider;
-                async move {
-                    eprintln!("[VibeAround] Tunnel ({})", provider.as_str());
-                    let config = config::ensure_loaded();
-                    match tunnels::start_web_tunnel_with_provider(provider, config).await {
-                        Ok((guard, url)) => {
-                            if let Ok(mut w) = tunnel_url.write() {
-                                *w = Some(url.clone());
-                            }
-                            eprintln!("[VibeAround] Tunnel URL: {}", url);
-                            if matches!(provider, TunnelProvider::Localtunnel) {
-                                let _ = tunnels::ping_tunnel_with_bypass(&url).await;
-                                if let Ok(Some(pw)) = tunnels::fetch_tunnel_password().await {
-                                    eprintln!(
-                                        "[VibeAround] Tunnel password (for loca.lt page): {} — or visit {}",
-                                        pw, TUNNEL_PASSWORD_URL
-                                    );
-                                } else {
-                                    eprintln!(
-                                        "[VibeAround] To get tunnel password, visit: {}",
-                                        TUNNEL_PASSWORD_URL
-                                    );
-                                }
-                            }
-                            guard.wait().await;
-                        }
-                        Err(e) => eprintln!("[VibeAround] Tunnel failed: {}", e),
-                    }
-                }
-            });
-            // Telegram bot
-            tauri::async_runtime::spawn(run_telegram_bot());
+
             Ok(())
         })
         .run(tauri::generate_context!())

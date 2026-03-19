@@ -170,10 +170,21 @@ async fn run_send_daemon_for_channel<T>(
                     }
                 }
             }
-            OutboundMsg::StreamEnd(_) | OutboundMsg::StreamDone(_) => {
+            OutboundMsg::StreamEnd(_) => {
+                // Block boundary — finalize current message, reset state for next block.
                 let mid = state.stream_message_id.take();
                 let pending = state.pending_stream_text.take();
-                state.pending_stream_text = None;
+                state.last_progress = None;
+                state.stream_sent = false;
+                if let (Some(mid), Some(pending)) = (mid, pending) {
+                    let _ = transport.edit_message(&channel_id, &mid, &pending).await;
+                    let _ = transport.finalize_stream(&channel_id, &mid, &pending).await;
+                }
+            }
+            OutboundMsg::StreamDone(_) => {
+                // Entire turn is done — finalize current block and reset.
+                let mid = state.stream_message_id.take();
+                let pending = state.pending_stream_text.take();
                 state.last_progress = None;
                 state.stream_sent = false;
                 if let (Some(mid), Some(pending)) = (mid, pending) {

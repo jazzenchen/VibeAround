@@ -25,7 +25,8 @@ use tokio::sync::{mpsc, Mutex};
 pub enum ContentBlock {
     Text { text: String },
     Thinking { text: String },
-    ToolUse { id: String, name: String },
+    ToolUse { id: String, name: String, input: Option<String> },
+    ToolResult { id: String, output: Option<String>, is_error: bool },
 }
 
 /// Events emitted by the Claude CLI, parsed from stdout NDJSON.
@@ -240,7 +241,16 @@ fn parse_content_blocks(msg: &serde_json::Value) -> Vec<ContentBlock> {
                 "tool_use" => {
                     let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
                     let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("tool_0").to_string();
-                    blocks.push(ContentBlock::ToolUse { id, name });
+                    let input = block.get("input").map(|v| v.to_string());
+                    blocks.push(ContentBlock::ToolUse { id, name, input });
+                }
+                "tool_result" => {
+                    let id = block.get("tool_use_id").and_then(|v| v.as_str()).unwrap_or("tool_0").to_string();
+                    let is_error = block.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let output = block.get("content").map(|v| {
+                        if let Some(s) = v.as_str() { s.to_string() } else { v.to_string() }
+                    });
+                    blocks.push(ContentBlock::ToolResult { id, output, is_error });
                 }
                 _ => {}
             }

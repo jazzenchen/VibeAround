@@ -173,7 +173,7 @@ pub async fn handle_webhook_body(
 
 /// Setup Feishu: create transport, outbound, worker; return state for webhook route.
 /// Returns None if feishu app_id/app_secret not configured.
-pub async fn run_feishu_bot() -> Option<FeishuWebhookState> {
+pub async fn run_feishu_bot(services: Arc<crate::service::ServiceManager>) -> Option<FeishuWebhookState> {
     let config = config::ensure_loaded();
     let app_id = match config.feishu_app_id.as_deref() {
         Some(id) if !id.trim().is_empty() => id.to_string(),
@@ -201,6 +201,7 @@ pub async fn run_feishu_bot() -> Option<FeishuWebhookState> {
     tokio::spawn(crate::im::worker::run_worker(
         inbound_rx, outbound.clone(), busy_set.clone(), Some(transport.clone()),
         config.feishu_verbose.clone(),
+        services,
     ));
 
     eprintln!("{} event=bot_ready webhook=/api/im/feishu/event", prefix_channel("feishu"));

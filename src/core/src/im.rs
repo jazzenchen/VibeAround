@@ -5,6 +5,7 @@
 
 pub mod channels;
 pub mod daemon;
+pub mod event_log;
 pub mod log;
 pub mod router;
 pub mod session;

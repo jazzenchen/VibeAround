@@ -47,7 +47,7 @@ struct WsQuery {
     session_id: Option<String>,
 }
 
-/// Shared app state: registry, SPA fallback path, working dir, DB, optional Feishu webhook state.
+/// Shared app state: registry, SPA fallback path, working dir, DB, optional Feishu webhook state, service manager.
 #[derive(Clone)]
 struct AppState {
     registry: Registry,
@@ -55,6 +55,7 @@ struct AppState {
     working_dir: PathBuf,
     db: Arc<std::sync::Mutex<Connection>>,
     feishu: Option<common::im::channels::feishu::FeishuWebhookState>,
+    services: Arc<common::service::ServiceManager>,
 }
 
 /// POST /api/sessions body.
@@ -139,6 +140,7 @@ pub async fn run_web_server(
     port: u16,
     dist_path: PathBuf,
     feishu_state: Option<common::im::channels::feishu::FeishuWebhookState>,
+    services: Arc<common::service::ServiceManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     verify_web_dist(&dist_path)?;
     let web_dist = dist_path
@@ -158,11 +160,12 @@ pub async fn run_web_server(
     let db = common::db::open_db(&working_dir)
         .expect("Failed to open SQLite database");
     let state = AppState {
-        registry: Arc::new(dashmap::DashMap::new()),
+        registry: Arc::clone(&services.pty),
         dist_for_fallback: web_dist.clone(),
         working_dir,
         db: Arc::new(std::sync::Mutex::new(db)),
         feishu: feishu_state,
+        services,
     };
 
     let app = Router::new()
@@ -178,9 +181,19 @@ pub async fn run_web_server(
         .route("/raw/{project_id}/{*path}", get(raw_path_handler))
         .route("/ws", get(ws_handler))
         .route("/ws/chat", get(ws_chat_handler))
+        .route("/ws/services", get(ws_services_handler))
+        .route("/api/services", get(list_services_handler))
+        .route("/api/services/{category}/{id}", delete(kill_service_handler))
+        .route("/mcp", post(mcp_handler))
         .nest_service("/assets", ServeDir::new(assets_dir))
         .fallback(any(spa_fallback_handler))
-        .with_state(state);
+        .with_state(state)
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any),
+        );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("[VibeAround] Web server listening on http://127.0.0.1:{}", port);
@@ -520,6 +533,70 @@ async fn delete_session_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ---------------------------------------------------------------------------
+// WebSocket: /ws/services — real-time service status push
+// ---------------------------------------------------------------------------
+
+async fn ws_services_handler(
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| ws_services_session(socket, state.services))
+}
+
+async fn ws_services_session(
+    mut socket: axum::extract::ws::WebSocket,
+    services: Arc<common::service::ServiceManager>,
+) {
+    use axum::extract::ws::Message;
+
+    // 1. Send initial snapshot immediately
+    let snapshot = services.list_all();
+    if let Ok(json) = serde_json::to_string(&snapshot) {
+        if socket.send(Message::Text(json.into())).await.is_err() {
+            return;
+        }
+    }
+
+    // 2. Subscribe to changes and forward
+    let mut rx = services.change_tx.subscribe();
+    loop {
+        tokio::select! {
+            result = rx.recv() => {
+                match result {
+                    Ok(snapshot) => {
+                        if let Ok(json) = serde_json::to_string(&snapshot) {
+                            if socket.send(Message::Text(json.into())).await.is_err() {
+                                break; // client disconnected
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        eprintln!("[VibeAround][ws/services] lagged by {}, sending fresh snapshot", n);
+                        let snapshot = services.list_all();
+                        if let Ok(json) = serde_json::to_string(&snapshot) {
+                            if socket.send(Message::Text(json.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            // Also listen for client messages (ping/pong/close)
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(data))) => {
+                        let _ = socket.send(Message::Pong(data)).await;
+                    }
+                    _ => {} // ignore text/binary from client
+                }
+            }
+        }
+    }
+}
+
 async fn ws_chat_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     let working_dir = state.working_dir.clone();
     let db = state.db.clone();
@@ -705,7 +782,7 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, _db: Arc<st
         let agent = active_agent.as_ref().unwrap();
         let mut rx = agent.subscribe();
 
-        if let Err(e) = agent.send_message(&prompt).await {
+        if let Err(e) = agent.send_message_fire(&prompt).await {
             // Check if agent died — try to restart
             let is_dead = e.contains("shut down") || e.contains("gone") || e.contains("ACP thread");
             let _ = ws_tx.send(Message::Text(
@@ -722,13 +799,12 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, _db: Arc<st
                     )).await;
                     // Retry the message
                     let agent = active_agent.as_ref().unwrap();
-                    if let Err(e2) = agent.send_message(&prompt).await {
+                    rx = agent.subscribe();
+                    if let Err(e2) = agent.send_message_fire(&prompt).await {
                         let _ = ws_tx.send(Message::Text(wire::error_json(&e2).into())).await;
                         let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
                         continue;
                     }
-                    // Re-subscribe after restart
-                    rx = agent.subscribe();
                 } else {
                     let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
                     continue;
@@ -783,6 +859,185 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, _db: Arc<st
     // Clean up agent on disconnect
     if let Some(mut agent) = active_agent.take() {
         agent.shutdown().await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Service management API
+// ---------------------------------------------------------------------------
+
+/// GET /api/services — list all services grouped by category.
+async fn list_services_handler(State(state): State<AppState>) -> Json<common::service::ServicesSnapshot> {
+    Json(state.services.list_all())
+}
+
+/// DELETE /api/services/:category/:id — kill a specific service.
+async fn kill_service_handler(
+    State(state): State<AppState>,
+    Path((category, id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if state.services.kill(&category, &id) {
+        (StatusCode::OK, format!("Killed {}/{}", category, id))
+    } else {
+        (StatusCode::NOT_FOUND, format!("Service {}/{} not found", category, id))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MCP Streamable HTTP endpoint — POST /mcp
+// ---------------------------------------------------------------------------
+
+/// JSON-RPC 2.0 request envelope.
+#[derive(serde::Deserialize)]
+struct JsonRpcRequest {
+    jsonrpc: String,
+    id: Option<serde_json::Value>,
+    method: String,
+    #[serde(default)]
+    params: Option<serde_json::Value>,
+}
+
+/// Build a JSON-RPC 2.0 success response.
+fn jsonrpc_ok(id: Option<serde_json::Value>, result: serde_json::Value) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result,
+    }))
+}
+
+/// Build a JSON-RPC 2.0 error response.
+fn jsonrpc_err(id: Option<serde_json::Value>, code: i64, message: &str) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message },
+    }))
+}
+
+/// POST /mcp — MCP Streamable HTTP endpoint.
+/// Handles JSON-RPC methods: initialize, notifications/initialized, tools/list, tools/call.
+async fn mcp_handler(
+    State(state): State<AppState>,
+    Json(req): Json<JsonRpcRequest>,
+) -> impl IntoResponse {
+    if req.jsonrpc != "2.0" {
+        return jsonrpc_err(req.id, -32600, "Invalid JSON-RPC version");
+    }
+
+    match req.method.as_str() {
+        "initialize" => mcp_initialize(req.id),
+        "notifications/initialized" => {
+            // Client acknowledgement — no response needed, but Streamable HTTP expects one.
+            jsonrpc_ok(req.id, serde_json::json!({}))
+        }
+        "tools/list" => mcp_tools_list(req.id),
+        "tools/call" => mcp_tools_call(req.id, req.params, &state).await,
+        _ => jsonrpc_err(req.id, -32601, &format!("Method not found: {}", req.method)),
+    }
+}
+
+/// Handle "initialize" — return server info and capabilities.
+fn mcp_initialize(id: Option<serde_json::Value>) -> Json<serde_json::Value> {
+    jsonrpc_ok(id, serde_json::json!({
+        "protocolVersion": "2025-03-26",
+        "capabilities": {
+            "tools": {}
+        },
+        "serverInfo": {
+            "name": "vibearound",
+            "version": "0.1.0"
+        }
+    }))
+}
+
+/// Handle "tools/list" — return the send_to_worker tool schema.
+fn mcp_tools_list(id: Option<serde_json::Value>) -> Json<serde_json::Value> {
+    jsonrpc_ok(id, serde_json::json!({
+        "tools": [{
+            "name": "send_to_worker",
+            "description": "Send a message to a worker agent on a project workspace. If no worker is running on the workspace, one will be auto-spawned.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "workspace": {
+                        "type": "string",
+                        "description": "Absolute path to the project directory"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "The task or question for the worker agent"
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Agent type: claude, gemini, opencode, or codex. If omitted, uses the default agent.",
+                        "enum": ["claude", "gemini", "opencode", "codex"]
+                    }
+                },
+                "required": ["workspace", "message"]
+            }
+        }]
+    }))
+}
+
+/// Handle "tools/call" — dispatch send_to_worker.
+async fn mcp_tools_call(
+    id: Option<serde_json::Value>,
+    params: Option<serde_json::Value>,
+    state: &AppState,
+) -> Json<serde_json::Value> {
+    let params = match params {
+        Some(p) => p,
+        None => return jsonrpc_err(id, -32602, "Missing params"),
+    };
+
+    let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    if tool_name != "send_to_worker" {
+        return jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name));
+    }
+
+    let arguments = match params.get("arguments") {
+        Some(a) => a,
+        None => return jsonrpc_err(id, -32602, "Missing arguments"),
+    };
+
+    let workspace = match arguments.get("workspace").and_then(|v| v.as_str()) {
+        Some(w) => std::path::PathBuf::from(w),
+        None => return jsonrpc_err(id, -32602, "Missing required argument: workspace"),
+    };
+    let message = match arguments.get("message").and_then(|v| v.as_str()) {
+        Some(m) => m,
+        None => return jsonrpc_err(id, -32602, "Missing required argument: message"),
+    };
+    let kind = arguments
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .and_then(common::agent::AgentKind::from_str_loose);
+
+    // Dispatch to registry
+    match common::agent::registry::send_to_worker(&state.services, workspace, message, kind).await {
+        Ok(result) => {
+            jsonrpc_ok(id, serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": result.output
+                }],
+                "isError": false,
+                "_meta": {
+                    "agent_id": result.agent_id,
+                    "spawned": result.spawned
+                }
+            }))
+        }
+        Err(e) => {
+            jsonrpc_ok(id, serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": format!("Error: {}", e)
+                }],
+                "isError": true
+            }))
+        }
     }
 }
 
