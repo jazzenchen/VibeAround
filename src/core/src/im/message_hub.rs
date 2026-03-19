@@ -37,6 +37,8 @@ pub fn spawn_hub(default_sessions_dir: PathBuf) -> mpsc::UnboundedSender<HubMess
 
     tokio::spawn(async move {
         let mut writers: HashMap<String, SessionWriter> = HashMap::new();
+        // Remember the last session file path per agent so we can reopen it
+        let mut last_session_path: HashMap<String, PathBuf> = HashMap::new();
         // Track the first agent_id seen — that's the Manager
         let mut manager_agent_id: Option<String> = None;
 
@@ -51,25 +53,34 @@ pub fn spawn_hub(default_sessions_dir: PathBuf) -> mpsc::UnboundedSender<HubMess
                     }
                     let is_manager = manager_agent_id.as_deref() == Some(agent_id);
 
-                    // Lazily open a writer for this agent
+                    // Lazily open (or reopen) a writer for this agent
                     if !writers.contains_key(agent_id) {
-                        let (kind, workspace) = parse_agent_id(agent_id);
-                        let role = if is_manager { "manager" } else { "worker" };
+                        // Try to reopen the last session file for this agent
+                        let reopened = last_session_path.get(agent_id).and_then(|p| {
+                            SessionWriter::reopen(p).ok()
+                        });
 
-                        // Manager → default_sessions_dir, Worker → <workspace>/.vibearound/sessions/
-                        let sessions_dir = if is_manager {
-                            default_sessions_dir.clone()
+                        if let Some(w) = reopened {
+                            writers.insert(agent_id.clone(), w);
                         } else {
-                            super::session_store::workspace_sessions_dir(std::path::Path::new(&workspace))
-                        };
+                            // Create a brand new session file
+                            let (kind, workspace) = parse_agent_id(agent_id);
+                            let role = if is_manager { "manager" } else { "worker" };
 
-                        match SessionWriter::create(&sessions_dir, kind, role, &workspace, None, None) {
-                            Ok(w) => {
-                                writers.insert(agent_id.clone(), w);
-                            }
-                            Err(e) => {
-                                eprintln!("[message-hub] failed to create session for {}: {}", agent_id, e);
-                                continue;
+                            let sessions_dir = if is_manager {
+                                default_sessions_dir.clone()
+                            } else {
+                                super::session_store::workspace_sessions_dir(std::path::Path::new(&workspace))
+                            };
+
+                            match SessionWriter::create(&sessions_dir, kind, role, &workspace, None, None) {
+                                Ok(w) => {
+                                    writers.insert(agent_id.clone(), w);
+                                }
+                                Err(e) => {
+                                    eprintln!("[message-hub] failed to create session for {}: {}", agent_id, e);
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -78,9 +89,10 @@ pub fn spawn_hub(default_sessions_dir: PathBuf) -> mpsc::UnboundedSender<HubMess
                         writer.append_agent_event(agent_id, event);
                     }
 
-                    // TurnComplete → close the writer (file handle released)
+                    // TurnComplete → close the writer (file handle released) but remember the path
                     if is_turn_complete {
                         if let Some(w) = writers.remove(agent_id) {
+                            last_session_path.insert(agent_id.clone(), w.path.clone());
                             eprintln!("[message-hub] closed session for {}: {}", agent_id, w.path.display());
                         }
                     }

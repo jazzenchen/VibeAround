@@ -93,6 +93,16 @@ For detailed setup instructions, configuration options, and standalone server mo
 
 - After completing the onboarding wizard, the app currently requires a **restart** for the new configuration to take full effect (the config singleton is loaded once at startup). This will be fixed in a future release.
 
+## Changelog (Recent)
+
+### Session persistence fix
+
+Previously, each turn (user message → agent response) created a **new** JSONL session file because the `SessionWriter` was discarded on `TurnComplete`. Now the message hub remembers the last session file path per agent and reopens it for subsequent turns, so a continuous conversation is persisted into a single session file. The `/new` command still starts a fresh session as expected.
+
+### Gemini ACP / MCP discovery findings
+
+Investigation revealed that Gemini CLI in `--experimental-acp` mode does **not** discover MCP servers from `.gemini/settings.json` when running under ACP. Instead, MCP servers must be injected via the `mcpServers` array in the `session/new` ACP request. This is the root cause of Gemini not having access to the `dispatch_task` tool. Fix pending — the `acp_session_loop` needs to pass MCP server config in `NewSessionRequest`.
+
 ---
 
 ## 📖 Wiki
