@@ -57,7 +57,7 @@ pub async fn run_worker<T>(
     T: crate::im::transport::ImTransport + 'static,
 {
     // Start event logger — create a session file for the Manager
-    let event_log_tx = {
+    let mut event_log_tx = {
         let sessions_dir = super::session_store::manager_sessions_dir();
         match super::session_store::SessionWriter::create(
             &sessions_dir,
@@ -130,6 +130,43 @@ pub async fn run_worker<T>(
 
         if let Some(rest) = text.strip_prefix("/spawn ") {
             handle_spawn_command(rest, &channel_id, &outbound, &services).await;
+            busy_set.remove(&channel_id);
+            continue;
+        }
+
+        if text == "/new" || text.starts_with("/new ") {
+            // Kill current Manager agent if running
+            if let Some(ref mid) = manager_id {
+                let _ = services.agents.remove(mid);
+                eprintln!("[worker] /new: killed Manager agent {}", mid);
+            }
+            manager_id = None;
+            current_target = None;
+
+            // Create a new session file
+            let summary = text.strip_prefix("/new ").map(|s| s.trim()).filter(|s| !s.is_empty());
+            let sessions_dir = super::session_store::manager_sessions_dir();
+            match super::session_store::SessionWriter::create(
+                &sessions_dir,
+                crate::agent::AgentKind::Claude,
+                "manager",
+                &config::data_dir().to_string_lossy(),
+                None,
+                summary,
+            ) {
+                Ok(writer) => {
+                    event_log_tx = Some(super::event_log::spawn_logger(writer));
+                    let msg = if let Some(s) = summary {
+                        format!("New session started: {} ✅", s)
+                    } else {
+                        "New session started ✅".to_string()
+                    };
+                    let _ = outbound.send_direct(&channel_id, &msg).await;
+                }
+                Err(e) => {
+                    let _ = outbound.send_direct(&channel_id, &format!("Failed to create session: {}", e)).await;
+                }
+            }
             busy_set.remove(&channel_id);
             continue;
         }

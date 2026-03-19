@@ -120,7 +120,7 @@ impl ClaudeAcpBridge {
         if lock.is_some() {
             return Ok(());
         }
-        let sdk = ClaudeSdk::spawn(&self.cwd, self.system_prompt.as_deref()).await
+        let sdk = ClaudeSdk::spawn(&self.cwd, self.system_prompt.as_deref(), None).await
             .map_err(|e| acp::Error::new(-32603, e))?;
         *lock = Some(sdk);
         Ok(())
