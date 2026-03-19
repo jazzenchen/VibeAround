@@ -11,14 +11,16 @@ use tauri::{
 use crate::AppServiceManager;
 
 const MAIN_WINDOW_LABEL: &str = "main";
+const LOCAL_DASHBOARD_URL: &str = "http://127.0.0.1:12358";
 
 pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>> {
     let show_item = MenuItemBuilder::with_id("show_window", "Show Window").build(app)?;
+    let open_local_item = MenuItemBuilder::with_id("open_local", "Open Local Dashboard").build(app)?;
     let open_tunnel_item = MenuItemBuilder::with_id("open_tunnel", "Open Tunnel")
         .enabled(false)
         .build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-    let menu = Menu::with_items(app, &[&show_item, &open_tunnel_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &open_local_item, &open_tunnel_item, &quit_item])?;
 
     let icon_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/32x32.png");
     let icon = Image::from_path(icon_path)?;
@@ -37,6 +39,9 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
+            }
+            "open_local" => {
+                let _ = open::that(LOCAL_DASHBOARD_URL);
             }
             "open_tunnel" => {
                 if let Some(state) = app.try_state::<AppServiceManager>() {
