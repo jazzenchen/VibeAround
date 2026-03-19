@@ -56,23 +56,10 @@ pub async fn run_worker<T>(
 ) where
     T: crate::im::transport::ImTransport + 'static,
 {
-    // Start event logger — create a session file for the Manager
-    let mut event_log_tx = {
+    // Start message hub — persists all agent events to JSONL session files
+    let mut hub_tx: Option<mpsc::UnboundedSender<super::message_hub::HubMessage>> = {
         let sessions_dir = super::session_store::manager_sessions_dir();
-        match super::session_store::SessionWriter::create(
-            &sessions_dir,
-            crate::agent::AgentKind::Claude, // will be updated when Manager spawns
-            "manager",
-            &config::data_dir().to_string_lossy(),
-            None,
-            None,
-        ) {
-            Ok(writer) => Some(super::event_log::spawn_logger(writer)),
-            Err(e) => {
-                eprintln!("[worker] failed to create session file: {}", e);
-                None
-            }
-        }
+        Some(super::message_hub::spawn_hub(sessions_dir))
     };
 
     // Current target agent id — None until Manager is spawned on first message.
@@ -143,30 +130,17 @@ pub async fn run_worker<T>(
             manager_id = None;
             current_target = None;
 
-            // Create a new session file
-            let summary = text.strip_prefix("/new ").map(|s| s.trim()).filter(|s| !s.is_empty());
+            // Restart the message hub with a fresh sessions dir
             let sessions_dir = super::session_store::manager_sessions_dir();
-            match super::session_store::SessionWriter::create(
-                &sessions_dir,
-                crate::agent::AgentKind::Claude,
-                "manager",
-                &config::data_dir().to_string_lossy(),
-                None,
-                summary,
-            ) {
-                Ok(writer) => {
-                    event_log_tx = Some(super::event_log::spawn_logger(writer));
-                    let msg = if let Some(s) = summary {
-                        format!("New session started: {} ✅", s)
-                    } else {
-                        "New session started ✅".to_string()
-                    };
-                    let _ = outbound.send_direct(&channel_id, &msg).await;
-                }
-                Err(e) => {
-                    let _ = outbound.send_direct(&channel_id, &format!("Failed to create session: {}", e)).await;
-                }
-            }
+            hub_tx = Some(super::message_hub::spawn_hub(sessions_dir));
+
+            let summary = text.strip_prefix("/new ").map(|s| s.trim()).filter(|s| !s.is_empty());
+            let msg = if let Some(s) = summary {
+                format!("New session started: {} ✅", s)
+            } else {
+                "New session started ✅".to_string()
+            };
+            let _ = outbound.send_direct(&channel_id, &msg).await;
             busy_set.remove(&channel_id);
             continue;
         }
@@ -220,7 +194,7 @@ pub async fn run_worker<T>(
         // --- Send message to current target agent ---
         let target_id = current_target.as_ref().unwrap();
         let agent_died = run_with_agent_from_registry(
-            &services, target_id, &msg, &channel_id, &outbound, &verbose, &event_log_tx,
+            &services, target_id, &msg, &channel_id, &outbound, &verbose, &hub_tx,
         ).await;
 
         // --- Auto-restart if agent process died ---
@@ -360,7 +334,7 @@ async fn run_with_agent_from_registry<T>(
     channel_id: &str,
     outbound: &Arc<OutboundHub<T>>,
     verbose: &ImVerboseConfig,
-    event_log_tx: &Option<mpsc::UnboundedSender<super::event_log::TaggedEvent>>,
+    hub_tx: &Option<mpsc::UnboundedSender<super::message_hub::HubMessage>>,
 ) -> bool
 where
     T: crate::im::transport::ImTransport + 'static,
@@ -402,7 +376,7 @@ where
     // Stream all agent events (Manager + Workers) back to IM in real-time
     let agent_died = stream_all_agent_events(
         services, agent_id, manager_rx, channel_id, outbound, verbose,
-        msg.user_message_id.as_deref(), event_log_tx,
+        msg.user_message_id.as_deref(), hub_tx,
     ).await;
 
     agent_died
@@ -419,7 +393,7 @@ async fn stream_all_agent_events<T>(
     outbound: &Arc<OutboundHub<T>>,
     verbose: &ImVerboseConfig,
     user_message_id: Option<&str>,
-    event_log_tx: &Option<mpsc::UnboundedSender<super::event_log::TaggedEvent>>,
+    hub_tx: &Option<mpsc::UnboundedSender<super::message_hub::HubMessage>>,
 ) -> bool
 where
     T: crate::im::transport::ImTransport + 'static,
@@ -517,8 +491,8 @@ where
 
     while let Some((agent_id, event)) = merge_rx.recv().await {
         // Log every event
-        if let Some(ref log_tx) = event_log_tx {
-            let _ = log_tx.send(super::event_log::TaggedEvent {
+        if let Some(ref log_tx) = hub_tx {
+            let _ = log_tx.send(super::message_hub::HubMessage::Event {
                 chat_id: channel_id.to_string(),
                 agent_id: agent_id.clone(),
                 event: event.clone(),

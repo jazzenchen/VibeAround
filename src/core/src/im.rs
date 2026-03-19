@@ -5,8 +5,8 @@
 
 pub mod channels;
 pub mod daemon;
-pub mod event_log;
 pub mod log;
+pub mod message_hub;
 pub mod router;
 pub mod session;
 pub mod session_store;
