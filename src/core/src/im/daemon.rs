@@ -92,6 +92,7 @@ async fn run_send_daemon_for_channel<T>(
     while let Some(msg) = rx.recv().await {
         match msg {
             OutboundMsg::StreamProgress(_, label) => {
+                eprintln!("[daemon] StreamProgress channel={} label={}", channel_id, label);
                 state.last_progress = Some(label.clone());
                 let to_show = state.pending_stream_text.as_deref().unwrap_or(&label);
                 let now = Instant::now();
@@ -110,8 +111,14 @@ async fn run_send_daemon_for_channel<T>(
                 }
             }
             OutboundMsg::StreamPart(_, text) => {
+                eprintln!("[daemon] StreamPart channel={} len={} stream_sent={}", channel_id, text.len(), state.stream_sent);
                 state.last_progress = None;
-                let acc = state.pending_stream_text.take().unwrap_or_default();
+                // If the current pending is a Working placeholder, replace it entirely
+                let acc = match state.pending_stream_text.take() {
+                    Some(prev) if prev == "⏳ Working..." => String::new(),
+                    Some(prev) => prev,
+                    None => String::new(),
+                };
                 state.pending_stream_text = Some(acc + &text);
                 let to_show = state.pending_stream_text.as_deref().unwrap_or("…");
                 let now = Instant::now();
@@ -171,6 +178,7 @@ async fn run_send_daemon_for_channel<T>(
                 }
             }
             OutboundMsg::StreamEnd(_) => {
+                eprintln!("[daemon] StreamEnd channel={} has_mid={}", channel_id, state.stream_message_id.is_some());
                 // Block boundary — finalize current message, send Working placeholder for next block.
                 let mid = state.stream_message_id.take();
                 let pending = state.pending_stream_text.take();
@@ -189,6 +197,7 @@ async fn run_send_daemon_for_channel<T>(
                 }
             }
             OutboundMsg::StreamDone(_) => {
+                eprintln!("[daemon] StreamDone channel={} pending={:?}", channel_id, state.pending_stream_text.as_deref());
                 // Turn is done. Delete the trailing Working placeholder from the last StreamEnd.
                 if let Some(ref mid) = state.stream_message_id {
                     if state.pending_stream_text.as_deref() == Some("⏳ Working...") {
