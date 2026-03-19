@@ -11,17 +11,22 @@ use std::path::Path;
 /// a bridging task.
 pub fn spawn_gemini_process(
     cwd: &Path,
+    system_md_path: Option<&Path>,
 ) -> Result<(tokio::io::DuplexStream, tokio::io::DuplexStream), String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     eprintln!("[gemini-acp] spawning gemini --experimental-acp in {:?}", cwd);
-    let mut child = tokio::process::Command::new("gemini")
-        .arg("--experimental-acp")
+    let mut cmd = tokio::process::Command::new("gemini");
+    cmd.arg("--experimental-acp")
         .current_dir(cwd)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    if let Some(path) = system_md_path {
+        cmd.env("GEMINI_SYSTEM_MD", path);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn gemini: {}", e))?;
     eprintln!("[gemini-acp] gemini process spawned pid={:?}", child.id());

@@ -215,7 +215,7 @@ pub async fn handle_card_callback(
     body: &str,
     state: Option<&FeishuWebhookState>,
 ) -> (u16, String) {
-    eprintln!("[VibeAround][im][feishu] card_callback received body={}", &body[..body.len().min(500)]);
+    eprintln!("[VibeAround][im][feishu] card_callback received body={}", &body);
 
     let root: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,

@@ -716,7 +716,7 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf, _db: Arc<st
             old.shutdown().await;
         }
         let mut backend = agent::create_backend(kind);
-        backend.start(cwd).await?;
+        backend.start(cwd, None).await?;
         *active_agent = Some(backend);
         Ok(())
     }
@@ -951,12 +951,12 @@ fn mcp_initialize(id: Option<serde_json::Value>) -> Json<serde_json::Value> {
     }))
 }
 
-/// Handle "tools/list" — return the send_to_worker tool schema.
+/// Handle "tools/list" — return the dispatch_task tool schema.
 fn mcp_tools_list(id: Option<serde_json::Value>) -> Json<serde_json::Value> {
     jsonrpc_ok(id, serde_json::json!({
         "tools": [{
-            "name": "send_to_worker",
-            "description": "Send a message to a worker agent on a project workspace. If no worker is running on the workspace, one will be auto-spawned.",
+            "name": "dispatch_task",
+            "description": "Dispatch a task to a worker agent on a project workspace. If no worker is running on the workspace, one will be auto-spawned.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -980,7 +980,7 @@ fn mcp_tools_list(id: Option<serde_json::Value>) -> Json<serde_json::Value> {
     }))
 }
 
-/// Handle "tools/call" — dispatch send_to_worker.
+/// Handle "tools/call" — dispatch task to worker.
 async fn mcp_tools_call(
     id: Option<serde_json::Value>,
     params: Option<serde_json::Value>,
@@ -992,7 +992,7 @@ async fn mcp_tools_call(
     };
 
     let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    if tool_name != "send_to_worker" {
+    if tool_name != "dispatch_task" {
         return jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name));
     }
 
@@ -1015,7 +1015,7 @@ async fn mcp_tools_call(
         .and_then(common::agent::AgentKind::from_str_loose);
 
     // Dispatch to registry
-    match common::agent::registry::send_to_worker(&state.services, workspace, message, kind).await {
+    match common::agent::registry::dispatch_task(&state.services, workspace, message, kind).await {
         Ok(result) => {
             jsonrpc_ok(id, serde_json::json!({
                 "content": [{

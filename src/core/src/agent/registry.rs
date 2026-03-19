@@ -44,13 +44,22 @@ pub async fn spawn_agent(
             .map_err(|e| format!("Failed to create workspace {:?}: {}", workspace, e))?;
     }
 
-    // Write MCP config for this agent kind (so it can discover VibeAround's MCP server)
-    let port = services.port;
-    crate::agent::manager_prompt::ensure_mcp_config(kind, &workspace, port);
+    // Write MCP config only for Manager (Workers don't need MCP access)
+    if role == AgentRole::Manager {
+        let port = services.port;
+        crate::agent::manager_prompt::ensure_mcp_config(kind, &workspace, port);
+    }
+
+    // Load system prompt for Manager agents only
+    let system_prompt = if role == AgentRole::Manager {
+        Some(crate::agent::manager_prompt::load_manager_prompt())
+    } else {
+        None
+    };
 
     // Create and start the backend
     let mut backend = agent::create_backend(kind);
-    backend.start(&workspace).await?;
+    backend.start(&workspace, system_prompt.as_deref()).await?;
 
     // Register in ServiceManager
     let key = services.register_agent(kind, workspace, role, None);
@@ -162,7 +171,7 @@ pub struct AgentInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace-based lookup (used by MCP send_to_worker)
+// Workspace-based lookup (used by MCP dispatch_task)
 // ---------------------------------------------------------------------------
 
 /// Find a running agent by workspace path, optionally filtered by kind.
@@ -181,24 +190,24 @@ pub fn find_by_workspace(
         .next()
 }
 
-/// Result of a send_to_worker operation.
+/// Result of a dispatch_task operation.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct SendToWorkerResult {
+pub struct DispatchTaskResult {
     pub agent_id: AgentId,
     pub output: String,
     /// True if a new agent was auto-spawned for this request.
     pub spawned: bool,
 }
 
-/// High-level: send a message to a worker on a workspace.
+/// High-level: dispatch a task to a worker on a workspace.
 /// Finds an existing running agent or auto-spawns one.
 /// Returns the agent's collected output.
-pub async fn send_to_worker(
+pub async fn dispatch_task(
     services: &Arc<ServiceManager>,
     workspace: PathBuf,
     message: &str,
     kind: Option<AgentKind>,
-) -> Result<SendToWorkerResult, String> {
+) -> Result<DispatchTaskResult, String> {
     let mut spawned = false;
 
     // 1. Try to find an existing running agent on this workspace
@@ -213,7 +222,7 @@ pub async fn send_to_worker(
                     .unwrap_or(AgentKind::Claude)
             });
             eprintln!(
-                "[VibeAround][send_to_worker] no agent on {:?}, auto-spawning {}",
+                "[VibeAround][dispatch_task] no agent on {:?}, auto-spawning {}",
                 workspace, spawn_kind
             );
             let id = spawn_agent(services, spawn_kind, workspace, AgentRole::Worker).await?;
@@ -225,7 +234,7 @@ pub async fn send_to_worker(
     // 3. Send message and collect output
     let output = send_message(services, &agent_id, message).await?;
 
-    Ok(SendToWorkerResult {
+    Ok(DispatchTaskResult {
         agent_id,
         output,
         spawned,

@@ -18,12 +18,8 @@ pub fn prefix_channel(channel: &str) -> String {
 
 /// Truncate message content for logging (avoid huge dumps).
 #[inline]
-pub fn truncate_content(content: &str, max_len: usize) -> std::borrow::Cow<'_, str> {
-    if content.len() <= max_len {
-        std::borrow::Cow::Borrowed(content)
-    } else {
-        std::borrow::Cow::Owned(format!("{}... ({} bytes)", &content[..max_len], content.len()))
-    }
+pub fn truncate_content(content: &str, _max_len: usize) -> std::borrow::Cow<'_, str> {
+    std::borrow::Cow::Borrowed(content)
 }
 
 #[inline]

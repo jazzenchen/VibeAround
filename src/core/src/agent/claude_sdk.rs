@@ -67,14 +67,19 @@ impl ClaudeSdk {
     ///
     /// The subprocess is initialized (control handshake sent) before returning.
     /// Events start flowing immediately into the internal channel.
-    pub async fn spawn(cwd: &Path) -> Result<Self, String> {
+    pub async fn spawn(cwd: &Path, system_prompt: Option<&str>) -> Result<Self, String> {
+        let mut args = vec![
+            "--input-format".to_string(), "stream-json".to_string(),
+            "--output-format".to_string(), "stream-json".to_string(),
+            "--verbose".to_string(),
+            "--dangerously-skip-permissions".to_string(),
+        ];
+        if let Some(prompt) = system_prompt {
+            args.push("--system-prompt".to_string());
+            args.push(prompt.to_string());
+        }
         let mut child = Command::new("claude")
-            .args([
-                "--input-format", "stream-json",
-                "--output-format", "stream-json",
-                "--verbose",
-                "--dangerously-skip-permissions",
-            ])
+            .args(&args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

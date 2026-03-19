@@ -19,6 +19,7 @@ use super::claude_sdk::{ClaudeSdk, ContentBlock, SdkEvent};
 /// Returns the client-side halves of a duplex pipe for `ClientSideConnection`.
 pub fn spawn_claude_acp(
     cwd: PathBuf,
+    system_prompt: Option<String>,
 ) -> (
     tokio::io::DuplexStream, // client reads from this
     tokio::io::DuplexStream, // client writes to this
@@ -39,7 +40,7 @@ pub fn spawn_claude_acp(
                 let local = tokio::task::LocalSet::new();
                 local
                     .run_until(async move {
-                        if let Err(e) = run_acp_bridge(cwd, agent_read, agent_write).await {
+                        if let Err(e) = run_acp_bridge(cwd, agent_read, agent_write, system_prompt).await {
                             eprintln!("[claude-acp] bridge error: {}", e);
                         }
                     })
@@ -59,6 +60,7 @@ async fn run_acp_bridge(
     cwd: PathBuf,
     agent_read: tokio::io::DuplexStream,
     agent_write: tokio::io::DuplexStream,
+    system_prompt: Option<String>,
 ) -> Result<(), String> {
     use acp::Client as _;
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -66,7 +68,7 @@ async fn run_acp_bridge(
     // Notification channel: event translator → ACP connection
     let (notif_tx, mut notif_rx) = mpsc::channel::<acp::SessionNotification>(256);
 
-    let agent_impl = ClaudeAcpBridge::new(cwd.clone(), notif_tx);
+    let agent_impl = ClaudeAcpBridge::new(cwd.clone(), notif_tx, system_prompt);
 
     let (conn, handle_io) = acp::AgentSideConnection::new(
         agent_impl,
@@ -98,15 +100,17 @@ async fn run_acp_bridge(
 struct ClaudeAcpBridge {
     cwd: PathBuf,
     notif_tx: mpsc::Sender<acp::SessionNotification>,
+    system_prompt: Option<String>,
     /// The underlying SDK handle, created on first `initialize`.
     sdk: tokio::sync::Mutex<Option<ClaudeSdk>>,
 }
 
 impl ClaudeAcpBridge {
-    fn new(cwd: PathBuf, notif_tx: mpsc::Sender<acp::SessionNotification>) -> Self {
+    fn new(cwd: PathBuf, notif_tx: mpsc::Sender<acp::SessionNotification>, system_prompt: Option<String>) -> Self {
         Self {
             cwd,
             notif_tx,
+            system_prompt,
             sdk: tokio::sync::Mutex::new(None),
         }
     }
@@ -116,7 +120,7 @@ impl ClaudeAcpBridge {
         if lock.is_some() {
             return Ok(());
         }
-        let sdk = ClaudeSdk::spawn(&self.cwd).await
+        let sdk = ClaudeSdk::spawn(&self.cwd, self.system_prompt.as_deref()).await
             .map_err(|e| acp::Error::new(-32603, e))?;
         *lock = Some(sdk);
         Ok(())

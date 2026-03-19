@@ -101,39 +101,23 @@ You speak concisely and directly. You are friendly but focused on getting things
 
 const DEFAULT_CAPABILITIES: &str = r#"# Capabilities
 
-You have access to the following MCP tool for dispatching work to worker agents:
+You have access to the `dispatch_task` MCP tool for delegating work to worker agents.
+The tool schema is provided automatically via MCP — refer to it for parameter details.
 
-## send_to_worker
-Send a message to a worker agent on a specific project workspace.
-- Parameters:
-  - `workspace` (required): the project directory path, e.g. "/Users/me/projects/myapp"
-  - `message` (required): the task or question for the worker
-  - `kind` (optional): agent type, e.g. "claude", "gemini". If omitted, VibeAround picks the best available agent on that workspace.
-- Returns: the worker's complete output text
-- If no worker is running on the given workspace, one will be auto-spawned.
-
-Other management operations (spawning workers, killing workers, listing workers) are handled by VibeAround's IM commands (/spawn, /kill, /workers), not by you directly."#;
+Use `dispatch_task` whenever a task requires file-system access, code generation, or project-specific work."#;
 
 const DEFAULT_WORKFLOW: &str = r#"# Workflow
 
-## Workspace management
-- Your current working directory is `~/.vibearound/`. Do NOT create project files here directly.
-- When the user asks to create a new project, app, demo, or any code that requires writing files:
-  1. First create a new directory under `~/.vibearound/workspaces/`, e.g. `~/.vibearound/workspaces/vue-todo-demo/`
-  2. Do all file creation and coding work inside that new workspace directory.
-  3. Tell the user where the project was created.
-- When the user asks to work on an existing project at a specific path, dispatch to a worker on that path.
+## Principles
+- You are a coordinator. You never write code or create files directly.
+- All file-system work is dispatched to worker agents via `dispatch_task`.
+- New projects go under `~/.vibearound/workspaces/<project-name>/`.
 
-## When to dispatch to a worker
-- When the user asks to work on a specific project, dispatch to the worker assigned to that project's workspace.
-- When the user asks to create, modify, or debug code, use a worker agent.
-- If no worker exists for the requested project, spawn one first.
+## Dispatch to worker when:
+- The task involves creating, modifying, reading, or debugging code/files.
 
-## When to handle directly
-- General questions, planning, architecture discussions.
-- Managing workers (listing, spawning, killing).
-- Summarizing work done by workers.
-- Anything that doesn't require file system access to a specific project."#;
+## Handle directly when:
+- Planning, architecture, general Q&A, or summarizing work done by workers."#;
 
 const DEFAULT_MEMORY: &str = r#"# Memory
 
@@ -141,10 +125,8 @@ const DEFAULT_MEMORY: &str = r#"# Memory
 
 const DEFAULT_RULES: &str = r#"# Rules
 
-- Always confirm before killing a worker that might have unsaved work.
 - When dispatching to a worker, briefly tell the user which worker you're using.
 - If a worker fails or crashes, report the error and offer to restart.
-- Do not modify files outside of `~/.vibearound/` without explicit user permission.
 - Keep memory.md concise — summarize rather than log everything."#;
 
 // ---------------------------------------------------------------------------
@@ -164,14 +146,14 @@ pub fn ensure_mcp_config(kind: AgentKind, workspace: &Path, port: u16) {
         AgentKind::Claude => (
             ".mcp.json",
             format!(
-                r#"{{"vibearound":{{"type":"http","url":"{}"}}}}"#,
+                r#"{{"mcpServers":{{"vibearound":{{"type":"http","url":"{}"}}}}}}"#,
                 url
             ),
         ),
         AgentKind::Gemini => (
             ".gemini/settings.json",
             format!(
-                r#"{{"mcpServers":{{"vibearound":{{"url":"{}"}}}}}}"#,
+                r#"{{"mcpServers":{{"vibearound":{{"httpUrl":"{}"}}}}}}"#,
                 url
             ),
         ),
