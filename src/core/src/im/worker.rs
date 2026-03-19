@@ -548,23 +548,9 @@ where
                     channel_id.to_string(), tool_msg,
                 )).await;
             }
-            AgentEvent::ToolResult { id: _, output, is_error } => {
-                if !verbose.show_tool_use { continue; }
-                if current_block != Block::None {
-                    flush_block(channel_id, outbound).await;
-                }
-                current_block = Block::Tool;
-                let pfx = if is_error { "❌" } else { "✅" };
-                let mut result_msg = format!("{} Tool result", pfx);
-                if let Some(ref out) = output {
-                    if !out.is_empty() {
-                        result_msg.push_str(&format!(":\n```\n{}\n```", out));
-                    }
-                }
-                result_msg.push('\n');
-                let _ = outbound.send(channel_id, OutboundMsg::StreamPart(
-                    channel_id.to_string(), result_msg,
-                )).await;
+            AgentEvent::ToolResult { id: _, output: _, is_error: _ } => {
+                // Tool results are for the LLM, not the user — skip display
+                continue;
             }
             AgentEvent::TurnComplete { .. } => {
                 if agent_id == primary_agent_id {
