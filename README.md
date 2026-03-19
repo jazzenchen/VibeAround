@@ -81,7 +81,17 @@ bun run dev
 
 Then tray menu → Open Web Dashboard; tunnel URL and password are in the terminal.
 
+On first launch, the desktop app will show an **onboarding wizard** that walks you through agent selection, IM channel tokens, and tunnel configuration. The wizard writes everything to `~/.vibearound/settings.json`.
+
+> **Configuration path change:** Settings are now read from `~/.vibearound/settings.json` (user home directory), not from the project `src/settings.json`. The in-repo file is only used as a development seed — on first run it is copied to `~/.vibearound/` if the file doesn't exist yet.
+
 For detailed setup instructions, configuration options, and standalone server mode, see the [Setup Guide](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide) in the wiki.
+
+---
+
+## Known Issues
+
+- After completing the onboarding wizard, the app currently requires a **restart** for the new configuration to take full effect (the config singleton is loaded once at startup). This will be fixed in a future release.
 
 ---
 
@@ -106,6 +116,7 @@ Full configuration docs and usage guides have moved to the [Wiki](https://github
 - [x] Agent switching via `/cli_` commands and `/start` card
 - [x] Buffered streaming output with reactions (processing / done)
 - [x] Per-channel verbose config (show_thinking, show_tool_use)
+- [x] Desktop onboarding wizard: first-run setup for agents, channels, and tunnel
 - [ ] Workspaces: switch and manage project folders via IM or Web Dashboard
 - [ ] Agent settings: model selection, API keys, generation options per agent
 - [ ] Skills and context: custom procedures, prompt templates, project rules
