@@ -1033,13 +1033,17 @@ async fn mcp_tools_call(
         Some(m) => m,
         None => return jsonrpc_err(id, -32602, "Missing required argument: message"),
     };
+
+    // Inject current date so the worker knows what "today" is
+    let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let message_with_date = format!("[Current date: {}]\n\n{}", date_str, message);
     let kind = arguments
         .get("kind")
         .and_then(|v| v.as_str())
         .and_then(common::agent::AgentKind::from_str_loose);
 
     // Dispatch to registry
-    match common::agent::registry::dispatch_task(&state.services, workspace, message, kind).await {
+    match common::agent::registry::dispatch_task(&state.services, workspace, &message_with_date, kind).await {
         Ok(result) => {
             let summary = format!(
                 "Task completed by worker {}. The user already saw the worker's output in real-time — do NOT repeat it.",

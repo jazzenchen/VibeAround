@@ -23,3 +23,4 @@ dashmap = "6.0"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 mime_guess = "2.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
+chrono = "0.4"
