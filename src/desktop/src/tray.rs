@@ -1,5 +1,5 @@
 //! System tray (Tray-First UX). Tauri 2.10 API.
-//! Native menu with quick actions; "Show Desktop" opens the main webview window.
+//! Native menu with quick actions; "Show Window" opens the main webview window.
 
 use tauri::{
     image::Image,
@@ -8,34 +8,47 @@ use tauri::{
     App, Manager, Runtime,
 };
 
+use crate::AppServiceManager;
+
 const MAIN_WINDOW_LABEL: &str = "main";
-const WEB_DASHBOARD_URL: &str = "http://127.0.0.1:12358";
 
 pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>> {
-    let show_item = MenuItemBuilder::with_id("show_desktop", "Show Services Dashboard").build(app)?;
-    let open_web_item = MenuItemBuilder::with_id("open_web", "Open Web Dashboard").build(app)?;
+    let show_item = MenuItemBuilder::with_id("show_window", "Show Window").build(app)?;
+    let open_tunnel_item = MenuItemBuilder::with_id("open_tunnel", "Open Tunnel")
+        .enabled(false)
+        .build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-    let menu = Menu::with_items(app, &[&show_item, &open_web_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &open_tunnel_item, &quit_item])?;
 
     let icon_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/32x32.png");
     let icon = Image::from_path(icon_path)?;
 
-    let _tray = TrayIconBuilder::new()
+    // Clone the tunnel item for the watcher task
+    let tunnel_item_clone = open_tunnel_item.clone();
+
+    TrayIconBuilder::new()
         .icon(icon)
-        .icon_as_template(true)
-        .tooltip("VibeAround")
         .menu(&menu)
-        .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show_desktop" => {
+        .tooltip("VibeAround")
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "show_window" => {
                 if let Some(w) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                     let _ = w.unminimize();
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
             }
-            "open_web" => {
-                let _ = open::that(WEB_DASHBOARD_URL);
+            "open_tunnel" => {
+                if let Some(state) = app.try_state::<AppServiceManager>() {
+                    for entry in state.0.tunnel.iter() {
+                        if let Ok(guard) = entry.url.read() {
+                            if let Some(ref url) = *guard {
+                                let _ = open::that(url);
+                                return;
+                            }
+                        }
+                    }
+                }
             }
             "quit" => {
                 app.exit(0);
@@ -43,6 +56,23 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
             _ => {}
         })
         .build(app)?;
+
+    // Watch for tunnel state changes → enable/disable "Open Tunnel" menu item
+    let app_handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        let Some(state) = app_handle.try_state::<AppServiceManager>() else { return };
+        let sm = &state.0;
+        let mut rx = sm.change_tx.subscribe();
+        loop {
+            let has_url = sm.tunnel.iter().any(|entry| {
+                entry.url.read().map(|u| u.is_some()).unwrap_or(false)
+            });
+            let _ = tunnel_item_clone.set_enabled(has_url);
+
+            // Wait for next change notification
+            if rx.recv().await.is_err() { break; }
+        }
+    });
 
     Ok(())
 }
