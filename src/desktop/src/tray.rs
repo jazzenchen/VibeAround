@@ -1,21 +1,31 @@
 //! System tray (Tray-First UX). Tauri 2.10 API.
 //! Native menu with quick actions; "Show Window" opens the main webview window.
+//! During onboarding, service-related items are disabled until `onboarding-complete` fires.
+
+use std::sync::atomic::Ordering;
 
 use tauri::{
     image::Image,
     menu::{Menu, MenuItemBuilder},
     tray::TrayIconBuilder,
-    App, Manager, Runtime,
+    App, Listener, Manager, Runtime,
 };
 
-use crate::AppServiceManager;
+use crate::{AppServiceManager, OnboardingActive};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const LOCAL_DASHBOARD_URL: &str = "http://127.0.0.1:12358";
 
 pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>> {
+    let is_onboarding = app
+        .try_state::<OnboardingActive>()
+        .map(|s| s.0.load(Ordering::Relaxed))
+        .unwrap_or(false);
+
     let show_item = MenuItemBuilder::with_id("show_window", "Show Window").build(app)?;
-    let open_local_item = MenuItemBuilder::with_id("open_local", "Open Local Dashboard").build(app)?;
+    let open_local_item = MenuItemBuilder::with_id("open_local", "Open Local Dashboard")
+        .enabled(!is_onboarding)
+        .build(app)?;
     let open_tunnel_item = MenuItemBuilder::with_id("open_tunnel", "Open Tunnel")
         .enabled(false)
         .build(app)?;
@@ -25,8 +35,9 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
     let icon_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/32x32.png");
     let icon = Image::from_path(icon_path)?;
 
-    // Clone the tunnel item for the watcher task
+    // Clone items for the async watchers
     let tunnel_item_clone = open_tunnel_item.clone();
+    let open_local_clone = open_local_item.clone();
 
     TrayIconBuilder::new()
         .icon(icon)
@@ -61,6 +72,12 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
             _ => {}
         })
         .build(app)?;
+
+    // Listen for onboarding-complete → re-enable menu items
+    let open_local_onboard = open_local_clone.clone();
+    app.listen("onboarding-complete", move |_| {
+        let _ = open_local_onboard.set_enabled(true);
+    });
 
     // Watch for tunnel state changes → enable/disable "Open Tunnel" menu item
     let app_handle = app.handle().clone();

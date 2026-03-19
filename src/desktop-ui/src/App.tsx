@@ -1,7 +1,9 @@
+import { useState, useEffect } from "react";
 import {
   Globe, Bot, MessageSquare, Terminal, X, RefreshCw, ExternalLink, Server, Wifi, WifiOff,
 } from "lucide-react";
 import { useServices, type ServiceInfo } from "./hooks/useServices";
+import Onboarding from "./Onboarding";
 
 function formatUptime(secs: number): string {
   if (secs < 60) return `${secs}s`;
@@ -108,6 +110,23 @@ function Section({
 }
 
 function App() {
+  // Route: if path is /onboarding, show the wizard; otherwise show dashboard.
+  const [route, setRoute] = useState(() => window.location.pathname);
+
+  useEffect(() => {
+    const onPop = () => setRoute(window.location.pathname);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  if (route === "/onboarding") {
+    return <Onboarding />;
+  }
+
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const { data, error, loading, connected, refresh, killService } = useServices();
 
   if (loading && !data) {
