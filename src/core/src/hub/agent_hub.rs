@@ -12,7 +12,6 @@
 //!
 //! All agents share the same workspace: ~/.vibearound/workspaces/
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use dashmap::DashMap;
