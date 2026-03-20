@@ -17,6 +17,7 @@ pub mod registry;
 
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Which agent CLI to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

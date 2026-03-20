@@ -9,7 +9,8 @@ pub mod message_hub;
 pub mod session_store;
 pub mod spec;
 pub mod transport;
-pub mod worker;
+// worker is deprecated — MessageHub replaces it. Kept for reference during Phase 2.
+// pub mod worker;
 
 /// Re-export plugin channel.
 pub use channels::plugin;
