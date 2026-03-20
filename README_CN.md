@@ -44,7 +44,8 @@ VibeAround 通过 [Agent Client Protocol (ACP)](https://agentclientprotocol.com/
 | OpenCode | `/cli_opencode` | `opencode acp`（原生 ACP） | [OpenCode](https://github.com/opencode-ai/opencode) |
 | Codex | `/cli_codex` | `npx @zed-industries/codex-acp`（ACP 桥接） | Node.js 18+, [codex-acp](https://github.com/zed-industries/codex-acp) |
 
-发送 `/start` 可以获取交互式智能体选择卡片，或发送 `/help` 查看所有可用命令。
+发送 `/start` 可以获取交互式智能体选择卡片，或发送 `/help` 查看所有可用命令。  
+> 已知问题：斜杠命令（`/start`、`/help`、`/cli_*`）在插件化渠道中尚未完全适配。
 
 **核心目标**
 
@@ -107,6 +108,10 @@ npm run build
 详细的安装步骤、配置说明和独立服务器模式，请参阅 Wiki 中的[安装与运行指南](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide-CN)。
 
 ---
+
+## 已知问题
+
+- 斜杠命令（`/start`、`/help`、`/cli_*`）在插件化渠道中尚未完全适配。
 
 ## 📖 Wiki
 

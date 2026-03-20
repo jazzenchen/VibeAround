@@ -52,6 +52,7 @@ VibeAround connects to AI coding agents through the [Agent Client Protocol (ACP)
 | Codex | `/cli_codex` | `npx @zed-industries/codex-acp` (ACP bridge) | Node.js 18+, [codex-acp](https://github.com/zed-industries/codex-acp) |
 
 Use `/start` for an interactive agent picker card, or `/help` to see all commands.
+> Known issue: slash commands (`/start`, `/help`, `/cli_*`) are not fully adapted in plugin channels yet.
 
 ---
 
@@ -122,6 +123,7 @@ For detailed setup instructions, configuration options, and standalone server mo
 ## Known Issues
 
 - After completing the onboarding wizard, the app currently requires a **restart** for the new configuration to take full effect (the config singleton is loaded once at startup). This will be fixed in a future release.
+- Slash commands (`/start`, `/help`, `/cli_*`) are currently a known issue in plugin channels and are not fully adapted yet.
 
 ## Changelog (Recent)
 
