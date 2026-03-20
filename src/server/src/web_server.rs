@@ -21,8 +21,8 @@ use tower_http::services::ServeDir;
 
 use common::config;
 use common::headless::wire;
-use common::pty::{list_tmux_sessions, tmux_available};
-use common::session::{Registry, SessionId};
+use common::pty::{list_tmux_sessions, tmux_available, PtyTool};
+use common::session::{self, Registry, SessionId};
 
 
 /// Client sends this as JSON over Text frame to resize the PTY (e.g. after xterm-addon-fit).
@@ -110,6 +110,8 @@ pub async fn run_web_server(
     };
 
     let app = Router::new()
+        .route("/api/sessions", get(list_sessions_handler).post(create_session_handler))
+        .route("/api/sessions/{session_id}", delete(delete_session_handler))
         .route("/api/tmux/sessions", get(list_tmux_sessions_handler))
         .route("/api/agents", get(list_agents_handler))
         .route("/api/im/feishu/event", post(feishu_webhook_handler))
@@ -317,6 +319,132 @@ async fn list_tmux_sessions_handler() -> Json<serde_json::Value> {
         "available": available,
         "sessions": sessions,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Session CRUD API: GET /api/sessions, POST /api/sessions, DELETE /api/sessions/:id
+// ---------------------------------------------------------------------------
+
+/// Request body for POST /api/sessions.
+#[derive(serde::Deserialize)]
+struct CreateSessionBody {
+    tool: PtyTool,
+    project_path: Option<String>,
+    tmux_session: Option<String>,
+    theme: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+}
+
+/// GET /api/sessions — list all active sessions.
+async fn list_sessions_handler(State(state): State<AppState>) -> Json<Vec<serde_json::Value>> {
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    for entry in state.registry.iter() {
+        let sid = entry.key();
+        let ctx = entry.value();
+        let status = ctx.state.read().ok().map(|g| {
+            serde_json::to_value(&*g).unwrap_or(serde_json::json!("unknown"))
+        }).unwrap_or(serde_json::json!("unknown"));
+        items.push(serde_json::json!({
+            "session_id": sid.0.to_string(),
+            "tool": ctx.metadata.tool,
+            "status": status,
+            "created_at": ctx.metadata.created_at,
+            "project_path": ctx.metadata.project_path,
+            "tmux_session": ctx.metadata.tmux_session,
+        }));
+    }
+    Json(items)
+}
+
+/// POST /api/sessions — create a new PTY session.
+async fn create_session_handler(
+    State(state): State<AppState>,
+    Json(body): Json<CreateSessionBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let cwd = body.project_path.as_ref().map(std::path::PathBuf::from);
+    let initial_size = match (body.cols, body.rows) {
+        (Some(c), Some(r)) => Some((c, r)),
+        _ => None,
+    };
+
+    let (bridge, mut pty_rx, resize_tx, mut state_rx) = common::pty::spawn_pty(
+        body.tool,
+        cwd,
+        body.tmux_session.clone(),
+        body.theme.clone(),
+        initial_size,
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to spawn PTY: {}", e)))?;
+
+    let session_id = SessionId::new();
+    let metadata = session::SessionMetadata {
+        created_at: session::unix_now_secs(),
+        project_path: body.project_path.clone(),
+        tool: body.tool,
+        tmux_session: body.tmux_session.clone(),
+    };
+
+    let buffer = Arc::new(session::CircularBuffer::new());
+    let (live_tx, _) = tokio::sync::broadcast::channel(session::LIVE_BROADCAST_CAP);
+    let run_state: Arc<std::sync::RwLock<common::pty::PtyRunState>> =
+        Arc::new(std::sync::RwLock::new(common::pty::PtyRunState::Running { tool: body.tool }));
+
+    let ctx = session::SessionContext {
+        bridge,
+        resize_tx,
+        state: Arc::clone(&run_state),
+        metadata: metadata.clone(),
+        buffer: Arc::clone(&buffer),
+        live_tx: live_tx.clone(),
+    };
+
+    state.registry.insert(session_id, ctx);
+
+    // Ghost reader: reads PTY output → buffer + broadcast.
+    let buf_clone = Arc::clone(&buffer);
+    let tx_clone = live_tx.clone();
+    tokio::spawn(async move {
+        while let Some(data) = pty_rx.recv().await {
+            buf_clone.push(&data);
+            let _ = tx_clone.send(bytes::Bytes::from(data));
+        }
+    });
+
+    // State watcher: updates run_state from PTY child poll.
+    let rs = Arc::clone(&run_state);
+    tokio::spawn(async move {
+        while let Some(new_state) = state_rx.recv().await {
+            if let Ok(mut g) = rs.write() {
+                *g = new_state;
+            }
+        }
+    });
+
+    Ok(Json(serde_json::json!({
+        "session_id": session_id.0.to_string(),
+        "tool": metadata.tool,
+        "created_at": metadata.created_at,
+        "project_path": metadata.project_path,
+    })))
+}
+
+/// DELETE /api/sessions/:session_id — kill and remove a session.
+async fn delete_session_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match uuid::Uuid::parse_str(&session_id) {
+        Ok(u) => u,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid session_id".to_string()),
+    };
+    let sid = SessionId(uuid);
+    if let Some((_, ctx)) = state.registry.remove(&sid) {
+        let _ = ctx.bridge.kill();
+        (StatusCode::OK, format!("Session {} deleted", session_id))
+    } else {
+        (StatusCode::NOT_FOUND, format!("Session {} not found", session_id))
+    }
 }
 
 /// GET /api/agents — list enabled agents and default agent for frontend agent selector.
