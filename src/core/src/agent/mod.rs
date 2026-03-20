@@ -13,7 +13,6 @@ pub mod gemini_acp;
 pub mod manager_prompt;
 pub mod opencode_acp;
 pub mod opencode_jsonl;
-pub mod registry;
 
 use std::fmt;
 use std::path::Path;

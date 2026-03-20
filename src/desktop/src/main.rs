@@ -13,8 +13,8 @@ use tokio::sync::Notify;
 
 use onboarding::OnboardingGate;
 
-/// Shared ServiceManager, injected into Tauri state for tray and IPC access.
-pub struct AppServiceManager(pub Arc<common::service::ServiceManager>);
+/// Shared ServiceStatusManager, injected into Tauri state for tray and IPC access.
+pub struct AppServiceManager(pub Arc<common::service::ServiceStatusManager>);
 
 /// Whether the app is currently in onboarding mode (tray reads this).
 pub struct OnboardingActive(pub std::sync::atomic::AtomicBool);

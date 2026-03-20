@@ -26,9 +26,9 @@ export interface ServerMeta {
 
 export interface ServicesSnapshot {
   server: ServerMeta;
-  tunnel: ServiceInfo[];
+  tunnels: ServiceInfo[];
   agents: ServiceInfo[];
-  im_bots: ServiceInfo[];
+  channels: ServiceInfo[];
   pty_session_count: number;
 }
 

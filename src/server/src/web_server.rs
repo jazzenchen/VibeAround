@@ -46,7 +46,7 @@ struct AppState {
     registry: Registry,
     dist_for_fallback: PathBuf,
     working_dir: PathBuf,
-    services: Arc<common::service::ServiceManager>,
+    services: Arc<common::service::ServiceStatusManager>,
 }
 
 
@@ -84,7 +84,7 @@ async fn spa_fallback(dist_path: PathBuf) -> Response {
 pub async fn run_web_server(
     port: u16,
     dist_path: PathBuf,
-    services: Arc<common::service::ServiceManager>,
+    services: Arc<common::service::ServiceStatusManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     verify_web_dist(&dist_path)?;
     let web_dist = dist_path
@@ -305,12 +305,12 @@ async fn ws_services_handler(
 
 async fn ws_services_session(
     mut socket: axum::extract::ws::WebSocket,
-    services: Arc<common::service::ServiceManager>,
+    services: Arc<common::service::ServiceStatusManager>,
 ) {
     use axum::extract::ws::Message;
 
     // 1. Send initial snapshot immediately
-    let snapshot = services.list_all();
+    let snapshot = services.snapshot();
     if let Ok(json) = serde_json::to_string(&snapshot) {
         if socket.send(Message::Text(json.into())).await.is_err() {
             return;
@@ -318,12 +318,13 @@ async fn ws_services_session(
     }
 
     // 2. Subscribe to changes and forward
-    let mut rx = services.change_tx.subscribe();
+    let mut rx = services.subscribe_changes();
     loop {
         tokio::select! {
             result = rx.recv() => {
                 match result {
-                    Ok(snapshot) => {
+                    Ok(()) => {
+                        let snapshot = services.snapshot();
                         if let Ok(json) = serde_json::to_string(&snapshot) {
                             if socket.send(Message::Text(json.into())).await.is_err() {
                                 break; // client disconnected
@@ -332,7 +333,7 @@ async fn ws_services_session(
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         eprintln!("[VibeAround][ws/services] lagged by {}, sending fresh snapshot", n);
-                        let snapshot = services.list_all();
+                        let snapshot = services.snapshot();
                         if let Ok(json) = serde_json::to_string(&snapshot) {
                             if socket.send(Message::Text(json.into())).await.is_err() {
                                 break;
@@ -625,8 +626,8 @@ async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
 // ---------------------------------------------------------------------------
 
 /// GET /api/services — list all services grouped by category.
-async fn list_services_handler(State(state): State<AppState>) -> Json<common::service::ServicesSnapshot> {
-    Json(state.services.list_all())
+async fn list_services_handler(State(state): State<AppState>) -> Json<common::service::StatusSnapshot> {
+    Json(state.services.snapshot())
 }
 
 /// DELETE /api/services/:category/:id — kill a specific service.
@@ -634,7 +635,7 @@ async fn kill_service_handler(
     State(state): State<AppState>,
     Path((category, id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if state.services.kill(&category, &id) {
+    if state.services.kill_service(&category, &id) {
         (StatusCode::OK, format!("Killed {}/{}", category, id))
     } else {
         (StatusCode::NOT_FOUND, format!("Service {}/{} not found", category, id))
@@ -786,40 +787,19 @@ async fn mcp_tools_call(
 
     // Inject current date so the worker knows what "today" is
     let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let message_with_date = format!("[Current date: {}]\n\n{}", date_str, message);
-    let kind = arguments
+    let _message_with_date = format!("[Current date: {}]\n\n{}", date_str, message);
+    let _kind = arguments
         .get("kind")
         .and_then(|v| v.as_str())
         .and_then(common::agent::AgentKind::from_str_loose);
 
-    // Dispatch to registry
-    match common::agent::registry::dispatch_task(&state.services, workspace, &message_with_date, kind).await {
-        Ok(result) => {
-            let summary = format!(
-                "Task completed by worker {}. The user already saw the worker's output in real-time — do NOT repeat it.",
-                result.agent_id
-            );
-            jsonrpc_ok(id, serde_json::json!({
-                "content": [{
-                    "type": "text",
-                    "text": summary
-                }],
-                "isError": false,
-                "_meta": {
-                    "agent_id": result.agent_id,
-                    "spawned": result.spawned
-                }
-            }))
-        }
-        Err(e) => {
-            jsonrpc_ok(id, serde_json::json!({
-                "content": [{
-                    "type": "text",
-                    "text": format!("Error: {}", e)
-                }],
-                "isError": true
-            }))
-        }
-    }
+    // TODO: migrate to AgentHub
+    jsonrpc_ok(id, serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": "MCP dispatch_task is not yet available in the new hub architecture"
+        }],
+        "isError": true
+    }))
 }
 
