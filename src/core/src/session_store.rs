@@ -118,7 +118,7 @@ impl SessionWriter {
     /// Reopen an existing session file for appending.
     /// Used to continue writing to the same session across multiple turns.
     pub fn reopen(path: &Path) -> std::io::Result<Self> {
-        let header = super::session_store::read_header(path)
+        let header = crate::session_store::read_header(path)
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad header"))?;
         let file = fs::OpenOptions::new().append(true).open(path)?;
         eprintln!("[session] reopened {}", path.display());

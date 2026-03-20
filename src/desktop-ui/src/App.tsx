@@ -197,18 +197,18 @@ function Dashboard() {
         <Section
           icon={<Globe className="w-4 h-4 text-primary" />}
           title="Tunnel"
-          badge={data.tunnel.length}
+          badge={data.tunnels.length}
         >
-          {data.tunnel.length === 0 ? (
+          {data.tunnels.length === 0 ? (
             <p className="text-xs text-muted-foreground px-3 py-2">
               No tunnel running
             </p>
           ) : (
-            data.tunnel.map((s) => (
+            data.tunnels.map((s) => (
               <ServiceRow
                 key={s.id}
                 service={s}
-                onKill={() => killService("tunnel", s.id)}
+                onKill={() => killService("tunnels", s.id)}
               />
             ))
           )}
@@ -235,22 +235,22 @@ function Dashboard() {
           )}
         </Section>
 
-        {/* IM Bots */}
+        {/* Channels */}
         <Section
           icon={<MessageSquare className="w-4 h-4 text-primary" />}
-          title="IM Bots"
-          badge={data.im_bots.length}
+          title="Channels"
+          badge={data.channels.length}
         >
-          {data.im_bots.length === 0 ? (
+          {data.channels.length === 0 ? (
             <p className="text-xs text-muted-foreground px-3 py-2">
-              No IM bots running
+              No channels running
             </p>
           ) : (
-            data.im_bots.map((s) => (
+            data.channels.map((s) => (
               <ServiceRow
                 key={s.id}
                 service={s}
-                onKill={() => killService("im_bots", s.id)}
+                onKill={() => killService("channels", s.id)}
               />
             ))
           )}

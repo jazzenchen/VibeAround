@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["desktop-ui", "web", "desktop"],
   "scripts": {
-    "prebuild": "bun run desktop-ui:build && bun run web:build",
+    "prebuild": "bun run plugins:build && bun run desktop-ui:build && bun run web:build",
     "build": "bun run desktop:build",
     "dev": "bun run desktop:dev",
     "desktop-ui:dev": "bun run --cwd desktop-ui dev",
@@ -13,7 +13,11 @@
     "server:dev": "cargo run -p server",
     "server:build": "cargo build -p server",
     "desktop:dev": "bun run --filter @vibearound/tauri dev",
-    "desktop:build": "bun run --filter @vibearound/tauri build"
+    "desktop:build": "bun run --filter @vibearound/tauri build",
+    "plugins:install": "cd plugins/feishu && npm install && cd ../telegram && npm install",
+    "plugins:build": "cd plugins/feishu && npm run build && cd ../telegram && npm run build",
+    "plugin:feishu:build": "cd plugins/feishu && npm run build",
+    "plugin:telegram:build": "cd plugins/telegram && npm run build"
   },
   "devDependencies": {}
 }

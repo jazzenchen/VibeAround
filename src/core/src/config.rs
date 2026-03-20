@@ -1,6 +1,6 @@
 //! Global config singleton. Load settings.json once; desktop and server both call
 //! `ensure_loaded()` so the first caller does the work, later callers get the same instance.
-//! All config (tunnel, ngrok, telegram, feishu) comes from ~/.vibearound/settings.json.
+//! All config comes from ~/.vibearound/settings.json.
 
 use std::path::PathBuf;
 use std::sync::Once;
@@ -25,14 +25,12 @@ pub fn data_dir() -> PathBuf {
 }
 
 /// Ensure ~/.vibearound/ exists with settings.json and workspaces/.
-/// Called once before loading config. Safe to call multiple times (idempotent).
 fn init_data_dir() {
     let dir = data_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("[VibeAround] Failed to create data dir {:?}: {}", dir, e);
         return;
     }
-    // Seed settings.json if missing
     let settings_path = dir.join("settings.json");
     if !settings_path.exists() {
         eprintln!("[VibeAround] Creating default settings.json at {:?}", settings_path);
@@ -40,16 +38,14 @@ fn init_data_dir() {
             eprintln!("[VibeAround] Failed to write settings.json: {}", e);
         }
     }
-    // Ensure workspaces/ dir
     let ws_dir = dir.join("workspaces");
     if let Err(e) = std::fs::create_dir_all(&ws_dir) {
         eprintln!("[VibeAround] Failed to create workspaces dir: {}", e);
     }
-    // Ensure manager prompt dir with default files
     crate::agent::manager_prompt::ensure_manager_prompt_dir();
 }
 
-/// Install rustls default crypto provider once (required by rustls 0.22+ before any TLS use, e.g. ngrok SDK).
+/// Install rustls default crypto provider once.
 fn ensure_rustls_provider() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -64,9 +60,7 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 /// Per-channel verbose/output settings for IM.
 #[derive(Debug, Clone)]
 pub struct ImVerboseConfig {
-    /// Show agent thinking/reasoning blocks in IM output. Default: false.
     pub show_thinking: bool,
-    /// Show tool use (call + result) blocks in IM output. Default: false.
     pub show_tool_use: bool,
 }
 
@@ -78,36 +72,45 @@ impl Default for ImVerboseConfig {
 
 /// Cached config from settings.json.
 pub struct Config {
+    // --- Tunnel ---
     pub tunnel_provider: TunnelProvider,
     pub ngrok_auth_token: Option<String>,
-    /// Reserved/static domain (e.g. myapp.ngrok.io). If set, tunnel uses this instead of a random URL.
     pub ngrok_domain: Option<String>,
-    /// Cloudflare Tunnel token (from `cloudflared tunnel run --token <TOKEN>`).
     pub cloudflare_tunnel_token: Option<String>,
-    /// Cloudflare Tunnel public hostname (e.g. vibe.yourdomain.com). Configured in CF Dashboard.
     pub cloudflare_hostname: Option<String>,
-    pub telegram_bot_token: Option<String>,
-    pub feishu_app_id: Option<String>,
-    pub feishu_app_secret: Option<String>,
-    /// Root for job workspaces and projects.json. Absolute path. Default: ~/.vibearound when not set.
+    // --- Working dir ---
     pub working_dir: PathBuf,
-    /// Optional base URL for preview links (e.g. https://xxx.ngrok-free.app). Overrides ngrok_domain when set.
     pub preview_base_url: Option<String>,
-    /// When attaching to a tmux session, detach other clients first (`tmux attach -d`). Default: true.
     pub tmux_detach_others: bool,
-    /// Per-channel verbose settings for Feishu.
-    pub feishu_verbose: ImVerboseConfig,
-    /// Per-channel verbose settings for Telegram.
-    pub telegram_verbose: ImVerboseConfig,
-    /// Default agent to start on first message (e.g. "claude", "gemini", "opencode", "codex").
-    /// Default: "claude".
+    // --- Agents ---
     pub default_agent: String,
-    /// Which agents are enabled (shown in UI / IM). Empty = all agents enabled.
     pub enabled_agents: Vec<crate::agent::AgentKind>,
+    // --- Raw channels JSON (for dynamic plugin config) ---
+    raw_channels: serde_json::Value,
 }
 
-/// Ensure config is loaded (idempotent). Initialises ~/.vibearound/ on first call,
-/// then loads settings.json. Returns the same instance on subsequent calls.
+impl Config {
+    /// List all channel names configured in settings.json (e.g. ["feishu", "telegram"]).
+    pub fn channel_names(&self) -> Vec<String> {
+        self.raw_channels
+            .as_object()
+            .map(|obj| obj.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get raw JSON config for a specific channel (e.g. channels.feishu → { app_id, app_secret, ... }).
+    /// Passed directly to the plugin process via initialize.
+    pub fn channel_raw_config(&self, name: &str) -> Option<serde_json::Value> {
+        self.raw_channels.get(name).cloned()
+    }
+
+    /// Get verbose config for a specific channel.
+    pub fn channel_verbose(&self, name: &str) -> ImVerboseConfig {
+        parse_verbose_config(self.raw_channels.get(name))
+    }
+}
+
+/// Ensure config is loaded (idempotent).
 pub fn ensure_loaded() -> &'static Config {
     ensure_rustls_provider();
     CONFIG.get_or_init(|| {
@@ -156,27 +159,10 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let channels = root.get("channels");
-    let telegram_bot_token = channels
-        .and_then(|c| c.get("telegram"))
-        .and_then(|t| t.get("bot_token"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty());
-
-    let feishu_app_id = channels
-        .and_then(|c| c.get("feishu"))
-        .and_then(|f| f.get("app_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty());
-
-    let feishu_app_secret = channels
-        .and_then(|c| c.get("feishu"))
-        .and_then(|f| f.get("app_secret"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty());
+    let raw_channels = root
+        .get("channels")
+        .cloned()
+        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
     let working_dir = root
         .get("working_dir")
@@ -198,8 +184,6 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    let feishu_verbose = parse_verbose_config(channels.and_then(|c| c.get("feishu")));
-    let telegram_verbose = parse_verbose_config(channels.and_then(|c| c.get("telegram")));
     let default_agent = root
         .get("default_agent")
         .and_then(|v| v.as_str())
@@ -225,20 +209,16 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         ngrok_domain,
         cloudflare_tunnel_token,
         cloudflare_hostname,
-        telegram_bot_token,
-        feishu_app_id,
-        feishu_app_secret,
         working_dir,
         preview_base_url,
         tmux_detach_others,
-        feishu_verbose,
-        telegram_verbose,
         default_agent,
         enabled_agents,
+        raw_channels,
     }
 }
 
-/// Base URL for preview links (e.g. https://xxx.ngrok-free.app). Uses preview_base_url from settings if set, else ngrok_domain.
+/// Base URL for preview links.
 pub fn preview_base_url() -> Option<String> {
     let cfg = ensure_loaded();
     cfg.preview_base_url
@@ -249,7 +229,7 @@ pub fn preview_base_url() -> Option<String> {
         .or_else(|| cfg.ngrok_domain.as_ref().map(|d| format!("https://{}", d.trim())))
 }
 
-/// Parse verbose config from a channel JSON object (e.g. channels.feishu or channels.telegram).
+/// Parse verbose config from a channel JSON object.
 fn parse_verbose_config(channel_obj: Option<&serde_json::Value>) -> ImVerboseConfig {
     let verbose = channel_obj.and_then(|c| c.get("verbose"));
     ImVerboseConfig {
@@ -264,7 +244,6 @@ fn parse_verbose_config(channel_obj: Option<&serde_json::Value>) -> ImVerboseCon
     }
 }
 
-/// Default working directory when not set in settings: ~/.vibearound (same as data_dir).
 fn default_working_dir() -> PathBuf {
     data_dir()
 }
@@ -277,16 +256,12 @@ impl Default for Config {
             ngrok_domain: None,
             cloudflare_tunnel_token: None,
             cloudflare_hostname: None,
-            telegram_bot_token: None,
-            feishu_app_id: None,
-            feishu_app_secret: None,
             working_dir: default_working_dir(),
             preview_base_url: None,
             tmux_detach_others: true,
-            feishu_verbose: ImVerboseConfig::default(),
-            telegram_verbose: ImVerboseConfig::default(),
             default_agent: "claude".to_string(),
             enabled_agents: crate::agent::AgentKind::all().to_vec(),
+            raw_channels: serde_json::Value::Object(serde_json::Map::new()),
         }
     }
 }

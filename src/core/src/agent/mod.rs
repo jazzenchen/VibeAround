@@ -13,10 +13,10 @@ pub mod gemini_acp;
 pub mod manager_prompt;
 pub mod opencode_acp;
 pub mod opencode_jsonl;
-pub mod registry;
 
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Which agent CLI to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

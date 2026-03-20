@@ -56,13 +56,8 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
             }
             "open_tunnel" => {
                 if let Some(state) = app.try_state::<AppServiceManager>() {
-                    for entry in state.0.tunnel.iter() {
-                        if let Ok(guard) = entry.url.read() {
-                            if let Some(ref url) = *guard {
-                                let _ = open::that(url);
-                                return;
-                            }
-                        }
+                    if let Some(url) = state.0.get_tunnel_url() {
+                        let _ = open::that(&url);
                     }
                 }
             }
@@ -84,11 +79,9 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
     tauri::async_runtime::spawn(async move {
         let Some(state) = app_handle.try_state::<AppServiceManager>() else { return };
         let sm = &state.0;
-        let mut rx = sm.change_tx.subscribe();
+        let mut rx = sm.subscribe_changes();
         loop {
-            let has_url = sm.tunnel.iter().any(|entry| {
-                entry.url.read().map(|u| u.is_some()).unwrap_or(false)
-            });
+            let has_url = sm.has_tunnel_url();
             let _ = tunnel_item_clone.set_enabled(has_url);
 
             // Wait for next change notification

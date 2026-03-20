@@ -55,6 +55,10 @@ tests/
 .claude/
 .specstory/
 .docs/
+.cursorindexingignore
+
+# Plugins (managed separately, not committed to main repo)
+src/plugins/
 
 # GitHub Wiki (独立仓库，本地编辑用)
 wiki/
