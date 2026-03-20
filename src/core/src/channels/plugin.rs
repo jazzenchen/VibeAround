@@ -2,8 +2,6 @@
 //!
 //! Uses MessageHub for agent routing — no worker/daemon needed.
 
-pub mod transport;
-
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -11,13 +9,18 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, oneshot};
 use tokio::task::AbortHandle;
 
 use crate::config;
-use crate::im::message_hub::{InboundMessage, MessageHub, PluginNotification};
+use crate::message_hub::{InboundMessage, MessageHub, PluginNotification};
 use crate::service::ServiceManager;
-use transport::{PendingRequests, StdinWriter};
+
+/// Shared writer to plugin stdin.
+pub(crate) type StdinWriter = Arc<Mutex<tokio::process::ChildStdin>>;
+
+/// Pending JSON-RPC request map: id → oneshot sender for the response.
+pub(crate) type PendingRequests = Arc<DashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>>;
 
 /// Start a plugin-based IM bot.
 ///
@@ -187,6 +190,11 @@ pub async fn run_plugin_bot(
                         let _ = inbound_tx.send(inbound).await;
                     }
                 }
+                "plugin_log" => {
+                    let level = params.get("level").and_then(|v| v.as_str()).unwrap_or("info");
+                    let message = params.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                    eprintln!("{} [plugin][{}] {}", prefix_stdout, level, message);
+                }
                 other => {
                     eprintln!("{} unknown notification: {}", prefix_stdout, other);
                 }
@@ -220,12 +228,8 @@ async fn forward_outbound(
 }
 
 /// Parse on_message notification params into InboundMessage.
-fn parse_on_message(params: &serde_json::Value, channel_name: &str) -> Option<InboundMessage> {
-    let channel_id = format!(
-        "{}:{}",
-        channel_name,
-        params.get("channelId").and_then(|v| v.as_str()).unwrap_or("")
-    );
+fn parse_on_message(params: &serde_json::Value, _channel_name: &str) -> Option<InboundMessage> {
+    let channel_id = params.get("channelId")?.as_str()?.to_string();
     let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let message_id = params.get("messageId").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let sender_id = params.get("sender").and_then(|s| s.get("id")).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -246,12 +250,8 @@ fn parse_on_message(params: &serde_json::Value, channel_name: &str) -> Option<In
 }
 
 /// Parse on_callback notification params into InboundMessage.
-fn parse_on_callback(params: &serde_json::Value, channel_name: &str) -> Option<InboundMessage> {
-    let channel_id = format!(
-        "{}:{}",
-        channel_name,
-        params.get("channelId").and_then(|v| v.as_str()).unwrap_or("")
-    );
+fn parse_on_callback(params: &serde_json::Value, _channel_name: &str) -> Option<InboundMessage> {
+    let channel_id = params.get("channelId")?.as_str()?.to_string();
     let _sender_id = params.get("sender").and_then(|s| s.get("id")).and_then(|v| v.as_str()).unwrap_or("").to_string();
     let action_value = params.get("data").and_then(|d| d.get("value")).and_then(|v| v.as_str()).unwrap_or("");
     let action_text = format!("[button:{}]", action_value);

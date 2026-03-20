@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use common::config;
-use common::im::ImChannelKind;
 use common::service::ServiceManager;
 use common::tunnels;
 
@@ -76,18 +75,10 @@ impl ServerDaemon {
                 }
             };
 
-            let kind = match name.as_str() {
-                "feishu" => ImChannelKind::Feishu,
-                other => {
-                    eprintln!("[VibeAround][daemon] unknown channel kind '{}', skipping", other);
-                    continue;
-                }
-            };
-
             if let Some(abort_handle) =
-                common::im::channels::plugin::run_plugin_bot(plugin_dir, &name, Arc::clone(services)).await
+                common::channels::plugin::run_plugin_bot(plugin_dir, &name, Arc::clone(services)).await
             {
-                services.register_im_bot(kind, abort_handle);
+                services.register_im_bot(&name, abort_handle);
             }
         }
 

@@ -17,7 +17,6 @@ use serde::Serialize;
 use tokio::task::AbortHandle;
 
 use crate::agent::AgentKind;
-use crate::im::ImChannelKind;
 use crate::session::{unix_now_secs, Registry};
 use crate::tunnels::TunnelProvider;
 
@@ -134,7 +133,8 @@ pub struct TunnelEntry {
 /// IM bot service entry.
 pub struct ImBotEntry {
     pub meta: ServiceMeta,
-    pub kind: ImChannelKind,
+    /// Channel name (e.g. "feishu", "telegram").
+    pub kind: String,
 }
 
 /// Agent role within the Manager/Worker hierarchy.
@@ -260,28 +260,28 @@ impl ServiceManager {
     // -- IM bot helpers --
 
     /// Register an IM bot service with a tokio AbortHandle.
-    pub fn register_im_bot(&self, kind: ImChannelKind, abort_handle: AbortHandle) {
+    pub fn register_im_bot(&self, kind: &str, abort_handle: AbortHandle) {
         let entry = ImBotEntry {
             meta: ServiceMeta::new(Some(abort_handle)),
-            kind,
+            kind: kind.to_string(),
         };
-        self.im_bots.insert(kind.kind_id().to_string(), entry);
-        eprintln!("[VibeAround][services] registered im_bot: {}", kind.kind_id());
+        self.im_bots.insert(kind.to_string(), entry);
+        eprintln!("[VibeAround][services] registered im_bot: {}", kind);
         self.notify_change();
     }
 
     /// Register an IM bot service with a custom kill function (e.g. Tauri JoinHandle).
     pub fn register_im_bot_with_kill_fn(
         &self,
-        kind: ImChannelKind,
+        kind: &str,
         kill_fn: impl Fn() + Send + Sync + 'static,
     ) {
         let entry = ImBotEntry {
             meta: ServiceMeta::with_kill_fn(kill_fn),
-            kind,
+            kind: kind.to_string(),
         };
-        self.im_bots.insert(kind.kind_id().to_string(), entry);
-        eprintln!("[VibeAround][services] registered im_bot: {} (kill_fn)", kind.kind_id());
+        self.im_bots.insert(kind.to_string(), entry);
+        eprintln!("[VibeAround][services] registered im_bot: {} (kill_fn)", kind);
         self.notify_change();
     }
 
@@ -416,13 +416,13 @@ impl ServiceManager {
             .map(|entry| ServiceInfo {
                 id: entry.key().clone(),
                 category: "im_bots".into(),
-                name: format!("{} Bot", capitalize(entry.kind.kind_id())),
+                name: format!("{} Bot", capitalize(&entry.kind)),
                 status: status_string(&entry.meta.current_status()),
                 status_detail: status_detail(&entry.meta.current_status()),
                 uptime_secs: entry.meta.uptime_secs(),
                 extra: {
                     let mut m = serde_json::Map::new();
-                    m.insert("kind".into(), entry.kind.kind_id().into());
+                    m.insert("kind".into(), entry.kind.as_str().into());
                     m
                 },
             })

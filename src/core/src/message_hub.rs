@@ -21,7 +21,12 @@ use crate::agent::{AgentEvent, AgentKind};
 use crate::agent::registry;
 use crate::config::{self, ImVerboseConfig};
 use crate::service::{AgentRole, ServiceManager};
-use super::log::prefix;
+/// Log prefix for IM: [VibeAround][im][{channel}].
+#[inline]
+fn prefix(channel_id: &str) -> String {
+    let channel = channel_id.split(':').next().unwrap_or("?");
+    format!("[VibeAround][im][{}]", channel)
+}
 
 // ---------------------------------------------------------------------------
 // Public types
