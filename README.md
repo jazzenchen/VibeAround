@@ -66,7 +66,7 @@ Use `/start` for an interactive agent picker card, or `/help` to see all command
   - **Remote terminal:** attach to a live PTY from the web dashboard, with tmux session persistence.
   - **Conversational vibe coding:** send instructions via IM; AI writes, refactors, and reviews code asynchronously.
 
-**IM scope (current):** For the foreseeable future we only consider **one-on-one (1:1) conversations** with users. Broadcasting, group messaging, and multi-chat fan-out are explicitly out of scope and will be addressed in a later phase.
+**IM scope (current):** One-on-one (1:1) conversations via the [Feishu plugin](https://github.com/jazzenchen/vibearound-plugin-feishu) and [Telegram plugin](https://github.com/jazzenchen/vibearound-plugin-telegram).
 
 ---
 
@@ -84,6 +84,36 @@ Then tray menu → Open Web Dashboard; tunnel URL and password are in the termin
 On first launch, the desktop app will show an **onboarding wizard** that walks you through agent selection, IM channel tokens, and tunnel configuration. The wizard writes everything to `~/.vibearound/settings.json`.
 
 > **Configuration path change:** Settings are now read from `~/.vibearound/settings.json` (user home directory), not from the project `src/settings.json`. The in-repo file is only used as a development seed — on first run it is copied to `~/.vibearound/` if the file doesn't exist yet.
+
+### Channel plugin install
+
+VibeAround implements IM support through plugins. Official plugin source code is maintained in separate repositories:
+
+- [vibearound-plugin-telegram](https://github.com/jazzenchen/vibearound-plugin-telegram)
+- [vibearound-plugin-feishu](https://github.com/jazzenchen/vibearound-plugin-feishu)
+
+Build plugins from their official repositories:
+
+```
+# Telegram
+git clone https://github.com/jazzenchen/vibearound-plugin-telegram.git
+cd vibearound-plugin-telegram
+npm install
+npm run build
+
+# Feishu
+git clone https://github.com/jazzenchen/vibearound-plugin-feishu.git
+cd vibearound-plugin-feishu
+npm install
+npm run build
+```
+
+Install to runtime plugin directory:
+
+- `~/.vibearound/plugins/telegram`
+- `~/.vibearound/plugins/feishu`
+
+Each channel plugin must provide `dist/main.js` in its plugin directory. The host loads plugins based on channel names configured in `~/.vibearound/settings.json`.
 
 For detailed setup instructions, configuration options, and standalone server mode, see the [Setup Guide](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide) in the wiki.
 
@@ -127,6 +157,7 @@ Full configuration docs and usage guides have moved to the [Wiki](https://github
 - [x] Buffered streaming output with reactions (processing / done)
 - [x] Per-channel verbose config (show_thinking, show_tool_use)
 - [x] Desktop onboarding wizard: first-run setup for agents, channels, and tunnel
+- [ ] Next: CLI plugin system (make agent CLIs loadable as plugins)
 - [ ] Workspaces: switch and manage project folders via IM or Web Dashboard
 - [ ] Agent settings: model selection, API keys, generation options per agent
 - [ ] Skills and context: custom procedures, prompt templates, project rules
@@ -152,28 +183,3 @@ Feel free to fork the project, explore the code, and experiment on your own.
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-
-
-# Manager-Worker UX Improvements
-
-## Current Architecture
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant IM as IM Worker
-    participant Manager as Manager Agent
-    participant MCP as MCP Server
-    participant Worker as Worker Agent
-
-    User->>IM: "写个旅游攻略"
-    IM->>Manager: prompt (via ACP)
-    Manager->>MCP: dispatch_task(workspace, message)
-    MCP->>Worker: spawn + send message
-    Worker-->>IM: AgentEvent stream (text/tool/thinking)
-    IM-->>User: streaming output
-    Worker->>MCP: result.output (full text)
-    MCP->>Manager: tool result (full text)
-    Manager-->>IM: AgentEvent stream (repeats worker output)
-    IM-->>User: duplicate output
-```

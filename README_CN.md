@@ -57,7 +57,7 @@ VibeAround 通过 [Agent Client Protocol (ACP)](https://agentclientprotocol.com/
   - **远程终端：** 从 Web 控制台附加到实时 PTY（伪终端），并支持 tmux 会话持久化。
   - **对话式 Vibe 编程：** 通过 IM（即时通讯）发送指令；AI 会在后台异步编写、重构和审查代码。
 
-**IM 功能范围（当前）：** 在可预见的未来，我们仅考虑与用户的**一对一 (1:1) 对话**。广播、群组消息以及多聊天分发等功能明确不在当前讨论范围内，这些将在后续阶段解决。
+**IM 功能范围（当前）：** 一对一对话（[飞书插件](https://github.com/jazzenchen/vibearound-plugin-feishu)、[Telegram 插件](https://github.com/jazzenchen/vibearound-plugin-telegram)）。
 
 ## 快速开始
 
@@ -69,6 +69,40 @@ bun run dev
 ```
 
 随后点击系统托盘菜单 → **Open Web Dashboard**（打开 Web 控制台）；内网穿透（Tunnel）的 URL 及密码将显示在终端日志中。
+
+首次启动时，桌面端会进入 **onboarding wizard**，引导你完成智能体选择、IM 令牌和隧道配置。向导会把配置写入 `~/.vibearound/settings.json`。
+
+> **配置路径变更：** 当前版本从用户目录 `~/.vibearound/settings.json` 读取配置，不再直接使用仓库内的 `src/settings.json`。仓库内文件仅作为开发种子配置。
+
+### IM 插件安装
+
+VibeAround 将 IM 支持通过插件实现。官方插件源码在独立仓库：
+
+- [vibearound-plugin-telegram](https://github.com/jazzenchen/vibearound-plugin-telegram)
+- [vibearound-plugin-feishu](https://github.com/jazzenchen/vibearound-plugin-feishu)
+
+从官方仓库构建插件：
+
+```
+# Telegram
+git clone https://github.com/jazzenchen/vibearound-plugin-telegram.git
+cd vibearound-plugin-telegram
+npm install
+npm run build
+
+# Feishu
+git clone https://github.com/jazzenchen/vibearound-plugin-feishu.git
+cd vibearound-plugin-feishu
+npm install
+npm run build
+```
+
+安装到运行时插件目录：
+
+- `~/.vibearound/plugins/telegram`
+- `~/.vibearound/plugins/feishu`
+
+每个 IM 插件目录下都需要包含 `dist/main.js`。Host 会根据 `~/.vibearound/settings.json` 中启用的 IM 名加载对应插件。
 
 详细的安装步骤、配置说明和独立服务器模式，请参阅 Wiki 中的[安装与运行指南](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide-CN)。
 
@@ -95,6 +129,8 @@ bun run dev
 - [x] 通过 `/cli_` 命令和 `/start` 卡片自由切换智能体
 - [x] 带有状态反馈（处理中/已完成）的缓冲流式输出
 - [x] 按渠道配置的详细输出项（显示思考过程、显示工具使用情况）
+- [x] Desktop onboarding wizard：首次运行完成智能体、渠道与隧道设置
+- [ ] 下一步：CLI 插件化（让各类 Agent CLI 适配器以插件方式加载）
 - [ ] 工作区管理：通过 IM 或 Web 控制台切换和管理项目文件夹
 - [ ] 智能体设置：为每个智能体独立配置模型选择、API 密钥和生成选项
 - [ ] 技能与上下文：自定义流程、提示词模板、项目级规则
