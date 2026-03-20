@@ -35,10 +35,9 @@ impl ServerDaemon {
     /// Start all services and wait for shutdown (ctrl_c or web server exit).
     ///
     /// Services started:
-    /// 1. Feishu IM bot (webhook mode)
+    /// 1. Channel plugins (driven by settings.json channels config)
     /// 2. Web server (Axum: HTTP API + WebSocket + SPA)
-    /// 3. Telegram IM bot
-    /// 4. Tunnel (cloudflare / localtunnel / ngrok)
+    /// 3. Tunnel (cloudflare / localtunnel / ngrok)
     pub async fn start(&self, dist_path: PathBuf) -> Result<(), String> {
         // Check if another instance is already running on the same port
         if let Ok(_) = tokio::net::TcpStream::connect(("127.0.0.1", self.port)).await {
@@ -52,13 +51,44 @@ impl ServerDaemon {
         let cfg = config::ensure_loaded();
         let services = &self.services;
 
-        // 1. Feishu bot (webhook state for web server routes)
-        let feishu_state =
-            common::im::channels::feishu::run_feishu_bot(Arc::clone(services)).await;
-        if feishu_state.is_some() {
-            services.register_im_bot_with_kill_fn(ImChannelKind::Feishu, || {
-                eprintln!("[VibeAround] Feishu webhook cannot be killed independently");
-            });
+        // 1. Channel plugins — start plugins for each channel in settings.json
+        for name in cfg.channel_names() {
+            let plugin_entry = "dist/main.js";
+            let candidates = [
+                config::data_dir().join("plugins").join(&name),
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join("plugins")
+                    .join(&name),
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .join("src")
+                    .join("plugins")
+                    .join(&name),
+            ];
+
+            let plugin_dir = match candidates.iter().find(|d| d.join(plugin_entry).exists()) {
+                Some(d) => d.clone(),
+                None => {
+                    eprintln!("[VibeAround][daemon] no plugin found for channel '{}', skipping", name);
+                    continue;
+                }
+            };
+
+            let kind = match name.as_str() {
+                "feishu" => ImChannelKind::Feishu,
+                other => {
+                    eprintln!("[VibeAround][daemon] unknown channel kind '{}', skipping", other);
+                    continue;
+                }
+            };
+
+            if let Some(abort_handle) =
+                common::im::channels::plugin::run_plugin_bot(plugin_dir, &name, Arc::clone(services)).await
+            {
+                services.register_im_bot(kind, abort_handle);
+            }
         }
 
         // 2. Web server (Axum)
@@ -67,23 +97,12 @@ impl ServerDaemon {
             run_web_server(
                 common::config::DEFAULT_PORT,
                 dist_path,
-                feishu_state,
                 web_services,
             )
             .await
         });
 
-        // 3. Telegram bot
-        if cfg.telegram_bot_token.as_ref().map_or(false, |t| !t.is_empty()) {
-            eprintln!("[VibeAround][daemon] Starting Telegram bot");
-            let tg_services = Arc::clone(services);
-            let tg_handle = tokio::spawn(async move {
-                common::im::channels::telegram::run_telegram_bot(tg_services).await;
-            });
-            services.register_im_bot(ImChannelKind::Telegram, tg_handle.abort_handle());
-        }
-
-        // 4. Tunnel
+        // 3. Tunnel
         let tunnel_provider = cfg.tunnel_provider;
         eprintln!("[VibeAround][daemon] Tunnel ({})", tunnel_provider.as_str());
         let tunnel_services = Arc::clone(services);
@@ -92,7 +111,6 @@ impl ServerDaemon {
                 Ok((guard, url)) => {
                     eprintln!("[VibeAround][daemon] Tunnel URL: {}", url);
                     tunnel_services.set_tunnel_url(tunnel_provider.as_str(), &url);
-                    // Keep tunnel alive until task is aborted
                     guard.wait().await;
                 }
                 Err(e) => {

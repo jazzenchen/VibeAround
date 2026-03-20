@@ -40,13 +40,12 @@ struct WsQuery {
     session_id: Option<String>,
 }
 
-/// Shared app state: registry, SPA fallback path, working dir, optional Feishu webhook state, service manager.
+/// Shared app state: registry, SPA fallback path, working dir, service manager.
 #[derive(Clone)]
 struct AppState {
     registry: Registry,
     dist_for_fallback: PathBuf,
     working_dir: PathBuf,
-    feishu: Option<common::im::channels::feishu::FeishuWebhookState>,
     services: Arc<common::service::ServiceManager>,
 }
 
@@ -81,12 +80,10 @@ async fn spa_fallback(dist_path: PathBuf) -> Response {
 }
 
 /// Runs the Axum server (static files + WebSocket + session API). Binds to 127.0.0.1 (localhost only).
-/// If feishu_state is Some, POST /api/im/feishu/event handles Feishu webhook (url_verification + events).
 /// Call from desktop via tauri::async_runtime::spawn, or run standalone via the server binary.
 pub async fn run_web_server(
     port: u16,
     dist_path: PathBuf,
-    feishu_state: Option<common::im::channels::feishu::FeishuWebhookState>,
     services: Arc<common::service::ServiceManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     verify_web_dist(&dist_path)?;
@@ -105,15 +102,12 @@ pub async fn run_web_server(
         registry: Arc::clone(&services.pty),
         dist_for_fallback: web_dist.clone(),
         working_dir,
-        feishu: feishu_state,
         services,
     };
 
     let app = Router::new()
         .route("/api/tmux/sessions", get(list_tmux_sessions_handler))
         .route("/api/agents", get(list_agents_handler))
-        .route("/api/im/feishu/event", post(feishu_webhook_handler))
-        .route("/api/im/feishu/card", post(feishu_card_callback_handler))
         .route("/preview/{project_id}", get(preview_page_handler))
         .route("/raw/{project_id}", get(raw_root_handler))
         .route("/raw/{project_id}/{*path}", get(raw_path_handler))
@@ -149,44 +143,6 @@ pub async fn run_web_server(
 
 async fn spa_fallback_handler(State(state): State<AppState>) -> Response {
     spa_fallback(state.dist_for_fallback.clone()).await
-}
-
-/// POST /api/im/feishu/event: Feishu sends url_verification (return {"challenge":"..."}) or event_callback.
-async fn feishu_webhook_handler(
-    State(state): State<AppState>,
-    body: String,
-) -> Response {
-    let (status_code, body_str) = common::im::channels::feishu::handle_webhook_body(
-        &body,
-        state.feishu.as_ref(),
-    )
-    .await;
-    let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    (
-        status,
-        [("Content-Type", "application/json; charset=utf-8")],
-        body_str,
-    )
-        .into_response()
-}
-
-/// POST /api/im/feishu/card: Feishu card button click callback.
-async fn feishu_card_callback_handler(
-    State(state): State<AppState>,
-    body: String,
-) -> Response {
-    let (status_code, body_str) = common::im::channels::feishu::handle_card_callback(
-        &body,
-        state.feishu.as_ref(),
-    )
-    .await;
-    let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    (
-        status,
-        [("Content-Type", "application/json; charset=utf-8")],
-        body_str,
-    )
-        .into_response()
 }
 
 async fn ws_handler(State(state): State<AppState>, Query(query): Query<WsQuery>, ws: WebSocketUpgrade) -> Response {

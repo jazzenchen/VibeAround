@@ -1,7 +1,6 @@
-//! IM (instant messaging) adapters: Telegram, Feishu, etc.
-//! Unified send daemon + per-IM transport (teloxide only in channels::telegram).
-//! Slash commands are handled in router.rs, dispatched in worker.rs.
-//! Log format: [VibeAround][im][channel] chat_id=... message_id=... content=...
+//! IM (instant messaging) adapters.
+//! All channels run as external plugin processes (stdio JSON-RPC).
+//! Slash commands are handled in worker.rs, dispatched by the worker loop.
 
 pub mod channels;
 pub mod daemon;
@@ -12,7 +11,7 @@ pub mod spec;
 pub mod transport;
 pub mod worker;
 
-/// Re-export channels so `common::im::telegram::run_telegram_bot` and `common::im::channels::feishu::run_feishu_bot` work.
-pub use channels::{feishu, telegram};
-/// Channel kind and unified build-from-config for management and dispatch.
+/// Re-export plugin channel.
+pub use channels::plugin;
+/// Channel kind for management and dispatch.
 pub use spec::ImChannelKind;

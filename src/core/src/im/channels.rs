@@ -1,4 +1,4 @@
-//! IM channel adapters: Telegram, Feishu, etc. Each channel has its own transport and receiver.
+//! IM channel implementations.
+//! All channels now run as external plugin processes via stdio JSON-RPC.
 
-pub mod feishu;
-pub mod telegram;
+pub mod plugin;

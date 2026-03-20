@@ -50,7 +50,6 @@ pub async fn run_worker<T>(
     mut inbound_rx: mpsc::Receiver<InboundMessage>,
     outbound: Arc<OutboundHub<T>>,
     busy_set: Arc<DashMap<String, ()>>,
-    _feishu_transport: Option<Arc<crate::im::channels::feishu::FeishuTransport>>,
     verbose: ImVerboseConfig,
     services: Arc<ServiceManager>,
 ) where
