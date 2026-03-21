@@ -58,8 +58,8 @@ pub struct ClaudeSdk {
     event_rx: Mutex<mpsc::Receiver<SdkEvent>>,
     /// The subprocess handle.
     child: Mutex<Option<Child>>,
-    /// Current session ID (updated on `result` messages).
-    session_id: Arc<Mutex<String>>,
+    /// Current session ID once Claude has emitted a real one.
+    session_id: Arc<Mutex<Option<String>>>,
 }
 
 impl ClaudeSdk {
@@ -120,7 +120,7 @@ impl ClaudeSdk {
 
         // Reader task: parses stdout NDJSON → SdkEvent
         let (event_tx, event_rx) = mpsc::channel::<SdkEvent>(256);
-        let session_id = Arc::new(Mutex::new("claude-0".to_string()));
+        let session_id = Arc::new(Mutex::new(None::<String>));
         let session_id_for_reader = session_id.clone();
         let write_tx_for_reader = write_tx.clone();
 
@@ -152,7 +152,7 @@ impl ClaudeSdk {
                     "result" => {
                         let new_sid = msg.get("session_id").and_then(|v| v.as_str()).map(|s| s.to_string());
                         if let Some(ref s) = new_sid {
-                            *session_id_for_reader.lock().await = s.clone();
+                            *session_id_for_reader.lock().await = Some(s.clone());
                         }
                         let is_error = msg.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
                         let error_text = if is_error {
@@ -170,7 +170,7 @@ impl ClaudeSdk {
                     "system" => {
                         let sid = msg.get("session_id").and_then(|v| v.as_str()).map(|s| s.to_string());
                         if let Some(ref s) = sid {
-                            *session_id_for_reader.lock().await = s.clone();
+                            *session_id_for_reader.lock().await = Some(s.clone());
                         }
                         let _ = event_tx.send(SdkEvent::SystemInit { session_id: sid }).await;
                     }
@@ -182,8 +182,6 @@ impl ClaudeSdk {
             eprintln!("[claude-sdk] stdout reader finished");
         });
 
-        // Brief wait for init handshake
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         eprintln!("[claude-sdk] subprocess started");
 
         Ok(Self {
@@ -197,12 +195,14 @@ impl ClaudeSdk {
     /// Send a user message to the Claude CLI.
     pub async fn send_user_message(&self, text: &str) -> Result<(), String> {
         let session_id = self.session_id.lock().await.clone();
-        let user_msg = serde_json::json!({
+        let mut user_msg = serde_json::json!({
             "type": "user",
-            "session_id": session_id,
             "message": { "role": "user", "content": text },
             "parent_tool_use_id": null
         });
+        if let Some(session_id) = session_id {
+            user_msg["session_id"] = serde_json::Value::String(session_id);
+        }
         self.write_tx.send(user_msg.to_string()).await
             .map_err(|e| format!("Failed to send user message: {}", e))
     }
@@ -213,7 +213,7 @@ impl ClaudeSdk {
     }
 
     /// Get the current session ID.
-    pub async fn session_id(&self) -> String {
+    pub async fn session_id(&self) -> Option<String> {
         self.session_id.lock().await.clone()
     }
 

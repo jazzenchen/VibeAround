@@ -98,6 +98,44 @@ pub struct QueuedMessage {
 // Agent events (from AgentHub back to SessionHub/ChannelHub)
 // ---------------------------------------------------------------------------
 
+/// Lifecycle signal emitted when an agent session becomes usable.
+#[derive(Debug, Clone)]
+pub struct AgentReady {
+    /// Which channel to route back to.
+    pub channel_kind: ChannelKind,
+    /// Which chat within the channel.
+    pub chat_id: ChatId,
+    /// The user message that caused this turn.
+    pub message_id: MessageId,
+    /// Session this ready signal belongs to.
+    pub session_id: SessionId,
+    /// Active CLI kind.
+    pub cli_kind: String,
+    /// Active CLI session id.
+    pub cli_session_id: CliSessionId,
+    /// Active profile.
+    pub profile: String,
+}
+
+/// Lifecycle signal emitted when an agent session closes.
+#[derive(Debug, Clone)]
+pub struct AgentClosed {
+    /// Which channel to route back to.
+    pub channel_kind: ChannelKind,
+    /// Which chat within the channel.
+    pub chat_id: ChatId,
+    /// Session this close signal belongs to.
+    pub session_id: SessionId,
+    /// Active CLI kind, if known.
+    pub cli_kind: Option<String>,
+    /// Active CLI session id, if known.
+    pub cli_session_id: Option<CliSessionId>,
+    /// Active profile, if known.
+    pub profile: Option<String>,
+    /// Close reason for observability.
+    pub reason: String,
+}
+
 /// An event from the agent, tagged with routing info.
 #[derive(Debug, Clone)]
 pub struct AgentReply {
@@ -127,11 +165,7 @@ pub enum AgentReplyEvent {
     /// Tool result.
     ToolResult { tool: String, output: String },
     /// Agent finished this turn.
-    Complete {
-        cli_session_id: Option<CliSessionId>,
-        cli_kind: String,
-        profile: String,
-    },
+    Complete,
     /// Agent error.
     Error { error: String },
 }

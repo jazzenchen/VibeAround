@@ -27,7 +27,11 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export type ChatMessage = { role: "user" | "assistant"; content: string; progress?: string };
+export type ChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+  progress?: string;
+};
 
 export function ChatView() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -79,6 +83,13 @@ export function ChatView() {
       // {"type":"agent_switched","agent":"opencode"} — backend confirmed agent switch
       if (j.type === "agent_switched" && typeof j.agent === "string") {
         setCurrentAgent(j.agent as string);
+        return;
+      }
+
+      // {"type":"system_text","text":"..."} — standalone system message
+      if (j.type === "system_text" && typeof j.text === "string") {
+        setMessages((prev) => [...prev, { role: "system", content: j.text as string }]);
+        setStreaming(false);
         return;
       }
 
@@ -193,11 +204,15 @@ export function ChatView() {
                   className={
                     msg.role === "user"
                       ? "rounded-lg bg-primary/15 px-4 py-3 text-foreground"
-                      : "rounded-lg bg-muted/50 px-4 py-3 text-foreground"
+                      : msg.role === "system"
+                        ? "rounded-lg border border-border/60 bg-muted/20 px-4 py-3 text-muted-foreground"
+                        : "rounded-lg bg-muted/50 px-4 py-3 text-foreground"
                   }
                 >
                   {msg.role === "user" ? (
                     <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+                  ) : msg.role === "system" ? (
+                    <p className="whitespace-pre-wrap text-xs font-mono leading-5">{msg.content}</p>
                   ) : (
                     <>
                       <MessageResponse

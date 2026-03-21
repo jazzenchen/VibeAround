@@ -109,17 +109,20 @@ impl AgentHub {
         let pfx = format!("[AgentHub][{}]", key);
 
         // Ensure agent is running
-        if let Err(e) = self.ensure_agent(&key, kind, &profile_owned).await {
-            eprintln!("{} failed to ensure agent: {}", pfx, e);
-            self.session_hub().on_reply(AgentReply {
-                channel_kind: msg.channel_kind,
-                chat_id: msg.chat_id,
-                message_id: msg.message_id,
-                session_id: String::new(),
-                event: AgentReplyEvent::Error { error: format!("Failed to start agent: {}", e) },
-            }).await;
-            return;
-        }
+        let startup_session_id = match self.ensure_agent(&key, kind, &profile_owned).await {
+            Ok(session_id) => session_id,
+            Err(e) => {
+                eprintln!("{} failed to ensure agent: {}", pfx, e);
+                self.session_hub().on_reply(AgentReply {
+                    channel_kind: msg.channel_kind,
+                    chat_id: msg.chat_id,
+                    message_id: msg.message_id,
+                    session_id: String::new(),
+                    event: AgentReplyEvent::Error { error: format!("Failed to start agent: {}", e) },
+                }).await;
+                return;
+            }
+        };
 
         eprintln!("{} → text={}", pfx, truncate(&msg.text, 80));
 
@@ -152,6 +155,18 @@ impl AgentHub {
         let chat_id = msg.chat_id.clone();
         let message_id = msg.message_id.clone();
 
+        if let Some(session_id) = startup_session_id {
+            self.session_hub().on_ready(AgentReady {
+                channel_kind: channel_kind.clone(),
+                chat_id: chat_id.clone(),
+                message_id: message_id.clone(),
+                session_id: String::new(),
+                cli_kind: cli_kind_owned.clone(),
+                cli_session_id: session_id,
+                profile: profile_owned.clone(),
+            }).await;
+        }
+
         self.session_hub().on_reply(AgentReply {
             channel_kind: channel_kind.clone(),
             chat_id: chat_id.clone(),
@@ -166,6 +181,31 @@ impl AgentHub {
         loop {
             match rx.recv().await {
                 Ok(event) => {
+                    if let AgentEvent::TurnComplete { session_id: Some(real_session_id), .. } = &event {
+                        let should_notify_ready = if let Some(mut entry) = self.agents.get_mut(&key_clone) {
+                            if entry.cli_session_id.is_none() {
+                                entry.cli_session_id = Some(real_session_id.clone());
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        if should_notify_ready {
+                            self.session_hub().on_ready(AgentReady {
+                                channel_kind: channel_kind.clone(),
+                                chat_id: chat_id.clone(),
+                                message_id: message_id.clone(),
+                                session_id: String::new(),
+                                cli_kind: cli_kind_owned.clone(),
+                                cli_session_id: real_session_id.clone(),
+                                profile: profile_owned.clone(),
+                            }).await;
+                        }
+                    }
+
                     let reply_event = match &event {
                         AgentEvent::Text(t) => Some(AgentReplyEvent::Token { delta: t.clone() }),
                         AgentEvent::Thinking(t) => {
@@ -195,28 +235,13 @@ impl AgentHub {
                                 None
                             }
                         }
-                        AgentEvent::TurnComplete { session_id, .. } => {
-                            // Update cli_session_id in our process table
-                            if let Some(sid) = session_id {
-                                if let Some(mut entry) = self.agents.get_mut(&key_clone) {
-                                    if entry.cli_session_id.as_ref() != Some(sid) {
-                                        eprintln!("{} cli_session_id updated: {:?} → {}", pfx, entry.cli_session_id, sid);
-                                        entry.cli_session_id = Some(sid.clone());
-                                    }
-                                }
-                            }
-                            Some(AgentReplyEvent::Complete {
-                                cli_session_id: session_id.clone(),
-                                cli_kind: cli_kind_owned.clone(),
-                                profile: profile_owned.clone(),
-                            })
-                        }
+                        AgentEvent::TurnComplete { .. } => Some(AgentReplyEvent::Complete),
                         AgentEvent::Error(e) => Some(AgentReplyEvent::Error { error: e.clone() }),
                         _ => None,
                     };
 
                     if let Some(re) = reply_event {
-                        let is_complete = matches!(re, AgentReplyEvent::Complete { .. });
+                        let is_complete = matches!(re, AgentReplyEvent::Complete);
                         self.session_hub().on_reply(AgentReply {
                             channel_kind: channel_kind.clone(),
                             chat_id: chat_id.clone(),
@@ -225,6 +250,7 @@ impl AgentHub {
                             event: re,
                         }).await;
                         if is_complete {
+                            self.session_hub().on_turn_complete(&channel_kind, &chat_id).await;
                             break;
                         }
                     }
@@ -239,11 +265,17 @@ impl AgentHub {
                         chat_id: chat_id.clone(),
                         message_id: message_id.clone(),
                         session_id: String::new(),
-                        event: AgentReplyEvent::Complete {
-                            cli_session_id: None,
-                            cli_kind: cli_kind_owned.clone(),
-                            profile: profile_owned.clone(),
-                        },
+                        event: AgentReplyEvent::Complete,
+                    }).await;
+                    self.session_hub().on_turn_complete(&channel_kind, &chat_id).await;
+                    self.session_hub().on_close(AgentClosed {
+                        channel_kind: channel_kind.clone(),
+                        chat_id: chat_id.clone(),
+                        session_id: String::new(),
+                        cli_kind: Some(cli_kind_owned.clone()),
+                        cli_session_id: self.agents.get(&key_clone).and_then(|entry| entry.cli_session_id.clone()),
+                        profile: Some(profile_owned.clone()),
+                        reason: "event_stream_closed".to_string(),
                     }).await;
                     break;
                 }
@@ -263,10 +295,10 @@ impl AgentHub {
         key: &str,
         kind: AgentKind,
         profile: &str,
-    ) -> Result<(), String> {
+    ) -> Result<Option<String>, String> {
         // Already running?
-        if self.agents.contains_key(key) {
-            return Ok(());
+        if let Some(entry) = self.agents.get(key) {
+            return Ok(entry.cli_session_id.clone());
         }
 
         // Shared workspace for all agents
@@ -286,13 +318,13 @@ impl AgentHub {
 
         // Create and start backend
         let mut backend = agent::create_backend(kind);
-        backend.start(&workspace, system_prompt.as_deref()).await?;
+        let cli_session_id = backend.start(&workspace, system_prompt.as_deref()).await?;
 
         eprintln!("[AgentHub] spawned agent: {}", key);
 
         self.agents.insert(key.to_string(), AgentProcess {
             backend,
-            cli_session_id: None,
+            cli_session_id: cli_session_id.clone(),
         });
 
         let _ = self.hub_tx.send(HubEvent::OnAgentSpawned {
@@ -300,7 +332,7 @@ impl AgentHub {
             kind: kind.to_string(),
         });
 
-        Ok(())
+        Ok(cli_session_id)
     }
 
     /// Kill an agent by its key.

@@ -16,7 +16,6 @@ pub mod opencode_jsonl;
 
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 
 /// Which agent CLI to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +105,8 @@ pub enum AgentEvent {
 pub trait AgentBackend: Send + Sync {
     /// Spawn the agent subprocess, establish ACP connection, create session.
     /// `system_prompt` is injected for Manager agents only (None for Workers).
-    async fn start(&mut self, cwd: &Path, system_prompt: Option<&str>) -> Result<(), String>;
+    /// Returns the initial CLI session id if it is known at startup time.
+    async fn start(&mut self, cwd: &Path, system_prompt: Option<&str>) -> Result<Option<String>, String>;
 
     /// Send a user message via ACP `prompt()`. Blocks until the turn completes.
     /// Events are delivered via `subscribe()`.
@@ -176,13 +176,13 @@ impl AcpBackend {
 
 #[async_trait::async_trait]
 impl AgentBackend for AcpBackend {
-    async fn start(&mut self, cwd: &Path, system_prompt: Option<&str>) -> Result<(), String> {
+    async fn start(&mut self, cwd: &Path, system_prompt: Option<&str>) -> Result<Option<String>, String> {
         let cwd = cwd.to_path_buf();
         let event_tx = self.event_tx.clone();
         let agent_kind = self.agent_kind;
         let system_prompt_owned = system_prompt.map(|s| s.to_string());
         let (cmd_tx, cmd_rx) = mpsc::channel::<AcpCmd>(32);
-        let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
+        let (ready_tx, ready_rx) = oneshot::channel::<Result<Option<String>, String>>();
 
         let handle = std::thread::Builder::new()
             .name(format!("{}-acp", agent_kind))
@@ -251,7 +251,7 @@ fn run_acp_thread(
     cwd: PathBuf,
     event_tx: broadcast::Sender<AgentEvent>,
     cmd_rx: mpsc::Receiver<AcpCmd>,
-    ready_tx: oneshot::Sender<Result<(), String>>,
+    ready_tx: oneshot::Sender<Result<Option<String>, String>>,
     system_prompt: Option<String>,
 ) {
     let rt = match tokio::runtime::Builder::new_current_thread()
@@ -285,7 +285,7 @@ async fn acp_session_loop(
     cwd: PathBuf,
     event_tx: broadcast::Sender<AgentEvent>,
     mut cmd_rx: mpsc::Receiver<AcpCmd>,
-    ready_tx: oneshot::Sender<Result<(), String>>,
+    ready_tx: oneshot::Sender<Result<Option<String>, String>>,
     system_prompt: Option<String>,
 ) -> Result<(), String> {
     use agent_client_protocol as acp;
@@ -318,27 +318,28 @@ async fn acp_session_loop(
     }
 
     // --- Obtain the read/write streams depending on agent kind ---
-    let (read_stream, write_stream, _claude_thread): (
+    let (read_stream, write_stream, _claude_thread, mut claude_real_session_id_rx): (
         tokio::io::DuplexStream,
         tokio::io::DuplexStream,
         Option<std::thread::JoinHandle<()>>,
+        Option<mpsc::UnboundedReceiver<String>>,
     ) = match agent_kind {
         AgentKind::Claude => {
-            let (r, w, h) = claude_acp::spawn_claude_acp(cwd.clone(), system_prompt);
-            (r, w, Some(h))
+            let (r, w, h, sid_rx) = claude_acp::spawn_claude_acp(cwd.clone(), system_prompt);
+            (r, w, Some(h), Some(sid_rx))
         }
         AgentKind::Gemini => {
             let system_md = system_prompt.as_ref().map(|_| cwd.join(".gemini").join("system.md"));
             let (r, w) = gemini_acp::spawn_gemini_process(&cwd, system_md.as_deref())?;
-            (r, w, None)
+            (r, w, None, None)
         }
         AgentKind::OpenCode => {
             let (r, w) = opencode_acp::spawn_opencode_process(&cwd)?;
-            (r, w, None)
+            (r, w, None, None)
         }
         AgentKind::Codex => {
             let (r, w) = codex_acp::spawn_codex_process(&cwd)?;
-            (r, w, None)
+            (r, w, None, None)
         }
     };
 
@@ -377,7 +378,14 @@ async fn acp_session_loop(
     let session_id = session_resp.session_id;
     eprintln!("[{}-acp] session created: {:?}", agent_kind, session_id);
 
-    let _ = ready_tx.send(Ok(()));
+    let startup_session_id = if matches!(agent_kind, AgentKind::Claude) {
+        None
+    } else {
+        Some(session_id.to_string())
+    };
+    let _ = ready_tx.send(Ok(startup_session_id));
+
+    let mut real_cli_session_id: Option<String> = None;
 
     // --- Command loop ---
     loop {
@@ -396,10 +404,15 @@ async fn acp_session_loop(
                     ))
                     .await;
                 eprintln!("[{}-acp] prompt returned: {:?}", agent_kind, result.is_ok());
+                if let Some(session_id_rx) = claude_real_session_id_rx.as_mut() {
+                    while let Ok(discovered_session_id) = session_id_rx.try_recv() {
+                        real_cli_session_id = Some(discovered_session_id);
+                    }
+                }
                 match result {
                     Ok(_) => {
                         let _ = event_tx.send(AgentEvent::TurnComplete {
-                            session_id: Some(session_id.to_string()),
+                            session_id: real_cli_session_id.clone(),
                             cost_usd: None,
                         });
                         let _ = done_tx.send(Ok(()));
@@ -594,7 +607,7 @@ impl JsonlBackend {
 
 #[async_trait::async_trait]
 impl AgentBackend for JsonlBackend {
-    async fn start(&mut self, cwd: &Path, _system_prompt: Option<&str>) -> Result<(), String> {
+    async fn start(&mut self, cwd: &Path, _system_prompt: Option<&str>) -> Result<Option<String>, String> {
         // Just verify the CLI exists
         let cmd = match self.agent_kind {
             AgentKind::OpenCode => "opencode",
@@ -611,7 +624,7 @@ impl AgentBackend for JsonlBackend {
         }
         self.cwd = Some(cwd.to_path_buf());
         eprintln!("[{}-jsonl] ready (per-prompt mode)", self.agent_kind);
-        Ok(())
+        Ok(None)
     }
 
     async fn send_message(&self, text: &str) -> Result<(), String> {

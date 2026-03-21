@@ -2,7 +2,7 @@
 
 import type { HTMLAttributes } from "react";
 
-export type MessageRole = "user" | "assistant";
+export type MessageRole = "user" | "assistant" | "system";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: MessageRole;
@@ -12,7 +12,11 @@ export function Message({ className, from, ...props }: MessageProps) {
   return (
     <div
       className={`group flex w-full max-w-[95%] flex-col gap-2 ${
-        from === "user" ? "is-user ml-auto items-end" : "is-assistant items-start"
+        from === "user"
+          ? "is-user ml-auto items-end"
+          : from === "system"
+            ? "is-system mx-auto items-center"
+            : "is-assistant items-start"
       } ${className ?? ""}`}
       {...props}
     />

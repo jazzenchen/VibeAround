@@ -135,6 +135,8 @@ fn notification_to_client_json(notif: ChannelNotification) -> serde_json::Value 
         ChannelNotification::AgentToolResult { .. } => serde_json::json!({}),
         ChannelNotification::AgentEnd { .. } => serde_json::json!({ "done": true }),
         ChannelNotification::AgentError { error, .. } => serde_json::json!({ "error": error }),
-        ChannelNotification::SendText { text, .. } => serde_json::json!({ "text": text, "done": true }),
+        ChannelNotification::SendText { text, .. } => {
+            serde_json::json!({ "type": "system_text", "text": text, "done": true })
+        }
     }
 }

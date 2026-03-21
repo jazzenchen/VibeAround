@@ -174,10 +174,38 @@ impl SessionHub {
     // Agent reply: receive events from AgentHub
     // -----------------------------------------------------------------------
 
+    /// Called by AgentHub when an agent session becomes usable.
+    pub async fn on_ready(&self, ready: AgentReady) {
+        let key = session_key(&ready.channel_kind, &ready.chat_id);
+        let first_ready = {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(session) = sessions.get_mut(&key) {
+                let first_ready = session.cli_session_id.is_none();
+                session.cli_session_id = Some(ready.cli_session_id.clone());
+                session.cli_kind = Some(ready.cli_kind.clone());
+                session.profile = ready.profile.clone();
+                first_ready
+            } else {
+                false
+            }
+        };
+
+        if first_ready {
+            let text = format!(
+                "CLI session is now active.\n\nAgent: {}\nSession ID: {}\nProfile: {}",
+                ready.cli_kind, ready.cli_session_id, ready.profile
+            );
+            self.channel_hub().send_notification(ChannelNotification::SendText {
+                channel_kind: ready.channel_kind,
+                chat_id: ready.chat_id,
+                text,
+                reply_to: Some(ready.message_id),
+            }).await;
+        }
+    }
+
     /// Called by AgentHub when an agent event arrives.
     pub async fn on_reply(&self, reply: AgentReply) {
-        let key = session_key(&reply.channel_kind, &reply.chat_id);
-
         match &reply.event {
             AgentReplyEvent::Start => {
                 self.channel_hub().send_notification(ChannelNotification::AgentStart {
@@ -223,48 +251,27 @@ impl SessionHub {
                     error: error.clone(),
                 }).await;
             }
-            AgentReplyEvent::Complete { cli_session_id, cli_kind, profile } => {
-                // Update session with CLI info
-                {
-                    let mut sessions = self.sessions.lock().await;
-                    if let Some(session) = sessions.get_mut(&key) {
-                        // If CLI returned a new session_id, it's a new session
-                        if let Some(new_id) = cli_session_id {
-                            if session.cli_session_id.as_ref() != Some(new_id) {
-                                eprintln!("[SessionHub][{}] cli_session_id updated: {:?} → {}", key, session.cli_session_id, new_id);
-                                session.cli_session_id = Some(new_id.clone());
-                            }
-                        }
-                        session.cli_kind = Some(cli_kind.clone());
-                        session.profile = profile.clone();
-                    }
-                }
-
-                // Send agent_end to channel
+            AgentReplyEvent::Complete => {
                 self.channel_hub().send_notification(ChannelNotification::AgentEnd {
                     channel_kind: reply.channel_kind.clone(),
                     chat_id: reply.chat_id.clone(),
                 }).await;
-
-                // Mark complete and try to dispatch next
-                self.on_complete(&key).await;
             }
         }
     }
 
-    /// Mark current message as replied and dispatch next in queue.
-    async fn on_complete(&self, session_key: &str) {
+    /// Called by AgentHub when the current turn is complete.
+    pub async fn on_turn_complete(&self, channel_kind: &str, chat_id: &str) {
+        let session_key = session_key(channel_kind, chat_id);
         let next_msg = {
             let mut sessions = self.sessions.lock().await;
-            if let Some(session) = sessions.get_mut(session_key) {
-                // Pop the completed message
+            if let Some(session) = sessions.get_mut(&session_key) {
                 if let Some(front) = session.queue.front() {
                     if front.status == MessageStatus::Processing {
                         session.queue.pop_front();
                     }
                 }
 
-                // Try to dispatch next
                 if let Some(next) = session.queue.front_mut() {
                     next.status = MessageStatus::Processing;
                     session.busy = true;
@@ -282,6 +289,18 @@ impl SessionHub {
             let verbose = config::ensure_loaded().channel_verbose(&msg.channel_kind);
             self.agent_hub().dispatch(msg, verbose, cli_kind, profile);
         }
+    }
+
+    /// Called by AgentHub when an agent session closes.
+    pub async fn on_close(&self, closed: AgentClosed) {
+        eprintln!(
+            "[SessionHub][{}] agent closed reason={} cli_kind={:?} cli_session_id={:?} profile={:?}",
+            session_key(&closed.channel_kind, &closed.chat_id),
+            closed.reason,
+            closed.cli_kind,
+            closed.cli_session_id,
+            closed.profile,
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use agent_client_protocol as acp;
 use tokio::sync::mpsc;
@@ -24,9 +25,11 @@ pub fn spawn_claude_acp(
     tokio::io::DuplexStream, // client reads from this
     tokio::io::DuplexStream, // client writes to this
     std::thread::JoinHandle<()>,
+    tokio::sync::mpsc::UnboundedReceiver<String>,
 ) {
     let (client_read, agent_write) = tokio::io::duplex(64 * 1024);
     let (agent_read, client_write) = tokio::io::duplex(64 * 1024);
+    let (real_session_id_tx, real_session_id_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     let handle = std::thread::Builder::new()
         .name("claude-acp".into())
@@ -40,7 +43,7 @@ pub fn spawn_claude_acp(
                 let local = tokio::task::LocalSet::new();
                 local
                     .run_until(async move {
-                        if let Err(e) = run_acp_bridge(cwd, agent_read, agent_write, system_prompt).await {
+                        if let Err(e) = run_acp_bridge(cwd, agent_read, agent_write, system_prompt, real_session_id_tx).await {
                             eprintln!("[claude-acp] bridge error: {}", e);
                         }
                     })
@@ -49,7 +52,7 @@ pub fn spawn_claude_acp(
         })
         .expect("Failed to spawn claude-acp thread");
 
-    (client_read, client_write, handle)
+    (client_read, client_write, handle, real_session_id_rx)
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +64,7 @@ async fn run_acp_bridge(
     agent_read: tokio::io::DuplexStream,
     agent_write: tokio::io::DuplexStream,
     system_prompt: Option<String>,
+    real_session_id_tx: tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<(), String> {
     use acp::Client as _;
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -68,7 +72,7 @@ async fn run_acp_bridge(
     // Notification channel: event translator → ACP connection
     let (notif_tx, mut notif_rx) = mpsc::channel::<acp::SessionNotification>(256);
 
-    let agent_impl = ClaudeAcpBridge::new(cwd.clone(), notif_tx, system_prompt);
+    let agent_impl = ClaudeAcpBridge::new(cwd.clone(), notif_tx, system_prompt, real_session_id_tx);
 
     let (conn, handle_io) = acp::AgentSideConnection::new(
         agent_impl,
@@ -103,15 +107,28 @@ struct ClaudeAcpBridge {
     system_prompt: Option<String>,
     /// The underlying SDK handle, created on first `initialize`.
     sdk: tokio::sync::Mutex<Option<ClaudeSdk>>,
+    /// Stable ACP session id used by the in-process bridge.
+    acp_session_id: String,
+    /// Real Claude CLI session ids observed from SDK events.
+    real_session_id_tx: tokio::sync::mpsc::UnboundedSender<String>,
 }
 
 impl ClaudeAcpBridge {
-    fn new(cwd: PathBuf, notif_tx: mpsc::Sender<acp::SessionNotification>, system_prompt: Option<String>) -> Self {
+    fn new(
+        cwd: PathBuf,
+        notif_tx: mpsc::Sender<acp::SessionNotification>,
+        system_prompt: Option<String>,
+        real_session_id_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Self {
+        static NEXT_ACP_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+        let acp_session_id = format!("claude-acp-{}", NEXT_ACP_SESSION_ID.fetch_add(1, Ordering::Relaxed));
         Self {
             cwd,
             notif_tx,
             system_prompt,
             sdk: tokio::sync::Mutex::new(None),
+            acp_session_id,
+            real_session_id_tx,
         }
     }
 
@@ -142,10 +159,19 @@ impl ClaudeAcpBridge {
                         let _ = self.notif_tx.send(notif).await;
                     }
                 }
-                SdkEvent::TurnResult { is_error, error_text, .. } => {
+                SdkEvent::TurnResult { session_id, is_error, error_text } => {
+                    if let Some(real_session_id) = session_id {
+                        let _ = self.real_session_id_tx.send(real_session_id);
+                    }
                     return Ok((is_error, error_text));
                 }
-                SdkEvent::SystemInit { .. } | SdkEvent::ControlHandled { .. } => {
+                SdkEvent::SystemInit { session_id } => {
+                    if let Some(real_session_id) = session_id {
+                        let _ = self.real_session_id_tx.send(real_session_id);
+                    }
+                    // informational, no ACP notification needed
+                }
+                SdkEvent::ControlHandled { .. } => {
                     // informational, no ACP notification needed
                 }
             }
@@ -165,12 +191,7 @@ impl acp::Agent for ClaudeAcpBridge {
     }
 
     async fn new_session(&self, _args: acp::NewSessionRequest) -> acp::Result<acp::NewSessionResponse> {
-        let lock = self.sdk.lock().await;
-        let sid = match lock.as_ref() {
-            Some(sdk) => sdk.session_id().await,
-            None => "claude-0".to_string(),
-        };
-        Ok(acp::NewSessionResponse::new(sid))
+        Ok(acp::NewSessionResponse::new(self.acp_session_id.clone()))
     }
 
     async fn load_session(&self, _args: acp::LoadSessionRequest) -> acp::Result<acp::LoadSessionResponse> {
@@ -198,14 +219,8 @@ impl acp::Agent for ClaudeAcpBridge {
                 .map_err(|e| acp::Error::new(-32603, e))?;
         }
 
-        // Get session ID for notifications
-        let sid = {
-            let lock = self.sdk.lock().await;
-            match lock.as_ref() {
-                Some(sdk) => sdk.session_id().await,
-                None => "claude-0".to_string(),
-            }
-        };
+        // Use the bridge session ID for ACP notifications.
+        let sid = self.acp_session_id.clone();
 
         // Drain events until turn completes
         let (is_error, error_text) = self.drain_until_turn_result(&sid).await?;
