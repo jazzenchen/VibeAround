@@ -9,5 +9,6 @@
 
 pub mod agent_hub;
 pub mod channel_hub;
+pub mod channels;
 pub mod session_hub;
 pub mod types;

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use common::config;
 use common::hub::agent_hub::AgentHub;
 use common::hub::channel_hub::ChannelHub;
+use common::hub::channels::web::WebChannelManager;
 use common::hub::session_hub::SessionHub;
 use common::hub::types::HubEvent;
 use common::service::ServiceStatusManager;
@@ -60,12 +61,25 @@ impl ServerDaemon {
         let channel_hub = Arc::new(ChannelHub::new());
         let session_hub = Arc::new(SessionHub::new());
         let agent_hub = Arc::new(AgentHub::new());
+        let web_channel = WebChannelManager::new();
 
         // Wire up cross-references
         channel_hub.set_session_hub(Arc::clone(&session_hub));
         session_hub.set_channel_hub(Arc::clone(&channel_hub));
         session_hub.set_agent_hub(Arc::clone(&agent_hub));
         agent_hub.set_session_hub(Arc::clone(&session_hub));
+
+        // Register built-in internal channels.
+        let (web_outbound_tx, mut web_outbound_rx) = web_channel.sender();
+        channel_hub.start_internal_plugin("web", web_outbound_tx);
+        {
+            let web_channel = Arc::clone(&web_channel);
+            tokio::spawn(async move {
+                while let Some(notif) = web_outbound_rx.recv().await {
+                    web_channel.dispatch_notification(notif);
+                }
+            });
+        }
 
         // 2. Channel plugins — start plugins for each channel in settings.json
         for name in cfg.channel_names() {
@@ -120,11 +134,15 @@ impl ServerDaemon {
 
         // 4. Web server (Axum)
         let web_services = Arc::clone(services);
+        let web_channel_hub = Arc::clone(&channel_hub);
+        let web_channel_manager = Arc::clone(&web_channel);
         let web_handle = tokio::spawn(async move {
             run_web_server(
                 common::config::DEFAULT_PORT,
                 dist_path,
                 web_services,
+                web_channel_hub,
+                web_channel_manager,
             )
             .await
         });

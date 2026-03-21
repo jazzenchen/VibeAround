@@ -16,16 +16,6 @@ import type { ToolType } from "@/lib/terminal-types";
 import { toolThemes } from "@/lib/terminal-types";
 import type { AgentInfo } from "@/api/agents";
 
-/** Max number of previous messages to include as context (client-side context memory). */
-const CONTEXT_MESSAGE_LIMIT = 20;
-
-function buildPromptWithContext(messages: ChatMessage[], newUserMessage: string): string {
-  if (messages.length === 0) return newUserMessage;
-  const recent = messages.slice(-CONTEXT_MESSAGE_LIMIT);
-  const lines = recent.map((m) => (m.role === "user" ? `User: ${m.content}` : `Assistant: ${m.content}`));
-  return `Previous conversation:\n\n${lines.join("\n\n")}\n\nUser: ${newUserMessage}`;
-}
-
 /** Map agent id to ToolType for theming. Falls back to "generic". */
 function agentIdToToolType(id: string): ToolType {
   if (id in toolThemes) return id as ToolType;
@@ -171,7 +161,6 @@ export function ChatView() {
     const text = input.trim();
     if (!text || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-    const prompt = buildPromptWithContext(messages, text);
     setInput("");
     setMessages((prev) => [
       ...prev,
@@ -179,17 +168,14 @@ export function ChatView() {
       { role: "assistant", content: "" },
     ]);
     setStreaming(true);
-    wsRef.current.send(prompt);
-  }, [input, messages]);
+    wsRef.current.send(JSON.stringify({ type: "message", text }));
+  }, [input]);
 
   const handleAgentChange = useCallback((agentId: string) => {
-    if (agentId === currentAgent) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     setCurrentAgent(agentId);
-    // Send /cli_<agent> command to switch backend
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(`/cli_${agentId}`);
-    }
-  }, [currentAgent]);
+    wsRef.current.send(JSON.stringify({ type: "message", text: `/agent ${agentId}` }));
+  }, []);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">

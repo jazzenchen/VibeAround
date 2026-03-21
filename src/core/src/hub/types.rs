@@ -140,9 +140,9 @@ pub enum AgentReplyEvent {
 // Plugin notification (sent to channel plugin via stdin JSON-RPC)
 // ---------------------------------------------------------------------------
 
-/// Notification to send to a channel plugin.
+/// Notification to send to a channel transport.
 #[derive(Debug, Clone)]
-pub enum PluginNotification {
+pub enum ChannelNotification {
     AgentStart { channel_kind: ChannelKind, chat_id: ChatId, message_id: MessageId },
     AgentThinking { channel_kind: ChannelKind, chat_id: ChatId, text: String },
     AgentToken { channel_kind: ChannelKind, chat_id: ChatId, delta: String },
@@ -154,7 +154,7 @@ pub enum PluginNotification {
     SendText { channel_kind: ChannelKind, chat_id: ChatId, text: String, reply_to: Option<MessageId> },
 }
 
-impl PluginNotification {
+impl ChannelNotification {
     /// The channel_id expected by the plugin protocol: "{channel_kind}:{chat_id}".
     fn plugin_channel_id(channel_kind: &str, chat_id: &str) -> String {
         format!("{}:{}", channel_kind, chat_id)

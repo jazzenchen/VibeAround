@@ -1,206 +1,140 @@
-//! WebSocket handler for agent chat sessions.
+//! WebSocket handler for web chat channel.
 //!
-//! - GET /ws/chat — interactive chat with AI agents (Claude, Gemini, etc.)
+//! - GET /ws/chat — websocket adapter for the internal `web` channel
 
 use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
     State,
 };
 use axum::response::Response;
-use futures_util::stream::StreamExt;
-use futures_util::SinkExt;
-use std::path::PathBuf;
+use futures_util::{SinkExt, StreamExt};
+use uuid::Uuid;
 
 use common::config;
-use common::headless::wire;
+use common::hub::types::ChannelNotification;
 
 use super::AppState;
 
-/// WebSocket upgrade handler for agent chat.
+/// WebSocket upgrade handler for web chat.
 pub async fn ws_chat_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
-    let working_dir = state.working_dir.clone();
-    ws.on_upgrade(move |socket| handle_chat_socket(socket, working_dir))
+    ws.on_upgrade(move |socket| handle_chat_socket(socket, state))
 }
 
-/// Full chat session lifecycle: agent selection, message routing, event streaming.
-async fn handle_chat_socket(socket: WebSocket, working_dir: PathBuf) {
-    use common::agent::{self, AgentBackend, AgentEvent, AgentKind};
+async fn handle_chat_socket(socket: WebSocket, state: AppState) {
+    let chat_id = Uuid::new_v4().to_string();
+    let channel_id = format!("web:{}", chat_id);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelNotification>();
+    state.web_channel.register_connection(chat_id.clone(), tx);
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    // Push enabled agents config to client on connect
-    let default_agent_str = {
-        let cfg = config::ensure_loaded();
-        let agents: Vec<serde_json::Value> = cfg.enabled_agents.iter().map(|kind| {
+    // Push config on connect so current UI can still render target info.
+    let cfg = config::ensure_loaded();
+    let agents: Vec<serde_json::Value> = cfg
+        .enabled_agents
+        .iter()
+        .map(|kind| {
             serde_json::json!({
                 "id": kind.to_string(),
                 "description": kind.description(),
             })
-        }).collect();
-        let config_msg = serde_json::json!({
-            "type": "config",
-            "agents": agents,
-            "default_agent": cfg.default_agent,
-        });
-        let _ = ws_tx.send(Message::Text(config_msg.to_string().into())).await;
-        cfg.default_agent.clone()
-    };
+        })
+        .collect();
+    let config_msg = serde_json::json!({
+        "type": "config",
+        "channelId": channel_id,
+        "agents": agents,
+        "default_agent": cfg.default_agent,
+    });
+    let _ = ws_tx.send(Message::Text(config_msg.to_string().into())).await;
 
-    let mut active_agent: Option<Box<dyn AgentBackend>> = None;
-
-    /// Start or switch agent backend. Returns true on success.
-    async fn start_agent(
-        active_agent: &mut Option<Box<dyn AgentBackend>>,
-        kind: AgentKind,
-        cwd: &std::path::Path,
-    ) -> Result<(), String> {
-        // Shut down existing
-        if let Some(mut old) = active_agent.take() {
-            old.shutdown().await;
+    let outbound_task = tokio::spawn(async move {
+        while let Some(notif) = rx.recv().await {
+            let msg = notification_to_client_json(notif);
+            if ws_tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+                break;
+            }
         }
-        let mut backend = agent::create_backend(kind);
-        backend.start(cwd, None).await?;
-        *active_agent = Some(backend);
-        Ok(())
-    }
+    });
 
     while let Some(Ok(msg)) = ws_rx.next().await {
-        let Message::Text(user_msg) = msg else { continue };
-        let prompt = user_msg.trim().to_string();
-        if prompt.is_empty() {
-            continue;
-        }
-
-        // Handle /cli_<agent> command — switch agent
-        if let Some(rest) = prompt.strip_prefix("/cli_") {
-            if let Some(kind) = AgentKind::from_str_loose(rest.trim()) {
-                if kind.is_enabled() {
-                    let _ = ws_tx.send(Message::Text(
-                        wire::text_json(&format!("Switching to {} agent...\n", kind)).into()
-                    )).await;
-                    match start_agent(&mut active_agent, kind, &working_dir).await {
-                        Ok(()) => {
-                            let _ = ws_tx.send(Message::Text(
-                                wire::text_json(&format!("{} agent started ✅\n", kind)).into()
-                            )).await;
-                            // Notify frontend of the switch
-                            let switch_msg = serde_json::json!({
-                                "type": "agent_switched",
-                                "agent": kind.to_string(),
-                            });
-                            let _ = ws_tx.send(Message::Text(switch_msg.to_string().into())).await;
-                        }
-                        Err(e) => {
-                            let _ = ws_tx.send(Message::Text(
-                                wire::error_json(&format!("Failed to start {}: {}", kind, e)).into()
-                            )).await;
-                        }
-                    }
-                    let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
-                    continue;
+        match msg {
+            Message::Text(text) => {
+                if let Some(value) = client_message_to_channel_json(&chat_id, &text) {
+                    state.channel_hub.handle_inbound_jsonrpc("web", value).await;
                 }
             }
-            // Unknown or disabled agent
-            let _ = ws_tx.send(Message::Text(
-                wire::error_json("Unknown or disabled agent").into()
-            )).await;
-            let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
-            continue;
+            Message::Close(_) => break,
+            _ => {}
         }
-
-        // Lazy-start default agent on first real message
-        if active_agent.is_none() {
-            let default_kind = AgentKind::from_str_loose(&default_agent_str)
-                .unwrap_or(AgentKind::Claude);
-            if let Err(e) = start_agent(&mut active_agent, default_kind, &working_dir).await {
-                let _ = ws_tx.send(Message::Text(
-                    wire::error_json(&format!("Failed to start default agent: {}", e)).into()
-                )).await;
-                let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
-                continue;
-            }
-        }
-
-        // Send message to active agent and stream events back
-        let agent = active_agent.as_ref().unwrap();
-        let mut rx = agent.subscribe();
-
-        if let Err(e) = agent.send_message_fire(&prompt).await {
-            // Check if agent died — try to restart
-            let is_dead = e.contains("shut down") || e.contains("gone") || e.contains("ACP thread");
-            let _ = ws_tx.send(Message::Text(
-                wire::error_json(&e).into()
-            )).await;
-            if is_dead {
-                let kind = agent.kind();
-                let _ = ws_tx.send(Message::Text(
-                    wire::text_json(&format!("⚠️ {} agent crashed, restarting...\n", kind)).into()
-                )).await;
-                if let Ok(()) = start_agent(&mut active_agent, kind, &working_dir).await {
-                    let _ = ws_tx.send(Message::Text(
-                        wire::text_json(&format!("{} agent restarted ✅\n", kind)).into()
-                    )).await;
-                    // Retry the message
-                    let agent = active_agent.as_ref().unwrap();
-                    rx = agent.subscribe();
-                    if let Err(e2) = agent.send_message_fire(&prompt).await {
-                        let _ = ws_tx.send(Message::Text(wire::error_json(&e2).into())).await;
-                        let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
-                        continue;
-                    }
-                } else {
-                    let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
-                    continue;
-                }
-            } else {
-                let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
-                continue;
-            }
-        }
-
-        // Stream agent events to WebSocket
-        loop {
-            match rx.recv().await {
-                Ok(event) => match event {
-                    AgentEvent::Text(text) => {
-                        let _ = ws_tx.send(Message::Text(wire::text_json(&text).into())).await;
-                    }
-                    AgentEvent::Thinking(_) => {
-                        // Web chat doesn't show thinking blocks for now
-                    }
-                    AgentEvent::Progress(status) => {
-                        let json = serde_json::json!({ "progress": status }).to_string();
-                        let _ = ws_tx.send(Message::Text(json.into())).await;
-                    }
-                    AgentEvent::ToolUse { name, .. } => {
-                        let json = serde_json::json!({ "progress": format!("Using tool: {}...", name) }).to_string();
-                        let _ = ws_tx.send(Message::Text(json.into())).await;
-                    }
-                    AgentEvent::ToolResult { .. } => {}
-                    AgentEvent::TurnComplete { .. } => {
-                        break;
-                    }
-                    AgentEvent::Error(err) => {
-                        let _ = ws_tx.send(Message::Text(wire::error_json(&err).into())).await;
-                    }
-                },
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    eprintln!("[VibeAround][ws/chat] event stream lagged by {}", n);
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    let _ = ws_tx.send(Message::Text(
-                        wire::error_json("Agent process ended unexpectedly").into()
-                    )).await;
-                    break;
-                }
-            }
-        }
-
-        let _ = ws_tx.send(Message::Text(wire::done_json().into())).await;
     }
 
-    // Clean up agent on disconnect
-    if let Some(mut agent) = active_agent.take() {
-        agent.shutdown().await;
+    outbound_task.abort();
+    state.web_channel.unregister_connection(&chat_id);
+}
+
+fn client_message_to_channel_json(chat_id: &str, text: &str) -> Option<serde_json::Value> {
+    let parsed = serde_json::from_str::<serde_json::Value>(text);
+
+    match parsed {
+        Ok(v) => {
+            let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            match ty {
+                "message" => {
+                    let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").trim();
+                    if text.is_empty() {
+                        return None;
+                    }
+                    let message_id = v
+                        .get("messageId")
+                        .and_then(|x| x.as_str())
+                        .map(ToOwned::to_owned)
+                        .unwrap_or_else(|| Uuid::new_v4().to_string());
+                    Some(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "on_message",
+                        "params": {
+                            "channelId": format!("web:{}", chat_id),
+                            "messageId": message_id,
+                            "text": text,
+                            "sender": { "id": "web-user" }
+                        }
+                    }))
+                }
+                _ => None,
+            }
+        }
+        Err(_) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "on_message",
+                    "params": {
+                        "channelId": format!("web:{}", chat_id),
+                        "messageId": Uuid::new_v4().to_string(),
+                        "text": trimmed,
+                        "sender": { "id": "web-user" }
+                    }
+                }))
+            }
+        }
+    }
+}
+
+fn notification_to_client_json(notif: ChannelNotification) -> serde_json::Value {
+    match notif {
+        ChannelNotification::AgentStart { .. } => serde_json::json!({ "type": "start" }),
+        ChannelNotification::AgentThinking { text, .. } => serde_json::json!({ "progress": text }),
+        ChannelNotification::AgentToken { delta, .. } => serde_json::json!({ "text": delta }),
+        ChannelNotification::AgentToolUse { tool, .. } => {
+            serde_json::json!({ "progress": format!("Using tool: {}...", tool) })
+        }
+        ChannelNotification::AgentToolResult { .. } => serde_json::json!({}),
+        ChannelNotification::AgentEnd { .. } => serde_json::json!({ "done": true }),
+        ChannelNotification::AgentError { error, .. } => serde_json::json!({ "error": error }),
+        ChannelNotification::SendText { text, .. } => serde_json::json!({ "text": text, "done": true }),
     }
 }

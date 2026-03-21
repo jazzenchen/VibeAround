@@ -154,16 +154,18 @@ impl SessionHub {
 
         if should_dispatch {
             // Get the message to dispatch (we know it's the front)
-            let dispatch_msg = {
+            let dispatch = {
                 let sessions = self.sessions.lock().await;
-                sessions.get(&key)
-                    .and_then(|s| s.queue.front())
-                    .map(|qm| qm.message.clone())
+                sessions.get(&key).and_then(|s| {
+                    s.queue.front().map(|qm| {
+                        (qm.message.clone(), s.cli_kind.clone(), Some(s.profile.clone()))
+                    })
+                })
             };
 
-            if let Some(dispatch_msg) = dispatch_msg {
+            if let Some((dispatch_msg, cli_kind, profile)) = dispatch {
                 let verbose = config::ensure_loaded().channel_verbose(&dispatch_msg.channel_kind);
-                self.agent_hub().dispatch(dispatch_msg, verbose);
+                self.agent_hub().dispatch(dispatch_msg, verbose, cli_kind, profile);
             }
         }
     }
@@ -178,28 +180,28 @@ impl SessionHub {
 
         match &reply.event {
             AgentReplyEvent::Start => {
-                self.channel_hub().send_notification(PluginNotification::AgentStart {
+                self.channel_hub().send_notification(ChannelNotification::AgentStart {
                     channel_kind: reply.channel_kind.clone(),
                     chat_id: reply.chat_id.clone(),
                     message_id: reply.message_id.clone(),
                 }).await;
             }
             AgentReplyEvent::Token { delta } => {
-                self.channel_hub().send_notification(PluginNotification::AgentToken {
+                self.channel_hub().send_notification(ChannelNotification::AgentToken {
                     channel_kind: reply.channel_kind.clone(),
                     chat_id: reply.chat_id.clone(),
                     delta: delta.clone(),
                 }).await;
             }
             AgentReplyEvent::Thinking { text } => {
-                self.channel_hub().send_notification(PluginNotification::AgentThinking {
+                self.channel_hub().send_notification(ChannelNotification::AgentThinking {
                     channel_kind: reply.channel_kind.clone(),
                     chat_id: reply.chat_id.clone(),
                     text: text.clone(),
                 }).await;
             }
             AgentReplyEvent::ToolUse { tool, input } => {
-                self.channel_hub().send_notification(PluginNotification::AgentToolUse {
+                self.channel_hub().send_notification(ChannelNotification::AgentToolUse {
                     channel_kind: reply.channel_kind.clone(),
                     chat_id: reply.chat_id.clone(),
                     tool: tool.clone(),
@@ -207,7 +209,7 @@ impl SessionHub {
                 }).await;
             }
             AgentReplyEvent::ToolResult { tool, output } => {
-                self.channel_hub().send_notification(PluginNotification::AgentToolResult {
+                self.channel_hub().send_notification(ChannelNotification::AgentToolResult {
                     channel_kind: reply.channel_kind.clone(),
                     chat_id: reply.chat_id.clone(),
                     tool: tool.clone(),
@@ -215,7 +217,7 @@ impl SessionHub {
                 }).await;
             }
             AgentReplyEvent::Error { error } => {
-                self.channel_hub().send_notification(PluginNotification::AgentError {
+                self.channel_hub().send_notification(ChannelNotification::AgentError {
                     channel_kind: reply.channel_kind.clone(),
                     chat_id: reply.chat_id.clone(),
                     error: error.clone(),
@@ -239,7 +241,7 @@ impl SessionHub {
                 }
 
                 // Send agent_end to channel
-                self.channel_hub().send_notification(PluginNotification::AgentEnd {
+                self.channel_hub().send_notification(ChannelNotification::AgentEnd {
                     channel_kind: reply.channel_kind.clone(),
                     chat_id: reply.chat_id.clone(),
                 }).await;
@@ -266,7 +268,7 @@ impl SessionHub {
                 if let Some(next) = session.queue.front_mut() {
                     next.status = MessageStatus::Processing;
                     session.busy = true;
-                    Some(next.message.clone())
+                    Some((next.message.clone(), session.cli_kind.clone(), Some(session.profile.clone())))
                 } else {
                     session.busy = false;
                     None
@@ -276,9 +278,9 @@ impl SessionHub {
             }
         };
 
-        if let Some(msg) = next_msg {
+        if let Some((msg, cli_kind, profile)) = next_msg {
             let verbose = config::ensure_loaded().channel_verbose(&msg.channel_kind);
-            self.agent_hub().dispatch(msg, verbose);
+            self.agent_hub().dispatch(msg, verbose, cli_kind, profile);
         }
     }
 
@@ -293,7 +295,7 @@ impl SessionHub {
 
         match cmd {
             "/help" => {
-                self.channel_hub().send_notification(PluginNotification::SendText {
+                self.channel_hub().send_notification(ChannelNotification::SendText {
                     channel_kind: channel_kind.to_string(),
                     chat_id: chat_id.to_string(),
                     text: concat!(
@@ -301,6 +303,7 @@ impl SessionHub {
                         "  /help — Show this help\n",
                         "  /new — Start a new session\n",
                         "  /status — Show current session info\n",
+                        "  /agent <name> — Switch current agent\n",
                     ).to_string(),
                     reply_to: reply_to.map(|s| s.to_string()),
                 }).await;
@@ -312,7 +315,7 @@ impl SessionHub {
                     let mut sessions = self.sessions.lock().await;
                     sessions.remove(&key);
                 }
-                self.channel_hub().send_notification(PluginNotification::SendText {
+                self.channel_hub().send_notification(ChannelNotification::SendText {
                     channel_kind: channel_kind.to_string(),
                     chat_id: chat_id.to_string(),
                     text: "🆕 New session started. Send a message to begin.".to_string(),
@@ -335,10 +338,47 @@ impl SessionHub {
                         "No active session.".to_string()
                     }
                 };
-                self.channel_hub().send_notification(PluginNotification::SendText {
+                self.channel_hub().send_notification(ChannelNotification::SendText {
                     channel_kind: channel_kind.to_string(),
                     chat_id: chat_id.to_string(),
                     text: status,
+                    reply_to: reply_to.map(|s| s.to_string()),
+                }).await;
+            }
+            "/agent" => {
+                let requested = parts.get(1).copied().unwrap_or("").trim();
+                let Some(kind) = crate::agent::AgentKind::from_str_loose(requested) else {
+                    self.channel_hub().send_notification(ChannelNotification::SendText {
+                        channel_kind: channel_kind.to_string(),
+                        chat_id: chat_id.to_string(),
+                        text: format!("Unknown agent: {}", requested),
+                        reply_to: reply_to.map(|s| s.to_string()),
+                    }).await;
+                    return;
+                };
+                if !kind.is_enabled() {
+                    self.channel_hub().send_notification(ChannelNotification::SendText {
+                        channel_kind: channel_kind.to_string(),
+                        chat_id: chat_id.to_string(),
+                        text: format!("Agent is disabled: {}", kind),
+                        reply_to: reply_to.map(|s| s.to_string()),
+                    }).await;
+                    return;
+                }
+
+                {
+                    let mut sessions = self.sessions.lock().await;
+                    let session = sessions
+                        .entry(key.clone())
+                        .or_insert_with(|| Session::new(channel_kind.to_string(), chat_id.to_string()));
+                    session.cli_kind = Some(kind.to_string());
+                    session.cli_session_id = None;
+                }
+                self.agent_hub().kill_chat_agents(channel_kind, chat_id).await;
+                self.channel_hub().send_notification(ChannelNotification::SendText {
+                    channel_kind: channel_kind.to_string(),
+                    chat_id: chat_id.to_string(),
+                    text: format!("Switched agent to {}.", kind),
                     reply_to: reply_to.map(|s| s.to_string()),
                 }).await;
             }

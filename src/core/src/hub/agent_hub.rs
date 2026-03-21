@@ -80,24 +80,36 @@ impl AgentHub {
 
     /// Called by SessionHub to dispatch a message to an agent.
     /// Spawns a tokio task that streams agent events back to SessionHub.
-    pub fn dispatch(self: &Arc<Self>, msg: InboundMessage, verbose: ImVerboseConfig) {
+    pub fn dispatch(
+        self: &Arc<Self>,
+        msg: InboundMessage,
+        verbose: ImVerboseConfig,
+        cli_kind: Option<String>,
+        profile: Option<String>,
+    ) {
         let this = Arc::clone(self);
         tokio::spawn(async move {
-            this.dispatch_inner(msg, verbose).await;
+            this.dispatch_inner(msg, verbose, cli_kind, profile).await;
         });
     }
 
     /// Inner dispatch logic (runs inside a spawned task).
-    async fn dispatch_inner(&self, msg: InboundMessage, verbose: ImVerboseConfig) {
+    async fn dispatch_inner(
+        &self,
+        msg: InboundMessage,
+        verbose: ImVerboseConfig,
+        cli_kind: Option<String>,
+        profile: Option<String>,
+    ) {
         let cfg = config::ensure_loaded();
-        let cli_kind_str = &cfg.default_agent;
-        let kind = AgentKind::from_str_loose(cli_kind_str).unwrap_or(AgentKind::Claude);
-        let profile = "default";
-        let key = agent_key(&msg.channel_kind, &msg.chat_id, profile, cli_kind_str);
+        let cli_kind_owned = cli_kind.unwrap_or_else(|| cfg.default_agent.clone());
+        let kind = AgentKind::from_str_loose(&cli_kind_owned).unwrap_or(AgentKind::Claude);
+        let profile_owned = profile.unwrap_or_else(|| "default".to_string());
+        let key = agent_key(&msg.channel_kind, &msg.chat_id, &profile_owned, &cli_kind_owned);
         let pfx = format!("[AgentHub][{}]", key);
 
         // Ensure agent is running
-        if let Err(e) = self.ensure_agent(&key, kind, profile).await {
+        if let Err(e) = self.ensure_agent(&key, kind, &profile_owned).await {
             eprintln!("{} failed to ensure agent: {}", pfx, e);
             self.session_hub().on_reply(AgentReply {
                 channel_kind: msg.channel_kind,
@@ -149,8 +161,6 @@ impl AgentHub {
         }).await;
 
         // Forward agent events
-        let cli_kind_owned = cli_kind_str.to_string();
-        let profile_owned = profile.to_string();
         let key_clone = key.clone();
 
         loop {

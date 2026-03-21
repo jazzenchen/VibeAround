@@ -22,6 +22,8 @@ use std::sync::Arc;
 use tower_http::services::ServeDir;
 
 use common::config;
+use common::hub::channel_hub::ChannelHub;
+use common::hub::channels::web::WebChannelManager;
 use common::session::Registry;
 
 /// Client sends this as JSON over Text frame to resize the PTY (e.g. after xterm-addon-fit).
@@ -46,6 +48,8 @@ pub(crate) struct AppState {
     dist_for_fallback: PathBuf,
     working_dir: PathBuf,
     services: Arc<common::service::ServiceStatusManager>,
+    channel_hub: Arc<ChannelHub>,
+    web_channel: Arc<WebChannelManager>,
 }
 
 /// Ensure web dist exists (build web first).
@@ -86,6 +90,8 @@ pub async fn run_web_server(
     port: u16,
     dist_path: PathBuf,
     services: Arc<common::service::ServiceStatusManager>,
+    channel_hub: Arc<ChannelHub>,
+    web_channel: Arc<WebChannelManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     verify_web_dist(&dist_path)?;
     let web_dist = dist_path
@@ -104,6 +110,8 @@ pub async fn run_web_server(
         dist_for_fallback: web_dist.clone(),
         working_dir,
         services,
+        channel_hub,
+        web_channel,
     };
 
     let app = Router::new()
