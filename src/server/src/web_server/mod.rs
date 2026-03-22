@@ -21,9 +21,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::services::ServeDir;
 
+use common::channel_manager::channels::web::WebChannelManager;
+use common::channel_manager::ChannelManager;
 use common::config;
-use common::hub::channel_hub::ChannelHub;
-use common::hub::channels::web::WebChannelManager;
 use common::session::Registry;
 
 /// Client sends this as JSON over Text frame to resize the PTY (e.g. after xterm-addon-fit).
@@ -48,7 +48,7 @@ pub(crate) struct AppState {
     dist_for_fallback: PathBuf,
     working_dir: PathBuf,
     services: Arc<common::service::ServiceStatusManager>,
-    channel_hub: Arc<ChannelHub>,
+    channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
 }
 
@@ -90,7 +90,7 @@ pub async fn run_web_server(
     port: u16,
     dist_path: PathBuf,
     services: Arc<common::service::ServiceStatusManager>,
-    channel_hub: Arc<ChannelHub>,
+    channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     verify_web_dist(&dist_path)?;

@@ -3,7 +3,9 @@
 pub mod agent;
 pub mod channels;
 pub mod config;
-pub mod hub;
+pub mod session_hub;
+pub mod agent_manager;
+pub mod channel_manager;
 pub mod message_hub {} // deleted — replaced by hub architecture
 pub mod pty;
 pub mod service;

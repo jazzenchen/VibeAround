@@ -7,13 +7,13 @@ pub use web_server::run_web_server;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use common::agent_manager::AgentManager;
+use common::channel_manager::channels::web::WebChannelManager;
+use common::channel_manager::ChannelManager;
 use common::config;
-use common::hub::agent_hub::AgentHub;
-use common::hub::channel_hub::ChannelHub;
-use common::hub::channels::web::WebChannelManager;
-use common::hub::session_hub::SessionHub;
-use common::hub::types::HubEvent;
 use common::service::ServiceStatusManager;
+use common::session_hub::types::HubEvent;
+use common::session_hub::SessionHub;
 use common::tunnels;
 
 /// Unified daemon that starts and manages all VibeAround services.
@@ -39,7 +39,7 @@ impl ServerDaemon {
     /// Start all services and wait for shutdown (ctrl_c or web server exit).
     ///
     /// Services started:
-    /// 1. Hub architecture (ChannelHub + SessionHub + AgentHub)
+    /// 1. Core runtime architecture (ChannelManager + SessionHub + AgentManager)
     /// 2. Channel plugins (driven by settings.json channels config)
     /// 3. Hub event subscriber (syncs hub state → ServiceStatusManager → Dashboard)
     /// 4. Web server (Axum: HTTP API + WebSocket + SPA)
@@ -58,15 +58,13 @@ impl ServerDaemon {
         let services = &self.services;
 
         // 1. Initialize hub architecture (two-phase init to avoid circular Arc)
-        let channel_hub = Arc::new(ChannelHub::new());
+        let channel_hub = Arc::new(ChannelManager::new());
         let session_hub = Arc::new(SessionHub::new());
-        let agent_hub = Arc::new(AgentHub::new());
+        let agent_hub = Arc::new(AgentManager::new());
         let web_channel = WebChannelManager::new();
 
         // Wire up cross-references
         channel_hub.set_session_hub(Arc::clone(&session_hub));
-        session_hub.set_channel_hub(Arc::clone(&channel_hub));
-        session_hub.set_agent_hub(Arc::clone(&agent_hub));
         agent_hub.set_session_hub(Arc::clone(&session_hub));
 
         // Register built-in internal channels.

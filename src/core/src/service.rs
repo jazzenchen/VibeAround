@@ -108,7 +108,7 @@ pub struct TunnelEntry {
 /// Lightweight status registry for all running services.
 /// Data is synced by ServerDaemon via hub events.
 pub struct ServiceStatusManager {
-    /// Agent status table (synced from AgentHub events).
+    /// Agent status table (synced from AgentManager events).
     agents: DashMap<String, AgentStatusEntry>,
     /// Channel plugin status (keyed by channel kind).
     channels: DashMap<String, ChannelEntry>,
@@ -161,7 +161,7 @@ impl ServiceStatusManager {
     }
 
     // -----------------------------------------------------------------------
-    // Agents (synced from AgentHub events via ServerDaemon)
+    // Agents (synced from AgentManager events via ServerDaemon)
     // -----------------------------------------------------------------------
 
     pub fn add_agent(&self, key: String, kind: String) {
