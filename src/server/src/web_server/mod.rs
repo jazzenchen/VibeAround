@@ -24,7 +24,7 @@ use tower_http::services::ServeDir;
 use common::channel_manager::channels::web::WebChannelManager;
 use common::channel_manager::ChannelManager;
 use common::config;
-use common::session::Registry;
+use common::pty::PtySessionManager;
 
 /// Client sends this as JSON over Text frame to resize the PTY (e.g. after xterm-addon-fit).
 #[derive(serde::Deserialize)]
@@ -44,7 +44,7 @@ struct WsQuery {
 /// Shared app state: registry, SPA fallback path, working dir, service manager.
 #[derive(Clone)]
 pub(crate) struct AppState {
-    registry: Registry,
+    pty_manager: Arc<PtySessionManager>,
     dist_for_fallback: PathBuf,
     working_dir: PathBuf,
     services: Arc<common::service::ServiceStatusManager>,
@@ -106,7 +106,7 @@ pub async fn run_web_server(
     let assets_dir = web_dist.join("assets");
     let working_dir = config::ensure_loaded().working_dir.clone();
     let state = AppState {
-        registry: Arc::clone(&services.pty),
+        pty_manager: Arc::new(PtySessionManager::from_registry(Arc::clone(&services.pty))),
         dist_for_fallback: web_dist.clone(),
         working_dir,
         services,

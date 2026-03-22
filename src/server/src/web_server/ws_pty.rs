@@ -11,7 +11,7 @@ use futures_util::stream::StreamExt;
 use futures_util::SinkExt;
 use std::io::Write;
 
-use common::session::SessionId;
+use common::pty::{PtySessionManager, SessionId};
 
 use super::{AppState, WsQuery};
 
@@ -24,8 +24,8 @@ pub async fn ws_handler(
     if let Some(ref sid) = query.session_id {
         if let Ok(uuid) = uuid::Uuid::parse_str(sid) {
             let session_id = SessionId(uuid);
-            let registry = state.registry.clone();
-            return ws.on_upgrade(move |socket| handle_socket_attach(socket, session_id, registry));
+            let pty_manager = state.pty_manager.clone();
+            return ws.on_upgrade(move |socket| handle_socket_attach(socket, session_id, pty_manager));
         }
     }
     // session_id is required; reject bare /ws connections.
@@ -38,24 +38,17 @@ pub async fn ws_handler(
 async fn handle_socket_attach(
     mut socket: WebSocket,
     session_id: SessionId,
-    registry: common::session::Registry,
+    pty_manager: std::sync::Arc<PtySessionManager>,
 ) {
-    let (buffer, state, live_tx, writer, resize_tx) = {
-        let ctx = match registry.get(&session_id) {
-            Some(c) => c,
-            None => {
-                let _ = socket.send(Message::Text("Session not found".into())).await;
-                return;
-            }
-        };
-        (
-            ctx.buffer.clone(),
-            ctx.state.clone(),
-            ctx.live_tx.clone(),
-            ctx.bridge.writer.clone(),
-            ctx.resize_tx.clone(),
-        )
+    let Some(handles) = pty_manager.attach_handles(session_id) else {
+        let _ = socket.send(Message::Text("Session not found".into())).await;
+        return;
     };
+    let buffer = handles.buffer;
+    let state = handles.state;
+    let live_tx = handles.live_tx;
+    let writer = handles.writer;
+    let resize_tx = handles.resize_tx;
     let (mut ws_tx, mut ws_rx) = socket.split();
     let dump = buffer.dump();
     if !dump.is_empty() {

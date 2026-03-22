@@ -7,7 +7,6 @@ pub mod agent_manager;
 pub mod channel_manager;
 pub mod pty;
 pub mod service;
-pub mod session;
 pub mod session_store;
 pub mod tunnels;
 pub mod workspace;

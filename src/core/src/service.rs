@@ -16,7 +16,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::task::AbortHandle;
 
-use crate::session::{unix_now_secs, Registry};
+use crate::pty::{unix_now_secs, Registry, SessionId};
 use crate::tunnels::TunnelProvider;
 
 // ---------------------------------------------------------------------------
@@ -242,7 +242,6 @@ impl ServiceStatusManager {
             }
             "pty" => {
                 if let Ok(uuid) = uuid::Uuid::parse_str(key) {
-                    use crate::session::SessionId;
                     self.pty.remove(&SessionId(uuid));
                     self.notify_change();
                     return true;
