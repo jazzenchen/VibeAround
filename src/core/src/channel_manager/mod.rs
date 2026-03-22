@@ -1,4 +1,4 @@
-//! ChannelHub: manages channel transports and protocol I/O.
+//! ChannelManager: manages channel transports and protocol I/O.
 //!
 //! Responsibilities:
 //! - Spawn external channel plugin processes (Node.js)
@@ -7,26 +7,24 @@
 //! - Forward ChannelNotification → channel transport
 //! - Route inbound messages to SessionHub
 
+pub mod channels;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{mpsc, Mutex, OnceCell, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex, OnceCell};
 use tokio::task::AbortHandle;
 
 use crate::config;
-use crate::hub::session_hub::SessionHub;
-use crate::hub::types::*;
+use crate::session_hub::types::*;
+use crate::session_hub::SessionHub;
 
-/// Shared writer to an external plugin's stdin.
 type StdinWriter = Arc<Mutex<tokio::process::ChildStdin>>;
-
-/// Pending JSON-RPC request map: id → oneshot sender for the response.
 type PendingRequests = Arc<DashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>>;
 
-/// Per-channel transport handle.
 enum ChannelHandle {
     External {
         stdin: StdinWriter,
@@ -37,18 +35,12 @@ enum ChannelHandle {
     },
 }
 
-// ---------------------------------------------------------------------------
-// ChannelHub
-// ---------------------------------------------------------------------------
-
-pub struct ChannelHub {
-    /// Channel handles keyed by channel_kind (e.g. "feishu", "web").
+pub struct ChannelManager {
     channels: DashMap<ChannelKind, ChannelHandle>,
-    /// Back-reference to SessionHub (set after init via set_session_hub).
     session_hub: OnceCell<Arc<SessionHub>>,
 }
 
-impl ChannelHub {
+impl ChannelManager {
     pub fn new() -> Self {
         Self {
             channels: DashMap::new(),
@@ -56,20 +48,173 @@ impl ChannelHub {
         }
     }
 
-    /// Set the SessionHub reference (two-phase init).
-    pub fn set_session_hub(&self, hub: Arc<SessionHub>) {
-        let _ = self.session_hub.set(hub);
+    pub fn set_session_hub(self: &Arc<Self>, hub: Arc<SessionHub>) {
+        let _ = self.session_hub.set(Arc::clone(&hub));
+        self.spawn_channel_event_bridge(hub);
     }
 
     fn session_hub(&self) -> &Arc<SessionHub> {
         self.session_hub.get().expect("SessionHub not initialized")
     }
 
-    // -----------------------------------------------------------------------
-    // Channel lifecycle
-    // -----------------------------------------------------------------------
+    fn spawn_channel_event_bridge(self: &Arc<Self>, session_hub: Arc<SessionHub>) {
+        let this = Arc::clone(self);
+        let mut rx = session_hub.subscribe_channel_events();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => this.handle_channel_event(event).await,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        eprintln!("[ChannelManager] channel event stream lagged by {} events", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
 
-    /// Start an external channel plugin. Called by ServerDaemon for configured channels.
+    async fn handle_channel_event(&self, event: ChannelEvent) {
+        match event {
+            ChannelEvent::OnAgentSessionReady {
+                channel_kind,
+                chat_id,
+                message_id,
+                cli_kind,
+                cli_session_id,
+                profile,
+            } => {
+                let text = format!(
+                    "CLI session is now active.\n\nAgent: {}\nSession ID: {}\nProfile: {}",
+                    cli_kind, cli_session_id, profile
+                );
+                self.send_notification(ChannelNotification::SendText {
+                    channel_kind,
+                    chat_id,
+                    text,
+                    reply_to: Some(message_id),
+                })
+                .await;
+            }
+            ChannelEvent::OnTurnStarted {
+                channel_kind,
+                chat_id,
+                message_id,
+            } => {
+                self.send_notification(ChannelNotification::AgentStart {
+                    channel_kind,
+                    chat_id,
+                    message_id,
+                })
+                .await;
+            }
+            ChannelEvent::OnTurnCompleted {
+                channel_kind,
+                chat_id,
+            } => {
+                self.send_notification(ChannelNotification::AgentEnd {
+                    channel_kind,
+                    chat_id,
+                })
+                .await;
+            }
+            ChannelEvent::OnSessionError {
+                channel_kind,
+                chat_id,
+                error,
+            } => {
+                self.send_notification(ChannelNotification::AgentError {
+                    channel_kind,
+                    chat_id,
+                    error,
+                })
+                .await;
+            }
+            ChannelEvent::OnSystemText {
+                channel_kind,
+                chat_id,
+                text,
+                reply_to,
+            } => {
+                self.send_notification(ChannelNotification::SendText {
+                    channel_kind,
+                    chat_id,
+                    text,
+                    reply_to,
+                })
+                .await;
+            }
+            ChannelEvent::OnAcpEvent {
+                channel_kind,
+                chat_id,
+                message_id,
+                payload,
+            } => {
+                if let Some(kind) = payload.get("kind").and_then(|v| v.as_str()) {
+                    match kind {
+                        "token" => {
+                            if let Some(delta) = payload.get("delta").and_then(|v| v.as_str()) {
+                                self.send_notification(ChannelNotification::AgentToken {
+                                    channel_kind,
+                                    chat_id,
+                                    delta: delta.to_string(),
+                                })
+                                .await;
+                            }
+                        }
+                        "thinking" => {
+                            if let Some(text) = payload.get("text").and_then(|v| v.as_str()) {
+                                self.send_notification(ChannelNotification::AgentThinking {
+                                    channel_kind,
+                                    chat_id,
+                                    text: text.to_string(),
+                                })
+                                .await;
+                            }
+                        }
+                        "tool_use" => {
+                            self.send_notification(ChannelNotification::AgentToolUse {
+                                channel_kind,
+                                chat_id,
+                                tool: payload
+                                    .get("tool")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                input: payload
+                                    .get("input")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            })
+                            .await;
+                        }
+                        "tool_result" => {
+                            self.send_notification(ChannelNotification::AgentToolResult {
+                                channel_kind,
+                                chat_id,
+                                tool: payload
+                                    .get("tool")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                output: payload
+                                    .get("output")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            })
+                            .await;
+                        }
+                        _ => {
+                            let _ = message_id;
+                        }
+                    }
+                }
+            }
+            ChannelEvent::OnSessionStarted { .. } | ChannelEvent::OnSessionClosed { .. } => {}
+        }
+    }
+
     pub async fn start_plugin(
         self: &Arc<Self>,
         plugin_dir: PathBuf,
@@ -78,7 +223,6 @@ impl ChannelHub {
         let prefix = format!("[{}]", channel_name);
         let cfg = config::ensure_loaded();
 
-        // Get raw channel config from settings.json
         let raw_config = match cfg.channel_raw_config(channel_name) {
             Some(v) => v,
             None => {
@@ -87,7 +231,6 @@ impl ChannelHub {
             }
         };
 
-        // Verify plugin entry point exists
         let entry_point = plugin_dir.join("dist").join("main.js");
         if !entry_point.exists() {
             eprintln!(
@@ -124,7 +267,6 @@ impl ChannelHub {
         let stdin_writer: StdinWriter = Arc::new(Mutex::new(stdin));
         let pending: PendingRequests = Arc::new(DashMap::new());
 
-        // Send initialize request
         let init_req = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -144,7 +286,6 @@ impl ChannelHub {
             let _ = guard.flush().await;
         }
 
-        // Spawn stderr reader (forward plugin logs to host stderr)
         let prefix_stderr = prefix.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
@@ -154,12 +295,11 @@ impl ChannelHub {
             }
         });
 
-        // Spawn stdout reader (JSON-RPC responses + notifications from plugin)
         let channel_name_owned = channel_name.to_string();
         let prefix_stdout = prefix.clone();
         let hub = Arc::clone(self);
         let handle = tokio::spawn(async move {
-            let _child = child; // prevent drop → keeps process alive (kill_on_drop)
+            let _child = child;
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
 
@@ -182,7 +322,6 @@ impl ChannelHub {
                     }
                 };
 
-                // JSON-RPC response (has "id" field) — resolve pending request
                 if let Some(id) = msg.get("id") {
                     if let Some(id_val) = id.as_u64() {
                         if let Some((_, tx)) = pending.remove(&id_val) {
@@ -213,7 +352,6 @@ impl ChannelHub {
 
         let abort = handle.abort_handle();
 
-        // Store external channel handle
         self.channels.insert(
             channel_name.to_string(),
             ChannelHandle::External {
@@ -226,7 +364,6 @@ impl ChannelHub {
         Some(abort)
     }
 
-    /// Register an internal channel transport.
     pub fn start_internal_plugin(
         &self,
         channel_name: &str,
@@ -239,15 +376,8 @@ impl ChannelHub {
         eprintln!("[{}] registered internal channel", channel_name);
     }
 
-    // -----------------------------------------------------------------------
-    // Inbound: receive structured messages from channel transports
-    // -----------------------------------------------------------------------
-
-    /// Handle a single inbound JSON-RPC value from a channel transport.
     pub async fn handle_inbound_jsonrpc(&self, channel_name: &str, msg: serde_json::Value) {
         let prefix = format!("[{}]", channel_name);
-
-        // JSON-RPC notification (no "id")
         let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
         let params = msg.get("params").cloned().unwrap_or(serde_json::Value::Null);
 
@@ -255,13 +385,13 @@ impl ChannelHub {
             "on_message" => {
                 if let Some(inbound) = parse_on_message(&params, channel_name) {
                     eprintln!("{} on_message text={}", prefix, truncate(&inbound.text, 80));
-                    self.session_hub().receive(inbound).await;
+                    self.session_hub().channel_request_message(inbound).await;
                 }
             }
             "on_callback" => {
                 if let Some(inbound) = parse_on_callback(&params, channel_name) {
                     eprintln!("{} on_callback text={}", prefix, truncate(&inbound.text, 80));
-                    self.session_hub().receive(inbound).await;
+                    self.session_hub().channel_request_message(inbound).await;
                 }
             }
             "plugin_log" => {
@@ -275,11 +405,6 @@ impl ChannelHub {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Outbound: send notifications to channel transports
-    // -----------------------------------------------------------------------
-
-    /// Send a ChannelNotification to the appropriate channel transport.
     pub async fn send_notification(&self, notif: ChannelNotification) {
         let channel_kind = channel_kind_of_notification(&notif).to_string();
 
@@ -302,7 +427,7 @@ impl ChannelHub {
                 }
             }
         } else {
-            eprintln!("[ChannelHub] no channel for kind '{}'", channel_kind);
+            eprintln!("[ChannelManager] no channel for kind '{}'", channel_kind);
         }
     }
 }
@@ -320,11 +445,6 @@ fn channel_kind_of_notification(notif: &ChannelNotification) -> &str {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Parsers (from channel JSON-RPC params → InboundMessage)
-// ---------------------------------------------------------------------------
-
-/// Parse on_message notification params into InboundMessage.
 fn parse_on_message(params: &serde_json::Value, channel_name: &str) -> Option<InboundMessage> {
     let raw_channel_id = params.get("channelId")?.as_str()?.to_string();
     let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -341,7 +461,6 @@ fn parse_on_message(params: &serde_json::Value, channel_name: &str) -> Option<In
         return None;
     }
 
-    // raw_channel_id from plugin is "{channel_kind}:{chat_id}" — extract chat_id
     let chat_id = raw_channel_id
         .strip_prefix(&format!("{}:", channel_name))
         .unwrap_or(&raw_channel_id)
@@ -358,7 +477,6 @@ fn parse_on_message(params: &serde_json::Value, channel_name: &str) -> Option<In
     })
 }
 
-/// Parse on_callback notification params into InboundMessage.
 fn parse_on_callback(params: &serde_json::Value, channel_name: &str) -> Option<InboundMessage> {
     let raw_channel_id = params.get("channelId")?.as_str()?.to_string();
     let sender_id = params

@@ -11,7 +11,7 @@ use futures_util::{SinkExt, StreamExt};
 use uuid::Uuid;
 
 use common::config;
-use common::hub::types::ChannelNotification;
+use common::session_hub::types::ChannelNotification;
 
 use super::AppState;
 

@@ -16,7 +16,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::task::AbortHandle;
 
-use crate::session::{unix_now_secs, Registry};
+use crate::pty::{unix_now_secs, Registry, SessionId};
 use crate::tunnels::TunnelProvider;
 
 // ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ pub struct TunnelEntry {
 /// Lightweight status registry for all running services.
 /// Data is synced by ServerDaemon via hub events.
 pub struct ServiceStatusManager {
-    /// Agent status table (synced from AgentHub events).
+    /// Agent status table (synced from AgentManager events).
     agents: DashMap<String, AgentStatusEntry>,
     /// Channel plugin status (keyed by channel kind).
     channels: DashMap<String, ChannelEntry>,
@@ -161,7 +161,7 @@ impl ServiceStatusManager {
     }
 
     // -----------------------------------------------------------------------
-    // Agents (synced from AgentHub events via ServerDaemon)
+    // Agents (synced from AgentManager events via ServerDaemon)
     // -----------------------------------------------------------------------
 
     pub fn add_agent(&self, key: String, kind: String) {
@@ -242,7 +242,6 @@ impl ServiceStatusManager {
             }
             "pty" => {
                 if let Ok(uuid) = uuid::Uuid::parse_str(key) {
-                    use crate::session::SessionId;
                     self.pty.remove(&SessionId(uuid));
                     self.notify_change();
                     return true;

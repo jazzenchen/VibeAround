@@ -1,13 +1,13 @@
-//! Session registry: persistent PTY sessions keyed by SessionId.
-//! Each session has a ghost reader (see web_server), circular scrollback buffer, and broadcast for live output.
+//! PTY session types and registry for terminal runtime sessions.
+//! Each session has a scrollback buffer, live broadcast channel, and PTY runtime handles.
 
-use crate::pty::{PtyBridge, PtyRunState, PtyTool, ResizeSender};
+use super::runtime::{PtyBridge, PtyRunState, PtyTool, ResizeSender};
+use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use bytes::Bytes;
 
-/// Unique session identifier (UUID v4). Used in API and WS query.
+/// Unique PTY session identifier (UUID v4). Used in API and WS query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct SessionId(pub uuid::Uuid);
@@ -24,7 +24,7 @@ impl std::fmt::Display for SessionId {
     }
 }
 
-/// Metadata for a session (creation time, project path, tool). Returned in list/create API.
+/// Metadata for a PTY session (creation time, project path, tool).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionMetadata {
     pub created_at: u64,
@@ -37,7 +37,7 @@ pub struct SessionMetadata {
 }
 
 /// Fixed-capacity circular scrollback buffer (bytes). New data appends; when over capacity, oldest bytes are dropped.
-const SCROLLBACK_CAP_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
+const SCROLLBACK_CAP_BYTES: usize = 2 * 1024 * 1024;
 
 pub struct CircularBuffer {
     data: std::sync::Mutex<Vec<u8>>,
@@ -62,7 +62,7 @@ impl CircularBuffer {
         }
     }
 
-    /// Return a copy of current buffer contents (for Dump Buffer on new subscriber).
+    /// Return a copy of current buffer contents for new subscribers.
     pub fn dump(&self) -> Vec<u8> {
         let g = self.data.lock().expect("buffer mutex");
         g.clone()
@@ -73,7 +73,6 @@ impl CircularBuffer {
 pub const LIVE_BROADCAST_CAP: usize = 256;
 
 /// One PTY session: bridge, resize, state, metadata, scrollback buffer, and live broadcast sender.
-/// The ghost reader (spawned when the session is created) feeds the buffer and broadcast.
 pub struct SessionContext {
     pub bridge: PtyBridge,
     pub resize_tx: ResizeSender,
@@ -81,11 +80,11 @@ pub struct SessionContext {
     pub state: Arc<std::sync::RwLock<PtyRunState>>,
     pub metadata: SessionMetadata,
     pub buffer: Arc<CircularBuffer>,
-    /// Sender for live PTY output. Subscribers receive after connecting (after they get Dump Buffer).
+    /// Sender for live PTY output. Subscribers receive after connecting (after they get dump buffer).
     pub live_tx: broadcast::Sender<Bytes>,
 }
 
-/// Global registry of all active sessions. Injected into routes (e.g. axum::Extension).
+/// Global registry of all active PTY sessions.
 pub type Registry = Arc<DashMap<SessionId, SessionContext>>;
 
 /// Unix timestamp for "now" (seconds).

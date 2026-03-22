@@ -158,7 +158,7 @@ async fn mcp_tools_call(
         .and_then(|v| v.as_str())
         .and_then(common::agent::AgentKind::from_str_loose);
 
-    // TODO: migrate to AgentHub
+    // TODO: migrate to AgentManager
     jsonrpc_ok(id, serde_json::json!({
         "content": [{
             "type": "text",

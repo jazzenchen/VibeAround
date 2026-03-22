@@ -1,28 +1,15 @@
-//! Shared types for the hub architecture.
-
-// ---------------------------------------------------------------------------
-// Hub lifecycle events (subscribed by ServerDaemon)
-// ---------------------------------------------------------------------------
+//! Shared types for SessionHub, AgentManager, and ChannelManager.
 
 /// Events emitted by hubs for external observers (e.g. ServerDaemon → Dashboard).
 #[derive(Debug, Clone)]
 pub enum HubEvent {
-    // AgentHub
     OnAgentSpawned { key: String, kind: String },
     OnAgentKilled { key: String },
-
-    // SessionHub
     OnSessionCreated { key: String },
     OnSessionDestroyed { key: String },
-
-    // ChannelHub
     OnPluginStarted { channel: String },
     OnPluginStopped { channel: String },
 }
-
-// ---------------------------------------------------------------------------
-// IDs
-// ---------------------------------------------------------------------------
 
 /// Channel kind identifier (e.g. "feishu", "telegram").
 pub type ChannelKind = String;
@@ -34,32 +21,20 @@ pub type ChatId = String;
 pub type MessageId = String;
 
 /// Internal session identifier: "{channel_kind}:{chat_id}:{seq}".
-/// A new session is created on first message or /new command.
 pub type SessionId = String;
 
 /// Agent CLI session identifier (returned by the CLI after spawn).
 pub type CliSessionId = String;
 
-// ---------------------------------------------------------------------------
-// Inbound message (from channel plugin)
-// ---------------------------------------------------------------------------
-
 /// A message received from a channel plugin.
 #[derive(Debug, Clone)]
 pub struct InboundMessage {
-    /// Channel kind (e.g. "feishu").
     pub channel_kind: ChannelKind,
-    /// Chat identifier within the channel.
     pub chat_id: ChatId,
-    /// Platform message identifier.
     pub message_id: MessageId,
-    /// Message text content.
     pub text: String,
-    /// Sender identifier (platform-specific).
     pub sender_id: String,
-    /// Attachments (platform-agnostic).
     pub attachments: Vec<Attachment>,
-    /// Parent message id (for threaded replies).
     pub parent_id: Option<String>,
 }
 
@@ -72,18 +47,11 @@ pub struct Attachment {
     pub resource_type: String,
 }
 
-// ---------------------------------------------------------------------------
-// Message status (tracked by SessionHub)
-// ---------------------------------------------------------------------------
-
 /// Status of a queued message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageStatus {
-    /// Waiting in queue.
     Unreplied,
-    /// Currently being processed by an agent.
     Processing,
-    /// Agent has finished replying.
     Replied,
 }
 
@@ -94,85 +62,125 @@ pub struct QueuedMessage {
     pub status: MessageStatus,
 }
 
-// ---------------------------------------------------------------------------
-// Agent events (from AgentHub back to SessionHub/ChannelHub)
-// ---------------------------------------------------------------------------
-
 /// Lifecycle signal emitted when an agent session becomes usable.
 #[derive(Debug, Clone)]
 pub struct AgentReady {
-    /// Which channel to route back to.
     pub channel_kind: ChannelKind,
-    /// Which chat within the channel.
     pub chat_id: ChatId,
-    /// The user message that caused this turn.
     pub message_id: MessageId,
-    /// Session this ready signal belongs to.
     pub session_id: SessionId,
-    /// Active CLI kind.
     pub cli_kind: String,
-    /// Active CLI session id.
     pub cli_session_id: CliSessionId,
-    /// Active profile.
     pub profile: String,
 }
 
 /// Lifecycle signal emitted when an agent session closes.
 #[derive(Debug, Clone)]
 pub struct AgentClosed {
-    /// Which channel to route back to.
     pub channel_kind: ChannelKind,
-    /// Which chat within the channel.
     pub chat_id: ChatId,
-    /// Session this close signal belongs to.
     pub session_id: SessionId,
-    /// Active CLI kind, if known.
     pub cli_kind: Option<String>,
-    /// Active CLI session id, if known.
     pub cli_session_id: Option<CliSessionId>,
-    /// Active profile, if known.
     pub profile: Option<String>,
-    /// Close reason for observability.
     pub reason: String,
 }
 
 /// An event from the agent, tagged with routing info.
 #[derive(Debug, Clone)]
 pub struct AgentReply {
-    /// Which channel to route back to.
     pub channel_kind: ChannelKind,
-    /// Which chat within the channel.
     pub chat_id: ChatId,
-    /// The original user message this is replying to.
     pub message_id: MessageId,
-    /// Session this reply belongs to.
     pub session_id: SessionId,
-    /// The event payload.
     pub event: AgentReplyEvent,
 }
 
 /// Agent reply event variants.
 #[derive(Debug, Clone)]
 pub enum AgentReplyEvent {
-    /// Agent started processing.
     Start,
-    /// Streaming text token.
     Token { delta: String },
-    /// Thinking/reasoning text.
     Thinking { text: String },
-    /// Tool use started.
     ToolUse { tool: String, input: String },
-    /// Tool result.
     ToolResult { tool: String, output: String },
-    /// Agent finished this turn.
     Complete,
-    /// Agent error.
     Error { error: String },
 }
 
-// ---------------------------------------------------------------------------
-// Plugin notification (sent to channel plugin via stdin JSON-RPC)
-// ---------------------------------------------------------------------------
+/// SessionHub -> AgentManager event skeleton for the new architecture.
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    OnStartRuntime {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        message_id: MessageId,
+        cli_kind: Option<String>,
+        profile: Option<String>,
+    },
+    OnReceiveMessage {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        message: InboundMessage,
+    },
+    OnStopRuntime {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+    },
+    OnCloseRuntime {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        reason: Option<String>,
+    },
+}
+
+/// SessionHub -> ChannelManager event skeleton for the new architecture.
+#[derive(Debug, Clone)]
+pub enum ChannelEvent {
+    OnSessionStarted {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+    },
+    OnAgentSessionReady {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        message_id: MessageId,
+        cli_kind: String,
+        cli_session_id: CliSessionId,
+        profile: String,
+    },
+    OnTurnStarted {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        message_id: MessageId,
+    },
+    OnTurnCompleted {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+    },
+    OnSessionClosed {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        reason: Option<String>,
+    },
+    OnSessionError {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        error: String,
+    },
+    OnSystemText {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        text: String,
+        reply_to: Option<MessageId>,
+    },
+    OnAcpEvent {
+        channel_kind: ChannelKind,
+        chat_id: ChatId,
+        message_id: MessageId,
+        payload: serde_json::Value,
+    },
+}
 
 /// Notification to send to a channel transport.
 #[derive(Debug, Clone)]
@@ -184,17 +192,14 @@ pub enum ChannelNotification {
     AgentToolResult { channel_kind: ChannelKind, chat_id: ChatId, tool: String, output: String },
     AgentEnd { channel_kind: ChannelKind, chat_id: ChatId },
     AgentError { channel_kind: ChannelKind, chat_id: ChatId, error: String },
-    /// Direct text message (command responses, system messages).
     SendText { channel_kind: ChannelKind, chat_id: ChatId, text: String, reply_to: Option<MessageId> },
 }
 
 impl ChannelNotification {
-    /// The channel_id expected by the plugin protocol: "{channel_kind}:{chat_id}".
     fn plugin_channel_id(channel_kind: &str, chat_id: &str) -> String {
         format!("{}:{}", channel_kind, chat_id)
     }
 
-    /// Convert to JSON-RPC notification format (compatible with existing plugin protocol).
     pub fn to_jsonrpc(&self) -> serde_json::Value {
         match self {
             Self::AgentStart { channel_kind, chat_id, message_id } => serde_json::json!({

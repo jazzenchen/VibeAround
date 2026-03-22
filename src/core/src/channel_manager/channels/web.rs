@@ -3,7 +3,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
-use crate::hub::types::ChannelNotification;
+use crate::session_hub::types::ChannelNotification;
 
 /// Outbound sink to a single web chat connection.
 pub type WebChatSink = mpsc::UnboundedSender<ChannelNotification>;
@@ -30,7 +30,12 @@ impl WebChannelManager {
         self.connections.remove(chat_id);
     }
 
-    pub fn sender(&self) -> (mpsc::UnboundedSender<ChannelNotification>, mpsc::UnboundedReceiver<ChannelNotification>) {
+    pub fn sender(
+        &self,
+    ) -> (
+        mpsc::UnboundedSender<ChannelNotification>,
+        mpsc::UnboundedReceiver<ChannelNotification>,
+    ) {
         mpsc::unbounded_channel()
     }
 
