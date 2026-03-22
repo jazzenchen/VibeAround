@@ -2,7 +2,7 @@
 
 # VibeAround
 
-**One local-first workspace for desktop, web, and chat-based coding workflows.**
+**Use real coding agents from your browser and chat apps.**
 
 [English](README.md) | [简体中文](README_CN.md) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki)
 
@@ -20,14 +20,14 @@
 
 </div>
 
-VibeAround brings your coding agents, terminal sessions, and remote access surfaces into one runtime. Instead of treating desktop tools, browser tools, and chat entry points as separate systems, it lets them operate on the same underlying sessions, configuration, and agent lifecycle.
+VibeAround does something simple: it brings real coding agents into the tools you already use.
 
-It is designed for people who want to:
+It gives you access to `Claude Code`, `Gemini CLI`, `Codex`, and `OpenCode` from desktop, browser, terminals, and chat surfaces — without making the product feel like a wrapper around just one agent.
 
-- start work on desktop and continue from the browser
-- keep long-running coding sessions reachable from more than one device
-- switch between web chat, terminal, and IM channels without changing the runtime model
-- manage more than one coding agent backend in one place
+- use real coding agents, not a fake assistant
+- turn chat apps into actual entry points for coding agents
+- keep terminals, web chat, and IM channel access in one product
+- make coding agents feel like part of your everyday workflow, not just a tool trapped in one window
 
 ## Screenshots
 
@@ -37,42 +37,44 @@ It is designed for people who want to:
 
 ## Why VibeAround
 
-Many coding workflows break apart once you move between devices or surfaces. A terminal lives in one place, chat lives in another, and agent state becomes hard to track.
+Most AI coding products give you a single surface.
 
-VibeAround solves that by centering the product around a shared runtime model:
+VibeAround is trying to do something much cooler: make real coding agents accessible from the tools you actually use every day.
 
-- one configuration source
-- one session model
-- one channel-oriented routing architecture
-- multiple user-facing surfaces
+That means you can imagine workflows like:
+
+- driving `Claude Code` from a browser chat
+- checking in on work from your phone
+- using Telegram or Feishu as a real entry point to coding agents
+- keeping terminal-heavy workflows available without forcing everything through the terminal UI itself
 
 ## What you can do today
 
-- Open a web dashboard for terminal sessions and chat
-- Launch or attach to persistent terminal sessions, including tmux-backed workflows
+- Open a web dashboard for terminals, tmux sessions, and chat
+- Launch or attach to persistent PTY sessions
 - Talk to supported coding agents from the web chat surface
-- Access the same system through IM channels such as Telegram and Feishu
-- Inspect running agents, channels, tunnels, and PTY sessions from the desktop UI
+- Reach the same agent system through IM channels such as Telegram and Feishu
+- Inspect running agents, channels, tunnels, and sessions from the desktop app
 - Choose enabled agents and the default agent during onboarding
 
 ## Product surfaces
 
 | Surface | Purpose |
 |---|---|
-| Desktop app | First-run setup, onboarding, runtime visibility, tray actions |
-| Web dashboard | Main daily workspace for terminals, tmux sessions, and web chat |
-| IM channels | Lightweight remote access through Telegram and Feishu plugins |
+| Desktop app | Onboarding, runtime visibility, tray actions, and local control |
+| Web dashboard | Main daily workspace for terminals, tmux sessions, and chat |
+| IM channels | Lightweight remote access through channel plugins |
 
 ## Supported agents
 
-VibeAround currently supports these coding agents:
+VibeAround currently supports:
 
 - Claude Code
 - Gemini CLI
 - OpenCode
 - Codex
 
-Agent enablement and the default agent are configured in onboarding and stored in `~/.vibearound/settings.json`.
+Agent enablement and the default agent are configured during onboarding and stored in `~/.vibearound/settings.json`.
 
 ## Quick start
 
@@ -93,19 +95,19 @@ After startup:
 
 ## Configuration
 
-The active runtime configuration lives at:
+Runtime configuration:
 
 - `~/.vibearound/settings.json`
 
-Channel plugins are loaded from:
+Channel plugin bundles:
 
 - `~/.vibearound/plugins/<channel>/dist/main.js`
 
 ## Documentation
 
-The README stays focused on product overview and quick start. The full technical manual lives in the wiki.
+This README stays focused on product overview and fast onboarding. The wiki contains the technical and usage documentation.
 
-Recommended reading order:
+Recommended starting points:
 
 - [Wiki Home](https://github.com/jazzenchen/VibeAround/wiki)
 - [Setup Guide](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide)
@@ -118,7 +120,7 @@ Recommended reading order:
 
 ## Project status
 
-VibeAround is still evolving quickly. The current architecture is already usable, but runtime behavior and product surfaces are still being refined.
+VibeAround is actively evolving. The current product is already usable, while the experience and documentation continue to improve.
 
 The repository is public for transparency and learning. Pull requests and feature requests are not being accepted at this time.
 

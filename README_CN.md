@@ -2,7 +2,7 @@
 
 # VibeAround
 
-**一套本地优先的统一工作台，把桌面端、Web 和聊天式编码工作流连成一个运行时。**
+**在浏览器和聊天软件里使用真正的 coding agents。**
 
 [English](README.md) | [简体中文](README_CN.md) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki)
 
@@ -20,14 +20,16 @@
 
 </div>
 
-VibeAround 把 coding agent、terminal session 和远程访问入口整合进同一个运行时。它不是把桌面工具、浏览器工具和聊天入口简单并列，而是让它们共享同一套 session、配置模型和 agent 生命周期。
+VibeAround 想做的事情很直接：把真正的 coding agents 带进你本来就在用的工具里。
 
-它适合这些场景：
+它让你可以从桌面、浏览器、terminal，甚至 Telegram、飞书、Discord 这类聊天工具里访问 `Claude Code`、`Gemini CLI`、`Codex`、`OpenCode`，但又不会让产品看起来只是某一个 agent 的附属工具。
 
-- 在桌面端开始工作，再从浏览器继续
-- 让长时间运行的 coding session 可以从多台设备访问
-- 在 web chat、terminal 和 IM channels 之间切换，而不切换底层运行时模型
-- 在一套产品里管理多个 coding agent backend
+最酷的地方也在这里：
+
+- 用的是真正的 coding agent，不是模拟助手
+- 聊天软件不再只是通知入口，也可以变成 agent 的操作入口
+- 同一套产品里同时拥有 terminal、Web chat 和 IM channel access
+- 让 coding agent 从“某个窗口里的工具”变成“你日常工作流的一部分”
 
 ## 界面截图
 
@@ -35,44 +37,46 @@ VibeAround 把 coding agent、terminal session 和远程访问入口整合进同
 |--------|--------|
 | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/pc.webp" width="720" alt="VibeAround 桌面端 Web 控制台" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/screenshots/mobile-claude.webp" width="200" alt="VibeAround 移动端 Web 控制台" /> |
 
-## 为什么是 VibeAround
+## 为什么它会让人眼前一亮
 
-很多编码工作流一旦跨设备、跨入口，就会迅速割裂：terminal 在一边，chat 在一边，agent 状态很难统一管理。
+很多 AI coding 产品只给你一个固定入口。
 
-VibeAround 的做法，是把产品建立在共享运行时模型之上：
+而 VibeAround 更想做的是一件非常酷、也非常实用的事：把真正的 coding agent 带进你每天都在用的工具里。
 
-- 一套配置来源
-- 一套 session 模型
-- 一套以 channel 为核心的消息路由架构
-- 多个面向用户的产品入口
+这意味着你可以想象这样的使用方式：
+
+- 在浏览器 chat 里直接驱动 `Claude Code`
+- 在手机上随时查看和操作 agent
+- 用 Telegram、飞书、Discord 这类 IM 工具真正接入 coding agent
+- 保留 terminal-heavy workflow，但不必把一切都锁死在 terminal 界面里
 
 ## 当前可以做什么
 
-- 打开 web dashboard 管理 terminal sessions 和 chat
-- 启动或附加持久化 terminal sessions，包括基于 tmux 的工作流
-- 在 web chat 界面中与支持的 coding agents 对话
-- 通过 Telegram、飞书等 IM channels 接入同一套系统
-- 在 desktop UI 中查看运行中的 agents、channels、tunnels 和 PTY sessions
-- 在 onboarding 中选择启用哪些 agents，并设置默认 agent
+- 打开 Web dashboard 管理 terminals、tmux sessions 和 chat
+- 启动或附加到持久化 PTY sessions
+- 在 Web chat 中与支持的 coding agents 交互
+- 通过 Telegram、飞书等 IM channels 访问同一套 agent 系统
+- 在 desktop app 中查看运行中的 agents、channels、tunnels 和 sessions
+- 在 onboarding 中选择启用哪些 agents，以及默认 agent
 
 ## 产品入口
 
 | 入口 | 作用 |
 |---|---|
-| Desktop app | 首次安装、onboarding、运行时可视化、tray actions |
-| Web dashboard | 日常主工作区，用于 terminals、tmux sessions 和 web chat |
-| IM channels | 通过 Telegram、飞书插件提供轻量级远程访问 |
+| Desktop app | 首次配置、运行状态可视化、tray actions、本地控制 |
+| Web dashboard | 日常主工作区，用于 terminals、tmux sessions 和 chat |
+| IM channels | 通过插件接入的轻量远程入口 |
 
 ## 当前支持的智能体
 
-VibeAround 当前支持这些 coding agents：
+VibeAround 当前支持：
 
 - Claude Code
 - Gemini CLI
 - OpenCode
 - Codex
 
-是否启用某个 agent，以及默认 agent 是什么，均在 onboarding 中配置，并写入 `~/.vibearound/settings.json`。
+启用哪些 agent、默认 agent 是什么，均在 onboarding 中配置，并写入 `~/.vibearound/settings.json`。
 
 ## 快速开始
 
@@ -88,24 +92,24 @@ bun run dev
 1. 打开 desktop app
 2. 首次运行时完成 onboarding
 3. 选择启用的 agents 和默认 agent
-4. 从托盘或 desktop UI 打开 web dashboard
-5. 通过 terminals、tmux sessions 或 web chat 开始工作
+4. 从托盘或 desktop UI 打开 Web dashboard
+5. 通过 terminals、tmux sessions 或 Web chat 开始工作
 
 ## 配置位置
 
-当前生效的运行时配置文件位于：
+运行时配置文件：
 
 - `~/.vibearound/settings.json`
 
-Channel plugins 的加载路径为：
+Channel plugin 构建产物：
 
 - `~/.vibearound/plugins/<channel>/dist/main.js`
 
 ## 文档入口
 
-README 只保留项目介绍与快速上手，完整技术手册请看 wiki。
+README 只保留项目介绍与快速上手；更完整的技术说明与使用文档请查看 wiki。
 
-建议阅读顺序：
+建议优先阅读：
 
 - [Wiki 首页](https://github.com/jazzenchen/VibeAround/wiki)
 - [安装与运行指南](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide-CN)
@@ -118,7 +122,7 @@ README 只保留项目介绍与快速上手，完整技术手册请看 wiki。
 
 ## 项目状态
 
-VibeAround 仍在快速演进中。当前架构已经可用，但运行时行为和产品入口仍在持续打磨。
+VibeAround 仍在持续演进中。当前版本已经可以使用，体验与文档也在继续完善。
 
 本仓库公开的主要目的是透明、学习和分享。当前阶段暂不接受 Pull Request 和 feature request。
 
