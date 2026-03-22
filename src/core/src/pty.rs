@@ -24,7 +24,7 @@ fn shell_command() -> CommandBuilder {
 }
 
 /// Exec string for each tool when wrapping with cd (bash -c "cd ... && exec ...").
-/// Claude code runs with acceptEdits so file writes are auto-approved in headless/PTY.
+/// Claude code runs with acceptEdits so file writes are auto-approved in PTY sessions.
 /// For tmux: if session exists, attach (with -d when tmux_detach_others); otherwise create new session.
 fn tool_exec_argv(tool: PtyTool, tmux_session: Option<&str>) -> String {
     if let Some(name) = tmux_session {
