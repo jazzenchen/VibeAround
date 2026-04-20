@@ -1,11 +1,11 @@
 ---
 name: vibearound
-description: Hand over your current coding session so the user can continue the conversation on their phone or another device via any IM channel connected to VibeAround. Use when the user says "/vibearound handover", "hand over this session", "continue on my phone", or similar session transfer requests.
+description: "Hands over the current coding session so the user can continue the conversation on another device via any IM channel connected to VibeAround. Generates a /pickup command and copies it to the clipboard. Use when the user says '/vibearound handover', 'hand over this session', 'continue on my phone', 'transfer to mobile', or similar session transfer requests."
 ---
 
 # VibeAround Session Handover
 
-Hand over the current coding session via the VibeAround orchestrator. The user can then pick it up from any connected IM channel (the pickup is not tied to a specific channel).
+Hands over the current coding session via the VibeAround orchestrator. The user picks it up from any connected IM channel (Telegram, Slack, Discord, etc.) — the pickup is not tied to a specific channel.
 
 ## When to Use
 
@@ -18,9 +18,9 @@ The VibeAround MCP server must be connected (server name: `vibearound`). If not 
 
 ## Handover Steps
 
-### 1. Get your session ID
+### 1. Resolve the session ID
 
-Use the `/va-session` skill to resolve your current session ID.
+Use the `/va-session` skill to get the current session ID.
 
 ### 2. Call prepare_handover
 
@@ -33,11 +33,18 @@ Arguments:
   agent_kind: "<your agent type>"
 ```
 
-If the tool says the workspace is not registered, ask the user for confirmation, then call `register_workspace` with the `cwd`, and retry.
+If the workspace is not registered, ask the user for confirmation, then call `register_workspace` with the `cwd`, and retry.
 
 ### 3. Copy to clipboard and present the result
 
-Copy the `/pickup` command to the user's clipboard, then show it. The user can paste it in any IM chat connected to VibeAround to resume the session there with the same agent.
+The tool returns a `/pickup` command string. Copy it to the user's clipboard using the platform clipboard tool:
+
+```
+Tool: clipboard_write  (or pbcopy on macOS, xclip on Linux)
+Content: <the /pickup command from prepare_handover>
+```
+
+Then display the command so the user can also copy it manually. The user pastes it in any IM chat connected to VibeAround to resume the session with the same agent context.
 
 ## Error Handling
 
