@@ -7,6 +7,7 @@
 //!              `~/.gemini/projects.json`)
 //!   - Codex:   `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (first line
 //!              contains `payload.cwd` and `payload.id`)
+//!   - Opencode: `~/.local/share/opencode/storage/session/*/ses_*.json`
 //!
 //! Used when the agent-side `prepare_handover` MCP tool is invoked without
 //! an explicit `session_id`.
@@ -17,6 +18,7 @@ pub(super) fn find_latest_session(agent_kind: &str, cwd: &std::path::Path) -> Op
         "claude" => find_latest_claude_session(cwd),
         "gemini" => find_latest_gemini_session(cwd),
         "codex" => find_latest_codex_session(cwd),
+        "opencode" => find_latest_opencode_session(cwd),
         _ => None,
     }
 }
@@ -206,5 +208,62 @@ fn find_latest_codex_session(cwd: &std::path::Path) -> Option<String> {
     }
 
     walk_codex_sessions(&sessions_dir, &cwd_str, &mut best);
+    best.map(|(_, session_id)| session_id)
+}
+
+/// Find the most recent Opencode session for a given cwd.
+/// Opencode stores sessions at `~/.local/share/opencode/storage/session/*/ses_*.json`.
+/// Each file contains an `directory` field matching the session's working directory.
+fn find_latest_opencode_session(cwd: &std::path::Path) -> Option<String> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()?;
+    let sessions_dir = std::path::PathBuf::from(&home)
+        .join(".local")
+        .join("share")
+        .join("opencode")
+        .join("storage")
+        .join("session");
+    if !sessions_dir.is_dir() {
+        return None;
+    }
+
+    let cwd_str = cwd.to_string_lossy();
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+
+    // Walk session subdirectories looking for ses_*.json files
+    if let Ok(projects) = std::fs::read_dir(&sessions_dir) {
+        for project_entry in projects.flatten() {
+            let project_dir = project_entry.path();
+            if !project_dir.is_dir() {
+                continue;
+            }
+            if let Ok(files) = std::fs::read_dir(&project_dir) {
+                for file_entry in files.flatten() {
+                    let path = file_entry.path();
+                    let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !fname.starts_with("ses_") || path.extension().and_then(|e| e.to_str()) != Some("json") {
+                        continue;
+                    }
+                    let Ok(meta) = path.metadata() else { continue };
+                    let Ok(modified) = meta.modified() else { continue };
+                    let Ok(data) = std::fs::read_to_string(&path) else { continue };
+                    let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) else { continue };
+                    let session_dir = json.get("directory")?.as_str()?;
+                    if session_dir != cwd_str {
+                        continue;
+                    }
+                    let Some(sid) = json.get("id").and_then(|v| v.as_str()) else { continue };
+                    match &best {
+                        Some((best_time, _)) if modified <= *best_time => {}
+                        _ => {
+                            best = Some((modified, sid.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     best.map(|(_, session_id)| session_id)
 }

@@ -103,6 +103,7 @@ pub(super) async fn mcp_prepare_handover(
                     "claude" => "In Claude Code, you can find it by running /status.",
                     "gemini" => "In Gemini CLI, run /resume to browse recent sessions.",
                     "codex" => "In Codex CLI, run `codex resume` to see recent sessions.",
+                    "opencode" => "In opencode, run `opencode session list` to see recent sessions.",
                     _ => "Check your agent's session history.",
                 };
                 return mcp_error_text(

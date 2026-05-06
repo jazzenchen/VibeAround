@@ -79,7 +79,13 @@
     "pty": {
       "command": "opencode"
     },
-    "resume_template": "cd {cwd} && opencode --session {session_id}"
+    "resume_template": "cd {cwd} && opencode --session {session_id}",
+    "global_config": {
+      "settings_path": ".config/opencode/opencode.json",
+      "mcp_key": "mcp",
+      "mcp_entry": { "type": "remote", "url": "{mcp_url}", "enabled": true },
+      "skill_dir": ".opencode/skills/vibearound"
+    }
   },
   {
     "id": "cursor",

@@ -36,7 +36,7 @@ If the env vars are not set (running outside VibeAround), resolve from local ses
   tail -1 ~/.codex/history.jsonl | jq -r '.session_id'
   ```
 - **Gemini**: Use `/resume` to list recent sessions, then extract the session ID from the output.
-- **Opencode**: The server auto-discovers sessions. If multiple sessions exist for the same directory, it picks the most recently modified. To manually find the session ID, check `~/.local/share/opencode/storage/session/*/ses_*.json` for the `.directory` field matching your cwd.
+- **Opencode**: The server auto-discovers sessions by finding the most recently modified session file matching your directory. If multiple sessions exist for the same directory, it picks the one with the latest modification time. You can also run `opencode session list --format json` to see all sessions with their directories and pick the most recently updated one.
 - **Other agents**: Omit the session ID — the server will attempt auto-discovery.
 
 ## Return Value

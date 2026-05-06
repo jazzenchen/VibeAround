@@ -162,7 +162,7 @@ fn config_env_for(launch_target: &str) -> Option<ConfigEnvTarget> {
     match launch_target {
         "opencode" => Some(ConfigEnvTarget::File {
             env: "OPENCODE_CONFIG",
-            rel_path: "opencode.json",
+            rel_path: ".config/opencode/opencode.json",
         }),
         _ => None,
     }

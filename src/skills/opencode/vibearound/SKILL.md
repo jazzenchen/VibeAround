@@ -43,5 +43,4 @@ The tool returns a `/pickup` command string. Copy it to the user's clipboard (us
 
 - **MCP server not available**: Start the VibeAround desktop app.
 - **Workspace not registered**: Offer to register it (needs user confirmation).
-- **Session ID not found**: The server can auto-discover in most cases. If that fails (e.g., multiple parallel sessions in the same directory):
-  - **Opencode**: Run `opencode session list` to see sessions. Find the one matching your current directory by checking the `.directory` field in `~/.local/share/opencode/storage/session/*/ses_*.json`, or note the session ID from the list and retry with the session_id parameter
+- **Session ID not found**: The server can auto-discover in most cases. If that fails (e.g., multiple parallel sessions in the same directory), run `opencode session list --format json` and pick the session with the most recent `updated` timestamp for your directory.

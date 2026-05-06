@@ -182,6 +182,7 @@ fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
         "cursor" => skills_for!("cursor"),
         "kiro" => skills_for!("kiro"),
         "qwen-code" => skills_for!("qwen-code"),
+        "opencode" => skills_for!("opencode"),
         // Generic fallback — top-level skills dir (no agent subdirectory).
         _ => vec![
             (
