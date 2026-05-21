@@ -154,6 +154,7 @@ export function ProfilePanel({
   onSelectApiType,
   onMakeDefault,
   onEditProfile,
+  onCopyProfile,
   onConnectionSettings,
   onDeleteProfile,
   onReorderProfile,
@@ -168,6 +169,7 @@ export function ProfilePanel({
   onSelectApiType: (profile: ProfileSummary, apiType: string) => void;
   onMakeDefault: (choice: ProfileChoice) => Promise<void>;
   onEditProfile: (profile: ProfileSummary) => void;
+  onCopyProfile: (profile: ProfileSummary) => void;
   onConnectionSettings: (
     profile: ProfileSummary,
     agentId: ConnectionAgentId,
@@ -384,6 +386,7 @@ export function ProfilePanel({
                             }
                           }}
                           onEditProfile={onEditProfile}
+                          onCopyProfile={onCopyProfile}
                           onDeleteProfile={onDeleteProfile}
                         />
                       </div>

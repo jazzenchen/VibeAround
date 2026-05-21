@@ -65,6 +65,7 @@ export const zhCNLaunch: Record<string, string> = {
   "Quick Launch default updated": "已更新快速启动默认配置",
   "Direct Quick Launch default updated": "已更新直接快速启动默认项",
   "Profile order updated": "配置顺序已更新",
+  "Profile copied": "已复制配置",
   "Profile deleted": "已删除配置",
   "Search profiles": "搜索配置",
   "No matching profiles": "没有匹配的配置",
