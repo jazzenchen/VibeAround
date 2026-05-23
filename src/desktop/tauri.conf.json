@@ -24,6 +24,12 @@
         "width": 960,
         "height": 640,
         "resizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 24
+        },
         "visible": true
       }
     ]

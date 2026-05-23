@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Default capability for tray window",
   "windows": ["main"],
-  "permissions": ["core:default", "shell:allow-open", "dialog:allow-open"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "shell:allow-open",
+    "dialog:allow-open"
+  ]
 }

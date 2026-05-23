@@ -5,6 +5,7 @@ import { useI18n } from "@va/i18n";
 
 import { Button } from "@/components/ui/button";
 import { LanguageMenu } from "@/components/LanguageMenu";
+import { cn } from "@/lib/utils";
 
 import { STEPS } from "./constants";
 import { StepAgents } from "./components/StepAgents";
@@ -74,6 +75,8 @@ function visibleStepsForGoals(
 
 export default function Onboarding() {
   const { t } = useI18n();
+  const isMacTitlebar =
+    typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
   const [step, setStep] = useState(0);
   const [selectedGoals, setSelectedGoals] = useState<Set<OnboardingGoal>>(
     () => new Set<OnboardingGoal>(),
@@ -407,8 +410,26 @@ export default function Onboarding() {
 
   return (
     <div className="flex flex-col h-full bg-background">
-      <div className="flex items-center gap-2 px-6 pt-5 pb-2">
-        <div className="flex items-center gap-1 flex-1">
+      <div
+        className={cn(
+          "relative flex h-12 items-center gap-3 pr-6",
+          isMacTitlebar ? "pl-[82px]" : "pl-6",
+        )}
+      >
+        <div
+          data-tauri-drag-region
+          aria-hidden="true"
+          className="absolute inset-0 z-0"
+        />
+        <div className="relative z-10 flex shrink-0 items-baseline gap-1.5 whitespace-nowrap">
+          <span className="text-[13px] font-semibold text-foreground">
+            VibeAround
+          </span>
+          <span className="font-mono text-[10px] text-muted-foreground/60">
+            @{__APP_VERSION_LABEL__}
+          </span>
+        </div>
+        <div className="relative z-10 flex items-center gap-1 flex-1">
           {visibleSteps.map((label, index) => (
             <div key={label} className="flex items-center gap-1 flex-1">
               <div
@@ -419,10 +440,9 @@ export default function Onboarding() {
             </div>
           ))}
         </div>
-        <span className="font-mono text-[10px] text-muted-foreground/60">
-          v{__APP_VERSION_LABEL__}
-        </span>
-        <LanguageMenu />
+        <div className="relative z-10">
+          <LanguageMenu />
+        </div>
       </div>
       <div className="px-6 pb-3">
         <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
