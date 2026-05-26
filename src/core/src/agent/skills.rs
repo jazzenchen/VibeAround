@@ -1,8 +1,8 @@
 //! Skill file install/uninstall.
 //!
-//! Each agent gets the same set of skills (`vibearound`, `va-session`,
-//! `va-preview`, `va-md-preview`); only the source directory and target
-//! filename convention differ per agent.
+//! Each agent gets the common VibeAround skills (`vibearound`, `va-session`,
+//! `va-preview`, `va-md-preview`); selected agents can receive additional
+//! skills while their workflows are being validated.
 //!
 //! The `include_str!` paths are relative to this source file: `src/core/
 //! src/agent/skills.rs` → `../../../skills/...` reaches the top-level
@@ -175,7 +175,7 @@ fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
         };
     }
 
-    match agent {
+    let mut skills = match agent {
         "claude" => skills_for!("claude"),
         "gemini" => skills_for!("gemini"),
         "codex" => skills_for!("codex"),
@@ -201,5 +201,19 @@ fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
                 include_str!("../../../skills/va-md-preview/SKILL.md"),
             ),
         ],
+    };
+
+    match agent {
+        "claude" => skills.push((
+            "agent-collaboration",
+            include_str!("../../../skills/claude/agent-collaboration/SKILL.md"),
+        )),
+        "codex" => skills.push((
+            "agent-collaboration",
+            include_str!("../../../skills/codex/agent-collaboration/SKILL.md"),
+        )),
+        _ => {}
     }
+
+    skills
 }
