@@ -304,6 +304,7 @@ export function TooltipButton({
 export function ProfileActionsMenu({
   profile,
   bridgeAvailable,
+  disabled = false,
   onMakeDefault,
   makeDefaultDisabled = false,
   onConnectionSettings,
@@ -313,6 +314,7 @@ export function ProfileActionsMenu({
 }: {
   profile: ProfileSummary;
   bridgeAvailable: boolean;
+  disabled?: boolean;
   onMakeDefault?: () => void;
   makeDefaultDisabled?: boolean;
   onConnectionSettings: (profile: ProfileSummary) => void;
@@ -329,6 +331,7 @@ export function ProfileActionsMenu({
           size="icon-xs"
           variant="ghost"
           className="h-7 w-7 text-muted-foreground"
+          disabled={disabled}
           aria-label={t("More")}
         >
           <MoreVertical className="h-3.5 w-3.5" />
@@ -338,7 +341,7 @@ export function ProfileActionsMenu({
         {onMakeDefault && (
           <DropdownMenuItem
             className="text-xs"
-            disabled={makeDefaultDisabled}
+            disabled={disabled || makeDefaultDisabled}
             onSelect={() => onMakeDefault()}
           >
             <Star className="h-3 w-3" />
@@ -349,6 +352,7 @@ export function ProfileActionsMenu({
         {bridgeAvailable && (
           <DropdownMenuItem
             className="text-xs"
+            disabled={disabled}
             onSelect={() => onConnectionSettings(profile)}
           >
             <Plug className="h-3 w-3" />
@@ -357,6 +361,7 @@ export function ProfileActionsMenu({
         )}
         <DropdownMenuItem
           className="text-xs"
+          disabled={disabled}
           onSelect={() => onEditProfile(profile)}
         >
           <Pencil className="h-3 w-3" />
@@ -364,6 +369,7 @@ export function ProfileActionsMenu({
         </DropdownMenuItem>
         <DropdownMenuItem
           className="text-xs"
+          disabled={disabled}
           onSelect={() => onCopyProfile(profile)}
         >
           <Copy className="h-3 w-3" />
@@ -373,6 +379,7 @@ export function ProfileActionsMenu({
         <DropdownMenuItem
           className="text-xs"
           variant="destructive"
+          disabled={disabled}
           onSelect={() => onDeleteProfile(profile)}
         >
           <Trash2 className="h-3 w-3" />

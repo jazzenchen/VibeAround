@@ -528,7 +528,11 @@ export function AgentLaunchBuilder({
     try {
       const fullProfile = await getProfile(profile.id);
       const copiedProfile = await createProfile(
-        buildProfileCopyDraft(fullProfile, t("Copy")),
+        buildProfileCopyDraft(
+          fullProfile,
+          t("Copy"),
+          profiles.map((candidate) => candidate.label),
+        ),
       );
       const sourceConnections = prefs.profileConnections[profile.id] ?? {};
       const connectionCopies = Object.entries(sourceConnections)
@@ -536,7 +540,11 @@ export function AgentLaunchBuilder({
           Boolean(entry[1]),
         )
         .map(([connectionAgentId, preference]) =>
-          setProfileConnection(copiedProfile.id, connectionAgentId, preference),
+          setProfileConnection(
+            copiedProfile.id,
+            connectionAgentId,
+            structuredClone(preference),
+          ),
         );
       await Promise.all(connectionCopies);
       await Promise.all([refreshProfiles(), refreshPrefs()]);
@@ -848,7 +856,6 @@ export function AgentLaunchBuilder({
                 onNewProfile={onNewProfile}
                 busy={busy}
               />
-
             </section>
           </div>
         </main>

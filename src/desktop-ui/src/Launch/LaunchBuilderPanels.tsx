@@ -370,6 +370,7 @@ export function ProfilePanel({
                         <ProfileActionsMenu
                           profile={profile}
                           bridgeAvailable={isBridgeAgent(agentId)}
+                          disabled={busy}
                           onMakeDefault={
                             globalDefaultForProfile
                               ? undefined
