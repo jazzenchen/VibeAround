@@ -650,7 +650,18 @@ impl WorkspaceThreadManager {
             self.thread_store.clone(),
             Some(self.change_tx.clone()),
         ));
-        self.runtimes.insert(thread.id, Arc::clone(&runtime));
+        self.runtimes.insert(thread.id.clone(), Arc::clone(&runtime));
+        let recovered = runtime
+            .recover_interrupted_subagents()
+            .await
+            .map_err(|error| anyhow!(error.message.to_string()))?;
+        if !recovered.is_empty() {
+            tracing::info!(
+                thread_id = %thread.id,
+                agents = recovered.len(),
+                "recovered interrupted subagents"
+            );
+        }
         Ok(runtime)
     }
 

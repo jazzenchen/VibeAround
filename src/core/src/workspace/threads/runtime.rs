@@ -277,6 +277,39 @@ impl ThreadRuntime {
         Ok(())
     }
 
+    pub async fn recover_interrupted_subagents(&self) -> acp::Result<Vec<ThreadAgent>> {
+        let interrupted_ids = {
+            let thread = self.thread.lock().await;
+            if thread.status == ThreadStatus::Closed {
+                return Ok(Vec::new());
+            }
+            thread
+                .agents
+                .values()
+                .filter(|agent| agent.status == ThreadAgentStatus::Running)
+                .map(|agent| agent.id.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let mut recovered = Vec::with_capacity(interrupted_ids.len());
+        for agent_id in interrupted_ids {
+            if let Some(updated) = self
+                .set_thread_agent_status(
+                    &agent_id,
+                    ThreadAgentStatus::Error,
+                    Some(
+                        "Subagent process was interrupted before it reported completion."
+                            .to_string(),
+                    ),
+                )
+                .await?
+            {
+                recovered.push(updated);
+            }
+        }
+        Ok(recovered)
+    }
+
     pub async fn start_subagent_assignment(
         self: &Arc<Self>,
         route: &RouteKey,
