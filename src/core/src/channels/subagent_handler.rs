@@ -177,6 +177,10 @@ impl SubagentReportTracker {
 
 #[async_trait::async_trait]
 impl SubagentCompletionValidator for SubagentReportTracker {
+    async fn reset_completion(&self) {
+        self.state.lock().await.assistant_text.clear();
+    }
+
     async fn validate_completion(&self) -> Result<SubagentCompletionResult, String> {
         let text = self.state.lock().await.assistant_text.clone();
         validate_report_text(&self.expected_agent, &text)
@@ -347,5 +351,39 @@ mod tests {
 
         assert_eq!(result.status, ThreadAgentStatus::Error);
         assert_eq!(result.last_error.as_deref(), Some("Blocked by failing test."));
+    }
+
+    #[test]
+    fn report_tracker_reset_supports_multiple_assignments() {
+        let tracker = SubagentReportTracker::new(test_agent());
+        let first = acp::SessionNotification::new(
+            "session-a",
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Text(acp::TextContent::new(
+                    r#"<va-agent-protocol>{"protocol":"va-agent-protocol","kind":"report","turn_id":"mat_a","from_agent_id":"00000000-0000-0000-0000-000000000001","status":"completed","summary":"First."}</va-agent-protocol>"#,
+                )),
+            )),
+        );
+        let second = acp::SessionNotification::new(
+            "session-a",
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Text(acp::TextContent::new(
+                    r#"<va-agent-protocol>{"protocol":"va-agent-protocol","kind":"report","turn_id":"mat_a","from_agent_id":"00000000-0000-0000-0000-000000000001","status":"error","summary":"Second failed."}</va-agent-protocol>"#,
+                )),
+            )),
+        );
+
+        futures::executor::block_on(async {
+            tracker.record_notification(&first).await;
+            assert_eq!(
+                tracker.validate_completion().await.unwrap().status,
+                ThreadAgentStatus::Completed
+            );
+            tracker.reset_completion().await;
+            tracker.record_notification(&second).await;
+            let result = tracker.validate_completion().await.unwrap();
+            assert_eq!(result.status, ThreadAgentStatus::Error);
+            assert_eq!(result.last_error.as_deref(), Some("Second failed."));
+        });
     }
 }

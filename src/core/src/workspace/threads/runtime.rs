@@ -32,9 +32,11 @@ pub struct ThreadRuntimeState {
     pub multi_agent_turns: Vec<MultiAgentTurn>,
 }
 
+#[derive(Clone)]
 struct SubagentRuntime {
     agent: Arc<Agent>,
     session_id: String,
+    completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +47,8 @@ pub struct SubagentCompletionResult {
 
 #[async_trait::async_trait]
 pub trait SubagentCompletionValidator: Send + Sync + 'static {
+    async fn reset_completion(&self);
+
     async fn validate_completion(&self) -> Result<SubagentCompletionResult, String>;
 }
 
@@ -362,13 +366,18 @@ impl ThreadRuntime {
             }
         };
         let session_id = session.session_id.to_string();
+        let completion_validator_for_runtime = completion_validator.clone();
         self.subagents.lock().await.insert(
             thread_agent.id.clone(),
             SubagentRuntime {
                 agent: Arc::clone(&agent),
                 session_id: session_id.clone(),
+                completion_validator: completion_validator_for_runtime,
             },
         );
+        if let Some(validator) = completion_validator.as_ref() {
+            validator.reset_completion().await;
+        }
 
         if let Some(updated) = self
             .set_thread_agent_status(&thread_agent.id, ThreadAgentStatus::Running, None)
@@ -389,6 +398,125 @@ impl ThreadRuntime {
                 .await;
             let next = match result {
                 Ok(_) => match completion_validator {
+                    Some(validator) => match validator.validate_completion().await {
+                        Ok(completion) => {
+                            runtime
+                                .set_thread_agent_status(
+                                    &agent_id,
+                                    completion.status,
+                                    completion.last_error,
+                                )
+                                .await
+                        }
+                        Err(message) => {
+                            runtime
+                                .set_thread_agent_status(
+                                    &agent_id,
+                                    ThreadAgentStatus::Error,
+                                    Some(message),
+                                )
+                                .await
+                        }
+                    },
+                    None => {
+                        runtime
+                            .set_thread_agent_status(&agent_id, ThreadAgentStatus::Completed, None)
+                            .await
+                    }
+                },
+                Err(error) => {
+                    let message = error.message.to_string();
+                    runtime
+                        .set_thread_agent_status(
+                            &agent_id,
+                            ThreadAgentStatus::Error,
+                            Some(message),
+                        )
+                        .await
+                }
+            };
+            match next {
+                Ok(Some(updated)) => {
+                    let _ = status_tx.send(updated);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        error = %error.message,
+                        "failed to update subagent status"
+                    );
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    pub async fn prompt_subagent_assignment(
+        self: &Arc<Self>,
+        agent_id: &ThreadAgentId,
+        assignment: serde_json::Value,
+        status_tx: mpsc::UnboundedSender<ThreadAgent>,
+    ) -> acp::Result<()> {
+        self.mark_activity();
+        if self.thread.lock().await.status == ThreadStatus::Closed {
+            return Err(acp::Error::new(-32603, "workspace thread is closed"));
+        }
+
+        let thread_agent = {
+            let thread = self.thread.lock().await;
+            let agent = thread
+                .agents
+                .get(agent_id)
+                .ok_or_else(|| acp::Error::new(-32602, "subagent not found"))?;
+            if agent.status == ThreadAgentStatus::Running {
+                return Err(acp::Error::new(-32603, "subagent is already running"));
+            }
+            agent.clone()
+        };
+        validate_subagent_assignment(&thread_agent, agent_id, &assignment)?;
+
+        let Some(subagent) = self.subagents.lock().await.get(agent_id).cloned() else {
+            if let Ok(Some(updated)) = self
+                .set_thread_agent_status(
+                    agent_id,
+                    ThreadAgentStatus::Error,
+                    Some("Subagent process is not available in this host runtime.".to_string()),
+                )
+                .await
+            {
+                let _ = status_tx.send(updated);
+            }
+            return Err(acp::Error::new(
+                -32603,
+                "subagent process is not available in this host runtime",
+            ));
+        };
+
+        if let Some(validator) = subagent.completion_validator.as_ref() {
+            validator.reset_completion().await;
+        }
+        if let Some(updated) = self
+            .set_thread_agent_status(agent_id, ThreadAgentStatus::Running, None)
+            .await?
+        {
+            let _ = status_tx.send(updated);
+        }
+
+        let prompt = subagent_assignment_prompt_from_value(&thread_agent, &assignment);
+        let runtime = Arc::clone(self);
+        let agent_id = agent_id.clone();
+        tokio::spawn(async move {
+            let result = subagent
+                .agent
+                .prompt(acp::PromptRequest::new(
+                    subagent.session_id,
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                ))
+                .await;
+            let next = match result {
+                Ok(_) => match subagent.completion_validator {
                     Some(validator) => match validator.validate_completion().await {
                         Ok(completion) => {
                             runtime
@@ -870,7 +998,81 @@ fn subagent_assignment_prompt(agent: &ThreadAgent) -> String {
             "worktree": agent.worktree.clone(),
         }
     });
-    let report_schema = serde_json::json!({
+    subagent_assignment_prompt_from_value(agent, &assignment)
+}
+
+fn subagent_assignment_prompt_from_value(
+    agent: &ThreadAgent,
+    assignment: &serde_json::Value,
+) -> String {
+    let report_schema = subagent_report_schema(agent);
+    format!(
+        "You are a VibeAround subagent named {name}.\n\
+         Work only inside your current git worktree. Do not merge branches or clean up worktrees.\n\
+         Complete the assignment independently, then report back to the host using only a `va-agent-protocol` report envelope.\n\
+         The final assistant message must contain exactly one XML envelope and no other prose. The JSON inside must match this report shape:\n\
+         <va-agent-protocol>\n{report_schema}\n</va-agent-protocol>\n\n\
+         <va-agent-protocol>\n{assignment}\n</va-agent-protocol>",
+        name = agent.name.as_str(),
+        report_schema =
+            serde_json::to_string_pretty(&report_schema).unwrap_or_else(|_| report_schema.to_string()),
+        assignment = serde_json::to_string_pretty(assignment).unwrap_or_else(|_| assignment.to_string())
+    )
+}
+
+fn validate_subagent_assignment(
+    agent: &ThreadAgent,
+    agent_id: &ThreadAgentId,
+    assignment: &serde_json::Value,
+) -> acp::Result<()> {
+    let object = assignment
+        .as_object()
+        .ok_or_else(|| acp::Error::new(-32602, "assignment must be a JSON object"))?;
+    require_assignment_field(object, "protocol", "va-agent-protocol")?;
+    require_assignment_field(object, "kind", "assignment")?;
+    require_assignment_field(object, "turn_id", agent.turn_id.as_str())?;
+    require_assignment_field(object, "to_agent_id", agent_id.as_str())?;
+    let task = object
+        .get("task")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|task| !task.is_empty())
+        .ok_or_else(|| acp::Error::new(-32602, "assignment `task` must be a non-empty string"))?;
+    if task.chars().count() > 24_000 {
+        return Err(acp::Error::new(-32602, "assignment `task` is too large"));
+    }
+    Ok(())
+}
+
+fn require_assignment_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    expected: &str,
+) -> acp::Result<()> {
+    let actual = object
+        .get(field)
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| {
+            acp::Error::new(
+                -32602,
+                format!("assignment `{}` must be a string", field),
+            )
+        })?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(acp::Error::new(
+            -32602,
+            format!(
+                "assignment `{}` expected `{}`, got `{}`",
+                field, expected, actual
+            ),
+        ))
+    }
+}
+
+fn subagent_report_schema(agent: &ThreadAgent) -> serde_json::Value {
+    serde_json::json!({
         "protocol": "va-agent-protocol",
         "kind": "report",
         "turn_id": agent.turn_id.to_string(),
@@ -880,20 +1082,7 @@ fn subagent_assignment_prompt(agent: &ThreadAgent) -> String {
         "files_changed": ["relative/path.rs"],
         "tests": ["cargo test --manifest-path path/Cargo.toml"],
         "notes": ["Important caveats, blockers, or follow-up needed."]
-    });
-    format!(
-        "You are a VibeAround subagent named {name}.\n\
-         Work only inside your current git worktree. Do not merge branches or clean up worktrees.\n\
-         Complete the assignment independently, then report back to the host using only a `va-agent-protocol` report envelope.\n\
-         The final assistant message must contain exactly one XML envelope and no other prose. The JSON inside must match this report shape:\n\
-         <va-agent-protocol>\n{report_schema}\n</va-agent-protocol>\n\n\
-         <va-agent-protocol>\n{assignment}\n</va-agent-protocol>",
-        name = agent.name.as_str(),
-        report_schema = serde_json::to_string_pretty(&report_schema)
-            .unwrap_or_else(|_| report_schema.to_string()),
-        assignment = serde_json::to_string_pretty(&assignment)
-            .unwrap_or_else(|_| assignment.to_string())
-    )
+    })
 }
 
 async fn append_thread_event(store: &ThreadEventStore, event: &ThreadEvent) -> acp::Result<()> {
@@ -910,6 +1099,19 @@ mod tests {
 
     use super::*;
     use crate::workspace::registry::WorkspaceId;
+
+    fn test_thread_agent() -> ThreadAgent {
+        ThreadAgent::ready(
+            ThreadAgentId::from("00000000-0000-0000-0000-000000000001"),
+            "mat_a",
+            "John Planner",
+            "codex",
+            None,
+            "va/subagents/mat_a/john-planner",
+            "/tmp/john-planner",
+            Some("plan".to_string()),
+        )
+    }
 
     fn thread_with_sessions() -> WorkspaceThread {
         let host = HostBinding::new("codex", Some("profile_a".to_string()));
@@ -959,5 +1161,52 @@ mod tests {
 
         assert_eq!(text.len(), 240);
         assert!(text.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn validates_matching_follow_up_assignment() {
+        let agent = test_thread_agent();
+        let assignment = serde_json::json!({
+            "protocol": "va-agent-protocol",
+            "kind": "assignment",
+            "turn_id": "mat_a",
+            "to_agent_id": "00000000-0000-0000-0000-000000000001",
+            "task": "Run another review pass.",
+            "context": { "focus": "tests" }
+        });
+
+        validate_subagent_assignment(&agent, &agent.id, &assignment).unwrap();
+    }
+
+    #[test]
+    fn rejects_follow_up_assignment_for_wrong_turn() {
+        let agent = test_thread_agent();
+        let assignment = serde_json::json!({
+            "protocol": "va-agent-protocol",
+            "kind": "assignment",
+            "turn_id": "mat_other",
+            "to_agent_id": "00000000-0000-0000-0000-000000000001",
+            "task": "Run another review pass."
+        });
+
+        let error = validate_subagent_assignment(&agent, &agent.id, &assignment).unwrap_err();
+
+        assert!(error.message.contains("turn_id"));
+    }
+
+    #[test]
+    fn rejects_follow_up_assignment_without_task() {
+        let agent = test_thread_agent();
+        let assignment = serde_json::json!({
+            "protocol": "va-agent-protocol",
+            "kind": "assignment",
+            "turn_id": "mat_a",
+            "to_agent_id": "00000000-0000-0000-0000-000000000001",
+            "task": " "
+        });
+
+        let error = validate_subagent_assignment(&agent, &agent.id, &assignment).unwrap_err();
+
+        assert!(error.message.contains("task"));
     }
 }

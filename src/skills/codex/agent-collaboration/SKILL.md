@@ -42,8 +42,9 @@ Subagents must report back with:
   "from_agent_id": "<subagent_guid>",
   "status": "completed",
   "summary": "<what changed or what was found>",
-  "artifacts": [],
-  "questions_for_host": []
+  "files_changed": [],
+  "tests": [],
+  "notes": []
 }
 </va-agent-protocol>
 ```
@@ -79,3 +80,26 @@ Rules:
 - If VibeAround reports a dirty workspace or worktree creation error, tell the user and stop the multi-agent turn.
 
 After the tool returns, summarize the created subagents, their branches, and their worktrees.
+
+## Continue Delegating
+
+After `initialize_subagents` returns, the host can continue delegating to an existing subagent by emitting an assignment envelope in the host response. VibeAround intercepts the envelope and sends it to the target subagent:
+
+```xml
+<va-agent-protocol>
+{
+  "protocol": "va-agent-protocol",
+  "kind": "assignment",
+  "turn_id": "<multi_agent_turn_id>",
+  "to_agent_id": "<subagent_guid>",
+  "task": "<follow-up task>",
+  "context": "<only what changed since the previous assignment>"
+}
+</va-agent-protocol>
+```
+
+Rules:
+
+- Use exactly the `turn_id` and `to_agent_id` returned by `initialize_subagents`.
+- Include a non-empty `task`.
+- Do not use MCP for follow-up delegation. The protocol envelope is the control path.
