@@ -449,16 +449,27 @@ async fn start_initialized_subagents(
 
     let mut errors = Vec::new();
     for agent in agents {
+        let tracker =
+            Arc::new(common::channels::subagent_handler::SubagentReportTracker::new(agent.clone()));
         let handler = Arc::new(
             common::channels::subagent_handler::SubagentBridgeHandler::for_thread(
                 state.channel_hub.plugin_host(),
                 &manager,
                 thread_id.clone(),
                 agent.clone(),
+                Arc::clone(&tracker),
             ),
         );
+        let validator: Arc<dyn common::workspace::threads::runtime::SubagentCompletionValidator> =
+            tracker;
         if let Err(error) = runtime
-            .start_subagent_assignment(&launch_route, agent.clone(), handler, status_tx.clone())
+            .start_subagent_assignment(
+                &launch_route,
+                agent.clone(),
+                handler,
+                status_tx.clone(),
+                Some(validator),
+            )
             .await
         {
             errors.push(format!("{}: {}", agent.name, error.message));

@@ -7,10 +7,14 @@
 use std::sync::{Arc, Weak};
 
 use agent_client_protocol::schema as acp;
+use tokio::sync::Mutex;
 
 use crate::agent::AgentClientHandler;
 use crate::routing::RouteKey;
-use crate::workspace::threads::{ThreadAgent, WorkspaceThreadId};
+use crate::workspace::threads::runtime::{
+    SubagentCompletionResult, SubagentCompletionValidator,
+};
+use crate::workspace::threads::{ThreadAgent, ThreadAgentStatus, WorkspaceThreadId};
 use crate::workspace::WorkspaceThreadManager;
 
 use super::plugin_host::PluginHost;
@@ -21,6 +25,7 @@ pub struct SubagentBridgeHandler {
     workspace_threads: Weak<WorkspaceThreadManager>,
     thread_id: WorkspaceThreadId,
     thread_agent: ThreadAgent,
+    report_tracker: Arc<SubagentReportTracker>,
 }
 
 impl SubagentBridgeHandler {
@@ -29,12 +34,14 @@ impl SubagentBridgeHandler {
         workspace_threads: &Arc<WorkspaceThreadManager>,
         thread_id: WorkspaceThreadId,
         thread_agent: ThreadAgent,
+        report_tracker: Arc<SubagentReportTracker>,
     ) -> Self {
         Self {
             plugin_host,
             workspace_threads: Arc::downgrade(workspace_threads),
             thread_id,
             thread_agent,
+            report_tracker,
         }
     }
 
@@ -65,6 +72,7 @@ impl SubagentBridgeHandler {
 #[async_trait::async_trait]
 impl AgentClientHandler for SubagentBridgeHandler {
     async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
+        self.report_tracker.record_notification(&args).await;
         let payload = serde_json::to_value(&args)
             .map_err(|e| acp::Error::new(-32603, format!("serialize: {}", e)))?;
 
@@ -135,5 +143,209 @@ impl AgentClientHandler for SubagentBridgeHandler {
                 ))
             }
         }
+    }
+}
+
+pub struct SubagentReportTracker {
+    expected_agent: ThreadAgent,
+    state: Mutex<SubagentReportState>,
+}
+
+#[derive(Default)]
+struct SubagentReportState {
+    assistant_text: String,
+}
+
+impl SubagentReportTracker {
+    pub fn new(expected_agent: ThreadAgent) -> Self {
+        Self {
+            expected_agent,
+            state: Mutex::new(SubagentReportState::default()),
+        }
+    }
+
+    async fn record_notification(&self, args: &acp::SessionNotification) {
+        let acp::SessionUpdate::AgentMessageChunk(chunk) = &args.update else {
+            return;
+        };
+        let Some(text) = content_block_text(&chunk.content) else {
+            return;
+        };
+        self.state.lock().await.assistant_text.push_str(text);
+    }
+}
+
+#[async_trait::async_trait]
+impl SubagentCompletionValidator for SubagentReportTracker {
+    async fn validate_completion(&self) -> Result<SubagentCompletionResult, String> {
+        let text = self.state.lock().await.assistant_text.clone();
+        validate_report_text(&self.expected_agent, &text)
+    }
+}
+
+fn content_block_text(block: &acp::ContentBlock) -> Option<&str> {
+    match block {
+        acp::ContentBlock::Text(text) => Some(text.text.as_str()),
+        _ => None,
+    }
+}
+
+fn validate_report_text(
+    expected_agent: &ThreadAgent,
+    text: &str,
+) -> Result<SubagentCompletionResult, String> {
+    let envelope = extract_single_protocol_envelope(text)?;
+    let value: serde_json::Value = serde_json::from_str(envelope)
+        .map_err(|error| format!("invalid va-agent-protocol report JSON: {}", error))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "va-agent-protocol report must be a JSON object".to_string())?;
+
+    require_field(object, "protocol", "va-agent-protocol")?;
+    require_field(object, "kind", "report")?;
+    require_field(object, "turn_id", expected_agent.turn_id.as_str())?;
+    require_field(object, "from_agent_id", expected_agent.id.as_str())?;
+
+    let status = object
+        .get("status")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "va-agent-protocol report missing string field `status`".to_string())?;
+    let summary = object
+        .get("summary")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .ok_or_else(|| "va-agent-protocol report missing non-empty `summary`".to_string())?;
+
+    match status {
+        "completed" => Ok(SubagentCompletionResult {
+            status: ThreadAgentStatus::Completed,
+            last_error: None,
+        }),
+        "error" => Ok(SubagentCompletionResult {
+            status: ThreadAgentStatus::Error,
+            last_error: Some(summary.to_string()),
+        }),
+        other => Err(format!(
+            "va-agent-protocol report has invalid status `{}`; expected `completed` or `error`",
+            other
+        )),
+    }
+}
+
+fn extract_single_protocol_envelope(text: &str) -> Result<&str, String> {
+    const OPEN: &str = "<va-agent-protocol>";
+    const CLOSE: &str = "</va-agent-protocol>";
+    let trimmed = text.trim();
+    if trimmed.matches(OPEN).count() != 1 || trimmed.matches(CLOSE).count() != 1 {
+        return Err("subagent final response must contain exactly one envelope".to_string());
+    }
+    let start = trimmed
+        .find(OPEN)
+        .ok_or_else(|| "subagent final response missing <va-agent-protocol> envelope".to_string())?;
+    if !trimmed[..start].trim().is_empty() {
+        return Err(
+            "subagent final response must not include prose before va-agent-protocol envelope"
+                .to_string(),
+        );
+    }
+    let content_start = start + OPEN.len();
+    let close_offset = trimmed[content_start..]
+        .find(CLOSE)
+        .ok_or_else(|| "subagent final response missing </va-agent-protocol> close tag".to_string())?;
+    let content_end = content_start + close_offset;
+    let after = content_end + CLOSE.len();
+    if !trimmed[after..].trim().is_empty() {
+        return Err(
+            "subagent final response must not include prose after va-agent-protocol envelope"
+                .to_string(),
+        );
+    }
+    Ok(trimmed[content_start..content_end].trim())
+}
+
+fn require_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    expected: &str,
+) -> Result<(), String> {
+    let actual = object
+        .get(field)
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| format!("va-agent-protocol report missing string field `{}`", field))?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "va-agent-protocol report field `{}` expected `{}`, got `{}`",
+            field, expected, actual
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workspace::threads::{MultiAgentTurnId, ThreadAgentId};
+
+    fn test_agent() -> ThreadAgent {
+        ThreadAgent::ready(
+            ThreadAgentId::from("00000000-0000-0000-0000-000000000001"),
+            MultiAgentTurnId::from("mat_a"),
+            "John Planner",
+            "codex",
+            None,
+            "va/subagents/mat_a/john-planner",
+            "/tmp/john-planner",
+            Some("plan".to_string()),
+        )
+    }
+
+    #[test]
+    fn validates_completed_report_envelope() {
+        let text = r#"
+<va-agent-protocol>
+{
+  "protocol": "va-agent-protocol",
+  "kind": "report",
+  "turn_id": "mat_a",
+  "from_agent_id": "00000000-0000-0000-0000-000000000001",
+  "status": "completed",
+  "summary": "Done."
+}
+</va-agent-protocol>
+"#;
+
+        let result = validate_report_text(&test_agent(), text).unwrap();
+
+        assert_eq!(result.status, ThreadAgentStatus::Completed);
+        assert!(result.last_error.is_none());
+    }
+
+    #[test]
+    fn rejects_report_with_extra_prose() {
+        let text = r#"Done.
+<va-agent-protocol>
+{"protocol":"va-agent-protocol","kind":"report","turn_id":"mat_a","from_agent_id":"00000000-0000-0000-0000-000000000001","status":"completed","summary":"Done."}
+</va-agent-protocol>
+"#;
+
+        let error = validate_report_text(&test_agent(), text).unwrap_err();
+
+        assert!(error.contains("before va-agent-protocol"));
+    }
+
+    #[test]
+    fn report_status_error_maps_to_agent_error() {
+        let text = r#"
+<va-agent-protocol>
+{"protocol":"va-agent-protocol","kind":"report","turn_id":"mat_a","from_agent_id":"00000000-0000-0000-0000-000000000001","status":"error","summary":"Blocked by failing test."}
+</va-agent-protocol>
+"#;
+
+        let result = validate_report_text(&test_agent(), text).unwrap();
+
+        assert_eq!(result.status, ThreadAgentStatus::Error);
+        assert_eq!(result.last_error.as_deref(), Some("Blocked by failing test."));
     }
 }

@@ -37,6 +37,17 @@ struct SubagentRuntime {
     session_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct SubagentCompletionResult {
+    pub status: ThreadAgentStatus,
+    pub last_error: Option<String>,
+}
+
+#[async_trait::async_trait]
+pub trait SubagentCompletionValidator: Send + Sync + 'static {
+    async fn validate_completion(&self) -> Result<SubagentCompletionResult, String>;
+}
+
 pub struct ThreadRuntime {
     thread: Mutex<WorkspaceThread>,
     workspace: PathBuf,
@@ -272,6 +283,7 @@ impl ThreadRuntime {
         thread_agent: ThreadAgent,
         handler: Arc<dyn AgentClientHandler>,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
+        completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
     ) -> acp::Result<()> {
         self.mark_activity();
         if self.thread.lock().await.status == ThreadStatus::Closed {
@@ -343,9 +355,33 @@ impl ThreadRuntime {
                 ))
                 .await;
             let next = match result {
-                Ok(_) => runtime
-                    .set_thread_agent_status(&agent_id, ThreadAgentStatus::Completed, None)
-                    .await,
+                Ok(_) => match completion_validator {
+                    Some(validator) => match validator.validate_completion().await {
+                        Ok(completion) => {
+                            runtime
+                                .set_thread_agent_status(
+                                    &agent_id,
+                                    completion.status,
+                                    completion.last_error,
+                                )
+                                .await
+                        }
+                        Err(message) => {
+                            runtime
+                                .set_thread_agent_status(
+                                    &agent_id,
+                                    ThreadAgentStatus::Error,
+                                    Some(message),
+                                )
+                                .await
+                        }
+                    },
+                    None => {
+                        runtime
+                            .set_thread_agent_status(&agent_id, ThreadAgentStatus::Completed, None)
+                            .await
+                    }
+                },
                 Err(error) => {
                     let message = error.message.to_string();
                     runtime
@@ -801,12 +837,27 @@ fn subagent_assignment_prompt(agent: &ThreadAgent) -> String {
             "worktree": agent.worktree.clone(),
         }
     });
+    let report_schema = serde_json::json!({
+        "protocol": "va-agent-protocol",
+        "kind": "report",
+        "turn_id": agent.turn_id.to_string(),
+        "from_agent_id": agent.id.to_string(),
+        "status": "completed",
+        "summary": "One or two sentences describing the outcome.",
+        "files_changed": ["relative/path.rs"],
+        "tests": ["cargo test --manifest-path path/Cargo.toml"],
+        "notes": ["Important caveats, blockers, or follow-up needed."]
+    });
     format!(
         "You are a VibeAround subagent named {name}.\n\
          Work only inside your current git worktree. Do not merge branches or clean up worktrees.\n\
-         Complete the assignment independently, then report back to the host using only a `va-agent-protocol` report envelope.\n\n\
+         Complete the assignment independently, then report back to the host using only a `va-agent-protocol` report envelope.\n\
+         The final assistant message must contain exactly one XML envelope and no other prose. The JSON inside must match this report shape:\n\
+         <va-agent-protocol>\n{report_schema}\n</va-agent-protocol>\n\n\
          <va-agent-protocol>\n{assignment}\n</va-agent-protocol>",
         name = agent.name.as_str(),
+        report_schema = serde_json::to_string_pretty(&report_schema)
+            .unwrap_or_else(|_| report_schema.to_string()),
         assignment = serde_json::to_string_pretty(&assignment)
             .unwrap_or_else(|_| assignment.to_string())
     )
