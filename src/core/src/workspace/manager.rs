@@ -20,8 +20,8 @@ use super::threads::attachment::{
 use super::threads::runtime::ThreadRuntime;
 use super::threads::runtime::ThreadRuntimeState;
 use super::threads::store::{
-    HostBinding, ThreadEvent, ThreadEventStore, ThreadProjection, WorkspaceThread,
-    WorkspaceThreadId,
+    HostBinding, MultiAgentTurn, ThreadAgent, ThreadEvent, ThreadEventStore, ThreadProjection,
+    WorkspaceThread, WorkspaceThreadId,
 };
 
 pub const AGENT_HOST_IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(10 * 60);
@@ -296,6 +296,19 @@ impl WorkspaceThreadManager {
                 Ok(PendingThreadSelection::Invalid { threads: choices })
             }
         }
+    }
+
+    pub async fn initialize_multi_agent_turn(
+        &self,
+        thread_id: &WorkspaceThreadId,
+        turn: MultiAgentTurn,
+        agents: Vec<ThreadAgent>,
+    ) -> anyhow::Result<()> {
+        let runtime = self.runtime_for_thread(thread_id).await?;
+        runtime
+            .initialize_multi_agent_turn(turn, agents)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))
     }
 
     pub async fn attach_thread(

@@ -13,7 +13,8 @@ use crate::routing::RouteKey;
 use crate::workspace::registry::WorkspaceId;
 
 use super::store::{
-    HostBinding, ThreadEvent, ThreadEventStore, ThreadStatus, WorkspaceThread, WorkspaceThreadId,
+    HostBinding, MultiAgentTurn, ThreadAgent, ThreadEvent, ThreadEventStore, ThreadStatus,
+    WorkspaceThread, WorkspaceThreadId,
 };
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,8 @@ pub struct ThreadRuntimeState {
     pub busy: bool,
     pub failed: Option<String>,
     pub initialize: Option<acp::InitializeResponse>,
+    pub agents: Vec<ThreadAgent>,
+    pub multi_agent_turns: Vec<MultiAgentTurn>,
 }
 
 pub struct ThreadRuntime {
@@ -80,6 +83,8 @@ impl ThreadRuntime {
             busy: *self.busy.lock().await,
             failed: self.failed.lock().await.clone(),
             initialize: self.initialize.lock().await.clone(),
+            agents: thread.agents.values().cloned().collect(),
+            multi_agent_turns: thread.multi_agent_turns.values().cloned().collect(),
         }
     }
 
@@ -220,6 +225,24 @@ impl ThreadRuntime {
         let next_session_id = latest_session_for_host(&thread);
         drop(thread);
         *self.session_id.lock().await = next_session_id;
+        self.notify_change();
+        Ok(())
+    }
+
+    pub async fn initialize_multi_agent_turn(
+        &self,
+        turn: MultiAgentTurn,
+        agents: Vec<ThreadAgent>,
+    ) -> acp::Result<()> {
+        self.mark_activity();
+        if self.thread.lock().await.status == ThreadStatus::Closed {
+            return Err(acp::Error::new(-32603, "workspace thread is closed"));
+        }
+
+        let thread_id = self.thread.lock().await.id.clone();
+        let event = ThreadEvent::multi_agent_turn_initialized(thread_id, turn, agents);
+        append_thread_event(&self.store, &event).await?;
+        self.apply_thread_event(&event).await?;
         self.notify_change();
         Ok(())
     }
@@ -427,6 +450,20 @@ impl ThreadRuntime {
                     .push(session);
                 thread.updated_at = occurred_at.clone();
             }
+            ThreadEvent::MultiAgentTurnInitialized {
+                occurred_at,
+                turn,
+                agents,
+                ..
+            } => {
+                thread
+                    .multi_agent_turns
+                    .insert(turn.id.clone(), turn.clone());
+                for agent in agents {
+                    thread.agents.insert(agent.id.clone(), agent.clone());
+                }
+                thread.updated_at = occurred_at.clone();
+            }
             ThreadEvent::Closed {
                 occurred_at,
                 reason,
@@ -510,6 +547,8 @@ mod tests {
             status: ThreadStatus::Open,
             first_user_prompt: None,
             agent_sessions: sessions,
+            agents: BTreeMap::new(),
+            multi_agent_turns: BTreeMap::new(),
             created_at: "2026-01-01T00:00:00.000Z".to_string(),
             updated_at: "2026-01-01T00:00:00.000Z".to_string(),
         }

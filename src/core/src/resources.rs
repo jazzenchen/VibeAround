@@ -267,25 +267,40 @@ pub fn mcp_tools_list_json() -> serde_json::Value {
         .map(|t| serde_json::to_value(t).unwrap())
         .collect();
 
-    // Inject agent_kind enum values into tool schemas that have an agent_kind property
+    // Inject agent_kind enum values wherever tool schemas expose an agent selector.
     for tool in &mut tools {
         if let Some(schema) = tool.get_mut("inputSchema") {
-            if let Some(props) = schema.get_mut("properties") {
-                for key in ["agent_kind", "kind"] {
-                    if let Some(prop) = props.get_mut(key) {
-                        if let Some(obj) = prop.as_object_mut() {
-                            obj.insert(
-                                "enum".to_string(),
-                                serde_json::Value::Array(agent_ids.clone()),
-                            );
-                        }
-                    }
-                }
-            }
+            inject_agent_schema_enums(schema, &agent_ids);
         }
     }
 
     serde_json::json!({ "tools": tools })
+}
+
+fn inject_agent_schema_enums(schema: &mut serde_json::Value, agent_ids: &[serde_json::Value]) {
+    match schema {
+        serde_json::Value::Object(obj) => {
+            if let Some(props) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) {
+                for key in ["agent_kind", "kind"] {
+                    if let Some(prop) = props.get_mut(key).and_then(|v| v.as_object_mut()) {
+                        prop.insert(
+                            "enum".to_string(),
+                            serde_json::Value::Array(agent_ids.to_vec()),
+                        );
+                    }
+                }
+            }
+            for value in obj.values_mut() {
+                inject_agent_schema_enums(value, agent_ids);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                inject_agent_schema_enums(item, agent_ids);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Format system commands into help text.

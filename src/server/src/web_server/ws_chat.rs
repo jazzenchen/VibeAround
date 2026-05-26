@@ -1114,6 +1114,9 @@ fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
             request_id,
             request: payload,
         },
+        ChannelOutput::MultiAgentTurn { turn, agents, .. } => {
+            ChatEvent::MultiAgentTurn { turn, agents }
+        }
         ChannelOutput::PromptDone { message_id, .. } => ChatEvent::PromptDone { message_id },
         ChannelOutput::TurnStatus { active, .. } => ChatEvent::TurnStatus { active },
     }
