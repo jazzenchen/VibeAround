@@ -4,11 +4,12 @@
 //! relevant workspace config / preview store / session files, and returns a
 //! JSON-RPC response.
 //!
-//! Tools do not touch agent processes directly. `initialize_subagents` is the
-//! collaboration exception: it creates git worktrees and records thread state,
-//! but still leaves live agent process orchestration to the thread runtime.
+//! Tools mostly do not touch agent processes directly. `initialize_subagents`
+//! is the collaboration exception: it creates git worktrees, records thread
+//! state, and asks the thread runtime to start isolated subagent sessions.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use axum::Json;
@@ -291,15 +292,19 @@ pub(super) async fn mcp_initialize_subagents(
     }
 
     notify_web_multi_agent_turn(state, &thread_id, &initialized.turn, &initialized.agents).await;
+    let start_errors = start_initialized_subagents(state, &thread_id, &initialized.agents).await;
 
     let body = serde_json::json!({
         "protocol": "va-agent-protocol",
         "kind": "multi_agent_turn",
         "turn": initialized.turn,
         "agents": initialized.agents,
+        "started": start_errors.is_empty(),
+        "start_errors": start_errors,
         "notes": [
             "Subagents are initialized in isolated git worktrees.",
-            "The host agent remains responsible for assignment, review, merge, and cleanup."
+            "Subagents have been assigned their initial tasks.",
+            "The host agent remains responsible for review, merge, and cleanup."
         ]
     });
     mcp_text(
@@ -402,27 +407,7 @@ async fn notify_web_multi_agent_turn(
     turn: &common::workspace::threads::MultiAgentTurn,
     agents: &[common::workspace::threads::ThreadAgent],
 ) {
-    let routes = match state
-        .channel_hub
-        .workspace_thread_manager()
-        .attached_routes_for_thread(thread_id)
-        .await
-    {
-        Ok(routes) => routes,
-        Err(error) => {
-            tracing::warn!(
-                thread_id = %thread_id,
-                error = %error,
-                "failed to notify web clients about multi-agent turn"
-            );
-            return;
-        }
-    };
-
-    for route in routes
-        .into_iter()
-        .filter(|route| route.channel_kind == "web")
-    {
+    for route in web_routes_for_thread(state, thread_id, "multi-agent turn").await {
         state
             .channel_hub
             .send_output(common::channels::ChannelOutput::MultiAgentTurn {
@@ -431,6 +416,97 @@ async fn notify_web_multi_agent_turn(
                 agents: agents.to_vec(),
             })
             .await;
+    }
+}
+
+async fn start_initialized_subagents(
+    state: &AppState,
+    thread_id: &common::workspace::threads::WorkspaceThreadId,
+    agents: &[common::workspace::threads::ThreadAgent],
+) -> Vec<String> {
+    let manager = state.channel_hub.workspace_thread_manager();
+    let runtime = match manager.runtime_for_thread_id(thread_id).await {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return vec![format!("failed to load thread runtime: {:#}", error)];
+        }
+    };
+
+    let web_routes = web_routes_for_thread(state, thread_id, "subagent launch").await;
+    let launch_route = web_routes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| common::routing::RouteKey::new("web", thread_id.as_str()));
+    let (status_tx, mut status_rx) =
+        tokio::sync::mpsc::unbounded_channel::<common::workspace::threads::ThreadAgent>();
+    let state_for_status = state.clone();
+    let thread_for_status = thread_id.clone();
+    tokio::spawn(async move {
+        while let Some(agent) = status_rx.recv().await {
+            notify_web_subagent_status(&state_for_status, &thread_for_status, &agent).await;
+        }
+    });
+
+    let mut errors = Vec::new();
+    for agent in agents {
+        let handler = Arc::new(
+            common::channels::subagent_handler::SubagentBridgeHandler::for_thread(
+                state.channel_hub.plugin_host(),
+                &manager,
+                thread_id.clone(),
+                agent.clone(),
+            ),
+        );
+        if let Err(error) = runtime
+            .start_subagent_assignment(&launch_route, agent.clone(), handler, status_tx.clone())
+            .await
+        {
+            errors.push(format!("{}: {}", agent.name, error.message));
+        }
+    }
+    errors
+}
+
+async fn notify_web_subagent_status(
+    state: &AppState,
+    thread_id: &common::workspace::threads::WorkspaceThreadId,
+    agent: &common::workspace::threads::ThreadAgent,
+) {
+    for route in web_routes_for_thread(state, thread_id, "subagent status").await {
+        state
+            .channel_hub
+            .send_output(common::channels::ChannelOutput::SubagentStatus {
+                route,
+                agent: agent.clone(),
+            })
+            .await;
+    }
+}
+
+async fn web_routes_for_thread(
+    state: &AppState,
+    thread_id: &common::workspace::threads::WorkspaceThreadId,
+    purpose: &'static str,
+) -> Vec<common::routing::RouteKey> {
+    match state
+        .channel_hub
+        .workspace_thread_manager()
+        .attached_routes_for_thread(thread_id)
+        .await
+    {
+        Ok(routes) => routes
+            .into_iter()
+            .filter(|route| route.channel_kind == "web")
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                thread_id = %thread_id,
+                error = %error,
+                purpose,
+                "failed to resolve web routes for thread"
+            );
+            Vec::new()
+        }
     }
 }
 

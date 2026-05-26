@@ -1353,6 +1353,8 @@ export function ChatView({
       <SubagentPanel
         turns={multiAgentTurns}
         agents={subagents}
+        messagesByAgent={activeRuntime.subagentMessages}
+        displaySettings={displaySettings}
         open={subagentPanelOpen}
         selectedAgentId={selectedSubagentId}
         onOpenChange={setSubagentPanelOpen}

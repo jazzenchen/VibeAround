@@ -47,6 +47,7 @@ export function ChatRuntimeHost({
       resumeReplay: connection.resumeReplay,
       multiAgentTurns: connection.multiAgentTurns,
       subagents: connection.subagents,
+      subagentMessages: connection.subagentMessages,
       lastPromptDoneAt: connection.lastPromptDoneAt,
     });
   }, [
@@ -60,6 +61,7 @@ export function ChatRuntimeHost({
     connection.resumeReplay,
     connection.sessionMode,
     connection.streaming,
+    connection.subagentMessages,
     connection.subagents,
     onSnapshot,
     runtimeKey,

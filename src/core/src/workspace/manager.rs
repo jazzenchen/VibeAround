@@ -311,6 +311,13 @@ impl WorkspaceThreadManager {
             .map_err(|error| anyhow!(error.to_string()))
     }
 
+    pub async fn runtime_for_thread_id(
+        &self,
+        thread_id: &WorkspaceThreadId,
+    ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        self.runtime_for_thread(thread_id).await
+    }
+
     pub async fn attach_thread(
         &self,
         route: &RouteKey,

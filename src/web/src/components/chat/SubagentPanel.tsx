@@ -27,10 +27,14 @@ import { BrandIcon } from "@/components/brand-icon";
 import { Button } from "@/components/ui/button";
 import { getAgentDisplayName } from "@/lib/agents";
 import { cn } from "@/lib/utils";
+import { ChatMessageList } from "./ChatMessageList";
+import type { ChatDisplaySettings, ChatMessage } from "./chatTypes";
 
 interface SubagentPanelProps {
   turns: MultiAgentTurn[];
   agents: ThreadAgent[];
+  messagesByAgent: Record<string, ChatMessage[]>;
+  displaySettings: ChatDisplaySettings;
   open: boolean;
   selectedAgentId?: string;
   onOpenChange: (open: boolean) => void;
@@ -63,6 +67,8 @@ const statusMeta = {
 export function SubagentPanel({
   turns,
   agents,
+  messagesByAgent,
+  displaySettings,
   open,
   selectedAgentId,
   onOpenChange,
@@ -183,6 +189,8 @@ export function SubagentPanel({
         <SubagentExpandedView
           turns={turns}
           agents={sortedAgents}
+          messagesByAgent={messagesByAgent}
+          displaySettings={displaySettings}
           activeTurn={activeTurn}
           selectedAgentId={selectedAgent?.id}
           onSelectedAgentChange={onSelectedAgentChange}
@@ -241,6 +249,8 @@ function SubagentListButton({
 function SubagentExpandedView({
   turns,
   agents,
+  messagesByAgent,
+  displaySettings,
   activeTurn,
   selectedAgentId,
   onSelectedAgentChange,
@@ -248,6 +258,8 @@ function SubagentExpandedView({
 }: {
   turns: MultiAgentTurn[];
   agents: ThreadAgent[];
+  messagesByAgent: Record<string, ChatMessage[]>;
+  displaySettings: ChatDisplaySettings;
   activeTurn?: MultiAgentTurn;
   selectedAgentId?: string;
   onSelectedAgentChange: (agentId: string) => void;
@@ -314,6 +326,8 @@ function SubagentExpandedView({
               <ParallelAgentColumn
                 key={agent.id}
                 agent={agent}
+                messages={messagesByAgent[agent.id] ?? []}
+                displaySettings={displaySettings}
                 active={selectedAgentId === agent.id}
                 onSelect={() => onSelectedAgentChange(agent.id)}
               />
@@ -325,6 +339,8 @@ function SubagentExpandedView({
               <ParallelAgentColumn
                 key={agent.id}
                 agent={agent}
+                messages={messagesByAgent[agent.id] ?? []}
+                displaySettings={displaySettings}
                 active={selectedAgentId === agent.id}
                 onSelect={() => onSelectedAgentChange(agent.id)}
               />
@@ -338,10 +354,14 @@ function SubagentExpandedView({
 
 function ParallelAgentColumn({
   agent,
+  messages,
+  displaySettings,
   active,
   onSelect,
 }: {
   agent: ThreadAgent;
+  messages: ChatMessage[];
+  displaySettings: ChatDisplaySettings;
   active: boolean;
   onSelect: () => void;
 }) {
@@ -400,9 +420,21 @@ function ParallelAgentColumn({
         )}
 
         <PanelSection title={t("Messages")}>
-          <div className="rounded-md border border-dashed border-border/70 px-3 py-8 text-center text-xs text-muted-foreground">
-            {t("Waiting for report")}
-          </div>
+          {messages.length === 0 ? (
+            <div className="rounded-md border border-dashed border-border/70 px-3 py-8 text-center text-xs text-muted-foreground">
+              {t("Waiting for report")}
+            </div>
+          ) : (
+            <div className="flex h-[34rem] min-h-[22rem] overflow-hidden rounded-md border border-border/70 bg-background">
+              <ChatMessageList
+                messages={messages}
+                streaming={agent.status === "running"}
+                agentLabel={agent.name}
+                displaySettings={displaySettings}
+                workspacePath={agent.worktree}
+              />
+            </div>
+          )}
         </PanelSection>
       </div>
     </section>

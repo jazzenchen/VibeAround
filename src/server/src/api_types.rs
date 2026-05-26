@@ -273,6 +273,8 @@ pub struct PreviewsResponse {
 /// { "kind": "acp_notification", "payload": { /* acp::SessionNotification */ } }
 /// { "kind": "permission_request", "request_id": "pr-1", "request": { ... } }
 /// { "kind": "multi_agent_turn", "turn": { ... }, "agents": [...] }
+/// { "kind": "subagent_status", "agent": { ... } }
+/// { "kind": "subagent_acp_notification", "agent": { ... }, "payload": { ... } }
 /// { "kind": "command_menu", "system_commands": [...], "agent_commands": [...] }
 /// { "kind": "prompt_done", "message_id": "01HX..." }
 /// { "kind": "error", "error": "spawn failed: ..." }
@@ -306,6 +308,13 @@ pub enum ChatEvent {
     MultiAgentTurn {
         turn: common::workspace::threads::MultiAgentTurn,
         agents: Vec<common::workspace::threads::ThreadAgent>,
+    },
+    SubagentStatus {
+        agent: common::workspace::threads::ThreadAgent,
+    },
+    SubagentAcpNotification {
+        agent: common::workspace::threads::ThreadAgent,
+        payload: serde_json::Value,
     },
     PromptDone {
         #[serde(skip_serializing_if = "Option::is_none")]

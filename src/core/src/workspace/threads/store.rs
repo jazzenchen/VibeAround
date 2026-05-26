@@ -332,6 +332,16 @@ pub enum ThreadEvent {
         turn: MultiAgentTurn,
         agents: Vec<ThreadAgent>,
     },
+    ThreadAgentStatusChanged {
+        schema_version: u8,
+        event_id: String,
+        occurred_at: String,
+        thread_id: WorkspaceThreadId,
+        agent_id: ThreadAgentId,
+        status: ThreadAgentStatus,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last_error: Option<String>,
+    },
     Closed {
         schema_version: u8,
         event_id: String,
@@ -418,6 +428,23 @@ impl ThreadEvent {
         }
     }
 
+    pub fn thread_agent_status_changed(
+        thread_id: impl Into<WorkspaceThreadId>,
+        agent_id: impl Into<ThreadAgentId>,
+        status: ThreadAgentStatus,
+        last_error: Option<String>,
+    ) -> Self {
+        Self::ThreadAgentStatusChanged {
+            schema_version: SCHEMA_VERSION,
+            event_id: event_id(),
+            occurred_at: now(),
+            thread_id: thread_id.into(),
+            agent_id: agent_id.into(),
+            status,
+            last_error,
+        }
+    }
+
     pub fn closed(thread_id: impl Into<WorkspaceThreadId>, reason: Option<String>) -> Self {
         Self::Closed {
             schema_version: SCHEMA_VERSION,
@@ -440,6 +467,8 @@ pub enum ThreadProjectionError {
     DuplicateThread { thread_id: WorkspaceThreadId },
     #[error("thread {thread_id} does not exist")]
     UnknownThread { thread_id: WorkspaceThreadId },
+    #[error("thread agent {agent_id} does not exist")]
+    UnknownThreadAgent { agent_id: ThreadAgentId },
 }
 
 impl ThreadProjection {
@@ -532,6 +561,42 @@ impl ThreadProjection {
                 thread.updated_at = occurred_at.clone();
                 Ok(())
             }
+            ThreadEvent::ThreadAgentStatusChanged {
+                occurred_at,
+                thread_id,
+                agent_id,
+                status,
+                last_error,
+                ..
+            } => {
+                let thread = self.thread_mut(thread_id)?;
+                let turn_id = {
+                    let agent = thread.agents.get_mut(agent_id).ok_or_else(|| {
+                        ThreadProjectionError::UnknownThreadAgent {
+                            agent_id: agent_id.clone(),
+                        }
+                    })?;
+                    agent.status = *status;
+                    agent.last_error = last_error.clone();
+                    agent.updated_at = occurred_at.clone();
+                    agent.turn_id.clone()
+                };
+                if let Some(agent_ids) = thread
+                    .multi_agent_turns
+                    .get(&turn_id)
+                    .map(|turn| turn.agent_ids.clone())
+                {
+                    let status = aggregate_turn_status(&agent_ids, &thread.agents);
+                    let turn = thread
+                        .multi_agent_turns
+                        .get_mut(&turn_id)
+                        .expect("turn existed when aggregating status");
+                    turn.status = status;
+                    turn.updated_at = occurred_at.clone();
+                }
+                thread.updated_at = occurred_at.clone();
+                Ok(())
+            }
             ThreadEvent::Closed {
                 occurred_at,
                 thread_id,
@@ -614,6 +679,32 @@ pub(crate) fn closed_reason_closes_thread(reason: Option<&str>) -> bool {
         reason,
         None | Some("web idle timeout") | Some("web resume aborted")
     )
+}
+
+fn aggregate_turn_status(
+    agent_ids: &[ThreadAgentId],
+    agents: &BTreeMap<ThreadAgentId, ThreadAgent>,
+) -> ThreadAgentStatus {
+    let statuses: Vec<ThreadAgentStatus> = agent_ids
+        .iter()
+        .filter_map(|agent_id| agents.get(agent_id).map(|agent| agent.status))
+        .collect();
+    if statuses.iter().any(|status| *status == ThreadAgentStatus::Error) {
+        ThreadAgentStatus::Error
+    } else if statuses
+        .iter()
+        .any(|status| *status == ThreadAgentStatus::Running)
+    {
+        ThreadAgentStatus::Running
+    } else if !statuses.is_empty()
+        && statuses
+            .iter()
+            .all(|status| *status == ThreadAgentStatus::Completed)
+    {
+        ThreadAgentStatus::Completed
+    } else {
+        ThreadAgentStatus::Ready
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -757,6 +848,77 @@ mod tests {
                 ThreadStatus::Open
             );
         }
+    }
+
+    #[test]
+    fn agent_status_updates_aggregate_turn_status() {
+        let thread_id = WorkspaceThreadId::from("wt_a");
+        let turn_id = MultiAgentTurnId::from("mat_a");
+        let first_id = ThreadAgentId::from("00000000-0000-0000-0000-000000000001");
+        let second_id = ThreadAgentId::from("00000000-0000-0000-0000-000000000002");
+        let events = vec![
+            ThreadEvent::created(
+                thread_id.clone(),
+                WorkspaceId::from("ws_a"),
+                HostBinding::new("codex", None),
+            ),
+            ThreadEvent::multi_agent_turn_initialized(
+                thread_id.clone(),
+                MultiAgentTurn::new(
+                    turn_id.clone(),
+                    MultiAgentTurnMode::Parallel,
+                    vec![first_id.clone(), second_id.clone()],
+                ),
+                vec![
+                    ThreadAgent::ready(
+                        first_id.clone(),
+                        turn_id.clone(),
+                        "John Planner",
+                        "codex",
+                        None,
+                        "va/subagents/mat_a/john-planner",
+                        "/tmp/john-planner",
+                        Some("plan".to_string()),
+                    ),
+                    ThreadAgent::ready(
+                        second_id.clone(),
+                        turn_id.clone(),
+                        "Jane Builder",
+                        "codex",
+                        None,
+                        "va/subagents/mat_a/jane-builder",
+                        "/tmp/jane-builder",
+                        Some("build".to_string()),
+                    ),
+                ],
+            ),
+            ThreadEvent::thread_agent_status_changed(
+                thread_id.clone(),
+                first_id.clone(),
+                ThreadAgentStatus::Running,
+                None,
+            ),
+            ThreadEvent::thread_agent_status_changed(
+                thread_id.clone(),
+                first_id,
+                ThreadAgentStatus::Completed,
+                None,
+            ),
+            ThreadEvent::thread_agent_status_changed(
+                thread_id,
+                second_id,
+                ThreadAgentStatus::Completed,
+                None,
+            ),
+        ];
+
+        let projection = ThreadProjection::from_events(&events).unwrap();
+        let thread = projection.get(&WorkspaceThreadId::from("wt_a")).unwrap();
+
+        assert_eq!(
+            thread.multi_agent_turns.get(&turn_id).unwrap().status,
+            ThreadAgentStatus::Completed
+        );
     }
 
     #[test]

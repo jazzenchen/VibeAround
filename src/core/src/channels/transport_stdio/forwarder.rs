@@ -12,6 +12,7 @@
 //! - `PermissionRequest`  → real `request_permission` call; response is
 //!   routed back through `PluginHost::pending_permissions`.
 //! - `MultiAgentTurn`     → web-only for now; stdio/IM plugins do not see it.
+//! - `Subagent*`          → web-only for now; stdio/IM plugins do not see it.
 
 use std::sync::Arc;
 
@@ -142,7 +143,9 @@ pub(super) async fn forward_output_to_plugin(
         }
         ChannelOutput::PromptDone { .. }
         | ChannelOutput::TurnStatus { .. }
-        | ChannelOutput::MultiAgentTurn { .. } => {}
+        | ChannelOutput::MultiAgentTurn { .. }
+        | ChannelOutput::SubagentStatus { .. }
+        | ChannelOutput::SubagentAcp { .. } => {}
         ChannelOutput::PermissionRequest {
             route,
             request_id,

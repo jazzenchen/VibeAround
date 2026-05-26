@@ -40,6 +40,7 @@ export interface ChatRuntimeSnapshot {
   resumeReplay: ResumeReplayState | null;
   multiAgentTurns: MultiAgentTurn[];
   subagents: ThreadAgent[];
+  subagentMessages: Record<string, ChatMessage[]>;
   lastPromptDoneAt?: number;
 }
 
@@ -65,5 +66,6 @@ export const EMPTY_RUNTIME_SNAPSHOT: ChatRuntimeSnapshot = {
   resumeReplay: null,
   multiAgentTurns: [],
   subagents: [],
+  subagentMessages: {},
   lastPromptDoneAt: undefined,
 };

@@ -363,6 +363,15 @@ export const ChatEventSchema = z.discriminatedUnion("kind", [
     agents: z.array(ThreadAgentSchema),
   }),
   z.object({
+    kind: z.literal("subagent_status"),
+    agent: ThreadAgentSchema,
+  }),
+  z.object({
+    kind: z.literal("subagent_acp_notification"),
+    agent: ThreadAgentSchema,
+    payload: z.unknown(),
+  }),
+  z.object({
     kind: z.literal("prompt_done"),
     message_id: z.string().optional(),
   }),

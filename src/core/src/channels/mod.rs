@@ -23,6 +23,7 @@ pub mod plugin_bridge;
 pub mod plugin_host;
 pub mod plugin_runtime;
 pub mod prompt;
+pub mod subagent_handler;
 pub mod transport_stdio;
 pub mod transport_websocket;
 pub mod types;

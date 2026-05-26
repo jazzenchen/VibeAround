@@ -1,20 +1,21 @@
 //! Runtime owner for one workspace thread.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema as acp;
 use anyhow::Context;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::agent::{Agent, AgentClientHandler};
 use crate::routing::RouteKey;
 use crate::workspace::registry::WorkspaceId;
 
 use super::store::{
-    HostBinding, MultiAgentTurn, ThreadAgent, ThreadEvent, ThreadEventStore, ThreadStatus,
-    WorkspaceThread, WorkspaceThreadId,
+    HostBinding, MultiAgentTurn, ThreadAgent, ThreadAgentId, ThreadAgentStatus, ThreadEvent,
+    ThreadEventStore, ThreadStatus, WorkspaceThread, WorkspaceThreadId,
 };
 
 #[derive(Debug, Clone)]
@@ -31,10 +32,16 @@ pub struct ThreadRuntimeState {
     pub multi_agent_turns: Vec<MultiAgentTurn>,
 }
 
+struct SubagentRuntime {
+    agent: Arc<Agent>,
+    session_id: String,
+}
+
 pub struct ThreadRuntime {
     thread: Mutex<WorkspaceThread>,
     workspace: PathBuf,
     agent: Mutex<Option<Arc<Agent>>>,
+    subagents: Mutex<BTreeMap<ThreadAgentId, SubagentRuntime>>,
     session_id: Mutex<Option<String>>,
     initialize: Mutex<Option<acp::InitializeResponse>>,
     prompt_lock: Mutex<()>,
@@ -61,6 +68,7 @@ impl ThreadRuntime {
             thread: Mutex::new(thread),
             workspace,
             agent: Mutex::new(None),
+            subagents: Mutex::new(BTreeMap::new()),
             session_id: Mutex::new(session_id),
             initialize: Mutex::new(None),
             prompt_lock: Mutex::new(()),
@@ -155,6 +163,10 @@ impl ThreadRuntime {
         if let Some(agent) = self.agent.lock().await.take() {
             agent.shutdown().await;
         }
+        for (_, subagent) in std::mem::take(&mut *self.subagents.lock().await) {
+            crate::previews::kill_by_session(&subagent.session_id);
+            subagent.agent.shutdown().await;
+        }
         let thread_id = self.thread.lock().await.id.clone();
         let event = ThreadEvent::closed(thread_id, reason);
         append_thread_event(&self.store, &event).await?;
@@ -173,6 +185,10 @@ impl ThreadRuntime {
         if let Some(agent) = self.agent.lock().await.take() {
             agent.shutdown().await;
         }
+        for (_, subagent) in std::mem::take(&mut *self.subagents.lock().await) {
+            crate::previews::kill_by_session(&subagent.session_id);
+            subagent.agent.shutdown().await;
+        }
         *self.initialize.lock().await = None;
         *self.busy.lock().await = false;
         *self.failed.lock().await = None;
@@ -188,6 +204,9 @@ impl ThreadRuntime {
             return false;
         }
         if *self.busy.lock().await {
+            return false;
+        }
+        if !self.subagents.lock().await.is_empty() {
             return false;
         }
         if self.idle_generation() != generation {
@@ -244,6 +263,115 @@ impl ThreadRuntime {
         append_thread_event(&self.store, &event).await?;
         self.apply_thread_event(&event).await?;
         self.notify_change();
+        Ok(())
+    }
+
+    pub async fn start_subagent_assignment(
+        self: &Arc<Self>,
+        route: &RouteKey,
+        thread_agent: ThreadAgent,
+        handler: Arc<dyn AgentClientHandler>,
+        status_tx: mpsc::UnboundedSender<ThreadAgent>,
+    ) -> acp::Result<()> {
+        self.mark_activity();
+        if self.thread.lock().await.status == ThreadStatus::Closed {
+            return Err(acp::Error::new(-32603, "workspace thread is closed"));
+        }
+
+        let agent = match self.spawn_subagent(route, &thread_agent, handler).await {
+            Ok(agent) => agent,
+            Err(error) => {
+                if let Ok(Some(updated)) = self
+                    .set_thread_agent_status(
+                        &thread_agent.id,
+                        ThreadAgentStatus::Error,
+                        Some(error.message.to_string()),
+                    )
+                    .await
+                {
+                    let _ = status_tx.send(updated);
+                }
+                return Err(error);
+            }
+        };
+        let session = match agent
+            .new_session(acp::NewSessionRequest::new(PathBuf::from(
+                thread_agent.worktree.clone(),
+            )))
+            .await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                if let Ok(Some(updated)) = self
+                    .set_thread_agent_status(
+                        &thread_agent.id,
+                        ThreadAgentStatus::Error,
+                        Some(error.message.to_string()),
+                    )
+                    .await
+                {
+                    let _ = status_tx.send(updated);
+                }
+                agent.shutdown().await;
+                return Err(error);
+            }
+        };
+        let session_id = session.session_id.to_string();
+        self.subagents.lock().await.insert(
+            thread_agent.id.clone(),
+            SubagentRuntime {
+                agent: Arc::clone(&agent),
+                session_id: session_id.clone(),
+            },
+        );
+
+        if let Some(updated) = self
+            .set_thread_agent_status(&thread_agent.id, ThreadAgentStatus::Running, None)
+            .await?
+        {
+            let _ = status_tx.send(updated);
+        }
+
+        let prompt = subagent_assignment_prompt(&thread_agent);
+        let runtime = Arc::clone(self);
+        let agent_id = thread_agent.id.clone();
+        tokio::spawn(async move {
+            let result = agent
+                .prompt(acp::PromptRequest::new(
+                    session_id,
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                ))
+                .await;
+            let next = match result {
+                Ok(_) => runtime
+                    .set_thread_agent_status(&agent_id, ThreadAgentStatus::Completed, None)
+                    .await,
+                Err(error) => {
+                    let message = error.message.to_string();
+                    runtime
+                        .set_thread_agent_status(
+                            &agent_id,
+                            ThreadAgentStatus::Error,
+                            Some(message),
+                        )
+                        .await
+                }
+            };
+            match next {
+                Ok(Some(updated)) => {
+                    let _ = status_tx.send(updated);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        error = %error.message,
+                        "failed to update subagent status"
+                    );
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -340,6 +468,77 @@ impl ThreadRuntime {
         Ok(ready.agent)
     }
 
+    async fn spawn_subagent(
+        &self,
+        route: &RouteKey,
+        thread_agent: &ThreadAgent,
+        handler: Arc<dyn AgentClientHandler>,
+    ) -> acp::Result<Arc<Agent>> {
+        let thread = self.thread.lock().await.clone();
+        let agent_id = crate::resources::resolve_agent_id(&thread_agent.agent_id)
+            .map_err(|error| acp::Error::new(-32602, error))?;
+        let profile = thread_agent
+            .profile_id
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+        let worktree = PathBuf::from(&thread_agent.worktree);
+        std::fs::create_dir_all(&worktree).map_err(|error| {
+            acp::Error::new(
+                -32603,
+                format!("failed to create subagent worktree {:?}: {}", worktree, error),
+            )
+        })?;
+
+        let mut env_vars = vec![
+            (
+                "VIBEAROUND_CHANNEL_KIND".to_string(),
+                route.channel_kind.clone(),
+            ),
+            ("VIBEAROUND_CHAT_ID".to_string(), route.chat_id.clone()),
+            ("VIBEAROUND_AGENT_KIND".to_string(), agent_id.clone()),
+            ("VIBEAROUND_AGENT_ROLE".to_string(), "subagent".to_string()),
+            ("VIBEAROUND_THREAD_ID".to_string(), thread.id.to_string()),
+            (
+                "VIBEAROUND_WORKSPACE_ID".to_string(),
+                thread.workspace_id.to_string(),
+            ),
+            (
+                "VIBEAROUND_SUBAGENT_ID".to_string(),
+                thread_agent.id.to_string(),
+            ),
+            (
+                "VIBEAROUND_SUBAGENT_NAME".to_string(),
+                thread_agent.name.clone(),
+            ),
+            (
+                "VIBEAROUND_MULTI_AGENT_TURN_ID".to_string(),
+                thread_agent.turn_id.to_string(),
+            ),
+        ];
+        let mut extra_args = Vec::new();
+        if crate::agent::launch::profile_uses_vibearound_credentials(&profile) {
+            let applied = crate::agent::launch::materialize_profile_for_agent(
+                &profile, &agent_id, &worktree, route,
+            )
+            .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
+            env_vars.extend(applied.env);
+            extra_args.extend(applied.command_args);
+        }
+
+        let ready = Agent::spawn(
+            agent_id,
+            route,
+            &worktree,
+            None,
+            handler,
+            extra_args,
+            env_vars,
+        )
+        .await
+        .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
+        Ok(ready.agent)
+    }
+
     async fn ensure_session(&self, agent: &Arc<Agent>) -> acp::Result<String> {
         if let Some(session_id) = self.session_id.lock().await.clone() {
             return Ok(session_id);
@@ -386,6 +585,26 @@ impl ThreadRuntime {
         *self.session_id.lock().await = Some(session_id.to_string());
         self.notify_change();
         Ok(())
+    }
+
+    async fn set_thread_agent_status(
+        &self,
+        agent_id: &ThreadAgentId,
+        status: ThreadAgentStatus,
+        last_error: Option<String>,
+    ) -> acp::Result<Option<ThreadAgent>> {
+        let thread_id = self.thread.lock().await.id.clone();
+        let event = ThreadEvent::thread_agent_status_changed(
+            thread_id,
+            agent_id.clone(),
+            status,
+            last_error,
+        );
+        append_thread_event(&self.store, &event).await?;
+        self.apply_thread_event(&event).await?;
+        self.notify_change();
+        let thread = self.thread.lock().await;
+        Ok(thread.agents.get(agent_id).cloned())
     }
 
     async fn maybe_record_first_prompt(
@@ -464,6 +683,36 @@ impl ThreadRuntime {
                 }
                 thread.updated_at = occurred_at.clone();
             }
+            ThreadEvent::ThreadAgentStatusChanged {
+                occurred_at,
+                agent_id,
+                status,
+                last_error,
+                ..
+            } => {
+                let turn_id = if let Some(agent) = thread.agents.get_mut(agent_id) {
+                    agent.status = *status;
+                    agent.last_error = last_error.clone();
+                    agent.updated_at = occurred_at.clone();
+                    Some(agent.turn_id.clone())
+                } else {
+                    None
+                };
+                if let Some(turn_id) = turn_id {
+                    if let Some(agent_ids) = thread
+                        .multi_agent_turns
+                        .get(&turn_id)
+                        .map(|turn| turn.agent_ids.clone())
+                    {
+                        let status = aggregate_turn_status(&agent_ids, &thread.agents);
+                        if let Some(turn) = thread.multi_agent_turns.get_mut(&turn_id) {
+                            turn.status = status;
+                            turn.updated_at = occurred_at.clone();
+                        }
+                    }
+                }
+                thread.updated_at = occurred_at.clone();
+            }
             ThreadEvent::Closed {
                 occurred_at,
                 reason,
@@ -511,6 +760,56 @@ fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
         }
         _ => None,
     })
+}
+
+fn aggregate_turn_status(
+    agent_ids: &[ThreadAgentId],
+    agents: &BTreeMap<ThreadAgentId, ThreadAgent>,
+) -> ThreadAgentStatus {
+    let statuses: Vec<ThreadAgentStatus> = agent_ids
+        .iter()
+        .filter_map(|agent_id| agents.get(agent_id).map(|agent| agent.status))
+        .collect();
+    if statuses.iter().any(|status| *status == ThreadAgentStatus::Error) {
+        ThreadAgentStatus::Error
+    } else if statuses
+        .iter()
+        .any(|status| *status == ThreadAgentStatus::Running)
+    {
+        ThreadAgentStatus::Running
+    } else if !statuses.is_empty()
+        && statuses
+            .iter()
+            .all(|status| *status == ThreadAgentStatus::Completed)
+    {
+        ThreadAgentStatus::Completed
+    } else {
+        ThreadAgentStatus::Ready
+    }
+}
+
+fn subagent_assignment_prompt(agent: &ThreadAgent) -> String {
+    let assignment = serde_json::json!({
+        "protocol": "va-agent-protocol",
+        "kind": "assignment",
+        "turn_id": agent.turn_id.to_string(),
+        "to_agent_id": agent.id.to_string(),
+        "task": agent.task.clone().unwrap_or_default(),
+        "context": {
+            "name": agent.name.clone(),
+            "branch": agent.branch.clone(),
+            "worktree": agent.worktree.clone(),
+        }
+    });
+    format!(
+        "You are a VibeAround subagent named {name}.\n\
+         Work only inside your current git worktree. Do not merge branches or clean up worktrees.\n\
+         Complete the assignment independently, then report back to the host using only a `va-agent-protocol` report envelope.\n\n\
+         <va-agent-protocol>\n{assignment}\n</va-agent-protocol>",
+        name = agent.name.as_str(),
+        assignment = serde_json::to_string_pretty(&assignment)
+            .unwrap_or_else(|_| assignment.to_string())
+    )
 }
 
 async fn append_thread_event(store: &ThreadEventStore, event: &ThreadEvent) -> acp::Result<()> {
