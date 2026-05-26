@@ -59,6 +59,7 @@ import { NewChatAgentPicker } from "./NewChatAgentPicker";
 import { NewChatHome } from "./NewChatHome";
 import { NewChatWorkspacePicker } from "./NewChatWorkspacePicker";
 import { PendingPermissions } from "./PendingPermissions";
+import { SubagentPanel } from "./SubagentPanel";
 import { currentUnixSeconds } from "./chatTime";
 import type { ChatSessionSelection } from "./chatTypes";
 import { useChatAttachments } from "./useChatAttachments";
@@ -143,6 +144,8 @@ export function ChatView({
   const [runtimeSnapshots, setRuntimeSnapshots] = useState<
     Record<string, ChatRuntimeSnapshot>
   >({});
+  const [subagentPanelOpen, setSubagentPanelOpen] = useState(true);
+  const [selectedSubagentId, setSelectedSubagentId] = useState<string | undefined>();
   const runtimeActionsRef = useRef<Record<string, ChatRuntimeActions>>({});
   const syncedPromptDoneRef = useRef<Record<string, number>>({});
   const syncedActiveSessionRef = useRef<Record<string, string | undefined>>({});
@@ -249,6 +252,8 @@ export function ChatView({
   const pendingPermissions = activeRuntime.pendingPermissions;
   const sessionMode = activeRuntime.sessionMode;
   const resumeReplay = activeRuntime.resumeReplay;
+  const multiAgentTurns = activeRuntime.multiAgentTurns;
+  const subagents = activeRuntime.subagents;
   const replayBlocksInput = Boolean(
     resumeReplay && resumeReplay.blocking !== false,
   );
@@ -258,6 +263,16 @@ export function ChatView({
   const setSessionConfigOption = activeRuntimeActions?.setSessionConfigOption;
   const sendPermissionResponse = activeRuntimeActions?.sendPermissionResponse;
   const cancelPermissionRequest = activeRuntimeActions?.cancelPermissionRequest;
+
+  useEffect(() => {
+    if (subagents.length === 0) {
+      if (selectedSubagentId) setSelectedSubagentId(undefined);
+      return;
+    }
+    if (!selectedSubagentId || !subagents.some((agent) => agent.id === selectedSubagentId)) {
+      setSelectedSubagentId(subagents[0].id);
+    }
+  }, [selectedSubagentId, subagents]);
 
   const launchSessionGroups = useMemo(
     () =>
@@ -1335,6 +1350,14 @@ export function ChatView({
           </>
         )}
       </div>
+      <SubagentPanel
+        turns={multiAgentTurns}
+        agents={subagents}
+        open={subagentPanelOpen}
+        selectedAgentId={selectedSubagentId}
+        onOpenChange={setSubagentPanelOpen}
+        onSelectedAgentChange={setSelectedSubagentId}
+      />
     </div>
   );
 }

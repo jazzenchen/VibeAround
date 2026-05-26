@@ -45,6 +45,8 @@ export function ChatRuntimeHost({
       pendingPermissions: connection.pendingPermissions,
       sessionMode: connection.sessionMode,
       resumeReplay: connection.resumeReplay,
+      multiAgentTurns: connection.multiAgentTurns,
+      subagents: connection.subagents,
       lastPromptDoneAt: connection.lastPromptDoneAt,
     });
   }, [
@@ -53,10 +55,12 @@ export function ChatRuntimeHost({
     connection.lastPromptDoneAt,
     connection.messages,
     connection.meta,
+    connection.multiAgentTurns,
     connection.pendingPermissions,
     connection.resumeReplay,
     connection.sessionMode,
     connection.streaming,
+    connection.subagents,
     onSnapshot,
     runtimeKey,
   ]);

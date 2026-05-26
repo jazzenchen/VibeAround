@@ -12,6 +12,8 @@ import {
   ChatEventSchema,
   type AgentInfo,
   type LaunchSessionInfo,
+  type MultiAgentTurn,
+  type ThreadAgent,
 } from "@va/client";
 import { useI18n } from "@va/i18n";
 import { getWebSocketUrl } from "@/lib/ws-url";
@@ -178,6 +180,8 @@ export function useWebChatConnection({
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([]);
   const [sessionMode, setSessionModeState] = useState<SessionModeState | null>(null);
   const [resumeReplay, setResumeReplay] = useState<ResumeReplayState | null>(null);
+  const [multiAgentTurns, setMultiAgentTurns] = useState<MultiAgentTurn[]>([]);
+  const [subagents, setSubagents] = useState<ThreadAgent[]>([]);
   const [lastPromptDoneAt, setLastPromptDoneAt] = useState<number | undefined>();
   const wsRef = useRef<WebSocket | null>(null);
   const promptInFlightRef = useRef(false);
@@ -499,6 +503,11 @@ export function useWebChatConnection({
             ...prev.filter((permission) => permission.requestId !== parsed.request_id),
             { requestId: parsed.request_id, request: parsed.request },
           ]);
+          break;
+        }
+        case "multi_agent_turn": {
+          setMultiAgentTurns((prev) => mergeById(prev, [parsed.turn]));
+          setSubagents((prev) => mergeById(prev, parsed.agents));
           break;
         }
       }
@@ -1023,6 +1032,8 @@ export function useWebChatConnection({
     pendingPermissions,
     sessionMode,
     resumeReplay,
+    multiAgentTurns,
+    subagents,
     lastPromptDoneAt,
     sendMessage,
     resumeSession,
@@ -1033,6 +1044,14 @@ export function useWebChatConnection({
     sendPermissionResponse,
     cancelPermissionRequest,
   };
+}
+
+function mergeById<T extends { id: string }>(prev: T[], nextItems: T[]): T[] {
+  const byId = new Map(prev.map((item) => [item.id, item]));
+  for (const item of nextItems) {
+    byId.set(item.id, item);
+  }
+  return Array.from(byId.values());
 }
 
 function messageContentBlocks(
