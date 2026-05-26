@@ -61,13 +61,19 @@ Arguments:
   mode: "parallel"
   agents:
     - name: "<host-chosen display name, e.g. John Planner>"
-      agent_kind: "<claude or codex unless the user asks otherwise>"
+      agent_kind: "codex"
+      task: "<parallel task>"
+    - name: "<host-chosen display name, e.g. Maya Reviewer>"
+      agent_kind: "codex"
       task: "<parallel task>"
 ```
 
 Rules:
 
 - Choose concise human names for subagents. Names are display aliases; the MCP tool returns GUID agent IDs.
+- For `parallel`, default to exactly 2 subagents.
+- Use `codex` for subagents by default.
+- Only create more than 2 subagents or use another `agent_kind` when the user explicitly asks.
 - For `parallel`, split the user's request into independent tasks that can run in separate git worktrees.
 - Do not merge or clean up worktrees automatically. The host agent decides after reviewing results.
 - If VibeAround reports a dirty workspace or worktree creation error, tell the user and stop the multi-agent turn.

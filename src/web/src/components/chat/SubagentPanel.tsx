@@ -1,17 +1,26 @@
 "use client";
 
-import { useEffect, useMemo, type ComponentType, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import type { MultiAgentTurn, ThreadAgent } from "@va/client";
 import {
   AlertCircle,
-  Bot,
   CheckCircle2,
   CircleDot,
+  Columns3,
   FolderGit2,
   GitBranch,
   Loader2,
+  Maximize2,
+  Minimize2,
   PanelRightClose,
   PanelRightOpen,
+  X,
 } from "lucide-react";
 import { useI18n } from "@va/i18n";
 import { BrandIcon } from "@/components/brand-icon";
@@ -60,16 +69,19 @@ export function SubagentPanel({
   onSelectedAgentChange,
 }: SubagentPanelProps) {
   const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
   const sortedAgents = useMemo(
     () =>
       [...agents].sort((a, b) =>
-        a.created_at === b.created_at ? a.name.localeCompare(b.name) : a.created_at.localeCompare(b.created_at),
+        a.created_at === b.created_at
+          ? a.name.localeCompare(b.name)
+          : a.created_at.localeCompare(b.created_at),
       ),
     [agents],
   );
   const selectedAgent =
     sortedAgents.find((agent) => agent.id === selectedAgentId) ?? sortedAgents[0];
-  const selectedTurn = selectedAgent
+  const activeTurn = selectedAgent
     ? turns.find((turn) => turn.id === selectedAgent.turn_id)
     : turns[0];
 
@@ -79,11 +91,17 @@ export function SubagentPanel({
     }
   }, [onSelectedAgentChange, selectedAgent, selectedAgentId]);
 
+  useEffect(() => {
+    if (sortedAgents.length === 0 && expanded) {
+      setExpanded(false);
+    }
+  }, [expanded, sortedAgents.length]);
+
   if (sortedAgents.length === 0) return null;
 
   if (!open) {
     return (
-      <aside className="hidden h-full w-11 shrink-0 border-l border-border/60 bg-background lg:flex">
+      <aside className="hidden h-full w-11 shrink-0 border-l border-border/60 bg-background md:flex">
         <Button
           type="button"
           variant="ghost"
@@ -100,114 +118,294 @@ export function SubagentPanel({
   }
 
   return (
-    <aside className="hidden h-full w-[22rem] shrink-0 flex-col border-l border-border/60 bg-background lg:flex">
-      <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-foreground">
-            {t("Subagents")}
-          </div>
-          <div className="truncate text-[11px] text-muted-foreground">
-            {selectedTurn
-              ? t("{{mode}} turn", { mode: selectedTurn.mode })
-              : t("Multi-agent turn")}
-          </div>
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="shrink-0 text-muted-foreground hover:text-foreground"
-          onClick={() => onOpenChange(false)}
-          title={t("Hide subagents")}
-          aria-label={t("Hide subagents")}
-        >
-          <PanelRightClose className="h-4 w-4" />
-        </Button>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="space-y-1.5 border-b border-border/60 p-2">
-          {sortedAgents.map((agent) => {
-            const active = selectedAgent?.id === agent.id;
-            const meta = statusMeta[agent.status];
-            const StatusIcon = meta.icon;
-            return (
-              <button
-                key={agent.id}
+    <>
+      <aside className="hidden h-full w-[18.5rem] shrink-0 items-start justify-center border-l border-border/60 bg-background/60 px-3 py-4 md:flex">
+        <section className="w-full rounded-lg border border-border/70 bg-background shadow-sm">
+          <div className="flex items-center justify-between gap-2 px-4 py-3">
+            <button
+              type="button"
+              className="flex min-w-0 items-center gap-1.5 text-left text-sm font-medium text-muted-foreground hover:text-foreground"
+              onClick={() => setExpanded(true)}
+            >
+              <span className="truncate">{t("Progress")}</span>
+              <Maximize2 className="h-3.5 w-3.5 shrink-0" />
+            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
                 type="button"
-                className={cn(
-                  "flex min-h-12 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                  active
-                    ? "bg-primary/10 text-foreground"
-                    : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
-                )}
-                onClick={() => onSelectedAgentChange(agent.id)}
+                variant="ghost"
+                size="icon-sm"
+                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                onClick={() => setExpanded(true)}
+                title={t("Expand subagents")}
+                aria-label={t("Expand subagents")}
               >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                  <BrandIcon
-                    kind="cli"
-                    id={agent.agent_id}
-                    label={getAgentDisplayName(agent.agent_id)}
-                    className="h-4 w-4"
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{agent.name}</div>
-                  <div className="truncate text-[11px]">
-                    {getAgentDisplayName(agent.agent_id)}
-                  </div>
-                </div>
-                <StatusIcon
-                  className={cn(
-                    "h-3.5 w-3.5 shrink-0",
-                    meta.className,
-                    agent.status === "running" && "animate-spin",
-                  )}
-                />
-              </button>
-            );
-          })}
-        </div>
-
-        {selectedAgent && (
-          <div className="space-y-4 p-3">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Bot className="h-4 w-4 text-muted-foreground" />
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-foreground">
-                    {selectedAgent.name}
-                  </div>
-                  <div className="truncate text-[11px] text-muted-foreground">
-                    {selectedAgent.id}
-                  </div>
-                </div>
-              </div>
-              <StatusBadge status={selectedAgent.status} />
+                <Columns3 className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                onClick={() => onOpenChange(false)}
+                title={t("Hide subagents")}
+                aria-label={t("Hide subagents")}
+              >
+                <PanelRightClose className="h-4 w-4" />
+              </Button>
             </div>
+          </div>
 
-            {selectedAgent.task && (
-              <PanelSection title={t("Task")}>
-                <p className="whitespace-pre-wrap break-words text-sm leading-5 text-foreground">
-                  {selectedAgent.task}
-                </p>
-              </PanelSection>
-            )}
+          <div className="border-t border-border/60 px-3 py-2">
+            <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              <span className="truncate">
+                {activeTurn
+                  ? t("{{mode}} turn", { mode: activeTurn.mode })
+                  : t("Multi-agent turn")}
+              </span>
+              <span>{sortedAgents.length}</span>
+            </div>
+            <div className="space-y-1.5">
+              {sortedAgents.map((agent) => (
+                <SubagentListButton
+                  key={agent.id}
+                  agent={agent}
+                  active={selectedAgent?.id === agent.id}
+                  onClick={() => onSelectedAgentChange(agent.id)}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+      </aside>
 
-            <PanelSection title={t("Workspace")}>
-              <PathRow icon={GitBranch} value={selectedAgent.branch} />
-              <PathRow icon={FolderGit2} value={selectedAgent.worktree} />
-            </PanelSection>
+      {expanded && (
+        <SubagentExpandedView
+          turns={turns}
+          agents={sortedAgents}
+          activeTurn={activeTurn}
+          selectedAgentId={selectedAgent?.id}
+          onSelectedAgentChange={onSelectedAgentChange}
+          onClose={() => setExpanded(false)}
+        />
+      )}
+    </>
+  );
+}
 
-            <PanelSection title={t("Messages")}>
-              <div className="rounded-md border border-dashed border-border/70 px-3 py-6 text-center text-xs text-muted-foreground">
-                {t("Waiting for report")}
-              </div>
-            </PanelSection>
+function SubagentListButton({
+  agent,
+  active,
+  onClick,
+}: {
+  agent: ThreadAgent;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const meta = statusMeta[agent.status];
+  const StatusIcon = meta.icon;
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex min-h-10 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+        active
+          ? "bg-primary/10 text-foreground"
+          : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+      )}
+      onClick={onClick}
+    >
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+        <BrandIcon
+          kind="cli"
+          id={agent.agent_id}
+          label={getAgentDisplayName(agent.agent_id)}
+          className="h-3.5 w-3.5"
+        />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium">{agent.name}</div>
+        <div className="truncate text-[11px]">{getAgentDisplayName(agent.agent_id)}</div>
+      </div>
+      <StatusIcon
+        className={cn(
+          "h-3.5 w-3.5 shrink-0",
+          meta.className,
+          agent.status === "running" && "animate-spin",
+        )}
+      />
+    </button>
+  );
+}
+
+function SubagentExpandedView({
+  turns,
+  agents,
+  activeTurn,
+  selectedAgentId,
+  onSelectedAgentChange,
+  onClose,
+}: {
+  turns: MultiAgentTurn[];
+  agents: ThreadAgent[];
+  activeTurn?: MultiAgentTurn;
+  selectedAgentId?: string;
+  onSelectedAgentChange: (agentId: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const turn = activeTurn ?? turns[0];
+  const turnAgents = turn
+    ? agents.filter((agent) => agent.turn_id === turn.id)
+    : agents;
+  const columns = turnAgents.length > 0 ? turnAgents : agents;
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <Columns3 className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium text-foreground">
+              {turn ? t("{{mode}} subagents", { mode: turn.mode }) : t("Subagents")}
+            </div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              {turn?.id ?? t("Current thread")}
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={onClose}
+            title={t("Collapse")}
+            aria-label={t("Collapse")}
+          >
+            <Minimize2 className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={onClose}
+            title={t("Close")}
+            aria-label={t("Close")}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </header>
+
+      <main className="min-h-0 flex-1 overflow-auto p-4">
+        {turn?.mode === "parallel" || !turn ? (
+          <div
+            className="grid min-h-full gap-3"
+            style={{
+              gridTemplateColumns: `repeat(${Math.max(columns.length, 1)}, minmax(19rem, 1fr))`,
+            }}
+          >
+            {columns.map((agent) => (
+              <ParallelAgentColumn
+                key={agent.id}
+                agent={agent}
+                active={selectedAgentId === agent.id}
+                onSelect={() => onSelectedAgentChange(agent.id)}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="mx-auto grid max-w-5xl gap-3">
+            {columns.map((agent) => (
+              <ParallelAgentColumn
+                key={agent.id}
+                agent={agent}
+                active={selectedAgentId === agent.id}
+                onSelect={() => onSelectedAgentChange(agent.id)}
+              />
+            ))}
           </div>
         )}
+      </main>
+    </div>
+  );
+}
+
+function ParallelAgentColumn({
+  agent,
+  active,
+  onSelect,
+}: {
+  agent: ThreadAgent;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <section
+      className={cn(
+        "flex min-h-[calc(100vh-6.5rem)] min-w-0 flex-col rounded-lg border bg-background",
+        active ? "border-primary/40 shadow-sm" : "border-border/70",
+      )}
+    >
+      <button
+        type="button"
+        className="flex min-h-16 items-center gap-2 border-b border-border/60 px-3 py-2 text-left"
+        onClick={onSelect}
+      >
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+          <BrandIcon
+            kind="cli"
+            id={agent.agent_id}
+            label={getAgentDisplayName(agent.agent_id)}
+            className="h-4 w-4"
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-foreground">
+            {agent.name}
+          </div>
+          <div className="truncate text-[11px] text-muted-foreground">
+            {getAgentDisplayName(agent.agent_id)}
+          </div>
+        </div>
+        <StatusBadge status={agent.status} />
+      </button>
+
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
+        {agent.task && (
+          <PanelSection title={t("Context")}>
+            <p className="whitespace-pre-wrap break-words text-sm leading-5 text-foreground">
+              {agent.task}
+            </p>
+          </PanelSection>
+        )}
+
+        <PanelSection title={t("Workspace")}>
+          <PathRow icon={GitBranch} value={agent.branch} />
+          <PathRow icon={FolderGit2} value={agent.worktree} />
+        </PanelSection>
+
+        {agent.last_error && (
+          <PanelSection title={t("Error")}>
+            <p className="whitespace-pre-wrap break-words text-sm leading-5 text-destructive">
+              {agent.last_error}
+            </p>
+          </PanelSection>
+        )}
+
+        <PanelSection title={t("Messages")}>
+          <div className="rounded-md border border-dashed border-border/70 px-3 py-8 text-center text-xs text-muted-foreground">
+            {t("Waiting for report")}
+          </div>
+        </PanelSection>
       </div>
-    </aside>
+    </section>
   );
 }
 
@@ -216,7 +414,12 @@ function StatusBadge({ status }: { status: ThreadAgent["status"] }) {
   const meta = statusMeta[status];
   const Icon = meta.icon;
   return (
-    <div className={cn("inline-flex items-center gap-1.5 text-xs", meta.className)}>
+    <div
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 text-xs",
+        meta.className,
+      )}
+    >
       <Icon className={cn("h-3.5 w-3.5", status === "running" && "animate-spin")} />
       <span>{t(meta.label)}</span>
     </div>
