@@ -73,6 +73,61 @@ where
     Ok(())
 }
 
+/// Replace a JSONL store with exactly these records.
+pub async fn replace_all<T>(path: impl AsRef<Path>, events: &[T]) -> Result<()>
+where
+    T: Serialize,
+{
+    let path = path.as_ref();
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|source| JsonlError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+    }
+
+    let tmp = path.with_extension(format!("jsonl.tmp-{}", uuid::Uuid::new_v4().simple()));
+    let mut file = tokio::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&tmp)
+        .await
+        .map_err(|source| JsonlError::Io {
+            path: tmp.clone(),
+            source,
+        })?;
+    for event in events {
+        let mut line = serde_json::to_vec(event).map_err(JsonlError::Serialize)?;
+        line.push(b'\n');
+        file.write_all(&line)
+            .await
+            .map_err(|source| JsonlError::Io {
+                path: tmp.clone(),
+                source,
+            })?;
+    }
+    file.flush().await.map_err(|source| JsonlError::Io {
+        path: tmp.clone(),
+        source,
+    })?;
+    drop(file);
+
+    crate::auth::set_owner_only(&tmp).map_err(|source| JsonlError::Io {
+        path: tmp.clone(),
+        source,
+    })?;
+    tokio::fs::rename(&tmp, path)
+        .await
+        .map_err(|source| JsonlError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+
+    Ok(())
+}
+
 /// Read every non-empty JSONL record in order.
 pub async fn read_all<T>(path: impl AsRef<Path>) -> Result<Vec<T>>
 where
@@ -179,6 +234,41 @@ mod tests {
         let events: Vec<TestEvent> = read_all(&path).await.unwrap();
 
         assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn replace_all_overwrites_existing_events() {
+        let path = temp_jsonl_path("replace");
+        append(
+            &path,
+            &TestEvent {
+                id: "old".to_string(),
+                value: 1,
+            },
+        )
+        .await
+        .unwrap();
+
+        replace_all(
+            &path,
+            &[TestEvent {
+                id: "new".to_string(),
+                value: 2,
+            }],
+        )
+        .await
+        .unwrap();
+
+        let events: Vec<TestEvent> = read_all(&path).await.unwrap();
+        assert_eq!(
+            events,
+            vec![TestEvent {
+                id: "new".to_string(),
+                value: 2,
+            }]
+        );
+
+        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
     }
 
     #[tokio::test]

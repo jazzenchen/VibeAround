@@ -149,6 +149,10 @@ impl WorkspaceThreadManager {
             .append(&RouteAttachmentEvent::detached(route.clone()))
             .await
             .context("append route detach")?;
+        self.attachment_store
+            .compact()
+            .await
+            .context("compact route attachments")?;
         self.pending_selections.remove(route);
         self.notify_change();
         Ok(())

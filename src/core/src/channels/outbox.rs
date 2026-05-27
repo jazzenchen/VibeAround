@@ -1,5 +1,7 @@
 //! JSONL-backed channel output outbox.
 
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use dashmap::DashMap;
@@ -11,6 +13,8 @@ use crate::storage::jsonl;
 use super::ChannelOutput;
 
 const SCHEMA_VERSION: u8 = 1;
+const MAX_REPLAY_BYTES: u64 = 64 * 1024 * 1024;
+const INTERNAL_WEB_CHANNEL: &str = "web";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -49,12 +53,17 @@ pub struct ChannelOutbox {
 
 impl ChannelOutbox {
     pub fn new_default() -> Self {
-        Self::new(crate::config::data_dir().join("channel-outbox.jsonl"))
+        Self::new(crate::config::migrate_legacy_state_file(
+            "channel-outbox.jsonl",
+        ))
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         let pending = hydrate_pending(&path);
+        if let Err(error) = compact_pending(&path, &pending) {
+            tracing::warn!(path = ?path, error = %error, "failed to compact channel outbox");
+        }
         Self { path, pending }
     }
 
@@ -120,6 +129,29 @@ impl ChannelOutbox {
 
 fn hydrate_pending(path: &Path) -> DashMap<String, ChannelOutput> {
     let pending = DashMap::new();
+    if let Ok(metadata) = fs::metadata(path) {
+        if metadata.len() > MAX_REPLAY_BYTES {
+            match crate::config::archive_state_file(path, "oversized-outbox") {
+                Ok(archive) => {
+                    tracing::warn!(
+                        path = ?path,
+                        archive = ?archive,
+                        bytes = metadata.len(),
+                        "archived oversized channel outbox instead of replaying it"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        path = ?path,
+                        bytes = metadata.len(),
+                        error = %error,
+                        "failed to archive oversized channel outbox"
+                    );
+                }
+            }
+            return pending;
+        }
+    }
     let Ok(file) = std::fs::File::open(path) else {
         return pending;
     };
@@ -135,8 +167,16 @@ fn hydrate_pending(path: &Path) -> DashMap<String, ChannelOutput> {
         };
         match event {
             OutboxEvent::Enqueued {
-                output_id, output, ..
+                output_id,
+                channel_kind,
+                output,
+                ..
             } => {
+                if channel_kind == INTERNAL_WEB_CHANNEL
+                    || output.route_key().channel_kind == INTERNAL_WEB_CHANNEL
+                {
+                    continue;
+                }
                 pending.insert(output_id, output);
             }
             OutboxEvent::Sent { output_id, .. }
@@ -147,6 +187,43 @@ fn hydrate_pending(path: &Path) -> DashMap<String, ChannelOutput> {
         }
     }
     pending
+}
+
+fn compact_pending(path: &Path, pending: &DashMap<String, ChannelOutput>) -> std::io::Result<()> {
+    if pending.is_empty() {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        return Ok(());
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension(format!("jsonl.tmp-{}", uuid::Uuid::new_v4().simple()));
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&tmp)?;
+    for entry in pending.iter() {
+        let output = entry.value();
+        let event = OutboxEvent::Enqueued {
+            schema_version: SCHEMA_VERSION,
+            output_id: entry.key().clone(),
+            channel_kind: output.route_key().channel_kind.clone(),
+            output: output.clone(),
+        };
+        serde_json::to_writer(&mut file, &event)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+        file.write_all(b"\n")?;
+    }
+    file.flush()?;
+    crate::auth::set_owner_only(&tmp)?;
+    fs::rename(tmp, path)?;
+    crate::auth::set_owner_only(path)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -222,6 +299,55 @@ mod tests {
         let reloaded = ChannelOutbox::new(path.clone());
 
         assert!(reloaded.pending_for_channel("feishu").is_empty());
+
+        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn new_compacts_sent_outputs_on_load() {
+        let path = std::env::temp_dir()
+            .join(format!("vibearound-outbox-{}", uuid::Uuid::new_v4()))
+            .join("outbox.jsonl");
+        let outbox = ChannelOutbox::new(path.clone());
+        let output = ChannelOutput::SystemText {
+            route: RouteKey::new("feishu", "chat-a"),
+            text: "hello".to_string(),
+            reply_to: None,
+        };
+        let output_id = outbox.enqueue(output).await.unwrap();
+        outbox.mark_sent(&output_id).await.unwrap();
+
+        let reloaded = ChannelOutbox::new(path.clone());
+
+        assert!(reloaded.pending_for_channel("feishu").is_empty());
+        assert_eq!(
+            tokio::fs::read_to_string(&path).await.unwrap_or_default(),
+            ""
+        );
+
+        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn new_drops_web_outputs_on_load() {
+        let path = std::env::temp_dir()
+            .join(format!("vibearound-outbox-{}", uuid::Uuid::new_v4()))
+            .join("outbox.jsonl");
+        let outbox = ChannelOutbox::new(path.clone());
+        let output = ChannelOutput::SystemText {
+            route: RouteKey::new("web", "chat-a"),
+            text: "hello".to_string(),
+            reply_to: None,
+        };
+        let _ = outbox.enqueue(output).await.unwrap();
+
+        let reloaded = ChannelOutbox::new(path.clone());
+
+        assert!(reloaded.pending_for_channel("web").is_empty());
+        assert_eq!(
+            tokio::fs::read_to_string(&path).await.unwrap_or_default(),
+            ""
+        );
 
         let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
     }

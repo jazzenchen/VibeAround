@@ -714,7 +714,7 @@ pub struct ThreadEventStore {
 
 impl ThreadEventStore {
     pub fn default_path() -> PathBuf {
-        crate::config::data_dir().join("workspace-threads.jsonl")
+        crate::config::migrate_legacy_state_file("workspace-threads.jsonl")
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
