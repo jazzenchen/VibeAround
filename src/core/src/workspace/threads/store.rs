@@ -203,6 +203,8 @@ pub struct ThreadAgent {
     pub agent_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub status: ThreadAgentStatus,
     pub branch: String,
     pub worktree: String,
@@ -234,6 +236,7 @@ impl ThreadAgent {
             name: name.into(),
             agent_id: agent_id.into(),
             profile_id,
+            session_id: None,
             status: ThreadAgentStatus::Ready,
             branch: branch.into(),
             worktree: worktree.into(),
@@ -343,6 +346,8 @@ pub enum ThreadEvent {
         agent_id: ThreadAgentId,
         status: ThreadAgentStatus,
         #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         last_error: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         report: Option<serde_json::Value>,
@@ -440,6 +445,19 @@ impl ThreadEvent {
         last_error: Option<String>,
         report: Option<serde_json::Value>,
     ) -> Self {
+        Self::thread_agent_status_changed_with_session(
+            thread_id, agent_id, status, None, last_error, report,
+        )
+    }
+
+    pub fn thread_agent_status_changed_with_session(
+        thread_id: impl Into<WorkspaceThreadId>,
+        agent_id: impl Into<ThreadAgentId>,
+        status: ThreadAgentStatus,
+        session_id: Option<String>,
+        last_error: Option<String>,
+        report: Option<serde_json::Value>,
+    ) -> Self {
         Self::ThreadAgentStatusChanged {
             schema_version: SCHEMA_VERSION,
             event_id: event_id(),
@@ -447,6 +465,7 @@ impl ThreadEvent {
             thread_id: thread_id.into(),
             agent_id: agent_id.into(),
             status,
+            session_id,
             last_error,
             report,
         }
@@ -573,6 +592,7 @@ impl ThreadProjection {
                 thread_id,
                 agent_id,
                 status,
+                session_id,
                 last_error,
                 report,
                 ..
@@ -585,6 +605,9 @@ impl ThreadProjection {
                         }
                     })?;
                     agent.status = *status;
+                    if session_id.is_some() {
+                        agent.session_id = session_id.clone();
+                    }
                     agent.last_error = last_error.clone();
                     agent.report = report.clone();
                     agent.updated_at = occurred_at.clone();
@@ -904,16 +927,17 @@ mod tests {
                     ),
                 ],
             ),
-            ThreadEvent::thread_agent_status_changed(
+            ThreadEvent::thread_agent_status_changed_with_session(
                 thread_id.clone(),
                 first_id.clone(),
                 ThreadAgentStatus::Running,
+                Some("subagent-session-1".to_string()),
                 None,
                 None,
             ),
             ThreadEvent::thread_agent_status_changed(
                 thread_id.clone(),
-                first_id,
+                first_id.clone(),
                 ThreadAgentStatus::Completed,
                 None,
                 None,
@@ -933,6 +957,10 @@ mod tests {
         assert_eq!(
             thread.multi_agent_turns.get(&turn_id).unwrap().status,
             ThreadAgentStatus::Completed
+        );
+        assert_eq!(
+            thread.agents.get(&first_id).unwrap().session_id.as_deref(),
+            Some("subagent-session-1")
         );
     }
 

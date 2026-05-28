@@ -282,6 +282,7 @@ export const ThreadAgentSchema = z.object({
   name: z.string(),
   agent_id: z.string(),
   profile_id: z.string().optional(),
+  session_id: z.string().optional(),
   status: ThreadAgentStatusSchema,
   branch: z.string(),
   worktree: z.string(),

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use agent_client_protocol::schema as acp;
 use anyhow::Context;
 use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::time::{sleep, Duration};
 
 use crate::agent::{Agent, AgentClientHandler};
 use crate::routing::RouteKey;
@@ -395,7 +396,13 @@ impl ThreadRuntime {
         }
 
         if let Some(updated) = self
-            .set_thread_agent_status(&thread_agent.id, ThreadAgentStatus::Running, None, None)
+            .set_thread_agent_status_with_session(
+                &thread_agent.id,
+                ThreadAgentStatus::Running,
+                Some(session_id.clone()),
+                None,
+                None,
+            )
             .await?
         {
             let _ = status_tx.send(updated);
@@ -718,6 +725,32 @@ impl ThreadRuntime {
         thread_agent: &ThreadAgent,
         handler: Arc<dyn AgentClientHandler>,
     ) -> acp::Result<Arc<Agent>> {
+        self.spawn_subagent_agent(route, thread_agent, handler, None)
+            .await
+    }
+
+    pub async fn replay_subagent_session(
+        &self,
+        route: &RouteKey,
+        thread_agent: &ThreadAgent,
+        session_id: String,
+        handler: Arc<dyn AgentClientHandler>,
+    ) -> acp::Result<()> {
+        let agent = self
+            .spawn_subagent_agent(route, thread_agent, handler, Some(session_id))
+            .await?;
+        sleep(Duration::from_millis(250)).await;
+        agent.shutdown().await;
+        Ok(())
+    }
+
+    async fn spawn_subagent_agent(
+        &self,
+        route: &RouteKey,
+        thread_agent: &ThreadAgent,
+        handler: Arc<dyn AgentClientHandler>,
+        resume_session_id: Option<String>,
+    ) -> acp::Result<Arc<Agent>> {
         let thread = self.thread.lock().await.clone();
         let agent_id = crate::resources::resolve_agent_id(&thread_agent.agent_id)
             .map_err(|error| acp::Error::new(-32602, error))?;
@@ -773,7 +806,13 @@ impl ThreadRuntime {
         }
 
         let ready = Agent::spawn(
-            agent_id, route, &worktree, None, handler, extra_args, env_vars,
+            agent_id,
+            route,
+            &worktree,
+            resume_session_id,
+            handler,
+            extra_args,
+            env_vars,
         )
         .await
         .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
@@ -835,11 +874,24 @@ impl ThreadRuntime {
         last_error: Option<String>,
         report: Option<serde_json::Value>,
     ) -> acp::Result<Option<ThreadAgent>> {
+        self.set_thread_agent_status_with_session(agent_id, status, None, last_error, report)
+            .await
+    }
+
+    async fn set_thread_agent_status_with_session(
+        &self,
+        agent_id: &ThreadAgentId,
+        status: ThreadAgentStatus,
+        session_id: Option<String>,
+        last_error: Option<String>,
+        report: Option<serde_json::Value>,
+    ) -> acp::Result<Option<ThreadAgent>> {
         let thread_id = self.thread.lock().await.id.clone();
-        let event = ThreadEvent::thread_agent_status_changed(
+        let event = ThreadEvent::thread_agent_status_changed_with_session(
             thread_id,
             agent_id.clone(),
             status,
+            session_id,
             last_error,
             report,
         );
