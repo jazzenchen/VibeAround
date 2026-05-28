@@ -3,12 +3,14 @@
 //! This is intentionally read-only. Each CLI owns its own session store; we
 //! only surface enough metadata for users to choose what to resume.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 mod archive;
 mod claude;
@@ -45,7 +47,73 @@ pub fn list_for_agent_workspace_with_archived(
     limit: usize,
     include_archived: bool,
 ) -> Vec<LaunchSession> {
+    let sessions = raw_sessions_for_agent_workspace(agent_id, workspace, include_archived);
+    finalize_sessions(agent_id, sessions, limit, include_archived)
+}
+
+pub async fn list_for_agent_workspace_with_archived_async(
+    agent_id: &str,
+    workspace: &Path,
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    let workspaces = [workspace.to_path_buf()];
+    list_for_agent_workspaces_with_archived_async(agent_id, &workspaces, limit, include_archived)
+        .await
+}
+
+pub async fn list_for_agent_workspaces_with_archived_async(
+    agent_id: &str,
+    workspaces: &[std::path::PathBuf],
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
     let mut sessions = match agent_id {
+        "codex" => codex::sessions_for_workspaces_async(workspaces, include_archived).await,
+        "opencode" => {
+            let workspaces = workspaces.to_vec();
+            tokio::task::spawn_blocking(move || opencode::sessions_for_workspaces(&workspaces))
+                .await
+                .unwrap_or_default()
+        }
+        _ => {
+            let agent_id = agent_id.to_string();
+            let workspaces = workspaces.to_vec();
+            tokio::task::spawn_blocking(move || {
+                workspaces
+                    .iter()
+                    .flat_map(|workspace| {
+                        raw_sessions_for_agent_workspace(&agent_id, workspace, include_archived)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default()
+        }
+    };
+    apply_archive_flags(agent_id, &mut sessions, include_archived);
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    let mut counts_by_workspace: HashMap<String, usize> = HashMap::new();
+    sessions.retain(|session| {
+        let count = counts_by_workspace
+            .entry(session.workspace.clone())
+            .or_insert(0);
+        if *count >= limit {
+            return false;
+        }
+        *count += 1;
+        true
+    });
+    sessions
+}
+
+fn raw_sessions_for_agent_workspace(
+    agent_id: &str,
+    workspace: &Path,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    match agent_id {
         "claude" => claude::sessions(workspace),
         "codex" => codex::sessions(workspace, include_archived),
         "cursor" => cursor::sessions(workspace),
@@ -54,10 +122,25 @@ pub fn list_for_agent_workspace_with_archived(
         "pi" => pi::sessions(workspace),
         "qwen-code" => qwen::sessions(workspace),
         _ => Vec::new(),
-    };
+    }
+}
+
+fn finalize_sessions(
+    agent_id: &str,
+    mut sessions: Vec<LaunchSession>,
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    apply_archive_flags(agent_id, &mut sessions, include_archived);
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.truncate(limit);
+    sessions
+}
+
+fn apply_archive_flags(agent_id: &str, sessions: &mut Vec<LaunchSession>, include_archived: bool) {
     let archived_session_ids = archive::archived_session_ids(agent_id);
     if !archived_session_ids.is_empty() {
-        for session in &mut sessions {
+        for session in sessions.iter_mut() {
             if archived_session_ids.contains(&session.session_id) {
                 session.archived = true;
             }
@@ -66,9 +149,6 @@ pub fn list_for_agent_workspace_with_archived(
             sessions.retain(|session| !session.archived);
         }
     }
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    sessions.truncate(limit);
-    sessions
 }
 
 pub fn archive_session(agent_id: &str, workspace: &Path, session_id: &str) -> Result<(), String> {
@@ -90,6 +170,11 @@ pub(super) fn dash_encoded_cwd(cwd: &Path) -> String {
         .chars()
         .map(|ch| if ch.is_alphanumeric() { ch } else { '-' })
         .collect()
+}
+
+pub(super) fn sha256_hex(value: &str) -> String {
+    let digest = Sha256::digest(value.as_bytes());
+    format!("{digest:x}")
 }
 
 pub(super) fn message_text(message: &Value) -> Option<&str> {

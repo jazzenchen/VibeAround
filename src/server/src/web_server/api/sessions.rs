@@ -80,12 +80,13 @@ pub async fn list_launch_sessions_handler(
         .map(common::workspace::normalize_workspace_cwd)
         .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
     let limit = query.limit.unwrap_or(25).clamp(1, 100);
-    let sessions = common::launch_sessions::list_for_agent_workspace_with_archived(
+    let sessions = common::launch_sessions::list_for_agent_workspace_with_archived_async(
         &agent_id,
         &workspace,
         limit,
         query.include_archived.unwrap_or(false),
     )
+    .await
     .into_iter()
     .map(|session| launch_session_info(&state, session))
     .collect();
@@ -140,18 +141,17 @@ pub async fn list_launch_sessions_batch_handler(
     let include_archived = body.include_archived.unwrap_or(false);
     let mut sessions = Vec::new();
     for agent_id in &agent_ids {
-        for workspace in &workspaces {
-            sessions.extend(
-                common::launch_sessions::list_for_agent_workspace_with_archived(
-                    agent_id,
-                    workspace,
-                    limit,
-                    include_archived,
-                )
-                .into_iter()
-                .map(|session| launch_session_info(&state, session)),
-            );
-        }
+        sessions.extend(
+            common::launch_sessions::list_for_agent_workspaces_with_archived_async(
+                agent_id,
+                &workspaces,
+                limit,
+                include_archived,
+            )
+            .await
+            .into_iter()
+            .map(|session| launch_session_info(&state, session)),
+        );
     }
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
