@@ -518,7 +518,6 @@ export function useWebChatConnection({
           break;
         }
         case "subagent_acp_notification": {
-          setSubagents((prev) => mergeById(prev, [parsed.agent]));
           const notif = parsed.payload as SessionNotification;
           setSubagentMessages((prev) => ({
             ...prev,

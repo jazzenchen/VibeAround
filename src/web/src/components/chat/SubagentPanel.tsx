@@ -366,6 +366,7 @@ function ParallelAgentColumn({
   onSelect: () => void;
 }) {
   const { t } = useI18n();
+  const report = parseSubagentReport(agent.report);
   return (
     <section
       className={cn(
@@ -419,6 +420,12 @@ function ParallelAgentColumn({
           </PanelSection>
         )}
 
+        {report && (
+          <PanelSection title={t("Report")}>
+            <SubagentReportSummary report={report} />
+          </PanelSection>
+        )}
+
         <PanelSection title={t("Messages")}>
           {messages.length === 0 ? (
             <div className="rounded-md border border-dashed border-border/70 px-3 py-8 text-center text-xs text-muted-foreground">
@@ -438,6 +445,67 @@ function ParallelAgentColumn({
         </PanelSection>
       </div>
     </section>
+  );
+}
+
+interface ParsedSubagentReport {
+  summary?: string;
+  filesChanged: string[];
+  tests: string[];
+  notes: string[];
+}
+
+function parseSubagentReport(value: unknown): ParsedSubagentReport | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  return {
+    summary:
+      typeof record.summary === "string" && record.summary.trim()
+        ? record.summary.trim()
+        : undefined,
+    filesChanged: stringList(record.files_changed),
+    tests: stringList(record.tests),
+    notes: stringList(record.notes),
+  };
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function SubagentReportSummary({ report }: { report: ParsedSubagentReport }) {
+  const { t } = useI18n();
+  return (
+    <div className="space-y-2 rounded-md border border-border/70 bg-muted/30 px-3 py-2">
+      {report.summary && (
+        <p className="whitespace-pre-wrap break-words text-sm leading-5 text-foreground">
+          {report.summary}
+        </p>
+      )}
+      <ReportList title={t("Files")} items={report.filesChanged} />
+      <ReportList title={t("Tests")} items={report.tests} />
+      <ReportList title={t("Notes")} items={report.notes} />
+    </div>
+  );
+}
+
+function ReportList({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <div className="text-[11px] font-medium text-muted-foreground">{title}</div>
+      <ul className="space-y-1">
+        {items.map((item, index) => (
+          <li
+            key={`${title}-${index}`}
+            className="break-words rounded bg-background/70 px-2 py-1 text-xs leading-4 text-muted-foreground"
+          >
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
