@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   archiveLaunchSession,
   createWorkspace,
-  getLaunchSessions,
+  getLaunchSessionsBatch,
   getProfiles,
   getWorkspaces,
 } from "@/api/sessions";
@@ -48,6 +48,8 @@ import {
   readStoredActiveLaunchSession,
   readStoredLaunchSelection,
   readStoredSessionSidebarWidth,
+  storedActiveLaunchSessionFromInfo,
+  storedActiveLaunchSessionToInfo,
   writeCachedLaunchSessionGroups,
   writeStoredActiveLaunchSession,
   writeStoredLaunchSelection,
@@ -714,33 +716,21 @@ export function ChatView({
       const requestId = ++sessionSyncRequestIdRef.current;
       setSessionsLoading(true);
       try {
-        const freshGroups = await Promise.all(
-          workspaces.map(async (workspace) => {
-            const sessionGroups = await Promise.all(
-              requestedAgentIds.map(async (agentId) => {
-                try {
-                  return await getLaunchSessions(
-                    agentId,
-                    webSettings.show_archived,
-                    workspace.path,
-                  );
-                } catch (error) {
-                  console.warn(
-                    "[ChatView] failed to sync launch sessions for workspace:",
-                    workspace.path,
-                    agentId,
-                    error,
-                  );
-                  return [];
-                }
-              }),
-            );
-            return {
-              workspace,
-              sessions: sessionGroups.flat(),
-            };
-          }),
+        const freshSessions = await getLaunchSessionsBatch(
+          requestedAgentIds,
+          webSettings.show_archived,
+          workspaces.map((workspace) => workspace.path),
         );
+        const sessionsByWorkspace = new Map<string, LaunchSessionInfo[]>();
+        for (const session of freshSessions) {
+          const sessions = sessionsByWorkspace.get(session.workspace) ?? [];
+          sessions.push(session);
+          sessionsByWorkspace.set(session.workspace, sessions);
+        }
+        const freshGroups = workspaces.map((workspace) => ({
+          workspace,
+          sessions: sessionsByWorkspace.get(workspace.path) ?? [],
+        }));
         if (sessionSyncRequestIdRef.current !== requestId) return;
         setSyncedLaunchSessionGroups((currentGroups) => {
           const baseGroups =
@@ -822,16 +812,7 @@ export function ChatView({
       restoredActiveLaunchSessionRef.current = true;
       return;
     }
-    if (agents.length === 0 || workspacesLoading || sessionsLoading) return;
-    const session = launchSessions.find(
-      (item) =>
-        item.agent_id === stored.agentId &&
-        item.session_id === stored.sessionId &&
-        item.workspace === stored.workspace,
-    );
-    if (!session) {
-      return;
-    }
+    const session = storedActiveLaunchSessionToInfo(stored);
     restoredActiveLaunchSessionRef.current = true;
     setSessionSelections((prev) => ({
       ...prev,
@@ -843,13 +824,7 @@ export function ChatView({
     }));
     storedActiveLaunchSessionKeyRef.current = chatSessionKey(session);
     activateRuntimeForSession(session);
-  }, [
-    activateRuntimeForSession,
-    agents.length,
-    launchSessions,
-    sessionsLoading,
-    workspacesLoading,
-  ]);
+  }, [activateRuntimeForSession]);
 
   useEffect(() => {
     const spec = runtimeSpecs[activeRuntimeKey];
@@ -865,11 +840,26 @@ export function ChatView({
     if (!sessionId || !workspace) return;
     const key = `${spec.agentId}\u0000${workspace}\u0000${sessionId}`;
     if (storedActiveLaunchSessionKeyRef.current === key) return;
-    writeStoredActiveLaunchSession({
-      agentId: spec.agentId,
-      sessionId,
-      workspace,
-    });
+    writeStoredActiveLaunchSession(
+      storedActiveLaunchSessionFromInfo({
+        agent_id: spec.launchSession?.agent_id ?? spec.agentId,
+        session_id: sessionId,
+        workspace,
+        title:
+          spec.launchSession?.title ??
+          spec.title ??
+          snapshot.resumeReplay?.title ??
+          t("Current session"),
+        updated_at: Math.max(
+          spec.lastPromptAt ?? 0,
+          spec.launchSession?.updated_at ?? 0,
+          snapshot.resumeReplay?.updatedAt ?? 0,
+        ),
+        short_id: spec.launchSession?.short_id ?? shortSessionId(sessionId),
+        archived: spec.launchSession?.archived ?? false,
+        active: true,
+      }),
+    );
     storedActiveLaunchSessionKeyRef.current = key;
   }, [
     activeRuntimeKey,
@@ -877,6 +867,7 @@ export function ChatView({
     runtimeSnapshots,
     runtimeSpecs,
     selectedWorkspace?.path,
+    t,
   ]);
 
   const handleLaunchChange = useCallback((agentId: string, profileId?: string) => {
@@ -945,11 +936,7 @@ export function ChatView({
         ...prev,
         [launchSession.agent_id]: launchSession,
       }));
-      writeStoredActiveLaunchSession({
-        agentId: launchSession.agent_id,
-        sessionId: launchSession.session_id,
-        workspace: launchSession.workspace,
-      });
+      writeStoredActiveLaunchSession(storedActiveLaunchSessionFromInfo(launchSession));
       storedActiveLaunchSessionKeyRef.current = chatSessionKey(launchSession);
       clearAttachments();
       activateRuntimeForSession(launchSession);
