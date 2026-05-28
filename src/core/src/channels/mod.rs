@@ -15,6 +15,7 @@
 //! - `transport_stdio`  — ACP bridge to child plugin processes
 //! - `transport_websocket` — in-process web chat channel
 
+pub(crate) mod agent_protocol;
 pub mod bridge_handler;
 pub mod manifest;
 pub mod monitor;

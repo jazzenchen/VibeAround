@@ -22,6 +22,10 @@ use crate::workspace::threads::store::{HostBinding, WorkspaceThreadId};
 use crate::workspace::threads::{ThreadAgent, ThreadAgentId};
 use crate::workspace::WorkspaceThreadManager;
 
+use super::agent_protocol::{
+    notification_payload, notification_payload_with_text, session_update_text,
+    synthetic_agent_message_payload, synthetic_user_message_payload, AgentProtocolFilter,
+};
 use super::plugin_host::PluginHost;
 use super::types::{ChannelOutput, ThreadReply, ThreadReplyAgent, ThreadReplyPayload};
 
@@ -80,21 +84,55 @@ impl ChannelBridgeHandler {
             .collect()
     }
 
-    async fn handle_host_protocol_notification(&self, args: &acp::SessionNotification) {
+    async fn filter_host_protocol_notification(
+        &self,
+        args: &acp::SessionNotification,
+    ) -> acp::Result<Option<serde_json::Value>> {
         let Some(text) = session_update_text(&args.update) else {
-            return;
+            return notification_payload(args).map(Some);
         };
-        let envelopes = {
+        let visible = {
             let mut state = self.host_protocol.lock().await;
-            state.push_text(text)
+            state.last_session_id = Some(args.session_id.to_string());
+            state.filter.feed_text(text)
         };
-        for envelope in envelopes {
-            self.dispatch_host_protocol_envelope(envelope).await;
+        if visible.is_empty() {
+            return Ok(None);
         }
+        notification_payload_with_text(args, visible).map(Some)
     }
 
-    async fn dispatch_host_protocol_envelope(&self, envelope: String) {
-        let assignment = match HostAssignment::parse(&envelope) {
+    async fn finish_host_protocol(&self, success: bool) {
+        let (session_id, finished) = {
+            let mut state = self.host_protocol.lock().await;
+            let session_id = state.last_session_id.clone();
+            let finished = state.filter.finish();
+            (session_id, finished)
+        };
+
+        if let Some(session_id) = session_id.as_deref() {
+            self.send_host_visible_text_chunk(session_id, &finished.visible_tail)
+                .await;
+        }
+        if !success {
+            return;
+        }
+        let Some(frame) = finished.frame else {
+            return;
+        };
+        let envelope = match frame {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                self.send_system_text(&format!("Subagent assignment ignored: {}", error))
+                    .await;
+                return;
+            }
+        };
+        self.dispatch_host_protocol_envelope(&envelope).await;
+    }
+
+    async fn dispatch_host_protocol_envelope(&self, envelope: &str) {
+        let assignment = match HostAssignment::parse(envelope) {
             Ok(Some(assignment)) => assignment,
             Ok(None) => return,
             Err(error) => {
@@ -123,15 +161,84 @@ impl ChannelBridgeHandler {
             }
         };
         let status_tx = self.spawn_subagent_status_forwarder();
+        let to_agent_id = assignment.to_agent_id.clone();
+        let task = assignment.task.clone();
         if let Err(error) = runtime
-            .prompt_subagent_assignment(&assignment.to_agent_id, assignment.payload, status_tx)
+            .prompt_subagent_assignment(&to_agent_id, assignment.payload, status_tx)
             .await
         {
             self.send_system_text(&format!(
                 "Subagent assignment ignored for {}: {}",
-                assignment.to_agent_id, error.message
+                to_agent_id, error.message
             ))
             .await;
+        } else {
+            self.send_subagent_assignment_visible(&to_agent_id, &task)
+                .await;
+        }
+    }
+
+    async fn send_host_visible_text_chunk(&self, session_id: &str, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let payload = synthetic_agent_message_payload(session_id, text.to_string());
+        let reply = ThreadReply {
+            workspace_id: self.workspace_id.to_string(),
+            thread_id: self.thread_id.to_string(),
+            agent: ThreadReplyAgent {
+                id: self.host_binding.agent_id.clone(),
+                profile: self.host_binding.profile_id.clone(),
+                session_id: session_id.to_string(),
+            },
+            payload: ThreadReplyPayload::AcpSessionNotification {
+                notification: payload,
+            },
+        };
+
+        for route in self.attached_routes().await {
+            self.plugin_host
+                .send_output(ChannelOutput::ThreadReply {
+                    route,
+                    reply: reply.clone(),
+                })
+                .await;
+        }
+    }
+
+    async fn send_subagent_assignment_visible(&self, agent_id: &ThreadAgentId, task: &str) {
+        let Some(workspace_threads) = self.workspace_threads.upgrade() else {
+            return;
+        };
+        let Ok(runtime) = workspace_threads
+            .runtime_for_thread_id(&self.thread_id)
+            .await
+        else {
+            return;
+        };
+        let Some(agent) = runtime
+            .state()
+            .await
+            .agents
+            .into_iter()
+            .find(|agent| &agent.id == agent_id)
+        else {
+            return;
+        };
+        let text = if task.trim().is_empty() {
+            "Host assignment received.".to_string()
+        } else {
+            format!("Host assignment:\n\n{}", task.trim())
+        };
+        let payload = synthetic_user_message_payload(&format!("subagent:{}", agent.id), text);
+        for route in self.attached_web_routes().await {
+            self.plugin_host
+                .send_output(ChannelOutput::SubagentAcp {
+                    route,
+                    agent: agent.clone(),
+                    payload: payload.clone(),
+                })
+                .await;
         }
     }
 
@@ -191,9 +298,9 @@ impl ChannelBridgeHandler {
 #[async_trait::async_trait]
 impl AgentClientHandler for ChannelBridgeHandler {
     async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
-        self.handle_host_protocol_notification(&args).await;
-        let payload = serde_json::to_value(&args)
-            .map_err(|e| acp::Error::new(-32603, format!("serialize: {}", e)))?;
+        let Some(payload) = self.filter_host_protocol_notification(&args).await? else {
+            return Ok(());
+        };
 
         // Log the update variant so we can tell whether an agent is emitting
         // real assistant text or only tool/thinking chunks. Claude Agent
@@ -240,6 +347,11 @@ impl AgentClientHandler for ChannelBridgeHandler {
                 })
                 .await;
         }
+        Ok(())
+    }
+
+    async fn prompt_finished(&self, success: bool) -> acp::Result<()> {
+        self.finish_host_protocol(success).await;
         Ok(())
     }
 
@@ -320,42 +432,14 @@ impl AgentClientHandler for ChannelBridgeHandler {
 
 #[derive(Default)]
 struct HostProtocolState {
-    buffer: String,
-}
-
-impl HostProtocolState {
-    fn push_text(&mut self, text: &str) -> Vec<String> {
-        const OPEN: &str = "<va-agent-protocol>";
-        const CLOSE: &str = "</va-agent-protocol>";
-
-        self.buffer.push_str(text);
-        let mut envelopes = Vec::new();
-        loop {
-            let Some(open_start) = self.buffer.find(OPEN) else {
-                if self.buffer.len() > 16 * 1024 {
-                    self.buffer.clear();
-                }
-                break;
-            };
-            if open_start > 0 {
-                self.buffer.drain(..open_start);
-            }
-            let content_start = OPEN.len();
-            let Some(close_offset) = self.buffer[content_start..].find(CLOSE) else {
-                break;
-            };
-            let content_end = content_start + close_offset;
-            let after_close = content_end + CLOSE.len();
-            envelopes.push(self.buffer[content_start..content_end].trim().to_string());
-            self.buffer.drain(..after_close);
-        }
-        envelopes
-    }
+    filter: AgentProtocolFilter,
+    last_session_id: Option<String>,
 }
 
 struct HostAssignment {
     to_agent_id: ThreadAgentId,
     payload: serde_json::Value,
+    task: String,
 }
 
 impl HostAssignment {
@@ -382,6 +466,11 @@ impl HostAssignment {
         }
         Ok(Some(Self {
             to_agent_id: ThreadAgentId::from(to_agent_id),
+            task: object
+                .get("task")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string(),
             payload,
         }))
     }
@@ -398,48 +487,9 @@ fn string_field(
         .ok_or_else(|| format!("va-agent-protocol payload missing string field `{}`", field))
 }
 
-fn session_update_text(update: &acp::SessionUpdate) -> Option<&str> {
-    let acp::SessionUpdate::AgentMessageChunk(chunk) = update else {
-        return None;
-    };
-    match &chunk.content {
-        acp::ContentBlock::Text(text) => Some(text.text.as_str()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn host_protocol_state_extracts_complete_envelopes() {
-        let mut state = HostProtocolState::default();
-
-        assert!(state.push_text("before <va-agent-protocol>{").is_empty());
-        let envelopes = state.push_text(
-            r#""protocol":"va-agent-protocol","kind":"assignment","to_agent_id":"a"}</va-agent-protocol> after"#,
-        );
-
-        assert_eq!(envelopes.len(), 1);
-        assert!(envelopes[0].contains("\"kind\":\"assignment\""));
-        assert_eq!(state.buffer, " after");
-    }
-
-    #[test]
-    fn host_protocol_state_extracts_multiple_streamed_assignments() {
-        let mut state = HostProtocolState::default();
-        let first = r#"<va-agent-protocol>{"protocol":"va-agent-protocol","kind":"assignment","to_agent_id":"00000000-0000-0000-0000-000000000001","task":"one"}</va-agent-protocol>"#;
-        let second = r#"<va-agent-protocol>{"protocol":"va-agent-protocol","kind":"assignment","to_agent_id":"00000000-0000-0000-0000-000000000002","task":"two"}</va-agent-protocol>"#;
-
-        assert!(state.push_text(&first[..80]).is_empty());
-        let envelopes = state.push_text(&format!("{}{}", &first[80..], second));
-
-        assert_eq!(envelopes.len(), 2);
-        assert!(envelopes[0].contains("\"task\":\"one\""));
-        assert!(envelopes[1].contains("\"task\":\"two\""));
-        assert!(state.buffer.is_empty());
-    }
 
     #[test]
     fn host_assignment_parses_target_agent_id() {

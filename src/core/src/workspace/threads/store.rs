@@ -210,6 +210,8 @@ pub struct ThreadAgent {
     pub task: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report: Option<serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -237,6 +239,7 @@ impl ThreadAgent {
             worktree: worktree.into(),
             task,
             last_error: None,
+            report: None,
             created_at: timestamp.clone(),
             updated_at: timestamp,
         }
@@ -341,6 +344,8 @@ pub enum ThreadEvent {
         status: ThreadAgentStatus,
         #[serde(skip_serializing_if = "Option::is_none")]
         last_error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        report: Option<serde_json::Value>,
     },
     Closed {
         schema_version: u8,
@@ -433,6 +438,7 @@ impl ThreadEvent {
         agent_id: impl Into<ThreadAgentId>,
         status: ThreadAgentStatus,
         last_error: Option<String>,
+        report: Option<serde_json::Value>,
     ) -> Self {
         Self::ThreadAgentStatusChanged {
             schema_version: SCHEMA_VERSION,
@@ -442,6 +448,7 @@ impl ThreadEvent {
             agent_id: agent_id.into(),
             status,
             last_error,
+            report,
         }
     }
 
@@ -567,6 +574,7 @@ impl ThreadProjection {
                 agent_id,
                 status,
                 last_error,
+                report,
                 ..
             } => {
                 let thread = self.thread_mut(thread_id)?;
@@ -578,6 +586,7 @@ impl ThreadProjection {
                     })?;
                     agent.status = *status;
                     agent.last_error = last_error.clone();
+                    agent.report = report.clone();
                     agent.updated_at = occurred_at.clone();
                     agent.turn_id.clone()
                 };
@@ -689,7 +698,10 @@ fn aggregate_turn_status(
         .iter()
         .filter_map(|agent_id| agents.get(agent_id).map(|agent| agent.status))
         .collect();
-    if statuses.iter().any(|status| *status == ThreadAgentStatus::Error) {
+    if statuses
+        .iter()
+        .any(|status| *status == ThreadAgentStatus::Error)
+    {
         ThreadAgentStatus::Error
     } else if statuses
         .iter()
@@ -897,17 +909,20 @@ mod tests {
                 first_id.clone(),
                 ThreadAgentStatus::Running,
                 None,
+                None,
             ),
             ThreadEvent::thread_agent_status_changed(
                 thread_id.clone(),
                 first_id,
                 ThreadAgentStatus::Completed,
                 None,
+                None,
             ),
             ThreadEvent::thread_agent_status_changed(
                 thread_id,
                 second_id,
                 ThreadAgentStatus::Completed,
+                None,
                 None,
             ),
         ];

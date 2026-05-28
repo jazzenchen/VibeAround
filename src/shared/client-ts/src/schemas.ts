@@ -287,6 +287,7 @@ export const ThreadAgentSchema = z.object({
   worktree: z.string(),
   task: z.string().optional(),
   last_error: z.string().optional(),
+  report: z.unknown().optional(),
   created_at: z.string(),
   updated_at: z.string(),
 });

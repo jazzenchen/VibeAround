@@ -36,6 +36,7 @@ pub struct ThreadRuntimeState {
 struct SubagentRuntime {
     agent: Arc<Agent>,
     session_id: String,
+    client_handler: Arc<dyn AgentClientHandler>,
     completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
 }
 
@@ -43,6 +44,7 @@ struct SubagentRuntime {
 pub struct SubagentCompletionResult {
     pub status: ThreadAgentStatus,
     pub last_error: Option<String>,
+    pub report: Option<serde_json::Value>,
 }
 
 #[async_trait::async_trait]
@@ -134,6 +136,7 @@ impl ThreadRuntime {
         *self.busy.lock().await = true;
         *self.failed.lock().await = None;
         self.notify_change();
+        let finish_handler = Arc::clone(&handler);
 
         let result = async {
             self.maybe_record_first_prompt(&content_blocks).await?;
@@ -144,6 +147,14 @@ impl ThreadRuntime {
                 .await
         }
         .await;
+        if let Err(error) = finish_handler.prompt_finished(result.is_ok()).await {
+            let thread_id = self.thread.lock().await.id.clone();
+            tracing::warn!(
+                thread_id = %thread_id,
+                error = %error.message,
+                "host prompt_finished hook failed"
+            );
+        }
 
         *self.busy.lock().await = false;
         if let Err(error) = &result {
@@ -305,6 +316,7 @@ impl ThreadRuntime {
                         "Subagent process was interrupted before it reported completion."
                             .to_string(),
                     ),
+                    None,
                 )
                 .await?
             {
@@ -327,6 +339,8 @@ impl ThreadRuntime {
             return Err(acp::Error::new(-32603, "workspace thread is closed"));
         }
 
+        let prompt_finish_handler = Arc::clone(&handler);
+        let runtime_handler = Arc::clone(&handler);
         let agent = match self.spawn_subagent(route, &thread_agent, handler).await {
             Ok(agent) => agent,
             Err(error) => {
@@ -335,6 +349,7 @@ impl ThreadRuntime {
                         &thread_agent.id,
                         ThreadAgentStatus::Error,
                         Some(error.message.to_string()),
+                        None,
                     )
                     .await
                 {
@@ -344,9 +359,7 @@ impl ThreadRuntime {
             }
         };
         let session = match agent
-            .new_session(acp::NewSessionRequest::new(PathBuf::from(
-                thread_agent.worktree.clone(),
-            )))
+            .new_session(subagent_new_session_request(&thread_agent))
             .await
         {
             Ok(session) => session,
@@ -356,6 +369,7 @@ impl ThreadRuntime {
                         &thread_agent.id,
                         ThreadAgentStatus::Error,
                         Some(error.message.to_string()),
+                        None,
                     )
                     .await
                 {
@@ -372,6 +386,7 @@ impl ThreadRuntime {
             SubagentRuntime {
                 agent: Arc::clone(&agent),
                 session_id: session_id.clone(),
+                client_handler: runtime_handler,
                 completion_validator: completion_validator_for_runtime,
             },
         );
@@ -380,7 +395,7 @@ impl ThreadRuntime {
         }
 
         if let Some(updated) = self
-            .set_thread_agent_status(&thread_agent.id, ThreadAgentStatus::Running, None)
+            .set_thread_agent_status(&thread_agent.id, ThreadAgentStatus::Running, None, None)
             .await?
         {
             let _ = status_tx.send(updated);
@@ -396,6 +411,13 @@ impl ThreadRuntime {
                     vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
                 ))
                 .await;
+            if let Err(error) = prompt_finish_handler.prompt_finished(result.is_ok()).await {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    error = %error.message,
+                    "subagent prompt_finished hook failed"
+                );
+            }
             let next = match result {
                 Ok(_) => match completion_validator {
                     Some(validator) => match validator.validate_completion().await {
@@ -405,6 +427,7 @@ impl ThreadRuntime {
                                     &agent_id,
                                     completion.status,
                                     completion.last_error,
+                                    completion.report,
                                 )
                                 .await
                         }
@@ -414,13 +437,19 @@ impl ThreadRuntime {
                                     &agent_id,
                                     ThreadAgentStatus::Error,
                                     Some(message),
+                                    None,
                                 )
                                 .await
                         }
                     },
                     None => {
                         runtime
-                            .set_thread_agent_status(&agent_id, ThreadAgentStatus::Completed, None)
+                            .set_thread_agent_status(
+                                &agent_id,
+                                ThreadAgentStatus::Completed,
+                                None,
+                                None,
+                            )
                             .await
                     }
                 },
@@ -431,6 +460,7 @@ impl ThreadRuntime {
                             &agent_id,
                             ThreadAgentStatus::Error,
                             Some(message),
+                            None,
                         )
                         .await
                 }
@@ -483,6 +513,7 @@ impl ThreadRuntime {
                     agent_id,
                     ThreadAgentStatus::Error,
                     Some("Subagent process is not available in this host runtime.".to_string()),
+                    None,
                 )
                 .await
             {
@@ -498,7 +529,7 @@ impl ThreadRuntime {
             validator.reset_completion().await;
         }
         if let Some(updated) = self
-            .set_thread_agent_status(agent_id, ThreadAgentStatus::Running, None)
+            .set_thread_agent_status(agent_id, ThreadAgentStatus::Running, None, None)
             .await?
         {
             let _ = status_tx.send(updated);
@@ -507,6 +538,7 @@ impl ThreadRuntime {
         let prompt = subagent_assignment_prompt_from_value(&thread_agent, &assignment);
         let runtime = Arc::clone(self);
         let agent_id = agent_id.clone();
+        let prompt_finish_handler = Arc::clone(&subagent.client_handler);
         tokio::spawn(async move {
             let result = subagent
                 .agent
@@ -515,6 +547,13 @@ impl ThreadRuntime {
                     vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
                 ))
                 .await;
+            if let Err(error) = prompt_finish_handler.prompt_finished(result.is_ok()).await {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    error = %error.message,
+                    "subagent prompt_finished hook failed"
+                );
+            }
             let next = match result {
                 Ok(_) => match subagent.completion_validator {
                     Some(validator) => match validator.validate_completion().await {
@@ -524,6 +563,7 @@ impl ThreadRuntime {
                                     &agent_id,
                                     completion.status,
                                     completion.last_error,
+                                    completion.report,
                                 )
                                 .await
                         }
@@ -533,13 +573,19 @@ impl ThreadRuntime {
                                     &agent_id,
                                     ThreadAgentStatus::Error,
                                     Some(message),
+                                    None,
                                 )
                                 .await
                         }
                     },
                     None => {
                         runtime
-                            .set_thread_agent_status(&agent_id, ThreadAgentStatus::Completed, None)
+                            .set_thread_agent_status(
+                                &agent_id,
+                                ThreadAgentStatus::Completed,
+                                None,
+                                None,
+                            )
                             .await
                     }
                 },
@@ -550,6 +596,7 @@ impl ThreadRuntime {
                             &agent_id,
                             ThreadAgentStatus::Error,
                             Some(message),
+                            None,
                         )
                         .await
                 }
@@ -682,7 +729,10 @@ impl ThreadRuntime {
         std::fs::create_dir_all(&worktree).map_err(|error| {
             acp::Error::new(
                 -32603,
-                format!("failed to create subagent worktree {:?}: {}", worktree, error),
+                format!(
+                    "failed to create subagent worktree {:?}: {}",
+                    worktree, error
+                ),
             )
         })?;
 
@@ -723,13 +773,7 @@ impl ThreadRuntime {
         }
 
         let ready = Agent::spawn(
-            agent_id,
-            route,
-            &worktree,
-            None,
-            handler,
-            extra_args,
-            env_vars,
+            agent_id, route, &worktree, None, handler, extra_args, env_vars,
         )
         .await
         .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
@@ -789,6 +833,7 @@ impl ThreadRuntime {
         agent_id: &ThreadAgentId,
         status: ThreadAgentStatus,
         last_error: Option<String>,
+        report: Option<serde_json::Value>,
     ) -> acp::Result<Option<ThreadAgent>> {
         let thread_id = self.thread.lock().await.id.clone();
         let event = ThreadEvent::thread_agent_status_changed(
@@ -796,6 +841,7 @@ impl ThreadRuntime {
             agent_id.clone(),
             status,
             last_error,
+            report,
         );
         append_thread_event(&self.store, &event).await?;
         self.apply_thread_event(&event).await?;
@@ -885,11 +931,13 @@ impl ThreadRuntime {
                 agent_id,
                 status,
                 last_error,
+                report,
                 ..
             } => {
                 let turn_id = if let Some(agent) = thread.agents.get_mut(agent_id) {
                     agent.status = *status;
                     agent.last_error = last_error.clone();
+                    agent.report = report.clone();
                     agent.updated_at = occurred_at.clone();
                     Some(agent.turn_id.clone())
                 } else {
@@ -967,7 +1015,10 @@ fn aggregate_turn_status(
         .iter()
         .filter_map(|agent_id| agents.get(agent_id).map(|agent| agent.status))
         .collect();
-    if statuses.iter().any(|status| *status == ThreadAgentStatus::Error) {
+    if statuses
+        .iter()
+        .any(|status| *status == ThreadAgentStatus::Error)
+    {
         ThreadAgentStatus::Error
     } else if statuses
         .iter()
@@ -1009,14 +1060,48 @@ fn subagent_assignment_prompt_from_value(
     format!(
         "You are a VibeAround subagent named {name}.\n\
          Work only inside your current git worktree. Do not merge branches or clean up worktrees.\n\
-         Complete the assignment independently, then report back to the host using only a `va-agent-protocol` report envelope.\n\
-         The final assistant message must contain exactly one XML envelope and no other prose. The JSON inside must match this report shape:\n\
+         Complete the assignment independently. You may stream progress and tool output normally.\n\
+         When the assignment is complete, end your final assistant content with exactly one `va-agent-protocol` report envelope. Do not put any prose after that envelope.\n\
+         The JSON inside the final report must match this report shape:\n\
          <va-agent-protocol>\n{report_schema}\n</va-agent-protocol>\n\n\
          <va-agent-protocol>\n{assignment}\n</va-agent-protocol>",
         name = agent.name.as_str(),
         report_schema =
             serde_json::to_string_pretty(&report_schema).unwrap_or_else(|_| report_schema.to_string()),
         assignment = serde_json::to_string_pretty(assignment).unwrap_or_else(|_| assignment.to_string())
+    )
+}
+
+fn subagent_new_session_request(agent: &ThreadAgent) -> acp::NewSessionRequest {
+    acp::NewSessionRequest::new(PathBuf::from(agent.worktree.clone()))
+        .meta(subagent_session_meta(agent))
+}
+
+fn subagent_session_meta(agent: &ThreadAgent) -> acp::Meta {
+    let system_prompt = subagent_system_prompt(agent);
+    let mut meta = serde_json::Map::new();
+    meta.insert("systemPrompt".to_string(), serde_json::json!(system_prompt));
+    meta.insert(
+        "vibearound".to_string(),
+        serde_json::json!({
+            "role": "subagent",
+            "system_prompt": system_prompt,
+            "turn_id": agent.turn_id.to_string(),
+            "subagent_id": agent.id.to_string(),
+            "subagent_name": agent.name.clone(),
+        }),
+    );
+    meta
+}
+
+fn subagent_system_prompt(agent: &ThreadAgent) -> String {
+    format!(
+        "You are a VibeAround subagent named {name}. Work only inside your assigned git worktree. \
+         Treat host assignments wrapped in <va-agent-protocol> as control messages. \
+         You may stream ordinary progress messages for the web UI, but control/report data must be wrapped in <va-agent-protocol>. \
+         Your completion report envelope must be the final content you emit, with no prose after it. \
+         Do not merge branches or clean up worktrees; the host reviews and merges results.",
+        name = agent.name
     )
 }
 
@@ -1053,10 +1138,7 @@ fn require_assignment_field(
         .get(field)
         .and_then(|value| value.as_str())
         .ok_or_else(|| {
-            acp::Error::new(
-                -32602,
-                format!("assignment `{}` must be a string", field),
-            )
+            acp::Error::new(-32602, format!("assignment `{}` must be a string", field))
         })?;
     if actual == expected {
         Ok(())
