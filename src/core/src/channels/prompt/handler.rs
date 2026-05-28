@@ -327,8 +327,33 @@ pub async fn start_runtime_and_notify(
             })
             .await;
     }
+    if should_send_session_ready {
+        send_multi_agent_state(plugin_host, route, &after).await;
+    }
     workspace_threads.schedule_host_idle_shutdown(after.thread_id);
     Ok(())
+}
+
+async fn send_multi_agent_state(
+    plugin_host: &Arc<PluginHost>,
+    route: &RouteKey,
+    state: &ThreadRuntimeState,
+) {
+    for turn in &state.multi_agent_turns {
+        let agents = state
+            .agents
+            .iter()
+            .filter(|agent| turn.agent_ids.contains(&agent.id))
+            .cloned()
+            .collect();
+        plugin_host
+            .send_output(ChannelOutput::MultiAgentTurn {
+                route: route.clone(),
+                turn: turn.clone(),
+                agents,
+            })
+            .await;
+    }
 }
 
 fn bridge_handler(

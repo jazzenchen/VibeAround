@@ -264,6 +264,7 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
                                         route: active_route.clone(),
                                         session_id,
                                     });
+                                    send_route_multi_agent_state(&state, &active_route, &tx).await;
                                     if let Some(deadline) =
                                         state.web_channel.bump_idle_route(&active_route)
                                     {
@@ -317,6 +318,35 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
             .workspace_thread_manager()
             .detach_route(&active_route)
             .await;
+    }
+}
+
+async fn send_route_multi_agent_state(
+    state: &AppState,
+    route: &RouteKey,
+    tx: &tokio::sync::mpsc::UnboundedSender<ChannelOutput>,
+) {
+    let Ok(runtime) = state
+        .channel_hub
+        .workspace_thread_manager()
+        .resolve_route_runtime(route)
+        .await
+    else {
+        return;
+    };
+    let runtime_state = runtime.state().await;
+    for turn in &runtime_state.multi_agent_turns {
+        let agents = runtime_state
+            .agents
+            .iter()
+            .filter(|agent| turn.agent_ids.contains(&agent.id))
+            .cloned()
+            .collect();
+        let _ = tx.send(ChannelOutput::MultiAgentTurn {
+            route: route.clone(),
+            turn: turn.clone(),
+            agents,
+        });
     }
 }
 
