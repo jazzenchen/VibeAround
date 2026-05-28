@@ -87,6 +87,7 @@ async fn mcp_tools_call(
         "prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
         "register_workspace" => tools::mcp_register_workspace(id, arguments).await,
         "initialize_subagents" => tools::mcp_initialize_subagents(id, arguments, state).await,
+        "wait_for_subagents" => tools::mcp_wait_for_subagents(id, arguments, state).await,
         "preview" => tools::mcp_preview_start(id, arguments, state).await,
         "md_preview" => tools::mcp_md_preview(id, arguments, state).await,
         _ => jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name)),

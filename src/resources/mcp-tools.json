@@ -112,6 +112,28 @@
     }
   },
   {
+    "name": "wait_for_subagents",
+    "description": "Wait for a VibeAround multi-agent turn to finish and return structured subagent reports. Host agents should call this after initialize_subagents before producing their final answer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "description": "Value of $VIBEAROUND_THREAD_ID for the host workspace thread."
+        },
+        "turn_id": {
+          "type": "string",
+          "description": "Optional multi-agent turn ID. Defaults to the latest turn on the thread."
+        },
+        "timeout_ms": {
+          "type": "number",
+          "description": "Optional maximum wait time in milliseconds. Defaults to 600000."
+        }
+      },
+      "required": ["thread_id"]
+    }
+  },
+  {
     "name": "preview",
     "description": "Start a live preview for a running local server. Returns owner and share URLs. Pass session_id (use /va-session skill) for proper lifecycle management.",
     "inputSchema": {
