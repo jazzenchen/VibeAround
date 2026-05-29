@@ -20,6 +20,8 @@ export const zhCNShared: Record<string, string> = {
   Duplicate: "创建副本",
   Edit: "编辑",
   Delete: "删除",
+  Remove: "移除",
+  "Removing…": "移除中…",
   More: "更多",
   Restore: "恢复",
   Maximize: "最大化",
