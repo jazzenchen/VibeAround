@@ -24,6 +24,7 @@ const PROVIDER_LOGOS: Record<string, string> = {
   moonshot: "brand/provider-moonshot.webp",
   nvidia: "brand/provider-nvidia.svg",
   openrouter: "brand/provider-openrouter-color.svg",
+  volcengine: "brand/provider-volcengine.svg",
   xai: "brand/provider-xai.svg",
   zai: "brand/provider-zai-color.svg",
 };

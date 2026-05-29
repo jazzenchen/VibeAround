@@ -361,3 +361,75 @@ fn quote_windows_process_arg(value: &str) -> String {
     out.push('"');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(command: &str, args: Vec<String>) -> LaunchPlan {
+        LaunchPlan {
+            env: Vec::new(),
+            command: command.to_string(),
+            args,
+            window_label: "Codex Test".to_string(),
+            workspace: PathBuf::from(r"C:\Users\tester\project"),
+        }
+    }
+
+    #[test]
+    fn powershell_script_keeps_codex_hook_config_as_one_argument() {
+        let hook_config = r#"hooks.SessionStart=[{ matcher = 'startup|resume|clear', hooks = [{ type = 'command', command = '"C:\Program Files\VibeAround\vibearound-hook.exe" --agent codex --event SessionStart', timeout = 5 }] }]"#;
+        let plan = plan(
+            "codex",
+            vec!["-c".to_string(), hook_config.to_string()],
+        );
+        let script = build_powershell_script(&plan, &plan.command, &plan.args);
+
+        assert!(script.contains("$vaArgs = @(\n"));
+        assert!(script.contains("  '-c'\n"));
+        assert!(script.contains("C:\\Program Files\\VibeAround\\vibearound-hook.exe"));
+        assert!(script.contains("& $vaCommand @vaArgs"));
+        assert!(!script.contains("Files\\VibeAround\\vibearound-hook.exe'\n"));
+    }
+
+    #[test]
+    fn rewrites_quoted_codex_npm_shim_under_space_path_to_node() {
+        let root = std::env::temp_dir().join(format!(
+            "VibeAround Test {}",
+            uuid::Uuid::new_v4()
+        ));
+        let bin_dir = root.join("bin");
+        let codex_js = bin_dir
+            .join("node_modules")
+            .join("@openai")
+            .join("codex")
+            .join("bin")
+            .join("codex.js");
+        std::fs::create_dir_all(codex_js.parent().expect("codex js parent"))
+            .expect("create shim fixture");
+        std::fs::write(&codex_js, "console.log('codex');\n").expect("write codex js fixture");
+        let shim = bin_dir.join("codex.cmd");
+        std::fs::write(
+            &shim,
+            r#"@ECHO off
+node "%~dp0\node_modules\@openai\codex\bin\codex.js" %*
+"#,
+        )
+        .expect("write codex cmd fixture");
+
+        let command = format!("\"{}\"", shim.to_string_lossy());
+        let (program, args) = normalize_windows_launch_command(
+            &command,
+            &["-c".to_string(), "features.hooks=true".to_string()],
+        );
+
+        assert_eq!(program, "node");
+        assert_eq!(PathBuf::from(&args[0]), codex_js);
+        assert_eq!(
+            &args[1..],
+            ["-c".to_string(), "features.hooks=true".to_string()]
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+}

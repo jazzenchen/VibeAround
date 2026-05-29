@@ -7,6 +7,12 @@ import type {
 } from "./types";
 import { apiTypeLabel, apiTypeShort, isProviderApiKind } from "./types";
 
+export interface ProviderEndpointGroup {
+  id: string;
+  label: string;
+  endpoints: CatalogEntry["endpoints"];
+}
+
 /**
  * Walk the selected api_types and union their auth-mode-matching `fields[]`
  * by `name`. Two endpoints of the same provider should declare the same
@@ -17,10 +23,11 @@ export function collectFields(
   provider: CatalogEntry,
   apiTypes: string[],
   mode: string,
+  overrides: Record<string, ApiTypeOverrides> = {},
 ): FieldDef[] {
   const seen = new Map<string, FieldDef>();
   for (const apiType of apiTypes) {
-    const ep = endpointsForApiType(provider, apiType)[0];
+    const ep = selectedEndpoint(provider, apiType, overrides);
     if (!ep) continue;
     const auth = ep.auth_modes.find((a: AuthModeDef) => a.mode === mode);
     if (!auth) continue;
@@ -77,6 +84,41 @@ export function endpointLabel(endpoint: CatalogEntry["endpoints"][number]): stri
   return endpoint.label || endpointId(endpoint);
 }
 
+export function providerEndpointGroups(provider: CatalogEntry): ProviderEndpointGroup[] {
+  const groups = new Map<string, ProviderEndpointGroup>();
+  for (const endpoint of provider.endpoints) {
+    if (!isProviderApiKind(endpoint.api_type)) continue;
+    const id = endpointId(endpoint);
+    const existing = groups.get(id);
+    if (existing) {
+      existing.endpoints.push(endpoint);
+    } else {
+      groups.set(id, {
+        id,
+        label: endpointLabel(endpoint),
+        endpoints: [endpoint],
+      });
+    }
+  }
+  return Array.from(groups.values());
+}
+
+export function providerUsesEndpointGroups(provider: CatalogEntry): boolean {
+  if (provider.id === "custom") return false;
+  const groups = providerEndpointGroups(provider);
+  if (groups.length <= 1) return false;
+  return groups.some((group) =>
+    group.endpoints.some((endpoint) => endpoint.id || endpoint.label),
+  );
+}
+
+export function defaultApiKindEndpoints(provider: CatalogEntry): CatalogEntry["endpoints"] {
+  if (providerUsesEndpointGroups(provider)) {
+    return providerEndpointGroups(provider)[0]?.endpoints ?? [];
+  }
+  return providerApiKindEndpoints(provider);
+}
+
 export function providerApiKindEndpoints(provider: CatalogEntry): CatalogEntry["endpoints"] {
   const seen = new Set<string>();
   const out: CatalogEntry["endpoints"] = [];
@@ -89,7 +131,56 @@ export function providerApiKindEndpoints(provider: CatalogEntry): CatalogEntry["
 }
 
 export function providerApiKindsEditable(provider: CatalogEntry): boolean {
-  return provider.id === "custom" || provider.id === "dashscope" || provider.id === "gemini";
+  return (
+    provider.id === "custom" ||
+    provider.id === "dashscope" ||
+    provider.id === "gemini" ||
+    provider.id === "volcengine"
+  );
+}
+
+export function selectedEndpointGroup(
+  provider: CatalogEntry,
+  apiTypes: string[],
+  overrides: Record<string, ApiTypeOverrides>,
+): ProviderEndpointGroup | undefined {
+  const groups = providerEndpointGroups(provider);
+  if (groups.length === 0) return undefined;
+  for (const apiType of apiTypes) {
+    const endpoint = selectedEndpoint(provider, apiType, overrides);
+    if (!endpoint) continue;
+    const group = groups.find((candidate) => candidate.id === endpointId(endpoint));
+    if (group) return group;
+  }
+  return groups[0];
+}
+
+export function overrideForEndpoint(
+  endpoint: CatalogEntry["endpoints"][number],
+  current?: ApiTypeOverrides,
+): ApiTypeOverrides {
+  const currentModel = current?.model ?? "";
+  const modelStillValid = endpoint.models.some((model) => model.id === currentModel);
+  return {
+    ...current,
+    endpoint_id: endpointId(endpoint),
+    base_url: endpoint.default_base_url || undefined,
+    model: modelStillValid ? currentModel : (endpoint.models[0]?.id ?? currentModel),
+  };
+}
+
+export function overridesForEndpoints(
+  endpoints: CatalogEntry["endpoints"],
+  current: Record<string, ApiTypeOverrides> = {},
+): Record<string, ApiTypeOverrides> {
+  const next = { ...current };
+  for (const endpoint of endpoints) {
+    next[endpoint.api_type] = overrideForEndpoint(
+      endpoint,
+      current[endpoint.api_type],
+    );
+  }
+  return next;
 }
 
 export function endpointsForApiType(
@@ -138,6 +229,15 @@ export function apiKindHint(
       return "Uses a Google Cloud access token and a Vertex endpoint root ending in /endpoints/openapi.";
     }
     return "Uses a Gemini API key with Google AI Studio's OpenAI-compatible endpoint.";
+  }
+  if (provider.id === "volcengine" && endpoint) {
+    if (endpointId(endpoint) === "coding-plan") {
+      return "Coding Plan uses subscription Base URLs; /api/v3 belongs to pay-as-you-go Ark API.";
+    }
+    if (endpointId(endpoint) === "agent-plan") {
+      return "Agent Plan requires its dedicated API key; Ark API and Coding Plan keys cannot be reused.";
+    }
+    return "Ark API uses pay-as-you-go API keys and versioned Model IDs.";
   }
   if (provider.id !== "azure") return undefined;
   if (apiType === "openai-responses") {

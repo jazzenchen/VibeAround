@@ -506,6 +506,7 @@ mod tests {
         assert!(get("minimax").is_some());
         assert!(get("mimo").is_some());
         assert!(get("deepseek").is_some());
+        assert!(get("volcengine").is_some());
         assert!(get("zai").is_some());
         assert!(get("gemini").is_some());
         assert!(get("xai").is_some());
@@ -804,6 +805,111 @@ mod tests {
             assert_eq!(build.id, "grok-build-0.1");
             assert_eq!(build.context_window, Some(256_000));
         }
+    }
+
+    #[test]
+    fn volcengine_catalog_separates_products_and_protocols() {
+        let provider = get("volcengine").expect("volcengine must exist");
+
+        let anthropic_ids: Vec<_> = provider
+            .endpoints
+            .iter()
+            .filter(|endpoint| endpoint.api_type == "anthropic")
+            .map(endpoint_id)
+            .collect();
+        assert_eq!(anthropic_ids, vec!["ark-api", "coding-plan", "agent-plan"]);
+
+        let chat_ids: Vec<_> = provider
+            .endpoints
+            .iter()
+            .filter(|endpoint| endpoint.api_type == "openai-chat")
+            .map(endpoint_id)
+            .collect();
+        assert_eq!(chat_ids, vec!["ark-api", "coding-plan", "agent-plan"]);
+
+        let response_ids: Vec<_> = provider
+            .endpoints
+            .iter()
+            .filter(|endpoint| endpoint.api_type == "openai-responses")
+            .map(endpoint_id)
+            .collect();
+        assert_eq!(response_ids, vec!["ark-api"]);
+
+        let ark_anthropic =
+            find_endpoint(provider, "anthropic", Some("ark-api")).expect("ark anthropic");
+        assert_eq!(
+            ark_anthropic.default_base_url,
+            "https://ark.cn-beijing.volces.com/api/compatible"
+        );
+        assert!(ark_anthropic.append_v1_path);
+        assert!(ark_anthropic.auth_header);
+        assert_eq!(
+            model(ark_anthropic, "doubao-seed-code").id,
+            "doubao-seed-code-preview-251028"
+        );
+
+        for api_type in ["openai-responses", "openai-chat"] {
+            let endpoint =
+                find_endpoint(provider, api_type, Some("ark-api")).expect("ark endpoint");
+            assert_eq!(
+                endpoint.default_base_url,
+                "https://ark.cn-beijing.volces.com/api/v3"
+            );
+            assert!(!endpoint.append_v1_path);
+            assert!(endpoint.capabilities.reasoning_effort);
+
+            let code = model(endpoint, "doubao-seed-code");
+            assert_eq!(code.id, "doubao-seed-code-preview-251028");
+            assert_eq!(code.context_window, Some(256_000));
+            assert!(code.capabilities.image_input);
+
+            let deepseek = model(endpoint, "deepseek-v4-pro");
+            assert_eq!(deepseek.id, "deepseek-v4-pro-260425");
+            assert_eq!(deepseek.context_window, Some(1_024_000));
+        }
+
+        let coding_anthropic =
+            find_endpoint(provider, "anthropic", Some("coding-plan")).expect("coding anthropic");
+        assert_eq!(
+            coding_anthropic.default_base_url,
+            "https://ark.cn-beijing.volces.com/api/coding"
+        );
+        assert!(coding_anthropic.append_v1_path);
+        assert!(coding_anthropic.auth_header);
+        assert!(find_model(coding_anthropic, "ark-code-latest").is_some());
+        assert!(find_model(coding_anthropic, "doubao-seed-2.0-code").is_some());
+        assert!(find_model(coding_anthropic, "minimax-latest").is_some());
+        assert!(find_model(coding_anthropic, "doubao-seed-code-preview-251028").is_none());
+
+        let coding_chat =
+            find_endpoint(provider, "openai-chat", Some("coding-plan")).expect("coding chat");
+        assert_eq!(
+            coding_chat.default_base_url,
+            "https://ark.cn-beijing.volces.com/api/coding/v3"
+        );
+        assert!(!coding_chat.append_v1_path);
+        assert!(find_model(coding_chat, "kimi-k2.6").is_some());
+
+        let agent_anthropic =
+            find_endpoint(provider, "anthropic", Some("agent-plan")).expect("agent anthropic");
+        assert_eq!(
+            agent_anthropic.default_base_url,
+            "https://ark.cn-beijing.volces.com/api/plan"
+        );
+        assert!(agent_anthropic.append_v1_path);
+        assert!(agent_anthropic.auth_header);
+        assert!(find_model(agent_anthropic, "ark-code-latest").is_some());
+        assert!(find_model(agent_anthropic, "doubao-seed-2.0-mini").is_some());
+        assert!(find_model(agent_anthropic, "doubao-seedance-2.0").is_none());
+
+        let agent_chat =
+            find_endpoint(provider, "openai-chat", Some("agent-plan")).expect("agent chat");
+        assert_eq!(
+            agent_chat.default_base_url,
+            "https://ark.cn-beijing.volces.com/api/plan/v3"
+        );
+        assert!(!agent_chat.append_v1_path);
+        assert!(find_model(agent_chat, "minimax-m2.7").is_some());
     }
 
     #[test]
