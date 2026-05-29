@@ -23,6 +23,10 @@ mod platform;
 #[allow(dead_code)]
 #[path = "launcher/linux.rs"]
 mod linux_for_tests;
+#[cfg(all(test, not(target_os = "windows")))]
+#[allow(dead_code)]
+#[path = "launcher/windows.rs"]
+mod windows_for_tests;
 
 use self::plan::LaunchPlanBuilder;
 use ::common::profiles;
