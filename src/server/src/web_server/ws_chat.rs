@@ -264,6 +264,22 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
                                         route: active_route.clone(),
                                         session_id,
                                     });
+                                    if let Ok(runtime) = state
+                                        .channel_hub
+                                        .workspace_thread_manager()
+                                        .resolve_route_runtime(&active_route)
+                                        .await
+                                    {
+                                        let workspace_threads =
+                                            state.channel_hub.workspace_thread_manager();
+                                        common::channels::prompt::send_runtime_multi_agent_state_and_replay(
+                                            &workspace_threads,
+                                            &runtime,
+                                            &state.channel_hub.plugin_host(),
+                                            &active_route,
+                                        )
+                                        .await;
+                                    }
                                     if let Some(deadline) =
                                         state.web_channel.bump_idle_route(&active_route)
                                     {
@@ -1114,6 +1130,13 @@ fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
             request_id,
             request: payload,
         },
+        ChannelOutput::MultiAgentTurn { turn, agents, .. } => {
+            ChatEvent::MultiAgentTurn { turn, agents }
+        }
+        ChannelOutput::SubagentStatus { agent, .. } => ChatEvent::SubagentStatus { agent },
+        ChannelOutput::SubagentAcp { agent, payload, .. } => {
+            ChatEvent::SubagentAcpNotification { agent, payload }
+        }
         ChannelOutput::PromptDone { message_id, .. } => ChatEvent::PromptDone { message_id },
         ChannelOutput::TurnStatus { active, .. } => ChatEvent::TurnStatus { active },
     }

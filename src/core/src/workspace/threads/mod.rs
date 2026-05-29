@@ -7,6 +7,7 @@ pub mod store;
 pub use attachment::{RouteAttachment, RouteAttachmentProjection};
 pub use runtime::{ThreadRuntime, ThreadRuntimeState};
 pub use store::{
-    AgentSessionRef, HostBinding, ThreadProjection, ThreadStatus, WorkspaceThread,
+    AgentSessionRef, HostBinding, MultiAgentTurn, MultiAgentTurnId, MultiAgentTurnMode,
+    ThreadAgent, ThreadAgentId, ThreadAgentStatus, ThreadProjection, ThreadStatus, WorkspaceThread,
     WorkspaceThreadId,
 };

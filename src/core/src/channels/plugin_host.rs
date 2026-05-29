@@ -113,6 +113,13 @@ impl PluginHost {
 
     pub async fn send_output(&self, output: ChannelOutput) {
         let route = output.route_key().clone();
+        let runtime = self.runtime_for_channel(&route.channel_kind);
+
+        if matches!(&runtime, Some(PluginRuntime::WebSocket(_))) || route.channel_kind == "web" {
+            self.send_direct(output, route, runtime).await;
+            return;
+        }
+
         let output_id = match self.outbox.enqueue(output.clone()).await {
             Ok(output_id) => output_id,
             Err(error) => {
@@ -134,13 +141,6 @@ impl PluginHost {
             event = "send_output",
             route = %route
         );
-        let runtime = self
-            .runtimes
-            .get(&route.channel_kind)
-            .map(|entry| match entry.value() {
-                PluginRuntime::Stdio(runtime) => PluginRuntime::Stdio(Arc::clone(runtime)),
-                PluginRuntime::WebSocket(runtime) => PluginRuntime::WebSocket(Arc::clone(runtime)),
-            });
 
         if let Some(runtime) = runtime {
             match runtime.send_output(output).await {
@@ -191,6 +191,58 @@ impl PluginHost {
                 event = "no_runtime_for_route",
                 route = %route,
                 known = ?known
+            );
+        }
+    }
+
+    fn runtime_for_channel(&self, channel_kind: &str) -> Option<PluginRuntime> {
+        self.runtimes
+            .get(channel_kind)
+            .map(|entry| match entry.value() {
+                PluginRuntime::Stdio(runtime) => PluginRuntime::Stdio(Arc::clone(runtime)),
+                PluginRuntime::WebSocket(runtime) => PluginRuntime::WebSocket(Arc::clone(runtime)),
+            })
+    }
+
+    async fn send_direct(
+        &self,
+        output: ChannelOutput,
+        route: crate::routing::RouteKey,
+        runtime: Option<PluginRuntime>,
+    ) {
+        proc_log!(
+            debug,
+            kind = ProcessKind::ChannelPlugin,
+            label = route.channel_kind,
+            event = "send_output_direct",
+            route = %route
+        );
+
+        let Some(runtime) = runtime else {
+            let known: Vec<String> = self
+                .runtimes
+                .iter()
+                .map(|e| format!("{:?}", e.key()))
+                .collect();
+            proc_log!(
+                warn,
+                kind = ProcessKind::ChannelPlugin,
+                label = route.channel_kind,
+                event = "no_runtime_for_route",
+                route = %route,
+                known = ?known
+            );
+            return;
+        };
+
+        if let Err(error) = runtime.send_output(output).await {
+            proc_log!(
+                warn,
+                kind = ProcessKind::ChannelPlugin,
+                label = route.channel_kind,
+                event = "send_output_failed",
+                route = %route,
+                error = %error
             );
         }
     }

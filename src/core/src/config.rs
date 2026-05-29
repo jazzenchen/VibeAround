@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
 
@@ -38,6 +38,63 @@ pub fn data_dir() -> PathBuf {
     home_dir().join(".vibearound")
 }
 
+/// Runtime state directory for append-only stores and other non-config data.
+pub fn state_dir() -> PathBuf {
+    data_dir().join("state")
+}
+
+pub fn state_file(name: &str) -> PathBuf {
+    state_dir().join(name)
+}
+
+pub fn legacy_state_file(name: &str) -> PathBuf {
+    data_dir().join(name)
+}
+
+pub fn migrate_legacy_state_file(name: &str) -> PathBuf {
+    let target = state_file(name);
+    let legacy = legacy_state_file(name);
+    if legacy.exists() {
+        if let Some(parent) = target.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                tracing::warn!(path = ?parent, error = %error, "failed to create state dir");
+                return target;
+            }
+        }
+        if target.exists() {
+            match archive_state_file(&legacy, "legacy-root") {
+                Ok(archive) => {
+                    tracing::info!(from = ?legacy, to = ?archive, "archived legacy state file")
+                }
+                Err(error) => {
+                    tracing::warn!(from = ?legacy, error = %error, "failed to archive legacy state file")
+                }
+            }
+        } else if let Err(error) = std::fs::rename(&legacy, &target) {
+            tracing::warn!(from = ?legacy, to = ?target, error = %error, "failed to migrate legacy state file");
+        } else {
+            tracing::info!(from = ?legacy, to = ?target, "migrated legacy state file")
+        }
+    }
+    target
+}
+
+pub fn archive_state_file(path: &Path, reason: &str) -> std::io::Result<PathBuf> {
+    let archive_dir = state_dir().join("archive");
+    std::fs::create_dir_all(&archive_dir)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("state-file");
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let archive = archive_dir.join(format!("{file_name}.{timestamp}.{reason}"));
+    std::fs::rename(path, &archive)?;
+    Ok(archive)
+}
+
 /// Ensure ~/.vibearound/ exists with settings.json and workspaces/.
 fn init_data_dir() {
     let dir = data_dir();
@@ -60,6 +117,10 @@ fn init_data_dir() {
     let ws_dir = dir.join("workspaces");
     if let Err(e) = std::fs::create_dir_all(&ws_dir) {
         tracing::info!("[VibeAround] Failed to create workspaces dir: {}", e);
+    }
+    let state_dir = state_dir();
+    if let Err(e) = std::fs::create_dir_all(&state_dir) {
+        tracing::info!("[VibeAround] Failed to create state dir: {}", e);
     }
 }
 
