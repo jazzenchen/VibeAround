@@ -89,7 +89,12 @@ export function providerApiKindEndpoints(provider: CatalogEntry): CatalogEntry["
 }
 
 export function providerApiKindsEditable(provider: CatalogEntry): boolean {
-  return provider.id === "custom" || provider.id === "dashscope" || provider.id === "gemini";
+  return (
+    provider.id === "custom" ||
+    provider.id === "dashscope" ||
+    provider.id === "gemini" ||
+    provider.id === "volcengine"
+  );
 }
 
 export function endpointsForApiType(
@@ -138,6 +143,15 @@ export function apiKindHint(
       return "Uses a Google Cloud access token and a Vertex endpoint root ending in /endpoints/openapi.";
     }
     return "Uses a Gemini API key with Google AI Studio's OpenAI-compatible endpoint.";
+  }
+  if (provider.id === "volcengine" && endpoint) {
+    if (endpointId(endpoint) === "coding-plan") {
+      return "Coding Plan uses subscription Base URLs; /api/v3 belongs to pay-as-you-go Ark API.";
+    }
+    if (endpointId(endpoint) === "agent-plan") {
+      return "Agent Plan requires its dedicated API key; Ark API and Coding Plan keys cannot be reused.";
+    }
+    return "Ark API uses pay-as-you-go API keys and versioned Model IDs.";
   }
   if (provider.id !== "azure") return undefined;
   if (apiType === "openai-responses") {
