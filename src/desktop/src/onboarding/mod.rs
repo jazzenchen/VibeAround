@@ -106,6 +106,7 @@ fn write_settings_value(val: &Value) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// Read current settings (exposed for startup integration sync).
+#[allow(dead_code)]
 pub fn get_settings_value() -> serde_json::Value {
     read_settings_value()
 }
@@ -164,6 +165,19 @@ pub fn save_settings<R: Runtime>(app: AppHandle<R>, settings: Value) -> Result<(
     write_settings_value(&settings)?;
     let _ = app.emit(crate::tray::LAUNCH_CONFIG_CHANGED_EVENT, ());
     Ok(())
+}
+
+#[tauri::command]
+pub async fn uninstall_agent_integrations(
+    remove_mcp: bool,
+    remove_skills: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        common::agent::uninstall_legacy_integrations(remove_mcp, remove_skills)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------

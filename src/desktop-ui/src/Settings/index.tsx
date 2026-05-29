@@ -7,6 +7,7 @@ import {
   Network,
   RotateCw,
   Settings as SettingsIcon,
+  Trash2,
   WandSparkles,
 } from "lucide-react";
 import { useI18n } from "@va/i18n";
@@ -57,6 +58,8 @@ type SaveState =
   | "im"
   | "tunnel"
   | "tunnel-restart"
+  | "uninstall-mcp"
+  | "uninstall-skills"
   | "restart-services";
 
 const AGENT_DISPLAY_ORDER = [
@@ -89,6 +92,8 @@ export function SettingsDialog({
   const [enabledChannels, setEnabledChannels] = useState<Set<string>>(
     () => new Set(),
   );
+  const [mcpAutoInstall, setMcpAutoInstall] = useState(true);
+  const [skillAutoInstall, setSkillAutoInstall] = useState(true);
   const [channelConfigs, setChannelConfigs] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -178,6 +183,12 @@ export function SettingsDialog({
     setProxyNoProxy(proxy?.no_proxy ?? "");
   }, []);
 
+  const hydrateIntegrations = useCallback((loadedSettings: AppSettings) => {
+    const integrations = loadedSettings.integrations;
+    setMcpAutoInstall(integrations?.mcp_auto_install ?? true);
+    setSkillAutoInstall(integrations?.skill_auto_install ?? true);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setSettingsLoaded(false);
@@ -201,6 +212,7 @@ export function SettingsDialog({
       hydrateChannels(loadedSettings, registry, discovered);
       hydrateTunnel(loadedSettings);
       hydrateProxy(loadedSettings);
+      hydrateIntegrations(loadedSettings);
       setSettingsLoaded(true);
     } catch (error) {
       setNotice({
@@ -210,7 +222,13 @@ export function SettingsDialog({
     } finally {
       setLoading(false);
     }
-  }, [hydrateAgents, hydrateChannels, hydrateProxy, hydrateTunnel]);
+  }, [
+    hydrateAgents,
+    hydrateChannels,
+    hydrateIntegrations,
+    hydrateProxy,
+    hydrateTunnel,
+  ]);
 
   useEffect(() => {
     if (open) void load();
@@ -329,6 +347,8 @@ export function SettingsDialog({
         settings,
         agents,
         enabledAgents,
+        mcpAutoInstall,
+        skillAutoInstall,
       });
       await invoke("save_settings", { settings: nextSettings });
       setSettings(nextSettings);
@@ -344,7 +364,14 @@ export function SettingsDialog({
     } finally {
       setSaving("idle");
     }
-  }, [settings, agents, enabledAgents, onServicesRestarted]);
+  }, [
+    settings,
+    agents,
+    enabledAgents,
+    mcpAutoInstall,
+    skillAutoInstall,
+    onServicesRestarted,
+  ]);
 
   const applyProxySettings = useCallback(async () => {
     setSaving("proxy");
@@ -371,6 +398,34 @@ export function SettingsDialog({
       setSaving("idle");
     }
   }, [settings, proxyEnabled, proxyHttp, proxyNoProxy, onServicesRestarted]);
+
+  const uninstallIntegrations = useCallback(
+    async (kind: "mcp" | "skills") => {
+      setSaving(kind === "mcp" ? "uninstall-mcp" : "uninstall-skills");
+      setNotice(null);
+      try {
+        await invoke("uninstall_agent_integrations", {
+          removeMcp: kind === "mcp",
+          removeSkills: kind === "skills",
+        });
+        setNotice({
+          variant: "success",
+          message:
+            kind === "mcp"
+              ? "Legacy VibeAround MCP entries removed."
+              : "Legacy VibeAround skill files removed.",
+        });
+      } catch (error) {
+        setNotice({
+          variant: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setSaving("idle");
+      }
+    },
+    [],
+  );
 
   const applyImSettings = useCallback(async () => {
     setSaving("im");
@@ -465,35 +520,35 @@ export function SettingsDialog({
             <TabsList className="!h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0">
               <TabsTrigger
                 value="general"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <SettingsIcon className="h-3 w-3" />
                 {t("General")}
               </TabsTrigger>
               <TabsTrigger
                 value="agents"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <Bot className="h-3 w-3" />
                 {t("Agents")}
               </TabsTrigger>
               <TabsTrigger
                 value="im"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <MessageSquare className="h-3 w-3" />
                 {t("IM")}
               </TabsTrigger>
               <TabsTrigger
                 value="tunnel"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <Globe className="h-3 w-3" />
                 {t("Tunnel")}
               </TabsTrigger>
               <TabsTrigger
                 value="proxy"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <Network className="h-3 w-3" />
                 {t("Proxy")}
@@ -507,7 +562,7 @@ export function SettingsDialog({
               className="min-h-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
             >
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
-                <div className="mb-4">
+                <div className="mb-5">
                   <h2 className="flex items-center gap-2 text-base font-semibold">
                     <SettingsIcon className="h-4 w-4 text-primary" />
                     {t("General")}
@@ -525,6 +580,7 @@ export function SettingsDialog({
                       <Button
                         type="button"
                         size="sm"
+                        className="text-xs"
                         disabled={saving !== "idle"}
                         onClick={() => void restartServices()}
                       >
@@ -543,6 +599,7 @@ export function SettingsDialog({
                         type="button"
                         variant="outline"
                         size="sm"
+                        className="text-xs"
                         disabled={saving !== "idle"}
                         onClick={() => window.location.replace("/onboarding")}
                       >
@@ -612,7 +669,14 @@ export function SettingsDialog({
                     <AgentSettingsPanel
                       agents={agents}
                       enabledAgents={enabledAgents}
+                      mcpAutoInstall={mcpAutoInstall}
+                      skillAutoInstall={skillAutoInstall}
                       onToggle={toggleAgent}
+                      onMcpAutoInstallChange={setMcpAutoInstall}
+                      onSkillAutoInstallChange={setSkillAutoInstall}
+                      onUninstallMcp={() => void uninstallIntegrations("mcp")}
+                      onUninstallSkills={() => void uninstallIntegrations("skills")}
+                      saving={saving}
                       notice={<SettingsNotice notice={notice} />}
                     />
                   </div>
@@ -730,17 +794,31 @@ export function SettingsDialog({
 function AgentSettingsPanel({
   agents,
   enabledAgents,
+  mcpAutoInstall,
+  skillAutoInstall,
   onToggle,
+  onMcpAutoInstallChange,
+  onSkillAutoInstallChange,
+  onUninstallMcp,
+  onUninstallSkills,
+  saving,
   notice,
 }: {
   agents: AgentSummary[];
   enabledAgents: Set<string>;
+  mcpAutoInstall: boolean;
+  skillAutoInstall: boolean;
   onToggle: (agentId: string) => void;
+  onMcpAutoInstallChange: (value: boolean) => void;
+  onSkillAutoInstallChange: (value: boolean) => void;
+  onUninstallMcp: () => void;
+  onUninstallSkills: () => void;
+  saving: SaveState;
   notice?: ReactNode;
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Bot className="h-4 w-4 text-primary" />
@@ -753,7 +831,7 @@ function AgentSettingsPanel({
         </p>
         {notice}
       </div>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(178px,220px))] gap-2">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
         {agents.map((agent) => {
           const isEnabled = enabledAgents.has(agent.id);
           return (
@@ -762,7 +840,7 @@ function AgentSettingsPanel({
               type="button"
               role="checkbox"
               aria-checked={isEnabled}
-              className={`relative flex min-h-[54px] items-center gap-2 rounded-md border p-2 pr-8 text-left transition-colors ${
+              className={`relative flex min-h-12 items-center gap-2 rounded-md border p-2 pr-8 text-left transition-colors ${
                 isEnabled
                   ? "border-primary/40 bg-primary/5"
                   : "border-border hover:border-border/80"
@@ -773,11 +851,11 @@ function AgentSettingsPanel({
                 kind="cli"
                 id={agent.id}
                 label={agent.display_name}
-                className="h-7 w-7"
+                className="h-6 w-6"
               />
               <span className="flex min-w-0 flex-1 items-center">
                 <span
-                  className={`truncate text-[13px] font-medium ${
+                  className={`truncate text-sm font-medium ${
                     isEnabled ? "text-foreground" : "text-muted-foreground"
                   }`}
                 >
@@ -801,6 +879,66 @@ function AgentSettingsPanel({
           )}
         </StatusBanner>
       )}
+      <div className="rounded-md border border-border">
+        <SettingsActionRow
+          label={t("Auto-install MCP")}
+          description={t("Install VibeAround MCP in the selected workspace when an agent launches.")}
+          action={
+            <Switch
+              checked={mcpAutoInstall}
+              onCheckedChange={onMcpAutoInstallChange}
+              aria-label={t("Auto-install MCP")}
+              size="sm"
+            />
+          }
+        />
+        <SettingsActionRow
+          label={t("Auto-install skills")}
+          description={t("Install VibeAround skills in the selected workspace when an agent launches.")}
+          action={
+            <Switch
+              checked={skillAutoInstall}
+              onCheckedChange={onSkillAutoInstallChange}
+              aria-label={t("Auto-install skills")}
+              size="sm"
+            />
+          }
+        />
+        <SettingsActionRow
+          label={t("Uninstall legacy MCP")}
+          description={t("Remove legacy VibeAround MCP entries from old global config.")}
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              disabled={saving !== "idle"}
+              onClick={onUninstallMcp}
+            >
+              <Trash2 className="h-3 w-3" />
+              {saving === "uninstall-mcp" ? t("Removing…") : t("Remove")}
+            </Button>
+          }
+        />
+        <SettingsActionRow
+          label={t("Uninstall legacy skill")}
+          description={t("Remove legacy VibeAround skill files from old global folders.")}
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              disabled={saving !== "idle"}
+              onClick={onUninstallSkills}
+            >
+              <Trash2 className="h-3 w-3" />
+              {saving === "uninstall-skills" ? t("Removing…") : t("Remove")}
+            </Button>
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -824,7 +962,7 @@ function ProxySettingsPanel({
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Network className="h-4 w-4 text-primary" />
@@ -846,30 +984,35 @@ function ProxySettingsPanel({
               checked={proxyEnabled}
               onCheckedChange={onProxyEnabledChange}
               aria-label={t("Enable Settings proxy")}
+              size="sm"
             />
           }
         />
-        <div className="grid gap-3 border-b border-border px-4 py-3 last:border-b-0">
-          <label className="grid gap-1.5">
-            <span className="text-xs font-medium">{t("HTTP proxy URL")}</span>
+        <div className="grid gap-3 border-b border-border px-4 py-4 last:border-b-0">
+          <label className="block">
+            <span className="text-xs text-muted-foreground">
+              {t("HTTP proxy URL")}
+            </span>
             <Input
               type="text"
               value={proxyHttp}
               onChange={(event) => onProxyHttpChange(event.currentTarget.value)}
               placeholder="http://127.0.0.1:7890"
-              className="h-8 font-mono text-xs"
+              className="mt-1"
             />
           </label>
         </div>
-        <div className="grid gap-3 border-b border-border px-4 py-3 last:border-b-0">
-          <label className="grid gap-1.5">
-            <span className="text-xs font-medium">{t("No proxy")}</span>
+        <div className="grid gap-3 border-b border-border px-4 py-4 last:border-b-0">
+          <label className="block">
+            <span className="text-xs text-muted-foreground">
+              {t("No proxy")}
+            </span>
             <Input
               type="text"
               value={proxyNoProxy}
               onChange={(event) => onProxyNoProxyChange(event.currentTarget.value)}
               placeholder="localhost,127.0.0.1,::1"
-              className="h-8 font-mono text-xs"
+              className="mt-1"
             />
           </label>
         </div>
@@ -898,7 +1041,7 @@ function SettingsActionRow({
   action: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 last:border-b-0">
+    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-4 last:border-b-0">
       <div className="min-w-0">
         <div className="text-sm font-medium">{label}</div>
         {description && (
@@ -925,15 +1068,24 @@ function buildAgentSettings({
   settings,
   agents,
   enabledAgents,
+  mcpAutoInstall,
+  skillAutoInstall,
 }: {
   settings: AppSettings;
   agents: AgentSummary[];
   enabledAgents: Set<string>;
+  mcpAutoInstall: boolean;
+  skillAutoInstall: boolean;
 }): AppSettings {
   const result: AppSettings = { ...settings };
   result.enabled_agents = agents
     .map((agent) => agent.id)
     .filter((id) => enabledAgents.has(id));
+  result.integrations = {
+    ...(isRecord(settings.integrations) ? settings.integrations : {}),
+    mcp_auto_install: mcpAutoInstall,
+    skill_auto_install: skillAutoInstall,
+  };
   return result;
 }
 

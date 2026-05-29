@@ -1,8 +1,8 @@
-//! MCP server entry install/uninstall for an agent's global settings.
+//! MCP server entry install/uninstall for an agent's settings.
 //!
 //! Supports both JSON (Claude Code, Gemini, Cursor, Kiro, Qwen) and TOML
-//! (Codex) formats. Also writes to any configured `settings_path_legacy`
-//! path for backward compatibility.
+//! (Codex) formats. Global helpers are kept only for cleanup/migration;
+//! runtime installation should prefer project-scoped workspace files.
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +13,7 @@ use crate::{config, resources};
 /// Merge VibeAround MCP server entry into an agent's global settings.
 /// Supports JSON (default) and TOML formats. Also writes to legacy path
 /// if configured.
+#[allow(dead_code)]
 pub(super) fn install_mcp_config(agent: &str, mcp_url: &str) -> anyhow::Result<()> {
     let home = home_dir()?;
 
@@ -26,35 +27,11 @@ pub(super) fn install_mcp_config(agent: &str, mcp_url: &str) -> anyhow::Result<(
     };
 
     let config_path = home.join(&global_config.settings_path);
-
-    if let Some(parent) = config_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
-    if is_toml_format(global_config) {
-        install_mcp_config_toml(
-            &config_path,
-            &global_config.mcp_key,
-            &global_config.mcp_entry,
-            mcp_url,
-            agent,
-        )?;
-    } else {
-        install_mcp_config_json(
-            &config_path,
-            &global_config.mcp_key,
-            &global_config.mcp_entry,
-            mcp_url,
-            agent,
-        )?;
-    }
+    install_mcp_config_at_path(agent, global_config, &config_path, mcp_url)?;
 
     // Also write to legacy path for backward compat (e.g. older Claude Code versions)
     if let Some(legacy) = &global_config.settings_path_legacy {
         let legacy_path = home.join(legacy);
-        if let Some(parent) = legacy_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         let _ = install_mcp_config_json(
             &legacy_path,
             &global_config.mcp_key,
@@ -65,6 +42,25 @@ pub(super) fn install_mcp_config(agent: &str, mcp_url: &str) -> anyhow::Result<(
     }
 
     Ok(())
+}
+
+/// Merge VibeAround MCP server entry into an agent's project/workspace settings.
+pub(super) fn install_project_mcp_config(
+    agent: &str,
+    workspace: &Path,
+    mcp_url: &str,
+) -> anyhow::Result<()> {
+    let agent_def = match resources::agent_by_id(agent) {
+        Some(def) => def,
+        None => return Ok(()),
+    };
+    let global_config = match &agent_def.global_config {
+        Some(cfg) => cfg,
+        None => return Ok(()),
+    };
+
+    let config_path = workspace.join(project_mcp_settings_path(agent, global_config));
+    install_mcp_config_at_path(agent, global_config, &config_path, mcp_url)
 }
 
 /// Remove VibeAround MCP server entry from an agent's global settings.
@@ -81,42 +77,74 @@ pub(super) fn uninstall_mcp_config(agent: &str) -> anyhow::Result<()> {
     };
 
     let config_path = home.join(&global_config.settings_path);
-    let mcp_key = &global_config.mcp_key;
+    uninstall_mcp_config_at_path(agent, global_config, &config_path)?;
 
-    if !config_path.exists() {
-        return Ok(());
-    }
-
-    if is_toml_format(global_config) {
-        return uninstall_mcp_config_toml(&config_path, mcp_key, agent);
-    }
-
-    let data =
-        std::fs::read_to_string(&config_path).with_context(|| format!("Read {:?}", config_path))?;
-    let mut root: serde_json::Value = serde_json::from_str(&data).unwrap_or(serde_json::json!({}));
-
-    let mut changed = false;
-    if let Some(obj) = root.as_object_mut() {
-        if let Some(servers) = obj.get_mut(mcp_key) {
-            if let Some(servers_obj) = servers.as_object_mut() {
-                if servers_obj.remove("vibearound").is_some() {
-                    changed = true;
-                }
-            }
-        }
-    }
-
-    if changed {
-        let pretty = serde_json::to_string_pretty(&root).context("JSON serialize")?;
-        std::fs::write(&config_path, pretty).with_context(|| format!("Write {:?}", config_path))?;
-        tracing::info!(
-            "[integrations] Removed MCP config for {} at {:?}",
-            agent,
-            config_path
-        );
+    if let Some(legacy) = &global_config.settings_path_legacy {
+        let legacy_path = home.join(legacy);
+        uninstall_mcp_config_json(&legacy_path, &global_config.mcp_key, agent)?;
     }
 
     Ok(())
+}
+
+/// Remove VibeAround MCP server entry from an agent's project/workspace settings.
+pub(super) fn uninstall_project_mcp_config(agent: &str, workspace: &Path) -> anyhow::Result<()> {
+    let agent_def = match resources::agent_by_id(agent) {
+        Some(def) => def,
+        None => return Ok(()),
+    };
+    let global_config = match &agent_def.global_config {
+        Some(cfg) => cfg,
+        None => return Ok(()),
+    };
+
+    let config_path = workspace.join(project_mcp_settings_path(agent, global_config));
+    uninstall_mcp_config_at_path(agent, global_config, &config_path)
+}
+
+fn install_mcp_config_at_path(
+    agent: &str,
+    global_config: &resources::AgentGlobalConfig,
+    config_path: &Path,
+    mcp_url: &str,
+) -> anyhow::Result<()> {
+    if is_toml_format(global_config) {
+        install_mcp_config_toml(
+            config_path,
+            &global_config.mcp_key,
+            &global_config.mcp_entry,
+            mcp_url,
+            agent,
+        )
+    } else {
+        install_mcp_config_json(
+            config_path,
+            &global_config.mcp_key,
+            &global_config.mcp_entry,
+            mcp_url,
+            agent,
+        )
+    }
+}
+
+fn uninstall_mcp_config_at_path(
+    agent: &str,
+    global_config: &resources::AgentGlobalConfig,
+    config_path: &Path,
+) -> anyhow::Result<()> {
+    if is_toml_format(global_config) {
+        uninstall_mcp_config_toml(config_path, &global_config.mcp_key, agent)
+    } else {
+        uninstall_mcp_config_json(config_path, &global_config.mcp_key, agent)
+    }
+}
+
+fn project_mcp_settings_path(agent: &str, global_config: &resources::AgentGlobalConfig) -> PathBuf {
+    match agent {
+        // Claude Code project-scoped MCP is shared through workspace .mcp.json.
+        "claude" => PathBuf::from(".mcp.json"),
+        _ => PathBuf::from(&global_config.settings_path),
+    }
 }
 
 /// Check if the agent uses TOML config format.
@@ -139,23 +167,33 @@ fn install_mcp_config_json(
     mcp_url: &str,
     agent: &str,
 ) -> anyhow::Result<()> {
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("Create {:?}", parent))?;
+    }
+
     // Substitute placeholders in the entry template
     let mcp_value_str = serde_json::to_string(mcp_entry_template).context("serialize mcp_entry")?;
     let mcp_value: serde_json::Value =
         serde_json::from_str(&mcp_value_str.replace("{mcp_url}", mcp_url))
             .context("parse mcp_entry after substitution")?;
 
-    // Read existing config
-    let data = std::fs::read_to_string(config_path).unwrap_or_else(|_| "{}".to_string());
-    let mut root: serde_json::Value = serde_json::from_str(&data).unwrap_or(serde_json::json!({}));
+    let mut root: serde_json::Value = match std::fs::read_to_string(config_path) {
+        Ok(data) => {
+            serde_json::from_str(&data).with_context(|| format!("Parse JSON {:?}", config_path))?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(error) => return Err(error).with_context(|| format!("Read {:?}", config_path)),
+    };
 
     // Always replace (full replace on every startup)
-    if let Some(obj) = root.as_object_mut() {
-        let servers = obj.entry(mcp_key).or_insert_with(|| serde_json::json!({}));
-        if let Some(servers_obj) = servers.as_object_mut() {
-            servers_obj.insert("vibearound".to_string(), mcp_value);
-        }
-    }
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{:?} root is not a JSON object", config_path))?;
+    let servers = obj.entry(mcp_key).or_insert_with(|| serde_json::json!({}));
+    let servers_obj = servers
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("{} is not an object in {:?}", mcp_key, config_path))?;
+    servers_obj.insert("vibearound".to_string(), mcp_value);
 
     let pretty = serde_json::to_string_pretty(&root).context("JSON serialize")?;
     std::fs::write(config_path, pretty).with_context(|| format!("Write {:?}", config_path))?;
@@ -177,15 +215,24 @@ fn install_mcp_config_toml(
 ) -> anyhow::Result<()> {
     use toml_edit::{DocumentMut, Item, Table};
 
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("Create {:?}", parent))?;
+    }
+
     // Substitute placeholders in the entry template
     let mcp_value_str = serde_json::to_string(mcp_entry_template).context("serialize mcp_entry")?;
     let substituted = mcp_value_str.replace("{mcp_url}", mcp_url);
     let mcp_value: serde_json::Value =
         serde_json::from_str(&substituted).context("parse mcp_entry after substitution")?;
 
-    // Read existing TOML config
-    let data = std::fs::read_to_string(config_path).unwrap_or_default();
-    let mut doc: DocumentMut = data.parse::<DocumentMut>().unwrap_or_default();
+    let data = match std::fs::read_to_string(config_path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error).with_context(|| format!("Read {:?}", config_path)),
+    };
+    let mut doc: DocumentMut = data
+        .parse::<DocumentMut>()
+        .with_context(|| format!("Parse TOML {:?}", config_path))?;
 
     // Ensure [mcp_key] table exists (e.g. [mcp_servers])
     if !doc.contains_key(mcp_key) {
@@ -235,6 +282,10 @@ fn install_mcp_config_toml(
 fn uninstall_mcp_config_toml(config_path: &Path, mcp_key: &str, agent: &str) -> anyhow::Result<()> {
     use toml_edit::DocumentMut;
 
+    if !config_path.exists() {
+        return Ok(());
+    }
+
     let data =
         std::fs::read_to_string(config_path).with_context(|| format!("Read {:?}", config_path))?;
     let mut doc: DocumentMut = data
@@ -259,4 +310,119 @@ fn uninstall_mcp_config_toml(config_path: &Path, mcp_key: &str, agent: &str) -> 
     }
 
     Ok(())
+}
+
+fn uninstall_mcp_config_json(config_path: &Path, mcp_key: &str, agent: &str) -> anyhow::Result<()> {
+    if !config_path.exists() {
+        return Ok(());
+    }
+
+    let data =
+        std::fs::read_to_string(config_path).with_context(|| format!("Read {:?}", config_path))?;
+    let mut root: serde_json::Value =
+        serde_json::from_str(&data).with_context(|| format!("Parse JSON {:?}", config_path))?;
+
+    let mut changed = false;
+    if let Some(obj) = root.as_object_mut() {
+        if let Some(servers) = obj.get_mut(mcp_key) {
+            if let Some(servers_obj) = servers.as_object_mut() {
+                let managed_keys: Vec<String> = servers_obj
+                    .iter()
+                    .filter(|(key, value)| {
+                        key.as_str() == "vibearound" || is_legacy_vibearound_managed(value)
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                for key in managed_keys {
+                    servers_obj.remove(&key);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if changed {
+        let pretty = serde_json::to_string_pretty(&root).context("JSON serialize")?;
+        std::fs::write(config_path, pretty).with_context(|| format!("Write {:?}", config_path))?;
+        tracing::info!(
+            "[integrations] Removed MCP config for {} at {:?}",
+            agent,
+            config_path
+        );
+    }
+
+    Ok(())
+}
+
+fn is_legacy_vibearound_managed(value: &serde_json::Value) -> bool {
+    value.get("metadata").and_then(|v| v.as_str()) == Some("vibearound")
+        || value
+            .get("_vibearound")
+            .and_then(|m| m.get("managed"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn unique_test_dir(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "vibearound-mcp-{name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn project_mcp_json_install_and_uninstall_preserves_other_servers() {
+        let dir = unique_test_dir("json");
+        fs::create_dir_all(dir.join(".gemini")).unwrap();
+        let path = dir.join(".gemini/settings.json");
+        fs::write(
+            &path,
+            r#"{
+  "mcpServers": {
+    "other": { "httpUrl": "http://127.0.0.1:1/mcp" }
+  }
+}"#,
+        )
+        .unwrap();
+
+        install_project_mcp_config("gemini", &dir, "http://127.0.0.1:12358/va/mcp").unwrap();
+        let installed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            installed["mcpServers"]["vibearound"]["httpUrl"],
+            "http://127.0.0.1:12358/va/mcp"
+        );
+        assert!(installed["mcpServers"]["other"].is_object());
+
+        uninstall_project_mcp_config("gemini", &dir).unwrap();
+        let removed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(removed["mcpServers"]["vibearound"].is_null());
+        assert!(removed["mcpServers"]["other"].is_object());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn claude_project_mcp_uses_workspace_mcp_json() {
+        let dir = unique_test_dir("claude");
+        fs::create_dir_all(&dir).unwrap();
+
+        install_project_mcp_config("claude", &dir, "http://127.0.0.1:12358/va/mcp").unwrap();
+
+        assert!(dir.join(".mcp.json").exists());
+        assert!(!dir.join(".claude.json").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

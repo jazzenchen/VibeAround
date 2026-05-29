@@ -157,10 +157,27 @@ pub struct Config {
     /// Validated at load time — entries that don't resolve via
     /// `resources::agent_by_alias` are dropped.
     pub enabled_agents: Vec<String>,
+    // --- Agent integrations ---
+    pub integrations: AgentIntegrationsConfig,
     // --- Optional outbound HTTP proxy ---
     pub proxy: HttpProxyConfig,
     // --- Raw channels JSON (for dynamic plugin config) ---
     raw_channels: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentIntegrationsConfig {
+    pub mcp_auto_install: bool,
+    pub skill_auto_install: bool,
+}
+
+impl Default for AgentIntegrationsConfig {
+    fn default() -> Self {
+        Self {
+            mcp_auto_install: true,
+            skill_auto_install: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -387,6 +404,23 @@ fn load_settings_from(path: &std::path::Path) -> Config {
                 .collect()
         });
 
+    let integrations = root
+        .get("integrations")
+        .and_then(|value| value.as_object())
+        .map(|integrations| AgentIntegrationsConfig {
+            mcp_auto_install: integrations
+                .get("mcp_auto_install")
+                .or_else(|| integrations.get("auto_install_mcp"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true),
+            skill_auto_install: integrations
+                .get("skill_auto_install")
+                .or_else(|| integrations.get("auto_install_skills"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true),
+        })
+        .unwrap_or_default();
+
     let proxy = root
         .get("proxy")
         .and_then(|value| value.as_object())
@@ -426,6 +460,7 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         default_agent,
         default_profiles,
         enabled_agents,
+        integrations,
         proxy,
         raw_channels,
     }
@@ -519,6 +554,7 @@ impl Default for Config {
                 .iter()
                 .map(|a| a.id.clone())
                 .collect(),
+            integrations: AgentIntegrationsConfig::default(),
             proxy: HttpProxyConfig::default(),
             raw_channels: serde_json::Value::Object(serde_json::Map::new()),
         }
@@ -638,6 +674,38 @@ mod tests {
             Some("http://127.0.0.1:7890")
         );
         assert!(!config.proxy.is_configured());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn integration_auto_install_defaults_to_enabled() {
+        let dir = unique_test_dir("integrations-default");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, "{}").unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(config.integrations.mcp_auto_install);
+        assert!(config.integrations.skill_auto_install);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn integration_auto_install_can_be_disabled() {
+        let dir = unique_test_dir("integrations-disabled");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "integrations": { "mcp_auto_install": false, "skill_auto_install": false } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(!config.integrations.mcp_auto_install);
+        assert!(!config.integrations.skill_auto_install);
         fs::remove_dir_all(&dir).unwrap();
     }
 

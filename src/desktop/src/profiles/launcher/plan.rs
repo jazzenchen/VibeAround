@@ -4,8 +4,8 @@
 //! the final plan, which keeps terminal-specific code away from profile,
 //! bridge, and resume routing decisions.
 
-use ::common::{profiles, resources};
-use anyhow::anyhow;
+use ::common::{agent as agent_integrations, profiles, resources};
+use anyhow::{anyhow, Context};
 use profiles::ProfileDef;
 
 use super::common::LaunchPlan;
@@ -91,6 +91,8 @@ impl<'a> LaunchPlanBuilder<'a> {
         let agent = resources::agent_by_id(agent_id)
             .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
+        agent_integrations::auto_install_project_integrations(agent_id, &workspace)
+            .with_context(|| format!("install project integrations for {}", agent_id))?;
 
         let Some(session_id) = self.session_id else {
             return Ok(LaunchPlan {
@@ -125,6 +127,8 @@ impl<'a> LaunchPlanBuilder<'a> {
         let agent = resources::agent_by_id(agent_id)
             .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
+        agent_integrations::auto_install_project_integrations(agent_id, &workspace)
+            .with_context(|| format!("install project integrations for {}", agent_id))?;
 
         Ok(LaunchPlan {
             env,
@@ -147,6 +151,8 @@ impl<'a> LaunchPlanBuilder<'a> {
 
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
+        agent_integrations::auto_install_project_integrations(agent_id, &workspace)
+            .with_context(|| format!("install project integrations for {}", agent_id))?;
         let (command, mut args) = resume_command_for_agent(agent_id, session_id)?;
         if !rendered.command_args.is_empty() {
             let mut profile_args = rendered.command_args.clone();

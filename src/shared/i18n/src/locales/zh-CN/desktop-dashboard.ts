@@ -27,14 +27,51 @@ export const zhCNDesktopDashboard: Record<string, string> = {
   "Services restarted.": "服务已重启。",
   General: "通用",
   IM: "IM",
+  Proxy: "Proxy",
   "Restart Services": "重启服务",
   Restart: "重启",
   "Rerun Onboarding": "重新运行配置向导",
+  "Manage local service controls and rerun setup when needed.":
+    "管理本地服务，并在需要时重新运行配置向导。",
+  "Restart VibeAround runtime services after local changes.":
+    "本地配置修改后重启 VibeAround 运行服务。",
+  "Open the configuration wizard again.": "重新打开配置向导。",
   "Apply IM Settings": "应用 IM 设置",
+  "Apply Agent Settings": "应用 Agent 设置",
+  "Apply Proxy Settings": "应用 Proxy 设置",
   "Applying…": "应用中…",
+  "Agent settings applied.": "Agent 设置已应用。",
   "IM settings applied.": "IM 设置已应用。",
+  "Proxy settings applied.": "Proxy 设置已应用。",
   "Tunnel settings saved.": "隧道设置已保存。",
   "Tunnel settings applied.": "隧道设置已应用。",
+  "Choose which CLIs appear in Launch and new IM sessions. Running sessions continue.":
+    "选择哪些 CLI 出现在启动页和新的 IM 会话中。已运行的会话不会受影响。",
+  "No agents are enabled. Launch will stay hidden until at least one agent is selected.":
+    "当前没有启用 Agent。至少选择一个 Agent 后，启动入口才会显示。",
+  "Auto-install MCP": "自动安装 MCP",
+  "Install VibeAround MCP in the selected workspace when an agent launches.":
+    "Agent 启动时，在所选工作区安装 VibeAround MCP。",
+  "Auto-install skills": "自动安装 skill",
+  "Install VibeAround skills in the selected workspace when an agent launches.":
+    "Agent 启动时，在所选工作区安装 VibeAround skill。",
+  "Uninstall legacy MCP": "卸载旧版 MCP",
+  "Remove legacy VibeAround MCP entries from old global config.":
+    "从旧的全局配置中移除 VibeAround MCP 条目。",
+  "Uninstall legacy skill": "卸载旧版 skill",
+  "Remove legacy VibeAround skill files from old global folders.":
+    "从旧的全局目录中移除 VibeAround skill 文件。",
+  "Legacy VibeAround MCP entries removed.":
+    "旧版 VibeAround MCP 条目已移除。",
+  "Legacy VibeAround skill files removed.":
+    "旧版 VibeAround skill 文件已移除。",
+  "Configure the HTTP proxy used by profile provider requests that opt in from profile settings.":
+    "配置供 Profile 中手动启用的 provider 请求使用的 HTTP proxy。",
+  "Enable Settings proxy": "启用设置中的 proxy",
+  "Allow profiles to opt in to this HTTP proxy.":
+    "允许 Profile 选择是否使用这个 HTTP proxy。",
+  "HTTP proxy URL": "HTTP proxy URL",
+  "No proxy": "不走 proxy",
   "Runtime health for tunnels, agents, and messaging channels.":
     "查看隧道、Agent 和消息频道的运行状态。",
   "No tunnel running": "没有运行中的隧道",
