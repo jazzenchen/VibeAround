@@ -21,6 +21,8 @@ pub struct ProfileDraft {
     #[serde(default)]
     pub overrides: BTreeMap<String, ApiTypeOverrides>,
     #[serde(default)]
+    pub use_settings_proxy: bool,
+    #[serde(default)]
     pub provider_settings: ProviderSettings,
 }
 
@@ -34,6 +36,7 @@ impl ProfileDraft {
             api_types: self.api_types,
             credentials: self.credentials,
             overrides: self.overrides,
+            use_settings_proxy: self.use_settings_proxy,
             provider_settings: self.provider_settings,
         }
     }

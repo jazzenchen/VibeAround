@@ -126,6 +126,7 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
@@ -155,6 +156,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
@@ -189,6 +191,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {

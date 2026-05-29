@@ -265,6 +265,7 @@ mod tests {
             )]
             .into_iter()
             .collect::<BTreeMap<_, _>>(),
+            use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
         }
     }

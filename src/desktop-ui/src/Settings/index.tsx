@@ -832,7 +832,7 @@ function ProxySettingsPanel({
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">
           {t(
-            "Configure the HTTP proxy used by API bridge routes that opt in from profile connection settings.",
+            "Configure the HTTP proxy used by profile provider requests that opt in from profile settings.",
           )}
         </p>
         {notice}
@@ -840,7 +840,7 @@ function ProxySettingsPanel({
       <div className="rounded-md border border-border">
         <SettingsActionRow
           label={t("Enable Settings proxy")}
-          description={t("Allow profile API bridge routes to opt in to this HTTP proxy.")}
+          description={t("Allow profiles to opt in to this HTTP proxy.")}
           action={
             <Switch
               checked={proxyEnabled}

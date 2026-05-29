@@ -9,7 +9,6 @@ import {
   createProfile,
   getLauncherPreferences,
   getProfile,
-  getSettings,
   listCatalog,
   listProfiles,
   setProfileConnection,
@@ -27,7 +26,6 @@ import type {
   ProfileDef,
   ProfileSummary,
 } from "./types";
-import type { Settings } from "../Onboarding/types";
 
 type ConnectionEditing = {
   profile: ProfileSummary;
@@ -39,7 +37,6 @@ export function Launch({ refreshToken = 0 }: { refreshToken?: number }) {
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [prefs, setPrefs] = useState<LauncherPreferences | null>(null);
-  const [settingsProxyEnabled, setSettingsProxyEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -51,16 +48,14 @@ export function Launch({ refreshToken = 0 }: { refreshToken?: number }) {
   const refresh = useCallback(async () => {
     setError(null);
     try {
-      const [nextCatalog, nextProfiles, nextPrefs, nextSettings] = await Promise.all([
+      const [nextCatalog, nextProfiles, nextPrefs] = await Promise.all([
         listCatalog(),
         listProfiles(),
         getLauncherPreferences(),
-        getSettings(),
       ]);
       setCatalog(nextCatalog);
       setProfiles(nextProfiles);
       setPrefs(nextPrefs);
-      setSettingsProxyEnabled(isSettingsProxyEnabled(nextSettings));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -176,14 +171,8 @@ export function Launch({ refreshToken = 0 }: { refreshToken?: number }) {
           connections={prefs?.profileConnections}
           onClose={() => setConnectionEditing(null)}
           onSave={handleSaveConnection}
-          settingsProxyEnabled={settingsProxyEnabled}
         />
       )}
     </div>
   );
-}
-
-function isSettingsProxyEnabled(settings: Settings): boolean {
-  const proxy = settings.proxy;
-  return Boolean(proxy?.enabled ?? proxy?.http_proxy);
 }
