@@ -520,35 +520,35 @@ export function SettingsDialog({
             <TabsList className="!h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0">
               <TabsTrigger
                 value="general"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <SettingsIcon className="h-3 w-3" />
                 {t("General")}
               </TabsTrigger>
               <TabsTrigger
                 value="agents"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <Bot className="h-3 w-3" />
                 {t("Agents")}
               </TabsTrigger>
               <TabsTrigger
                 value="im"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <MessageSquare className="h-3 w-3" />
                 {t("IM")}
               </TabsTrigger>
               <TabsTrigger
                 value="tunnel"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <Globe className="h-3 w-3" />
                 {t("Tunnel")}
               </TabsTrigger>
               <TabsTrigger
                 value="proxy"
-                className="!h-8 w-full justify-start gap-2 px-2 text-xs data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <Network className="h-3 w-3" />
                 {t("Proxy")}
