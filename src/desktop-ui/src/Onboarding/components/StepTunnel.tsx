@@ -26,7 +26,7 @@ export function StepTunnel({
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
         <h2 className="text-base font-semibold flex items-center gap-2">
           <Globe className="w-4 h-4 text-primary" />

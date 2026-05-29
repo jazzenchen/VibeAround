@@ -562,7 +562,7 @@ export function SettingsDialog({
               className="min-h-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
             >
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
-                <div className="mb-4">
+                <div className="mb-5">
                   <h2 className="flex items-center gap-2 text-base font-semibold">
                     <SettingsIcon className="h-4 w-4 text-primary" />
                     {t("General")}
@@ -580,6 +580,7 @@ export function SettingsDialog({
                       <Button
                         type="button"
                         size="sm"
+                        className="text-xs"
                         disabled={saving !== "idle"}
                         onClick={() => void restartServices()}
                       >
@@ -598,6 +599,7 @@ export function SettingsDialog({
                         type="button"
                         variant="outline"
                         size="sm"
+                        className="text-xs"
                         disabled={saving !== "idle"}
                         onClick={() => window.location.replace("/onboarding")}
                       >
@@ -816,7 +818,7 @@ function AgentSettingsPanel({
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Bot className="h-4 w-4 text-primary" />
@@ -853,7 +855,7 @@ function AgentSettingsPanel({
               />
               <span className="flex min-w-0 flex-1 items-center">
                 <span
-                  className={`truncate text-[13px] font-medium ${
+                  className={`truncate text-sm font-medium ${
                     isEnabled ? "text-foreground" : "text-muted-foreground"
                   }`}
                 >
@@ -960,7 +962,7 @@ function ProxySettingsPanel({
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <Network className="h-4 w-4 text-primary" />
@@ -982,30 +984,35 @@ function ProxySettingsPanel({
               checked={proxyEnabled}
               onCheckedChange={onProxyEnabledChange}
               aria-label={t("Enable Settings proxy")}
+              size="sm"
             />
           }
         />
-        <div className="grid gap-3 border-b border-border px-4 py-3 last:border-b-0">
-          <label className="grid gap-1.5">
-            <span className="text-xs font-medium">{t("HTTP proxy URL")}</span>
+        <div className="grid gap-3 border-b border-border px-4 py-4 last:border-b-0">
+          <label className="block">
+            <span className="text-xs text-muted-foreground">
+              {t("HTTP proxy URL")}
+            </span>
             <Input
               type="text"
               value={proxyHttp}
               onChange={(event) => onProxyHttpChange(event.currentTarget.value)}
               placeholder="http://127.0.0.1:7890"
-              className="h-8 font-mono text-xs"
+              className="mt-1"
             />
           </label>
         </div>
-        <div className="grid gap-3 border-b border-border px-4 py-3 last:border-b-0">
-          <label className="grid gap-1.5">
-            <span className="text-xs font-medium">{t("No proxy")}</span>
+        <div className="grid gap-3 border-b border-border px-4 py-4 last:border-b-0">
+          <label className="block">
+            <span className="text-xs text-muted-foreground">
+              {t("No proxy")}
+            </span>
             <Input
               type="text"
               value={proxyNoProxy}
               onChange={(event) => onProxyNoProxyChange(event.currentTarget.value)}
               placeholder="localhost,127.0.0.1,::1"
-              className="h-8 font-mono text-xs"
+              className="mt-1"
             />
           </label>
         </div>
@@ -1034,7 +1041,7 @@ function SettingsActionRow({
   action: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 last:border-b-0">
+    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-4 last:border-b-0">
       <div className="min-w-0">
         <div className="text-sm font-medium">{label}</div>
         {description && (
