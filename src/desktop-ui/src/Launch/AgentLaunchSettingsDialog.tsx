@@ -12,14 +12,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  applyCodexSandboxPreset,
+  inferCodexSandboxPreset,
+  parseLaunchArgInput,
+  sameArgs,
+  type CodexSandboxPreset,
+  type LaunchArgParseError,
+} from "./agentLaunchArgs";
 import type { AgentSummary } from "./api";
 import type { AgentLaunchArgs, AgentLaunchPreference } from "./types";
-
-type CodexSandboxPreset =
-  | "default"
-  | "read-only"
-  | "workspace-write"
-  | "danger-full-access";
 
 interface Props {
   agent: AgentSummary | null;
@@ -46,71 +48,6 @@ function launchArgsFromPreference(
     terminal: [...(preference?.launchArgs?.terminal ?? [])],
     acp: [...(preference?.launchArgs?.acp ?? [])],
   };
-}
-
-function sameArgs(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((arg, index) => arg === right[index]);
-}
-
-function removeCodexSandboxArgs(args: string[]): string[] {
-  const out: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (
-      arg === "--dangerously-bypass-approvals-and-sandbox" ||
-      arg.startsWith("--sandbox=") ||
-      arg.startsWith("-s=")
-    ) {
-      continue;
-    }
-    if (arg === "--sandbox" || arg === "-s") {
-      index += 1;
-      continue;
-    }
-    out.push(arg);
-  }
-  return out;
-}
-
-function inferCodexSandboxPreset(args: string[]): CodexSandboxPreset {
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    const next = args[index + 1];
-    if (arg === "--sandbox" || arg === "-s") {
-      if (
-        next === "read-only" ||
-        next === "workspace-write" ||
-        next === "danger-full-access"
-      ) {
-        return next;
-      }
-    }
-    if (arg.startsWith("--sandbox=") || arg.startsWith("-s=")) {
-      const value = arg.slice(arg.indexOf("=") + 1);
-      if (
-        value === "read-only" ||
-        value === "workspace-write" ||
-        value === "danger-full-access"
-      ) {
-        return value;
-      }
-    }
-  }
-  return "default";
-}
-
-function applyCodexSandboxPreset(
-  args: string[],
-  preset: CodexSandboxPreset,
-): string[] {
-  const out = removeCodexSandboxArgs(args);
-  if (preset === "default") return out;
-  out.push("--sandbox", preset);
-  return out;
-}
-
-export function agentLaunchArgCount(preference?: AgentLaunchPreference): number {
-  return preference?.launchArgs?.terminal?.length ?? 0;
 }
 
 export function AgentLaunchSettingsDialog({
@@ -141,14 +78,25 @@ export function AgentLaunchSettingsDialog({
     agent.id === "codex" ? inferCodexSandboxPreset(terminalArgs) : null;
   const dirty = !sameArgs(terminalArgs, initialArgs.terminal ?? []);
 
+  function parseErrorMessage(error: LaunchArgParseError): string {
+    switch (error) {
+      case "danglingEscape":
+        return t("Backslash must escape a character");
+      case "lineBreak":
+        return t("Arguments cannot contain line breaks");
+      case "unterminatedQuote":
+        return t("Quote is not closed");
+    }
+  }
+
   function addArg() {
-    const arg = draftArg.trim();
-    if (!arg) return;
-    if (arg.includes("\n") || arg.includes("\r")) {
-      setError(t("Arguments cannot contain line breaks"));
+    const parsed = parseLaunchArgInput(draftArg);
+    if (parsed.error) {
+      setError(parseErrorMessage(parsed.error));
       return;
     }
-    setTerminalArgs((current) => [...current, arg]);
+    if (parsed.args.length === 0) return;
+    setTerminalArgs((current) => [...current, ...parsed.args]);
     setDraftArg("");
     setError(null);
   }
@@ -264,7 +212,7 @@ export function AgentLaunchSettingsDialog({
               <Input
                 value={draftArg}
                 disabled={busy}
-                placeholder={t("Argument")}
+                placeholder={t("Argument or command-line fragment")}
                 className="font-mono text-sm"
                 onChange={(event) => setDraftArg(event.target.value)}
                 onKeyDown={(event) => {

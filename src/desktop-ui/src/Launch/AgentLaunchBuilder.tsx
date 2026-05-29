@@ -52,10 +52,8 @@ import {
   type LauncherPreferences,
   type WorkspaceOption,
 } from "./api";
-import {
-  AgentLaunchSettingsDialog,
-  agentLaunchArgCount,
-} from "./AgentLaunchSettingsDialog";
+import { AgentLaunchSettingsDialog } from "./AgentLaunchSettingsDialog";
+import { agentLaunchArgCount } from "./agentLaunchArgs";
 import { buildProfileCopyDraft } from "./profileClone";
 import {
   agentLabel,
