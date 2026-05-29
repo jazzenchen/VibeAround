@@ -1,0 +1,671 @@
+{
+  "id": "volcengine",
+  "label": "Volcengine",
+  "icon": "V",
+  "homepage": "https://www.volcengine.com/docs/82379/2160841",
+  "endpoints": [
+    {
+      "id": "ark-api",
+      "label": "Ark API",
+      "api_type": "anthropic",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/compatible",
+      "auth_header": true,
+      "models": [
+        {
+          "id": "doubao-seed-code-preview-251028",
+          "label": "Doubao Seed Code Preview",
+          "aliases": ["doubao-seed-code"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-1-8-251228",
+          "label": "Doubao Seed 1.8",
+          "aliases": ["doubao-seed-1-8"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-code-preview-260215",
+          "label": "Doubao Seed 2.0 Code Preview",
+          "aliases": ["doubao-seed-2-0-code"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-pro-260215",
+          "label": "Doubao Seed 2.0 Pro",
+          "aliases": ["doubao-seed-2-0-pro"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-lite-260428",
+          "label": "Doubao Seed 2.0 Lite",
+          "aliases": ["doubao-seed-2-0-lite"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-mini-260428",
+          "label": "Doubao Seed 2.0 Mini",
+          "aliases": ["doubao-seed-2-0-mini"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "deepseek-v4-pro-260425",
+          "label": "DeepSeek V4 Pro",
+          "aliases": ["deepseek-v4-pro"],
+          "context_window": 1024000
+        },
+        {
+          "id": "deepseek-v4-flash-260425",
+          "label": "DeepSeek V4 Flash",
+          "aliases": ["deepseek-v4-flash"],
+          "context_window": 1024000
+        },
+        {
+          "id": "deepseek-v3-2-251201",
+          "label": "DeepSeek V3.2",
+          "aliases": ["deepseek-v3-2"],
+          "context_window": 1024000
+        },
+        {
+          "id": "glm-4-7-251222",
+          "label": "GLM 4.7",
+          "aliases": ["glm-4-7"],
+          "context_window": 200000
+        }
+      ],
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Volcengine API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "ANTHROPIC_AUTH_TOKEN": "{{api_key}}",
+              "ANTHROPIC_BASE_URL": "{{base_url}}",
+              "ANTHROPIC_MODEL": "{{model}}"
+            },
+            "settings_files": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "coding-plan",
+      "label": "Coding Plan",
+      "api_type": "anthropic",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/coding",
+      "auth_header": true,
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "label": "Ark Code Latest"
+        },
+        {
+          "id": "doubao-seed-2.0-code",
+          "label": "Doubao Seed 2.0 Code"
+        },
+        {
+          "id": "doubao-seed-2.0-pro",
+          "label": "Doubao Seed 2.0 Pro"
+        },
+        {
+          "id": "doubao-seed-2.0-lite",
+          "label": "Doubao Seed 2.0 Lite"
+        },
+        {
+          "id": "doubao-seed-code",
+          "label": "Doubao Seed Code"
+        },
+        {
+          "id": "minimax-latest",
+          "label": "MiniMax Latest",
+          "aliases": ["minimax-m2.7"]
+        },
+        {
+          "id": "glm-5.1",
+          "label": "GLM 5.1"
+        },
+        {
+          "id": "deepseek-v3.2",
+          "label": "DeepSeek V3.2"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "label": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "kimi-k2.6",
+          "label": "Kimi K2.6"
+        }
+      ],
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Volcengine API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "ANTHROPIC_AUTH_TOKEN": "{{api_key}}",
+              "ANTHROPIC_BASE_URL": "{{base_url}}",
+              "ANTHROPIC_MODEL": "{{model}}"
+            },
+            "settings_files": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "agent-plan",
+      "label": "Agent Plan",
+      "api_type": "anthropic",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/plan",
+      "auth_header": true,
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "label": "Ark Code Latest"
+        },
+        {
+          "id": "doubao-seed-2.0-code",
+          "label": "Doubao Seed 2.0 Code"
+        },
+        {
+          "id": "doubao-seed-2.0-pro",
+          "label": "Doubao Seed 2.0 Pro"
+        },
+        {
+          "id": "doubao-seed-2.0-lite",
+          "label": "Doubao Seed 2.0 Lite"
+        },
+        {
+          "id": "doubao-seed-2.0-mini",
+          "label": "Doubao Seed 2.0 Mini"
+        },
+        {
+          "id": "minimax-m2.7",
+          "label": "MiniMax M2.7"
+        },
+        {
+          "id": "glm-5.1",
+          "label": "GLM 5.1"
+        },
+        {
+          "id": "deepseek-v3.2",
+          "label": "DeepSeek V3.2"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "label": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "kimi-k2.6",
+          "label": "Kimi K2.6"
+        }
+      ],
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Volcengine API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "ANTHROPIC_AUTH_TOKEN": "{{api_key}}",
+              "ANTHROPIC_BASE_URL": "{{base_url}}",
+              "ANTHROPIC_MODEL": "{{model}}"
+            },
+            "settings_files": []
+          }
+        }
+      ]
+    },
+    {
+      "id": "ark-api",
+      "label": "Ark API",
+      "api_type": "openai-responses",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "append_v1_path": false,
+      "models": [
+        {
+          "id": "doubao-seed-code-preview-251028",
+          "label": "Doubao Seed Code Preview",
+          "aliases": ["doubao-seed-code"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-1-8-251228",
+          "label": "Doubao Seed 1.8",
+          "aliases": ["doubao-seed-1-8"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-code-preview-260215",
+          "label": "Doubao Seed 2.0 Code Preview",
+          "aliases": ["doubao-seed-2-0-code"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-pro-260215",
+          "label": "Doubao Seed 2.0 Pro",
+          "aliases": ["doubao-seed-2-0-pro"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-lite-260428",
+          "label": "Doubao Seed 2.0 Lite",
+          "aliases": ["doubao-seed-2-0-lite"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-mini-260428",
+          "label": "Doubao Seed 2.0 Mini",
+          "aliases": ["doubao-seed-2-0-mini"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "deepseek-v4-pro-260425",
+          "label": "DeepSeek V4 Pro",
+          "aliases": ["deepseek-v4-pro"],
+          "context_window": 1024000
+        },
+        {
+          "id": "deepseek-v4-flash-260425",
+          "label": "DeepSeek V4 Flash",
+          "aliases": ["deepseek-v4-flash"],
+          "context_window": 1024000
+        },
+        {
+          "id": "deepseek-v3-2-251201",
+          "label": "DeepSeek V3.2",
+          "aliases": ["deepseek-v3-2"],
+          "context_window": 1024000
+        },
+        {
+          "id": "glm-4-7-251222",
+          "label": "GLM 4.7",
+          "aliases": ["glm-4-7"],
+          "context_window": 200000
+        }
+      ],
+      "capabilities": {
+        "reasoning_effort": true
+      },
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Volcengine API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "OPENAI_API_KEY": "{{api_key}}"
+            },
+            "settings_files": [
+              {
+                "rel_path": "config.toml",
+                "template": "model = \"{{model}}\"\nmodel_provider = \"volcengine\"\nmodel_reasoning_effort = \"{{reasoning_effort}}\"\ndisable_response_storage = true\n\n[model_providers.volcengine]\nname = \"Volcengine\"\nbase_url = \"{{base_url}}\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n"
+              },
+              {
+                "rel_path": "auth.json",
+                "template": "{\n  \"OPENAI_API_KEY\": \"{{api_key|json}}\"\n}\n"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ark-api",
+      "label": "Ark API",
+      "api_type": "openai-chat",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "append_v1_path": false,
+      "models": [
+        {
+          "id": "doubao-seed-code-preview-251028",
+          "label": "Doubao Seed Code Preview",
+          "aliases": ["doubao-seed-code"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-1-8-251228",
+          "label": "Doubao Seed 1.8",
+          "aliases": ["doubao-seed-1-8"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-code-preview-260215",
+          "label": "Doubao Seed 2.0 Code Preview",
+          "aliases": ["doubao-seed-2-0-code"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-pro-260215",
+          "label": "Doubao Seed 2.0 Pro",
+          "aliases": ["doubao-seed-2-0-pro"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-lite-260428",
+          "label": "Doubao Seed 2.0 Lite",
+          "aliases": ["doubao-seed-2-0-lite"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "doubao-seed-2-0-mini-260428",
+          "label": "Doubao Seed 2.0 Mini",
+          "aliases": ["doubao-seed-2-0-mini"],
+          "context_window": 256000,
+          "capabilities": {
+            "image_input": true
+          }
+        },
+        {
+          "id": "deepseek-v4-pro-260425",
+          "label": "DeepSeek V4 Pro",
+          "aliases": ["deepseek-v4-pro"],
+          "context_window": 1024000
+        },
+        {
+          "id": "deepseek-v4-flash-260425",
+          "label": "DeepSeek V4 Flash",
+          "aliases": ["deepseek-v4-flash"],
+          "context_window": 1024000
+        },
+        {
+          "id": "deepseek-v3-2-251201",
+          "label": "DeepSeek V3.2",
+          "aliases": ["deepseek-v3-2"],
+          "context_window": 1024000
+        },
+        {
+          "id": "glm-4-7-251222",
+          "label": "GLM 4.7",
+          "aliases": ["glm-4-7"],
+          "context_window": 200000
+        }
+      ],
+      "capabilities": {
+        "reasoning_effort": true
+      },
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Volcengine API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "OPENAI_API_KEY": "{{api_key}}"
+            },
+            "settings_files": [
+              {
+                "rel_path": "config.toml",
+                "template": "model = \"{{model}}\"\nmodel_provider = \"volcengine\"\nmodel_reasoning_effort = \"{{reasoning_effort}}\"\ndisable_response_storage = true\n\n[model_providers.volcengine]\nname = \"Volcengine\"\nbase_url = \"{{base_url}}\"\nwire_api = \"chat\"\nrequires_openai_auth = true\n"
+              },
+              {
+                "rel_path": "auth.json",
+                "template": "{\n  \"OPENAI_API_KEY\": \"{{api_key|json}}\"\n}\n"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "coding-plan",
+      "label": "Coding Plan",
+      "api_type": "openai-chat",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "append_v1_path": false,
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "label": "Ark Code Latest"
+        },
+        {
+          "id": "doubao-seed-2.0-code",
+          "label": "Doubao Seed 2.0 Code"
+        },
+        {
+          "id": "doubao-seed-2.0-pro",
+          "label": "Doubao Seed 2.0 Pro"
+        },
+        {
+          "id": "doubao-seed-2.0-lite",
+          "label": "Doubao Seed 2.0 Lite"
+        },
+        {
+          "id": "doubao-seed-code",
+          "label": "Doubao Seed Code"
+        },
+        {
+          "id": "minimax-latest",
+          "label": "MiniMax Latest",
+          "aliases": ["minimax-m2.7"]
+        },
+        {
+          "id": "glm-5.1",
+          "label": "GLM 5.1"
+        },
+        {
+          "id": "deepseek-v3.2",
+          "label": "DeepSeek V3.2"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "label": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "kimi-k2.6",
+          "label": "Kimi K2.6"
+        }
+      ],
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Volcengine API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "OPENAI_API_KEY": "{{api_key}}"
+            },
+            "settings_files": [
+              {
+                "rel_path": "config.toml",
+                "template": "model = \"{{model}}\"\nmodel_provider = \"volcengine\"\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.volcengine]\nname = \"Volcengine\"\nbase_url = \"{{base_url}}\"\nwire_api = \"chat\"\nrequires_openai_auth = true\n"
+              },
+              {
+                "rel_path": "auth.json",
+                "template": "{\n  \"OPENAI_API_KEY\": \"{{api_key|json}}\"\n}\n"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "agent-plan",
+      "label": "Agent Plan",
+      "api_type": "openai-chat",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "append_v1_path": false,
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "label": "Ark Code Latest"
+        },
+        {
+          "id": "doubao-seed-2.0-code",
+          "label": "Doubao Seed 2.0 Code"
+        },
+        {
+          "id": "doubao-seed-2.0-pro",
+          "label": "Doubao Seed 2.0 Pro"
+        },
+        {
+          "id": "doubao-seed-2.0-lite",
+          "label": "Doubao Seed 2.0 Lite"
+        },
+        {
+          "id": "doubao-seed-2.0-mini",
+          "label": "Doubao Seed 2.0 Mini"
+        },
+        {
+          "id": "minimax-m2.7",
+          "label": "MiniMax M2.7"
+        },
+        {
+          "id": "glm-5.1",
+          "label": "GLM 5.1"
+        },
+        {
+          "id": "deepseek-v3.2",
+          "label": "DeepSeek V3.2"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "label": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "kimi-k2.6",
+          "label": "Kimi K2.6"
+        }
+      ],
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Volcengine API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "OPENAI_API_KEY": "{{api_key}}"
+            },
+            "settings_files": [
+              {
+                "rel_path": "config.toml",
+                "template": "model = \"{{model}}\"\nmodel_provider = \"volcengine\"\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.volcengine]\nname = \"Volcengine\"\nbase_url = \"{{base_url}}\"\nwire_api = \"chat\"\nrequires_openai_auth = true\n"
+              },
+              {
+                "rel_path": "auth.json",
+                "template": "{\n  \"OPENAI_API_KEY\": \"{{api_key|json}}\"\n}\n"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

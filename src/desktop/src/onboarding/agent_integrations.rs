@@ -1,9 +1,10 @@
-//! Agent integration installation — thin wrapper over `common::agent`.
+//! Agent integration installation.
 
-/// Sync MCP config + skills for enabled/disabled agents.
+/// Project MCP config + skills are installed lazily for the active workspace
+/// when an agent launches. Kept as a no-op compatibility wrapper for old
+/// onboarding call sites.
 #[allow(dead_code)]
-pub(super) fn install_agent_integrations(settings: &serde_json::Value) -> anyhow::Result<()> {
-    common::agent::sync_integrations(settings);
+pub(super) fn install_agent_integrations(_settings: &serde_json::Value) -> anyhow::Result<()> {
     Ok(())
 }
 

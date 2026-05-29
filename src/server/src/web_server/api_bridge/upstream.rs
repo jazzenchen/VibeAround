@@ -267,6 +267,14 @@ mod tests {
             ),
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         );
+        assert_eq!(
+            join_protocol_endpoint(
+                "https://ark.cn-beijing.volces.com/api/v3",
+                "responses",
+                false,
+            ),
+            "https://ark.cn-beijing.volces.com/api/v3/responses"
+        );
     }
 
     #[test]

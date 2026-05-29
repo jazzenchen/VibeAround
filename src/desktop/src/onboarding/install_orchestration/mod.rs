@@ -9,7 +9,8 @@
 //!
 //! The top-level `get_install_manifest`, `start`, and `cancel` functions
 //! live in this file and drive `run_install` — the background task that
-//! sweeps MCP/skill sync, then iterates enabled agents and channels.
+//! installs CLI packages and channel plugins. Project MCP/skill files are
+//! installed lazily for the active workspace at launch time.
 
 mod steps;
 mod util;
@@ -23,12 +24,10 @@ use tokio::sync::Mutex;
 
 use common::config;
 
-use crate::onboarding::{
-    write_settings_value, InstallProgressEvent, InstallTaskInfo, OnboardingInstallState,
-};
+use crate::onboarding::{write_settings_value, InstallTaskInfo, OnboardingInstallState};
 
 use steps::{install_channel_plugin, install_npm_agent, install_script_agent};
-use util::{emit_progress, log_line, resolve_enabled_agents};
+use util::{log_line, resolve_enabled_agents};
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,12 +54,8 @@ fn default_true() -> bool {
 /// Returns the list of install tasks for the given settings, so the frontend
 /// can pre-populate the progress list before install starts.
 pub fn get_install_manifest(settings: &Value, scope: InstallScope) -> Vec<InstallTaskInfo> {
+    let _agent_setup_requested = scope.agents;
     let all_agents = common::resources::agent_ids();
-    let integration_agents = if scope.agents {
-        resolve_enabled_agents(settings, &all_agents)
-    } else {
-        Vec::new()
-    };
     let enabled_channels = if scope.channels {
         enabled_registry_channel_ids(settings)
     } else {
@@ -74,32 +69,6 @@ pub fn get_install_manifest(settings: &Value, scope: InstallScope) -> Vec<Instal
     };
 
     let mut tasks = Vec::new();
-
-    for agent_id in &integration_agents {
-        let agent_def = match common::resources::agent_by_id(agent_id) {
-            Some(def) => def,
-            None => continue,
-        };
-
-        // MCP config + skill are installed only when agent setup is in scope.
-        if agent_def.global_config.is_some() {
-            tasks.push(InstallTaskInfo {
-                id: format!("agent:{}:mcp", agent_id),
-                label: format!("{} — MCP config", agent_def.display_name),
-            });
-            if agent_def
-                .global_config
-                .as_ref()
-                .and_then(|c| c.skill_dir.as_ref())
-                .is_some()
-            {
-                tasks.push(InstallTaskInfo {
-                    id: format!("agent:{}:skill", agent_id),
-                    label: format!("{} — Skill file", agent_def.display_name),
-                });
-            }
-        }
-    }
 
     for agent_id in &acp_agents {
         let agent_def = match common::resources::agent_by_id(agent_id) {
@@ -192,11 +161,6 @@ async fn run_install<R: Runtime>(
     log_file: Arc<Mutex<Option<std::fs::File>>>,
 ) {
     let all_agents = common::resources::agent_ids();
-    let integration_agents = if scope.agents {
-        resolve_enabled_agents(&settings, &all_agents)
-    } else {
-        Vec::new()
-    };
     let enabled_channels = if scope.channels {
         enabled_registry_channel_ids(&settings)
     } else {
@@ -209,72 +173,6 @@ async fn run_install<R: Runtime>(
         Vec::new()
     };
     let mut had_error = false;
-
-    // Install MCP config + skill files for all enabled agents in one global
-    // sweep BEFORE the per-agent loop.
-    if !integration_agents.is_empty() {
-        log_line(
-            &log_file,
-            &format!(
-                "[onboarding] Syncing MCP config and skills for {} enabled agent(s)",
-                integration_agents.len()
-            ),
-        );
-        common::agent::sync_integrations(&settings);
-    }
-
-    // --- Agent integration installs ---
-    for agent_id in &integration_agents {
-        if cancelled.load(Ordering::Relaxed) {
-            break;
-        }
-
-        let agent_def = match common::resources::agent_by_id(agent_id) {
-            Some(def) => def,
-            None => continue,
-        };
-
-        // MCP config
-        if agent_def.global_config.is_some() {
-            let task_id = format!("agent:{}:mcp", agent_id);
-            emit_progress(
-                &app,
-                &InstallProgressEvent {
-                    id: task_id.clone(),
-                    label: format!("{} — MCP config", agent_def.display_name),
-                    status: "running".into(),
-                    message: Some("Installing MCP config…".into()),
-                },
-            );
-            emit_progress(
-                &app,
-                &InstallProgressEvent {
-                    id: task_id,
-                    label: format!("{} — MCP config", agent_def.display_name),
-                    status: "done".into(),
-                    message: Some("MCP config installed".into()),
-                },
-            );
-
-            if agent_def
-                .global_config
-                .as_ref()
-                .and_then(|c| c.skill_dir.as_ref())
-                .is_some()
-            {
-                let skill_id = format!("agent:{}:skill", agent_id);
-                emit_progress(
-                    &app,
-                    &InstallProgressEvent {
-                        id: skill_id,
-                        label: format!("{} — Skill file", agent_def.display_name),
-                        status: "done".into(),
-                        message: Some("Skill file installed".into()),
-                    },
-                );
-            }
-        }
-    }
 
     // --- ACP agent installs ---
     for agent_id in &acp_agents {
@@ -436,8 +334,9 @@ mod tests {
 
         assert!(!ids.contains(&"agent:claude:acp".to_string()));
         assert!(!ids.contains(&"agent:codex:acp".to_string()));
-        assert!(ids.contains(&"agent:claude:mcp".to_string()));
-        assert!(ids.contains(&"agent:codex:mcp".to_string()));
+        assert!(!ids.contains(&"agent:claude:mcp".to_string()));
+        assert!(!ids.contains(&"agent:codex:mcp".to_string()));
+        assert!(ids.is_empty());
     }
 
     #[test]

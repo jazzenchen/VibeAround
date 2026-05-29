@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import { Eye, EyeOff, Globe } from "lucide-react";
 import { useI18n } from "@va/i18n";
@@ -18,13 +18,18 @@ import {
 } from "./ProfileFormDialog.constants";
 import {
   apiKindHint,
+  arraysEqual,
   canOverrideInputSupport,
   collectFields,
   endpointId,
   endpointLabel,
   endpointsForApiType,
+  overridesForEndpoints,
+  providerEndpointGroups,
   providerApiKindsEditable,
   providerApiKindEndpoints,
+  providerUsesEndpointGroups,
+  selectedEndpointGroup,
   selectedEndpoint,
   shouldShowBaseUrl,
 } from "./profileFormHelpers";
@@ -68,9 +73,66 @@ export function FormBody({
   setRevealKeys,
 }: FormBodyProps) {
   const { t } = useI18n();
-  const fieldDefs = collectFields(provider, selectedApiTypes, "api_key");
+  const endpointGroups = providerEndpointGroups(provider);
+  const usesEndpointGroups = providerUsesEndpointGroups(provider);
+  const selectedGroup = usesEndpointGroups
+    ? selectedEndpointGroup(provider, selectedApiTypes, overrides)
+    : undefined;
   const apiKindEndpoints = providerApiKindEndpoints(provider);
+  const visibleApiKindEndpoints = selectedGroup?.endpoints ?? apiKindEndpoints;
+  const visibleApiTypes = visibleApiKindEndpoints.map((endpoint) => endpoint.api_type);
+  const visibleApiTypeSet = new Set(visibleApiTypes);
+  const effectiveSelectedApiTypes = usesEndpointGroups
+    ? selectedApiTypes.filter((apiType) => visibleApiTypeSet.has(apiType))
+    : selectedApiTypes;
+  const fieldDefs = collectFields(
+    provider,
+    effectiveSelectedApiTypes,
+    "api_key",
+    overrides,
+  );
   const apiKindsEditable = providerApiKindsEditable(provider);
+
+  useEffect(() => {
+    if (!usesEndpointGroups || !selectedGroup) return;
+    const next = apiKindsEditable
+      ? effectiveSelectedApiTypes.length > 0
+        ? effectiveSelectedApiTypes
+        : visibleApiTypes
+      : visibleApiTypes;
+    if (!arraysEqual(selectedApiTypes, next)) {
+      setSelectedApiTypes(next);
+    }
+  }, [
+    apiKindsEditable,
+    effectiveSelectedApiTypes,
+    selectedApiTypes,
+    selectedGroup,
+    setSelectedApiTypes,
+    usesEndpointGroups,
+    visibleApiTypes,
+  ]);
+
+  function applyEndpointGroup(groupId: string) {
+    const group = endpointGroups.find((candidate) => candidate.id === groupId);
+    if (!group) return;
+    setSelectedApiTypes(group.endpoints.map((endpoint) => endpoint.api_type));
+    setOverrides(overridesForEndpoints(group.endpoints, overrides));
+  }
+
+  function applySelectedApiTypes(apiTypes: string[]) {
+    const nextOverrides = { ...overrides };
+    for (const endpoint of visibleApiKindEndpoints) {
+      if (!apiTypes.includes(endpoint.api_type)) continue;
+      if (nextOverrides[endpoint.api_type]) continue;
+      nextOverrides[endpoint.api_type] = overridesForEndpoints(
+        [endpoint],
+        nextOverrides,
+      )[endpoint.api_type];
+    }
+    setOverrides(nextOverrides);
+    setSelectedApiTypes(apiTypes);
+  }
 
   return (
     <div className="space-y-3">
@@ -85,11 +147,19 @@ export function FormBody({
           />
         </FieldRow>
 
+        {usesEndpointGroups && selectedGroup && (
+          <EndpointGroupField
+            groups={endpointGroups}
+            selectedGroupId={selectedGroup.id}
+            onChange={applyEndpointGroup}
+          />
+        )}
+
         <ApiKindsField
-          endpoints={apiKindEndpoints}
+          endpoints={visibleApiKindEndpoints}
           editable={apiKindsEditable}
-          selectedApiTypes={selectedApiTypes}
-          setSelectedApiTypes={setSelectedApiTypes}
+          selectedApiTypes={effectiveSelectedApiTypes}
+          setSelectedApiTypes={applySelectedApiTypes}
         />
 
         <ProxyField
@@ -115,10 +185,10 @@ export function FormBody({
         </FormSection>
       )}
 
-      {selectedApiTypes.length > 0 && (
+      {effectiveSelectedApiTypes.length > 0 && (
         <FormSection title={t("Model settings")}>
           <div className="space-y-2">
-            {selectedApiTypes.map((apiType) => {
+            {effectiveSelectedApiTypes.map((apiType) => {
               const ep = selectedEndpoint(provider, apiType, overrides);
               if (!ep) return null;
               const ov = overrides[apiType] ?? {};
@@ -133,8 +203,11 @@ export function FormBody({
                     <span className="font-mono px-1.5 py-0.5 rounded bg-muted">
                       {apiTypeShort(apiType)}
                     </span>
+                    <span className="text-muted-foreground/70">
+                      · {t(apiTypeLabel(apiType))}
+                    </span>
                   </div>
-                  {endpointOptions.length > 1 && (
+                  {!usesEndpointGroups && endpointOptions.length > 1 && (
                     <FieldRow label={t("Endpoint type")}>
                       <Select
                         value={endpointId(ep)}
@@ -367,6 +440,35 @@ export function FormBody({
         </a>
       )}
     </div>
+  );
+}
+
+function EndpointGroupField({
+  groups,
+  selectedGroupId,
+  onChange,
+}: {
+  groups: ReturnType<typeof providerEndpointGroups>;
+  selectedGroupId: string;
+  onChange: (groupId: string) => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <FieldRow label={t("Plan type")}>
+      <Select value={selectedGroupId} onValueChange={onChange}>
+        <SelectTrigger size="sm" className="h-8 w-full text-[13px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {groups.map((group) => (
+            <SelectItem key={group.id} value={group.id} className="text-xs">
+              {t(group.label)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </FieldRow>
   );
 }
 

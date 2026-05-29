@@ -1,6 +1,10 @@
 {
   "workspaces": [],
   "enabled_agents": ["claude", "gemini", "opencode", "codex"],
+  "integrations": {
+    "mcp_auto_install": true,
+    "skill_auto_install": true
+  },
   "tunnel": {
     "provider": "ngrok",
     "ngrok": {

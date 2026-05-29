@@ -29,6 +29,10 @@
       "file": "deepseek.json"
     },
     {
+      "id": "volcengine",
+      "file": "volcengine.json"
+    },
+    {
       "id": "zai",
       "file": "zai.json"
     },
