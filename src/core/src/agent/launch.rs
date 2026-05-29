@@ -50,6 +50,9 @@ pub fn materialize_profile_for_agent(
     }
     let command_args = rendered.command_args.clone();
     let mut env = profiles::runtime::materialize_env(&profile.id, rendered)?;
+    if route.bridge_target_api_type.is_none() {
+        profiles::runtime::append_settings_proxy_env(&profile, &mut env)?;
+    }
     env.push(("VIBEAROUND_LAUNCH_ID".to_string(), launch_id));
     env.push(("VIBEAROUND_PROFILE_ID".to_string(), profile.id.clone()));
     env.push(("VIBEAROUND_LAUNCH_TARGET".to_string(), agent_id.to_string()));

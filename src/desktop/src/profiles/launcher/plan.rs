@@ -171,6 +171,9 @@ fn materialized_profile_env(
     rendered: profiles::render::RenderedProfile,
 ) -> anyhow::Result<Vec<(String, String)>> {
     let mut env = profiles::runtime::materialize_env(&profile.id, rendered)?;
+    if !bridge::launch_uses_local_bridge(profile, launch_target)? {
+        profiles::runtime::append_settings_proxy_env(profile, &mut env)?;
+    }
     env.push(("VIBEAROUND_LAUNCH_ID".to_string(), launch_id.to_string()));
     env.push(("VIBEAROUND_PROFILE_ID".to_string(), profile.id.clone()));
     env.push((
@@ -265,6 +268,7 @@ mod tests {
             )]
             .into_iter()
             .collect::<BTreeMap<_, _>>(),
+            use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
         }
     }

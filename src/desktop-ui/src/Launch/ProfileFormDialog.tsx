@@ -94,6 +94,9 @@ export function ProfileFormDialog({
   const [overrides, setOverrides] = useState<Record<string, ApiTypeOverrides>>(
     initial?.overrides ?? {},
   );
+  const [useSettingsProxy, setUseSettingsProxy] = useState(
+    !!initial?.use_settings_proxy,
+  );
   const [providerSettings, setProviderSettings] = useState<ProviderSettings>(
     initial?.provider_settings ?? {},
   );
@@ -185,6 +188,7 @@ export function ProfileFormDialog({
       api_types: selectedApiTypes,
       credentials: stripEmpty(credentials),
       overrides: pruneOverrides(overrides, selectedApiTypes, provider),
+      use_settings_proxy: useSettingsProxy,
       provider_settings: pruneProviderSettings(provider.id, providerSettings),
     };
 
@@ -237,6 +241,8 @@ export function ProfileFormDialog({
               setCredentials={setCredentials}
               overrides={overrides}
               setOverrides={setOverrides}
+              useSettingsProxy={useSettingsProxy}
+              setUseSettingsProxy={setUseSettingsProxy}
               providerSettings={providerSettings}
               setProviderSettings={setProviderSettings}
               revealKeys={revealKeys}

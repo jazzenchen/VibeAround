@@ -51,7 +51,7 @@ pub fn env_for_launch(
     launch_target: &str,
 ) -> anyhow::Result<Vec<(String, String)>> {
     let rendered = render_for_launch(profile, launch_target)?;
-    materialize_env(&profile.id, rendered)
+    materialize_env_for_profile(profile, rendered)
 }
 
 pub fn render_for_agent_route(
@@ -105,6 +105,61 @@ pub fn materialize_env(
     }
 
     Ok(env)
+}
+
+pub fn materialize_env_for_profile(
+    profile: &ProfileDef,
+    rendered: RenderedProfile,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let mut env = materialize_env(&profile.id, rendered)?;
+    append_settings_proxy_env(profile, &mut env)?;
+    Ok(env)
+}
+
+pub fn append_settings_proxy_env(
+    profile: &ProfileDef,
+    env: &mut Vec<(String, String)>,
+) -> anyhow::Result<()> {
+    if !profile.use_settings_proxy {
+        return Ok(());
+    }
+
+    let cfg = config::ensure_loaded();
+    if !cfg.proxy.enabled {
+        return Ok(());
+    }
+    append_proxy_env_vars(&profile.id, &cfg.proxy, env)
+}
+
+fn append_proxy_env_vars(
+    profile_id: &str,
+    proxy: &config::HttpProxyConfig,
+    env: &mut Vec<(String, String)>,
+) -> anyhow::Result<()> {
+    let proxy_url = proxy.http_proxy.as_deref().ok_or_else(|| {
+        anyhow!("profile '{profile_id}' uses Settings proxy but HTTP proxy URL is empty")
+    })?;
+    env.retain(|(key, _)| !is_proxy_env_key(key));
+    env.extend([
+        ("HTTP_PROXY".to_string(), proxy_url.to_string()),
+        ("HTTPS_PROXY".to_string(), proxy_url.to_string()),
+        ("http_proxy".to_string(), proxy_url.to_string()),
+        ("https_proxy".to_string(), proxy_url.to_string()),
+    ]);
+    if let Some(no_proxy) = proxy.no_proxy.as_deref() {
+        env.extend([
+            ("NO_PROXY".to_string(), no_proxy.to_string()),
+            ("no_proxy".to_string(), no_proxy.to_string()),
+        ]);
+    }
+    Ok(())
+}
+
+fn is_proxy_env_key(key: &str) -> bool {
+    matches!(
+        key,
+        "HTTP_PROXY" | "HTTPS_PROXY" | "http_proxy" | "https_proxy" | "NO_PROXY" | "no_proxy"
+    )
 }
 
 pub fn launch_targets_for_api_types(
@@ -208,6 +263,67 @@ mod tests {
         assert!(launch_targets_for_api_types(&chat)
             .iter()
             .any(|(id, _, api_type)| *id == "pi" && *api_type == "openai-chat"));
+    }
+
+    #[test]
+    fn proxy_env_vars_cover_common_http_proxy_names() {
+        let mut env = vec![
+            ("HTTP_PROXY".to_string(), "http://old.example".to_string()),
+            ("OTHER".to_string(), "1".to_string()),
+        ];
+
+        append_proxy_env_vars(
+            "profile-test",
+            &config::HttpProxyConfig {
+                enabled: true,
+                http_proxy: Some("http://127.0.0.1:7890".to_string()),
+                no_proxy: Some("localhost,127.0.0.1".to_string()),
+            },
+            &mut env,
+        )
+        .expect("proxy env appends");
+
+        assert_eq!(
+            env,
+            vec![
+                ("OTHER".to_string(), "1".to_string()),
+                (
+                    "HTTP_PROXY".to_string(),
+                    "http://127.0.0.1:7890".to_string()
+                ),
+                (
+                    "HTTPS_PROXY".to_string(),
+                    "http://127.0.0.1:7890".to_string()
+                ),
+                (
+                    "http_proxy".to_string(),
+                    "http://127.0.0.1:7890".to_string()
+                ),
+                (
+                    "https_proxy".to_string(),
+                    "http://127.0.0.1:7890".to_string()
+                ),
+                ("NO_PROXY".to_string(), "localhost,127.0.0.1".to_string()),
+                ("no_proxy".to_string(), "localhost,127.0.0.1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn proxy_env_vars_require_proxy_url() {
+        let mut env = Vec::new();
+        let error = append_proxy_env_vars(
+            "profile-test",
+            &config::HttpProxyConfig {
+                enabled: true,
+                http_proxy: None,
+                no_proxy: None,
+            },
+            &mut env,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("HTTP proxy URL is empty"));
     }
 }
 

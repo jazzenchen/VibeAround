@@ -212,6 +212,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides,
+            use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
         };
 
@@ -238,6 +239,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
         };
 
@@ -268,6 +270,7 @@ mod tests {
             api_types: vec!["anthropic".to_string()],
             credentials: BTreeMap::new(),
             overrides,
+            use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
         };
 
