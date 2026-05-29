@@ -743,6 +743,11 @@ impl ThreadRuntime {
             env_vars.extend(applied.env);
             extra_args.extend(applied.command_args);
         }
+        let agent_prefs = crate::agent_state::read_prefs();
+        extra_args.extend(crate::agent_state::resolve_agent_acp_args(
+            &agent_prefs,
+            &agent_id,
+        ));
 
         let ready = Agent::spawn(
             agent_id.clone(),
@@ -861,6 +866,11 @@ impl ThreadRuntime {
             env_vars.extend(applied.env);
             extra_args.extend(applied.command_args);
         }
+        let agent_prefs = crate::agent_state::read_prefs();
+        extra_args.extend(crate::agent_state::resolve_agent_acp_args(
+            &agent_prefs,
+            &agent_id,
+        ));
 
         let ready = Agent::spawn(
             agent_id,

@@ -98,13 +98,15 @@ impl<'a> LaunchPlanBuilder<'a> {
             return Ok(LaunchPlan {
                 env: Vec::new(),
                 command: agent.pty.command.clone(),
-                args: Vec::new(),
+                args: terminal_launch_args_for_agent(agent_id),
                 window_label: format!("{} (direct)", agent.display_name),
                 workspace,
             });
         };
 
-        let (command, args) = resume_command_for_agent(agent_id, session_id)?;
+        let (command, resume_args) = resume_command_for_agent(agent_id, session_id)?;
+        let mut args = terminal_launch_args_for_agent(agent_id);
+        args.extend(resume_args);
         Ok(LaunchPlan {
             env: Vec::new(),
             command,
@@ -120,15 +122,15 @@ impl<'a> LaunchPlanBuilder<'a> {
         launch_target: &str,
         rendered: profiles::render::RenderedProfile,
     ) -> anyhow::Result<LaunchPlan> {
-        let command_args = rendered.command_args.clone();
-        let env = materialized_profile_env(profile, launch_target, &self.launch_id, rendered)?;
-
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let agent = resources::agent_by_id(agent_id)
             .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
         agent_integrations::auto_install_project_integrations(agent_id, &workspace)
             .with_context(|| format!("install project integrations for {}", agent_id))?;
+        let mut command_args = rendered.command_args.clone();
+        command_args.extend(terminal_launch_args_for_agent(agent_id));
+        let env = materialized_profile_env(profile, launch_target, &self.launch_id, rendered)?;
 
         Ok(LaunchPlan {
             env,
@@ -153,12 +155,10 @@ impl<'a> LaunchPlanBuilder<'a> {
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
         agent_integrations::auto_install_project_integrations(agent_id, &workspace)
             .with_context(|| format!("install project integrations for {}", agent_id))?;
-        let (command, mut args) = resume_command_for_agent(agent_id, session_id)?;
-        if !rendered.command_args.is_empty() {
-            let mut profile_args = rendered.command_args.clone();
-            profile_args.extend(args);
-            args = profile_args;
-        }
+        let (command, resume_args) = resume_command_for_agent(agent_id, session_id)?;
+        let mut args = rendered.command_args.clone();
+        args.extend(terminal_launch_args_for_agent(agent_id));
+        args.extend(resume_args);
 
         Ok(LaunchPlan {
             env,
@@ -187,6 +187,17 @@ fn materialized_profile_env(
         launch_target.to_string(),
     ));
     Ok(env)
+}
+
+#[cfg(not(test))]
+fn terminal_launch_args_for_agent(agent_id: &str) -> Vec<String> {
+    let prefs = ::common::agent_state::read_prefs();
+    ::common::agent_state::resolve_agent_terminal_args(&prefs, agent_id)
+}
+
+#[cfg(test)]
+fn terminal_launch_args_for_agent(_agent_id: &str) -> Vec<String> {
+    Vec::new()
 }
 
 fn resume_command_for_agent(

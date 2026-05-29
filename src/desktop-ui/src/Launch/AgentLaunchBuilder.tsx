@@ -4,6 +4,7 @@ import {
   FolderOpen,
   MessageCircle,
   Rocket,
+  Settings2,
   Terminal,
 } from "lucide-react";
 import { useI18n } from "@va/i18n";
@@ -41,6 +42,7 @@ import {
   reorderProfiles,
   setProfileConnection,
   setLauncherAgentProfile,
+  setLauncherAgentLaunchArgs,
   setLauncherDefault,
   setLauncherSelectedAgent,
   setLauncherTerminal,
@@ -50,6 +52,10 @@ import {
   type LauncherPreferences,
   type WorkspaceOption,
 } from "./api";
+import {
+  AgentLaunchSettingsDialog,
+  agentLaunchArgCount,
+} from "./AgentLaunchSettingsDialog";
 import { buildProfileCopyDraft } from "./profileClone";
 import {
   agentLabel,
@@ -72,6 +78,7 @@ import {
   type SessionChoice,
 } from "./launchModel";
 import type {
+  AgentLaunchArgs,
   ConnectionAgentId,
   ProfileConnectionPreference,
   ProfileSummary,
@@ -139,6 +146,7 @@ export function AgentLaunchBuilder({
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [showArchivedSessions, setShowArchivedSessions] = useState(false);
   const [sessionChoice, setSessionChoice] = useState<SessionChoice>(null);
+  const [settingsAgent, setSettingsAgent] = useState<AgentSummary | null>(null);
   const [busy, setBusy] = useState(false);
 
   const enabledAgents = useMemo(
@@ -633,6 +641,22 @@ export function AgentLaunchBuilder({
     }
   }
 
+  async function saveAgentLaunchArgs(launchArgs: AgentLaunchArgs) {
+    if (!settingsAgent) return;
+    setBusy(true);
+    onError(null);
+    try {
+      await setLauncherAgentLaunchArgs(settingsAgent.id, launchArgs);
+      await refreshPrefs();
+      onToast(t("Agent launch settings updated"));
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!viewPrefs || agents.length === 0 || !selectedAgent) {
     if (prefs?.enabledAgents.length === 0) {
       return (
@@ -653,6 +677,8 @@ export function AgentLaunchBuilder({
         route: t("Native CLI login"),
       };
   const sessionTitle = selectedSession?.title ?? t("New session");
+  const selectedAgentPreference = viewPrefs.agentPreferences[agentId];
+  const terminalArgCount = agentLaunchArgCount(selectedAgentPreference);
 
   return (
     <TooltipProvider>
@@ -679,6 +705,26 @@ export function AgentLaunchBuilder({
                   <AgentSummaryHeader
                     agentId={agentId}
                     agentLabelText={selectedAgent.display_name}
+                    action={
+                      <div className="flex items-center gap-1.5 pt-1">
+                        {terminalArgCount > 0 && (
+                          <span className="rounded-md border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                            {t("{{count}} args", { count: terminalArgCount })}
+                          </span>
+                        )}
+                        <TooltipButton
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          disabled={busy}
+                          aria-label={t("Agent settings")}
+                          title={t("Agent settings")}
+                          onClick={() => setSettingsAgent(selectedAgent)}
+                        >
+                          <Settings2 className="h-4 w-4" />
+                        </TooltipButton>
+                      </div>
+                    }
                   >
                     <SelectorPopup
                       id="profile"
@@ -883,6 +929,17 @@ export function AgentLaunchBuilder({
           </div>
         </main>
       </div>
+      <AgentLaunchSettingsDialog
+        agent={settingsAgent}
+        preference={
+          settingsAgent
+            ? viewPrefs.agentPreferences[settingsAgent.id]
+            : undefined
+        }
+        busy={busy}
+        onClose={() => setSettingsAgent(null)}
+        onSave={saveAgentLaunchArgs}
+      />
     </TooltipProvider>
   );
 }

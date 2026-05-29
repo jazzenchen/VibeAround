@@ -202,6 +202,21 @@ pub fn launcher_set_agent_profile(
 }
 
 #[tauri::command]
+pub fn launcher_set_agent_launch_args(
+    app: tauri::AppHandle,
+    agent_id: String,
+    launch_args: agent_state::AgentLaunchArgs,
+) -> Result<(), String> {
+    let agent_id = resources::agent_by_alias(&agent_id)
+        .map(|def| def.id.clone())
+        .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
+    let launch_args = sanitize_agent_launch_args(launch_args)?;
+    agent_state::write_agent_launch_args(&agent_id, launch_args).map_err(|e| e.to_string())?;
+    emit_launch_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn launcher_set_selected_agent(app: tauri::AppHandle, agent_id: String) -> Result<(), String> {
     let agent_id = resources::agent_by_alias(&agent_id)
         .map(|def| def.id.clone())
@@ -293,6 +308,34 @@ fn validate_connection_agent_id(agent_id: String) -> Result<String, String> {
     }
 }
 
+fn sanitize_agent_launch_args(
+    launch_args: agent_state::AgentLaunchArgs,
+) -> Result<agent_state::AgentLaunchArgs, String> {
+    Ok(agent_state::AgentLaunchArgs {
+        terminal: sanitize_arg_list("terminal", launch_args.terminal)?,
+        acp: sanitize_arg_list("acp", launch_args.acp)?,
+    })
+}
+
+fn sanitize_arg_list(kind: &str, args: Vec<String>) -> Result<Vec<String>, String> {
+    if args.len() > 64 {
+        return Err(format!("{kind} launch args cannot exceed 64 entries"));
+    }
+
+    let mut out = Vec::with_capacity(args.len());
+    for arg in args {
+        let arg = arg.trim().to_string();
+        if arg.is_empty() {
+            continue;
+        }
+        if arg.chars().any(|ch| ch == '\0' || ch == '\n' || ch == '\r') {
+            return Err(format!("{kind} launch args cannot contain line breaks"));
+        }
+        out.push(arg);
+    }
+    Ok(out)
+}
+
 pub(super) fn resolve_launch_workspace(agent_id: &str) -> anyhow::Result<PathBuf> {
     workspace::resolve_launch_workspace(agent_id)
 }
@@ -303,7 +346,8 @@ fn emit_launch_config_changed(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_connection_agent_id;
+    use super::{sanitize_agent_launch_args, validate_connection_agent_id};
+    use common::agent_state::AgentLaunchArgs;
 
     #[test]
     fn accepts_supported_profile_connection_targets() {
@@ -318,5 +362,32 @@ mod tests {
     #[test]
     fn rejects_unknown_profile_connection_target() {
         assert!(validate_connection_agent_id("cursor".to_string()).is_err());
+    }
+
+    #[test]
+    fn cleans_agent_launch_args() {
+        let args = sanitize_agent_launch_args(AgentLaunchArgs {
+            terminal: vec![
+                "".to_string(),
+                "  --sandbox ".to_string(),
+                " danger-full-access ".to_string(),
+            ],
+            acp: Vec::new(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            args.terminal,
+            vec!["--sandbox".to_string(), "danger-full-access".to_string()]
+        );
+    }
+
+    #[test]
+    fn rejects_multiline_agent_launch_args() {
+        assert!(sanitize_agent_launch_args(AgentLaunchArgs {
+            terminal: vec!["--flag\nvalue".to_string()],
+            acp: Vec::new(),
+        })
+        .is_err());
     }
 }

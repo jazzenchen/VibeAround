@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CatalogEntry,
   CompatibilityBridgeMode,
+  AgentLaunchArgs,
   AgentLaunchPreference,
   ConnectionAgentId,
   ProfileDef,
@@ -200,6 +201,16 @@ export function setLauncherAgentProfile(
   profileId: string | null,
 ): Promise<void> {
   return invoke<void>("launcher_set_agent_profile", { agentId, profileId });
+}
+
+export function setLauncherAgentLaunchArgs(
+  agentId: string,
+  launchArgs: AgentLaunchArgs,
+): Promise<void> {
+  return invoke<void>("launcher_set_agent_launch_args", {
+    agentId,
+    launchArgs,
+  });
 }
 
 export function setLauncherSelectedAgent(agentId: string): Promise<void> {
