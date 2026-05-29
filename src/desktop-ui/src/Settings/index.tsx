@@ -838,7 +838,7 @@ function AgentSettingsPanel({
               type="button"
               role="checkbox"
               aria-checked={isEnabled}
-              className={`relative flex min-h-[54px] items-center gap-2 rounded-md border p-2 pr-8 text-left transition-colors ${
+              className={`relative flex min-h-12 items-center gap-2 rounded-md border p-2 pr-8 text-left transition-colors ${
                 isEnabled
                   ? "border-primary/40 bg-primary/5"
                   : "border-border hover:border-border/80"
@@ -849,7 +849,7 @@ function AgentSettingsPanel({
                 kind="cli"
                 id={agent.id}
                 label={agent.display_name}
-                className="h-7 w-7"
+                className="h-6 w-6"
               />
               <span className="flex min-w-0 flex-1 items-center">
                 <span
@@ -886,6 +886,7 @@ function AgentSettingsPanel({
               checked={mcpAutoInstall}
               onCheckedChange={onMcpAutoInstallChange}
               aria-label={t("Auto-install MCP")}
+              size="sm"
             />
           }
         />
@@ -897,6 +898,7 @@ function AgentSettingsPanel({
               checked={skillAutoInstall}
               onCheckedChange={onSkillAutoInstallChange}
               aria-label={t("Auto-install skills")}
+              size="sm"
             />
           }
         />
@@ -908,6 +910,7 @@ function AgentSettingsPanel({
               type="button"
               variant="outline"
               size="sm"
+              className="text-xs"
               disabled={saving !== "idle"}
               onClick={onUninstallMcp}
             >
@@ -924,6 +927,7 @@ function AgentSettingsPanel({
               type="button"
               variant="outline"
               size="sm"
+              className="text-xs"
               disabled={saving !== "idle"}
               onClick={onUninstallSkills}
             >
