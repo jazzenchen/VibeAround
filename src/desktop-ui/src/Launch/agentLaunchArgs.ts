@@ -139,7 +139,10 @@ export function applyCodexSandboxPreset(
 }
 
 export function agentLaunchArgCount(preference?: AgentLaunchPreference): number {
-  return preference?.launchArgs?.terminal?.length ?? 0;
+  return (
+    (preference?.launchArgs?.terminal?.length ?? 0) +
+    (preference?.launchArgs?.acp?.length ?? 0)
+  );
 }
 
 function isCodexSandboxMode(value: unknown): value is Exclude<CodexSandboxPreset, "default"> {

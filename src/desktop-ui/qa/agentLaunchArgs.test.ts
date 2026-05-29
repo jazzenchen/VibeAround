@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  agentLaunchArgCount,
   applyCodexSandboxPreset,
   inferCodexSandboxPreset,
   parseLaunchArgInput,
@@ -49,4 +50,15 @@ test("codex sandbox preset replaces existing sandbox args", () => {
   expect(
     applyCodexSandboxPreset(["--sandbox", "read-only", "--foo"], "default"),
   ).toEqual(["--foo"]);
+});
+
+test("agentLaunchArgCount includes terminal and agent protocol args", () => {
+  expect(
+    agentLaunchArgCount({
+      launchArgs: {
+        terminal: ["--sandbox", "read-only"],
+        acp: ["--strict-config"],
+      },
+    }),
+  ).toBe(3);
 });

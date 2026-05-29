@@ -161,6 +161,7 @@ export const zhCNLaunch: Record<string, string> = {
   "Workspace write": "工作区可写",
   "Full access": "完全访问",
   "Terminal arguments": "终端参数",
+  "Agent protocol arguments": "Agent 协议参数",
   "No custom arguments": "没有自定义参数",
   Argument: "参数",
   "Argument or command-line fragment": "参数或命令行片段",
