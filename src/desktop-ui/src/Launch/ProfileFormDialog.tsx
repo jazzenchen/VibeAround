@@ -24,12 +24,14 @@ import { ProviderGrid } from "./ProfileProviderGrid";
 import {
   arraysEqual,
   collectFields,
-  endpointId,
-  endpointsForApiType,
+  defaultApiKindEndpoints,
+  overridesForEndpoints,
   pruneOverrides,
   pruneProviderSettings,
   providerApiKindEndpoints,
   providerApiKindsEditable,
+  providerUsesEndpointGroups,
+  selectedEndpointGroup,
   selectedEndpoint,
   stripEmpty,
 } from "./profileFormHelpers";
@@ -106,20 +108,9 @@ export function ProfileFormDialog({
 
   useEffect(() => {
     if (!provider || editing) return;
-    const apiKindEndpoints = providerApiKindEndpoints(provider);
+    const apiKindEndpoints = defaultApiKindEndpoints(provider);
     setSelectedApiTypes(apiKindEndpoints.map((e) => e.api_type));
-    const next: Record<string, ApiTypeOverrides> = {};
-    for (const ep of apiKindEndpoints) {
-      const endpointOptions = endpointsForApiType(provider, ep.api_type);
-      const defaultEndpoint = endpointOptions[0] ?? ep;
-      next[ep.api_type] = {
-        endpoint_id:
-          endpointOptions.length > 1 ? endpointId(defaultEndpoint) : undefined,
-        model: ep.models[0]?.id ?? "",
-        base_url: ep.default_base_url || undefined,
-      };
-    }
-    setOverrides(next);
+    setOverrides(overridesForEndpoints(apiKindEndpoints));
     setProviderSettings(
       provider.id === "deepseek"
         ? {
@@ -134,11 +125,15 @@ export function ProfileFormDialog({
 
   useEffect(() => {
     if (!provider || providerApiKindsEditable(provider)) return;
-    const apiKinds = providerApiKindEndpoints(provider).map((e) => e.api_type);
+    const endpoints = providerUsesEndpointGroups(provider)
+      ? (selectedEndpointGroup(provider, selectedApiTypes, overrides)?.endpoints ??
+        defaultApiKindEndpoints(provider))
+      : providerApiKindEndpoints(provider);
+    const apiKinds = endpoints.map((e) => e.api_type);
     setSelectedApiTypes((current) =>
       arraysEqual(current, apiKinds) ? current : apiKinds,
     );
-  }, [provider]);
+  }, [provider, overrides, selectedApiTypes]);
 
   function handlePickProvider(c: CatalogEntry) {
     setProvider(c);
@@ -158,7 +153,7 @@ export function ProfileFormDialog({
       return;
     }
 
-    const fieldDefs = collectFields(provider, selectedApiTypes, "api_key");
+    const fieldDefs = collectFields(provider, selectedApiTypes, "api_key", overrides);
     for (const f of fieldDefs) {
       if (f.required && !credentials[f.name]?.trim()) {
         setError(t("{{field}} is required", { field: t(f.label) }));
