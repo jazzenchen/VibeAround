@@ -102,6 +102,26 @@ export async function getLaunchSessions(
   return LaunchSessionListSchema.parse(await res.json());
 }
 
+export async function getLaunchSessionsBatch(
+  agentIds: string[],
+  includeArchived = false,
+  workspacePaths: string[] = [],
+): Promise<LaunchSessionInfo[]> {
+  if (agentIds.length === 0) return [];
+  const path = "/api/launch-sessions";
+  const res = await fetch(`${browserBaseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      agent_ids: agentIds,
+      workspace_paths: workspacePaths,
+      include_archived: includeArchived,
+    }),
+  });
+  if (!res.ok) throw new Error(`POST ${path}: ${res.status}`);
+  return LaunchSessionListSchema.parse(await res.json());
+}
+
 export async function archiveLaunchSession(
   agentId: string,
   sessionId: string,

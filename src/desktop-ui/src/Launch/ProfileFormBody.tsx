@@ -42,6 +42,8 @@ interface FormBodyProps {
   setCredentials: (v: Record<string, string>) => void;
   overrides: Record<string, ApiTypeOverrides>;
   setOverrides: (v: Record<string, ApiTypeOverrides>) => void;
+  useSettingsProxy: boolean;
+  setUseSettingsProxy: (v: boolean) => void;
   providerSettings: ProviderSettings;
   setProviderSettings: (v: ProviderSettings) => void;
   revealKeys: Record<string, boolean>;
@@ -58,6 +60,8 @@ export function FormBody({
   setCredentials,
   overrides,
   setOverrides,
+  useSettingsProxy,
+  setUseSettingsProxy,
   providerSettings,
   setProviderSettings,
   revealKeys,
@@ -86,6 +90,11 @@ export function FormBody({
           editable={apiKindsEditable}
           selectedApiTypes={selectedApiTypes}
           setSelectedApiTypes={setSelectedApiTypes}
+        />
+
+        <ProxyField
+          checked={useSettingsProxy}
+          onChange={setUseSettingsProxy}
         />
       </FormSection>
 
@@ -358,6 +367,39 @@ export function FormBody({
         </a>
       )}
     </div>
+  );
+}
+
+function ProxyField({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <label
+      className={`flex min-h-10 items-center justify-between gap-3 rounded-md border px-2.5 py-2 text-xs ${
+        checked
+          ? "border-primary bg-primary/10 cursor-pointer"
+          : "border-border hover:bg-accent/30 cursor-pointer"
+      }`}
+    >
+      <span className="min-w-0">
+        <span className="block font-medium">{t("Use Settings proxy")}</span>
+        <span className="block text-[10px] text-muted-foreground/70">
+          {t("Provider requests for this profile use the configured Settings proxy when it is enabled.")}
+        </span>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-3.5 w-3.5 shrink-0 accent-primary"
+      />
+    </label>
   );
 }
 

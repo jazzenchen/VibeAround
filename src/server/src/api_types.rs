@@ -272,6 +272,9 @@ pub struct PreviewsResponse {
 /// { "kind": "system_text", "text": "Session paired." }
 /// { "kind": "acp_notification", "payload": { /* acp::SessionNotification */ } }
 /// { "kind": "permission_request", "request_id": "pr-1", "request": { ... } }
+/// { "kind": "multi_agent_turn", "turn": { ... }, "agents": [...] }
+/// { "kind": "subagent_status", "agent": { ... } }
+/// { "kind": "subagent_acp_notification", "agent": { ... }, "payload": { ... } }
 /// { "kind": "command_menu", "system_commands": [...], "agent_commands": [...] }
 /// { "kind": "prompt_done", "message_id": "01HX..." }
 /// { "kind": "error", "error": "spawn failed: ..." }
@@ -301,6 +304,17 @@ pub enum ChatEvent {
     PermissionRequest {
         request_id: String,
         request: serde_json::Value,
+    },
+    MultiAgentTurn {
+        turn: common::workspace::threads::MultiAgentTurn,
+        agents: Vec<common::workspace::threads::ThreadAgent>,
+    },
+    SubagentStatus {
+        agent: common::workspace::threads::ThreadAgent,
+    },
+    SubagentAcpNotification {
+        agent: common::workspace::threads::ThreadAgent,
+        payload: serde_json::Value,
     },
     PromptDone {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -362,4 +376,6 @@ pub struct AgentRuntime {
     pub agent_name: Option<String>,
     pub agent_title: Option<String>,
     pub agent_version: Option<String>,
+    pub multi_agent_turns: Vec<common::workspace::threads::MultiAgentTurn>,
+    pub subagents: Vec<common::workspace::threads::ThreadAgent>,
 }

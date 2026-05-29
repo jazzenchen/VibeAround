@@ -109,7 +109,6 @@ export function emptyConnectionDraft(
         const current = connections?.[profile.id]?.[agent.id]?.bridge?.[item.apiType];
         bridge[item.apiType] = {
           enabled: item.bridgeEnabled,
-          useProxy: current?.useProxy ?? false,
           targetApiType:
             current?.targetApiType && item.targetOptions.includes(current.targetApiType)
               ? current.targetApiType

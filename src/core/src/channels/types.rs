@@ -122,6 +122,20 @@ pub enum ChannelOutput {
         request_id: String,
         payload: serde_json::Value,
     },
+    MultiAgentTurn {
+        route: RouteKey,
+        turn: crate::workspace::threads::MultiAgentTurn,
+        agents: Vec<crate::workspace::threads::ThreadAgent>,
+    },
+    SubagentStatus {
+        route: RouteKey,
+        agent: crate::workspace::threads::ThreadAgent,
+    },
+    SubagentAcp {
+        route: RouteKey,
+        agent: crate::workspace::threads::ThreadAgent,
+        payload: serde_json::Value,
+    },
 }
 
 impl ChannelOutput {
@@ -137,7 +151,10 @@ impl ChannelOutput {
             | Self::CommandMenu { route, .. }
             | Self::PromptDone { route, .. }
             | Self::TurnStatus { route, .. }
-            | Self::PermissionRequest { route, .. } => route,
+            | Self::PermissionRequest { route, .. }
+            | Self::MultiAgentTurn { route, .. }
+            | Self::SubagentStatus { route, .. }
+            | Self::SubagentAcp { route, .. } => route,
         }
     }
 }

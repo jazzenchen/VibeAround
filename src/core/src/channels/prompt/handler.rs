@@ -7,6 +7,7 @@ use agent_client_protocol::schema as acp;
 use crate::agent::AgentClientHandler;
 use crate::channels::bridge_handler::ChannelBridgeHandler;
 use crate::channels::plugin_host::PluginHost;
+use crate::channels::subagent_handler::{SubagentBridgeHandler, SubagentReportTracker};
 use crate::channels::types::{
     ChannelOutput, ChannelSessionAgent, ChannelSessionInfo, ChannelSessionStart,
 };
@@ -327,8 +328,92 @@ pub async fn start_runtime_and_notify(
             })
             .await;
     }
+    if should_send_session_ready {
+        send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
+            .await;
+    }
     workspace_threads.schedule_host_idle_shutdown(after.thread_id);
     Ok(())
+}
+
+pub async fn send_runtime_multi_agent_state_and_replay(
+    workspace_threads: &Arc<WorkspaceThreadManager>,
+    runtime: &Arc<ThreadRuntime>,
+    plugin_host: &Arc<PluginHost>,
+    route: &RouteKey,
+) {
+    let state = runtime.state().await;
+    send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &state).await;
+}
+
+async fn send_multi_agent_state_and_replay(
+    workspace_threads: &Arc<WorkspaceThreadManager>,
+    runtime: &Arc<ThreadRuntime>,
+    plugin_host: &Arc<PluginHost>,
+    route: &RouteKey,
+    state: &ThreadRuntimeState,
+) {
+    send_multi_agent_state(plugin_host, route, state).await;
+    replay_subagent_sessions(workspace_threads, runtime, plugin_host, route, state).await;
+}
+
+async fn send_multi_agent_state(
+    plugin_host: &Arc<PluginHost>,
+    route: &RouteKey,
+    state: &ThreadRuntimeState,
+) {
+    for turn in &state.multi_agent_turns {
+        let agents = state
+            .agents
+            .iter()
+            .filter(|agent| turn.agent_ids.contains(&agent.id))
+            .cloned()
+            .collect();
+        plugin_host
+            .send_output(ChannelOutput::MultiAgentTurn {
+                route: route.clone(),
+                turn: turn.clone(),
+                agents,
+            })
+            .await;
+    }
+}
+
+async fn replay_subagent_sessions(
+    workspace_threads: &Arc<WorkspaceThreadManager>,
+    runtime: &Arc<ThreadRuntime>,
+    plugin_host: &Arc<PluginHost>,
+    route: &RouteKey,
+    state: &ThreadRuntimeState,
+) {
+    for agent in &state.agents {
+        let Some(session_id) = latest_subagent_session_id(agent) else {
+            continue;
+        };
+        let tracker = Arc::new(SubagentReportTracker::new(agent.clone()));
+        let handler = Arc::new(SubagentBridgeHandler::for_thread(
+            Arc::clone(plugin_host),
+            workspace_threads,
+            state.thread_id.clone(),
+            agent.clone(),
+            tracker,
+        ));
+        if let Err(error) = runtime
+            .replay_subagent_session(route, agent, session_id, handler)
+            .await
+        {
+            tracing::debug!(
+                thread_id = %state.thread_id,
+                agent_id = %agent.id,
+                error = %error.message,
+                "failed to replay subagent session"
+            );
+        }
+    }
+}
+
+fn latest_subagent_session_id(agent: &crate::workspace::threads::ThreadAgent) -> Option<String> {
+    agent.session_id.clone()
 }
 
 fn bridge_handler(

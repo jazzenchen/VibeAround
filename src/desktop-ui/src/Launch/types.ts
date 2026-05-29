@@ -41,7 +41,6 @@ export interface ProfileConnectionPreference {
 
 export interface ProfileBridgePreference {
   enabled?: boolean | null;
-  useProxy?: boolean | null;
   targetApiType?: string | null;
   /** TODO(0.7.x): remove single-model compatibility fields after migration to models[]. */
   upstreamModel?: string | null;
@@ -90,6 +89,7 @@ export interface ProfileDef {
   api_types: string[];
   credentials: Record<string, string>;
   overrides: Record<string, ApiTypeOverrides>;
+  use_settings_proxy?: boolean;
   provider_settings?: ProviderSettings;
 }
 

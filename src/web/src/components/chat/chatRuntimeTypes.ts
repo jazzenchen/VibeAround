@@ -1,4 +1,9 @@
-import type { AgentInfo, LaunchSessionInfo } from "@va/client";
+import type {
+  AgentInfo,
+  LaunchSessionInfo,
+  MultiAgentTurn,
+  ThreadAgent,
+} from "@va/client";
 import type {
   ChatMessage,
   ChatMeta,
@@ -33,6 +38,9 @@ export interface ChatRuntimeSnapshot {
   pendingPermissions: PendingPermission[];
   sessionMode: SessionModeState | null;
   resumeReplay: ResumeReplayState | null;
+  multiAgentTurns: MultiAgentTurn[];
+  subagents: ThreadAgent[];
+  subagentMessages: Record<string, ChatMessage[]>;
   lastPromptDoneAt?: number;
 }
 
@@ -56,5 +64,8 @@ export const EMPTY_RUNTIME_SNAPSHOT: ChatRuntimeSnapshot = {
   pendingPermissions: [],
   sessionMode: null,
   resumeReplay: null,
+  multiAgentTurns: [],
+  subagents: [],
+  subagentMessages: {},
   lastPromptDoneAt: undefined,
 };

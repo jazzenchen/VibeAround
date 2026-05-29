@@ -80,31 +80,101 @@ pub async fn list_launch_sessions_handler(
         .map(common::workspace::normalize_workspace_cwd)
         .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
     let limit = query.limit.unwrap_or(25).clamp(1, 100);
-    let sessions = common::launch_sessions::list_for_agent_workspace_with_archived(
+    let sessions = common::launch_sessions::list_for_agent_workspace_with_archived_async(
         &agent_id,
         &workspace,
         limit,
         query.include_archived.unwrap_or(false),
     )
+    .await
     .into_iter()
-    .map(|session| {
-        let active = state
-            .web_channel
-            .session_is_active(&session.agent_id, &session.session_id);
-        crate::api_types::LaunchSessionInfo {
-            short_id: common::launch_sessions::short_id(&session.session_id),
-            agent_id: session.agent_id,
-            session_id: session.session_id,
-            title: session.title,
-            workspace: session.workspace,
-            updated_at: session.updated_at,
-            archived: session.archived,
-            active,
-        }
-    })
+    .map(|session| launch_session_info(&state, session))
     .collect();
 
     Ok(Json(sessions))
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct LaunchSessionsBatchBody {
+    agent_ids: Vec<String>,
+    workspace_paths: Vec<String>,
+    include_archived: Option<bool>,
+    limit: Option<usize>,
+}
+
+/// POST /api/launch-sessions -- list resumable CLI sessions across agents/workspaces.
+pub async fn list_launch_sessions_batch_handler(
+    State(state): State<AppState>,
+    Json(body): Json<LaunchSessionsBatchBody>,
+) -> Result<Json<Vec<crate::api_types::LaunchSessionInfo>>, (StatusCode, String)> {
+    let mut agent_ids = Vec::new();
+    for agent_id in body.agent_ids {
+        let resolved = common::resources::resolve_agent_id(&agent_id)
+            .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+        if !agent_ids.contains(&resolved) {
+            agent_ids.push(resolved);
+        }
+    }
+    if agent_ids.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+
+    let mut workspaces = Vec::new();
+    for workspace_path in body.workspace_paths {
+        let workspace =
+            common::workspace::normalize_workspace_cwd(std::path::PathBuf::from(workspace_path));
+        if !workspaces.contains(&workspace) {
+            workspaces.push(workspace);
+        }
+    }
+    if workspaces.is_empty() {
+        let config = common::config::ensure_loaded();
+        for agent_id in &agent_ids {
+            let workspace = config.resolve_workspace(agent_id);
+            if !workspaces.contains(&workspace) {
+                workspaces.push(workspace);
+            }
+        }
+    }
+
+    let limit = body.limit.unwrap_or(25).clamp(1, 100);
+    let include_archived = body.include_archived.unwrap_or(false);
+    let mut sessions = Vec::new();
+    for agent_id in &agent_ids {
+        sessions.extend(
+            common::launch_sessions::list_for_agent_workspaces_with_archived_async(
+                agent_id,
+                &workspaces,
+                limit,
+                include_archived,
+            )
+            .await
+            .into_iter()
+            .map(|session| launch_session_info(&state, session)),
+        );
+    }
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    Ok(Json(sessions))
+}
+
+fn launch_session_info(
+    state: &AppState,
+    session: common::launch_sessions::LaunchSession,
+) -> crate::api_types::LaunchSessionInfo {
+    let active = state
+        .web_channel
+        .session_is_active(&session.agent_id, &session.session_id);
+    crate::api_types::LaunchSessionInfo {
+        short_id: common::launch_sessions::short_id(&session.session_id),
+        agent_id: session.agent_id,
+        session_id: session.session_id,
+        title: session.title,
+        workspace: session.workspace,
+        updated_at: session.updated_at,
+        archived: session.archived,
+        active,
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -218,6 +288,10 @@ pub async fn create_session_handler(
             let command_args = rendered.command_args.clone();
             let mut env = common::profiles::runtime::materialize_env(&profile.id, rendered)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if route.bridge_target_api_type.is_none() {
+                common::profiles::runtime::append_settings_proxy_env(&profile, &mut env)
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
             env.push(("VIBEAROUND_LAUNCH_ID".to_string(), launch_id));
             env.push(("VIBEAROUND_PROFILE_ID".to_string(), profile.id.clone()));
             env.push((

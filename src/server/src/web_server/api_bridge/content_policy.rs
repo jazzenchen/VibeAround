@@ -285,6 +285,7 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
         }
     }

@@ -43,6 +43,16 @@ pub(super) fn render_for_launch(
     Ok(rendered)
 }
 
+pub(super) fn launch_uses_local_bridge(
+    profile: &ProfileDef,
+    launch_target: &str,
+) -> anyhow::Result<bool> {
+    let route = crate::profiles::resolve_profile_agent_route(profile, launch_target)
+        .ok_or_else(|| anyhow!("profile '{}' cannot launch '{}'", profile.id, launch_target))?;
+    Ok(route.bridge_target_api_type.is_some()
+        || compatibility_bridge_applies(launch_target, &route.client_api_type))
+}
+
 fn apply_compatibility_bridge(
     profile: &ProfileDef,
     launch_target: &str,
@@ -50,11 +60,7 @@ fn apply_compatibility_bridge(
     api_type: &str,
     rendered: &mut profiles::render::RenderedProfile,
 ) -> anyhow::Result<()> {
-    if terminal::read_compatibility_bridge_preference() == CompatibilityBridgeMode::Off {
-        return Ok(());
-    }
-
-    if launch_target != "codex" || api_type != "openai-chat" {
+    if !compatibility_bridge_applies(launch_target, api_type) {
         return Ok(());
     }
 
@@ -77,4 +83,10 @@ fn apply_compatibility_bridge(
     );
 
     Ok(())
+}
+
+fn compatibility_bridge_applies(launch_target: &str, api_type: &str) -> bool {
+    terminal::read_compatibility_bridge_preference() != CompatibilityBridgeMode::Off
+        && launch_target == "codex"
+        && api_type == "openai-chat"
 }

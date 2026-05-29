@@ -195,6 +195,10 @@ pub async fn run_web_server(
             delete(api::delete_session_handler),
         )
         .route(
+            "/api/launch-sessions",
+            post(api::list_launch_sessions_batch_handler),
+        )
+        .route(
             "/api/agents/{agent_id}/launch-sessions",
             get(api::list_launch_sessions_handler),
         )

@@ -161,6 +161,8 @@ async fn build_agents_runtime(
             agent_name,
             agent_title,
             agent_version,
+            multi_agent_turns: st.multi_agent_turns,
+            subagents: st.agents,
         });
     }
     out

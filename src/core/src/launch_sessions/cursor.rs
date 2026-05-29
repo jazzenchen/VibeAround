@@ -45,20 +45,15 @@ fn encoded_cwd(cwd: &Path) -> String {
 
 fn title(path: &Path) -> Option<String> {
     let file = fs::File::open(path).ok()?;
-    for line in BufReader::new(file).lines().map_while(Result::ok).take(80) {
-        let json: Value = serde_json::from_str(&line).ok()?;
-        if json.get("role").and_then(Value::as_str) != Some("user") {
-            continue;
-        }
-        if let Some(title) = json
-            .get("message")
-            .and_then(message_text)
-            .and_then(clean_user_title)
-        {
-            return Some(title);
-        }
+    let mut line = String::new();
+    BufReader::new(file).read_line(&mut line).ok()?;
+    let json: Value = serde_json::from_str(&line).ok()?;
+    if json.get("role").and_then(Value::as_str) != Some("user") {
+        return None;
     }
-    None
+    json.get("message")
+        .and_then(message_text)
+        .and_then(clean_user_title)
 }
 
 fn clean_user_title(value: &str) -> Option<String> {
