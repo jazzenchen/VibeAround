@@ -55,6 +55,10 @@ pub trait SubagentCompletionValidator: Send + Sync + 'static {
     async fn validate_completion(&self) -> Result<SubagentCompletionResult, String>;
 }
 
+const SUBAGENT_START_MAX_ATTEMPTS: usize = 2;
+const SUBAGENT_PROMPT_MAX_ATTEMPTS: usize = 2;
+const SUBAGENT_RETRY_DELAY: Duration = Duration::from_millis(750);
+
 pub struct ThreadRuntime {
     thread: Mutex<WorkspaceThread>,
     workspace: PathBuf,
@@ -340,27 +344,9 @@ impl ThreadRuntime {
             return Err(acp::Error::new(-32603, "workspace thread is closed"));
         }
 
-        let prompt_finish_handler = Arc::clone(&handler);
         let runtime_handler = Arc::clone(&handler);
-        let agent = match self.spawn_subagent(route, &thread_agent, handler).await {
-            Ok(agent) => agent,
-            Err(error) => {
-                if let Ok(Some(updated)) = self
-                    .set_thread_agent_status(
-                        &thread_agent.id,
-                        ThreadAgentStatus::Error,
-                        Some(error.message.to_string()),
-                        None,
-                    )
-                    .await
-                {
-                    let _ = status_tx.send(updated);
-                }
-                return Err(error);
-            }
-        };
-        let session = match agent
-            .new_session(subagent_new_session_request(&thread_agent))
+        let (agent, session_id) = match self
+            .spawn_subagent_session_with_retries(route, &thread_agent, handler)
             .await
         {
             Ok(session) => session,
@@ -376,24 +362,19 @@ impl ThreadRuntime {
                 {
                     let _ = status_tx.send(updated);
                 }
-                agent.shutdown().await;
                 return Err(error);
             }
         };
-        let session_id = session.session_id.to_string();
         let completion_validator_for_runtime = completion_validator.clone();
         self.subagents.lock().await.insert(
             thread_agent.id.clone(),
             SubagentRuntime {
                 agent: Arc::clone(&agent),
                 session_id: session_id.clone(),
-                client_handler: runtime_handler,
+                client_handler: Arc::clone(&runtime_handler),
                 completion_validator: completion_validator_for_runtime,
             },
         );
-        if let Some(validator) = completion_validator.as_ref() {
-            validator.reset_completion().await;
-        }
 
         if let Some(updated) = self
             .set_thread_agent_status_with_session(
@@ -409,83 +390,15 @@ impl ThreadRuntime {
         }
 
         let prompt = subagent_assignment_prompt(&thread_agent);
-        let runtime = Arc::clone(self);
-        let agent_id = thread_agent.id.clone();
-        tokio::spawn(async move {
-            let result = agent
-                .prompt(acp::PromptRequest::new(
-                    session_id,
-                    vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
-                ))
-                .await;
-            if let Err(error) = prompt_finish_handler.prompt_finished(result.is_ok()).await {
-                tracing::warn!(
-                    agent_id = %agent_id,
-                    error = %error.message,
-                    "subagent prompt_finished hook failed"
-                );
-            }
-            let next = match result {
-                Ok(_) => match completion_validator {
-                    Some(validator) => match validator.validate_completion().await {
-                        Ok(completion) => {
-                            runtime
-                                .set_thread_agent_status(
-                                    &agent_id,
-                                    completion.status,
-                                    completion.last_error,
-                                    completion.report,
-                                )
-                                .await
-                        }
-                        Err(message) => {
-                            runtime
-                                .set_thread_agent_status(
-                                    &agent_id,
-                                    ThreadAgentStatus::Error,
-                                    Some(message),
-                                    None,
-                                )
-                                .await
-                        }
-                    },
-                    None => {
-                        runtime
-                            .set_thread_agent_status(
-                                &agent_id,
-                                ThreadAgentStatus::Completed,
-                                None,
-                                None,
-                            )
-                            .await
-                    }
-                },
-                Err(error) => {
-                    let message = error.message.to_string();
-                    runtime
-                        .set_thread_agent_status(
-                            &agent_id,
-                            ThreadAgentStatus::Error,
-                            Some(message),
-                            None,
-                        )
-                        .await
-                }
-            };
-            match next {
-                Ok(Some(updated)) => {
-                    let _ = status_tx.send(updated);
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        agent_id = %agent_id,
-                        error = %error.message,
-                        "failed to update subagent status"
-                    );
-                }
-            }
-        });
+        self.spawn_subagent_prompt_task(
+            thread_agent,
+            agent,
+            session_id,
+            prompt,
+            status_tx,
+            runtime_handler,
+            completion_validator,
+        );
 
         Ok(())
     }
@@ -532,9 +445,6 @@ impl ThreadRuntime {
             ));
         };
 
-        if let Some(validator) = subagent.completion_validator.as_ref() {
-            validator.reset_completion().await;
-        }
         if let Some(updated) = self
             .set_thread_agent_status(agent_id, ThreadAgentStatus::Running, None, None)
             .await?
@@ -543,15 +453,111 @@ impl ThreadRuntime {
         }
 
         let prompt = subagent_assignment_prompt_from_value(&thread_agent, &assignment);
+        self.spawn_subagent_prompt_task(
+            thread_agent,
+            subagent.agent,
+            subagent.session_id,
+            prompt,
+            status_tx,
+            subagent.client_handler,
+            subagent.completion_validator,
+        );
+
+        Ok(())
+    }
+
+    async fn spawn_subagent_session_with_retries(
+        &self,
+        route: &RouteKey,
+        thread_agent: &ThreadAgent,
+        handler: Arc<dyn AgentClientHandler>,
+    ) -> acp::Result<(Arc<Agent>, String)> {
+        let mut last_error = None;
+        for attempt in 1..=SUBAGENT_START_MAX_ATTEMPTS {
+            let agent = match self
+                .spawn_subagent(route, thread_agent, Arc::clone(&handler))
+                .await
+            {
+                Ok(agent) => agent,
+                Err(error) => {
+                    last_error = Some(error.message.to_string());
+                    if attempt < SUBAGENT_START_MAX_ATTEMPTS {
+                        sleep(SUBAGENT_RETRY_DELAY).await;
+                        continue;
+                    }
+                    break;
+                }
+            };
+
+            match agent
+                .new_session(subagent_new_session_request(thread_agent))
+                .await
+            {
+                Ok(session) => return Ok((agent, session.session_id.to_string())),
+                Err(error) => {
+                    last_error = Some(error.message.to_string());
+                    agent.shutdown().await;
+                    if attempt < SUBAGENT_START_MAX_ATTEMPTS {
+                        sleep(SUBAGENT_RETRY_DELAY).await;
+                    }
+                }
+            }
+        }
+
+        Err(acp::Error::new(
+            -32603,
+            last_error.unwrap_or_else(|| "failed to start subagent session".to_string()),
+        ))
+    }
+
+    fn spawn_subagent_prompt_task(
+        self: &Arc<Self>,
+        thread_agent: ThreadAgent,
+        agent: Arc<Agent>,
+        session_id: String,
+        prompt: String,
+        status_tx: mpsc::UnboundedSender<ThreadAgent>,
+        prompt_finish_handler: Arc<dyn AgentClientHandler>,
+        completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
+    ) {
         let runtime = Arc::clone(self);
-        let agent_id = agent_id.clone();
-        let prompt_finish_handler = Arc::clone(&subagent.client_handler);
         tokio::spawn(async move {
-            let result = subagent
-                .agent
+            runtime
+                .run_subagent_prompt_with_retries(
+                    thread_agent,
+                    agent,
+                    session_id,
+                    prompt,
+                    status_tx,
+                    prompt_finish_handler,
+                    completion_validator,
+                )
+                .await;
+        });
+    }
+
+    async fn run_subagent_prompt_with_retries(
+        self: Arc<Self>,
+        thread_agent: ThreadAgent,
+        agent: Arc<Agent>,
+        session_id: String,
+        mut prompt: String,
+        status_tx: mpsc::UnboundedSender<ThreadAgent>,
+        prompt_finish_handler: Arc<dyn AgentClientHandler>,
+        completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
+    ) {
+        let agent_id = thread_agent.id.clone();
+        for attempt in 1..=SUBAGENT_PROMPT_MAX_ATTEMPTS {
+            if let Some(validator) = completion_validator.as_ref() {
+                validator.reset_completion().await;
+            }
+
+            let result = agent
                 .prompt(acp::PromptRequest::new(
-                    subagent.session_id,
-                    vec![acp::ContentBlock::Text(acp::TextContent::new(prompt))],
+                    session_id.clone(),
+                    vec![acp::ContentBlock::Text(acp::TextContent::new(
+                        prompt.clone(),
+                    ))],
                 ))
                 .await;
             if let Err(error) = prompt_finish_handler.prompt_finished(result.is_ok()).await {
@@ -561,69 +567,120 @@ impl ThreadRuntime {
                     "subagent prompt_finished hook failed"
                 );
             }
-            let next = match result {
-                Ok(_) => match subagent.completion_validator {
+
+            match result {
+                Ok(_) => match completion_validator.as_ref() {
                     Some(validator) => match validator.validate_completion().await {
                         Ok(completion) => {
-                            runtime
-                                .set_thread_agent_status(
-                                    &agent_id,
-                                    completion.status,
-                                    completion.last_error,
-                                    completion.report,
-                                )
-                                .await
+                            self.set_subagent_completion(&agent_id, completion, &status_tx)
+                                .await;
+                            return;
                         }
                         Err(message) => {
-                            runtime
-                                .set_thread_agent_status(
-                                    &agent_id,
-                                    ThreadAgentStatus::Error,
-                                    Some(message),
-                                    None,
-                                )
-                                .await
+                            if attempt < SUBAGENT_PROMPT_MAX_ATTEMPTS {
+                                tracing::info!(
+                                    agent_id = %agent_id,
+                                    error = %message,
+                                    "retrying subagent completion report"
+                                );
+                                prompt = subagent_report_repair_prompt(&thread_agent, &message);
+                                sleep(SUBAGENT_RETRY_DELAY).await;
+                                continue;
+                            }
+                            self.set_subagent_error(&agent_id, message, &status_tx)
+                                .await;
+                            return;
                         }
                     },
                     None => {
-                        runtime
-                            .set_thread_agent_status(
-                                &agent_id,
-                                ThreadAgentStatus::Completed,
-                                None,
-                                None,
-                            )
-                            .await
+                        self.set_subagent_completion(
+                            &agent_id,
+                            SubagentCompletionResult {
+                                status: ThreadAgentStatus::Completed,
+                                last_error: None,
+                                report: None,
+                            },
+                            &status_tx,
+                        )
+                        .await;
+                        return;
                     }
                 },
                 Err(error) => {
                     let message = error.message.to_string();
-                    runtime
-                        .set_thread_agent_status(
-                            &agent_id,
-                            ThreadAgentStatus::Error,
-                            Some(message),
-                            None,
-                        )
-                        .await
-                }
-            };
-            match next {
-                Ok(Some(updated)) => {
-                    let _ = status_tx.send(updated);
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        agent_id = %agent_id,
-                        error = %error.message,
-                        "failed to update subagent status"
-                    );
+                    if attempt < SUBAGENT_PROMPT_MAX_ATTEMPTS {
+                        tracing::info!(
+                            agent_id = %agent_id,
+                            error = %message,
+                            "retrying subagent prompt after error"
+                        );
+                        sleep(SUBAGENT_RETRY_DELAY).await;
+                        continue;
+                    }
+                    self.set_subagent_error(&agent_id, message, &status_tx)
+                        .await;
+                    return;
                 }
             }
-        });
+        }
+    }
 
-        Ok(())
+    async fn set_subagent_completion(
+        &self,
+        agent_id: &ThreadAgentId,
+        completion: SubagentCompletionResult,
+        status_tx: &mpsc::UnboundedSender<ThreadAgent>,
+    ) {
+        self.set_subagent_status_and_notify(
+            agent_id,
+            completion.status,
+            completion.last_error,
+            completion.report,
+            status_tx,
+        )
+        .await;
+    }
+
+    async fn set_subagent_error(
+        &self,
+        agent_id: &ThreadAgentId,
+        message: String,
+        status_tx: &mpsc::UnboundedSender<ThreadAgent>,
+    ) {
+        self.set_subagent_status_and_notify(
+            agent_id,
+            ThreadAgentStatus::Error,
+            Some(message),
+            None,
+            status_tx,
+        )
+        .await;
+    }
+
+    async fn set_subagent_status_and_notify(
+        &self,
+        agent_id: &ThreadAgentId,
+        status: ThreadAgentStatus,
+        last_error: Option<String>,
+        report: Option<serde_json::Value>,
+        status_tx: &mpsc::UnboundedSender<ThreadAgent>,
+    ) {
+        match self
+            .set_thread_agent_status(agent_id, status, last_error, report)
+            .await
+        {
+            Ok(Some(updated)) => {
+                let _ = status_tx.send(updated);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    error = %error.message,
+                    "failed to update subagent status"
+                );
+            }
+        }
     }
 
     async fn ensure_agent(
@@ -982,12 +1039,16 @@ impl ThreadRuntime {
                 occurred_at,
                 agent_id,
                 status,
+                session_id,
                 last_error,
                 report,
                 ..
             } => {
                 let turn_id = if let Some(agent) = thread.agents.get_mut(agent_id) {
                     agent.status = *status;
+                    if session_id.is_some() {
+                        agent.session_id = session_id.clone();
+                    }
                     agent.last_error = last_error.clone();
                     agent.report = report.clone();
                     agent.updated_at = occurred_at.clone();
@@ -1121,6 +1182,21 @@ fn subagent_assignment_prompt_from_value(
         report_schema =
             serde_json::to_string_pretty(&report_schema).unwrap_or_else(|_| report_schema.to_string()),
         assignment = serde_json::to_string_pretty(assignment).unwrap_or_else(|_| assignment.to_string())
+    )
+}
+
+fn subagent_report_repair_prompt(agent: &ThreadAgent, error: &str) -> String {
+    let report_schema = subagent_report_schema(agent);
+    format!(
+        "Your previous response could not be accepted as a VibeAround subagent report.\n\
+         Reason: {error}\n\n\
+         Do not continue task work. Emit exactly one final `va-agent-protocol` report envelope now. \
+         Do not put any prose before or after the envelope.\n\
+         The JSON inside the final report must match this report shape:\n\
+         <va-agent-protocol>\n{report_schema}\n</va-agent-protocol>",
+        error = error.trim(),
+        report_schema =
+            serde_json::to_string_pretty(&report_schema).unwrap_or_else(|_| report_schema.to_string()),
     )
 }
 
@@ -1342,5 +1418,16 @@ mod tests {
         let error = validate_subagent_assignment(&agent, &agent.id, &assignment).unwrap_err();
 
         assert!(error.message.contains("task"));
+    }
+
+    #[test]
+    fn repair_prompt_asks_only_for_protocol_report() {
+        let agent = test_thread_agent();
+        let prompt = subagent_report_repair_prompt(&agent, "missing report");
+
+        assert!(prompt.contains("missing report"));
+        assert!(prompt.contains("\"kind\": \"report\""));
+        assert!(prompt.contains("\"from_agent_id\": \"00000000-0000-0000-0000-000000000001\""));
+        assert!(prompt.contains("Do not continue task work"));
     }
 }
