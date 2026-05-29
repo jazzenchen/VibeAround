@@ -106,6 +106,7 @@ fn write_settings_value(val: &Value) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// Read current settings (exposed for startup integration sync).
+#[allow(dead_code)]
 pub fn get_settings_value() -> serde_json::Value {
     read_settings_value()
 }

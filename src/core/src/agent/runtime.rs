@@ -106,6 +106,9 @@ impl Agent {
         let cwd = workspace.to_path_buf();
         let label = format!("{}:{}", agent_id, route);
 
+        super::auto_install_project_integrations(&agent_id, workspace)
+            .with_context(|| format!("install project integrations for {}", agent_id))?;
+
         // Resolve program + args + install if needed.
         let (program, mut resolved_args) = resolve_agent_program(&agent_id).await?;
         resolved_args.extend(extra_args);

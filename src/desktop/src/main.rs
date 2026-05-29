@@ -172,20 +172,6 @@ fn main() {
 
     let onboarding_needed = onboarding::needs_onboarding();
 
-    // Rewrite each enabled coding agent's MCP config with the fresh
-    // token-bearing URL *before* the HTTP listener binds. This closes a
-    // race window where auth.json already carries the new token but the
-    // MCP config files on disk still reference the previous run's token:
-    // a coding agent that happens to boot during that window would cache
-    // the stale URL and 401 on every tool call until restarted.
-    //
-    // Skipped on first run (onboarding_needed) because no agents are
-    // enabled yet — the onboarding install flow calls sync_integrations
-    // itself with the freshly populated settings. Skipping here also
-    // avoids a pointless uninstall sweep over files that don't exist yet.
-    if !onboarding_needed {
-        common::agent::sync_integrations(&onboarding::get_settings_value());
-    }
     let gate = Arc::new(Notify::new());
 
     tauri::Builder::default()
@@ -320,15 +306,6 @@ fn main() {
 
                     if let Err(e) = start_daemon(&app_handle).await {
                         tracing::info!("[VibeAround] Daemon error: {}", e);
-                    }
-
-                    // Onboarding path: settings were empty when we ran the
-                    // early sync before Tauri started, so run it now that
-                    // the user has picked their enabled agents. The
-                    // steady-state path already ran this pre-binding, so
-                    // re-running would be wasted work.
-                    if onboarding_needed {
-                        common::agent::sync_integrations(&onboarding::get_settings_value());
                     }
                 });
 

@@ -17,6 +17,7 @@ use crate::resources;
 use super::mcp::home_dir;
 
 /// Install all skill files for a given agent.
+#[allow(dead_code)]
 pub(super) fn install_skill(agent: &str) -> anyhow::Result<()> {
     let agent_def = match resources::agent_by_id(agent) {
         Some(def) => def,

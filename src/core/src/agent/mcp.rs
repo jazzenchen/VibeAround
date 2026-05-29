@@ -13,6 +13,7 @@ use crate::{config, resources};
 /// Merge VibeAround MCP server entry into an agent's global settings.
 /// Supports JSON (default) and TOML formats. Also writes to legacy path
 /// if configured.
+#[allow(dead_code)]
 pub(super) fn install_mcp_config(agent: &str, mcp_url: &str) -> anyhow::Result<()> {
     let home = home_dir()?;
 
