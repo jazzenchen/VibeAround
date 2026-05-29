@@ -207,6 +207,7 @@ fn main() {
             onboarding::get_settings,
             onboarding::list_channel_plugins,
             onboarding::save_settings,
+            onboarding::uninstall_agent_integrations,
             onboarding::install_plugin,
             onboarding::check_plugin_status,
             onboarding::plugin_auth_start,

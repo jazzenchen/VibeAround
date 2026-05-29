@@ -7,6 +7,7 @@ import {
   Network,
   RotateCw,
   Settings as SettingsIcon,
+  Trash2,
   WandSparkles,
 } from "lucide-react";
 import { useI18n } from "@va/i18n";
@@ -57,6 +58,8 @@ type SaveState =
   | "im"
   | "tunnel"
   | "tunnel-restart"
+  | "uninstall-mcp"
+  | "uninstall-skills"
   | "restart-services";
 
 const AGENT_DISPLAY_ORDER = [
@@ -89,6 +92,8 @@ export function SettingsDialog({
   const [enabledChannels, setEnabledChannels] = useState<Set<string>>(
     () => new Set(),
   );
+  const [mcpAutoInstall, setMcpAutoInstall] = useState(true);
+  const [skillAutoInstall, setSkillAutoInstall] = useState(true);
   const [channelConfigs, setChannelConfigs] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -178,6 +183,12 @@ export function SettingsDialog({
     setProxyNoProxy(proxy?.no_proxy ?? "");
   }, []);
 
+  const hydrateIntegrations = useCallback((loadedSettings: AppSettings) => {
+    const integrations = loadedSettings.integrations;
+    setMcpAutoInstall(integrations?.mcp_auto_install ?? true);
+    setSkillAutoInstall(integrations?.skill_auto_install ?? true);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setSettingsLoaded(false);
@@ -201,6 +212,7 @@ export function SettingsDialog({
       hydrateChannels(loadedSettings, registry, discovered);
       hydrateTunnel(loadedSettings);
       hydrateProxy(loadedSettings);
+      hydrateIntegrations(loadedSettings);
       setSettingsLoaded(true);
     } catch (error) {
       setNotice({
@@ -210,7 +222,13 @@ export function SettingsDialog({
     } finally {
       setLoading(false);
     }
-  }, [hydrateAgents, hydrateChannels, hydrateProxy, hydrateTunnel]);
+  }, [
+    hydrateAgents,
+    hydrateChannels,
+    hydrateIntegrations,
+    hydrateProxy,
+    hydrateTunnel,
+  ]);
 
   useEffect(() => {
     if (open) void load();
@@ -329,6 +347,8 @@ export function SettingsDialog({
         settings,
         agents,
         enabledAgents,
+        mcpAutoInstall,
+        skillAutoInstall,
       });
       await invoke("save_settings", { settings: nextSettings });
       setSettings(nextSettings);
@@ -344,7 +364,14 @@ export function SettingsDialog({
     } finally {
       setSaving("idle");
     }
-  }, [settings, agents, enabledAgents, onServicesRestarted]);
+  }, [
+    settings,
+    agents,
+    enabledAgents,
+    mcpAutoInstall,
+    skillAutoInstall,
+    onServicesRestarted,
+  ]);
 
   const applyProxySettings = useCallback(async () => {
     setSaving("proxy");
@@ -371,6 +398,34 @@ export function SettingsDialog({
       setSaving("idle");
     }
   }, [settings, proxyEnabled, proxyHttp, proxyNoProxy, onServicesRestarted]);
+
+  const uninstallIntegrations = useCallback(
+    async (kind: "mcp" | "skills") => {
+      setSaving(kind === "mcp" ? "uninstall-mcp" : "uninstall-skills");
+      setNotice(null);
+      try {
+        await invoke("uninstall_agent_integrations", {
+          removeMcp: kind === "mcp",
+          removeSkills: kind === "skills",
+        });
+        setNotice({
+          variant: "success",
+          message:
+            kind === "mcp"
+              ? "VibeAround MCP entries removed."
+              : "VibeAround skill files removed.",
+        });
+      } catch (error) {
+        setNotice({
+          variant: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setSaving("idle");
+      }
+    },
+    [],
+  );
 
   const applyImSettings = useCallback(async () => {
     setSaving("im");
@@ -612,7 +667,14 @@ export function SettingsDialog({
                     <AgentSettingsPanel
                       agents={agents}
                       enabledAgents={enabledAgents}
+                      mcpAutoInstall={mcpAutoInstall}
+                      skillAutoInstall={skillAutoInstall}
                       onToggle={toggleAgent}
+                      onMcpAutoInstallChange={setMcpAutoInstall}
+                      onSkillAutoInstallChange={setSkillAutoInstall}
+                      onUninstallMcp={() => void uninstallIntegrations("mcp")}
+                      onUninstallSkills={() => void uninstallIntegrations("skills")}
+                      saving={saving}
                       notice={<SettingsNotice notice={notice} />}
                     />
                   </div>
@@ -730,12 +792,26 @@ export function SettingsDialog({
 function AgentSettingsPanel({
   agents,
   enabledAgents,
+  mcpAutoInstall,
+  skillAutoInstall,
   onToggle,
+  onMcpAutoInstallChange,
+  onSkillAutoInstallChange,
+  onUninstallMcp,
+  onUninstallSkills,
+  saving,
   notice,
 }: {
   agents: AgentSummary[];
   enabledAgents: Set<string>;
+  mcpAutoInstall: boolean;
+  skillAutoInstall: boolean;
   onToggle: (agentId: string) => void;
+  onMcpAutoInstallChange: (value: boolean) => void;
+  onSkillAutoInstallChange: (value: boolean) => void;
+  onUninstallMcp: () => void;
+  onUninstallSkills: () => void;
+  saving: SaveState;
   notice?: ReactNode;
 }) {
   const { t } = useI18n();
@@ -801,6 +877,62 @@ function AgentSettingsPanel({
           )}
         </StatusBanner>
       )}
+      <div className="rounded-md border border-border">
+        <SettingsActionRow
+          label={t("Auto-install MCP")}
+          description={t("Install VibeAround MCP in the selected workspace when an agent launches.")}
+          action={
+            <Switch
+              checked={mcpAutoInstall}
+              onCheckedChange={onMcpAutoInstallChange}
+              aria-label={t("Auto-install MCP")}
+            />
+          }
+        />
+        <SettingsActionRow
+          label={t("Auto-install skills")}
+          description={t("Install VibeAround skills in the selected workspace when an agent launches.")}
+          action={
+            <Switch
+              checked={skillAutoInstall}
+              onCheckedChange={onSkillAutoInstallChange}
+              aria-label={t("Auto-install skills")}
+            />
+          }
+        />
+        <SettingsActionRow
+          label={t("Uninstall MCP")}
+          description={t("Remove VibeAround MCP entries from known workspaces and old global config.")}
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={saving !== "idle"}
+              onClick={onUninstallMcp}
+            >
+              <Trash2 className="h-3 w-3" />
+              {saving === "uninstall-mcp" ? t("Removing…") : t("Remove")}
+            </Button>
+          }
+        />
+        <SettingsActionRow
+          label={t("Uninstall skills")}
+          description={t("Remove VibeAround skill files from known workspaces and old global folders.")}
+          action={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={saving !== "idle"}
+              onClick={onUninstallSkills}
+            >
+              <Trash2 className="h-3 w-3" />
+              {saving === "uninstall-skills" ? t("Removing…") : t("Remove")}
+            </Button>
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -925,15 +1057,24 @@ function buildAgentSettings({
   settings,
   agents,
   enabledAgents,
+  mcpAutoInstall,
+  skillAutoInstall,
 }: {
   settings: AppSettings;
   agents: AgentSummary[];
   enabledAgents: Set<string>;
+  mcpAutoInstall: boolean;
+  skillAutoInstall: boolean;
 }): AppSettings {
   const result: AppSettings = { ...settings };
   result.enabled_agents = agents
     .map((agent) => agent.id)
     .filter((id) => enabledAgents.has(id));
+  result.integrations = {
+    ...(isRecord(settings.integrations) ? settings.integrations : {}),
+    mcp_auto_install: mcpAutoInstall,
+    skill_auto_install: skillAutoInstall,
+  };
   return result;
 }
 

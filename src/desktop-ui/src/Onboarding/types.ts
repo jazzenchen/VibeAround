@@ -30,6 +30,10 @@ export interface Settings {
   default_agent?: string;
   default_profiles?: Record<string, string>;
   enabled_agents?: string[];
+  integrations?: {
+    mcp_auto_install?: boolean;
+    skill_auto_install?: boolean;
+  };
   proxy?: {
     enabled?: boolean;
     http_proxy?: string;
