@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::config;
 
-use super::{clean_title, fallback_title, message_text, modified_secs, walk_files, LaunchSession};
+use super::{fallback_title, modified_secs, walk_files, LaunchSession};
 
 pub(super) fn sessions(workspace: &Path) -> Vec<LaunchSession> {
     let root = config::home_dir()
@@ -28,50 +28,25 @@ pub(super) fn sessions(workspace: &Path) -> Vec<LaunchSession> {
 fn session_from_file(path: &Path, workspace: &Path) -> Option<LaunchSession> {
     let file = fs::File::open(path).ok()?;
     let workspace_str = workspace.to_string_lossy();
-    let mut session_id: Option<String> = None;
-    let mut session_cwd: Option<String> = None;
-    let mut first_user_title: Option<String> = None;
-
-    for line in BufReader::new(file).lines().map_while(Result::ok).take(600) {
-        let Ok(json) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-
-        if json.get("type").and_then(Value::as_str) == Some("session") {
-            if session_id.is_none() {
-                session_id = json
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned);
-            }
-            if session_cwd.is_none() {
-                session_cwd = json
-                    .get("cwd")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned);
-            }
-        }
-
-        if first_user_title.is_none()
-            && json.get("type").and_then(Value::as_str) == Some("message")
-            && json
-                .get("message")
-                .and_then(|message| message.get("role"))
-                .and_then(Value::as_str)
-                == Some("user")
-        {
-            first_user_title = json
-                .get("message")
-                .and_then(message_text)
-                .and_then(clean_title);
-        }
-    }
-
-    let session_id = session_id.or_else(|| path.file_stem()?.to_str().map(ToOwned::to_owned))?;
-    if session_cwd.as_deref() != Some(workspace_str.as_ref()) {
+    let mut line = String::new();
+    BufReader::new(file).read_line(&mut line).ok()?;
+    let Ok(json) = serde_json::from_str::<Value>(&line) else {
+        return None;
+    };
+    if json.get("type").and_then(Value::as_str) != Some("session") {
         return None;
     }
-    let title = first_user_title.unwrap_or_else(|| fallback_title(workspace, &session_id));
+
+    let session_id = json
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| path.file_stem()?.to_str().map(ToOwned::to_owned))?;
+    let session_cwd = json.get("cwd").and_then(Value::as_str)?;
+    if session_cwd != workspace_str.as_ref() {
+        return None;
+    }
+    let title = fallback_title(workspace, &session_id);
 
     Some(LaunchSession {
         agent_id: "pi".to_string(),

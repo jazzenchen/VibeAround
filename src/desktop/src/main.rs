@@ -335,6 +335,12 @@ fn main() {
                 Ok(())
             }
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building VibeAround")
         .run(|_app, event| {

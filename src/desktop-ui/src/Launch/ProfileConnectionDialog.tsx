@@ -4,7 +4,6 @@ import {
   FileText,
   Info,
   ListChecks,
-  Network,
   Plug,
   Plus,
   ShieldCheck,
@@ -68,7 +67,6 @@ interface Props {
   profile: ProfileSummary;
   agentId: ConnectionAgentId;
   connections?: ProfileConnections;
-  settingsProxyEnabled: boolean;
   onClose: () => void;
   onSave: (
     agentId: ConnectionAgentId,
@@ -80,7 +78,6 @@ export function ProfileConnectionDialog({
   profile,
   agentId,
   connections,
-  settingsProxyEnabled,
   onClose,
   onSave,
 }: Props) {
@@ -489,44 +486,6 @@ export function ProfileConnectionDialog({
                                 }
                               />
                             </div>
-                            {settingsProxyEnabled && (
-                              <div className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5 text-[11px] font-medium">
-                                    <Network className="h-3 w-3 text-primary" />
-                                    {t("Use Settings proxy")}
-                                  </div>
-                                  <div className="mt-0.5 text-[10px] text-muted-foreground">
-                                    {t("Route this bridge's upstream requests through the configured HTTP proxy.")}
-                                  </div>
-                                </div>
-                                <Switch
-                                  checked={!!currentBridge.useProxy}
-                                  disabled={saving}
-                                  onCheckedChange={(checked) => {
-                                    setDraft((prev) => ({
-                                      ...prev,
-                                      [agent.id]: {
-                                        ...prev[agent.id],
-                                        selectedApiType:
-                                          prev[agent.id].selectedApiType ?? client.apiType,
-                                        bridge: {
-                                          ...(prev[agent.id].bridge ?? {}),
-                                          [client.apiType]: {
-                                            ...(prev[agent.id].bridge?.[client.apiType] ?? {}),
-                                            enabled: true,
-                                            targetApiType: bridgeTarget,
-                                            upstreamModel,
-                                            models: modelEntries,
-                                            useProxy: checked,
-                                          },
-                                        },
-                                      },
-                                    }));
-                                  }}
-                                />
-                              </div>
-                            )}
                             <div className="font-mono text-[11px] leading-5 text-primary">
                               {apiTypeProtocolDisplayLabel(client.apiType)} -&gt;{" "}
                               {t("API bridge")} -&gt; {profile.providerLabel}{" "}

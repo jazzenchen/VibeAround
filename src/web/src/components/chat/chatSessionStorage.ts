@@ -1,6 +1,6 @@
 import type { ChatSessionWorkspaceGroup } from "./chatSessionModel";
 import { normalizeSessionGroups } from "./chatSessionModel";
-import type { WorkspaceItem } from "@va/client";
+import type { LaunchSessionInfo, WorkspaceItem } from "@va/client";
 
 const LAUNCH_SELECTION_STORAGE_KEY = "vibearound.webChat.launchSelection";
 const ACTIVE_LAUNCH_SESSION_STORAGE_KEY = "vibearound.webChat.activeLaunchSession";
@@ -20,6 +20,11 @@ export interface StoredActiveLaunchSession {
   agentId: string;
   sessionId: string;
   workspace: string;
+  title?: string;
+  updatedAt?: number;
+  shortId?: string;
+  archived?: boolean;
+  active?: boolean;
 }
 
 interface StoredLaunchSessionCache {
@@ -61,7 +66,8 @@ export function readStoredActiveLaunchSession():
   | undefined {
   if (typeof window === "undefined") return undefined;
   try {
-    const raw = window.localStorage.getItem(ACTIVE_LAUNCH_SESSION_STORAGE_KEY);
+    window.localStorage.removeItem(ACTIVE_LAUNCH_SESSION_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(ACTIVE_LAUNCH_SESSION_STORAGE_KEY);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Partial<StoredActiveLaunchSession>;
     if (
@@ -75,17 +81,53 @@ export function readStoredActiveLaunchSession():
       agentId: parsed.agentId,
       sessionId: parsed.sessionId,
       workspace: parsed.workspace,
+      title: typeof parsed.title === "string" ? parsed.title : undefined,
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : undefined,
+      shortId: typeof parsed.shortId === "string" ? parsed.shortId : undefined,
+      archived: typeof parsed.archived === "boolean" ? parsed.archived : undefined,
+      active: typeof parsed.active === "boolean" ? parsed.active : undefined,
     };
   } catch {
     return undefined;
   }
 }
 
+export function storedActiveLaunchSessionFromInfo(
+  session: LaunchSessionInfo,
+): StoredActiveLaunchSession {
+  return {
+    agentId: session.agent_id,
+    sessionId: session.session_id,
+    workspace: session.workspace,
+    title: session.title,
+    updatedAt: session.updated_at,
+    shortId: session.short_id,
+    archived: session.archived,
+    active: session.active,
+  };
+}
+
+export function storedActiveLaunchSessionToInfo(
+  session: StoredActiveLaunchSession,
+): LaunchSessionInfo {
+  return {
+    agent_id: session.agentId,
+    session_id: session.sessionId,
+    workspace: session.workspace,
+    title: session.title ?? session.sessionId,
+    updated_at: session.updatedAt ?? 0,
+    short_id: session.shortId ?? session.sessionId.slice(0, 8),
+    archived: session.archived ?? false,
+    active: session.active,
+  };
+}
+
 export function writeStoredActiveLaunchSession(
   session: StoredActiveLaunchSession,
 ) {
   try {
-    window.localStorage.setItem(
+    window.localStorage.removeItem(ACTIVE_LAUNCH_SESSION_STORAGE_KEY);
+    window.sessionStorage.setItem(
       ACTIVE_LAUNCH_SESSION_STORAGE_KEY,
       JSON.stringify(session),
     );
@@ -96,6 +138,7 @@ export function writeStoredActiveLaunchSession(
 
 export function clearStoredActiveLaunchSession() {
   try {
+    window.sessionStorage.removeItem(ACTIVE_LAUNCH_SESSION_STORAGE_KEY);
     window.localStorage.removeItem(ACTIVE_LAUNCH_SESSION_STORAGE_KEY);
   } catch {
     // Ignore storage failures.

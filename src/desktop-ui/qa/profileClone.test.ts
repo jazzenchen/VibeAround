@@ -22,6 +22,7 @@ const sourceProfile: ProfileDef = {
       base_url: "https://api.example.test/responses",
     },
   },
+  use_settings_proxy: true,
   provider_settings: {
     deepseek: {
       thinking: true,
@@ -76,6 +77,7 @@ test("buildProfileCopyDraft clones editable profile fields without the id", () =
     api_types: sourceProfile.api_types,
     credentials: sourceProfile.credentials,
     overrides: sourceProfile.overrides,
+    use_settings_proxy: true,
     provider_settings: sourceProfile.provider_settings,
   });
   expect("id" in draft).toBe(false);

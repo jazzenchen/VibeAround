@@ -115,7 +115,6 @@ pub fn sanitize_profile_connection_preference(
                 client_api_type,
                 agent_state::ProfileBridgePreference {
                     enabled: bridge_preference.enabled,
-                    use_proxy: bridge_preference.enabled && bridge_preference.use_proxy,
                     target_api_type,
                     upstream_model,
                     fake_model_id,

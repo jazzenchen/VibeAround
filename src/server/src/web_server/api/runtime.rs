@@ -124,6 +124,8 @@ pub async fn list_agents_runtime_handler(
             agent_name,
             agent_title,
             agent_version,
+            multi_agent_turns: st.multi_agent_turns,
+            subagents: st.agents,
         });
     }
     Json(out)

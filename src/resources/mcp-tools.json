@@ -58,6 +58,82 @@
     }
   },
   {
+    "name": "initialize_subagents",
+    "description": "Initialize a VibeAround multi-agent turn. Creates one git branch/worktree per subagent, records the turn on the workspace thread, and returns a va-agent-protocol structure. The first supported mode is parallel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "description": "Value of $VIBEAROUND_THREAD_ID for the host workspace thread."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Absolute path to the host project workspace."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["parallel", "collaboration", "brainstorming"],
+          "description": "Multi-agent coordination mode. Only parallel is supported initially."
+        },
+        "agents": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Host-chosen display name for the subagent, e.g. John Planner."
+              },
+              "agent_kind": {
+                "type": "string",
+                "description": "Subagent CLI kind, e.g. claude or codex."
+              },
+              "profile_id": {
+                "type": "string",
+                "description": "Optional profile ID for this subagent."
+              },
+              "task": {
+                "type": "string",
+                "description": "Optional short task assignment for this subagent."
+              }
+            },
+            "required": ["name", "agent_kind"]
+          }
+        },
+        "branch_prefix": {
+          "type": "string",
+          "description": "Optional git branch prefix. Defaults to va/subagents."
+        }
+      },
+      "required": ["thread_id", "cwd", "mode", "agents"]
+    }
+  },
+  {
+    "name": "wait_for_subagents",
+    "description": "Wait for a VibeAround multi-agent turn to finish and return structured subagent reports. Host agents should call this after initialize_subagents before producing their final answer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "description": "Value of $VIBEAROUND_THREAD_ID for the host workspace thread."
+        },
+        "turn_id": {
+          "type": "string",
+          "description": "Optional multi-agent turn ID. Defaults to the latest turn on the thread."
+        },
+        "timeout_ms": {
+          "type": "number",
+          "description": "Optional maximum wait time in milliseconds. Defaults to 600000."
+        }
+      },
+      "required": ["thread_id"]
+    }
+  },
+  {
     "name": "preview",
     "description": "Start a live preview for a running local server. Returns owner and share URLs. Pass session_id (use /va-session skill) for proper lifecycle management.",
     "inputSchema": {

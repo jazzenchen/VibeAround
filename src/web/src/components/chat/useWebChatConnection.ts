@@ -12,6 +12,8 @@ import {
   ChatEventSchema,
   type AgentInfo,
   type LaunchSessionInfo,
+  type MultiAgentTurn,
+  type ThreadAgent,
 } from "@va/client";
 import { useI18n } from "@va/i18n";
 import { getWebSocketUrl } from "@/lib/ws-url";
@@ -178,6 +180,11 @@ export function useWebChatConnection({
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([]);
   const [sessionMode, setSessionModeState] = useState<SessionModeState | null>(null);
   const [resumeReplay, setResumeReplay] = useState<ResumeReplayState | null>(null);
+  const [multiAgentTurns, setMultiAgentTurns] = useState<MultiAgentTurn[]>([]);
+  const [subagents, setSubagents] = useState<ThreadAgent[]>([]);
+  const [subagentMessages, setSubagentMessages] = useState<
+    Record<string, ChatMessage[]>
+  >({});
   const [lastPromptDoneAt, setLastPromptDoneAt] = useState<number | undefined>();
   const wsRef = useRef<WebSocket | null>(null);
   const promptInFlightRef = useRef(false);
@@ -499,6 +506,26 @@ export function useWebChatConnection({
             ...prev.filter((permission) => permission.requestId !== parsed.request_id),
             { requestId: parsed.request_id, request: parsed.request },
           ]);
+          break;
+        }
+        case "multi_agent_turn": {
+          setMultiAgentTurns((prev) => mergeById(prev, [parsed.turn]));
+          setSubagents((prev) => mergeById(prev, parsed.agents));
+          break;
+        }
+        case "subagent_status": {
+          setSubagents((prev) => mergeById(prev, [parsed.agent]));
+          break;
+        }
+        case "subagent_acp_notification": {
+          const notif = parsed.payload as SessionNotification;
+          setSubagentMessages((prev) => ({
+            ...prev,
+            [parsed.agent.id]: applySubagentAcpNotification(
+              prev[parsed.agent.id] ?? [],
+              notif,
+            ),
+          }));
           break;
         }
       }
@@ -1023,6 +1050,9 @@ export function useWebChatConnection({
     pendingPermissions,
     sessionMode,
     resumeReplay,
+    multiAgentTurns,
+    subagents,
+    subagentMessages,
     lastPromptDoneAt,
     sendMessage,
     resumeSession,
@@ -1033,6 +1063,48 @@ export function useWebChatConnection({
     sendPermissionResponse,
     cancelPermissionRequest,
   };
+}
+
+function applySubagentAcpNotification(
+  prev: ChatMessage[],
+  notif: SessionNotification,
+): ChatMessage[] {
+  const update = notif.update;
+  switch (update.sessionUpdate) {
+    case "user_message_chunk":
+      return appendUserMessageChunk(prev, update.content, update.messageId, {
+        dedupeExistingText: true,
+      });
+    case "agent_message_chunk":
+      return appendStreamAssistantMessage(prev, update.content, update.messageId);
+    case "agent_thought_chunk":
+      return appendThinkingActivityMessage(prev, update.content, "Thinking");
+    case "tool_call":
+    case "tool_call_update": {
+      const messages = appendToolActivityMessage(prev, update);
+      const status = toolActivityStatus(update);
+      if (status === "completed" || status === "failed") {
+        return clearStreamProgressMessage(messages);
+      }
+      return setStreamProgressMessage(
+        messages,
+        `Using tool: ${toolActivityLabel(update)}...`,
+        "tool",
+      );
+    }
+    case "plan":
+      return appendPlanMessage(prev, update);
+    default:
+      return prev;
+  }
+}
+
+function mergeById<T extends { id: string }>(prev: T[], nextItems: T[]): T[] {
+  const byId = new Map(prev.map((item) => [item.id, item]));
+  for (const item of nextItems) {
+    byId.set(item.id, item);
+  }
+  return Array.from(byId.values());
 }
 
 function messageContentBlocks(

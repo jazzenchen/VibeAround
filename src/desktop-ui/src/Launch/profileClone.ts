@@ -59,6 +59,7 @@ export function buildProfileCopyDraft(
     api_types: [...profile.api_types],
     credentials: { ...profile.credentials },
     overrides: structuredClone(profile.overrides),
+    use_settings_proxy: !!profile.use_settings_proxy,
     provider_settings: structuredClone(profile.provider_settings ?? {}),
   };
 }

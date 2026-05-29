@@ -3,9 +3,10 @@
 //! Implements a JSON-RPC 2.0 server for the Model Context Protocol.
 //! Methods: initialize, notifications/initialized, tools/list, tools/call.
 //!
-//! MCP tools are **stateless** — they validate inputs and return text.
-//! They never touch agent processes directly. Session loading happens later
-//! when the user sends `/pickup` in an IM/web route.
+//! Most MCP tools are stateless — they validate inputs and return text.
+//! Collaboration tools are the exception: `initialize_subagents` creates
+//! git worktrees and records the resulting multi-agent turn on a workspace
+//! thread, but still does not drive live agent processes directly.
 //!
 //! ## Module layout
 //!
@@ -85,6 +86,8 @@ async fn mcp_tools_call(
         "get_session_id" => tools::mcp_get_session_id(id, arguments, state).await,
         "prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
         "register_workspace" => tools::mcp_register_workspace(id, arguments).await,
+        "initialize_subagents" => tools::mcp_initialize_subagents(id, arguments, state).await,
+        "wait_for_subagents" => tools::mcp_wait_for_subagents(id, arguments, state).await,
         "preview" => tools::mcp_preview_start(id, arguments, state).await,
         "md_preview" => tools::mcp_md_preview(id, arguments, state).await,
         _ => jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name)),

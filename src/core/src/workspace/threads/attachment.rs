@@ -63,6 +63,17 @@ impl RouteAttachmentEvent {
             route,
         }
     }
+
+    fn snapshot(attachment: &RouteAttachment) -> Self {
+        Self::Attached {
+            schema_version: SCHEMA_VERSION,
+            event_id: event_id(),
+            occurred_at: attachment.attached_at.clone(),
+            route: attachment.route.clone(),
+            workspace_id: attachment.workspace_id.clone(),
+            thread_id: attachment.thread_id.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -111,6 +122,10 @@ impl RouteAttachmentProjection {
     pub fn all(&self) -> impl Iterator<Item = &RouteAttachment> {
         self.current.values()
     }
+
+    pub fn len(&self) -> usize {
+        self.current.len()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -120,7 +135,7 @@ pub struct RouteAttachmentEventStore {
 
 impl RouteAttachmentEventStore {
     pub fn default_path() -> PathBuf {
-        crate::config::data_dir().join("route-attachments.jsonl")
+        crate::config::migrate_legacy_state_file("route-attachments.jsonl")
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
@@ -141,7 +156,27 @@ impl RouteAttachmentEventStore {
 
     pub async fn load_projection(&self) -> jsonl::Result<RouteAttachmentProjection> {
         let events = self.read_events().await?;
-        Ok(RouteAttachmentProjection::from_events(&events))
+        let projection = RouteAttachmentProjection::from_events(&events);
+        if events.len() > projection.len().saturating_add(16) {
+            self.replace_with_projection(&projection).await?;
+        }
+        Ok(projection)
+    }
+
+    pub async fn compact(&self) -> jsonl::Result<()> {
+        let projection = self.load_projection().await?;
+        self.replace_with_projection(&projection).await
+    }
+
+    async fn replace_with_projection(
+        &self,
+        projection: &RouteAttachmentProjection,
+    ) -> jsonl::Result<()> {
+        let events = projection
+            .all()
+            .map(RouteAttachmentEvent::snapshot)
+            .collect::<Vec<_>>();
+        jsonl::replace_all(&self.path, &events).await
     }
 }
 
@@ -175,5 +210,33 @@ mod tests {
         let projection = RouteAttachmentProjection::from_events(&events);
 
         assert!(projection.get(&route).is_none());
+    }
+
+    #[tokio::test]
+    async fn compact_removes_detached_attachment_history() {
+        let path = std::env::temp_dir()
+            .join(format!("vibearound-attachments-{}", uuid::Uuid::new_v4()))
+            .join("attachments.jsonl");
+        let store = RouteAttachmentEventStore::new(path.clone());
+        let route = RouteKey::new("web", "chat-a");
+        store
+            .append(&RouteAttachmentEvent::attached(
+                route.clone(),
+                "ws_a",
+                "wt_a",
+            ))
+            .await
+            .unwrap();
+        store
+            .append(&RouteAttachmentEvent::detached(route.clone()))
+            .await
+            .unwrap();
+
+        store.compact().await.unwrap();
+        let events = store.read_events().await.unwrap();
+
+        assert!(events.is_empty());
+
+        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
     }
 }

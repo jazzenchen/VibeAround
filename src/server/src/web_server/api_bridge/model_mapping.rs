@@ -126,11 +126,11 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
-            use_proxy: false,
             target_api_type: Some("openai-chat".to_string()),
             upstream_model: Some("gemini-3.1-pro".to_string()),
             fake_model_id: None,
@@ -155,11 +155,11 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
-            use_proxy: false,
             target_api_type: Some("openai-chat".to_string()),
             upstream_model: Some("gpt-4o".to_string()),
             fake_model_id: None,
@@ -189,11 +189,11 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
-            use_proxy: false,
             target_api_type: Some("openai-chat".to_string()),
             upstream_model: Some("deepseek-v4-pro".to_string()),
             fake_model_id: Some("opus-4.7[1m]".to_string()),

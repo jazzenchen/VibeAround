@@ -1,6 +1,6 @@
 [package]
 name = "common"
-version = "0.6.6"
+version = "0.6.7"
 description = "VibeAround shared logic: PTY, session registry, tunnel, headless CLI, IM (Telegram)"
 edition = "2021"
 rust-version = "1.82"
@@ -29,6 +29,8 @@ toml_edit = "0.22"
 rand = "0.8"
 nanoid = "0.5"
 parking_lot = "0.12"
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 tracing = "0.1"
 tracing-appender = "0.2"

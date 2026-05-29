@@ -54,6 +54,10 @@ pub trait AgentClientHandler: Send + Sync + 'static {
         &self,
         args: schema::RequestPermissionRequest,
     ) -> acp::Result<schema::RequestPermissionResponse>;
+
+    async fn prompt_finished(&self, _success: bool) -> acp::Result<()> {
+        Ok(())
+    }
 }
 
 /// Handle returned from a successful [`Agent::spawn`].

@@ -841,6 +841,7 @@ mod tests {
             api_types: vec!["anthropic".to_string()],
             credentials,
             overrides,
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         }
     }
@@ -869,6 +870,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials,
             overrides,
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         }
     }
@@ -897,6 +899,7 @@ mod tests {
             api_types: vec!["openai-responses".to_string()],
             credentials,
             overrides,
+            use_settings_proxy: false,
             provider_settings: Default::default(),
         }
     }

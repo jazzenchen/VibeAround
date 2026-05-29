@@ -46,7 +46,6 @@ pub(super) fn profile_connections() -> agent_state::ProfileConnectionPreferences
                     selected_api_type.to_string(),
                     agent_state::ProfileBridgePreference {
                         enabled: preference.bridge_enabled,
-                        use_proxy: false,
                         target_api_type: preference.target_api_type,
                         upstream_model: None,
                         fake_model_id: None,

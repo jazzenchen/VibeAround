@@ -251,6 +251,49 @@ export const TunnelRuntimeSchema = z.object({
 export type TunnelRuntime = z.infer<typeof TunnelRuntimeSchema>;
 export const TunnelRuntimeListSchema = z.array(TunnelRuntimeSchema);
 
+export const MultiAgentTurnModeSchema = z.enum([
+  "parallel",
+  "collaboration",
+  "brainstorming",
+]);
+export type MultiAgentTurnMode = z.infer<typeof MultiAgentTurnModeSchema>;
+
+export const ThreadAgentStatusSchema = z.enum([
+  "ready",
+  "running",
+  "completed",
+  "error",
+]);
+export type ThreadAgentStatus = z.infer<typeof ThreadAgentStatusSchema>;
+
+export const MultiAgentTurnSchema = z.object({
+  id: z.string(),
+  mode: MultiAgentTurnModeSchema,
+  status: ThreadAgentStatusSchema,
+  agents: z.array(z.string()),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type MultiAgentTurn = z.infer<typeof MultiAgentTurnSchema>;
+
+export const ThreadAgentSchema = z.object({
+  id: z.string(),
+  turn_id: z.string(),
+  name: z.string(),
+  agent_id: z.string(),
+  profile_id: z.string().optional(),
+  session_id: z.string().optional(),
+  status: ThreadAgentStatusSchema,
+  branch: z.string(),
+  worktree: z.string(),
+  task: z.string().optional(),
+  last_error: z.string().optional(),
+  report: z.unknown().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type ThreadAgent = z.infer<typeof ThreadAgentSchema>;
+
 export const AgentRuntimeSchema = z.object({
   route_key: z.string(),
   channel_kind: z.string(),
@@ -265,6 +308,8 @@ export const AgentRuntimeSchema = z.object({
   agent_name: z.string().nullable(),
   agent_title: z.string().nullable(),
   agent_version: z.string().nullable(),
+  multi_agent_turns: z.array(MultiAgentTurnSchema),
+  subagents: z.array(ThreadAgentSchema),
 });
 export type AgentRuntime = z.infer<typeof AgentRuntimeSchema>;
 export const AgentRuntimeListSchema = z.array(AgentRuntimeSchema);
@@ -313,6 +358,20 @@ export const ChatEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("permission_request"),
     request_id: z.string(),
     request: z.unknown(),
+  }),
+  z.object({
+    kind: z.literal("multi_agent_turn"),
+    turn: MultiAgentTurnSchema,
+    agents: z.array(ThreadAgentSchema),
+  }),
+  z.object({
+    kind: z.literal("subagent_status"),
+    agent: ThreadAgentSchema,
+  }),
+  z.object({
+    kind: z.literal("subagent_acp_notification"),
+    agent: ThreadAgentSchema,
+    payload: z.unknown(),
   }),
   z.object({
     kind: z.literal("prompt_done"),

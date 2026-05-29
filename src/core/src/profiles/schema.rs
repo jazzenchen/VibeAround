@@ -92,6 +92,10 @@ pub struct ProfileDef {
     /// inherit catalog defaults.
     #[serde(default)]
     pub overrides: BTreeMap<String, ApiTypeOverrides>,
+    /// When true, provider-bound requests for this profile use the global
+    /// Settings HTTP proxy when that proxy is enabled.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub use_settings_proxy: bool,
     /// Provider-specific behavior. Missing fields intentionally deserialize
     /// to false/empty so existing profile JSON never gains new behavior
     /// unless the user explicitly saves it.
