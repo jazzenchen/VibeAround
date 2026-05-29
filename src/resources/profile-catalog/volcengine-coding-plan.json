@@ -1,0 +1,163 @@
+{
+  "id": "volcengine-coding-plan",
+  "label": "Volcengine Coding Plan",
+  "icon": "V",
+  "homepage": "https://www.volcengine.com/docs/82379/1928261",
+  "endpoints": [
+    {
+      "api_type": "anthropic",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/coding",
+      "auth_header": true,
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "label": "Ark Code Latest"
+        },
+        {
+          "id": "doubao-seed-2.0-code",
+          "label": "Doubao Seed 2.0 Code"
+        },
+        {
+          "id": "doubao-seed-2.0-pro",
+          "label": "Doubao Seed 2.0 Pro"
+        },
+        {
+          "id": "doubao-seed-2.0-lite",
+          "label": "Doubao Seed 2.0 Lite"
+        },
+        {
+          "id": "doubao-seed-code",
+          "label": "Doubao Seed Code"
+        },
+        {
+          "id": "minimax-latest",
+          "label": "MiniMax Latest",
+          "aliases": ["minimax-m2.7"]
+        },
+        {
+          "id": "glm-5.1",
+          "label": "GLM 5.1"
+        },
+        {
+          "id": "deepseek-v3.2",
+          "label": "DeepSeek V3.2"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "label": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "kimi-k2.6",
+          "label": "Kimi K2.6"
+        }
+      ],
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Coding Plan API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine Coding Plan API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "ANTHROPIC_AUTH_TOKEN": "{{api_key}}",
+              "ANTHROPIC_BASE_URL": "{{base_url}}",
+              "ANTHROPIC_MODEL": "{{model}}"
+            },
+            "settings_files": []
+          }
+        }
+      ]
+    },
+    {
+      "api_type": "openai-chat",
+      "default_base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "append_v1_path": false,
+      "models": [
+        {
+          "id": "ark-code-latest",
+          "label": "Ark Code Latest"
+        },
+        {
+          "id": "doubao-seed-2.0-code",
+          "label": "Doubao Seed 2.0 Code"
+        },
+        {
+          "id": "doubao-seed-2.0-pro",
+          "label": "Doubao Seed 2.0 Pro"
+        },
+        {
+          "id": "doubao-seed-2.0-lite",
+          "label": "Doubao Seed 2.0 Lite"
+        },
+        {
+          "id": "doubao-seed-code",
+          "label": "Doubao Seed Code"
+        },
+        {
+          "id": "minimax-latest",
+          "label": "MiniMax Latest",
+          "aliases": ["minimax-m2.7"]
+        },
+        {
+          "id": "glm-5.1",
+          "label": "GLM 5.1"
+        },
+        {
+          "id": "deepseek-v3.2",
+          "label": "DeepSeek V3.2"
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "label": "DeepSeek V4 Flash"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "label": "DeepSeek V4 Pro"
+        },
+        {
+          "id": "kimi-k2.6",
+          "label": "Kimi K2.6"
+        }
+      ],
+      "auth_modes": [
+        {
+          "mode": "api_key",
+          "label": "Use Coding Plan API key",
+          "fields": [
+            {
+              "name": "api_key",
+              "label": "Volcengine Coding Plan API key",
+              "secret": true,
+              "required": true
+            }
+          ],
+          "render": {
+            "env": {
+              "OPENAI_API_KEY": "{{api_key}}"
+            },
+            "settings_files": [
+              {
+                "rel_path": "config.toml",
+                "template": "model = \"{{model}}\"\nmodel_provider = \"volcengine-coding-plan\"\nmodel_reasoning_effort = \"high\"\ndisable_response_storage = true\n\n[model_providers.volcengine-coding-plan]\nname = \"Volcengine Coding Plan\"\nbase_url = \"{{base_url}}\"\nwire_api = \"chat\"\nrequires_openai_auth = true\n"
+              },
+              {
+                "rel_path": "auth.json",
+                "template": "{\n  \"OPENAI_API_KEY\": \"{{api_key|json}}\"\n}\n"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

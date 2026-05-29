@@ -29,6 +29,18 @@
       "file": "deepseek.json"
     },
     {
+      "id": "volcengine",
+      "file": "volcengine.json"
+    },
+    {
+      "id": "volcengine-coding-plan",
+      "file": "volcengine-coding-plan.json"
+    },
+    {
+      "id": "volcengine-agent-plan",
+      "file": "volcengine-agent-plan.json"
+    },
+    {
       "id": "zai",
       "file": "zai.json"
     },
