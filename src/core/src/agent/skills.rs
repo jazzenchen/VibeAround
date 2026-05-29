@@ -368,3 +368,52 @@ fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
 
     skills
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn unique_test_dir(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "vibearound-skills-{name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn shared_rule_uninstall_leaves_non_vibearound_file() {
+        let dir = unique_test_dir("shared-foreign");
+        let rules = dir.join(".cursor/rules");
+        fs::create_dir_all(&rules).unwrap();
+        let target = rules.join("vibearound.mdc");
+        fs::write(&target, "user owned rule").unwrap();
+
+        uninstall_project_skill("cursor", &dir).unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "user owned rule");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn project_skill_install_and_uninstall_removes_managed_files() {
+        let dir = unique_test_dir("install-remove");
+        fs::create_dir_all(&dir).unwrap();
+
+        install_project_skill("cursor", &dir).unwrap();
+        assert!(dir.join(".cursor/rules/vibearound.mdc").exists());
+        assert!(dir.join(".cursor/rules/va-preview.mdc").exists());
+
+        uninstall_project_skill("cursor", &dir).unwrap();
+        assert!(!dir.join(".cursor/rules/vibearound.mdc").exists());
+        assert!(!dir.join(".cursor/rules/va-preview.mdc").exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}

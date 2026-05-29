@@ -362,3 +362,67 @@ fn is_legacy_vibearound_managed(value: &serde_json::Value) -> bool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn unique_test_dir(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "vibearound-mcp-{name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn project_mcp_json_install_and_uninstall_preserves_other_servers() {
+        let dir = unique_test_dir("json");
+        fs::create_dir_all(dir.join(".gemini")).unwrap();
+        let path = dir.join(".gemini/settings.json");
+        fs::write(
+            &path,
+            r#"{
+  "mcpServers": {
+    "other": { "httpUrl": "http://127.0.0.1:1/mcp" }
+  }
+}"#,
+        )
+        .unwrap();
+
+        install_project_mcp_config("gemini", &dir, "http://127.0.0.1:12358/va/mcp").unwrap();
+        let installed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            installed["mcpServers"]["vibearound"]["httpUrl"],
+            "http://127.0.0.1:12358/va/mcp"
+        );
+        assert!(installed["mcpServers"]["other"].is_object());
+
+        uninstall_project_mcp_config("gemini", &dir).unwrap();
+        let removed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(removed["mcpServers"]["vibearound"].is_null());
+        assert!(removed["mcpServers"]["other"].is_object());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn claude_project_mcp_uses_workspace_mcp_json() {
+        let dir = unique_test_dir("claude");
+        fs::create_dir_all(&dir).unwrap();
+
+        install_project_mcp_config("claude", &dir, "http://127.0.0.1:12358/va/mcp").unwrap();
+
+        assert!(dir.join(".mcp.json").exists());
+        assert!(!dir.join(".claude.json").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}
