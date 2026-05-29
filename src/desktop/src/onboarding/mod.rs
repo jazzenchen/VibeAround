@@ -173,7 +173,7 @@ pub async fn uninstall_agent_integrations(
     remove_skills: bool,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        common::agent::uninstall_managed_integrations(remove_mcp, remove_skills)
+        common::agent::uninstall_legacy_integrations(remove_mcp, remove_skills)
     })
     .await
     .map_err(|e| e.to_string())?

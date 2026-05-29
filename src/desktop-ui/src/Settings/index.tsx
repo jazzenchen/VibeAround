@@ -412,8 +412,8 @@ export function SettingsDialog({
           variant: "success",
           message:
             kind === "mcp"
-              ? "VibeAround MCP entries removed."
-              : "VibeAround skill files removed.",
+              ? "Legacy VibeAround MCP entries removed."
+              : "Legacy VibeAround skill files removed.",
         });
       } catch (error) {
         setNotice({
@@ -829,7 +829,7 @@ function AgentSettingsPanel({
         </p>
         {notice}
       </div>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(178px,220px))] gap-2">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
         {agents.map((agent) => {
           const isEnabled = enabledAgents.has(agent.id);
           return (
@@ -901,8 +901,8 @@ function AgentSettingsPanel({
           }
         />
         <SettingsActionRow
-          label={t("Uninstall MCP")}
-          description={t("Remove VibeAround MCP entries from known workspaces and old global config.")}
+          label={t("Uninstall legacy MCP")}
+          description={t("Remove legacy VibeAround MCP entries from old global config.")}
           action={
             <Button
               type="button"
@@ -917,8 +917,8 @@ function AgentSettingsPanel({
           }
         />
         <SettingsActionRow
-          label={t("Uninstall skills")}
-          description={t("Remove VibeAround skill files from known workspaces and old global folders.")}
+          label={t("Uninstall legacy skill")}
+          description={t("Remove legacy VibeAround skill files from old global folders.")}
           action={
             <Button
               type="button"

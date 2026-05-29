@@ -149,6 +149,29 @@ pub fn uninstall_managed_integrations(remove_mcp: bool, remove_skills: bool) -> 
     }
 }
 
+/// Remove VibeAround-managed integrations from legacy global locations only.
+pub fn uninstall_legacy_integrations(remove_mcp: bool, remove_skills: bool) -> anyhow::Result<()> {
+    let mut errors = Vec::new();
+    for agent in resources::agent_ids() {
+        if remove_mcp {
+            if let Err(error) = uninstall_mcp_config(agent) {
+                errors.push(format!("{} legacy MCP: {:#}", agent, error));
+            }
+        }
+        if remove_skills {
+            if let Err(error) = uninstall_skill(agent) {
+                errors.push(format!("{} legacy skill: {:#}", agent, error));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(errors.join("\n")))
+    }
+}
+
 fn current_mcp_url() -> String {
     let port = config::DEFAULT_PORT;
     match crate::auth::read_token_file() {
