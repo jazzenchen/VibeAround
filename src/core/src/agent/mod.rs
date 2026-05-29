@@ -15,9 +15,8 @@
 //!   packages or native CLIs with an install command). Called eagerly at
 //!   onboarding and lazily on `Agent::spawn` miss.
 //! - **Integrations** ([`mcp`], [`skills`]) — install the VibeAround MCP
-//!   server URL and SKILL files into each agent's own global config, so
-//!   the agent knows how to reach us. [`sync_integrations`] is the
-//!   startup/settings-change entrypoint.
+//!   server URL and SKILL files. New launches use project-scoped workspace
+//!   config; global helpers remain for cleanup of older installs.
 //!
 //! [`ThreadRuntime`]: crate::workspace::threads::ThreadRuntime
 
@@ -27,6 +26,11 @@ pub mod launch;
 mod mcp;
 pub mod runtime;
 mod skills;
+
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use anyhow::anyhow;
 
 use crate::{config, resources};
 
@@ -38,8 +42,11 @@ pub use install::{
 };
 pub use runtime::{Agent, AgentClientHandler, AgentReady};
 
-use mcp::{install_mcp_config, uninstall_mcp_config};
-use skills::{install_skill, uninstall_skill};
+use mcp::{
+    install_mcp_config, install_project_mcp_config, uninstall_mcp_config,
+    uninstall_project_mcp_config,
+};
+use skills::{install_project_skill, install_skill, uninstall_project_skill, uninstall_skill};
 
 // ---------------------------------------------------------------------------
 // Integration sync (MCP config + SKILL files)
@@ -49,7 +56,6 @@ use skills::{install_skill, uninstall_skill};
 /// - Enabled agents: install/update MCP config + skills.
 /// - Disabled agents: remove MCP config + skills.
 pub fn sync_integrations(settings: &serde_json::Value) {
-    let port = config::DEFAULT_PORT;
     // The /mcp endpoint is bearer-gated by the web server auth middleware
     // (see server/src/web_server/auth.rs). Coding agents (Claude Code,
     // Gemini, Codex, Cursor, Kiro, Qwen) drive MCP over plain HTTP and
@@ -62,16 +68,7 @@ pub fn sync_integrations(settings: &serde_json::Value) {
     // all configs with the fresh value. `auth.json` is 0600 on disk and
     // the config files inherit the same mode when we control writes, so
     // leaking the token via `ps` / loopback-only traffic is acceptable.
-    let mcp_url = match crate::auth::read_token_file() {
-        Some(auth) => format!("http://127.0.0.1:{}/va/mcp?token={}", port, auth.token),
-        None => {
-            tracing::info!(
-                "[agent] auth.json missing — writing MCP config without token; \
-                 coding agents will get 401 until the daemon rewrites it"
-            );
-            format!("http://127.0.0.1:{}/va/mcp", port)
-        }
-    };
+    let mcp_url = current_mcp_url();
 
     let all_agents = resources::agent_ids();
     let enabled_agents = resolve_enabled_agents(settings, &all_agents);
@@ -94,6 +91,111 @@ pub fn sync_integrations(settings: &serde_json::Value) {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProjectIntegrationOptions {
+    pub mcp: bool,
+    pub skills: bool,
+}
+
+/// Install project-scoped integrations for the current agent/workspace.
+pub fn install_project_integrations(
+    agent: &str,
+    workspace: &Path,
+    options: ProjectIntegrationOptions,
+) -> anyhow::Result<()> {
+    if !workspace.is_dir() {
+        anyhow::bail!("workspace does not exist: {}", workspace.display());
+    }
+    if workspace == config::home_dir() {
+        tracing::info!(
+            "[agent] skipping project integrations for {} in home directory {:?}",
+            agent,
+            workspace
+        );
+        return Ok(());
+    }
+
+    let mcp_url = current_mcp_url();
+    if options.mcp {
+        install_project_mcp_config(agent, workspace, &mcp_url)?;
+    }
+    if options.skills {
+        install_project_skill(agent, workspace)?;
+    }
+    Ok(())
+}
+
+/// Remove VibeAround-managed integrations from global legacy locations and
+/// every known project workspace.
+pub fn uninstall_managed_integrations(remove_mcp: bool, remove_skills: bool) -> anyhow::Result<()> {
+    let mut errors = Vec::new();
+    let workspaces = known_integration_workspaces();
+    for agent in resources::agent_ids() {
+        if remove_mcp {
+            if let Err(error) = uninstall_mcp_config(agent) {
+                errors.push(format!("{} global MCP: {:#}", agent, error));
+            }
+            for workspace in &workspaces {
+                if let Err(error) = uninstall_project_mcp_config(agent, workspace) {
+                    errors.push(format!(
+                        "{} project MCP {}: {:#}",
+                        agent,
+                        workspace.display(),
+                        error
+                    ));
+                }
+            }
+        }
+        if remove_skills {
+            if let Err(error) = uninstall_skill(agent) {
+                errors.push(format!("{} global skill: {:#}", agent, error));
+            }
+            for workspace in &workspaces {
+                if let Err(error) = uninstall_project_skill(agent, workspace) {
+                    errors.push(format!(
+                        "{} project skill {}: {:#}",
+                        agent,
+                        workspace.display(),
+                        error
+                    ));
+                }
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(errors.join("\n")))
+    }
+}
+
+fn current_mcp_url() -> String {
+    let port = config::DEFAULT_PORT;
+    match crate::auth::read_token_file() {
+        Some(auth) => format!("http://127.0.0.1:{}/va/mcp?token={}", port, auth.token),
+        None => {
+            tracing::info!(
+                "[agent] auth.json missing — writing MCP config without token; \
+                 coding agents will get 401 until the daemon rewrites it"
+            );
+            format!("http://127.0.0.1:{}/va/mcp", port)
+        }
+    }
+}
+
+fn known_integration_workspaces() -> Vec<PathBuf> {
+    let cfg = config::ensure_loaded();
+    let mut paths: BTreeSet<PathBuf> = cfg.all_workspaces().into_iter().collect();
+    let agent_prefs = crate::agent_state::read_prefs();
+    for preference in agent_prefs.agents.values() {
+        if let Some(workspace) = &preference.workspace {
+            paths.insert(workspace.clone());
+        }
+    }
+    paths.into_iter().filter(|path| path.is_dir()).collect()
 }
 
 /// Resolve which agents are enabled from settings JSON.
