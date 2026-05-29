@@ -1,6 +1,6 @@
 [package]
 name = "server"
-version = "0.6.5"
+version = "0.6.6"
 description = "VibeAround HTTP/WebSocket server: SPA, /ws, /ws/chat, /mcp"
 edition = "2021"
 rust-version = "1.82"

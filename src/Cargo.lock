@@ -687,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -4244,7 +4244,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -5701,7 +5701,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vibearound-desktop"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "anyhow",
  "common",
@@ -5724,7 +5724,7 @@ dependencies = [
 
 [[package]]
 name = "vibearound-hook"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "anyhow",
  "serde_json",

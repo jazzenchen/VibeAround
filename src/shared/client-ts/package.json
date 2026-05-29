@@ -1,7 +1,7 @@
 {
   "name": "@vibearound/client",
   "private": true,
-  "version": "0.6.5",
+  "version": "0.6.6",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

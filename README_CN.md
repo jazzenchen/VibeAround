@@ -4,7 +4,9 @@
 
 # VibeAround
 
-**让本地编程 Agent 留在身边，从桌面、网页、IM 随时接入。**
+**让你的 AI 编程 Agent 一直在身边。**
+
+从一个地方启动 Claude Code、Codex CLI、Gemini CLI、Pi Agent 等工具：并排运行，保持连接，随处可达，并且随时可以在 Web、移动端和消息平台继续工作。
 
 [下载](https://github.com/jazzenchen/VibeAround/releases/latest) | [演示](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [English](README.md)
 
@@ -12,120 +14,119 @@
   <img src="https://img.shields.io/badge/Rust-1.82+-000?style=flat-square&logo=rust&logoColor=fff" alt="Rust" />
   <img src="https://img.shields.io/badge/Tauri-2.10-24C8DB?style=flat-square&logo=tauri&logoColor=fff" alt="Tauri" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=000" alt="React" />
-  <img src="https://img.shields.io/badge/ACP-Rust_SDK-000?style=flat-square" alt="ACP" />
+  <img src="https://img.shields.io/badge/ACP-local%20agents-111?style=flat-square" alt="ACP local agents" />
   <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License: MIT" />
 </p>
 
 </div>
 
-VibeAround 是一个面向本地 AI 编程 Agent 的桌面中枢。它把 Claude Code、Codex CLI、Gemini CLI、OpenCode 等本地 Agent runtime，连接到 Tauri 桌面应用、浏览器 Dashboard、移动端友好的 Web Chat、Web Terminal，以及 Telegram、飞书/Lark、Discord、Slack、微信、钉钉、企业微信、QQ Bot 等 IM 入口。
+VibeAround 把执行留在本机。Claude Code、Codex CLI、Gemini CLI、Pi Agent 等工具仍然运行在你的电脑、项目目录、shell、文件系统、凭证和权限环境里。VibeAround 负责给这些本地会话提供统一入口：桌面 Launch、浏览器 Dashboard、移动端友好的 Web Chat、Web Terminal、IM 频道和短时预览。
 
-核心想法很简单：Agent 仍然在你的电脑上运行，但你可以从当下最顺手的入口触达它。
+Profile 也可以接第三方 provider API。VibeAround 可以维护模型列表、自定义模型名、context metadata，并在 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Generate Content 等 API 形态之间做 bridge，让 Agent 可以使用 DeepSeek、Kimi、DashScope、xAI/Grok、MiniMax、NVIDIA NIM，或者你自己的 OpenAI-compatible endpoint。
 
-## 界面截图
+这里的远程访问不必依赖 Agent 厂商自己的订阅远程能力。Agent 继续在本机运行，VibeAround 通过自己的 tunnel 和 channel 层，让同一个本地 session 可以从 Web、移动端或消息平台继续访问。底层 CLI 支持 API key/provider 配置时，也可以走普通 provider API 计费，而不是被单一 Agent 订阅绑定。
 
-| 模型配置 | 频道插件 |
+## 解决什么问题
+
+本地编程 Agent 很强，但会话、模型配置和运行状态通常散落在不同终端里。VibeAround 把本机作为真实运行环境，同时提供多个稳定入口。
+
+| 问题 | VibeAround 提供 |
 |---|---|
-| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.5.12/screenshots/cn-profiles.webp" alt="VibeAround 模型配置" width="100%" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.5.12/screenshots/cn-channels.webp" alt="VibeAround 频道插件" width="100%" /> |
+| Agent CLI 和模型配置太多 | 一个桌面 Launch 页面管理 Agent、Profile、Workspace、Session 和 Terminal |
+| 想使用 Agent 默认列表之外的 provider | 第三方 provider API key、模型列表、自定义模型名、context metadata 和 bridge route |
+| Provider API 形态和 Agent 不匹配 | 在 OpenAI Responses、Chat Completions、Anthropic Messages、Gemini Generate Content 之间做本地 bridge |
+| 不想每次重新开始会话 | Workspace/Session 选择、host session 发现，以及 handover 命令 |
+| 想远程访问，但不想把执行搬到厂商云端 | Web Chat、Web Terminal、IM 频道、tunnel 和连接本地 session 的短时预览链接 |
+| 希望配置可复现 | 首次引导、频道插件安装、MCP/Skill 注入和本地设置管理 |
 
-| 启动本地 Agent | 查看代码变更 | 生成视觉素材 |
-|---|---|---|
-| <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.6.3/screenshots/web-chat-start.webp" alt="VibeAround Web Chat 工作区启动页" width="100%" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.6.3/screenshots/web-chat-diff.webp" alt="VibeAround Web Chat 代码 diff 对话" width="100%" /> | <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.6.3/screenshots/web-chat-imagegen.webp" alt="VibeAround Web Chat 图片生成会话" width="100%" /> |
+## 产品地图
 
-## 为什么需要 VibeAround
-
-本地编程 Agent 很强，但通常被困在某一个终端窗口里。VibeAround 给它们增加了稳定的入口：
-
-| 需求 | VibeAround 提供什么 |
+| 区域 | 作用 |
 |---|---|
-| 用不同模型 provider 启动 Agent | 保存 Profile、设置 Agent Launch 默认项、支持直连启动 |
-| 让本地 CLI 使用非原生模型 API | 在 OpenAI Responses、Chat Completions、Anthropic Messages、Gemini Generate Content 之间做本地统一代理 |
-| 离开终端也能继续工作 | Web Chat、IM 频道、Web Terminal、会话接力 |
-| 安全查看本地工作成果 | 为 dev server、Markdown、HTML 生成短时效预览链接 |
-| 保持配置可复现 | 首次引导、插件安装、配置同步、MCP 与 Skill 自动注入 |
+| **Launch** | 直接启动 Agent，或通过 Provider Profile 启动；同一处选择 terminal、workspace 和 new/resume session |
+| **Profiles** | 保存 provider 凭证、模型列表、bridge route、API 形态转换和 provider 选项 |
+| **Workspaces** | 围绕本地项目目录组织启动上下文、会话历史和工作状态 |
+| **Web Dashboard** | 在浏览器中打开 Web Chat、Web Terminal、预览、运行状态和本地会话视图 |
+| **IM Channels** | 通过 Telegram、飞书/Lark、Discord、Slack、微信、钉钉、企业微信、QQ Bot 私聊本地 Agent |
+| **Previews** | 为本地 dev server、Markdown、HTML 生成短时效鉴权预览链接 |
+| **Settings** | 管理 Agent、插件、Tunnel、Proxy、IM verbosity、语言和更新检查 |
 
-## 产品入口
+## 产品截图
 
-| 入口 | 适合做什么 |
-|---|---|
-| 桌面应用 | 首次引导、Profile、启动默认项、工作区、频道插件、隧道、预览、快速启动 |
-| Web Dashboard | 在浏览器中访问 Web Chat、Web Terminal、实时预览、会话列表和本地 runtime 状态 |
-| Web Chat | 多 Agent 对话、恢复会话、文件/图片/文档附件、归档会话、显示思考/工具、发送快捷键 |
-| Web Terminal | 浏览器里的本地 PTY 终端，支持移动端常用控制，也可附加 tmux |
-| IM 频道 | 从 Telegram、飞书/Lark、Discord、Slack、微信、钉钉、企业微信、QQ Bot 私聊本地 Agent |
-| 本地 API bridge | 按 Profile 生成 loopback endpoint，用于模型路由和 API 形态转换 |
+<p align="center">
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.6.5/current-app/app-launch-cn.webp" width="88%" alt="VibeAround 桌面 Launch 页面，包含 Agent、Profile、Workspace、Session 与启动按钮" />
+</p>
 
-## 可以做什么
+<p align="center">
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.6.5/screenshots/web-chat.webp" width="49%" alt="VibeAround Web Chat 与浏览器 Dashboard" />
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.6.5/screenshots/model-bridge-terminals.webp" width="49%" alt="通过模型 Bridge Profile 启动的 Codex 终端" />
+</p>
 
-### 启动本地编程 Agent
+<p align="center">
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.6.5/current-app/app-provider-catalog-cn.webp" width="49%" alt="Provider catalog 与支持的 API 形态" />
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.6.5/current-app/app-profile-form-cn.webp" width="49%" alt="Provider Profile 表单、API 类型与模型设置" />
+</p>
 
-直接启动 Claude Code、Codex CLI、Gemini CLI、OpenCode 等 Agent，或通过保存的 provider profile 启动。多个 Agent、多个 Profile 可以并行存在。
+## 快速开始
 
-### 用 API 转接接入多种模型
+1. 下载适合你系统的最新桌面包。
+2. 打开 VibeAround，完成首次引导。
+3. 启用你常用的 Agent CLI。
+4. 如果需要模型路由，添加一个或多个 Provider Profile。
+5. 在 Launch 里选择 Agent、Profile、Terminal、Workspace 和 Session。
+6. 从桌面、Web Chat、Web Terminal 或配置好的 IM 频道继续使用。
 
-通过 Provider Profile，把本地 Agent CLI 连接到 DeepSeek、阿里云百炼、Moonshot/Kimi、MiniMax、Z.AI/GLM、Google Gemini、OpenRouter、Azure OpenAI、官方 API 或自定义兼容 endpoint。
-
-### 从 Web 和 IM 对话
-
-使用内置 Web Chat 或 IM 频道与同一个本地 Agent 对话。Web Chat 支持恢复会话、增量同步会话列表、显示归档会话、多文件上传、拖拽附件和可配置发送快捷键。
-
-### 保持终端工作流不断线
-
-打开 Web Terminal，按需附加 tmux，或从桌面托盘快速启动原生终端。用 `/handover` 和 `/pickup` 在终端、Web、IM 之间移动正在运行的会话。
-
-### 远程预览本地工作
-
-将本地开发服务、Markdown 文件、HTML 预览生成带鉴权的短时链接，方便在另一台浏览器或手机上查看。
-
-## 演示视频
-
-[![VibeAround 演示视频 - 本地编程 Agent 跨桌面、浏览器和 IM 协同](https://img.youtube.com/vi/6kxNKTMz-AM/maxresdefault.jpg)](https://youtu.be/6kxNKTMz-AM)
-
-通过通讯软件远程控制本地 Agent，并在终端和手机之间传递会话。
+更详细的文档见 [Wiki](https://github.com/jazzenchen/VibeAround/wiki)。
 
 ## 下载
 
-最新版本：[VibeAround v0.6.5](https://github.com/jazzenchen/VibeAround/releases/tag/v0.6.5)。
+最新版本：[VibeAround v0.6.6](https://github.com/jazzenchen/VibeAround/releases/tag/v0.6.6)。
 
 | 平台 | 推荐下载 |
 |---|---|
-| macOS Apple Silicon | [VibeAround_0.6.5_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.5/VibeAround_0.6.5_arm64.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.5/VibeAround_0.6.5_x64-setup.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.5/VibeAround_0.6.5_x64_en-US.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.5/VibeAround-win-0.6.5-portable.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.5/VibeAround_0.6.5_amd64.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.5/VibeAround_0.6.5_amd64.deb) |
+| macOS Apple Silicon | [VibeAround_0.6.6_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.6/VibeAround_0.6.6_arm64.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.6/VibeAround_0.6.6_x64-setup.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.6/VibeAround_0.6.6_x64_en-US.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.6/VibeAround-win-0.6.6-portable.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.6/VibeAround_0.6.6_amd64.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.6/VibeAround_0.6.6_amd64.deb) |
 
-macOS 当前发布 Apple Silicon 版本。Windows 和 Linux 桌面包由 GitHub Actions 构建；macOS DMG 已签名并完成 notarization。
+Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前发布 Apple Silicon 版本。
 
-## 支持的 Agent
+## 核心概念
 
-Agent 通过 [ACP (Agent Client Protocol)](https://agentclientprotocol.com/) 在 stdio 上通信。需要 npm 分发 bridge 时，VibeAround 会按需安装。
+### Agent
 
-| Agent | IM 对话 | 会话接力 | Profile 启动 | 手动 bridge 配置 |
-|---|---|---|---|---|
-| Claude Code | 支持 | 支持 | 支持 | 支持 |
-| Codex CLI | 支持 | 支持 | 支持 | 支持 |
-| Gemini CLI | 支持 | 支持 | 支持 | 支持 |
-| Cursor CLI | 支持 | 支持 | 直接启动 | 不支持 |
-| Kiro CLI | 支持 | 支持 | 直接启动 | 不支持 |
-| Qwen Code | 支持 | 支持 | 直接启动 | 不支持 |
-| OpenCode | 支持 | 不支持 | 支持 | 支持 |
+Agent 是 VibeAround 启动或接入的编程 CLI。Agent 运行在本机，优先通过 stdio/ACP 风格 adapter 通信。
 
-## Model Providers 与 Proxy 路由
+| Agent | 启动 | Resume / handover | Profile 路由 |
+|---|---:|---:|---:|
+| Claude Code | 支持 | 支持 | 支持 |
+| Codex CLI | 支持 | 支持 | 支持 |
+| Pi | 支持 | 支持 | 支持 |
+| Gemini CLI | 支持 | 支持 | 支持 |
+| OpenCode | 支持 | 部分支持 | 支持 |
+| Cursor CLI | 直连 | 支持 | 不支持 |
+| Kiro CLI | 直连 | 支持 | 不支持 |
+| Qwen Code | 直连 | 支持 | 不支持 |
 
-Provider Profile 让本地 Agent 可以连接官方 API、OpenAI-compatible endpoint 或经过转换的 bridge route，而不用手动改 CLI 配置文件。
+### Profile
 
-| Provider | Profile 支持 |
-|---|---|
-| DeepSeek | 内置 endpoint 和 bridge route |
-| 阿里云百炼 | 内置 Coding Plan 和 Token Plan endpoint |
-| Moonshot / Kimi | 内置 OpenAI-compatible 和 bridge route |
-| MiniMax | 内置 OpenAI-compatible 和 bridge route |
-| Z.AI / GLM | 内置 endpoint 和 bridge route |
-| Google Gemini | 内置 Gemini API profile |
-| OpenRouter | 内置 OpenRouter profile |
-| Azure OpenAI | 内置 Azure profile |
-| Custom endpoint | 自带兼容 base URL |
+Profile 是保存好的 provider 连接。它可以只是“使用 CLI 已登录态”，也可以是“用某个 DeepSeek bridge route 启动 Codex，并向 Codex/Claude 暴露多个模型选项”。
 
-VibeAround 的本地 API bridge 由 [va-ai-api-bridge](https://github.com/jazzenchen/va-ai-api-bridge) 驱动，昵称是 `va-aab`，重点打通常见 Agent API 形态：
+Profile 可以包含：
+
+- provider API key 和 base URL
+- endpoint / API kind 选择
+- OpenAI Responses、OpenAI Chat、Anthropic Messages、Gemini route 信息
+- 模型列表、fake ID、上游模型映射和 context-window metadata
+- DeepSeek reasoning 等 provider 特殊选项
+- API bridge 流量的 proxy opt-in
+
+### Workspace 和 Session
+
+Workspace 是本地项目目录。Session 是围绕该 workspace 的 Agent 对话或终端运行。Launch 默认可以启动新会话，也可以在 Agent 支持时 resume 已有 host session。
+
+### 本地 API Bridge
+
+VibeAround 可以为每个 Profile 暴露 loopback endpoint，在常见模型 API 形态之间转换：
 
 | API 形态 | 常见 endpoint |
 |---|---|
@@ -134,38 +135,61 @@ VibeAround 的本地 API bridge 由 [va-ai-api-bridge](https://github.com/jazzen
 | Anthropic Messages | `/v1/messages` |
 | Gemini Generate Content | `/v1beta/models/{model}:generateContent` |
 
-## 频道插件
+Bridge 由 [va-ai-api-bridge](https://github.com/jazzenchen/va-ai-api-bridge) 提供能力。
 
-每个 IM 频道都是独立的 Node.js 插件，基于 [@vibearound/plugin-channel-sdk](https://www.npmjs.com/package/@vibearound/plugin-channel-sdk) 构建。官方插件可在首次引导中安装。
+## 支持的 Provider
 
-| 频道 | 认证方式 | 私聊 | 文件/图片 | 流式输出 |
-|---|---|---|---|---|
-| Telegram | Bot Token | 支持 | 支持 | 支持 |
-| 飞书 / Lark | 应用凭证 | 支持 | 支持 | 支持 |
-| Discord | Bot Token | 支持 | 支持 | 支持 |
-| Slack | Bot + App Token | 支持 | 支持 | 支持 |
-| 微信 | 二维码登录 | 支持 | 支持 | 不支持 |
-| 钉钉 | AppKey + Secret | 支持 | 支持 | 支持 |
-| 企业微信 | Bot ID + Secret | 支持 | 支持 | 支持 |
-| QQ Bot | App ID + Token | 支持 | 支持 | 不支持 |
+内置 Provider 覆盖常见官方和兼容接口。只要你的 provider 支持对应 API 形态，也可以使用 Custom endpoint。
+
+| Provider | 说明 |
+|---|---|
+| DeepSeek | OpenAI-compatible 和 bridge route，支持模型 alias 与 Claude suffix 归一化 |
+| 阿里云百炼 | Coding Plan 和 Token Plan endpoint |
+| Moonshot / Kimi | OpenAI-compatible 和 Anthropic-style bridge flow |
+| MiniMax | OpenAI-compatible 和 Anthropic-style bridge flow |
+| Xiaomi MiMo | Token Plan 与多区域 endpoint，处理 provider 特有返回形态 |
+| xAI / Grok | Responses 和 Chat 形态 |
+| NVIDIA NIM | OpenAI-compatible Chat Completions |
+| Z.AI / GLM | 内置兼容 endpoint |
+| Google Gemini | 原生 Gemini API profile |
+| OpenRouter | OpenAI-compatible profile |
+| Azure OpenAI | Responses 和 Chat deployment 路由 |
+| Custom endpoint | 自定义 base URL、headers、models 和 API kinds |
+
+## IM 频道
+
+频道插件是独立的 Node.js package，由 VibeAround 安装和管理。
+
+| 频道 | 配置方式 | 常见用途 |
+|---|---|---|
+| Telegram | BotFather Token | 个人 bot 和移动端对话 |
+| 飞书 / Lark | 应用凭证 | 团队 IM 和企业 bot |
+| Discord | Bot Token | Server 和 DM 工作流 |
+| Slack | Bot/App Token + Socket Mode | Workspace DM 工作流 |
+| 微信 | OpenClaw-compatible bridge 二维码登录 | 中文个人聊天 |
+| 钉钉 | Stream API 凭证 | 企业聊天 |
+| 企业微信 | WebSocket bot 凭证 | 企业微信工作流 |
+| QQ Bot | Guild bot 凭证 | QQ bot 工作流 |
+
+## Web、Terminal 和预览
+
+Dashboard 提供浏览器优先的本地工作入口：
+
+- Web Chat：Agent 对话、附件、thinking/tool 显示、归档会话和 resume workspace session。
+- Web Terminal：本地 PTY session，适合移动端访问，也适合 tmux 流程。
+- Previews：为 dev server、Markdown、HTML 生成短时效链接。
+- Status：查看 Agent、Channel、Tunnel 和 runtime 健康状态。
 
 ## 安全模型
 
-- Daemon 默认只监听本机 loopback：`127.0.0.1:12358`。
-- Dashboard API 和 WebSocket 路由使用本地 auth token。
+VibeAround 默认是 local-first：
+
+- daemon 默认只监听 loopback，除非你显式开启 tunnel。
+- Dashboard API 和 WebSocket 路由需要本地 auth token。
 - 公网 tunnel URL 需要浏览器配对。
-- Preview 链接短时有效，并绑定到对应 preview session。
-- Provider 凭证保存在本地 VibeAround settings/profile storage 中。
-
-## 用户快速开始
-
-1. 下载适合你平台的最新安装包。
-2. 打开 VibeAround，完成首次引导。
-3. 启用你需要的 Agent 和频道插件。
-4. 添加一个或多个模型 Provider Profile。
-5. 从桌面应用 Quick Launch 启动，或打开 Web Dashboard 使用 Web Chat、Web Terminal 和预览。
-
-更详细的步骤请看 [安装指南](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide-CN)。
+- Preview 链接短时有效，并绑定到具体 preview session。
+- Provider 凭证保存在本地 settings/profile storage。
+- Agent CLI 仍然在你的电脑上运行，权限也来自你的本地环境。
 
 ## 本地开发
 
@@ -173,54 +197,33 @@ VibeAround 的本地 API bridge 由 [va-ai-api-bridge](https://github.com/jazzen
 cd src
 bun install
 bun run prebuild
-
-# 启动 Tauri 桌面开发环境
 bun run dev
 ```
 
-AI API bridge SDK（`va-aab`）作为独立开源 Rust crate 维护。本地联调时可以把 SDK checkout 放在 `src/sdks/`；第一次 crates.io release 之后，应用应消费发布后的 crate，而不是 submodule 或 vendored checkout。
-
-环境要求：Rust 1.82+、推荐 Node.js 24 LTS、Bun 1.3+。macOS 还需要执行 `xcode-select --install`；Linux 需要安装发行版对应的 WebKitGTK/Tauri 系统依赖。
-
-## 斜杠命令
-
-| 命令 | 说明 |
-|---|---|
-| `/help` | 显示可用命令 |
-| `/new` | 重置会话，开始新的对话 |
-| `/switch <agent>` | 在对话中切换 Agent |
-| `/profile <name>` | 切换 Profile |
-| `/close` | 关闭当前对话 |
-| `/handover` | 导出当前会话，以便在其他入口继续 |
-| `/pickup <code>` | 恢复从其他频道移交的会话 |
-| `/agent <command>` | 向底层 Agent 发送斜杠命令，例如 `/agent status` |
-
-在 Slack 中，`/` 前缀会被客户端拦截，请改用 `/va` 或 `/vibearound`，例如 `/va switch claude`。
+环境要求：Rust 1.82+、Bun 1.3+，推荐 Node.js 24 LTS。macOS 需要 Xcode Command Line Tools；Linux 需要安装发行版对应的 WebKitGTK/Tauri 依赖。
 
 ## 文档
 
 - [安装指南](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide-CN)
-- [产品入口](https://github.com/jazzenchen/VibeAround/wiki/Product-Surfaces-CN)
+- [Launch、Profiles 与 Models](https://github.com/jazzenchen/VibeAround/wiki/Model-Profiles-and-Agent-Launch-CN)
 - [支持的 Agent](https://github.com/jazzenchen/VibeAround/wiki/Supported-Agents-CN)
-- [Model Profiles 与 Agent Launch](https://github.com/jazzenchen/VibeAround/wiki/Model-Profiles-and-Agent-Launch-CN)
 - [频道插件](https://github.com/jazzenchen/VibeAround/wiki/Channel-Plugins-CN)
 - [配置模型](https://github.com/jazzenchen/VibeAround/wiki/Configuration-Model-CN)
-- [隧道配置](https://github.com/jazzenchen/VibeAround/wiki/Tunnel-Configuration-CN)
-- [认证与访问控制](https://github.com/jazzenchen/VibeAround/wiki/Authentication-CN)
+- [Tunnels 与 Previews](https://github.com/jazzenchen/VibeAround/wiki/Tunnel-Configuration-CN)
 - [架构说明](https://github.com/jazzenchen/VibeAround/wiki/Architecture-CN)
 - [构建与打包](https://github.com/jazzenchen/VibeAround/wiki/Build-and-Packaging-CN)
-- [FAQ 和故障排除](https://github.com/jazzenchen/VibeAround/wiki/FAQ-and-Troubleshooting-CN)
+- [FAQ 与故障排除](https://github.com/jazzenchen/VibeAround/wiki/FAQ-and-Troubleshooting-CN)
 
 ## 社区
 
-提问、交流想法，或者聊聊你如何使用 VibeAround。
+提问、交流工作流，或者告诉我们哪个 Agent、Provider、Channel 还需要更顺手。
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20VibeAround-5865F2?logo=discord&logoColor=white)](https://discord.gg/KsJWkY64GN)
 [![Product Hunt](https://img.shields.io/badge/Product%20Hunt-Follow%20VibeAround-DA552F?logo=producthunt&logoColor=white)](https://www.producthunt.com/products/vibearound)
 
 中文交流微信群：
 
-<img src="docs/assets/wechat-group-qr.jpeg" width="180" alt="VibeAround 微信群二维码" />
+<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr.webp" width="180" alt="VibeAround 微信群二维码" />
 
 微信群二维码会周期性过期。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
 
