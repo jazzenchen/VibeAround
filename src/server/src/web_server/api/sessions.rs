@@ -288,6 +288,10 @@ pub async fn create_session_handler(
             let command_args = rendered.command_args.clone();
             let mut env = common::profiles::runtime::materialize_env(&profile.id, rendered)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if route.bridge_target_api_type.is_none() {
+                common::profiles::runtime::append_settings_proxy_env(&profile, &mut env)
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            }
             env.push(("VIBEAROUND_LAUNCH_ID".to_string(), launch_id));
             env.push(("VIBEAROUND_PROFILE_ID".to_string(), profile.id.clone()));
             env.push((

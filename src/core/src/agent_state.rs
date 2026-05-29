@@ -56,8 +56,6 @@ pub struct ProfileConnectionPreference {
 pub struct ProfileBridgePreference {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub use_proxy: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_api_type: Option<String>,
     // TODO(0.7.x): remove these single-model compatibility fields once all
@@ -88,10 +86,6 @@ pub struct ProfileBridgeModelPreference {
     /// Optional model id exposed to the agent for this entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fake_model_id: Option<String>,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 pub type ProfileConnectionPreferences =

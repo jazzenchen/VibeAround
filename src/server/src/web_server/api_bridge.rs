@@ -1,10 +1,10 @@
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use common::config;
 use common::profiles::headers::merged_upstream_headers;
 use common::profiles::schema::ProfileDef;
 use common::profiles::{catalog, connections};
-use common::{agent_state, config};
 use serde_json::{json, Value};
 use va_ai_api_bridge::{
     DeepSeekBridgeSettings, ProviderBridgeAdapter, ProviderBridgeAdapterConfig,
@@ -131,7 +131,7 @@ pub(super) async fn bridge_handler(
             Ok(headers) => headers,
             Err(error) => return json_error(StatusCode::BAD_REQUEST, &error.to_string()),
         };
-        let upstream_client = match upstream_http_client(&state, bridge_preference.as_ref()) {
+        let upstream_client = match upstream_http_client(&state, &upstream.profile) {
             Ok(client) => client,
             Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
         };
@@ -245,7 +245,7 @@ pub(super) async fn bridge_handler(
         Err(error) => return json_error(StatusCode::BAD_REQUEST, &error.to_string()),
     };
 
-    let upstream_client = match upstream_http_client(&state, bridge_preference.as_ref()) {
+    let upstream_client = match upstream_http_client(&state, &upstream.profile) {
         Ok(client) => client,
         Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
     };
@@ -389,14 +389,8 @@ pub(super) async fn models_handler(
     .into_response()
 }
 
-fn upstream_http_client(
-    state: &AppState,
-    bridge_preference: Option<&agent_state::ProfileBridgePreference>,
-) -> Result<reqwest::Client, String> {
-    if !bridge_preference
-        .map(|preference| preference.use_proxy)
-        .unwrap_or(false)
-    {
+fn upstream_http_client(state: &AppState, profile: &ProfileDef) -> Result<reqwest::Client, String> {
+    if !profile.use_settings_proxy {
         return Ok(state.preview_client.clone());
     }
     let cfg = config::ensure_loaded();
@@ -408,7 +402,7 @@ fn upstream_http_client(
 
 fn proxy_http_client(proxy: &config::HttpProxyConfig) -> Result<reqwest::Client, String> {
     let proxy_url = proxy.http_proxy.as_deref().ok_or_else(|| {
-        "API bridge proxy is enabled but Settings proxy HTTP URL is empty".to_string()
+        "Settings proxy is enabled for this profile but HTTP proxy URL is empty".to_string()
     })?;
     let mut proxy_rule = reqwest::Proxy::all(proxy_url)
         .map_err(|error| format!("invalid Settings proxy HTTP URL: {error}"))?;
@@ -585,7 +579,7 @@ mod tests {
     fn proxy_client_requires_configured_proxy_url() {
         let error = proxy_http_client(&HttpProxyConfig::default()).unwrap_err();
 
-        assert!(error.contains("proxy HTTP URL is empty"));
+        assert!(error.contains("HTTP proxy URL is empty"));
     }
 
     #[test]

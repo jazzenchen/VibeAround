@@ -99,38 +99,6 @@ fn bridge_launch_target_carries_bridge_hint() {
 }
 
 #[test]
-fn bridge_sanitization_preserves_proxy_toggle_when_enabled() {
-    let profile = profile(&["anthropic"]);
-    let sanitized = sanitize_profile_connection_preference(
-        &profile,
-        "codex",
-        agent_state::ProfileConnectionPreference {
-            selected_api_type: Some("openai-responses".to_string()),
-            bridge: [(
-                "openai-responses".to_string(),
-                agent_state::ProfileBridgePreference {
-                    enabled: true,
-                    use_proxy: true,
-                    target_api_type: Some("anthropic".to_string()),
-                    ..Default::default()
-                },
-            )]
-            .into_iter()
-            .collect(),
-        },
-    )
-    .expect("bridge preference sanitizes");
-
-    assert!(
-        sanitized
-            .bridge
-            .get("openai-responses")
-            .expect("bridge preference")
-            .use_proxy
-    );
-}
-
-#[test]
 fn unsupported_without_native_or_bridge_route() {
     let profile = profile(&["anthropic"]);
 
