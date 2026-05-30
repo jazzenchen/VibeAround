@@ -92,6 +92,8 @@ export function SettingsDialog({
   const [enabledChannels, setEnabledChannels] = useState<Set<string>>(
     () => new Set(),
   );
+  const [imAutoContinueLastSession, setImAutoContinueLastSession] =
+    useState(true);
   const [mcpAutoInstall, setMcpAutoInstall] = useState(true);
   const [skillAutoInstall, setSkillAutoInstall] = useState(true);
   const [channelConfigs, setChannelConfigs] = useState<
@@ -189,6 +191,21 @@ export function SettingsDialog({
     setSkillAutoInstall(integrations?.skill_auto_install ?? true);
   }, []);
 
+  const hydrateImAgent = useCallback((loadedSettings: AppSettings) => {
+    let imAgent: Record<string, unknown> = {};
+    if (isRecord(loadedSettings.im_agent)) {
+      imAgent = loadedSettings.im_agent;
+    } else {
+      const im = isRecord(loadedSettings.im) ? loadedSettings.im : {};
+      if (isRecord(im.agent)) imAgent = im.agent;
+    }
+    setImAutoContinueLastSession(
+      typeof imAgent.auto_continue_last_session === "boolean"
+        ? imAgent.auto_continue_last_session
+        : true,
+    );
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setSettingsLoaded(false);
@@ -213,6 +230,7 @@ export function SettingsDialog({
       hydrateTunnel(loadedSettings);
       hydrateProxy(loadedSettings);
       hydrateIntegrations(loadedSettings);
+      hydrateImAgent(loadedSettings);
       setSettingsLoaded(true);
     } catch (error) {
       setNotice({
@@ -226,6 +244,7 @@ export function SettingsDialog({
     hydrateAgents,
     hydrateChannels,
     hydrateIntegrations,
+    hydrateImAgent,
     hydrateProxy,
     hydrateTunnel,
   ]);
@@ -438,6 +457,7 @@ export function SettingsDialog({
         enabledChannels,
         channelConfigs,
         channelVerbose,
+        imAutoContinueLastSession,
       });
       await invoke("save_settings", { settings: nextSettings });
       setSettings(nextSettings);
@@ -460,6 +480,7 @@ export function SettingsDialog({
     enabledChannels,
     channelConfigs,
     channelVerbose,
+    imAutoContinueLastSession,
     onServicesRestarted,
   ]);
 
@@ -623,23 +644,41 @@ export function SettingsDialog({
               ) : (
                 <>
                   <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
-                    <StepChannels
-                      pluginRegistry={pluginRegistry}
-                      discoveredPlugins={discoveredPlugins}
-                      enabledChannels={enabledChannels}
-                      channelConfigs={channelConfigs}
-                      channelVerbose={channelVerbose}
-                      installingPlugins={installingPlugins}
-                      authStates={authStates}
-                      onToggleChannel={toggleChannel}
-                      onConfigChange={updateChannelConfig}
-                      onVerboseChange={updateChannelVerbose}
-                      onInstallPlugin={installPlugin}
-                      onStartAuth={(pluginId) => void startAuth(pluginId)}
-                      onCancelAuth={(pluginId) => void cancelAuth(pluginId)}
-                      switchSize="sm"
-                      notice={<SettingsNotice notice={notice} />}
-                    />
+                    <div className="space-y-5">
+                      <div className="rounded-md border border-border">
+                        <SettingsActionRow
+                          label={t("Auto-continue last IM session")}
+                          description={t(
+                            "When IM attaches to a thread, continue that thread's latest agent session without replaying old output.",
+                          )}
+                          action={
+                            <Switch
+                              checked={imAutoContinueLastSession}
+                              onCheckedChange={setImAutoContinueLastSession}
+                              aria-label={t("Auto-continue last IM session")}
+                              size="sm"
+                            />
+                          }
+                        />
+                      </div>
+                      <StepChannels
+                        pluginRegistry={pluginRegistry}
+                        discoveredPlugins={discoveredPlugins}
+                        enabledChannels={enabledChannels}
+                        channelConfigs={channelConfigs}
+                        channelVerbose={channelVerbose}
+                        installingPlugins={installingPlugins}
+                        authStates={authStates}
+                        onToggleChannel={toggleChannel}
+                        onConfigChange={updateChannelConfig}
+                        onVerboseChange={updateChannelVerbose}
+                        onInstallPlugin={installPlugin}
+                        onStartAuth={(pluginId) => void startAuth(pluginId)}
+                        onCancelAuth={(pluginId) => void cancelAuth(pluginId)}
+                        switchSize="sm"
+                        notice={<SettingsNotice notice={notice} />}
+                      />
+                    </div>
                   </div>
                   <div className="flex shrink-0 justify-end border-t border-border px-5 py-3">
                     <Button
@@ -1123,6 +1162,7 @@ function buildChannelSettings({
   enabledChannels,
   channelConfigs,
   channelVerbose,
+  imAutoContinueLastSession,
 }: {
   settings: AppSettings;
   pluginRegistry: PluginRegistryEntry[];
@@ -1130,6 +1170,7 @@ function buildChannelSettings({
   enabledChannels: Set<string>;
   channelConfigs: Record<string, Record<string, string>>;
   channelVerbose: Record<string, ChannelVerboseConfig>;
+  imAutoContinueLastSession: boolean;
 }): AppSettings {
   const result: AppSettings = { ...settings };
   const existingChannels = isRecord(settings.channels) ? settings.channels : {};
@@ -1185,6 +1226,21 @@ function buildChannelSettings({
     result.channels = channels;
   } else {
     delete result.channels;
+  }
+
+  const imAgent = isRecord(settings.im_agent) ? { ...settings.im_agent } : {};
+  if (imAutoContinueLastSession) {
+    delete imAgent.auto_continue_last_session;
+    if (Object.keys(imAgent).length > 0) {
+      result.im_agent = imAgent as AppSettings["im_agent"];
+    } else {
+      delete result.im_agent;
+    }
+  } else {
+    result.im_agent = {
+      ...imAgent,
+      auto_continue_last_session: false,
+    };
   }
 
   return result;

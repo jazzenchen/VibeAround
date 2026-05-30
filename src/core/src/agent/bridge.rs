@@ -18,6 +18,7 @@
 //! [`Supervisor::register`]: crate::process::Supervisor::register
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use acp::schema;
@@ -81,6 +82,8 @@ async fn drive_agent_bridge(
 
     let permission_handler = Arc::clone(&client_handler);
     let notification_handler = Arc::clone(&client_handler);
+    let suppress_startup_notifications = Arc::new(AtomicBool::new(false));
+    let notification_suppression = Arc::clone(&suppress_startup_notifications);
     let agent_id_for_run = agent_id.clone();
 
     let run_result = acp::Client
@@ -94,6 +97,13 @@ async fn drive_agent_bridge(
         )
         .on_receive_notification(
             async move |args: schema::SessionNotification, _cx| {
+                if notification_suppression.load(Ordering::SeqCst) {
+                    tracing::debug!(
+                        session_id = %args.session_id,
+                        "suppressing startup session notification"
+                    );
+                    return Ok(());
+                }
                 notification_handler.session_notification(args).await
             },
             acp::on_receive_notification!(),
@@ -147,14 +157,17 @@ async fn drive_agent_bridge(
                     }
                 }
                 StartupSession::Resume(session_id) => {
-                    if initialize
+                    // Keep this on after a successful startup attach. `Agent`
+                    // clears it before the first real prompt/new session.
+                    suppress_startup_notifications.store(true, Ordering::SeqCst);
+                    let resume_result = if initialize
                         .agent_capabilities
                         .session_capabilities
                         .resume
                         .is_none()
                     {
                         tracing::info!(
-                            "[{}-agent] session/resume unsupported for {}, starting without session",
+                            "[{}-agent] session/resume unsupported for {}, trying suppressed session/load",
                             agent_id_for_run,
                             session_id
                         );
@@ -171,16 +184,46 @@ async fn drive_agent_bridge(
                             Ok(response) => {
                                 startup_modes = response.modes;
                                 startup_config_options = response.config_options;
-                                Some(session_id)
+                                Some(session_id.clone())
                             }
                             Err(error) => {
                                 tracing::info!(
-                                    "[{}-agent] failed to resume session {}, starting without session: {}",
+                                    "[{}-agent] failed to resume session {}, trying suppressed session/load: {}",
                                     agent_id_for_run,
                                     session_id,
                                     error
                                 );
                                 None
+                            }
+                        }
+                    };
+
+                    match resume_result {
+                        Some(session_id) => Some(session_id),
+                        None => {
+                            match conn
+                                .send_request(schema::LoadSessionRequest::new(
+                                    session_id.clone(),
+                                    cwd.clone(),
+                                ))
+                                .block_task()
+                                .await
+                            {
+                                Ok(response) => {
+                                    startup_modes = response.modes;
+                                    startup_config_options = response.config_options;
+                                    Some(session_id)
+                                }
+                                Err(error) => {
+                                    suppress_startup_notifications.store(false, Ordering::SeqCst);
+                                    tracing::info!(
+                                        "[{}-agent] failed to attach session {}, starting without session: {}",
+                                        agent_id_for_run,
+                                        session_id,
+                                        error
+                                    );
+                                    None
+                                }
                             }
                         }
                     }
@@ -192,6 +235,7 @@ async fn drive_agent_bridge(
                 agent_id_for_run.clone(),
                 initialize.clone(),
                 startup_session_id.clone(),
+                suppress_startup_notifications,
             );
             let ready = AgentReady {
                 agent,

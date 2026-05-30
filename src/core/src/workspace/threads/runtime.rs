@@ -704,8 +704,19 @@ impl ThreadRuntime {
             .profile_id
             .clone()
             .unwrap_or_else(|| "default".to_string());
+        let im_auto_continue_last_session = crate::config::ensure_loaded()
+            .im_agent
+            .auto_continue_last_session;
+        if !route_allows_startup_replay(route) && !im_auto_continue_last_session {
+            *self.session_id.lock().await = None;
+        }
         let runtime_session_id = self.session_id.lock().await.clone();
-        let startup_session = host_startup_session(route, runtime_session_id, &thread);
+        let startup_session = host_startup_session(
+            route,
+            runtime_session_id,
+            &thread,
+            im_auto_continue_last_session,
+        );
 
         std::fs::create_dir_all(&self.workspace).map_err(|error| {
             acp::Error::new(
@@ -1118,14 +1129,17 @@ fn host_startup_session(
     route: &RouteKey,
     runtime_session_id: Option<String>,
     thread: &WorkspaceThread,
+    im_auto_continue_last_session: bool,
 ) -> StartupSession {
     let Some(session_id) = runtime_session_id.or_else(|| latest_session_for_host(thread)) else {
         return StartupSession::Fresh;
     };
     if route_allows_startup_replay(route) {
         StartupSession::Load(session_id)
-    } else {
+    } else if im_auto_continue_last_session {
         StartupSession::Resume(session_id)
+    } else {
+        StartupSession::Fresh
     }
 }
 
@@ -1393,7 +1407,7 @@ mod tests {
     fn web_routes_load_previous_host_session_for_playback() {
         let route = RouteKey::new("web", "chat-1");
 
-        let startup_session = host_startup_session(&route, None, &thread_with_sessions());
+        let startup_session = host_startup_session(&route, None, &thread_with_sessions(), true);
 
         assert_eq!(
             startup_session,
@@ -1409,12 +1423,27 @@ mod tests {
             &route,
             Some("runtime-session".to_string()),
             &thread_with_sessions(),
+            true,
         );
 
         assert_eq!(
             startup_session,
             StartupSession::Resume("runtime-session".to_string())
         );
+    }
+
+    #[test]
+    fn im_routes_start_fresh_when_auto_continue_disabled() {
+        let route = RouteKey::new("slack", "dm-1");
+
+        let startup_session = host_startup_session(
+            &route,
+            Some("runtime-session".to_string()),
+            &thread_with_sessions(),
+            false,
+        );
+
+        assert_eq!(startup_session, StartupSession::Fresh);
     }
 
     #[test]
