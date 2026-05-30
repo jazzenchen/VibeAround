@@ -34,6 +34,9 @@ export interface Settings {
     mcp_auto_install?: boolean;
     skill_auto_install?: boolean;
   };
+  im_agent?: {
+    auto_continue_last_session?: boolean;
+  };
   proxy?: {
     enabled?: boolean;
     http_proxy?: string;

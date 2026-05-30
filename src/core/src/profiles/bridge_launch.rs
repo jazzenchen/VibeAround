@@ -218,6 +218,7 @@ fn claude_env(
     let default_model = settings.default_model();
     let mut env = vec![
         ("ANTHROPIC_API_KEY".to_string(), api_key.clone()),
+        ("ANTHROPIC_AUTH_TOKEN".to_string(), api_key.clone()),
         ("ANTHROPIC_BASE_URL".to_string(), base_url),
         (
             "ANTHROPIC_MODEL".to_string(),
@@ -784,6 +785,7 @@ mod tests {
                 keys,
                 vec![
                     "ANTHROPIC_API_KEY",
+                    "ANTHROPIC_AUTH_TOKEN",
                     "ANTHROPIC_BASE_URL",
                     "ANTHROPIC_MODEL",
                     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",

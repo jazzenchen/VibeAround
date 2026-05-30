@@ -200,29 +200,34 @@ export function LaunchSummaryPill({
 export function AgentSummaryHeader({
   agentId,
   agentLabelText,
+  action,
   children,
 }: {
   agentId: string;
   agentLabelText: string;
+  action?: ReactNode;
   children?: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2.5">
-      <span className="flex h-14 w-14 shrink-0 items-center justify-center text-primary">
-        <BrandIcon
-          kind="cli"
-          id={agentId}
-          label={agentLabelText}
-          framed={false}
-          className="h-12 w-12"
-        />
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-[17px] font-semibold leading-tight">
-          {agentLabelText}
+    <div className="flex min-w-0 items-start justify-between gap-2.5">
+      <span className="flex min-w-0 items-center gap-2.5">
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center text-primary">
+          <BrandIcon
+            kind="cli"
+            id={agentId}
+            label={agentLabelText}
+            framed={false}
+            className="h-12 w-12"
+          />
         </span>
-        {children}
+        <span className="min-w-0">
+          <span className="block truncate text-[17px] font-semibold leading-tight">
+            {agentLabelText}
+          </span>
+          {children}
+        </span>
       </span>
+      {action && <span className="shrink-0">{action}</span>}
     </div>
   );
 }

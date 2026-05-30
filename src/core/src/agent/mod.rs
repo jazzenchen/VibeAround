@@ -40,7 +40,7 @@ pub use install::{
     auto_install_npm_agent_with_progress_and_cancel, install_acp_agents, is_program_available,
     npm_package_bin_name, npm_package_installed, InstallOutput,
 };
-pub use runtime::{Agent, AgentClientHandler, AgentReady};
+pub use runtime::{Agent, AgentClientHandler, AgentReady, StartupSession};
 
 use mcp::{install_project_mcp_config, uninstall_mcp_config, uninstall_project_mcp_config};
 use skills::{install_project_skill, uninstall_project_skill, uninstall_skill};

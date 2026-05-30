@@ -58,6 +58,8 @@ pub struct AgentLaunchPreferenceSummary {
     pub profile_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
+    #[serde(skip_serializing_if = "agent_state::AgentLaunchArgs::is_empty")]
+    pub launch_args: agent_state::AgentLaunchArgs,
 }
 
 pub(super) fn launcher_preferences() -> LauncherPreferences {
@@ -154,12 +156,16 @@ fn summarize_agent_preferences(
         let workspace = stored
             .and_then(|preference| preference.workspace.as_ref())
             .map(|path| path.to_string_lossy().to_string());
-        if profile_id.is_some() || workspace.is_some() {
+        let launch_args = stored
+            .map(|preference| preference.launch_args.clone())
+            .unwrap_or_default();
+        if profile_id.is_some() || workspace.is_some() || !launch_args.is_empty() {
             out.insert(
                 agent_id,
                 AgentLaunchPreferenceSummary {
                     profile_id,
                     workspace,
+                    launch_args,
                 },
             );
         }

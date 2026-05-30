@@ -40,7 +40,7 @@ export const zhCNOnboarding: Record<string, string> = {
   "No API profiles yet. You can add one now or skip this step.":
     "还没有 API 配置。你可以现在添加，也可以跳过这一步。",
   "Default workspace": "默认工作区",
-  "IM Channels": "IM 频道",
+  "IM Channel": "通讯工具",
   "Connect messaging bots to vibe code from your phone. Install plugins from the registry, then configure and enable them.":
     "连接消息机器人后，就能在手机上 vibe code。先从 registry 安装插件，然后配置并启用。",
   "IM message detail": "IM 消息细节",

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CatalogEntry,
   CompatibilityBridgeMode,
+  AgentLaunchArgs,
   AgentLaunchPreference,
   ConnectionAgentId,
   ProfileDef,
@@ -74,6 +75,11 @@ export interface AgentSummary {
   display_name: string;
   description: string;
   install_type: string | null;
+  pty_command: string;
+  acp_program: string;
+  acp_args: string[];
+  acp_npm_package?: string | null;
+  acp_bin_name?: string | null;
 }
 
 /** Reuses the onboarding command that returns all CLIs in agents.json. */
@@ -200,6 +206,16 @@ export function setLauncherAgentProfile(
   profileId: string | null,
 ): Promise<void> {
   return invoke<void>("launcher_set_agent_profile", { agentId, profileId });
+}
+
+export function setLauncherAgentLaunchArgs(
+  agentId: string,
+  launchArgs: AgentLaunchArgs,
+): Promise<void> {
+  return invoke<void>("launcher_set_agent_launch_args", {
+    agentId,
+    launchArgs,
+  });
 }
 
 export function setLauncherSelectedAgent(agentId: string): Promise<void> {
