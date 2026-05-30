@@ -934,6 +934,18 @@ export function AgentLaunchBuilder({
             ? viewPrefs.agentPreferences[settingsAgent.id]
             : undefined
         }
+        workspacePath={selectedWorkspace.path}
+        windowLabel={
+          selectedProfile
+            ? selectedSession
+              ? `${selectedProfile.label} (resume)`
+              : selectedProfile.label
+            : selectedSession && selectedAgent
+              ? `${selectedAgent.display_name} (resume)`
+              : selectedAgent
+                ? `${selectedAgent.display_name} (direct)`
+                : null
+        }
         busy={busy}
         onClose={() => setSettingsAgent(null)}
         onSave={saveAgentLaunchArgs}

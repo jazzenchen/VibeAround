@@ -75,6 +75,11 @@ export interface AgentSummary {
   display_name: string;
   description: string;
   install_type: string | null;
+  pty_command: string;
+  acp_program: string;
+  acp_args: string[];
+  acp_npm_package?: string | null;
+  acp_bin_name?: string | null;
 }
 
 /** Reuses the onboarding command that returns all CLIs in agents.json. */
