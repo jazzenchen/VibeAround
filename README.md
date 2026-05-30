@@ -80,13 +80,13 @@ Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki
 
 ## Download
 
-Latest release: [VibeAround v0.6.8](https://github.com/jazzenchen/VibeAround/releases/tag/v0.6.8).
+Latest release: [VibeAround v0.6.9](https://github.com/jazzenchen/VibeAround/releases/tag/v0.6.9).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround_0.6.8_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.8/VibeAround_0.6.8_arm64.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.8/VibeAround_0.6.8_x64-setup.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.8/VibeAround_0.6.8_x64_en-US.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.8/VibeAround-win-0.6.8-portable.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.8/VibeAround_0.6.8_amd64.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.8/VibeAround_0.6.8_amd64.deb) |
+| macOS Apple Silicon | [VibeAround_0.6.9_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_arm64.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_x64-setup.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_x64_en-US.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround-win-0.6.9-portable.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_amd64.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_amd64.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
 
