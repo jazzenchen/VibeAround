@@ -47,7 +47,7 @@ export function StepChannels({
       <div>
         <h2 className="text-base font-semibold flex items-center gap-2">
           <MessageSquare className="w-4 h-4 text-primary" />
-          {t("IM Channels")}
+          {t("IM Channel")}
         </h2>
         <p className="text-xs text-muted-foreground mt-1">
           {t("Connect messaging bots to vibe code from your phone. Install plugins from the registry, then configure and enable them.")}

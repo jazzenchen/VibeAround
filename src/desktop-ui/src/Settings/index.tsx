@@ -3,10 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   Bot,
   Globe,
+  History,
   MessageSquare,
   Network,
   RotateCw,
-  Settings as SettingsIcon,
+  SlidersHorizontal,
   Trash2,
   WandSparkles,
 } from "lucide-react";
@@ -56,6 +57,7 @@ type SaveState =
   | "agents"
   | "proxy"
   | "im"
+  | "sessions"
   | "tunnel"
   | "tunnel-restart"
   | "uninstall-mcp"
@@ -457,14 +459,13 @@ export function SettingsDialog({
         enabledChannels,
         channelConfigs,
         channelVerbose,
-        imAutoContinueLastSession,
       });
       await invoke("save_settings", { settings: nextSettings });
       setSettings(nextSettings);
       const response = await apiFetch("/api/channels/sync", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       onServicesRestarted?.();
-      setNotice({ variant: "success", message: "IM settings applied." });
+      setNotice({ variant: "success", message: "IM Channel settings applied." });
     } catch (error) {
       setNotice({
         variant: "error",
@@ -480,6 +481,33 @@ export function SettingsDialog({
     enabledChannels,
     channelConfigs,
     channelVerbose,
+    onServicesRestarted,
+  ]);
+
+  const applySessionSettings = useCallback(async () => {
+    setSaving("sessions");
+    setNotice(null);
+    try {
+      const nextSettings = buildSessionSettings({
+        settings,
+        imAutoContinueLastSession,
+      });
+      await invoke("save_settings", { settings: nextSettings });
+      setSettings(nextSettings);
+      const response = await apiFetch("/api/settings/reload", { method: "POST" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      onServicesRestarted?.();
+      setNotice({ variant: "success", message: "Session settings applied." });
+    } catch (error) {
+      setNotice({
+        variant: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSaving("idle");
+    }
+  }, [
+    settings,
     imAutoContinueLastSession,
     onServicesRestarted,
   ]);
@@ -533,17 +561,14 @@ export function SettingsDialog({
         <Tabs orientation="vertical" defaultValue="general" className="min-h-0 flex-1 gap-0">
           <aside className="flex w-44 shrink-0 flex-col border-r border-border bg-muted/20 px-4 py-4">
             <DialogHeader className="mb-4 pr-8">
-              <DialogTitle className="flex items-center gap-2 text-base">
-                <SettingsIcon className="h-4 w-4 text-primary" />
-                {t("Settings")}
-              </DialogTitle>
+              <DialogTitle className="text-base">{t("Settings")}</DialogTitle>
             </DialogHeader>
             <TabsList className="!h-auto w-full flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-0">
               <TabsTrigger
                 value="general"
                 className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
-                <SettingsIcon className="h-3 w-3" />
+                <SlidersHorizontal className="h-3 w-3" />
                 {t("General")}
               </TabsTrigger>
               <TabsTrigger
@@ -558,7 +583,14 @@ export function SettingsDialog({
                 className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <MessageSquare className="h-3 w-3" />
-                {t("IM")}
+                {t("IM Channel")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="sessions"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+              >
+                <History className="h-3 w-3" />
+                {t("Sessions")}
               </TabsTrigger>
               <TabsTrigger
                 value="tunnel"
@@ -585,7 +617,7 @@ export function SettingsDialog({
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
                 <div className="mb-5">
                   <h2 className="flex items-center gap-2 text-base font-semibold">
-                    <SettingsIcon className="h-4 w-4 text-primary" />
+                    <SlidersHorizontal className="h-4 w-4 text-primary" />
                     {t("General")}
                   </h2>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -644,41 +676,23 @@ export function SettingsDialog({
               ) : (
                 <>
                   <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
-                    <div className="space-y-5">
-                      <div className="rounded-md border border-border">
-                        <SettingsActionRow
-                          label={t("Auto-continue last IM session")}
-                          description={t(
-                            "When IM attaches to a thread, continue that thread's latest agent session without replaying old output.",
-                          )}
-                          action={
-                            <Switch
-                              checked={imAutoContinueLastSession}
-                              onCheckedChange={setImAutoContinueLastSession}
-                              aria-label={t("Auto-continue last IM session")}
-                              size="sm"
-                            />
-                          }
-                        />
-                      </div>
-                      <StepChannels
-                        pluginRegistry={pluginRegistry}
-                        discoveredPlugins={discoveredPlugins}
-                        enabledChannels={enabledChannels}
-                        channelConfigs={channelConfigs}
-                        channelVerbose={channelVerbose}
-                        installingPlugins={installingPlugins}
-                        authStates={authStates}
-                        onToggleChannel={toggleChannel}
-                        onConfigChange={updateChannelConfig}
-                        onVerboseChange={updateChannelVerbose}
-                        onInstallPlugin={installPlugin}
-                        onStartAuth={(pluginId) => void startAuth(pluginId)}
-                        onCancelAuth={(pluginId) => void cancelAuth(pluginId)}
-                        switchSize="sm"
-                        notice={<SettingsNotice notice={notice} />}
-                      />
-                    </div>
+                    <StepChannels
+                      pluginRegistry={pluginRegistry}
+                      discoveredPlugins={discoveredPlugins}
+                      enabledChannels={enabledChannels}
+                      channelConfigs={channelConfigs}
+                      channelVerbose={channelVerbose}
+                      installingPlugins={installingPlugins}
+                      authStates={authStates}
+                      onToggleChannel={toggleChannel}
+                      onConfigChange={updateChannelConfig}
+                      onVerboseChange={updateChannelVerbose}
+                      onInstallPlugin={installPlugin}
+                      onStartAuth={(pluginId) => void startAuth(pluginId)}
+                      onCancelAuth={(pluginId) => void cancelAuth(pluginId)}
+                      switchSize="sm"
+                      notice={<SettingsNotice notice={notice} />}
+                    />
                   </div>
                   <div className="flex shrink-0 justify-end border-t border-border px-5 py-3">
                     <Button
@@ -687,7 +701,44 @@ export function SettingsDialog({
                       disabled={!canSubmit}
                       onClick={() => void applyImSettings()}
                     >
-                      {saving === "im" ? t("Applying…") : t("Apply IM Settings")}
+                      {saving === "im"
+                        ? t("Applying…")
+                        : t("Apply IM Channel Settings")}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent
+              value="sessions"
+              className="min-h-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
+            >
+              {loading ? (
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
+                  <LoadingBlock />
+                </div>
+              ) : (
+                <>
+                  <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
+                    <SessionSettingsPanel
+                      imAutoContinueLastSession={imAutoContinueLastSession}
+                      onImAutoContinueLastSessionChange={
+                        setImAutoContinueLastSession
+                      }
+                      notice={<SettingsNotice notice={notice} />}
+                    />
+                  </div>
+                  <div className="flex shrink-0 justify-end border-t border-border px-5 py-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!canSubmit}
+                      onClick={() => void applySessionSettings()}
+                    >
+                      {saving === "sessions"
+                        ? t("Applying…")
+                        : t("Apply Session Settings")}
                     </Button>
                   </div>
                 </>
@@ -1060,6 +1111,48 @@ function ProxySettingsPanel({
   );
 }
 
+function SessionSettingsPanel({
+  imAutoContinueLastSession,
+  onImAutoContinueLastSessionChange,
+  notice,
+}: {
+  imAutoContinueLastSession: boolean;
+  onImAutoContinueLastSessionChange: (value: boolean) => void;
+  notice?: ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <History className="h-4 w-4 text-primary" />
+          {t("Sessions")}
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t("Configure how VibeAround restores active conversations.")}
+        </p>
+        {notice}
+      </div>
+      <div className="rounded-md border border-border">
+        <SettingsActionRow
+          label={t("Auto-continue IM Channel sessions")}
+          description={t(
+            "When an IM Channel message attaches to a thread, continue that thread's latest agent session without replaying old output.",
+          )}
+          action={
+            <Switch
+              checked={imAutoContinueLastSession}
+              onCheckedChange={onImAutoContinueLastSessionChange}
+              aria-label={t("Auto-continue IM Channel sessions")}
+              size="sm"
+            />
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
 function SettingsNotice({ notice }: { notice: Notice | null }) {
   const { t } = useI18n();
   if (!notice) return null;
@@ -1162,7 +1255,6 @@ function buildChannelSettings({
   enabledChannels,
   channelConfigs,
   channelVerbose,
-  imAutoContinueLastSession,
 }: {
   settings: AppSettings;
   pluginRegistry: PluginRegistryEntry[];
@@ -1170,7 +1262,6 @@ function buildChannelSettings({
   enabledChannels: Set<string>;
   channelConfigs: Record<string, Record<string, string>>;
   channelVerbose: Record<string, ChannelVerboseConfig>;
-  imAutoContinueLastSession: boolean;
 }): AppSettings {
   const result: AppSettings = { ...settings };
   const existingChannels = isRecord(settings.channels) ? settings.channels : {};
@@ -1228,6 +1319,17 @@ function buildChannelSettings({
     delete result.channels;
   }
 
+  return result;
+}
+
+function buildSessionSettings({
+  settings,
+  imAutoContinueLastSession,
+}: {
+  settings: AppSettings;
+  imAutoContinueLastSession: boolean;
+}): AppSettings {
+  const result: AppSettings = { ...settings };
   const imAgent = isRecord(settings.im_agent) ? { ...settings.im_agent } : {};
   if (imAutoContinueLastSession) {
     delete imAgent.auto_continue_last_session;
