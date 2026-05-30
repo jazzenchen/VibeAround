@@ -419,6 +419,7 @@ fn normalize_claude_env(env: &mut Vec<(String, String)>, ctx: &BTreeMap<String, 
 
     env.retain(|(key, _)| !is_standardized_claude_env_key(key));
     push_env_if_nonempty(env, "ANTHROPIC_API_KEY", api_key.clone());
+    push_env_if_nonempty(env, "ANTHROPIC_AUTH_TOKEN", api_key);
     push_env_if_nonempty(env, "ANTHROPIC_BASE_URL", base_url);
     push_env_if_nonempty(env, "ANTHROPIC_MODEL", model);
     if let Some(auto_compact_window) = auto_compact_window {
@@ -686,6 +687,7 @@ mod tests {
                 keys,
                 vec![
                     "ANTHROPIC_API_KEY",
+                    "ANTHROPIC_AUTH_TOKEN",
                     "ANTHROPIC_BASE_URL",
                     "ANTHROPIC_MODEL",
                     "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
