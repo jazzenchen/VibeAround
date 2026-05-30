@@ -60,6 +60,7 @@ pub fn generate() -> (String, String) {
 /// matching code. On match, marks the session as verified and returns
 /// the daemon's auth token. Returns `None` if no match or expired.
 pub fn validate(code: &str) -> Option<String> {
+    let code = code.trim();
     let mut store = STORE.lock().unwrap();
     purge_expired(&mut store);
 
@@ -144,6 +145,13 @@ mod tests {
         // Note: validate() reads token from disk which may not exist in test.
         // We test the matching logic, not the token retrieval.
         let _ = validate(&code);
+        assert_eq!(check_status(&sid), Some(true));
+    }
+
+    #[test]
+    fn validate_trims_pairing_code() {
+        let (sid, code) = generate();
+        let _ = validate(&format!("  {code}  "));
         assert_eq!(check_status(&sid), Some(true));
     }
 
