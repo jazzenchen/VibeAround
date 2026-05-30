@@ -649,9 +649,13 @@ function CustomArgToken({
   removeLabel: string;
   onRemoveArg: (index: number) => void;
 }) {
+  const escapedArg = quote(arg);
   return (
-    <span className="inline-flex max-w-full min-w-0 items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 text-primary">
-      <span className="truncate">{quote(arg)}</span>
+    <span
+      className="inline-flex max-w-full min-w-0 items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 text-primary"
+      title={escapedArg}
+    >
+      <span className="truncate">{arg}</span>
       <button
         type="button"
         disabled={busy}
