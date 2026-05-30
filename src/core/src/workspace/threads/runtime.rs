@@ -704,12 +704,9 @@ impl ThreadRuntime {
             .profile_id
             .clone()
             .unwrap_or_else(|| "default".to_string());
-        let resume_session_id = self
-            .session_id
-            .lock()
-            .await
-            .clone()
-            .or_else(|| latest_session_for_host(&thread));
+        let startup_replay_allowed = route_allows_startup_replay(route);
+        let runtime_session_id = self.session_id.lock().await.clone();
+        let resume_session_id = host_startup_resume_session_id(route, runtime_session_id, &thread);
 
         std::fs::create_dir_all(&self.workspace).map_err(|error| {
             acp::Error::new(
@@ -772,6 +769,8 @@ impl ThreadRuntime {
         if let Some(session_id) = ready.startup_session_id {
             self.observe_session(&agent_id, thread.host_binding.profile_id, &session_id)
                 .await?;
+        } else if !startup_replay_allowed {
+            *self.session_id.lock().await = None;
         } else if resume_session_id.is_some() {
             // The bridge falls back to a fresh agent when load_session fails.
             // Clear the stale candidate so ensure_session creates a real one.
@@ -1116,6 +1115,21 @@ fn latest_session_for_host(thread: &WorkspaceThread) -> Option<String> {
         .map(|session| session.session_id.clone())
 }
 
+fn host_startup_resume_session_id(
+    route: &RouteKey,
+    runtime_session_id: Option<String>,
+    thread: &WorkspaceThread,
+) -> Option<String> {
+    if !route_allows_startup_replay(route) {
+        return None;
+    }
+    runtime_session_id.or_else(|| latest_session_for_host(thread))
+}
+
+pub(crate) fn route_allows_startup_replay(route: &RouteKey) -> bool {
+    route.channel_kind == "web"
+}
+
 fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
     content_blocks.iter().find_map(|block| match block {
         acp::ContentBlock::Text(text) => {
@@ -1370,6 +1384,28 @@ mod tests {
         let state = futures::executor::block_on(runtime.state());
 
         assert_eq!(state.session_id.as_deref(), Some("session-old"));
+    }
+
+    #[test]
+    fn web_routes_load_previous_host_session_for_playback() {
+        let route = RouteKey::new("web", "chat-1");
+
+        let session_id = host_startup_resume_session_id(&route, None, &thread_with_sessions());
+
+        assert_eq!(session_id.as_deref(), Some("session-old"));
+    }
+
+    #[test]
+    fn im_routes_do_not_load_previous_host_session_for_playback() {
+        let route = RouteKey::new("slack", "dm-1");
+
+        let session_id = host_startup_resume_session_id(
+            &route,
+            Some("runtime-session".to_string()),
+            &thread_with_sessions(),
+        );
+
+        assert_eq!(session_id, None);
     }
 
     #[test]
