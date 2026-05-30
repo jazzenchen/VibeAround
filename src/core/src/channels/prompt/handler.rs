@@ -118,18 +118,19 @@ async fn handle_command(
             .await;
         }
         ThreadCommand::Pickup(code) => {
-            let Some((agent, session_id, cwd)) = crate::workspace::handoff::consume(&code) else {
+            let Some(handoff) = crate::workspace::handoff::consume(&code) else {
                 send_system_text(plugin_host, route, "Handoff code is invalid or expired.").await;
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             };
-            let agent_id = crate::resources::resolve_agent_id(&agent).map_err(invalid_params)?;
+            let agent_id =
+                crate::resources::resolve_agent_id(&handoff.agent_kind).map_err(invalid_params)?;
             let runtime = workspace_threads
                 .attach_external_session(
                     route,
                     agent_id.clone(),
-                    None,
-                    session_id,
-                    std::path::PathBuf::from(cwd),
+                    handoff.profile_id,
+                    handoff.session_id,
+                    std::path::PathBuf::from(handoff.cwd),
                 )
                 .await
                 .map_err(internal_error)?;

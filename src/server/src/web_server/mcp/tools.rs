@@ -85,6 +85,30 @@ pub(super) async fn mcp_prepare_handover(
         None => return jsonrpc_err(id, -32602, "Missing required argument: agent_kind"),
     };
     let agent_kind_str = agent_kind;
+    let profile_id =
+        normalize_handover_profile_id(arguments.get("profile_id").and_then(|v| v.as_str()));
+
+    if let Some(profile_id) = &profile_id {
+        let agent_id = match common::resources::resolve_agent_id(agent_kind_str) {
+            Ok(agent_id) => agent_id,
+            Err(error) => return mcp_error_text(id, &error),
+        };
+        let Some(profile) = common::profiles::schema::load(profile_id)
+            .map(common::profiles::normalize_legacy_profile_and_persist)
+        else {
+            return mcp_error_text(id, &format!("Profile '{}' was not found.", profile_id));
+        };
+        if common::profiles::connections::resolve_profile_agent_route(&profile, &agent_id).is_none()
+        {
+            return mcp_error_text(
+                id,
+                &format!(
+                    "Profile '{}' cannot launch agent '{}'.",
+                    profile_id, agent_id
+                ),
+            );
+        }
+    }
 
     // Validate cwd is a known workspace.
     // Built-in workspaces under ~/.vibearound/workspaces/ are always accepted.
@@ -132,11 +156,12 @@ pub(super) async fn mcp_prepare_handover(
         },
     };
 
-    let code = common::workspace::handoff::store(
-        agent_kind_str.to_string(),
+    let code = common::workspace::handoff::store(common::workspace::handoff::HandoffPayload {
+        agent_kind: agent_kind_str.to_string(),
+        profile_id,
         session_id,
-        cwd_path.to_string_lossy().to_string(),
-    );
+        cwd: cwd_path.to_string_lossy().to_string(),
+    });
     let pickup_cmd = format!("/pickup {}", code);
     mcp_text(
         id,
@@ -148,6 +173,17 @@ pub(super) async fn mcp_prepare_handover(
             pickup_cmd
         ),
     )
+}
+
+fn normalize_handover_profile_id(profile_id: Option<&str>) -> Option<String> {
+    let profile_id = profile_id?.trim();
+    if profile_id.is_empty() {
+        return None;
+    }
+    match profile_id.to_ascii_lowercase().as_str() {
+        "default" | "direct" | "none" | "off" => None,
+        _ => Some(profile_id.to_string()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,4 +1041,21 @@ fn build_preview_url(state: &AppState, route: &str, slug: &str) -> String {
         .first_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", state.port));
     format!("{}/va/{}/{}", base.trim_end_matches('/'), route, slug)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_handover_profile_id_omits_direct_launch_profiles() {
+        assert_eq!(normalize_handover_profile_id(None), None);
+        assert_eq!(normalize_handover_profile_id(Some("")), None);
+        assert_eq!(normalize_handover_profile_id(Some(" direct ")), None);
+        assert_eq!(normalize_handover_profile_id(Some("DEFAULT")), None);
+        assert_eq!(
+            normalize_handover_profile_id(Some("claude-deepseek")),
+            Some("claude-deepseek".to_string())
+        );
+    }
 }
