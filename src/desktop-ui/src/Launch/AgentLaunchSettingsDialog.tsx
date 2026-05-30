@@ -194,7 +194,7 @@ export function AgentLaunchSettingsDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="!flex max-h-[calc(100vh-64px)] w-[min(660px,calc(100vw-28px))] max-w-[calc(100vw-28px)] flex-col overflow-hidden p-0 sm:max-w-[min(660px,calc(100vw-28px))]">
+      <DialogContent className="!flex h-[520px] max-h-[calc(100vh-64px)] w-[min(660px,calc(100vw-28px))] max-w-[calc(100vw-28px)] flex-col overflow-hidden p-0 sm:max-w-[min(660px,calc(100vw-28px))]">
         <DialogHeader className="shrink-0 border-b border-border px-5 py-3 pr-12">
           <DialogTitle className="text-lg">
             {t("{{agent}} launch settings", { agent: agent.display_name })}
