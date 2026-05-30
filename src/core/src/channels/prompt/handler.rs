@@ -560,12 +560,8 @@ fn invalid_params(error: String) -> acp::Error {
 
 fn resolve_host_binding(agent: &str, profile: Option<&str>) -> Result<HostBinding, String> {
     let agent_id = crate::resources::resolve_agent_id(agent)?;
-    let profile_id = profile
-        .map(str::trim)
-        .filter(|profile| !profile.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| Some("direct".to_string()));
-    Ok(HostBinding::new(agent_id, profile_id))
+    let profile_id = crate::agent::launch::normalize_launch_profile_id(profile);
+    Ok(HostBinding::new(agent_id, Some(profile_id)))
 }
 
 #[cfg(test)]

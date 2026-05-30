@@ -206,6 +206,9 @@ impl WorkspaceThreadManager {
             self.detach_route(route).await?;
         }
 
+        let profile_id = Some(crate::agent::launch::normalize_launch_profile_id(
+            profile_id.as_deref(),
+        ));
         let workspace = self.ensure_workspace_for_cwd(cwd).await?;
         let host_binding = HostBinding::new(agent_id.clone(), profile_id.clone());
         let projection = self.thread_projection().await?;
@@ -968,6 +971,33 @@ mod tests {
             .unwrap()
             .get_by_cwd(&root.canonicalize().unwrap())
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn attach_external_session_defaults_missing_profile_to_direct() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let route = RouteKey::new("feishu", "chat-a");
+
+        let runtime = manager
+            .attach_external_session(
+                &route,
+                "claude".to_string(),
+                None,
+                "external-session".to_string(),
+                root,
+            )
+            .await
+            .unwrap();
+
+        let state = runtime.state().await;
+        assert_eq!(
+            state.host_binding,
+            HostBinding::new("claude", Some("direct".to_string()))
+        );
+        assert_eq!(state.session_id.as_deref(), Some("external-session"));
     }
 
     #[tokio::test]

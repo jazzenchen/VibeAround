@@ -22,7 +22,7 @@ The VibeAround MCP server must be connected (server name: `vibearound`). If not 
 ### 1. Get your session ID
 
 Use the `/va-session` skill to resolve your current session ID.
-Also read `$VIBEAROUND_PROFILE_ID` from the environment if present. If it is empty, `direct`, `default`, `none`, or `off`, omit it.
+Also read `$VIBEAROUND_PROFILE_ID` from the environment if present. VibeAround-launched sessions should have it, including `direct`; external user-started sessions may omit it.
 
 ### 2. Call prepare_handover
 
@@ -33,7 +33,7 @@ Arguments:
   session_id: "<session_id from step 1>"  (pass if available)
   cwd: "<current working directory>"
   agent_kind: "kiro"
-  profile_id: "<VIBEAROUND_PROFILE_ID if present and not direct/default>"  (optional)
+  profile_id: "<VIBEAROUND_PROFILE_ID if present>"  (optional; omitted means direct)
 ```
 
 If the tool says the workspace is not registered, ask the user for confirmation, then call `register_workspace` with the `cwd`, and retry.
