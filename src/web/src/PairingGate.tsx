@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import { useI18n } from "@va/i18n";
 
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,22 @@ import { LanguageMenu } from "@/components/LanguageMenu";
 const STORAGE_KEY = "vibearound.auth.token";
 const POLL_INTERVAL_MS = 2000;
 const CODE_TTL_SECS = 60;
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
+}
 
 /**
  * Only allow same-origin redirects after pairing. Anything else (absolute
@@ -38,9 +55,12 @@ export function PairingGate() {
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [pasted, setPasted] = useState("");
   const [tokenError, setTokenError] = useState<string | null>(null);
+  const [pairCommandCopied, setPairCommandCopied] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimeRef = useRef<number>(0);
+  const pairCommand = code ? `/pair ${code}` : "";
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -58,6 +78,7 @@ export function PairingGate() {
     setStatus("loading");
     setCode(null);
     setRemaining(CODE_TTL_SECS);
+    setPairCommandCopied(false);
 
     try {
       const res = await fetch("/va/api/pair/start", { method: "POST" });
@@ -117,6 +138,24 @@ export function PairingGate() {
     startPairing();
     return stopPolling;
   }, [startPairing, stopPolling]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
+
+  const copyPairCommand = useCallback(async () => {
+    if (!pairCommand) return;
+    await copyText(pairCommand);
+    setPairCommandCopied(true);
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+    }
+    copyTimerRef.current = setTimeout(() => setPairCommandCopied(false), 1500);
+  }, [pairCommand]);
 
   const submitToken = (e: React.FormEvent) => {
     e.preventDefault();
@@ -221,10 +260,27 @@ export function PairingGate() {
             <ol className="list-decimal space-y-1 pl-5 text-sm text-foreground/90">
               <li>{t("Open any IM channel connected to VibeAround.")}</li>
               <li>
-                {t("Send")}{" "}
-                <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
-                  /pair {code ?? "···"}
-                </span>
+                <div className="inline-flex flex-wrap items-center gap-2">
+                  <span>{t("Send")}</span>
+                  <span className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+                    {pairCommand || "/pair ···"}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    disabled={!pairCommand}
+                    onClick={copyPairCommand}
+                    className="h-6 px-2 text-xs"
+                  >
+                    {pairCommandCopied ? (
+                      <Check className="h-3 w-3" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                    {pairCommandCopied ? t("Copied") : t("Copy")}
+                  </Button>
+                </div>
               </li>
               <li>{t("This page will update automatically.")}</li>
             </ol>
