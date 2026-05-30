@@ -157,6 +157,8 @@ pub struct Config {
     /// Validated at load time — entries that don't resolve via
     /// `resources::agent_by_alias` are dropped.
     pub enabled_agents: Vec<String>,
+    // --- IM agent behavior ---
+    pub im_agent: ImAgentConfig,
     // --- Agent integrations ---
     pub integrations: AgentIntegrationsConfig,
     // --- Optional outbound HTTP proxy ---
@@ -169,6 +171,19 @@ pub struct Config {
 pub struct AgentIntegrationsConfig {
     pub mcp_auto_install: bool,
     pub skill_auto_install: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImAgentConfig {
+    pub auto_continue_last_session: bool,
+}
+
+impl Default for ImAgentConfig {
+    fn default() -> Self {
+        Self {
+            auto_continue_last_session: true,
+        }
+    }
 }
 
 impl Default for AgentIntegrationsConfig {
@@ -421,6 +436,8 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         })
         .unwrap_or_default();
 
+    let im_agent = load_im_agent_config(&root);
+
     let proxy = root
         .get("proxy")
         .and_then(|value| value.as_object())
@@ -460,10 +477,24 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         default_agent,
         default_profiles,
         enabled_agents,
+        im_agent,
         integrations,
         proxy,
         raw_channels,
     }
+}
+
+fn load_im_agent_config(root: &serde_json::Value) -> ImAgentConfig {
+    root.get("im_agent")
+        .or_else(|| root.get("im").and_then(|im| im.get("agent")))
+        .and_then(|value| value.as_object())
+        .map(|settings| ImAgentConfig {
+            auto_continue_last_session: settings
+                .get("auto_continue_last_session")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true),
+        })
+        .unwrap_or_default()
 }
 
 /// Base URL for preview links. Reads from the config cache.
@@ -554,6 +585,7 @@ impl Default for Config {
                 .iter()
                 .map(|a| a.id.clone())
                 .collect(),
+            im_agent: ImAgentConfig::default(),
             integrations: AgentIntegrationsConfig::default(),
             proxy: HttpProxyConfig::default(),
             raw_channels: serde_json::Value::Object(serde_json::Map::new()),
@@ -706,6 +738,36 @@ mod tests {
 
         assert!(!config.integrations.mcp_auto_install);
         assert!(!config.integrations.skill_auto_install);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn im_agent_auto_continue_defaults_to_enabled() {
+        let dir = unique_test_dir("im-agent-default");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, "{}").unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(config.im_agent.auto_continue_last_session);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn im_agent_auto_continue_can_be_disabled() {
+        let dir = unique_test_dir("im-agent-disabled");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "im_agent": { "auto_continue_last_session": false } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(!config.im_agent.auto_continue_last_session);
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -14,7 +14,9 @@ use crate::channels::types::{
 use crate::routing::RouteKey;
 use crate::workspace::context_transfer;
 use crate::workspace::manager::{PendingThreadSelection, ThreadChoice, WorkspaceSwitch};
-use crate::workspace::threads::runtime::{ThreadRuntime, ThreadRuntimeState};
+use crate::workspace::threads::runtime::{
+    route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
+};
 use crate::workspace::threads::store::HostBinding;
 use crate::workspace::WorkspaceThreadManager;
 
@@ -328,7 +330,7 @@ pub async fn start_runtime_and_notify(
             })
             .await;
     }
-    if should_send_session_ready {
+    if should_send_session_ready && route_allows_startup_replay(route) {
         send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
             .await;
     }

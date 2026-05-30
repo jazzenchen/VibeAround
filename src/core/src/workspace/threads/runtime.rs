@@ -10,7 +10,7 @@ use anyhow::Context;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::{sleep, Duration};
 
-use crate::agent::{Agent, AgentClientHandler};
+use crate::agent::{Agent, AgentClientHandler, StartupSession};
 use crate::routing::RouteKey;
 use crate::workspace::registry::WorkspaceId;
 
@@ -704,12 +704,19 @@ impl ThreadRuntime {
             .profile_id
             .clone()
             .unwrap_or_else(|| "default".to_string());
-        let resume_session_id = self
-            .session_id
-            .lock()
-            .await
-            .clone()
-            .or_else(|| latest_session_for_host(&thread));
+        let im_auto_continue_last_session = crate::config::ensure_loaded()
+            .im_agent
+            .auto_continue_last_session;
+        if !route_allows_startup_replay(route) && !im_auto_continue_last_session {
+            *self.session_id.lock().await = None;
+        }
+        let runtime_session_id = self.session_id.lock().await.clone();
+        let startup_session = host_startup_session(
+            route,
+            runtime_session_id,
+            &thread,
+            im_auto_continue_last_session,
+        );
 
         std::fs::create_dir_all(&self.workspace).map_err(|error| {
             acp::Error::new(
@@ -743,12 +750,17 @@ impl ThreadRuntime {
             env_vars.extend(applied.env);
             extra_args.extend(applied.command_args);
         }
+        let agent_prefs = crate::agent_state::read_prefs();
+        extra_args.extend(crate::agent_state::resolve_agent_acp_args(
+            &agent_prefs,
+            &agent_id,
+        ));
 
         let ready = Agent::spawn(
             agent_id.clone(),
             route,
             &self.workspace,
-            resume_session_id.clone(),
+            startup_session.clone(),
             handler,
             extra_args,
             env_vars,
@@ -767,8 +779,8 @@ impl ThreadRuntime {
         if let Some(session_id) = ready.startup_session_id {
             self.observe_session(&agent_id, thread.host_binding.profile_id, &session_id)
                 .await?;
-        } else if resume_session_id.is_some() {
-            // The bridge falls back to a fresh agent when load_session fails.
+        } else if startup_session.session_id().is_some() {
+            // The bridge falls back to a fresh agent when startup attachment fails.
             // Clear the stale candidate so ensure_session creates a real one.
             *self.session_id.lock().await = None;
         }
@@ -861,12 +873,19 @@ impl ThreadRuntime {
             env_vars.extend(applied.env);
             extra_args.extend(applied.command_args);
         }
+        let agent_prefs = crate::agent_state::read_prefs();
+        extra_args.extend(crate::agent_state::resolve_agent_acp_args(
+            &agent_prefs,
+            &agent_id,
+        ));
 
         let ready = Agent::spawn(
             agent_id,
             route,
             &worktree,
-            resume_session_id,
+            resume_session_id
+                .map(StartupSession::Load)
+                .unwrap_or(StartupSession::Fresh),
             handler,
             extra_args,
             env_vars,
@@ -1104,6 +1123,28 @@ fn latest_session_for_host(thread: &WorkspaceThread) -> Option<String> {
         .get(&thread.host_binding)
         .and_then(|sessions| sessions.last())
         .map(|session| session.session_id.clone())
+}
+
+fn host_startup_session(
+    route: &RouteKey,
+    runtime_session_id: Option<String>,
+    thread: &WorkspaceThread,
+    im_auto_continue_last_session: bool,
+) -> StartupSession {
+    let Some(session_id) = runtime_session_id.or_else(|| latest_session_for_host(thread)) else {
+        return StartupSession::Fresh;
+    };
+    if route_allows_startup_replay(route) {
+        StartupSession::Load(session_id)
+    } else if im_auto_continue_last_session {
+        StartupSession::Resume(session_id)
+    } else {
+        StartupSession::Fresh
+    }
+}
+
+pub(crate) fn route_allows_startup_replay(route: &RouteKey) -> bool {
+    route.channel_kind == "web"
 }
 
 fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
@@ -1360,6 +1401,49 @@ mod tests {
         let state = futures::executor::block_on(runtime.state());
 
         assert_eq!(state.session_id.as_deref(), Some("session-old"));
+    }
+
+    #[test]
+    fn web_routes_load_previous_host_session_for_playback() {
+        let route = RouteKey::new("web", "chat-1");
+
+        let startup_session = host_startup_session(&route, None, &thread_with_sessions(), true);
+
+        assert_eq!(
+            startup_session,
+            StartupSession::Load("session-old".to_string())
+        );
+    }
+
+    #[test]
+    fn im_routes_resume_previous_host_session_without_playback() {
+        let route = RouteKey::new("slack", "dm-1");
+
+        let startup_session = host_startup_session(
+            &route,
+            Some("runtime-session".to_string()),
+            &thread_with_sessions(),
+            true,
+        );
+
+        assert_eq!(
+            startup_session,
+            StartupSession::Resume("runtime-session".to_string())
+        );
+    }
+
+    #[test]
+    fn im_routes_start_fresh_when_auto_continue_disabled() {
+        let route = RouteKey::new("slack", "dm-1");
+
+        let startup_session = host_startup_session(
+            &route,
+            Some("runtime-session".to_string()),
+            &thread_with_sessions(),
+            false,
+        );
+
+        assert_eq!(startup_session, StartupSession::Fresh);
     }
 
     #[test]

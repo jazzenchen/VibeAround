@@ -27,6 +27,8 @@ export const zhCNDesktopDashboard: Record<string, string> = {
   "Services restarted.": "服务已重启。",
   General: "通用",
   IM: "IM",
+  "IM Channel": "通讯工具",
+  Sessions: "会话",
   Proxy: "Proxy",
   "Restart Services": "重启服务",
   Restart: "重启",
@@ -36,12 +38,14 @@ export const zhCNDesktopDashboard: Record<string, string> = {
   "Restart VibeAround runtime services after local changes.":
     "本地配置修改后重启 VibeAround 运行服务。",
   "Open the configuration wizard again.": "重新打开配置向导。",
-  "Apply IM Settings": "应用 IM 设置",
+  "Apply IM Channel Settings": "应用通讯工具设置",
+  "Apply Session Settings": "应用会话设置",
   "Apply Agent Settings": "应用 Agent 设置",
   "Apply Proxy Settings": "应用 Proxy 设置",
   "Applying…": "应用中…",
   "Agent settings applied.": "Agent 设置已应用。",
-  "IM settings applied.": "IM 设置已应用。",
+  "IM Channel settings applied.": "通讯工具设置已应用。",
+  "Session settings applied.": "会话设置已应用。",
   "Proxy settings applied.": "Proxy 设置已应用。",
   "Tunnel settings saved.": "隧道设置已保存。",
   "Tunnel settings applied.": "隧道设置已应用。",
@@ -72,6 +76,11 @@ export const zhCNDesktopDashboard: Record<string, string> = {
     "允许 Profile 选择是否使用这个 HTTP proxy。",
   "HTTP proxy URL": "HTTP proxy URL",
   "No proxy": "不走 proxy",
+  "Configure how VibeAround restores active conversations.":
+    "配置 VibeAround 如何恢复进行中的对话。",
+  "Auto-continue IM Channel sessions": "自动延续通讯工具会话",
+  "When an IM Channel message attaches to a thread, continue that thread's latest agent session without replaying old output.":
+    "当通讯工具消息附加到 thread 时，延续该 thread 最近的 agent session，并且不回放旧输出。",
   "Runtime health for tunnels, agents, and messaging channels.":
     "查看隧道、Agent 和消息频道的运行状态。",
   "No tunnel running": "没有运行中的隧道",

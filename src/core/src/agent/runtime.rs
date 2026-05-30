@@ -23,6 +23,7 @@
 //! [`RestartPolicy`]: crate::process::RestartPolicy
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{anyhow, Context};
@@ -69,6 +70,26 @@ pub struct AgentReady {
     pub initialize: schema::InitializeResponse,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartupSession {
+    Fresh,
+    /// Attach with startup replay. Web uses this to rebuild visible history.
+    Load(String),
+    /// Attach without startup replay. The bridge uses ACP `session/resume`
+    /// where available, and otherwise suppresses startup notifications while
+    /// falling back to `session/load`.
+    Resume(String),
+}
+
+impl StartupSession {
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Fresh => None,
+            Self::Load(session_id) | Self::Resume(session_id) => Some(session_id.as_str()),
+        }
+    }
+}
+
 /// One live ACP-speaking coding CLI.
 pub struct Agent {
     /// The southbound ACP connection to the real agent process.
@@ -78,6 +99,7 @@ pub struct Agent {
     initialize: schema::InitializeResponse,
     /// ACP session ID obtained from new_session / load_session.
     session_id: Mutex<Option<String>>,
+    suppress_startup_notifications: Arc<AtomicBool>,
     /// Supervisor handle installed by [`Agent::spawn`] after registration.
     /// `None` until the registration returns — effectively
     /// a moment-of-initialization gap where `shutdown()` is a no-op.
@@ -98,7 +120,7 @@ impl Agent {
         agent_id: String,
         route: &RouteKey,
         workspace: &Path,
-        resume_session_id: Option<String>,
+        startup_session: StartupSession,
         client_handler: Arc<dyn AgentClientHandler>,
         extra_args: Vec<String>,
         extra_env: Vec<(String, String)>,
@@ -133,7 +155,7 @@ impl Agent {
         let bridge = AcpAgentBridge {
             agent_id: agent_id.clone(),
             cwd,
-            resume_session_id,
+            startup_session,
             client_handler,
             ready_tx,
         };
@@ -172,12 +194,14 @@ impl Agent {
         agent_id: String,
         initialize: schema::InitializeResponse,
         startup_session_id: Option<String>,
+        suppress_startup_notifications: Arc<AtomicBool>,
     ) -> Arc<Self> {
         Arc::new(Self {
             conn,
             agent_id,
             initialize,
             session_id: Mutex::new(startup_session_id),
+            suppress_startup_notifications,
             process_id: OnceLock::new(),
         })
     }
@@ -230,6 +254,7 @@ impl Agent {
         &self,
         args: schema::NewSessionRequest,
     ) -> acp::Result<schema::NewSessionResponse> {
+        self.allow_startup_notifications();
         let resp = self.conn.send_request(args).block_task().await?;
         *self.session_id.lock().await = Some(resp.session_id.to_string());
         Ok(resp)
@@ -253,6 +278,7 @@ impl Agent {
     }
 
     pub async fn prompt(&self, args: schema::PromptRequest) -> acp::Result<schema::PromptResponse> {
+        self.allow_startup_notifications();
         self.conn.send_request(args).block_task().await
     }
 
@@ -265,6 +291,11 @@ impl Agent {
         args: schema::SetSessionConfigOptionRequest,
     ) -> acp::Result<schema::SetSessionConfigOptionResponse> {
         self.conn.send_request(args).block_task().await
+    }
+
+    fn allow_startup_notifications(&self) {
+        self.suppress_startup_notifications
+            .store(false, Ordering::SeqCst);
     }
 }
 

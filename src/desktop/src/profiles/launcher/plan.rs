@@ -98,13 +98,15 @@ impl<'a> LaunchPlanBuilder<'a> {
             return Ok(LaunchPlan {
                 env: Vec::new(),
                 command: agent.pty.command.clone(),
-                args: Vec::new(),
+                args: terminal_launch_args_for_agent(agent_id),
                 window_label: format!("{} (direct)", agent.display_name),
                 workspace,
             });
         };
 
-        let (command, args) = resume_command_for_agent(agent_id, session_id)?;
+        let (command, resume_args) = resume_command_for_agent(agent_id, session_id)?;
+        let mut args = terminal_launch_args_for_agent(agent_id);
+        args.extend(resume_args);
         Ok(LaunchPlan {
             env: Vec::new(),
             command,
@@ -120,15 +122,15 @@ impl<'a> LaunchPlanBuilder<'a> {
         launch_target: &str,
         rendered: profiles::render::RenderedProfile,
     ) -> anyhow::Result<LaunchPlan> {
-        let command_args = rendered.command_args.clone();
-        let env = materialized_profile_env(profile, launch_target, &self.launch_id, rendered)?;
-
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let agent = resources::agent_by_id(agent_id)
             .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
         agent_integrations::auto_install_project_integrations(agent_id, &workspace)
             .with_context(|| format!("install project integrations for {}", agent_id))?;
+        let mut command_args = rendered.command_args.clone();
+        command_args.extend(terminal_launch_args_for_agent(agent_id));
+        let env = materialized_profile_env(profile, launch_target, &self.launch_id, rendered)?;
 
         Ok(LaunchPlan {
             env,
@@ -153,12 +155,10 @@ impl<'a> LaunchPlanBuilder<'a> {
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
         agent_integrations::auto_install_project_integrations(agent_id, &workspace)
             .with_context(|| format!("install project integrations for {}", agent_id))?;
-        let (command, mut args) = resume_command_for_agent(agent_id, session_id)?;
-        if !rendered.command_args.is_empty() {
-            let mut profile_args = rendered.command_args.clone();
-            profile_args.extend(args);
-            args = profile_args;
-        }
+        let (command, resume_args) = resume_command_for_agent(agent_id, session_id)?;
+        let mut args = rendered.command_args.clone();
+        args.extend(terminal_launch_args_for_agent(agent_id));
+        args.extend(resume_args);
 
         Ok(LaunchPlan {
             env,
@@ -187,6 +187,40 @@ fn materialized_profile_env(
         launch_target.to_string(),
     ));
     Ok(env)
+}
+
+#[cfg(not(test))]
+fn terminal_launch_args_for_agent(agent_id: &str) -> Vec<String> {
+    let prefs = ::common::agent_state::read_prefs();
+    ::common::agent_state::resolve_agent_terminal_args(&prefs, agent_id)
+}
+
+#[cfg(test)]
+fn terminal_launch_args_for_agent(agent_id: &str) -> Vec<String> {
+    test_terminal_launch_args()
+        .lock()
+        .expect("test launch args")
+        .get(agent_id)
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+type TestLaunchArgs = std::sync::Mutex<std::collections::BTreeMap<String, Vec<String>>>;
+
+#[cfg(test)]
+type TestLaunchArgsIsolation = std::sync::Mutex<()>;
+
+#[cfg(test)]
+fn test_terminal_launch_args() -> &'static TestLaunchArgs {
+    static ARGS: std::sync::OnceLock<TestLaunchArgs> = std::sync::OnceLock::new();
+    ARGS.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
+}
+
+#[cfg(test)]
+fn test_terminal_launch_args_isolation() -> &'static TestLaunchArgsIsolation {
+    static LOCK: std::sync::OnceLock<TestLaunchArgsIsolation> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
 
 fn resume_command_for_agent(
@@ -255,6 +289,37 @@ mod tests {
         }
     }
 
+    struct TestLaunchArgsGuard {
+        agent_id: String,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for TestLaunchArgsGuard {
+        fn drop(&mut self) {
+            test_terminal_launch_args()
+                .lock()
+                .expect("test launch args")
+                .remove(&self.agent_id);
+        }
+    }
+
+    fn set_terminal_launch_args(agent_id: &str, args: &[&str]) -> TestLaunchArgsGuard {
+        let lock = test_terminal_launch_args_isolation()
+            .lock()
+            .expect("test launch args isolation");
+        test_terminal_launch_args()
+            .lock()
+            .expect("test launch args")
+            .insert(
+                agent_id.to_string(),
+                args.iter().map(|arg| (*arg).to_string()).collect(),
+            );
+        TestLaunchArgsGuard {
+            agent_id: agent_id.to_string(),
+            _lock: lock,
+        }
+    }
+
     fn minimax_anthropic_profile() -> ProfileDef {
         ProfileDef {
             id: "minimax-test".to_string(),
@@ -293,6 +358,22 @@ mod tests {
     }
 
     #[test]
+    fn direct_launch_plan_includes_agent_terminal_args() {
+        let _guard = set_terminal_launch_args("codex", &["--sandbox", "danger-full-access"]);
+        let plan = LaunchPlanBuilder::with_launch_id("launch-123")
+            .direct("codex")
+            .build()
+            .expect("direct plan");
+
+        assert_eq!(plan.command, "codex");
+        assert_eq!(
+            plan.args,
+            vec!["--sandbox".to_string(), "danger-full-access".to_string()]
+        );
+        assert!(plan.env.is_empty());
+    }
+
+    #[test]
     fn direct_resume_plan_uses_agent_resume_command() {
         let plan = LaunchPlanBuilder::with_launch_id("launch-123")
             .direct("claude")
@@ -311,6 +392,26 @@ mod tests {
             ]
         );
         assert_eq!(plan.window_label, "Claude Code (resume)");
+    }
+
+    #[test]
+    fn direct_resume_plan_places_agent_args_before_resume_args() {
+        let _guard = set_terminal_launch_args("codex", &["--sandbox", "read-only"]);
+        let plan = LaunchPlanBuilder::with_launch_id("launch-123")
+            .direct("codex")
+            .resume("session-456")
+            .build()
+            .expect("direct resume plan");
+
+        assert_eq!(
+            plan.args,
+            vec![
+                "--sandbox".to_string(),
+                "read-only".to_string(),
+                "resume".to_string(),
+                "session-456".to_string(),
+            ]
+        );
     }
 
     #[test]
@@ -349,6 +450,19 @@ mod tests {
         assert!(plan
             .env
             .contains(&("VIBEAROUND_LAUNCH_TARGET".to_string(), "claude".to_string())));
+    }
+
+    #[test]
+    fn profile_launch_plan_appends_agent_terminal_args() {
+        let _guard = set_terminal_launch_args("opencode", &["--trace"]);
+        let profile = minimax_anthropic_profile();
+        let plan = LaunchPlanBuilder::with_launch_id("launch-123")
+            .profile(&profile, "opencode")
+            .build()
+            .expect("profile plan");
+
+        assert_eq!(plan.command, "opencode");
+        assert_eq!(plan.args.last().map(String::as_str), Some("--trace"));
     }
 
     #[test]

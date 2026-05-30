@@ -128,6 +128,11 @@ pub struct AgentSummary {
     pub display_name: String,
     pub description: String,
     pub install_type: Option<String>,
+    pub pty_command: String,
+    pub acp_program: String,
+    pub acp_args: Vec<String>,
+    pub acp_npm_package: Option<String>,
+    pub acp_bin_name: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -193,6 +198,11 @@ pub fn list_agents() -> Vec<AgentSummary> {
             display_name: a.display_name.clone(),
             description: a.description.clone(),
             install_type: a.install.as_ref().map(|i| i.install_type.clone()),
+            pty_command: a.pty.command.clone(),
+            acp_program: a.acp.program.clone(),
+            acp_args: a.acp.args.clone(),
+            acp_npm_package: a.acp.npm_package.clone(),
+            acp_bin_name: a.acp.bin_name.clone(),
         })
         .collect()
 }

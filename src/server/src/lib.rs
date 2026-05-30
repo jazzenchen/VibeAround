@@ -54,8 +54,21 @@ pub struct RunningDaemon {
 
 impl RunningDaemon {
     pub async fn stop(self) {
-        self.workspace_thread_manager.shutdown_all().await;
-        self.channel_hub.shutdown_all().await;
+        let RunningDaemon {
+            channel_hub,
+            workspace_thread_manager,
+            web_handle,
+            tunnel_handle,
+            web_dispatch_handle,
+            tunnels,
+            pty,
+            channel_input_shutdown,
+            channel_input_handle,
+            ..
+        } = self;
+
+        workspace_thread_manager.shutdown_all().await;
+        channel_hub.shutdown_all().await;
 
         // Safety net: synchronously kill any child process still registered
         // after the graceful shutdown paths ran. Covers cases where the
@@ -67,26 +80,31 @@ impl RunningDaemon {
         // outlive the daemon. Best-effort; failures are logged.
         common::previews::shutdown_kill_all_ports();
 
-        let pty_manager = PtySessionManager::from_registry(Arc::clone(&self.pty));
-        let session_ids: Vec<SessionId> =
-            self.pty.iter().map(|entry| entry.key().clone()).collect();
+        let pty_manager = PtySessionManager::from_registry(Arc::clone(&pty));
+        let session_ids: Vec<SessionId> = pty.iter().map(|entry| entry.key().clone()).collect();
         for session_id in session_ids {
             let _ = pty_manager.delete_session(session_id);
         }
 
-        self.web_dispatch_handle.abort();
-        self.web_handle.abort();
-        self.tunnel_handle.abort();
+        web_dispatch_handle.abort();
+        web_handle.abort();
+        tunnel_handle.abort();
 
         // Wake the channel-input task and wait for it to exit.
-        self.channel_input_shutdown.notify_waiters();
-        self.channel_input_handle.abort();
-        let _ = self.channel_input_handle.await;
+        channel_input_shutdown.notify_waiters();
+        channel_input_handle.abort();
+        let _ = channel_input_handle.await;
+
+        // Wait for aborted tasks so their sockets and child handles are
+        // dropped before a hot restart probes/binds the same port.
+        let _ = web_handle.await;
+        let _ = tunnel_handle.await;
+        let _ = web_dispatch_handle.await;
 
         // Clear tunnel + PTY registries so stale entries don't persist
         // across restarts.
-        self.tunnels.clear();
-        self.pty.clear();
+        tunnels.clear();
+        pty.clear();
     }
 }
 

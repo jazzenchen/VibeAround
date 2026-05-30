@@ -74,6 +74,12 @@ export interface ProviderSettings {
 export interface AgentLaunchPreference {
   profileId?: string | null;
   workspace?: string | null;
+  launchArgs?: AgentLaunchArgs | null;
+}
+
+export interface AgentLaunchArgs {
+  terminal?: string[] | null;
+  acp?: string[] | null;
 }
 
 export interface DeepSeekProviderSettings {
