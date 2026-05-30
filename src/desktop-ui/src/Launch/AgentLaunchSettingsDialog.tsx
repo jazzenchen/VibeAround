@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, Plus, RotateCcw, X } from "lucide-react";
+import { Plus, RotateCcw, X } from "lucide-react";
 import { useI18n } from "@va/i18n";
 
 import { Button } from "@/components/ui/button";
@@ -14,11 +14,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  applyCodexSandboxPreset,
-  inferCodexSandboxPreset,
   parseLaunchArgInput,
   sameArgs,
-  type CodexSandboxPreset,
   type LaunchArgParseError,
 } from "./agentLaunchArgs";
 import type { AgentSummary } from "./api";
@@ -53,16 +50,6 @@ interface ArgsEditorProps {
 
 type LaunchArgTab = "terminal" | "acp";
 type ClientOs = "macos" | "windows" | "linux";
-
-const CODEX_SANDBOX_PRESETS: Array<{
-  id: CodexSandboxPreset;
-  label: string;
-}> = [
-  { id: "default", label: "Default" },
-  { id: "read-only", label: "Read only" },
-  { id: "workspace-write", label: "Workspace write" },
-  { id: "danger-full-access", label: "Full access" },
-];
 
 const ACP_NPM_BIN_DIR = "~/.vibearound/plugins/node_modules/.bin";
 const ACP_NPM_BIN_DIR_WINDOWS =
@@ -176,8 +163,6 @@ export function AgentLaunchSettingsDialog({
   const previewWindowLabel =
     windowLabel?.trim() || `${agent.display_name} (direct)`;
   const clientOs = detectClientOs();
-  const sandboxPreset =
-    agent.id === "codex" ? inferCodexSandboxPreset(terminalArgs) : null;
   const dirty =
     !sameArgs(terminalArgs, initialArgs.terminal ?? []) ||
     !sameArgs(acpArgs, initialArgs.acp ?? []);
@@ -235,37 +220,6 @@ export function AgentLaunchSettingsDialog({
             </TabsList>
 
             <TabsContent value="terminal" className="mt-0 space-y-3">
-              {agent.id === "codex" && sandboxPreset && (
-                <section className="space-y-1.5">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
-                    {t("Sandbox")}
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-                    {CODEX_SANDBOX_PRESETS.map((preset) => {
-                      const active = sandboxPreset === preset.id;
-                      return (
-                        <Button
-                          key={preset.id}
-                          type="button"
-                          variant={active ? "default" : "outline"}
-                          size="sm"
-                          disabled={busy}
-                          className="h-8 min-w-0 justify-center px-2 text-xs"
-                          onClick={() =>
-                            setTerminalArgs((current) =>
-                              applyCodexSandboxPreset(current, preset.id),
-                            )
-                          }
-                        >
-                          {active && <Check className="h-3 w-3" />}
-                          {t(preset.label)}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
-
               <ArgsEditor
                 label={t("Terminal arguments")}
                 previewKind="terminal"
@@ -391,7 +345,7 @@ function ArgsEditor({
           value={draftArg}
           disabled={busy}
           placeholder={t("Argument or command-line fragment")}
-          className="h-8 font-mono text-xs"
+          className="h-8 font-mono text-xs [font-variant-ligatures:none]"
           onChange={(event) => onChangeDraftArg(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -474,7 +428,7 @@ function LaunchPreview({
   }
 
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-3 py-2 font-mono text-[11px] leading-5">
+    <div className="rounded-md border border-border bg-muted/20 px-3 py-2 font-mono text-[11px] leading-5 [font-variant-ligatures:none]">
       <PreviewLine muted>#!/bin/bash</PreviewLine>
       <PreviewLine muted>rm -- "$0"</PreviewLine>
       <PreviewLine muted>set -e</PreviewLine>
@@ -526,7 +480,7 @@ function WindowsLaunchPreview({
 }) {
   const [program, ...programArgs] = commandWords;
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-3 py-2 font-mono text-[11px] leading-5">
+    <div className="rounded-md border border-border bg-muted/20 px-3 py-2 font-mono text-[11px] leading-5 [font-variant-ligatures:none]">
       <PreviewLine muted>
         $Host.UI.RawUI.WindowTitle ={" "}
         {powershellSingleQuoted(`VibeAround - ${windowLabel}`)}
@@ -608,7 +562,7 @@ function AcpProcessPreview({
 }) {
   const quote = clientOs === "windows" ? powershellSingleQuoted : quoteCommandWord;
   return (
-    <div className="rounded-md border border-border bg-muted/20 px-3 py-2 font-mono text-[11px] leading-5">
+    <div className="rounded-md border border-border bg-muted/20 px-3 py-2 font-mono text-[11px] leading-5 [font-variant-ligatures:none]">
       <PreviewLine muted>cwd {quote(workspacePath)}</PreviewLine>
       <div className="flex min-h-6 flex-wrap items-center gap-x-1.5 gap-y-1">
         <span className="text-muted-foreground">spawn</span>
