@@ -9,7 +9,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::agent::{Agent, AgentClientHandler};
+use crate::agent::{Agent, AgentClientHandler, StartupSession};
 use crate::routing::RouteKey;
 
 use super::registry::WorkspaceId;
@@ -81,7 +81,7 @@ pub async fn capture(
         agent_id.clone(),
         route,
         workspace,
-        Some(source_session_id.to_string()),
+        StartupSession::Load(source_session_id.to_string()),
         handler,
         extra_args,
         env_vars,

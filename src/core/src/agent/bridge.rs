@@ -29,14 +29,14 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use crate::process::acp_transport::notifying_stdio_transport;
 use crate::process::bridge::{BridgeExit, BridgeFuture, CancelSignal, ProcessBridge, StdioPipes};
 
-use super::runtime::{Agent, AgentClientHandler, AgentReady};
+use super::runtime::{Agent, AgentClientHandler, AgentReady, StartupSession};
 
 /// Single-shot bridge that initializes an ACP connection on its own
 /// thread, then runs the IO loop until cancelled or the child exits.
 pub struct AcpAgentBridge {
     pub agent_id: String,
     pub cwd: PathBuf,
-    pub resume_session_id: Option<String>,
+    pub startup_session: StartupSession,
     pub client_handler: Arc<dyn AgentClientHandler>,
     pub ready_tx: oneshot::Sender<anyhow::Result<AgentReady>>,
 }
@@ -48,7 +48,7 @@ impl ProcessBridge for AcpAgentBridge {
             let AcpAgentBridge {
                 agent_id,
                 cwd,
-                resume_session_id,
+                startup_session,
                 client_handler,
                 ready_tx,
             } = this;
@@ -56,7 +56,7 @@ impl ProcessBridge for AcpAgentBridge {
             drive_agent_bridge(
                 agent_id,
                 cwd,
-                resume_session_id,
+                startup_session,
                 client_handler,
                 ready_tx,
                 pipes,
@@ -70,7 +70,7 @@ impl ProcessBridge for AcpAgentBridge {
 async fn drive_agent_bridge(
     agent_id: String,
     cwd: PathBuf,
-    resume_session_id: Option<String>,
+    startup_session: StartupSession,
     client_handler: Arc<dyn AgentClientHandler>,
     ready_tx: oneshot::Sender<anyhow::Result<AgentReady>>,
     pipes: StdioPipes,
@@ -115,33 +115,76 @@ async fn drive_agent_bridge(
                 }
             };
 
-            // Optional session resume. A failed resume downgrades to "start
-            // fresh" — matching the pre-migration behavior.
+            // Optional startup session attachment. `session/load` is used by
+            // web playback flows; `session/resume` attaches without replay.
             let mut startup_modes = None;
             let mut startup_config_options = None;
-            let startup_session_id = if let Some(resume) = resume_session_id.clone() {
-                match conn
-                    .send_request(schema::LoadSessionRequest::new(resume.clone(), cwd.clone()))
-                    .block_task()
-                    .await
-                {
-                    Ok(response) => {
-                        startup_modes = response.modes;
-                        startup_config_options = response.config_options;
-                        Some(resume)
-                    }
-                    Err(error) => {
-                        tracing::info!(
-                            "[{}-agent] failed to load session {}, starting without session: {}",
-                            agent_id_for_run,
-                            resume,
-                            error
-                        );
-                        None
+            let startup_session_id = match startup_session.clone() {
+                StartupSession::Fresh => None,
+                StartupSession::Load(session_id) => {
+                    match conn
+                        .send_request(schema::LoadSessionRequest::new(
+                            session_id.clone(),
+                            cwd.clone(),
+                        ))
+                        .block_task()
+                        .await
+                    {
+                        Ok(response) => {
+                            startup_modes = response.modes;
+                            startup_config_options = response.config_options;
+                            Some(session_id)
+                        }
+                        Err(error) => {
+                            tracing::info!(
+                                "[{}-agent] failed to load session {}, starting without session: {}",
+                                agent_id_for_run,
+                                session_id,
+                                error
+                            );
+                            None
+                        }
                     }
                 }
-            } else {
-                None
+                StartupSession::Resume(session_id) => {
+                    if initialize
+                        .agent_capabilities
+                        .session_capabilities
+                        .resume
+                        .is_none()
+                    {
+                        tracing::info!(
+                            "[{}-agent] session/resume unsupported for {}, starting without session",
+                            agent_id_for_run,
+                            session_id
+                        );
+                        None
+                    } else {
+                        match conn
+                            .send_request(schema::ResumeSessionRequest::new(
+                                session_id.clone(),
+                                cwd.clone(),
+                            ))
+                            .block_task()
+                            .await
+                        {
+                            Ok(response) => {
+                                startup_modes = response.modes;
+                                startup_config_options = response.config_options;
+                                Some(session_id)
+                            }
+                            Err(error) => {
+                                tracing::info!(
+                                    "[{}-agent] failed to resume session {}, starting without session: {}",
+                                    agent_id_for_run,
+                                    session_id,
+                                    error
+                                );
+                                None
+                            }
+                        }
+                    }
+                }
             };
 
             let agent = Agent::from_connection(

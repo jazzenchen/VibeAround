@@ -19,7 +19,7 @@ url = "2.5"
 async-trait = "0.1"
 rustls = "0.23"
 chrono = "0.4"
-agent-client-protocol = { version = "=0.11.1", features = ["unstable_session_usage"] }
+agent-client-protocol = { version = "=0.11.1", features = ["unstable_session_resume", "unstable_session_usage"] }
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["compat"] }
 anyhow = "1"

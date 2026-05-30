@@ -10,7 +10,7 @@ use anyhow::Context;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::{sleep, Duration};
 
-use crate::agent::{Agent, AgentClientHandler};
+use crate::agent::{Agent, AgentClientHandler, StartupSession};
 use crate::routing::RouteKey;
 use crate::workspace::registry::WorkspaceId;
 
@@ -704,9 +704,8 @@ impl ThreadRuntime {
             .profile_id
             .clone()
             .unwrap_or_else(|| "default".to_string());
-        let startup_replay_allowed = route_allows_startup_replay(route);
         let runtime_session_id = self.session_id.lock().await.clone();
-        let resume_session_id = host_startup_resume_session_id(route, runtime_session_id, &thread);
+        let startup_session = host_startup_session(route, runtime_session_id, &thread);
 
         std::fs::create_dir_all(&self.workspace).map_err(|error| {
             acp::Error::new(
@@ -750,7 +749,7 @@ impl ThreadRuntime {
             agent_id.clone(),
             route,
             &self.workspace,
-            resume_session_id.clone(),
+            startup_session.clone(),
             handler,
             extra_args,
             env_vars,
@@ -769,10 +768,8 @@ impl ThreadRuntime {
         if let Some(session_id) = ready.startup_session_id {
             self.observe_session(&agent_id, thread.host_binding.profile_id, &session_id)
                 .await?;
-        } else if !startup_replay_allowed {
-            *self.session_id.lock().await = None;
-        } else if resume_session_id.is_some() {
-            // The bridge falls back to a fresh agent when load_session fails.
+        } else if startup_session.session_id().is_some() {
+            // The bridge falls back to a fresh agent when startup attachment fails.
             // Clear the stale candidate so ensure_session creates a real one.
             *self.session_id.lock().await = None;
         }
@@ -875,7 +872,9 @@ impl ThreadRuntime {
             agent_id,
             route,
             &worktree,
-            resume_session_id,
+            resume_session_id
+                .map(StartupSession::Load)
+                .unwrap_or(StartupSession::Fresh),
             handler,
             extra_args,
             env_vars,
@@ -1115,15 +1114,19 @@ fn latest_session_for_host(thread: &WorkspaceThread) -> Option<String> {
         .map(|session| session.session_id.clone())
 }
 
-fn host_startup_resume_session_id(
+fn host_startup_session(
     route: &RouteKey,
     runtime_session_id: Option<String>,
     thread: &WorkspaceThread,
-) -> Option<String> {
-    if !route_allows_startup_replay(route) {
-        return None;
+) -> StartupSession {
+    let Some(session_id) = runtime_session_id.or_else(|| latest_session_for_host(thread)) else {
+        return StartupSession::Fresh;
+    };
+    if route_allows_startup_replay(route) {
+        StartupSession::Load(session_id)
+    } else {
+        StartupSession::Resume(session_id)
     }
-    runtime_session_id.or_else(|| latest_session_for_host(thread))
 }
 
 pub(crate) fn route_allows_startup_replay(route: &RouteKey) -> bool {
@@ -1390,22 +1393,28 @@ mod tests {
     fn web_routes_load_previous_host_session_for_playback() {
         let route = RouteKey::new("web", "chat-1");
 
-        let session_id = host_startup_resume_session_id(&route, None, &thread_with_sessions());
+        let startup_session = host_startup_session(&route, None, &thread_with_sessions());
 
-        assert_eq!(session_id.as_deref(), Some("session-old"));
+        assert_eq!(
+            startup_session,
+            StartupSession::Load("session-old".to_string())
+        );
     }
 
     #[test]
-    fn im_routes_do_not_load_previous_host_session_for_playback() {
+    fn im_routes_resume_previous_host_session_without_playback() {
         let route = RouteKey::new("slack", "dm-1");
 
-        let session_id = host_startup_resume_session_id(
+        let startup_session = host_startup_session(
             &route,
             Some("runtime-session".to_string()),
             &thread_with_sessions(),
         );
 
-        assert_eq!(session_id, None);
+        assert_eq!(
+            startup_session,
+            StartupSession::Resume("runtime-session".to_string())
+        );
     }
 
     #[test]

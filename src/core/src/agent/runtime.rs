@@ -69,6 +69,22 @@ pub struct AgentReady {
     pub initialize: schema::InitializeResponse,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartupSession {
+    Fresh,
+    Load(String),
+    Resume(String),
+}
+
+impl StartupSession {
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::Fresh => None,
+            Self::Load(session_id) | Self::Resume(session_id) => Some(session_id.as_str()),
+        }
+    }
+}
+
 /// One live ACP-speaking coding CLI.
 pub struct Agent {
     /// The southbound ACP connection to the real agent process.
@@ -98,7 +114,7 @@ impl Agent {
         agent_id: String,
         route: &RouteKey,
         workspace: &Path,
-        resume_session_id: Option<String>,
+        startup_session: StartupSession,
         client_handler: Arc<dyn AgentClientHandler>,
         extra_args: Vec<String>,
         extra_env: Vec<(String, String)>,
@@ -133,7 +149,7 @@ impl Agent {
         let bridge = AcpAgentBridge {
             agent_id: agent_id.clone(),
             cwd,
-            resume_session_id,
+            startup_session,
             client_handler,
             ready_tx,
         };
