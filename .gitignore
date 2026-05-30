@@ -59,6 +59,7 @@ demo*/
 
 # Exclude from commit (tooling / temp)
 .claude/
+.gemini/
 .specstory/
 .docs/
 .cursorindexingignore
