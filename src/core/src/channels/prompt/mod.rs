@@ -71,6 +71,17 @@ pub async fn handle_channel_input(
                 Err(e) => {
                     tracing::warn!(route = %route, error = %e, "prompt failed");
                     send_system_text(plugin_host, &route, &format!("❌ {}", e)).await;
+                    if let Some(reason) = auto_close_reason_for_prompt_error(&e) {
+                        if let Err(close_error) =
+                            workspace_threads.close_route(&route, Some(reason)).await
+                        {
+                            tracing::warn!(
+                                route = %route,
+                                error = %close_error,
+                                "failed to auto-close failed workspace thread"
+                            );
+                        }
+                    }
                 }
             }
             send_prompt_done(plugin_host, &route, message_id).await;
@@ -172,4 +183,54 @@ async fn send_prompt_done(
             message_id,
         })
         .await;
+}
+
+fn auto_close_reason_for_prompt_error(error: &acp::Error) -> Option<String> {
+    if error.code == acp::ErrorCode::AuthRequired {
+        return Some("agent authentication required".to_string());
+    }
+
+    let message = error.message.trim().to_ascii_lowercase();
+    if message == "workspace thread is closed" {
+        return Some("workspace thread already closed".to_string());
+    }
+    if message.contains("authentication required") {
+        return Some("agent authentication required".to_string());
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_close_only_for_unrecoverable_prompt_errors() {
+        assert_eq!(
+            auto_close_reason_for_prompt_error(&acp::Error::auth_required()).as_deref(),
+            Some("agent authentication required")
+        );
+        assert_eq!(
+            auto_close_reason_for_prompt_error(&acp::Error::new(
+                -32603,
+                "workspace thread is closed"
+            ))
+            .as_deref(),
+            Some("workspace thread already closed")
+        );
+        assert_eq!(
+            auto_close_reason_for_prompt_error(&acp::Error::new(
+                -32603,
+                "ACP initialize failed for claude: Authentication required"
+            ))
+            .as_deref(),
+            Some("agent authentication required")
+        );
+        assert!(auto_close_reason_for_prompt_error(&acp::Error::new(
+            -32603,
+            "upstream request failed"
+        ))
+        .is_none());
+    }
 }
