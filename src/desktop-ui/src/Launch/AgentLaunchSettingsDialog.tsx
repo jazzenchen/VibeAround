@@ -262,10 +262,21 @@ export function AgentLaunchSettingsDialog({
         </div>
 
         <DialogFooter className="shrink-0 border-t border-border px-5 py-3">
-          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={onClose}
+          >
             {t("Cancel")}
           </Button>
-          <Button type="button" disabled={busy || !dirty} onClick={() => void save()}>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy || !dirty}
+            onClick={() => void save()}
+          >
             {t("Save")}
           </Button>
         </DialogFooter>
