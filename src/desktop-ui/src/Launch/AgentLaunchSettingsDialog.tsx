@@ -356,7 +356,7 @@ function ArgsEditor({
           value={draftArg}
           disabled={busy}
           placeholder={t("Argument or command-line fragment")}
-          className="h-8 font-mono text-xs [font-variant-ligatures:none]"
+          className="!h-8 min-h-8 max-h-8 font-mono !text-[11px] leading-4 placeholder:!text-[11px] md:!text-[11px] [font-variant-ligatures:none]"
           onChange={(event) => onChangeDraftArg(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
