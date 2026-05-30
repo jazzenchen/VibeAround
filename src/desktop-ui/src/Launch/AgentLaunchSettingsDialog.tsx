@@ -329,6 +329,7 @@ function ArgsEditor({
           variant="ghost"
           size="xs"
           disabled={busy || args.length === 0}
+          className="cursor-pointer disabled:cursor-not-allowed"
           onClick={() => onChangeArgs([])}
         >
           <RotateCcw className="h-3 w-3" />
@@ -672,7 +673,7 @@ function CustomArgToken({
         disabled={busy}
         aria-label={removeLabel}
         title={removeLabel}
-        className="rounded-sm text-primary/70 hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+        className="cursor-pointer rounded-sm text-primary/70 hover:text-primary disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
         onClick={() => onRemoveArg(index)}
       >
         <X className="h-3 w-3" />
