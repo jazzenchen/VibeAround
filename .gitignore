@@ -64,6 +64,7 @@ demo*/
 .docs/
 .cursorindexingignore
 .superpowers/
+.gemini/
 
 # Plugins (managed separately, not committed to main repo)
 src/plugins/

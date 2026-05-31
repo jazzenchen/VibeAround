@@ -33,7 +33,9 @@ pub use routes::{
     local_models_handler, local_responses_handler,
 };
 use stream::translated_stream_response;
-use upstream::{apply_upstream_auth, redacted_url, upstream_endpoint, upstream_error_response};
+use upstream::{
+    apply_upstream_auth, redacted_url, request_stream, upstream_endpoint, upstream_error_response,
+};
 
 use super::AppState;
 
@@ -82,6 +84,14 @@ pub(super) async fn bridge_handler(
         if let Some(mapping) = &model_mapping {
             apply_wire_model(&mut agent_request, &mapping.upstream_model);
         }
+        let gemini_route = if upstream.protocol == BridgeProtocol::GeminiGenerateContent {
+            match resolve_upstream_route(&upstream, &agent_request) {
+                Ok(route) => Some(route),
+                Err(response) => return response,
+            }
+        } else {
+            None
+        };
         if let Err(message) = normalize_target_request(&mut agent_request, upstream.protocol) {
             return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message);
         }
@@ -96,6 +106,13 @@ pub(super) async fn bridge_handler(
         } else if upstream.protocol == BridgeProtocol::AnthropicMessages {
             provider_adapter.prepare_anthropic_request(&mut agent_request);
         }
+        let (stream, upstream_url) = match gemini_route {
+            Some(route) => route,
+            None => match resolve_upstream_route(&upstream, &agent_request) {
+                Ok(route) => route,
+                Err(response) => return response,
+            },
+        };
         if let Ok(mut validation_request) = upstream
             .protocol
             .decode_agent_request(agent_request.clone())
@@ -109,10 +126,6 @@ pub(super) async fn bridge_handler(
                 return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message);
             }
         }
-        let stream = agent_request
-            .get("stream")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
         let body = match serde_json::to_vec(&agent_request) {
             Ok(body) => body,
             Err(e) => {
@@ -136,7 +149,7 @@ pub(super) async fn bridge_handler(
             Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
         };
         let request = upstream_client
-            .post(&upstream.url)
+            .post(&upstream_url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .headers(upstream_headers)
             .body(body);
@@ -157,7 +170,7 @@ pub(super) async fn bridge_handler(
             route_scope = ?route_scope,
             manual_scope = ?manual_scope,
             target_api_type = %target_api_type,
-            upstream = %redacted_url(&upstream.url),
+            upstream = %redacted_url(&upstream_url),
             stream = stream,
             "API bridge passthrough forwarding request"
         );
@@ -197,6 +210,14 @@ pub(super) async fn bridge_handler(
         Ok(request) => request,
         Err(error) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, &error.to_string()),
     };
+    let gemini_route = if upstream.protocol == BridgeProtocol::GeminiGenerateContent {
+        match resolve_upstream_route(&upstream, &upstream_request) {
+            Ok(route) => Some(route),
+            Err(response) => return response,
+        }
+    } else {
+        None
+    };
     if let Err(message) = normalize_target_request(&mut upstream_request, upstream.protocol) {
         return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message);
     }
@@ -211,6 +232,13 @@ pub(super) async fn bridge_handler(
     } else if upstream.protocol == BridgeProtocol::AnthropicMessages {
         provider_adapter.prepare_anthropic_request(&mut upstream_request);
     }
+    let (stream, upstream_url) = match gemini_route {
+        Some(route) => route,
+        None => match resolve_upstream_route(&upstream, &upstream_request) {
+            Ok(route) => route,
+            Err(response) => return response,
+        },
+    };
     if let Ok(validation_request) = upstream
         .protocol
         .decode_agent_request(upstream_request.clone())
@@ -221,10 +249,6 @@ pub(super) async fn bridge_handler(
             return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message);
         }
     }
-    let stream = upstream_request
-        .get("stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let body = match serde_json::to_vec(&upstream_request) {
         Ok(body) => body,
         Err(e) => {
@@ -250,7 +274,7 @@ pub(super) async fn bridge_handler(
         Err(message) => return json_error(StatusCode::BAD_REQUEST, &message),
     };
     let request = upstream_client
-        .post(&upstream.url)
+        .post(&upstream_url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .headers(upstream_headers)
         .body(body);
@@ -271,7 +295,7 @@ pub(super) async fn bridge_handler(
         route_scope = ?route_scope,
         manual_scope = ?manual_scope,
         target_api_type = %target_api_type,
-        upstream = %redacted_url(&upstream.url),
+        upstream = %redacted_url(&upstream_url),
         bridge_model = ?model_mapping.as_ref().map(|mapping| mapping.upstream_model.as_str()),
         agent_model = ?model_mapping.as_ref().map(|mapping| mapping.agent_model.as_str()),
         stream = stream,
@@ -400,6 +424,17 @@ fn upstream_http_client(state: &AppState, profile: &ProfileDef) -> Result<reqwes
     proxy_http_client(&cfg.proxy)
 }
 
+fn resolve_upstream_route(
+    upstream: &upstream::UpstreamEndpoint,
+    request: &Value,
+) -> Result<(bool, String), Response> {
+    let stream = request_stream(upstream.protocol, request);
+    let url = upstream
+        .request_url(request)
+        .map_err(|message| json_error(StatusCode::UNPROCESSABLE_ENTITY, &message))?;
+    Ok((stream, url))
+}
+
 fn proxy_http_client(proxy: &config::HttpProxyConfig) -> Result<reqwest::Client, String> {
     let proxy_url = proxy.http_proxy.as_deref().ok_or_else(|| {
         "Settings proxy is enabled for this profile but HTTP proxy URL is empty".to_string()
@@ -526,13 +561,19 @@ fn validate_manual_scope(scope: &str) -> Result<(), Response> {
 
 fn apply_wire_model(request: &mut Value, model: &str) {
     if let Some(object) = request.as_object_mut() {
-        object.insert("model".to_string(), Value::String(model.to_string()));
+        if object.contains_key("__va_model") {
+            object.insert("__va_model".to_string(), Value::String(model.to_string()));
+        }
+        if object.contains_key("model") || !object.contains_key("__va_model") {
+            object.insert("model".to_string(), Value::String(model.to_string()));
+        }
     }
 }
 
 fn wire_model(request: &Value) -> Option<String> {
     request
         .get("model")
+        .or_else(|| request.get("__va_model"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())

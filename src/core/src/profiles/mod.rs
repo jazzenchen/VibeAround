@@ -28,10 +28,14 @@ const MOONSHOT_PROVIDER_ID: &str = "moonshot";
 const LEGACY_KIMI_PROVIDER_ID: &str = "kimi";
 const KIMI_CODING_ENDPOINT_ID: &str = "kimi-coding";
 const KIMI_CODING_LEGACY_BASE_URL: &str = "https://api.kimi.com/coding";
+const GEMINI_PROVIDER_ID: &str = "gemini";
+const GEMINI_API_ENDPOINT_ID: &str = "gemini-api";
+const LEGACY_GEMINI_OPENAI_ENDPOINT_ID: &str = "openai-compatible";
 
 pub fn normalize_legacy_profile(mut profile: ProfileDef) -> ProfileDef {
     normalize_legacy_dashscope_profile(&mut profile);
     normalize_legacy_kimi_profile(&mut profile);
+    normalize_legacy_gemini_profile(&mut profile);
 
     if profile.provider == "azure" && profile.api_types.iter().any(|t| t == "openai-chat") {
         let chat_overrides = profile.overrides.remove("openai-chat");
@@ -50,8 +54,9 @@ pub fn normalize_legacy_profile(mut profile: ProfileDef) -> ProfileDef {
 }
 
 pub fn normalize_legacy_profile_and_persist(profile: ProfileDef) -> ProfileDef {
-    let should_persist_profile_migration =
-        needs_dashscope_profile_persist(&profile) || needs_kimi_profile_persist(&profile);
+    let should_persist_profile_migration = needs_dashscope_profile_persist(&profile)
+        || needs_kimi_profile_persist(&profile)
+        || needs_gemini_profile_persist(&profile);
     let profile = normalize_legacy_profile(profile);
 
     // TODO(0.6.x): remove these legacy provider migrations once old profile
@@ -168,6 +173,18 @@ fn normalize_legacy_kimi_profile(profile: &mut ProfileDef) {
     }
 }
 
+fn normalize_legacy_gemini_profile(profile: &mut ProfileDef) {
+    if profile.provider != GEMINI_PROVIDER_ID {
+        return;
+    }
+
+    for overrides in profile.overrides.values_mut() {
+        if overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID) {
+            overrides.endpoint_id = Some(GEMINI_API_ENDPOINT_ID.to_string());
+        }
+    }
+}
+
 fn needs_dashscope_profile_persist(profile: &ProfileDef) -> bool {
     profile.provider == LEGACY_QWEN_PROVIDER_ID
         || (profile.provider == DASHSCOPE_PROVIDER_ID
@@ -182,6 +199,13 @@ fn needs_dashscope_profile_persist(profile: &ProfileDef) -> bool {
 
 fn needs_kimi_profile_persist(profile: &ProfileDef) -> bool {
     profile.provider == LEGACY_KIMI_PROVIDER_ID
+}
+
+fn needs_gemini_profile_persist(profile: &ProfileDef) -> bool {
+    profile.provider == GEMINI_PROVIDER_ID
+        && profile.overrides.values().any(|overrides| {
+            overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID)
+        })
 }
 
 #[cfg(test)]
@@ -284,5 +308,41 @@ mod tests {
         assert_eq!(overrides.endpoint_id.as_deref(), Some("kimi-coding"));
         assert_eq!(overrides.base_url, None);
         assert_eq!(overrides.model.as_deref(), Some("kimi-for-coding"));
+    }
+
+    #[test]
+    fn normalizes_legacy_gemini_openai_endpoint_id() {
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            "openai-chat".to_string(),
+            ApiTypeOverrides {
+                endpoint_id: Some("openai-compatible".to_string()),
+                base_url: None,
+                model: Some("gemini-3.1-pro".to_string()),
+                reasoning_effort: None,
+                capabilities: None,
+            },
+        );
+        let profile = ProfileDef {
+            id: "gemini-old".to_string(),
+            label: "Gemini".to_string(),
+            provider: "gemini".to_string(),
+            auth_mode: AuthMode::ApiKey,
+            api_types: vec!["openai-chat".to_string()],
+            credentials: BTreeMap::new(),
+            overrides,
+            use_settings_proxy: false,
+            provider_settings: ProviderSettings::default(),
+        };
+
+        let profile = normalize_legacy_profile(profile);
+
+        assert_eq!(
+            profile
+                .overrides
+                .get("openai-chat")
+                .and_then(|overrides| overrides.endpoint_id.as_deref()),
+            Some("gemini-api")
+        );
     }
 }

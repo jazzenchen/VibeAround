@@ -117,7 +117,7 @@ mod tests {
             overrides: [(
                 "openai-chat".to_string(),
                 ApiTypeOverrides {
-                    endpoint_id: Some("openai-compatible".to_string()),
+                    endpoint_id: Some("gemini-api".to_string()),
                     base_url: None,
                     model: Some("gemini-3.1-pro".to_string()),
                     reasoning_effort: None,

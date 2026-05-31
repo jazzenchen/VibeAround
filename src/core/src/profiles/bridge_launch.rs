@@ -766,6 +766,46 @@ mod tests {
     }
 
     #[test]
+    fn codex_bridge_launch_can_target_native_gemini_api() {
+        let mut profile = gemini_profile();
+        profile.api_types = vec!["gemini".to_string()];
+        profile.overrides.clear();
+        profile.overrides.insert(
+            "gemini".to_string(),
+            ApiTypeOverrides {
+                endpoint_id: None,
+                base_url: None,
+                model: Some("gemini-3.1-pro".to_string()),
+                reasoning_effort: Some("medium".to_string()),
+                capabilities: None,
+            },
+        );
+
+        let rendered = render_bridge_launch(
+            &profile,
+            "codex",
+            "launch-test",
+            "openai-responses",
+            "gemini",
+            None,
+            None,
+            &[],
+        )
+        .expect("codex native gemini bridge launch renders");
+
+        assert!(rendered.command_args.iter().any(|arg| {
+            arg == "model_providers.gemini.base_url='http://127.0.0.1:12358/va/local-api/gemini-test/codex-openai-responses/gemini/v1'"
+        }));
+        assert!(rendered
+            .command_args
+            .iter()
+            .any(|arg| arg == "model='gemini-3.1-pro'"));
+        assert!(rendered
+            .env
+            .contains(&("OPENAI_API_KEY".to_string(), "test-key".to_string())));
+    }
+
+    #[test]
     fn claude_bridge_launch_uses_standard_env_shape() {
         for profile in [dashscope_profile(), deepseek_profile()] {
             let rendered = render_bridge_launch(
@@ -843,7 +883,7 @@ mod tests {
         overrides.insert(
             "openai-chat".to_string(),
             ApiTypeOverrides {
-                endpoint_id: Some("openai-compatible".to_string()),
+                endpoint_id: Some("gemini-api".to_string()),
                 base_url: None,
                 model: Some("gemini-3.1-pro".to_string()),
                 reasoning_effort: Some("medium".to_string()),
