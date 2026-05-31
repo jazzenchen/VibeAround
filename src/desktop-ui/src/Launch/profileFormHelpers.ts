@@ -159,14 +159,18 @@ export function overrideForEndpoint(
   endpoint: CatalogEntry["endpoints"][number],
   current?: ApiTypeOverrides,
 ): ApiTypeOverrides {
-  const currentModel = current?.model ?? "";
-  const modelStillValid = endpoint.models.some((model) => model.id === currentModel);
-  return {
+  const next: ApiTypeOverrides = {
     ...current,
     endpoint_id: endpointId(endpoint),
     base_url: endpoint.default_base_url || undefined,
-    model: modelStillValid ? currentModel : (endpoint.models[0]?.id ?? currentModel),
   };
+  if (endpoint.models.length === 0) {
+    next.model = current?.model ?? "";
+  } else {
+    delete next.model;
+  }
+  delete next.reasoning_effort;
+  return next;
 }
 
 export function overridesForEndpoints(
@@ -214,6 +218,13 @@ export function shouldShowBaseUrl(
   }
   if (!endpoint.default_base_url) return true;
   return !!overrides.base_url && overrides.base_url !== endpoint.default_base_url;
+}
+
+export function requiresProfileModel(
+  provider: CatalogEntry,
+  endpoint: CatalogEntry["endpoints"][number] | undefined,
+): boolean {
+  return !!endpoint && (provider.id === "custom" || endpoint.models.length === 0);
 }
 
 export function apiKindHint(
@@ -273,9 +284,8 @@ export function pruneOverrides(
     if (ov.endpoint_id && endpointOptions.length > 1) {
       trimmed.endpoint_id = ov.endpoint_id;
     }
-    if (ov.model && ov.model.length > 0) trimmed.model = ov.model;
-    if (ep?.capabilities?.reasoning_effort && ov.reasoning_effort) {
-      trimmed.reasoning_effort = ov.reasoning_effort;
+    if (requiresProfileModel(provider, ep) && ov.model && ov.model.length > 0) {
+      trimmed.model = ov.model;
     }
     if (
       canOverrideInputSupport(provider, ep) &&
