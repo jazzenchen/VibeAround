@@ -407,7 +407,10 @@ fn client_route_available(
 }
 
 fn is_bridge_target_api_type(api_type: &str) -> bool {
-    matches!(api_type, "anthropic" | "openai-responses" | "openai-chat")
+    matches!(
+        api_type,
+        "anthropic" | "openai-responses" | "openai-chat" | "gemini"
+    )
 }
 
 fn recommended_bridge_target(
@@ -417,13 +420,13 @@ fn recommended_bridge_target(
 ) -> Option<String> {
     let order: &[&str] = match (agent_id, client_api_type) {
         ("claude", "anthropic") | ("opencode", "anthropic") | ("pi", "anthropic") => {
-            &["openai-responses", "openai-chat", "anthropic"]
+            &["openai-responses", "gemini", "openai-chat", "anthropic"]
         }
         ("codex", "openai-responses")
         | ("opencode", "openai-responses")
         | ("opencode", "openai-chat")
         | ("pi", "openai-responses")
-        | ("pi", "openai-chat") => &["anthropic", "openai-chat", "openai-responses"],
+        | ("pi", "openai-chat") => &["anthropic", "gemini", "openai-chat", "openai-responses"],
         ("gemini", "gemini") => &["openai-chat", "openai-responses", "anthropic"],
         _ => &[],
     };

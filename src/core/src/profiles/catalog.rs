@@ -1003,8 +1003,10 @@ mod tests {
             Some("{{base_url}}")
         );
         assert!(render.settings_files.is_empty());
-        let openai_chat = find_endpoint(provider, "openai-chat", Some("openai-compatible"))
+        assert_eq!(endpoint_id(endpoint), "gemini-api");
+        let openai_chat = find_endpoint(provider, "openai-chat", Some("gemini-api"))
             .expect("gemini openai-compatible endpoint");
+        assert_eq!(endpoint_id(openai_chat), "gemini-api");
         assert!(!openai_chat.append_v1_path);
         assert_eq!(
             openai_chat.default_base_url,

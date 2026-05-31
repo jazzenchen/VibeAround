@@ -166,6 +166,65 @@ fn gemini_cli_can_launch_openai_chat_profile_via_bridge() {
 }
 
 #[test]
+fn codex_can_launch_gemini_profile_via_bridge() {
+    let profile = profile(&["gemini"]);
+    let prefs = connections(
+        &profile.id,
+        "codex",
+        agent_state::ProfileConnectionPreference {
+            selected_api_type: Some("openai-responses".to_string()),
+            bridge: [(
+                "openai-responses".to_string(),
+                agent_state::ProfileBridgePreference {
+                    enabled: true,
+                    target_api_type: Some("gemini".to_string()),
+                    upstream_model: Some("gemini-2.5-flash".to_string()),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        },
+    );
+
+    let route = resolve_profile_agent_route_with_connections(&profile, "codex", &prefs)
+        .expect("codex gemini bridge route");
+
+    assert_eq!(route.client_api_type, "openai-responses");
+    assert_eq!(route.bridge_target_api_type.as_deref(), Some("gemini"));
+    assert_eq!(
+        route.bridge_upstream_model.as_deref(),
+        Some("gemini-2.5-flash")
+    );
+}
+
+#[test]
+fn bridge_recommendation_can_target_gemini() {
+    let profile = profile(&["gemini", "openai-chat"]);
+    let prefs = connections(
+        &profile.id,
+        "codex",
+        agent_state::ProfileConnectionPreference {
+            selected_api_type: Some("openai-responses".to_string()),
+            bridge: [(
+                "openai-responses".to_string(),
+                agent_state::ProfileBridgePreference {
+                    enabled: true,
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        },
+    );
+
+    let route = resolve_profile_agent_route_with_connections(&profile, "codex", &prefs)
+        .expect("codex recommended gemini bridge route");
+
+    assert_eq!(route.bridge_target_api_type.as_deref(), Some("gemini"));
+}
+
+#[test]
 fn bridge_route_carries_model_list() {
     let profile = profile(&["openai-chat"]);
     let prefs = connections(

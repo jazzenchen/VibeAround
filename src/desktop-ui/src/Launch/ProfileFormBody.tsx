@@ -455,7 +455,7 @@ function EndpointGroupField({
   const { t } = useI18n();
 
   return (
-    <FieldRow label={t("Plan type")}>
+    <FieldRow label={t("Endpoint")}>
       <Select value={selectedGroupId} onValueChange={onChange}>
         <SelectTrigger size="sm" className="h-8 w-full text-[13px]">
           <SelectValue />

@@ -228,7 +228,10 @@ export function apiKindHint(
     if (endpoint && endpointId(endpoint) === "vertex-openai-compatible") {
       return "Uses a Google Cloud access token and a Vertex endpoint root ending in /endpoints/openapi.";
     }
-    return "Uses a Gemini API key with Google AI Studio's OpenAI-compatible endpoint.";
+    return "Uses the same Gemini API key through Google AI Studio's OpenAI-compatible Chat Completions surface.";
+  }
+  if (provider.id === "gemini" && apiType === "gemini") {
+    return "Uses the native Gemini GenerateContent API with a Gemini API key.";
   }
   if (provider.id === "volcengine" && endpoint) {
     if (endpointId(endpoint) === "coding-plan") {

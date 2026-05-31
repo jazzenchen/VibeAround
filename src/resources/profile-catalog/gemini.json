@@ -5,6 +5,8 @@
   "homepage": "https://ai.google.dev/gemini-api",
   "endpoints": [
     {
+      "id": "gemini-api",
+      "label": "Gemini API",
       "api_type": "gemini",
       "default_base_url": "https://generativelanguage.googleapis.com",
       "models": [
@@ -48,8 +50,8 @@
       ]
     },
     {
-      "id": "openai-compatible",
-      "label": "Gemini API (OpenAI-compatible)",
+      "id": "gemini-api",
+      "label": "Gemini API",
       "api_type": "openai-chat",
       "default_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "append_v1_path": false,
