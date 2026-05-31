@@ -34,6 +34,10 @@
         "agent_kind": {
           "type": "string",
           "description": "Your agent type (e.g. claude, codex, pi, gemini, cursor, kiro, qwen-code)."
+        },
+        "profile_id": {
+          "type": "string",
+          "description": "Optional VibeAround launch profile id from $VIBEAROUND_PROFILE_ID. VibeAround-launched sessions should pass this value; external sessions may omit it and will be treated as direct."
         }
       },
       "required": ["cwd", "agent_kind"]

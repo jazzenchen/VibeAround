@@ -21,7 +21,7 @@ use super::threads::runtime::ThreadRuntime;
 use super::threads::runtime::ThreadRuntimeState;
 use super::threads::store::{
     HostBinding, MultiAgentTurn, ThreadAgent, ThreadEvent, ThreadEventStore, ThreadProjection,
-    WorkspaceThread, WorkspaceThreadId,
+    ThreadStatus, WorkspaceThread, WorkspaceThreadId,
 };
 
 pub const AGENT_HOST_IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(10 * 60);
@@ -202,11 +202,18 @@ impl WorkspaceThreadManager {
         session_id: String,
         cwd: PathBuf,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        if self.current_attachment(route).await?.is_some() {
+            self.detach_route(route).await?;
+        }
+
+        let profile_id = Some(crate::agent::launch::normalize_launch_profile_id(
+            profile_id.as_deref(),
+        ));
         let workspace = self.ensure_workspace_for_cwd(cwd).await?;
         let host_binding = HostBinding::new(agent_id.clone(), profile_id.clone());
         let projection = self.thread_projection().await?;
         let thread = projection
-            .for_workspace(&workspace.id, true)
+            .for_workspace(&workspace.id, false)
             .find(|thread| {
                 thread
                     .agent_sessions
@@ -220,9 +227,7 @@ impl WorkspaceThreadManager {
             });
 
         self.ensure_thread_persisted(&thread).await?;
-        if thread.status != crate::workspace::threads::store::ThreadStatus::Closed
-            && thread.host_binding != host_binding
-        {
+        if thread.status != ThreadStatus::Closed && thread.host_binding != host_binding {
             self.thread_store
                 .append(&ThreadEvent::host_changed(
                     thread.id.clone(),
@@ -233,7 +238,7 @@ impl WorkspaceThreadManager {
                 .context("append external session host binding")?;
             self.notify_change();
         }
-        if thread.status != crate::workspace::threads::store::ThreadStatus::Closed
+        if thread.status != ThreadStatus::Closed
             && !thread.has_agent_session(&host_binding, &session_id)
         {
             self.thread_store
@@ -654,7 +659,8 @@ impl WorkspaceThreadManager {
             self.thread_store.clone(),
             Some(self.change_tx.clone()),
         ));
-        self.runtimes.insert(thread.id.clone(), Arc::clone(&runtime));
+        self.runtimes
+            .insert(thread.id.clone(), Arc::clone(&runtime));
         let recovered = runtime
             .recover_interrupted_subagents()
             .await
@@ -968,7 +974,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attach_external_session_reuses_closed_matching_thread() {
+    async fn attach_external_session_defaults_missing_profile_to_direct() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let route = RouteKey::new("feishu", "chat-a");
+
+        let runtime = manager
+            .attach_external_session(
+                &route,
+                "claude".to_string(),
+                None,
+                "external-session".to_string(),
+                root,
+            )
+            .await
+            .unwrap();
+
+        let state = runtime.state().await;
+        assert_eq!(
+            state.host_binding,
+            HostBinding::new("claude", Some("direct".to_string()))
+        );
+        assert_eq!(state.session_id.as_deref(), Some("external-session"));
+    }
+
+    #[tokio::test]
+    async fn attach_external_session_clears_existing_route_selection() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let route = RouteKey::new("feishu", "chat-a");
+
+        let switch = manager
+            .switch_workspace(&route, root.to_str().unwrap())
+            .await
+            .unwrap();
+        let WorkspaceSwitch::Started(_) = switch else {
+            panic!("new workspace should start first thread");
+        };
+        manager
+            .create_thread_in_current_workspace(&route)
+            .await
+            .unwrap();
+
+        let switch = manager
+            .switch_workspace(&route, root.to_str().unwrap())
+            .await
+            .unwrap();
+        let WorkspaceSwitch::NeedsSelection { .. } = switch else {
+            panic!("existing workspace should ask for thread selection");
+        };
+
+        manager
+            .attach_external_session(
+                &route,
+                "codex".to_string(),
+                Some("direct".to_string()),
+                "session-picked-up".to_string(),
+                root,
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            manager.select_pending_thread(&route, "1").await.unwrap(),
+            PendingThreadSelection::NoPending
+        ));
+    }
+
+    #[tokio::test]
+    async fn attach_external_session_creates_open_thread_when_matching_thread_is_closed() {
         let (workspaces, threads, attachments) = temp_paths();
         let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
         let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
@@ -1004,10 +1082,25 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(second.state().await.thread_id, thread_id);
+        let second_thread_id = second.state().await.thread_id;
+        assert_ne!(second_thread_id, thread_id);
         assert_eq!(
             manager.thread(&thread_id).await.unwrap().unwrap().status,
-            crate::workspace::threads::store::ThreadStatus::Closed
+            ThreadStatus::Closed
+        );
+        let second_thread = manager
+            .thread(&second_thread_id)
+            .await
+            .unwrap()
+            .expect("second thread should exist");
+        assert_eq!(second_thread.status, ThreadStatus::Open);
+        assert!(second_thread.has_agent_session(
+            &HostBinding::new("codex", Some("direct".to_string())),
+            "session-closed"
+        ));
+        assert_eq!(
+            second.state().await.session_id.as_deref(),
+            Some("session-closed")
         );
         assert_eq!(
             manager
@@ -1016,7 +1109,7 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .thread_id,
-            thread_id
+            second_thread_id
         );
     }
 

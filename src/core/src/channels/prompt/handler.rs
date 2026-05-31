@@ -117,19 +117,27 @@ async fn handle_command(
             )
             .await;
         }
+        ThreadCommand::Pair(code) => {
+            if crate::auth::pair::validate(&code).is_some() {
+                send_system_text(plugin_host, route, "Session paired.").await;
+            } else {
+                send_system_text(plugin_host, route, "Pairing code is invalid or expired.").await;
+            }
+        }
         ThreadCommand::Pickup(code) => {
-            let Some((agent, session_id, cwd)) = crate::workspace::handoff::consume(&code) else {
+            let Some(handoff) = crate::workspace::handoff::consume(&code) else {
                 send_system_text(plugin_host, route, "Handoff code is invalid or expired.").await;
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             };
-            let agent_id = crate::resources::resolve_agent_id(&agent).map_err(invalid_params)?;
+            let agent_id =
+                crate::resources::resolve_agent_id(&handoff.agent_kind).map_err(invalid_params)?;
             let runtime = workspace_threads
                 .attach_external_session(
                     route,
                     agent_id.clone(),
-                    None,
-                    session_id,
-                    std::path::PathBuf::from(cwd),
+                    handoff.profile_id,
+                    handoff.session_id,
+                    std::path::PathBuf::from(handoff.cwd),
                 )
                 .await
                 .map_err(internal_error)?;
@@ -253,7 +261,7 @@ async fn handle_command(
             send_system_text(
                 plugin_host,
                 route,
-                "Commands: /switch workspace <id|path>, /switch host <agent> [profile], /pickup <code>, /new, /close. You can also prefix commands with /va or /vibearound. Reply with a listed number or thread id after switching workspace.",
+                "Commands: /switch workspace <id|path>, /switch host <agent> [profile], /pair <code>, /pickup <code>, /new, /close. You can also prefix commands with /va or /vibearound. Reply with a listed number or thread id after switching workspace.",
             )
             .await;
         }
@@ -436,6 +444,7 @@ fn bridge_handler(
 enum ThreadCommand {
     New,
     Close,
+    Pair(String),
     Pickup(String),
     SwitchWorkspace(String),
     SwitchHost {
@@ -459,6 +468,12 @@ fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
     }
     if normalized == "/close" {
         return Some(ThreadCommand::Close);
+    }
+    if let Some(code) = normalized.strip_prefix("/pair ") {
+        let code = code.trim();
+        if !code.is_empty() {
+            return Some(ThreadCommand::Pair(code.to_string()));
+        }
     }
     if let Some(code) = normalized.strip_prefix("/pickup ") {
         let code = code.trim();
@@ -545,12 +560,8 @@ fn invalid_params(error: String) -> acp::Error {
 
 fn resolve_host_binding(agent: &str, profile: Option<&str>) -> Result<HostBinding, String> {
     let agent_id = crate::resources::resolve_agent_id(agent)?;
-    let profile_id = profile
-        .map(str::trim)
-        .filter(|profile| !profile.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| Some("direct".to_string()));
-    Ok(HostBinding::new(agent_id, profile_id))
+    let profile_id = crate::agent::launch::normalize_launch_profile_id(profile);
+    Ok(HostBinding::new(agent_id, Some(profile_id)))
 }
 
 #[cfg(test)]
@@ -563,6 +574,18 @@ mod tests {
         assert_eq!(parse_thread_command("/close"), Some(ThreadCommand::Close));
         assert_eq!(parse_thread_command("/va"), Some(ThreadCommand::Help));
         assert_eq!(parse_thread_command("/va new"), Some(ThreadCommand::New));
+        assert_eq!(
+            parse_thread_command("  /pair   049778  "),
+            Some(ThreadCommand::Pair("049778".to_string()))
+        );
+        assert_eq!(
+            parse_thread_command("/vibearound pair 049778"),
+            Some(ThreadCommand::Pair("049778".to_string()))
+        );
+        assert_eq!(
+            parse_thread_command("\n/pickup   B8LX  "),
+            Some(ThreadCommand::Pickup("B8LX".to_string()))
+        );
         assert_eq!(
             parse_thread_command("/vibearound switch workspace general"),
             Some(ThreadCommand::SwitchWorkspace("general".to_string()))

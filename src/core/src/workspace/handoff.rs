@@ -11,6 +11,7 @@ use rand::Rng;
 
 struct HandoffEntry {
     agent_kind: String,
+    profile_id: Option<String>,
     session_id: String,
     cwd: String,
     expires_at: Instant,
@@ -22,6 +23,14 @@ static HANDOFF_CODES: LazyLock<Mutex<HashMap<String, HandoffEntry>>> =
 const TTL: Duration = Duration::from_secs(120);
 const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffPayload {
+    pub agent_kind: String,
+    pub profile_id: Option<String>,
+    pub session_id: String,
+    pub cwd: String,
+}
+
 fn generate_code() -> String {
     let mut rng = OsRng;
     (0..4)
@@ -32,7 +41,7 @@ fn generate_code() -> String {
         .collect()
 }
 
-pub fn store(agent_kind: String, session_id: String, cwd: String) -> String {
+pub fn store(payload: HandoffPayload) -> String {
     let mut map = HANDOFF_CODES.lock();
     let now = Instant::now();
     map.retain(|_, entry| entry.expires_at > now);
@@ -46,21 +55,27 @@ pub fn store(agent_kind: String, session_id: String, cwd: String) -> String {
     map.insert(
         code.clone(),
         HandoffEntry {
-            agent_kind,
-            session_id,
-            cwd,
+            agent_kind: payload.agent_kind,
+            profile_id: payload.profile_id,
+            session_id: payload.session_id,
+            cwd: payload.cwd,
             expires_at: now + TTL,
         },
     );
     code
 }
 
-pub fn consume(code: &str) -> Option<(String, String, String)> {
+pub fn consume(code: &str) -> Option<HandoffPayload> {
     let mut map = HANDOFF_CODES.lock();
     let now = Instant::now();
     map.retain(|_, entry| entry.expires_at > now);
     let entry = map.remove(&code.to_uppercase())?;
-    Some((entry.agent_kind, entry.session_id, entry.cwd))
+    Some(HandoffPayload {
+        agent_kind: entry.agent_kind,
+        profile_id: entry.profile_id,
+        session_id: entry.session_id,
+        cwd: entry.cwd,
+    })
 }
 
 #[cfg(test)]
@@ -80,16 +95,27 @@ mod tests {
 
     #[test]
     fn store_and_consume_roundtrip() {
-        let code = store("claude".into(), "sess-1".into(), "/tmp".into());
-        let (agent, session, cwd) = consume(&code).expect("code should resolve");
-        assert_eq!(agent, "claude");
-        assert_eq!(session, "sess-1");
-        assert_eq!(cwd, "/tmp");
+        let code = store(HandoffPayload {
+            agent_kind: "claude".into(),
+            profile_id: Some("deepseek".into()),
+            session_id: "sess-1".into(),
+            cwd: "/tmp".into(),
+        });
+        let payload = consume(&code).expect("code should resolve");
+        assert_eq!(payload.agent_kind, "claude");
+        assert_eq!(payload.profile_id.as_deref(), Some("deepseek"));
+        assert_eq!(payload.session_id, "sess-1");
+        assert_eq!(payload.cwd, "/tmp");
     }
 
     #[test]
     fn consume_is_one_shot() {
-        let code = store("gemini".into(), "sess-2".into(), "/home".into());
+        let code = store(HandoffPayload {
+            agent_kind: "gemini".into(),
+            profile_id: None,
+            session_id: "sess-2".into(),
+            cwd: "/home".into(),
+        });
         assert!(consume(&code).is_some());
         assert!(consume(&code).is_none(), "second consume must fail");
     }

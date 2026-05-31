@@ -1104,7 +1104,7 @@ fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
                 },
                 info.agent
                     .profile_id
-                    .unwrap_or_else(|| "default".to_string()),
+                    .unwrap_or_else(|| common::agent::launch::DIRECT_PROFILE_ID.to_string()),
                 match info.start {
                     common::channels::types::ChannelSessionStart::New => "New session started",
                     common::channels::types::ChannelSessionStart::Resumed =>

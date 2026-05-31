@@ -750,6 +750,10 @@ impl ThreadRuntime {
             env_vars.extend(applied.env);
             extra_args.extend(applied.command_args);
         }
+        crate::agent::launch::append_profile_id_env(
+            &mut env_vars,
+            thread.host_binding.profile_id.as_deref(),
+        );
         let agent_prefs = crate::agent_state::read_prefs();
         extra_args.extend(crate::agent_state::resolve_agent_acp_args(
             &agent_prefs,
@@ -873,6 +877,10 @@ impl ThreadRuntime {
             env_vars.extend(applied.env);
             extra_args.extend(applied.command_args);
         }
+        crate::agent::launch::append_profile_id_env(
+            &mut env_vars,
+            thread_agent.profile_id.as_deref(),
+        );
         let agent_prefs = crate::agent_state::read_prefs();
         extra_args.extend(crate::agent_state::resolve_agent_acp_args(
             &agent_prefs,
