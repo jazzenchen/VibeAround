@@ -169,7 +169,7 @@ export function apiTypeLabel(api_type: string): string {
     case "openai-responses":
       return "OpenAI Responses";
     case "gemini":
-      return "Gemini API";
+      return "Gemini GenerateContent";
     default:
       return api_type;
   }
