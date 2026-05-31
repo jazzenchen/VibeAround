@@ -26,6 +26,7 @@ use crate::{auth, config};
 pub enum AuthMode {
     ApiKey,
     OauthViaCli,
+    GoogleOauth,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

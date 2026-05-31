@@ -165,6 +165,7 @@ fn pick_auth_mode<'a>(
     let needle = match auth_mode {
         AuthMode::ApiKey => "api_key",
         AuthMode::OauthViaCli => "oauth_via_cli",
+        AuthMode::GoogleOauth => "google_oauth",
     };
     endpoint
         .auth_modes

@@ -12,6 +12,7 @@ use va_ai_api_bridge::{
     DecodeState, EncodeState, ProviderBridgeAdapter, UniversalEvent, WireEvent,
 };
 
+use super::completion::{transform_upstream_response, UpstreamResponseTransform};
 use super::{json_error, BridgeProtocol};
 
 type UpstreamByteStream =
@@ -23,6 +24,7 @@ pub(super) fn translated_stream_response(
     agent_protocol: BridgeProtocol,
     provider_adapter: ProviderBridgeAdapter,
     agent_model: Option<String>,
+    transform: UpstreamResponseTransform,
 ) -> Response {
     let stream = map_sse_stream(
         upstream,
@@ -30,6 +32,7 @@ pub(super) fn translated_stream_response(
         agent_protocol,
         provider_adapter,
         agent_model,
+        transform,
     );
     Response::builder()
         .status(StatusCode::OK)
@@ -50,6 +53,7 @@ fn map_sse_stream(
     agent_protocol: BridgeProtocol,
     provider_adapter: ProviderBridgeAdapter,
     agent_model: Option<String>,
+    transform: UpstreamResponseTransform,
 ) -> impl Stream<Item = Result<Bytes, io::Error>> + Send + 'static {
     let state = SseMapState {
         upstream: Box::pin(upstream.bytes_stream()),
@@ -57,6 +61,7 @@ fn map_sse_stream(
         agent_protocol,
         provider_adapter,
         agent_model,
+        transform,
         decode_state: DecodeState::default(),
         encode_state: EncodeState::default(),
         buffer: Vec::new(),
@@ -97,6 +102,7 @@ struct SseMapState {
     agent_protocol: BridgeProtocol,
     provider_adapter: ProviderBridgeAdapter,
     agent_model: Option<String>,
+    transform: UpstreamResponseTransform,
     decode_state: DecodeState,
     encode_state: EncodeState,
     buffer: Vec<u8>,
@@ -128,10 +134,17 @@ impl SseMapState {
             return;
         }
 
-        let mut raw = match serde_json::from_str::<Value>(&data) {
+        let raw = match serde_json::from_str::<Value>(&data) {
             Ok(value) => value,
             Err(e) => {
                 self.fail(format!("upstream sent invalid SSE JSON: {e}"));
+                return;
+            }
+        };
+        let mut raw = match transform_upstream_response(raw, self.transform) {
+            Ok(value) => value,
+            Err(message) => {
+                self.fail(message);
                 return;
             }
         };

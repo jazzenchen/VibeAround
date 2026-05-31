@@ -28,6 +28,7 @@ use self::sessions::list_sessions;
 use self::store::{create_profile, delete_profile, get_profile, reorder_profiles, save_profile};
 use self::summary::{catalog_entries, profile_summaries};
 use self::workspace::{canonical_agent_id, launcher_workspace_options};
+pub use common::profiles::google_oauth::GoogleOAuthStatus;
 pub use common::profiles::ProfileDef;
 pub use preferences::LauncherPreferences;
 pub use sessions::LaunchSessionSummary;
@@ -105,6 +106,18 @@ pub fn profiles_launch_direct(agent_id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn profiles_catalog() -> Vec<CatalogEntry> {
     catalog_entries()
+}
+
+#[tauri::command]
+pub fn profiles_google_oauth_status() -> GoogleOAuthStatus {
+    common::profiles::google_oauth::status()
+}
+
+#[tauri::command]
+pub async fn profiles_google_oauth_login() -> Result<GoogleOAuthStatus, String> {
+    common::profiles::google_oauth::login_with_browser_default_client()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 // ---------------------------------------------------------------------------

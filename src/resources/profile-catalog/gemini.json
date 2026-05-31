@@ -50,6 +50,50 @@
       ]
     },
     {
+      "id": "google-accounts",
+      "label": "Google accounts",
+      "api_type": "gemini",
+      "default_base_url": "https://cloudcode-pa.googleapis.com",
+      "append_v1_path": false,
+      "models": [
+        { "id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "context_window": 1048576 },
+        { "id": "gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash Lite", "context_window": 1048576 },
+        { "id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite", "context_window": 1048576 },
+        { "id": "gemini-3-flash-preview", "label": "Gemini 3 Flash", "aliases": ["gemini-3-flash"], "context_window": 1048576 },
+        { "id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro", "context_window": 1048576 },
+        { "id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro", "aliases": ["gemini-3.1-pro"], "context_window": 1048576 }
+      ],
+      "capabilities": {
+        "content": {
+          "image_input": true,
+          "file_input": true
+        }
+      },
+      "auth_modes": [
+        {
+          "mode": "google_oauth",
+          "label": "Use Google account",
+          "fields": [
+            {
+              "name": "google_cloud_project",
+              "label": "Google Cloud project",
+              "required": false,
+              "placeholder": "Optional project id"
+            }
+          ],
+          "render": {
+            "env": {
+              "GOOGLE_GENAI_USE_GCA": "true",
+              "GOOGLE_CLOUD_PROJECT": "{{google_cloud_project}}",
+              "GEMINI_DEFAULT_AUTH_TYPE": "oauth-personal",
+              "GEMINI_MODEL": "{{model}}"
+            },
+            "settings_files": []
+          }
+        }
+      ]
+    },
+    {
       "id": "gemini-api",
       "label": "Gemini API",
       "api_type": "openai-chat",

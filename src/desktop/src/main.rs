@@ -232,6 +232,8 @@ fn main() {
             profiles::profiles_launch_direct,
             profiles::profiles_launch_direct_resume,
             profiles::profiles_catalog,
+            profiles::profiles_google_oauth_status,
+            profiles::profiles_google_oauth_login,
             profiles::launcher_list_sessions,
             profiles::launcher_list_workspaces,
             profiles::launcher_get_preferences,

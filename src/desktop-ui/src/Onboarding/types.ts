@@ -42,6 +42,13 @@ export interface Settings {
     http_proxy?: string;
     no_proxy?: string;
   };
+  api_bridge?: {
+    retry_429?: {
+      enabled?: boolean;
+      max_retries?: number | null;
+      delay_seconds?: number;
+    };
+  };
   tunnel?: {
     provider?: string;
     ngrok?: { auth_token?: string; domain?: string };

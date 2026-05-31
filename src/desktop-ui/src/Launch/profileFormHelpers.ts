@@ -1,5 +1,6 @@
 import type {
   ApiTypeOverrides,
+  AuthMode,
   AuthModeDef,
   CatalogEntry,
   FieldDef,
@@ -36,6 +37,50 @@ export function collectFields(
     }
   }
   return Array.from(seen.values());
+}
+
+export function selectedAuthModes(
+  provider: CatalogEntry,
+  apiTypes: string[],
+  overrides: Record<string, ApiTypeOverrides> = {},
+): AuthModeDef[] {
+  let common: AuthModeDef[] | null = null;
+  for (const apiType of apiTypes) {
+    const endpoint = selectedEndpoint(provider, apiType, overrides);
+    if (!endpoint) continue;
+    if (common == null) {
+      common = [...endpoint.auth_modes];
+      continue;
+    }
+    common = common.filter((auth) =>
+      endpoint.auth_modes.some((candidate) => candidate.mode === auth.mode),
+    );
+  }
+  return common ?? [];
+}
+
+export function normalizeAuthMode(
+  mode: string | null | undefined,
+): AuthMode | null {
+  return mode === "api_key" ||
+    mode === "oauth_via_cli" ||
+    mode === "google_oauth"
+    ? mode
+    : null;
+}
+
+export function defaultAuthMode(
+  provider: CatalogEntry,
+  apiTypes: string[],
+  overrides: Record<string, ApiTypeOverrides> = {},
+  preferred?: AuthMode | null,
+): AuthMode {
+  const modes = selectedAuthModes(provider, apiTypes, overrides)
+    .map((auth) => normalizeAuthMode(auth.mode))
+    .filter((mode): mode is AuthMode => !!mode);
+  if (preferred && modes.includes(preferred)) return preferred;
+  if (modes.includes("api_key")) return "api_key";
+  return modes[0] ?? "api_key";
 }
 
 export function hostnameOf(url: string): string {

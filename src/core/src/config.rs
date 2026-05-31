@@ -163,6 +163,8 @@ pub struct Config {
     pub integrations: AgentIntegrationsConfig,
     // --- Optional outbound HTTP proxy ---
     pub proxy: HttpProxyConfig,
+    // --- API bridge behavior ---
+    pub api_bridge: ApiBridgeConfig,
     // --- Raw channels JSON (for dynamic plugin config) ---
     raw_channels: serde_json::Value,
 }
@@ -178,6 +180,18 @@ pub struct ImAgentConfig {
     pub auto_continue_last_session: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApiBridgeConfig {
+    pub retry_429: Retry429Config,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Retry429Config {
+    pub enabled: bool,
+    pub max_retries: Option<usize>,
+    pub delay_seconds: u64,
+}
+
 impl Default for ImAgentConfig {
     fn default() -> Self {
         Self {
@@ -191,6 +205,24 @@ impl Default for AgentIntegrationsConfig {
         Self {
             mcp_auto_install: true,
             skill_auto_install: true,
+        }
+    }
+}
+
+impl Default for ApiBridgeConfig {
+    fn default() -> Self {
+        Self {
+            retry_429: Retry429Config::default(),
+        }
+    }
+}
+
+impl Default for Retry429Config {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_retries: Some(10),
+            delay_seconds: 10,
         }
     }
 }
@@ -437,6 +469,7 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .unwrap_or_default();
 
     let im_agent = load_im_agent_config(&root);
+    let api_bridge = load_api_bridge_config(&root);
 
     let proxy = root
         .get("proxy")
@@ -480,6 +513,7 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         im_agent,
         integrations,
         proxy,
+        api_bridge,
         raw_channels,
     }
 }
@@ -495,6 +529,55 @@ fn load_im_agent_config(root: &serde_json::Value) -> ImAgentConfig {
                 .unwrap_or(true),
         })
         .unwrap_or_default()
+}
+
+fn load_api_bridge_config(root: &serde_json::Value) -> ApiBridgeConfig {
+    root.get("api_bridge")
+        .or_else(|| root.get("bridge"))
+        .and_then(|value| value.as_object())
+        .map(|settings| ApiBridgeConfig {
+            retry_429: settings
+                .get("retry_429")
+                .or_else(|| settings.get("rate_limit_retry"))
+                .and_then(|value| value.as_object())
+                .map(load_retry_429_config)
+                .unwrap_or_default(),
+        })
+        .unwrap_or_default()
+}
+
+fn load_retry_429_config(settings: &serde_json::Map<String, serde_json::Value>) -> Retry429Config {
+    let defaults = Retry429Config::default();
+    Retry429Config {
+        enabled: settings
+            .get("enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(defaults.enabled),
+        max_retries: retry_limit_setting(settings, defaults.max_retries),
+        delay_seconds: settings
+            .get("delay_seconds")
+            .or_else(|| settings.get("delay"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or(defaults.delay_seconds)
+            .max(1),
+    }
+}
+
+fn retry_limit_setting(
+    settings: &serde_json::Map<String, serde_json::Value>,
+    default: Option<usize>,
+) -> Option<usize> {
+    let Some(value) = settings
+        .get("max_retries")
+        .or_else(|| settings.get("retries"))
+    else {
+        return default;
+    };
+    if value.is_null() {
+        None
+    } else {
+        value.as_u64().map(|value| value as usize).or(default)
+    }
 }
 
 /// Base URL for preview links. Reads from the config cache.
@@ -588,6 +671,7 @@ impl Default for Config {
             im_agent: ImAgentConfig::default(),
             integrations: AgentIntegrationsConfig::default(),
             proxy: HttpProxyConfig::default(),
+            api_bridge: ApiBridgeConfig::default(),
             raw_channels: serde_json::Value::Object(serde_json::Map::new()),
         }
     }
@@ -738,6 +822,58 @@ mod tests {
 
         assert!(!config.integrations.mcp_auto_install);
         assert!(!config.integrations.skill_auto_install);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn api_bridge_retry_429_defaults_to_enabled() {
+        let dir = unique_test_dir("api-bridge-retry-default");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, "{}").unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(config.api_bridge.retry_429.enabled);
+        assert_eq!(config.api_bridge.retry_429.max_retries, Some(10));
+        assert_eq!(config.api_bridge.retry_429.delay_seconds, 10);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn api_bridge_retry_429_can_be_configured() {
+        let dir = unique_test_dir("api-bridge-retry-configured");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "api_bridge": { "retry_429": { "enabled": false, "max_retries": 4, "delay_seconds": 12 } } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(!config.api_bridge.retry_429.enabled);
+        assert_eq!(config.api_bridge.retry_429.max_retries, Some(4));
+        assert_eq!(config.api_bridge.retry_429.delay_seconds, 12);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn api_bridge_retry_429_null_retries_means_unlimited() {
+        let dir = unique_test_dir("api-bridge-retry-unlimited");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "api_bridge": { "retry_429": { "max_retries": null, "delay_seconds": 3 } } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert_eq!(config.api_bridge.retry_429.max_retries, None);
+        assert_eq!(config.api_bridge.retry_429.delay_seconds, 3);
         fs::remove_dir_all(&dir).unwrap();
     }
 

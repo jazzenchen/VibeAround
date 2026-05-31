@@ -1,8 +1,9 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import { Eye, EyeOff, Globe } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, Globe, Loader2, LogIn } from "lucide-react";
 import { useI18n } from "@va/i18n";
 
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -17,9 +18,15 @@ import {
   SECRET_INPUT_CLASS,
 } from "./ProfileFormDialog.constants";
 import {
+  googleOAuthLogin,
+  googleOAuthStatus,
+  type GoogleOAuthStatus,
+} from "./api";
+import {
   arraysEqual,
   canOverrideInputSupport,
   collectFields,
+  defaultAuthMode,
   endpointId,
   endpointLabel,
   endpointsForApiType,
@@ -30,10 +37,16 @@ import {
   providerUsesEndpointGroups,
   requiresProfileModel,
   selectedEndpointGroup,
+  selectedAuthModes,
   selectedEndpoint,
   shouldShowBaseUrl,
 } from "./profileFormHelpers";
-import type { ApiTypeOverrides, CatalogEntry, FieldDef } from "./types";
+import type {
+  ApiTypeOverrides,
+  AuthMode,
+  CatalogEntry,
+  FieldDef,
+} from "./types";
 import type { ProviderSettings } from "./types";
 import { apiTypeLabel, apiTypeShort } from "./types";
 
@@ -43,6 +56,8 @@ interface FormBodyProps {
   setLabel: (v: string) => void;
   selectedApiTypes: string[];
   setSelectedApiTypes: (v: string[]) => void;
+  authMode: AuthMode;
+  setAuthMode: (v: AuthMode) => void;
   credentials: Record<string, string>;
   setCredentials: (v: Record<string, string>) => void;
   overrides: Record<string, ApiTypeOverrides>;
@@ -61,6 +76,8 @@ export function FormBody({
   setLabel,
   selectedApiTypes,
   setSelectedApiTypes,
+  authMode,
+  setAuthMode,
   credentials,
   setCredentials,
   overrides,
@@ -88,9 +105,24 @@ export function FormBody({
   const fieldDefs = collectFields(
     provider,
     effectiveSelectedApiTypes,
-    "api_key",
+    authMode,
     overrides,
   );
+  const [googleStatus, setGoogleStatus] = useState<GoogleOAuthStatus | null>(null);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
+  const authModeOptions = selectedAuthModes(
+    provider,
+    effectiveSelectedApiTypes,
+    overrides,
+  );
+  const googleAccountsSelected =
+    provider.id === "gemini" &&
+    (authMode === "google_oauth" || authMode === "oauth_via_cli") &&
+    effectiveSelectedApiTypes.some((apiType) => {
+      const endpoint = selectedEndpoint(provider, apiType, overrides);
+      return endpoint ? endpointId(endpoint) === "google-accounts" : false;
+    });
   const apiKindsEditable = providerApiKindsEditable(provider);
   const configurableApiTypes = effectiveSelectedApiTypes.filter((apiType) => {
     const ep = selectedEndpoint(provider, apiType, overrides);
@@ -125,11 +157,50 @@ export function FormBody({
     visibleApiTypes,
   ]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!googleAccountsSelected) {
+      setGoogleStatus(null);
+      setGoogleError(null);
+      setGoogleLoading(false);
+      return;
+    }
+
+    setGoogleError(null);
+    googleOAuthStatus()
+      .then((status) => {
+        if (!cancelled) setGoogleStatus(status);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setGoogleError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [googleAccountsSelected]);
+
+  async function handleGoogleOAuthLogin() {
+    setGoogleLoading(true);
+    setGoogleError(null);
+    try {
+      setGoogleStatus(await googleOAuthLogin());
+    } catch (error) {
+      setGoogleError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setGoogleLoading(false);
+    }
+  }
+
   function applyEndpointGroup(groupId: string) {
     const group = endpointGroups.find((candidate) => candidate.id === groupId);
     if (!group) return;
-    setSelectedApiTypes(group.endpoints.map((endpoint) => endpoint.api_type));
-    setOverrides(overridesForEndpoints(group.endpoints, overrides));
+    const nextApiTypes = group.endpoints.map((endpoint) => endpoint.api_type);
+    const nextOverrides = overridesForEndpoints(group.endpoints, overrides);
+    setSelectedApiTypes(nextApiTypes);
+    setOverrides(nextOverrides);
+    setAuthMode(defaultAuthMode(provider, nextApiTypes, nextOverrides, authMode));
   }
 
   function applySelectedApiTypes(apiTypes: string[]) {
@@ -144,6 +215,7 @@ export function FormBody({
     }
     setOverrides(nextOverrides);
     setSelectedApiTypes(apiTypes);
+    setAuthMode(defaultAuthMode(provider, apiTypes, nextOverrides, authMode));
   }
 
   return (
@@ -167,6 +239,48 @@ export function FormBody({
               groups={endpointGroups}
               selectedGroupId={selectedGroup.id}
               onChange={applyEndpointGroup}
+            />
+          )}
+
+          {authModeOptions.length > 1 && (
+            <FieldRow label={t("Auth method")}>
+              <Select
+                value={authMode}
+                onValueChange={(value) =>
+                  setAuthMode(
+                    defaultAuthMode(
+                      provider,
+                      effectiveSelectedApiTypes,
+                      overrides,
+                      value as AuthMode,
+                    ),
+                  )
+                }
+              >
+                <SelectTrigger size="sm" className="h-8 w-full text-[13px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {authModeOptions.map((auth) => (
+                    <SelectItem
+                      key={auth.mode}
+                      value={auth.mode}
+                      className="text-xs"
+                    >
+                      {t(auth.label ?? auth.mode)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FieldRow>
+          )}
+
+          {googleAccountsSelected && (
+            <GoogleOAuthField
+              status={googleStatus}
+              loading={googleLoading}
+              error={googleError}
+              onLogin={handleGoogleOAuthLogin}
             />
           )}
 
@@ -414,6 +528,65 @@ function EndpointGroupField({
         </SelectContent>
       </Select>
     </FieldRow>
+  );
+}
+
+function GoogleOAuthField({
+  status,
+  loading,
+  error,
+  onLogin,
+}: {
+  status: GoogleOAuthStatus | null;
+  loading: boolean;
+  error: string | null;
+  onLogin: () => void;
+}) {
+  const { t } = useI18n();
+  const signedIn = !!status?.signedIn;
+
+  return (
+    <div>
+      <div className="text-[11px] font-medium text-muted-foreground mb-0.5">
+        {t("Google account")}
+      </div>
+      <div
+        className={`flex min-h-10 items-center justify-between gap-3 rounded-md border px-2.5 py-2 text-xs ${
+          signedIn ? "border-primary bg-primary/10" : "border-border"
+        }`}
+      >
+        <div className="min-w-0 flex items-center gap-2">
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+          ) : signedIn ? (
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary" />
+          ) : (
+            <LogIn className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span className="truncate font-medium">
+            {signedIn ? t("Signed in with Google") : t("Google account not connected")}
+          </span>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={onLogin}
+          disabled={loading}
+          className="h-8"
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <LogIn className="h-3.5 w-3.5" />
+          )}
+          {signedIn ? t("Reconnect") : t("Sign in")}
+        </Button>
+      </div>
+      {error && (
+        <div className="mt-1 text-[10px] text-destructive">{error}</div>
+      )}
+    </div>
   );
 }
 

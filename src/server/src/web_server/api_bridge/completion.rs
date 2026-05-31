@@ -11,12 +11,19 @@ use va_ai_api_bridge::{
 
 use super::{json_error, BridgeProtocol};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UpstreamResponseTransform {
+    Identity,
+    GoogleCodeAssist,
+}
+
 pub(super) async fn translated_completion_response(
     upstream: reqwest::Response,
     upstream_protocol: BridgeProtocol,
     agent_protocol: BridgeProtocol,
     provider_adapter: &mut ProviderBridgeAdapter,
     agent_model: Option<String>,
+    transform: UpstreamResponseTransform,
 ) -> Response {
     let bytes = match upstream.bytes().await {
         Ok(bytes) => bytes,
@@ -27,7 +34,7 @@ pub(super) async fn translated_completion_response(
             );
         }
     };
-    let mut raw = match serde_json::from_slice::<Value>(&bytes) {
+    let raw = match serde_json::from_slice::<Value>(&bytes) {
         Ok(value) => value,
         Err(e) => {
             return json_error(
@@ -35,6 +42,10 @@ pub(super) async fn translated_completion_response(
                 &format!("upstream returned invalid JSON: {e}"),
             );
         }
+    };
+    let mut raw = match transform_upstream_response(raw, transform) {
+        Ok(raw) => raw,
+        Err(message) => return json_error(StatusCode::BAD_GATEWAY, &message),
     };
     if upstream_protocol == BridgeProtocol::OpenAiChat {
         provider_adapter.normalize_chat_response(&mut raw);
@@ -54,6 +65,18 @@ pub(super) async fn translated_completion_response(
         }
     };
     Json(body).into_response()
+}
+
+pub(super) fn transform_upstream_response(
+    raw: Value,
+    transform: UpstreamResponseTransform,
+) -> Result<Value, String> {
+    match transform {
+        UpstreamResponseTransform::Identity => Ok(raw),
+        UpstreamResponseTransform::GoogleCodeAssist => {
+            super::google_code_assist::unwrap_generate_content_response(raw)
+        }
+    }
 }
 
 fn apply_agent_model(events: &mut [UniversalEvent], agent_model: Option<&str>) {
