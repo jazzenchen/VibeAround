@@ -70,6 +70,20 @@ export function launchDirectResume(
   return invoke<void>("profiles_launch_direct_resume", { agentId, sessionId });
 }
 
+export interface GoogleOAuthStatus {
+  signedIn: boolean;
+  path: string;
+  expiresAt?: number | null;
+}
+
+export function googleOAuthStatus(): Promise<GoogleOAuthStatus> {
+  return invoke<GoogleOAuthStatus>("profiles_google_oauth_status");
+}
+
+export function googleOAuthLogin(): Promise<GoogleOAuthStatus> {
+  return invoke<GoogleOAuthStatus>("profiles_google_oauth_login");
+}
+
 export interface AgentSummary {
   id: string;
   display_name: string;

@@ -10,6 +10,7 @@ mod bridge_launch;
 pub mod catalog;
 pub mod codex_metadata;
 pub mod connections;
+pub mod google_oauth;
 pub mod headers;
 mod pi_launch;
 pub mod render;
@@ -178,6 +179,10 @@ fn normalize_legacy_gemini_profile(profile: &mut ProfileDef) {
         return;
     }
 
+    if profile.auth_mode == schema::AuthMode::OauthViaCli {
+        profile.auth_mode = schema::AuthMode::GoogleOauth;
+    }
+
     for overrides in profile.overrides.values_mut() {
         if overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID) {
             overrides.endpoint_id = Some(GEMINI_API_ENDPOINT_ID.to_string());
@@ -203,9 +208,10 @@ fn needs_kimi_profile_persist(profile: &ProfileDef) -> bool {
 
 fn needs_gemini_profile_persist(profile: &ProfileDef) -> bool {
     profile.provider == GEMINI_PROVIDER_ID
-        && profile.overrides.values().any(|overrides| {
-            overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID)
-        })
+        && (profile.auth_mode == schema::AuthMode::OauthViaCli
+            || profile.overrides.values().any(|overrides| {
+                overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID)
+            }))
 }
 
 #[cfg(test)]
@@ -344,5 +350,24 @@ mod tests {
                 .and_then(|overrides| overrides.endpoint_id.as_deref()),
             Some("gemini-api")
         );
+    }
+
+    #[test]
+    fn normalizes_legacy_gemini_oauth_mode() {
+        let profile = ProfileDef {
+            id: "gemini-google-account".to_string(),
+            label: "Gemini Google".to_string(),
+            provider: "gemini".to_string(),
+            auth_mode: AuthMode::OauthViaCli,
+            api_types: vec!["gemini".to_string()],
+            credentials: BTreeMap::new(),
+            overrides: BTreeMap::new(),
+            use_settings_proxy: false,
+            provider_settings: ProviderSettings::default(),
+        };
+
+        let profile = normalize_legacy_profile(profile);
+
+        assert_eq!(profile.auth_mode, AuthMode::GoogleOauth);
     }
 }

@@ -49,6 +49,19 @@ export const zhCNDesktopDashboard: Record<string, string> = {
   "Proxy settings applied.": "代理设置已应用。",
   "Tunnel settings saved.": "隧道设置已保存。",
   "Tunnel settings applied.": "隧道设置已应用。",
+  "API bridge retry": "API 转接重试",
+  "Automatically retry upstream requests that return 429.":
+    "上游返回 429 时自动等待后重试。",
+  "Auto retry 429": "自动重试 429",
+  "Retry upstream API requests when the provider reports rate limiting.":
+    "当服务商返回限流时，自动重试上游 API 请求。",
+  "Max retries": "最大重试次数",
+  "Set to unlimited to keep waiting through provider throttling.":
+    "设为无限后，会一直等待服务商限流解除。",
+  "Retry indefinitely": "无限重试",
+  "Delay seconds": "延迟秒数",
+  "Used between 429 retries unless upstream sends Retry-After.":
+    "如果上游没有返回 Retry-After，每次 429 重试前等待这个秒数。",
   "Choose which CLIs appear in Launch and new IM sessions. Running sessions continue.":
     "选择哪些 CLI 出现在启动页和新的 IM 会话中。已运行的会话不会受影响。",
   "No agents are enabled. Launch will stay hidden until at least one agent is selected.":

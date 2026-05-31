@@ -135,11 +135,6 @@ pub struct AuthModeDef {
     pub fields: Vec<FieldDef>,
     #[serde(default)]
     pub render: Option<RenderRules>,
-    /// Reserved for v2 OAuth flow — not consumed by v1 launcher.
-    #[serde(default)]
-    pub login_command: Option<Vec<String>>,
-    #[serde(default)]
-    pub session_file_check: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -382,8 +377,6 @@ pub fn custom() -> &'static ProviderCatalog {
                         ]),
                         settings_files: Vec::new(),
                     }),
-                    login_command: None,
-                    session_file_check: None,
                 }],
             },
             EndpointDef {
@@ -424,8 +417,6 @@ pub fn custom() -> &'static ProviderCatalog {
                             },
                         ],
                     }),
-                    login_command: None,
-                    session_file_check: None,
                 }],
             },
             EndpointDef {
@@ -463,8 +454,6 @@ pub fn custom() -> &'static ProviderCatalog {
                             },
                         ],
                     }),
-                    login_command: None,
-                    session_file_check: None,
                 }],
             },
         ],
@@ -1004,6 +993,32 @@ mod tests {
         );
         assert!(render.settings_files.is_empty());
         assert_eq!(endpoint_id(endpoint), "gemini-api");
+        let google_accounts = find_endpoint(provider, "gemini", Some("google-accounts"))
+            .expect("gemini google accounts endpoint");
+        assert_eq!(
+            google_accounts.default_base_url,
+            "https://cloudcode-pa.googleapis.com"
+        );
+        let oauth = google_accounts
+            .auth_modes
+            .iter()
+            .find(|auth| auth.mode == "google_oauth")
+            .expect("google accounts oauth auth");
+        let oauth_render = oauth.render.as_ref().expect("oauth auth renders env");
+        assert_eq!(
+            oauth_render
+                .env
+                .get("GEMINI_DEFAULT_AUTH_TYPE")
+                .map(String::as_str),
+            Some("oauth-personal")
+        );
+        assert_eq!(
+            oauth_render
+                .env
+                .get("GOOGLE_CLOUD_PROJECT")
+                .map(String::as_str),
+            Some("{{google_cloud_project}}")
+        );
         let openai_chat = find_endpoint(provider, "openai-chat", Some("gemini-api"))
             .expect("gemini openai-compatible endpoint");
         assert_eq!(endpoint_id(openai_chat), "gemini-api");

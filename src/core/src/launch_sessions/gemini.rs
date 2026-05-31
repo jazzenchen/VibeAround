@@ -317,6 +317,9 @@ mod tests {
         let metadata = metadata_from_json(&path).expect("metadata");
         let _ = fs::remove_file(&path);
 
-        assert_eq!(metadata.title, Some("Fix null avg price in SQL query.".to_string()));
+        assert_eq!(
+            metadata.title,
+            Some("Fix null avg price in SQL query.".to_string())
+        );
     }
 }

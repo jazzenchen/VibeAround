@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  defaultAuthMode,
   overrideForEndpoint,
   pruneOverrides,
   requiresProfileModel,
@@ -21,6 +22,21 @@ const geminiProvider: CatalogEntry = {
       default_base_url: "https://generativelanguage.googleapis.com",
       models: [{ id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" }],
       auth_modes: [],
+    },
+    {
+      id: "google-accounts",
+      label: "Google accounts",
+      api_type: "gemini",
+      default_base_url: "https://cloudcode-pa.googleapis.com",
+      append_v1_path: false,
+      models: [{ id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" }],
+      auth_modes: [
+        {
+          mode: "google_oauth",
+          label: "Use Google account",
+          fields: [],
+        },
+      ],
     },
     {
       id: "gemini-api",
@@ -60,7 +76,9 @@ const azureProvider: CatalogEntry = {
 };
 
 test("catalog model endpoints do not create profile model defaults", () => {
-  const endpoint = geminiProvider.endpoints[1];
+  const endpoint = geminiProvider.endpoints.find(
+    (candidate) => candidate.api_type === "openai-chat" && candidate.id === "gemini-api",
+  )!;
 
   expect(
     overrideForEndpoint(endpoint, {
@@ -99,6 +117,16 @@ test("legacy loaded profile overrides still select their endpoint", () => {
   });
 
   expect(endpoint?.id).toBe("vertex-openai-compatible");
+});
+
+test("google account gemini endpoint defaults to oauth auth", () => {
+  expect(
+    defaultAuthMode(geminiProvider, ["gemini"], {
+      gemini: {
+        endpoint_id: "google-accounts",
+      },
+    }),
+  ).toBe("google_oauth");
 });
 
 test("endpoints without catalog models keep required deployment names", () => {

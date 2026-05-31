@@ -379,10 +379,7 @@ mod tests {
     #[test]
     fn powershell_script_keeps_codex_hook_config_as_one_argument() {
         let hook_config = r#"hooks.SessionStart=[{ matcher = 'startup|resume|clear', hooks = [{ type = 'command', command = '"C:\Program Files\VibeAround\vibearound-hook.exe" --agent codex --event SessionStart', timeout = 5 }] }]"#;
-        let plan = plan(
-            "codex",
-            vec!["-c".to_string(), hook_config.to_string()],
-        );
+        let plan = plan("codex", vec!["-c".to_string(), hook_config.to_string()]);
         let script = build_powershell_script(&plan, &plan.command, &plan.args);
 
         assert!(script.contains("$vaArgs = @(\n"));
@@ -394,10 +391,7 @@ mod tests {
 
     #[test]
     fn rewrites_quoted_codex_npm_shim_under_space_path_to_node() {
-        let root = std::env::temp_dir().join(format!(
-            "VibeAround Test {}",
-            uuid::Uuid::new_v4()
-        ));
+        let root = std::env::temp_dir().join(format!("VibeAround Test {}", uuid::Uuid::new_v4()));
         let bin_dir = root.join("bin");
         let codex_js = bin_dir
             .join("node_modules")

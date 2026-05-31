@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Bot,
@@ -64,6 +71,13 @@ type SaveState =
   | "uninstall-skills"
   | "restart-services";
 
+type ApiBridgeRetryFormState = {
+  retry429Enabled: boolean;
+  retry429MaxRetries: string;
+  retry429Unlimited: boolean;
+  retry429DelaySeconds: string;
+};
+
 const AGENT_DISPLAY_ORDER = [
   "claude",
   "codex",
@@ -109,6 +123,10 @@ export function SettingsDialog({
   const [proxyEnabled, setProxyEnabled] = useState(false);
   const [proxyHttp, setProxyHttp] = useState("");
   const [proxyNoProxy, setProxyNoProxy] = useState("");
+  const [retry429Enabled, setRetry429Enabled] = useState(true);
+  const [retry429MaxRetries, setRetry429MaxRetries] = useState("10");
+  const [retry429Unlimited, setRetry429Unlimited] = useState(false);
+  const [retry429DelaySeconds, setRetry429DelaySeconds] = useState("10");
   const [ngrokToken, setNgrokToken] = useState("");
   const [ngrokDomain, setNgrokDomain] = useState("");
   const [cfToken, setCfToken] = useState("");
@@ -120,6 +138,30 @@ export function SettingsDialog({
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saving, setSaving] = useState<SaveState>("idle");
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [settingsTab, setSettingsTab] = useState("general");
+  const apiBridgeRetrySnapshotRef = useRef<string | null>(null);
+  const apiBridgeRetrySavingRef = useRef(false);
+  const apiBridgeRetryForm = useMemo<ApiBridgeRetryFormState>(
+    () => ({
+      retry429Enabled,
+      retry429MaxRetries,
+      retry429Unlimited,
+      retry429DelaySeconds,
+    }),
+    [
+      retry429Enabled,
+      retry429MaxRetries,
+      retry429Unlimited,
+      retry429DelaySeconds,
+    ],
+  );
+  const apiBridgeRetryFormKey = useMemo(
+    () =>
+      isApiBridgeRetryFormReady(apiBridgeRetryForm)
+        ? serializeApiBridgeRetryForm(apiBridgeRetryForm)
+        : null,
+    [apiBridgeRetryForm],
+  );
 
   const hydrateChannels = useCallback(
     (
@@ -187,6 +229,38 @@ export function SettingsDialog({
     setProxyNoProxy(proxy?.no_proxy ?? "");
   }, []);
 
+  const hydrateApiBridge = useCallback((loadedSettings: AppSettings) => {
+    const apiBridge = isRecord(loadedSettings.api_bridge)
+      ? loadedSettings.api_bridge
+      : {};
+    const retry429 = isRecord(apiBridge.retry_429)
+      ? apiBridge.retry_429
+      : {};
+    const maxRetries = retry429.max_retries;
+    const delaySeconds = retry429.delay_seconds;
+
+    const nextForm = {
+      retry429Enabled:
+        typeof retry429.enabled === "boolean" ? retry429.enabled : true,
+      retry429Unlimited: maxRetries === null,
+      retry429MaxRetries:
+        typeof maxRetries === "number" && Number.isFinite(maxRetries)
+          ? String(Math.max(0, Math.floor(maxRetries)))
+          : "10",
+      retry429DelaySeconds:
+        typeof delaySeconds === "number" && Number.isFinite(delaySeconds)
+          ? String(Math.max(1, Math.floor(delaySeconds)))
+          : "10",
+    };
+
+    apiBridgeRetrySnapshotRef.current =
+      serializeApiBridgeRetryForm(nextForm);
+    setRetry429Enabled(nextForm.retry429Enabled);
+    setRetry429Unlimited(nextForm.retry429Unlimited);
+    setRetry429MaxRetries(nextForm.retry429MaxRetries);
+    setRetry429DelaySeconds(nextForm.retry429DelaySeconds);
+  }, []);
+
   const hydrateIntegrations = useCallback((loadedSettings: AppSettings) => {
     const integrations = loadedSettings.integrations;
     setMcpAutoInstall(integrations?.mcp_auto_install ?? true);
@@ -231,6 +305,7 @@ export function SettingsDialog({
       hydrateChannels(loadedSettings, registry, discovered);
       hydrateTunnel(loadedSettings);
       hydrateProxy(loadedSettings);
+      hydrateApiBridge(loadedSettings);
       hydrateIntegrations(loadedSettings);
       hydrateImAgent(loadedSettings);
       setSettingsLoaded(true);
@@ -244,6 +319,7 @@ export function SettingsDialog({
     }
   }, [
     hydrateAgents,
+    hydrateApiBridge,
     hydrateChannels,
     hydrateIntegrations,
     hydrateImAgent,
@@ -254,6 +330,11 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) void load();
   }, [open, load]);
+
+  const changeSettingsTab = useCallback((value: string) => {
+    setSettingsTab(value);
+    setNotice(null);
+  }, []);
 
   const updateChannelConfig = useCallback(
     (pluginId: string, key: string, value: string) => {
@@ -420,6 +501,57 @@ export function SettingsDialog({
     }
   }, [settings, proxyEnabled, proxyHttp, proxyNoProxy, onServicesRestarted]);
 
+  const saveApiBridgeSettings = useCallback(async () => {
+    if (!apiBridgeRetryFormKey || apiBridgeRetrySavingRef.current) return;
+    apiBridgeRetrySavingRef.current = true;
+    try {
+      const nextSettings = buildApiBridgeSettings({
+        settings,
+        retry429Form: apiBridgeRetryForm,
+      });
+      await invoke("save_settings", { settings: nextSettings });
+      setSettings(nextSettings);
+      const response = await apiFetch("/api/settings/reload", { method: "POST" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      apiBridgeRetrySnapshotRef.current = apiBridgeRetryFormKey;
+    } catch (error) {
+      apiBridgeRetrySnapshotRef.current = apiBridgeRetryFormKey;
+      setNotice({
+        variant: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      apiBridgeRetrySavingRef.current = false;
+    }
+  }, [
+    settings,
+    apiBridgeRetryForm,
+    apiBridgeRetryFormKey,
+  ]);
+
+  useEffect(() => {
+    if (
+      !settingsLoaded ||
+      loading ||
+      saving !== "idle" ||
+      !apiBridgeRetryFormKey ||
+      apiBridgeRetrySnapshotRef.current === apiBridgeRetryFormKey
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void saveApiBridgeSettings();
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [
+    apiBridgeRetryFormKey,
+    loading,
+    saveApiBridgeSettings,
+    saving,
+    settingsLoaded,
+  ]);
+
   const uninstallIntegrations = useCallback(
     async (kind: "mcp" | "skills") => {
       setSaving(kind === "mcp" ? "uninstall-mcp" : "uninstall-skills");
@@ -558,7 +690,12 @@ export function SettingsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="!flex h-[680px] min-h-[520px] w-[min(860px,calc(100vw-32px))] max-h-[calc(100vh-64px)] max-w-[calc(100vw-32px)] overflow-hidden p-0 sm:max-w-[min(860px,calc(100vw-32px))]">
-        <Tabs orientation="vertical" defaultValue="general" className="min-h-0 flex-1 gap-0">
+        <Tabs
+          orientation="vertical"
+          value={settingsTab}
+          onValueChange={changeSettingsTab}
+          className="min-h-0 flex-1 gap-0"
+        >
           <aside className="flex w-44 shrink-0 flex-col border-r border-border bg-muted/20 px-4 py-4">
             <DialogHeader className="mb-4 pr-8">
               <DialogTitle className="text-base">{t("Settings")}</DialogTitle>
@@ -662,6 +799,17 @@ export function SettingsDialog({
                     }
                   />
                 </div>
+                <ApiBridgeRetrySettingsPanel
+                  retry429Enabled={retry429Enabled}
+                  retry429MaxRetries={retry429MaxRetries}
+                  retry429Unlimited={retry429Unlimited}
+                  retry429DelaySeconds={retry429DelaySeconds}
+                  onRetry429EnabledChange={setRetry429Enabled}
+                  onRetry429MaxRetriesChange={setRetry429MaxRetries}
+                  onRetry429UnlimitedChange={setRetry429Unlimited}
+                  onRetry429DelaySecondsChange={setRetry429DelaySeconds}
+                  disabled={!canSubmit}
+                />
               </div>
             </TabsContent>
 
@@ -1114,6 +1262,113 @@ function ProxySettingsPanel({
   );
 }
 
+function ApiBridgeRetrySettingsPanel({
+  retry429Enabled,
+  retry429MaxRetries,
+  retry429Unlimited,
+  retry429DelaySeconds,
+  onRetry429EnabledChange,
+  onRetry429MaxRetriesChange,
+  onRetry429UnlimitedChange,
+  onRetry429DelaySecondsChange,
+  disabled,
+}: {
+  retry429Enabled: boolean;
+  retry429MaxRetries: string;
+  retry429Unlimited: boolean;
+  retry429DelaySeconds: string;
+  onRetry429EnabledChange: (value: boolean) => void;
+  onRetry429MaxRetriesChange: (value: string) => void;
+  onRetry429UnlimitedChange: (value: boolean) => void;
+  onRetry429DelaySecondsChange: (value: string) => void;
+  disabled: boolean;
+}) {
+  const { t } = useI18n();
+  const controlsDisabled = disabled || !retry429Enabled;
+  return (
+    <div className="mt-5 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            <RotateCw className="h-4 w-4 text-primary" />
+            {t("API bridge retry")}
+          </h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("Automatically retry upstream requests that return 429.")}
+          </p>
+        </div>
+      </div>
+      <div className="rounded-md border border-border">
+        <SettingsActionRow
+          label={t("Auto retry 429")}
+          description={t("Retry upstream API requests when the provider reports rate limiting.")}
+          action={
+            <Switch
+              checked={retry429Enabled}
+              onCheckedChange={onRetry429EnabledChange}
+              aria-label={t("Auto retry 429")}
+              size="sm"
+              disabled={disabled}
+            />
+          }
+        />
+        <div className="grid gap-3 border-b border-border px-4 py-4 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{t("Max retries")}</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {t("Set to unlimited to keep waiting through provider throttling.")}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <Input
+              type="number"
+              min={0}
+              step={1}
+              value={retry429MaxRetries}
+              onChange={(event) =>
+                onRetry429MaxRetriesChange(event.currentTarget.value)
+              }
+              className="h-8 w-24 text-right"
+              disabled={controlsDisabled || retry429Unlimited}
+              aria-label={t("Max retries")}
+            />
+            <label className="flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground">
+              <Checkbox
+                checked={retry429Unlimited}
+                onCheckedChange={(checked) =>
+                  onRetry429UnlimitedChange(checked === true)
+                }
+                disabled={controlsDisabled}
+              />
+              {t("Retry indefinitely")}
+            </label>
+          </div>
+        </div>
+        <div className="grid gap-3 px-4 py-4 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">{t("Delay seconds")}</div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {t("Used between 429 retries unless upstream sends Retry-After.")}
+            </div>
+          </div>
+          <Input
+            type="number"
+            min={1}
+            step={1}
+            value={retry429DelaySeconds}
+            onChange={(event) =>
+              onRetry429DelaySecondsChange(event.currentTarget.value)
+            }
+            className="h-8 w-24 justify-self-end text-right"
+            disabled={controlsDisabled}
+            aria-label={t("Delay seconds")}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SessionSettingsPanel({
   imAutoContinueLastSession,
   onImAutoContinueLastSessionChange,
@@ -1248,6 +1503,36 @@ function buildProxySettings({
   } else {
     delete result.proxy;
   }
+  return result;
+}
+
+function buildApiBridgeSettings({
+  settings,
+  retry429Form,
+}: {
+  settings: AppSettings;
+  retry429Form: ApiBridgeRetryFormState;
+}): AppSettings {
+  const result: AppSettings = { ...settings };
+  const apiBridge = isRecord(settings.api_bridge)
+    ? { ...settings.api_bridge }
+    : {};
+  const retry429 = isRecord(apiBridge.retry_429)
+    ? { ...apiBridge.retry_429 }
+    : {};
+
+  retry429.enabled = retry429Form.retry429Enabled;
+  retry429.max_retries = retry429Form.retry429Unlimited
+    ? null
+    : parseIntegerSetting(retry429Form.retry429MaxRetries, 10, 0);
+  retry429.delay_seconds = parseIntegerSetting(
+    retry429Form.retry429DelaySeconds,
+    10,
+    1,
+  );
+
+  apiBridge.retry_429 = retry429;
+  result.api_bridge = apiBridge as AppSettings["api_bridge"];
   return result;
 }
 
@@ -1402,6 +1687,38 @@ function parseChannelVerbose(value: unknown): ChannelVerboseConfig {
     show_tool_use:
       typeof value.show_tool_use === "boolean" ? value.show_tool_use : false,
   };
+}
+
+function isApiBridgeRetryFormReady(form: ApiBridgeRetryFormState): boolean {
+  if (
+    !form.retry429Unlimited &&
+    !isIntegerSettingReady(form.retry429MaxRetries, 0)
+  ) {
+    return false;
+  }
+  return isIntegerSettingReady(form.retry429DelaySeconds, 1);
+}
+
+function serializeApiBridgeRetryForm(form: ApiBridgeRetryFormState): string {
+  return JSON.stringify({
+    enabled: form.retry429Enabled,
+    max_retries: form.retry429Unlimited
+      ? null
+      : parseIntegerSetting(form.retry429MaxRetries, 10, 0),
+    delay_seconds: parseIntegerSetting(form.retry429DelaySeconds, 10, 1),
+  });
+}
+
+function isIntegerSettingReady(value: string, min: number): boolean {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return false;
+  return Number.parseInt(trimmed, 10) >= min;
+}
+
+function parseIntegerSetting(value: string, fallback: number, min: number): number {
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, parsed);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
