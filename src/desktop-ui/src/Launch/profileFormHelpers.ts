@@ -227,42 +227,6 @@ export function requiresProfileModel(
   return !!endpoint && (provider.id === "custom" || endpoint.models.length === 0);
 }
 
-export function apiKindHint(
-  provider: CatalogEntry,
-  apiType: string,
-  endpoint?: CatalogEntry["endpoints"][number],
-): string | undefined {
-  if (provider.id === "mimo" && endpoint && endpointId(endpoint).startsWith("token-plan")) {
-    return "Token Plan keys must use the Base URL shown on the MiMo Subscription page.";
-  }
-  if (provider.id === "gemini" && apiType === "openai-chat") {
-    if (endpoint && endpointId(endpoint) === "vertex-openai-compatible") {
-      return "Uses a Google Cloud access token and a Vertex endpoint root ending in /endpoints/openapi.";
-    }
-    return "Uses the same Gemini API key through Google AI Studio's OpenAI-compatible Chat Completions surface.";
-  }
-  if (provider.id === "gemini" && apiType === "gemini") {
-    return "Uses the native Gemini GenerateContent API with a Gemini API key.";
-  }
-  if (provider.id === "volcengine" && endpoint) {
-    if (endpointId(endpoint) === "coding-plan") {
-      return "Coding Plan uses subscription Base URLs; /api/v3 belongs to pay-as-you-go Ark API.";
-    }
-    if (endpointId(endpoint) === "agent-plan") {
-      return "Agent Plan requires its dedicated API key; Ark API and Coding Plan keys cannot be reused.";
-    }
-    return "Ark API uses pay-as-you-go API keys and versioned Model IDs.";
-  }
-  if (provider.id !== "azure") return undefined;
-  if (apiType === "openai-responses") {
-    return "Used by Codex and OpenCode for reasoning/tools. Must be an Azure deployment that supports the Responses API.";
-  }
-  if (apiType === "openai-chat") {
-    return "Chat Completions fallback for CLIs/providers that cannot use Responses.";
-  }
-  return undefined;
-}
-
 /**
  * Strip override values that match the catalog default. This keeps
  * profile.json minimal and lets future catalog updates flow through
