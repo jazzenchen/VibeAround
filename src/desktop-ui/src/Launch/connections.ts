@@ -70,7 +70,7 @@ export const CONNECTION_AGENTS: ConnectionAgentDef[] = [
   },
 ];
 
-const PROXY_TARGET_API_TYPES = ["anthropic", "openai-responses", "openai-chat"];
+const PROXY_TARGET_API_TYPES = ["anthropic", "openai-responses", "openai-chat", "gemini"];
 
 export function resolveProfileConnection(
   profile: ProfileSummary,
@@ -152,14 +152,15 @@ export function recommendedBridgeTarget(
   agentId: ConnectionAgentId,
   clientApiType: string,
 ): string | null {
+  const anthropicClient =
+    clientApiType === "anthropic" &&
+    (agentId === "claude" || agentId === "opencode" || agentId === "pi");
   const order =
     agentId === "gemini" && clientApiType === "gemini"
       ? ["openai-chat", "openai-responses", "anthropic"]
-      : (agentId === "claude" && clientApiType === "anthropic") ||
-          (agentId === "opencode" && clientApiType === "anthropic") ||
-          (agentId === "pi" && clientApiType === "anthropic")
-        ? ["openai-responses", "openai-chat", "anthropic"]
-        : ["anthropic", "openai-chat", "openai-responses"];
+      : anthropicClient
+        ? ["openai-responses", "gemini", "openai-chat", "anthropic"]
+        : ["anthropic", "gemini", "openai-chat", "openai-responses"];
   return order.find((apiType) => profile.apiTypes.includes(apiType)) ?? null;
 }
 
