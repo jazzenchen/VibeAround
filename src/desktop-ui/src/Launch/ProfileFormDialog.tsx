@@ -31,6 +31,7 @@ import {
   providerApiKindEndpoints,
   providerApiKindsEditable,
   providerUsesEndpointGroups,
+  requiresProfileModel,
   selectedEndpointGroup,
   selectedEndpoint,
   stripEmpty,
@@ -165,7 +166,7 @@ export function ProfileFormDialog({
       const ep = selectedEndpoint(provider, apiType, overrides);
       if (!ep) continue;
       const ov = overrides[apiType];
-      if (!ov?.model?.trim()) {
+      if (requiresProfileModel(provider, ep) && !ov?.model?.trim()) {
         setError(t("Model is required for {{apiType}}", { apiType }));
         return;
       }
@@ -268,7 +269,7 @@ export function ProfileFormDialog({
                 size="sm"
                 onClick={() => setStep("pick-provider")}
               >
-                {t("Back")}
+                {t("Change provider")}
               </Button>
             )}
           </div>
