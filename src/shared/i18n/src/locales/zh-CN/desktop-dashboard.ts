@@ -29,7 +29,7 @@ export const zhCNDesktopDashboard: Record<string, string> = {
   IM: "IM",
   "IM Channel": "通讯工具",
   Sessions: "会话",
-  Proxy: "Proxy",
+  Proxy: "代理",
   "Restart Services": "重启服务",
   Restart: "重启",
   "Rerun Onboarding": "重新运行配置向导",
@@ -41,12 +41,12 @@ export const zhCNDesktopDashboard: Record<string, string> = {
   "Apply IM Channel Settings": "应用通讯工具设置",
   "Apply Session Settings": "应用会话设置",
   "Apply Agent Settings": "应用 Agent 设置",
-  "Apply Proxy Settings": "应用 Proxy 设置",
+  "Apply Proxy Settings": "应用代理设置",
   "Applying…": "应用中…",
   "Agent settings applied.": "Agent 设置已应用。",
   "IM Channel settings applied.": "通讯工具设置已应用。",
   "Session settings applied.": "会话设置已应用。",
-  "Proxy settings applied.": "Proxy 设置已应用。",
+  "Proxy settings applied.": "代理设置已应用。",
   "Tunnel settings saved.": "隧道设置已保存。",
   "Tunnel settings applied.": "隧道设置已应用。",
   "Choose which CLIs appear in Launch and new IM sessions. Running sessions continue.":
@@ -70,12 +70,12 @@ export const zhCNDesktopDashboard: Record<string, string> = {
   "Legacy VibeAround skill files removed.":
     "旧版 VibeAround skill 文件已移除。",
   "Configure the HTTP proxy used by profile provider requests that opt in from profile settings.":
-    "配置供 Profile 中手动启用的 provider 请求使用的 HTTP proxy。",
+    "配置服务商请求使用的 HTTP 代理，可在服务商配置中启用。",
   "Enable HTTP proxy": "启用 HTTP 代理",
   "Allow profiles to opt in to this HTTP proxy.":
-    "允许 Profile 选择是否使用这个 HTTP proxy。",
-  "HTTP proxy URL": "HTTP proxy URL",
-  "No proxy": "不走 proxy",
+    "允许在服务商配置中启用 HTTP 代理。",
+  "HTTP proxy URL": "HTTP 代理 URL",
+  "No proxy": "不走代理",
   "Configure how VibeAround restores active conversations.":
     "配置 VibeAround 如何恢复进行中的对话。",
   "Auto-continue IM Channel sessions": "自动延续通讯工具会话",
