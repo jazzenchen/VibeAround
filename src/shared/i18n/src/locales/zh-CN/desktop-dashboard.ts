@@ -75,7 +75,9 @@ export const zhCNDesktopDashboard: Record<string, string> = {
   "Allow profiles to opt in to this HTTP proxy.":
     "允许在服务商配置中启用 HTTP 代理。",
   "HTTP proxy URL": "HTTP 代理 URL",
-  "No proxy": "不走代理",
+  "Proxy bypass list": "代理排除列表",
+  "Comma-separated hosts, domains, or IPs that should connect directly.":
+    "用逗号分隔，匹配的主机、域名或 IP 将直连。",
   "Configure how VibeAround restores active conversations.":
     "配置 VibeAround 如何恢复进行中的对话。",
   "Auto-continue IM Channel sessions": "自动延续通讯工具会话",

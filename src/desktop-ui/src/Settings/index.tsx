@@ -1095,7 +1095,7 @@ function ProxySettingsPanel({
         <div className="grid gap-3 border-b border-border px-4 py-4 last:border-b-0">
           <label className="block">
             <span className="text-xs text-muted-foreground">
-              {t("No proxy")}
+              {t("Proxy bypass list")}
             </span>
             <Input
               type="text"
@@ -1104,6 +1104,9 @@ function ProxySettingsPanel({
               placeholder="localhost,127.0.0.1,::1"
               className="mt-1"
             />
+            <span className="mt-1 block text-[11px] text-muted-foreground/70">
+              {t("Comma-separated hosts, domains, or IPs that should connect directly.")}
+            </span>
           </label>
         </div>
       </div>
