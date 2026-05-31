@@ -71,7 +71,7 @@ export const zhCNDesktopDashboard: Record<string, string> = {
     "旧版 VibeAround skill 文件已移除。",
   "Configure the HTTP proxy used by profile provider requests that opt in from profile settings.":
     "配置供 Profile 中手动启用的 provider 请求使用的 HTTP proxy。",
-  "Enable Settings proxy": "启用设置中的 proxy",
+  "Enable HTTP proxy": "启用 HTTP 代理",
   "Allow profiles to opt in to this HTTP proxy.":
     "允许 Profile 选择是否使用这个 HTTP proxy。",
   "HTTP proxy URL": "HTTP proxy URL",

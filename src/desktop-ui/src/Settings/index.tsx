@@ -1067,13 +1067,13 @@ function ProxySettingsPanel({
       </div>
       <div className="rounded-md border border-border">
         <SettingsActionRow
-          label={t("Enable Settings proxy")}
+          label={t("Enable HTTP proxy")}
           description={t("Allow profiles to opt in to this HTTP proxy.")}
           action={
             <Switch
               checked={proxyEnabled}
               onCheckedChange={onProxyEnabledChange}
-              aria-label={t("Enable Settings proxy")}
+              aria-label={t("Enable HTTP proxy")}
               size="sm"
             />
           }
