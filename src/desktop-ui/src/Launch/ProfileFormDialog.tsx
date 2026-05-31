@@ -269,7 +269,7 @@ export function ProfileFormDialog({
                 size="sm"
                 onClick={() => setStep("pick-provider")}
               >
-                {t("Back")}
+                {t("Change provider")}
               </Button>
             )}
           </div>

@@ -87,6 +87,7 @@ export const zhCNLaunch: Record<string, string> = {
     "将 {{agent}} 设为不使用配置的快速启动默认项",
   "Edit profile · {{label}}": "编辑配置 · {{label}}",
   "Pick a provider": "选择服务商",
+  "Change provider": "更换服务商",
   "New profile · {{provider}}": "新建配置 · {{provider}}",
   "Configure a Quick Launch provider profile.": "配置快速启动的服务商凭据。",
   "The provider {{provider}} is no longer in the catalog. Form fell back to a custom endpoint — re-pick a provider via Back, or edit the URL/key and save.":
