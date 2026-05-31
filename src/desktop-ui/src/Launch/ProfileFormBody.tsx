@@ -435,9 +435,9 @@ function ProxyField({
       }`}
     >
       <span className="min-w-0">
-        <span className="block font-medium">{t("Use Settings proxy")}</span>
+        <span className="block font-medium">{t("Use HTTP proxy")}</span>
         <span className="block text-[10px] text-muted-foreground/70">
-          {t("Provider requests for this profile use the configured Settings proxy when it is enabled.")}
+          {t("Provider requests for this profile use the configured HTTP proxy when it is enabled.")}
         </span>
       </span>
       <input

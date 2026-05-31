@@ -132,9 +132,9 @@ export const zhCNLaunch: Record<string, string> = {
   "Endpoint type": "Endpoint 类型",
   "Select every API shape this endpoint supports.":
     "选择这个 endpoint 支持的所有 API 形态。",
-  "Use Settings proxy": "使用设置里的代理",
-  "Provider requests for this profile use the configured Settings proxy when it is enabled.":
-    "开启后，这个配置的服务商请求会使用设置中配置的代理。",
+  "Use HTTP proxy": "使用 HTTP 代理",
+  "Provider requests for this profile use the configured HTTP proxy when it is enabled.":
+    "开启后，这个配置的服务商请求会使用设置中配置的 HTTP 代理。",
   Hide: "隐藏",
   Reveal: "显示",
   "Search providers": "搜索服务商",
