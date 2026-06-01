@@ -20,14 +20,16 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
+    extract::connect_info::ConnectInfo,
     extract::State,
-    http::{header, Request, StatusCode},
+    http::{header, HeaderMap, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
 };
 
 use common::auth::AuthToken;
+use std::net::SocketAddr;
 
 /// Shared handle to the server's current auth token.
 #[derive(Clone)]
@@ -76,11 +78,39 @@ pub(crate) fn is_loopback_host(host: &str) -> bool {
     matches!(without_port.as_str(), "localhost" | "127.0.0.1" | "::1")
 }
 
-fn is_loopback_dashboard<B>(req: &Request<B>) -> bool {
+fn request_host_is_loopback<B>(req: &Request<B>) -> bool {
     req.headers()
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .is_some_and(is_loopback_host)
+}
+
+fn request_peer_is_loopback<B>(req: &Request<B>) -> bool {
+    req.extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|ConnectInfo(addr)| addr.ip().is_loopback())
+}
+
+fn request_origin_is_local_dashboard<B>(req: &Request<B>) -> bool {
+    req.headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_none_or(|origin| local_dashboard_origin_allowed(origin, None))
+}
+
+/// Allow local API bridge calls only from clients that actually connected via
+/// loopback and targeted a loopback dashboard URL. Tunnel forwarders also
+/// connect to the daemon over loopback, so the Host/Origin checks are needed
+/// to keep `/local-api` off public tunnel URLs while preserving local CLI use.
+pub async fn require_local_bridge(req: Request<Body>, next: Next) -> Response {
+    if request_peer_is_loopback(&req)
+        && request_host_is_loopback(&req)
+        && request_origin_is_local_dashboard(&req)
+    {
+        return next.run(req).await;
+    }
+
+    StatusCode::FORBIDDEN.into_response()
 }
 
 /// axum middleware that rejects any request lacking a valid token.
@@ -90,10 +120,6 @@ pub async fn require_auth(
     next: Next,
 ) -> Response {
     let is_mcp = req.uri().path() == "/mcp";
-    if is_loopback_dashboard(&req) {
-        return next.run(req).await;
-    }
-
     let token = extract_token(&req);
     let authorized = match token.as_deref() {
         Some(candidate) => state.0.matches(candidate),
@@ -121,6 +147,84 @@ pub async fn require_auth(
         return (StatusCode::OK, body).into_response();
     }
     StatusCode::UNAUTHORIZED.into_response()
+}
+
+pub(crate) fn headers_have_allowed_ws_origin(
+    headers: &HeaderMap,
+    port: u16,
+    tunnel_urls: &[String],
+) -> bool {
+    headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_none_or(|origin| dashboard_origin_allowed(origin, port, tunnel_urls))
+}
+
+pub(crate) fn dashboard_origin_allowed(origin: &str, port: u16, tunnel_urls: &[String]) -> bool {
+    if local_dashboard_origin_allowed(origin, Some(port)) {
+        return true;
+    }
+
+    let Some(origin) = parse_origin(origin) else {
+        return false;
+    };
+    tunnel_urls.iter().any(|url| {
+        parse_origin(url)
+            .as_ref()
+            .is_some_and(|tunnel_origin| tunnel_origin == &origin)
+    })
+}
+
+fn local_dashboard_origin_allowed(origin: &str, port: Option<u16>) -> bool {
+    let Some(origin) = parse_origin(origin) else {
+        return false;
+    };
+
+    if matches!(
+        (
+            origin.scheme.as_str(),
+            origin.host.as_str(),
+            origin.port,
+            port
+        ),
+        ("tauri", "localhost", None, _)
+            | ("http", "tauri.localhost", Some(80), _)
+            | ("http", "localhost", Some(5181), _)
+    ) {
+        return true;
+    }
+
+    match port {
+        Some(port) => {
+            origin.scheme == "http"
+                && origin.port == Some(port)
+                && matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1")
+        }
+        None => {
+            origin.scheme == "http"
+                && matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1")
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct OriginParts {
+    scheme: String,
+    host: String,
+    port: Option<u16>,
+}
+
+fn parse_origin(value: &str) -> Option<OriginParts> {
+    let parsed = reqwest::Url::parse(value.trim().trim_end_matches('/')).ok()?;
+    let host = parsed
+        .host_str()?
+        .trim_matches(['[', ']'])
+        .to_ascii_lowercase();
+    Some(OriginParts {
+        scheme: parsed.scheme().to_ascii_lowercase(),
+        host,
+        port: parsed.port_or_known_default(),
+    })
 }
 
 /// Minimal percent-decoder for the `?token=` value. We only need to handle
@@ -228,5 +332,35 @@ mod tests {
         assert!(is_loopback_host("[::1]:12358"));
         assert!(!is_loopback_host("example.com"));
         assert!(!is_loopback_host("example.com:12358"));
+    }
+
+    #[test]
+    fn validates_static_dashboard_origins() {
+        assert!(dashboard_origin_allowed(
+            "http://127.0.0.1:12358",
+            12358,
+            &[]
+        ));
+        assert!(dashboard_origin_allowed(
+            "http://localhost:12358",
+            12358,
+            &[]
+        ));
+        assert!(dashboard_origin_allowed("tauri://localhost", 12358, &[]));
+        assert!(!dashboard_origin_allowed("http://evil.example", 12358, &[]));
+    }
+
+    #[test]
+    fn validates_tunnel_origins_by_active_url() {
+        assert!(dashboard_origin_allowed(
+            "https://demo.loca.lt",
+            12358,
+            &["https://demo.loca.lt".to_string()]
+        ));
+        assert!(!dashboard_origin_allowed(
+            "https://other.loca.lt",
+            12358,
+            &["https://demo.loca.lt".to_string()]
+        ));
     }
 }

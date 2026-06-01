@@ -30,7 +30,7 @@ use common::channels::{ChannelManager, WebChannelManager};
 use common::pty::{PtySessionManager, Registry};
 use common::tunnels::TunnelManager;
 
-use self::auth::{require_auth, AuthState};
+use self::auth::{require_auth, require_local_bridge, AuthState};
 
 const LOCAL_BRIDGE_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 
@@ -319,6 +319,7 @@ pub async fn run_web_server(
             "/local-api/{profile_id}/{scope}/{target_api_type}/{version}/models/{model_action}",
             post(api_bridge::local_gemini_generate_content_handler),
         )
+        .route_layer(axum::middleware::from_fn(require_local_bridge))
         .layer(DefaultBodyLimit::max(LOCAL_BRIDGE_BODY_LIMIT_BYTES));
 
     let public = Router::new()
@@ -366,7 +367,11 @@ pub async fn run_web_server(
         "[VibeAround] Web server listening on http://127.0.0.1:{}",
         port
     );
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 

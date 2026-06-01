@@ -138,6 +138,14 @@ impl TunnelManager {
         self.tunnels.iter().find_map(|entry| entry.url.clone())
     }
 
+    /// Snapshot of every public URL currently registered.
+    pub fn public_urls(&self) -> Vec<String> {
+        self.tunnels
+            .iter()
+            .filter_map(|entry| entry.url.clone())
+            .collect()
+    }
+
     fn notify_change(&self) {
         let _ = self.change_tx.send(());
     }

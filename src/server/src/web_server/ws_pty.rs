@@ -7,7 +7,8 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
-    response::Response,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
 };
 use bytes::Bytes;
 use futures_util::stream::StreamExt;
@@ -22,8 +23,14 @@ use super::{AppState, WsQuery};
 pub async fn ws_handler(
     State(state): State<AppState>,
     Query(query): Query<WsQuery>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
+    let tunnel_urls = state.tunnels.public_urls();
+    if !super::auth::headers_have_allowed_ws_origin(&headers, state.port, &tunnel_urls) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     if let Some(ref sid) = query.session_id {
         if let Ok(uuid) = uuid::Uuid::parse_str(sid) {
             let session_id = SessionId(uuid);
