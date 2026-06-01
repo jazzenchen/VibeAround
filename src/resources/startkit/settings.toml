@@ -1,0 +1,165 @@
+[startkit]
+id = "vibearound.startkit"
+name = "VibeAround Startkit"
+schema = 1
+version = "0.1.0"
+
+[runner]
+default_timeout_secs = 600
+log_redact_keys = ["token", "api_key", "secret", "password"]
+
+[sources.global]
+label = "Global"
+node_index = "https://nodejs.org/dist/index.json"
+node_dist = "https://nodejs.org/dist"
+npm_registry = "https://registry.npmjs.org"
+
+[sources.cn]
+label = "China mirror"
+node_index = "https://npmmirror.com/mirrors/node/index.json"
+node_dist = "https://npmmirror.com/mirrors/node"
+npm_registry = "https://registry.npmmirror.com"
+
+[[items]]
+id = "essentials.node"
+label = "Node.js"
+group = "computer"
+category = "essentials"
+description = "Managed Node.js runtime for agent CLIs and channel plugins."
+platforms = ["macos", "windows"]
+include_if = ["agent:any", "channels:any", "tunnel:localtunnel"]
+severity = "blocker"
+managed = true
+min_version = "22.0.0"
+
+[items.detect]
+macos = "scripts/macos/detect-node.sh"
+windows = "scripts/windows/detect-node.ps1"
+
+[items.install]
+macos = "scripts/macos/install-node.sh"
+windows = "scripts/windows/install-node.ps1"
+
+[[items]]
+id = "essentials.git"
+label = "Git"
+group = "computer"
+category = "essentials"
+description = "Required for workspace operations and plugin installs."
+platforms = ["macos", "windows"]
+include_if = ["agent:any", "channels:any"]
+severity = "warning"
+program = "git"
+version_arg = "--version"
+
+[items.detect]
+macos = "scripts/macos/detect-program.sh"
+windows = "scripts/windows/detect-program.ps1"
+
+[items.install]
+macos = "scripts/macos/install-git.sh"
+windows = "scripts/windows/install-git.ps1"
+
+[[items]]
+id = "agents.codex.cli"
+label = "Codex CLI"
+group = "agents"
+category = "agents"
+description = "OpenAI Codex CLI installed in the VibeAround-managed npm prefix."
+platforms = ["macos", "windows"]
+include_if = ["agent:codex"]
+depends_on = ["essentials.node"]
+severity = "blocker"
+program = "codex"
+version_arg = "--version"
+npm_package = "@openai/codex"
+
+[items.detect]
+macos = "scripts/macos/detect-program.sh"
+windows = "scripts/windows/detect-program.ps1"
+
+[items.install]
+macos = "scripts/macos/install-npm-package.sh"
+windows = "scripts/windows/install-npm-package.ps1"
+
+[[items]]
+id = "agents.claude.cli"
+label = "Claude Code"
+group = "agents"
+category = "agents"
+description = "Anthropic Claude Code installed in the VibeAround-managed npm prefix."
+platforms = ["macos", "windows"]
+include_if = ["agent:claude"]
+depends_on = ["essentials.node"]
+severity = "blocker"
+program = "claude"
+version_arg = "--version"
+npm_package = "@anthropic-ai/claude-code"
+
+[items.detect]
+macos = "scripts/macos/detect-program.sh"
+windows = "scripts/windows/detect-program.ps1"
+
+[items.install]
+macos = "scripts/macos/install-npm-package.sh"
+windows = "scripts/windows/install-npm-package.ps1"
+
+[[items]]
+id = "tunnels.cloudflare.binary"
+label = "cloudflared"
+group = "remote"
+category = "tunnels"
+description = "Cloudflare tunnel binary for stable remote access."
+platforms = ["macos", "windows"]
+include_if = ["tunnel:cloudflare"]
+severity = "blocker"
+program = "cloudflared"
+version_arg = "--version"
+
+[items.detect]
+macos = "scripts/macos/detect-program.sh"
+windows = "scripts/windows/detect-program.ps1"
+
+[items.install]
+macos = "scripts/macos/install-cloudflared.sh"
+windows = "scripts/windows/install-cloudflared.ps1"
+
+[[items]]
+id = "tunnels.cloudflare.token"
+label = "Cloudflare Tunnel Token"
+group = "remote"
+category = "config"
+description = "Token copied from a Cloudflare named tunnel."
+platforms = ["macos", "windows"]
+include_if = ["tunnel:cloudflare"]
+depends_on = ["tunnels.cloudflare.binary"]
+severity = "needs_input"
+kind = "config"
+settings_key = "tunnel.cloudflare.tunnel_token"
+secret = true
+
+[[items]]
+id = "tunnels.cloudflare.hostname"
+label = "Cloudflare Hostname"
+group = "remote"
+category = "config"
+description = "Public hostname routed to the Cloudflare tunnel."
+platforms = ["macos", "windows"]
+include_if = ["tunnel:cloudflare"]
+depends_on = ["tunnels.cloudflare.token"]
+severity = "needs_input"
+kind = "config"
+settings_key = "tunnel.cloudflare.hostname"
+
+[[items]]
+id = "channels.plugins"
+label = "Channel plugins"
+group = "messaging"
+category = "channels"
+description = "Selected messaging channel plugins."
+platforms = ["macos", "windows"]
+include_if = ["channels:any"]
+depends_on = ["essentials.node", "essentials.git"]
+severity = "blocker"
+kind = "builtin_channel_plugins"
+

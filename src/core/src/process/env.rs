@@ -212,7 +212,49 @@ fn probe_enriched_env() -> HashMap<String, String> {
         enrich_windows_path(&mut env);
     }
 
+    prepend_vibearound_managed_paths(&mut env);
     env
+}
+
+/// Prepend binaries installed by Startkit into the app-managed toolchain.
+///
+/// Startkit installs Node.js, npm global CLIs, and helper binaries under
+/// `~/.vibearound` instead of mutating system directories. Every child
+/// process launched by VibeAround should see those tools first.
+fn prepend_vibearound_managed_paths(env: &mut HashMap<String, String>) {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let home = crate::config::data_dir();
+    let candidates = [
+        home.join("bin"),
+        home.join("runtime").join("node").join("bin"),
+        home.join("runtime").join("node"),
+        home.join("npm-global").join("bin"),
+        home.join("npm-global"),
+    ];
+
+    let current = env.get("PATH").cloned().unwrap_or_default();
+    let mut parts: Vec<String> = current
+        .split(sep)
+        .filter(|part| !part.trim().is_empty())
+        .map(String::from)
+        .collect();
+
+    for candidate in candidates.iter().rev() {
+        if !candidate.is_dir() {
+            continue;
+        }
+        let value = candidate.to_string_lossy().to_string();
+        let exists = if cfg!(windows) {
+            parts.iter().any(|part| part.eq_ignore_ascii_case(&value))
+        } else {
+            parts.iter().any(|part| part == &value)
+        };
+        if !exists {
+            parts.insert(0, value);
+        }
+    }
+
+    env.insert("PATH".to_string(), parts.join(&sep.to_string()));
 }
 
 /// Probe the user's login shell for their full environment.

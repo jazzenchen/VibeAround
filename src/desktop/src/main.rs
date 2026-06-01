@@ -3,6 +3,7 @@
 
 mod onboarding;
 mod profiles;
+mod startkit;
 mod tray;
 
 use std::path::PathBuf;

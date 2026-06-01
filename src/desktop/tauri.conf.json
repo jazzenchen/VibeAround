@@ -46,6 +46,7 @@
     ],
     "resources": [
       "../web/dist/**/*",
+      "../resources/startkit/**/*",
       "icons/32x32.png"
     ],
     "externalBin": [
