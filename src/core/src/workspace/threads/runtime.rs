@@ -63,6 +63,7 @@ pub struct ThreadRuntime {
     thread: Mutex<WorkspaceThread>,
     workspace: PathBuf,
     agent: Mutex<Option<Arc<Agent>>>,
+    spawn_lock: Mutex<()>,
     subagents: Mutex<BTreeMap<ThreadAgentId, SubagentRuntime>>,
     session_id: Mutex<Option<String>>,
     initialize: Mutex<Option<acp::InitializeResponse>>,
@@ -90,6 +91,7 @@ impl ThreadRuntime {
             thread: Mutex::new(thread),
             workspace,
             agent: Mutex::new(None),
+            spawn_lock: Mutex::new(()),
             subagents: Mutex::new(BTreeMap::new()),
             session_id: Mutex::new(session_id),
             initialize: Mutex::new(None),
@@ -688,6 +690,7 @@ impl ThreadRuntime {
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
     ) -> acp::Result<Arc<Agent>> {
+        let _spawn_guard = self.spawn_lock.lock().await;
         if let Some(agent) = self.agent.lock().await.clone() {
             return Ok(agent);
         }
