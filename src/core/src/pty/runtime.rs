@@ -26,7 +26,7 @@ fn shell_command() -> CommandBuilder {
 }
 
 fn set_pty_env(c: &mut CommandBuilder, theme: Option<&str>, extra_env: &[(String, String)]) {
-    for (key, val) in crate::process::env::enriched_env() {
+    for (key, val) in crate::process::env::child_env() {
         c.env(key, val);
     }
     // Codex.app launches this process with NO_COLOR=1/TERM=dumb in some

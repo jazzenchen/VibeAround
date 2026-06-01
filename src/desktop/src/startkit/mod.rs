@@ -155,6 +155,8 @@ pub struct StartkitChoices {
     pub channels: Vec<String>,
     #[serde(default = "default_source")]
     pub source: String,
+    #[serde(default = "default_toolchain_mode")]
+    pub toolchain_mode: String,
 }
 
 fn default_tunnel() -> String {
@@ -163,6 +165,10 @@ fn default_tunnel() -> String {
 
 fn default_source() -> String {
     "global".to_string()
+}
+
+fn default_toolchain_mode() -> String {
+    "auto".to_string()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -433,6 +439,17 @@ pub async fn execute_item(
         return Ok(before);
     }
 
+    if choices.toolchain_mode == "system" && item.managed {
+        return Ok(StartkitItemReport {
+            status: StartkitItemStatus::Blocked,
+            message: Some(
+                "System-only mode is selected, so Startkit will not install a managed copy."
+                    .to_string(),
+            ),
+            ..base_report(item)
+        });
+    }
+
     let Some(script) = &item.install else {
         return Ok(StartkitItemReport {
             status: StartkitItemStatus::Blocked,
@@ -449,7 +466,17 @@ pub async fn execute_item(
         });
     };
 
-    match run_script(&manifest, &paths, item, choices, platform, script_path, script).await {
+    match run_script(
+        &manifest,
+        &paths,
+        item,
+        choices,
+        platform,
+        script_path,
+        script,
+    )
+    .await
+    {
         Ok(report) => report_from_script(item, report),
         Err(err) => StartkitItemReport {
             status: StartkitItemStatus::Error,
@@ -494,8 +521,10 @@ async fn run_startkit_install<R: Runtime>(
 
         match report {
             Ok(report) => {
-                if matches!(report.status, StartkitItemStatus::Error | StartkitItemStatus::Blocked)
-                {
+                if matches!(
+                    report.status,
+                    StartkitItemStatus::Error | StartkitItemStatus::Blocked
+                ) {
                     had_error = true;
                 }
                 if matches!(report.status, StartkitItemStatus::NeedsConfig) {
@@ -603,7 +632,10 @@ async fn install_acp_adapter_for_agent<R: Runtime>(
             app,
             item,
             StartkitItemStatus::Running,
-            Some(format!("{} ACP adapter already installed", agent_def.display_name)),
+            Some(format!(
+                "{} ACP adapter already installed",
+                agent_def.display_name
+            )),
             None,
         );
         return Ok(());
@@ -620,13 +652,7 @@ async fn install_acp_adapter_for_agent<R: Runtime>(
     common::agent::auto_install_npm_agent_with_progress_and_cancel(
         npm_pkg,
         |line| {
-            emit_progress(
-                app,
-                item,
-                StartkitItemStatus::Running,
-                Some(line),
-                None,
-            );
+            emit_progress(app, item, StartkitItemStatus::Running, Some(line), None);
         },
         || cancelled.load(Ordering::Relaxed),
     )
@@ -668,13 +694,7 @@ async fn install_channel_plugin<R: Runtime>(
             github_url: plugin.github.clone(),
         },
         |line| {
-            emit_progress(
-                app,
-                item,
-                StartkitItemStatus::Running,
-                Some(line),
-                None,
-            );
+            emit_progress(app, item, StartkitItemStatus::Running, Some(line), None);
         },
         || cancelled.load(Ordering::Relaxed),
     )
@@ -721,7 +741,10 @@ async fn scan_item(
         };
         return StartkitItemReport {
             status,
-            message: Some(format!("{} channel plugin(s) selected", choices.channels.len())),
+            message: Some(format!(
+                "{} channel plugin(s) selected",
+                choices.channels.len()
+            )),
             actions: if choices.channels.is_empty() {
                 Vec::new()
             } else {
@@ -747,7 +770,17 @@ async fn scan_item(
         };
     };
 
-    match run_script(manifest, paths, item, choices, platform, script_path, detect).await {
+    match run_script(
+        manifest,
+        paths,
+        item,
+        choices,
+        platform,
+        script_path,
+        detect,
+    )
+    .await
+    {
         Ok(output) => report_from_script(item, output),
         Err(err) => StartkitItemReport {
             status: StartkitItemStatus::Error,
@@ -865,19 +898,23 @@ fn apply_startkit_env(
         .or_else(|| manifest.sources.get("global"))
         .ok_or_else(|| anyhow!("startkit source '{}' not found", choices.source))?;
 
-    let managed_paths = managed_path_entries();
     let current_path = common::process::env::enriched_env()
         .get("PATH")
         .cloned()
         .unwrap_or_default();
     let sep = if cfg!(windows) { ";" } else { ":" };
-    let mut path = managed_paths
-        .iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-    path.push(current_path);
+    let path = if choices.toolchain_mode == "system" {
+        current_path
+    } else {
+        let mut path = managed_path_entries()
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        path.push(current_path);
+        path.join(sep)
+    };
 
-    command.env("PATH", path.join(sep));
+    command.env("PATH", path);
     command.env("STARTKIT_HOME", &paths.home);
     command.env("STARTKIT_ROOT", &paths.root);
     command.env("STARTKIT_BIN_DIR", &paths.bin_dir);
@@ -886,6 +923,11 @@ fn apply_startkit_env(
     command.env("STARTKIT_NPM_PREFIX", &paths.npm_prefix);
     command.env("STARTKIT_CACHE_DIR", &paths.cache_dir);
     command.env("STARTKIT_SOURCE", &choices.source);
+    command.env("STARTKIT_TOOLCHAIN_MODE", &choices.toolchain_mode);
+    command.env(
+        "STARTKIT_ITEM_MANAGED",
+        if item.managed { "true" } else { "false" },
+    );
     command.env("STARTKIT_NODE_INDEX_URL", &source.node_index);
     command.env("STARTKIT_NODE_DIST_BASE", &source.node_dist);
     command.env("STARTKIT_NPM_REGISTRY", &source.npm_registry);
@@ -986,7 +1028,15 @@ fn plan_from_manifest(
     let mut temporary = HashSet::new();
     let mut permanent = HashSet::new();
     for id in selected.iter() {
-        visit(id, &by_id, platform, &selected, &mut temporary, &mut permanent, &mut ordered)?;
+        visit(
+            id,
+            &by_id,
+            platform,
+            &selected,
+            &mut temporary,
+            &mut permanent,
+            &mut ordered,
+        )?;
     }
 
     let items = ordered
@@ -1041,11 +1091,13 @@ fn visit(
         .ok_or_else(|| anyhow!("planned startkit item missing: {id}"))?;
     for dep in &item.depends_on {
         if selected.contains(dep) {
-            let dep_item = by_id
-                .get(dep.as_str())
-                .ok_or_else(|| anyhow!("startkit item '{}' depends on missing '{}'", item.id, dep))?;
+            let dep_item = by_id.get(dep.as_str()).ok_or_else(|| {
+                anyhow!("startkit item '{}' depends on missing '{}'", item.id, dep)
+            })?;
             if supports_platform(dep_item, platform) {
-                visit(dep, by_id, platform, selected, temporary, permanent, ordered)?;
+                visit(
+                    dep, by_id, platform, selected, temporary, permanent, ordered,
+                )?;
             }
         }
     }
@@ -1167,6 +1219,7 @@ mod tests {
             tunnel: "none".to_string(),
             channels: Vec::new(),
             source: "global".to_string(),
+            toolchain_mode: "auto".to_string(),
         });
 
         assert!(item_ids.contains(&"essentials.node".to_string()));
@@ -1183,6 +1236,7 @@ mod tests {
             tunnel: "cloudflare".to_string(),
             channels: Vec::new(),
             source: "cn".to_string(),
+            toolchain_mode: "auto".to_string(),
         });
 
         assert_eq!(
@@ -1202,10 +1256,24 @@ mod tests {
             tunnel: "none".to_string(),
             channels: vec!["telegram".to_string()],
             source: "global".to_string(),
+            toolchain_mode: "auto".to_string(),
         });
 
         assert!(item_ids.contains(&"essentials.node".to_string()));
         assert!(item_ids.contains(&"essentials.git".to_string()));
         assert!(item_ids.contains(&"channels.plugins".to_string()));
+    }
+
+    #[test]
+    fn startkit_choices_default_to_auto_toolchain() {
+        let choices: StartkitChoices = serde_json::from_value(serde_json::json!({
+            "agents": ["codex"],
+            "tunnel": "none",
+            "channels": [],
+            "source": "global"
+        }))
+        .unwrap();
+
+        assert_eq!(choices.toolchain_mode, "auto");
     }
 }

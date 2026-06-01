@@ -49,6 +49,10 @@ export interface Settings {
       delay_seconds?: number;
     };
   };
+  startkit?: {
+    source?: string;
+    toolchain_mode?: "auto" | "managed" | "system" | string;
+  };
   tunnel?: {
     provider?: string;
     ngrok?: { auth_token?: string; domain?: string };
@@ -213,6 +217,7 @@ export interface StartkitChoices {
   tunnel: string;
   channels: string[];
   source: string;
+  toolchainMode: "auto" | "managed" | "system" | string;
 }
 
 export interface StartkitSource {

@@ -10,18 +10,20 @@ function Major($version) {
 }
 
 $minMajor = Major($env:STARTKIT_MIN_VERSION)
+$mode = if ($env:STARTKIT_TOOLCHAIN_MODE) { $env:STARTKIT_TOOLCHAIN_MODE } else { "auto" }
 $candidate = $null
-if ($env:STARTKIT_NODE_DIR) {
+if ($mode -ne "system" -and $env:STARTKIT_NODE_DIR) {
   $managed = Join-Path $env:STARTKIT_NODE_DIR "node.exe"
   if (Test-Path $managed) { $candidate = $managed }
 }
-if (-not $candidate) {
+if (-not $candidate -and $mode -ne "managed") {
   $cmd = Get-Command node -ErrorAction SilentlyContinue
   if ($cmd) { $candidate = $cmd.Source }
 }
 
 if (-not $candidate) {
-  Emit @{ status = "missing"; message = "Node.js was not found"; actions = @("install") }
+  $message = if ($mode -eq "managed") { "Managed Node.js was not found" } else { "Node.js was not found" }
+  Emit @{ status = "missing"; message = $message; actions = @("install") }
   exit 0
 }
 
@@ -32,4 +34,3 @@ if ((Major $version) -lt $minMajor) {
 }
 
 Emit @{ status = "ok"; version = $version; path = $candidate; message = "Node.js is ready"; actions = @() }
-

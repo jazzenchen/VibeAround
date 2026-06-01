@@ -37,13 +37,25 @@ pub fn enriched_env() -> &'static HashMap<String, String> {
     })
 }
 
+/// Return the environment VibeAround should pass to child processes.
+///
+/// This is the cached shell environment plus the Startkit-managed toolchain
+/// paths unless the user explicitly selected `system` mode.
+pub fn child_env() -> HashMap<String, String> {
+    let mut env = enriched_env().clone();
+    if vibearound_managed_paths_enabled() {
+        prepend_vibearound_managed_paths(&mut env);
+    }
+    env
+}
+
 /// Create a `tokio::process::Command` with the enriched environment pre-set.
 /// Drop-in replacement for `tokio::process::Command::new(program)`.
 pub fn command(program: &str) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
     hide_windows_console(&mut cmd);
     cmd.env_clear();
-    cmd.envs(enriched_env());
+    cmd.envs(child_env());
     cmd
 }
 
@@ -52,7 +64,7 @@ pub fn std_command(program: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);
     hide_windows_console_std(&mut cmd);
     cmd.env_clear();
-    cmd.envs(enriched_env());
+    cmd.envs(child_env());
     cmd
 }
 
@@ -212,7 +224,6 @@ fn probe_enriched_env() -> HashMap<String, String> {
         enrich_windows_path(&mut env);
     }
 
-    prepend_vibearound_managed_paths(&mut env);
     env
 }
 
@@ -252,6 +263,20 @@ fn prepend_vibearound_managed_paths(env: &mut HashMap<String, String>) {
     }
 
     env.insert("PATH".to_string(), parts.join(&sep.to_string()));
+}
+
+fn vibearound_managed_paths_enabled() -> bool {
+    let path = crate::config::data_dir().join("settings.json");
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return true;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return true;
+    };
+    json.get("startkit")
+        .and_then(|value| value.get("toolchain_mode"))
+        .and_then(serde_json::Value::as_str)
+        != Some("system")
 }
 
 /// Probe the user's login shell for their full environment.

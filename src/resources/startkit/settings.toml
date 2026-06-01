@@ -73,6 +73,7 @@ severity = "blocker"
 program = "codex"
 version_arg = "--version"
 npm_package = "@openai/codex"
+managed = true
 
 [items.detect]
 macos = "scripts/macos/detect-program.sh"
@@ -95,6 +96,7 @@ severity = "blocker"
 program = "claude"
 version_arg = "--version"
 npm_package = "@anthropic-ai/claude-code"
+managed = true
 
 [items.detect]
 macos = "scripts/macos/detect-program.sh"
@@ -115,6 +117,7 @@ include_if = ["tunnel:cloudflare"]
 severity = "blocker"
 program = "cloudflared"
 version_arg = "--version"
+managed = true
 
 [items.detect]
 macos = "scripts/macos/detect-program.sh"
@@ -162,4 +165,3 @@ include_if = ["channels:any"]
 depends_on = ["essentials.node", "essentials.git"]
 severity = "blocker"
 kind = "builtin_channel_plugins"
-

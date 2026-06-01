@@ -12,14 +12,18 @@ version_major() {
 min_major="$(version_major "${STARTKIT_MIN_VERSION:-22.0.0}")"
 candidate=""
 
-if [ -x "${STARTKIT_NODE_DIR:-}/bin/node" ]; then
+if [ "${STARTKIT_TOOLCHAIN_MODE:-auto}" != "system" ] && [ -x "${STARTKIT_NODE_DIR:-}/bin/node" ]; then
   candidate="$STARTKIT_NODE_DIR/bin/node"
-elif command -v node >/dev/null 2>&1; then
+elif [ "${STARTKIT_TOOLCHAIN_MODE:-auto}" != "managed" ] && command -v node >/dev/null 2>&1; then
   candidate="$(command -v node)"
 fi
 
 if [ -z "$candidate" ]; then
-  printf '{"status":"missing","message":"Node.js was not found","actions":["install"]}\n'
+  if [ "${STARTKIT_TOOLCHAIN_MODE:-auto}" = "managed" ]; then
+    printf '{"status":"missing","message":"Managed Node.js was not found","actions":["install"]}\n'
+  else
+    printf '{"status":"missing","message":"Node.js was not found","actions":["install"]}\n'
+  fi
   exit 0
 fi
 
@@ -33,4 +37,3 @@ fi
 
 printf '{"status":"ok","version":"%s","path":"%s","message":"Node.js is ready","actions":[]}\n' \
   "$(json_escape "$version")" "$(json_escape "$candidate")"
-

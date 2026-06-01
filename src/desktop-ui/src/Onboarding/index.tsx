@@ -93,6 +93,9 @@ export default function Onboarding() {
   >([]);
 
   const [downloadSource, setDownloadSource] = useState("global");
+  const [toolchainMode, setToolchainMode] = useState<
+    "auto" | "managed" | "system"
+  >("auto");
   const [enabledAgents, setEnabledAgents] = useState<Set<AgentId>>(new Set());
   const [enabledChannels, setEnabledChannels] = useState<Set<string>>(
     new Set(),
@@ -145,6 +148,16 @@ export default function Onboarding() {
           setTunnels(tunnelDefs);
           setPluginRegistry(pluginDefs);
           setManifest(startkitManifest);
+          if (loadedSettings.startkit?.source) {
+            setDownloadSource(loadedSettings.startkit.source);
+          }
+          if (
+            loadedSettings.startkit?.toolchain_mode === "auto" ||
+            loadedSettings.startkit?.toolchain_mode === "managed" ||
+            loadedSettings.startkit?.toolchain_mode === "system"
+          ) {
+            setToolchainMode(loadedSettings.startkit.toolchain_mode);
+          }
           setCatalog(catalogDefs);
           setProfiles(profileDefs);
 
@@ -222,13 +235,14 @@ export default function Onboarding() {
       tunnel: tunnelProvider,
       channels: Array.from(enabledChannels),
       source: downloadSource,
+      toolchainMode,
     }),
-    [enabledAgents, tunnelProvider, enabledChannels, downloadSource],
+    [enabledAgents, tunnelProvider, enabledChannels, downloadSource, toolchainMode],
   );
 
   const finalSettings = useMemo(
-    () =>
-      buildSettings({
+    () => {
+      const built = buildSettings({
         settings,
         configureAgents: true,
         configureChannels: true,
@@ -244,7 +258,18 @@ export default function Onboarding() {
         ngrokDomain,
         cfToken,
         cfHostname,
-      }),
+      });
+      return {
+        ...built,
+        startkit: {
+          ...(typeof built.startkit === "object" && built.startkit !== null
+            ? built.startkit
+            : {}),
+          source: downloadSource,
+          toolchain_mode: toolchainMode,
+        },
+      };
+    },
     [
       settings,
       enabledAgents,
@@ -258,6 +283,8 @@ export default function Onboarding() {
       ngrokDomain,
       cfToken,
       cfHostname,
+      downloadSource,
+      toolchainMode,
     ],
   );
 
@@ -444,6 +471,7 @@ export default function Onboarding() {
               value={downloadSource}
               onChange={setDownloadSource}
             />
+            <ToolchainChooser value={toolchainMode} onChange={setToolchainMode} />
 
             <div className="rounded-md border border-border bg-card/40 p-3">
               <StepAgents
@@ -504,7 +532,7 @@ export default function Onboarding() {
                   {t("Computer readiness")}
                 </div>
                 <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
-                  {t("Scan first, then let Startkit install or repair the missing pieces inside VibeAround's managed toolchain.")}
+                  {t("Scan first, then let Startkit install or repair the pieces required by your selected toolchain mode.")}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -602,6 +630,65 @@ export default function Onboarding() {
           onSave={handleSaveProfile}
         />
       )}
+    </div>
+  );
+}
+
+function ToolchainChooser({
+  value,
+  onChange,
+}: {
+  value: "auto" | "managed" | "system";
+  onChange: (value: "auto" | "managed" | "system") => void;
+}) {
+  const options: Array<{
+    id: "auto" | "managed" | "system";
+    label: string;
+    description: string;
+  }> = [
+    {
+      id: "auto",
+      label: "Auto",
+      description: "Reuse valid system tools; install managed copies when needed.",
+    },
+    {
+      id: "managed",
+      label: "Managed",
+      description: "Install and prefer VibeAround-managed Node and CLIs.",
+    },
+    {
+      id: "system",
+      label: "System only",
+      description: "Do not install managed tools; use what is already on PATH.",
+    },
+  ];
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs font-medium">
+        <TerminalSquare className="h-3.5 w-3.5 text-primary" />
+        Toolchain mode
+      </div>
+      <div className="grid gap-2">
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={cn(
+              "rounded-md border p-2 text-left transition-colors",
+              value === option.id
+                ? "border-primary bg-primary/10 text-foreground"
+                : "border-border bg-background hover:border-primary/30",
+            )}
+            onClick={() => onChange(option.id)}
+          >
+            <span className="block text-xs font-medium">{option.label}</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">
+              {option.description}
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
