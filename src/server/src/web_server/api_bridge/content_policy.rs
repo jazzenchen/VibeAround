@@ -1,20 +1,97 @@
-use common::profiles::catalog::{self, ContentCapabilities, EndpointDef};
+#[cfg(test)]
+use common::profiles::catalog::EndpointDef;
+use common::profiles::catalog::{self, ContentCapabilities};
 use common::profiles::schema::ProfileDef;
+#[cfg(test)]
 use serde_json::Value;
-use va_ai_api_bridge::{ContentBlock, UniversalItem, UniversalRequest};
+#[cfg(test)]
+use va_ai_api_bridge::{ContentBlock, UniversalItem};
+use va_ai_api_bridge::{
+    sanitize_unsupported_media, MediaSanitization, ModelCapabilities, ResolvedModelSpec,
+    UniversalRequest,
+};
 
+#[cfg(test)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct ContentUsage {
     image_input: bool,
     file_input: bool,
 }
 
+#[cfg(test)]
 impl ContentUsage {
     fn is_empty(self) -> bool {
         !self.image_input && !self.file_input
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ContentSanitization {
+    pub(super) image_omitted: bool,
+    pub(super) file_omitted: bool,
+}
+
+impl ContentSanitization {
+    pub(super) fn changed(self) -> bool {
+        self.image_omitted || self.file_omitted
+    }
+}
+
+impl From<MediaSanitization> for ContentSanitization {
+    fn from(value: MediaSanitization) -> Self {
+        Self {
+            image_omitted: value.image_omitted,
+            file_omitted: value.file_omitted,
+        }
+    }
+}
+
+pub(super) fn sanitize_request_content(
+    profile: &ProfileDef,
+    target_api_type: &str,
+    request: &mut UniversalRequest,
+) -> ContentSanitization {
+    let configured_model = configured_model(profile, target_api_type);
+    let model = request.model.as_deref().or(configured_model.as_deref());
+    let capabilities = resolve_content_capabilities(profile, target_api_type, model);
+    let model_spec = resolved_model_spec(profile, model, capabilities);
+    sanitize_unsupported_media(request, &model_spec).into()
+}
+
+fn resolved_model_spec(
+    profile: &ProfileDef,
+    model: Option<&str>,
+    capabilities: ContentCapabilities,
+) -> ResolvedModelSpec {
+    ResolvedModelSpec {
+        provider_label: Some(
+            catalog::get(&profile.provider)
+                .map(|provider| provider.label.clone())
+                .unwrap_or_else(|| profile.provider.clone()),
+        ),
+        model: model.unwrap_or("selected model").to_string(),
+        capabilities: ModelCapabilities {
+            vision: capabilities.image_input,
+            files: capabilities.file_input,
+            input_modalities: input_modalities(capabilities),
+            ..ModelCapabilities::default()
+        },
+        extensions: Default::default(),
+    }
+}
+
+fn input_modalities(capabilities: ContentCapabilities) -> Vec<String> {
+    let mut modalities = vec!["text".to_string()];
+    if capabilities.image_input {
+        modalities.push("image".to_string());
+    }
+    if capabilities.file_input {
+        modalities.push("file".to_string());
+    }
+    modalities
+}
+
+#[cfg(test)]
 pub(super) fn validate_request_content(
     profile: &ProfileDef,
     target_api_type: &str,
@@ -99,6 +176,7 @@ fn resolve_content_capabilities(
     capabilities
 }
 
+#[cfg(test)]
 fn compatible_models(
     profile: &ProfileDef,
     target_api_type: &str,
@@ -137,6 +215,7 @@ fn compatible_models(
         .collect()
 }
 
+#[cfg(test)]
 fn supports_required_content(
     endpoint: &EndpointDef,
     model_capabilities: &ContentCapabilities,
@@ -154,6 +233,7 @@ fn selected_endpoint_id<'a>(profile: &'a ProfileDef, target_api_type: &str) -> O
         .and_then(|overrides| overrides.endpoint_id.as_deref())
 }
 
+#[cfg(test)]
 fn content_usage_label(usage: ContentUsage) -> &'static str {
     match (usage.image_input, usage.file_input) {
         (true, true) => "image and file",
@@ -176,6 +256,7 @@ fn clean_model_id(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+#[cfg(test)]
 fn request_content_usage(request: &UniversalRequest) -> ContentUsage {
     let mut usage = ContentUsage::default();
     collect_blocks_usage(&request.instructions, &mut usage);
@@ -185,6 +266,7 @@ fn request_content_usage(request: &UniversalRequest) -> ContentUsage {
     usage
 }
 
+#[cfg(test)]
 fn collect_item_usage(item: &UniversalItem, usage: &mut ContentUsage) {
     match item {
         UniversalItem::Message { content, .. } | UniversalItem::ToolResult { content, .. } => {
@@ -195,12 +277,14 @@ fn collect_item_usage(item: &UniversalItem, usage: &mut ContentUsage) {
     }
 }
 
+#[cfg(test)]
 fn collect_blocks_usage(blocks: &[ContentBlock], usage: &mut ContentUsage) {
     for block in blocks {
         collect_block_usage(block, usage);
     }
 }
 
+#[cfg(test)]
 fn collect_block_usage(block: &ContentBlock, usage: &mut ContentUsage) {
     match block {
         ContentBlock::Image { .. } => usage.image_input = true,
@@ -213,6 +297,7 @@ fn collect_block_usage(block: &ContentBlock, usage: &mut ContentUsage) {
     }
 }
 
+#[cfg(test)]
 fn collect_value_usage(value: &Value, usage: &mut ContentUsage) {
     match value {
         Value::Array(values) => {
@@ -264,7 +349,7 @@ mod tests {
 
     use common::profiles::schema::{ApiTypeOverrides, AuthMode, ProviderSettings};
     use serde_json::json;
-    use va_ai_api_bridge::Role;
+    use va_ai_api_bridge::{AnthropicMessagesTranslator, OpenAiChatTranslator, Role, WireTranslator};
 
     use super::*;
 
@@ -411,5 +496,147 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("file input"));
+    }
+
+    #[test]
+    fn sanitizes_image_for_text_only_model() {
+        let mut request = image_request("deepseek-v4-pro");
+
+        let result = sanitize_request_content(
+            &profile("deepseek", "deepseek-v4-pro"),
+            "openai-chat",
+            &mut request,
+        );
+
+        assert!(result.changed());
+        assert!(result.image_omitted);
+        assert!(!request_content_usage(&request).image_input);
+        let UniversalItem::Message { content, .. } = &request.input[0] else {
+            panic!("expected message");
+        };
+        let ContentBlock::Text { text } = &content[0] else {
+            panic!("expected placeholder text");
+        };
+        assert!(text.contains("Image attachment omitted"));
+        assert!(text.contains("DeepSeek deepseek-v4-pro"));
+        assert!(text.contains("Do not infer image contents"));
+    }
+
+    #[test]
+    fn leaves_supported_image_model_unchanged() {
+        let mut request = image_request("qwen3.6-plus");
+
+        let result = sanitize_request_content(
+            &profile("dashscope", "qwen3.6-plus"),
+            "openai-chat",
+            &mut request,
+        );
+
+        assert!(!result.changed());
+        assert!(request_content_usage(&request).image_input);
+    }
+
+    #[test]
+    fn sanitizes_file_inside_tool_result() {
+        let mut request = UniversalRequest {
+            model: Some("deepseek-v4-pro".to_string()),
+            input: vec![UniversalItem::ToolResult {
+                tool_call_id: "call_1".to_string(),
+                content: vec![ContentBlock::File {
+                    media_type: Some("application/pdf".to_string()),
+                    filename: Some("paper.pdf".to_string()),
+                    url: Some("https://example.test/paper.pdf".to_string()),
+                    data: None,
+                    extensions: BTreeMap::new(),
+                }],
+                is_error: false,
+                extensions: BTreeMap::new(),
+            }],
+            ..UniversalRequest::default()
+        };
+
+        let result = sanitize_request_content(
+            &profile("deepseek", "deepseek-v4-pro"),
+            "openai-chat",
+            &mut request,
+        );
+
+        assert!(result.file_omitted);
+        assert!(!request_content_usage(&request).file_input);
+        let UniversalItem::ToolResult { content, .. } = &request.input[0] else {
+            panic!("expected tool result");
+        };
+        let ContentBlock::Text { text } = &content[0] else {
+            panic!("expected placeholder text");
+        };
+        assert!(text.contains("File attachment omitted"));
+        assert!(text.contains("Do not infer file contents"));
+    }
+
+    #[test]
+    fn sanitizes_unknown_media_payloads() {
+        let mut request = UniversalRequest {
+            input: vec![UniversalItem::Unknown {
+                raw: json!({
+                    "role": "user",
+                    "content": [
+                        { "type": "input_image", "image_url": "https://example.test/a.png" }
+                    ]
+                }),
+            }],
+            ..UniversalRequest::default()
+        };
+
+        let result = sanitize_request_content(
+            &profile("deepseek", "deepseek-v4-pro"),
+            "openai-chat",
+            &mut request,
+        );
+
+        assert!(result.image_omitted);
+        assert!(!request_content_usage(&request).image_input);
+        let UniversalItem::Message { content, .. } = &request.input[0] else {
+            panic!("expected unknown item to become placeholder message");
+        };
+        assert!(matches!(content[0], ContentBlock::Text { .. }));
+    }
+
+    #[test]
+    fn claude_image_history_to_text_only_chat_does_not_forward_image() {
+        let raw_anthropic = json!({
+            "model": "deepseek-v4-pro",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "iVBORw0KGgo="
+                        }
+                    },
+                    { "type": "text", "text": "What is this?" }
+                ]
+            }]
+        });
+        let mut request = AnthropicMessagesTranslator
+            .decode_request(raw_anthropic)
+            .unwrap();
+
+        let result = sanitize_request_content(
+            &profile("deepseek", "deepseek-v4-pro"),
+            "openai-chat",
+            &mut request,
+        );
+        let upstream = OpenAiChatTranslator.encode_request(&request).unwrap();
+        let upstream_text = upstream.to_string();
+
+        assert!(result.image_omitted);
+        assert!(!upstream_text.contains("image_url"));
+        assert!(!upstream_text.contains("iVBORw0KGgo="));
+        assert!(upstream_text.contains("Image attachment omitted"));
+        assert!(upstream_text.contains("What is this?"));
     }
 }

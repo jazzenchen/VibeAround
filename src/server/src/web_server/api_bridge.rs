@@ -22,7 +22,7 @@ mod stream;
 mod upstream;
 
 use completion::{translated_completion_response, UpstreamResponseTransform};
-use content_policy::validate_request_content;
+use content_policy::{sanitize_request_content, ContentSanitization};
 use model_mapping::{bridge_model_mapping, bridge_route_preference};
 use normalization::normalize_target_request;
 use passthrough::{buffered_passthrough_response, passthrough_response};
@@ -86,6 +86,28 @@ pub(super) async fn bridge_handler(
         if let Some(mapping) = &model_mapping {
             apply_wire_model(&mut agent_request, &mapping.upstream_model);
         }
+        if let Ok(mut content_request) = upstream
+            .protocol
+            .decode_agent_request(agent_request.clone())
+        {
+            let sanitization =
+                sanitize_request_content(&upstream.profile, &target_api_type, &mut content_request);
+            log_content_sanitization(
+                &profile_id,
+                &target_api_type,
+                client_protocol,
+                upstream.protocol,
+                sanitization,
+            );
+            if sanitization.changed() {
+                agent_request = match upstream.protocol.encode_upstream_request(&content_request) {
+                    Ok(request) => request,
+                    Err(error) => {
+                        return json_error(StatusCode::UNPROCESSABLE_ENTITY, &error.to_string());
+                    }
+                };
+            }
+        }
         let gemini_route = if upstream.protocol == BridgeProtocol::GeminiGenerateContent {
             match resolve_upstream_route(&upstream, &agent_request) {
                 Ok(route) => Some(route),
@@ -115,19 +137,6 @@ pub(super) async fn bridge_handler(
                 Err(response) => return response,
             },
         };
-        if let Ok(mut validation_request) = upstream
-            .protocol
-            .decode_agent_request(agent_request.clone())
-        {
-            if let Some(mapping) = &model_mapping {
-                validation_request.model = Some(mapping.upstream_model.clone());
-            }
-            if let Err(message) =
-                validate_request_content(&upstream.profile, &target_api_type, &validation_request)
-            {
-                return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message);
-            }
-        }
         let request = match build_upstream_request(
             &state,
             &upstream,
@@ -182,6 +191,15 @@ pub(super) async fn bridge_handler(
     if let Some(mapping) = &model_mapping {
         universal_request.model = Some(mapping.upstream_model.clone());
     }
+    let sanitization =
+        sanitize_request_content(&upstream.profile, &target_api_type, &mut universal_request);
+    log_content_sanitization(
+        &profile_id,
+        &target_api_type,
+        client_protocol,
+        upstream.protocol,
+        sanitization,
+    );
     let mut upstream_request = match upstream
         .protocol
         .encode_upstream_request(&universal_request)
@@ -218,16 +236,6 @@ pub(super) async fn bridge_handler(
             Err(response) => return response,
         },
     };
-    if let Ok(validation_request) = upstream
-        .protocol
-        .decode_agent_request(upstream_request.clone())
-    {
-        if let Err(message) =
-            validate_request_content(&upstream.profile, &target_api_type, &validation_request)
-        {
-            return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message);
-        }
-    }
     let request = match build_upstream_request(
         &state,
         &upstream,
@@ -332,11 +340,13 @@ pub(super) async fn models_handler(
         .map(|model| {
             let metadata =
                 bridge_model_metadata(&upstream.profile, &target_api_type, &model.upstream_model);
-            let input_modalities = if metadata.image_input {
-                vec!["text", "image"]
-            } else {
-                vec!["text"]
-            };
+            let mut input_modalities = vec!["text"];
+            if metadata.image_input {
+                input_modalities.push("image");
+            }
+            if metadata.file_input {
+                input_modalities.push("file");
+            }
             json!({
                 "id": model.agent_model.as_str(),
                 "type": "model",
@@ -575,6 +585,28 @@ fn reasoning_effort_enabled(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "off" | "none" | "disabled" | "disable" | "false"
     )
+}
+
+fn log_content_sanitization(
+    profile_id: &str,
+    target_api_type: &str,
+    client_protocol: BridgeProtocol,
+    upstream_protocol: BridgeProtocol,
+    sanitization: ContentSanitization,
+) {
+    if !sanitization.changed() {
+        return;
+    }
+    tracing::warn!(
+        target: "server::web_server::api_bridge",
+        profile_id = %profile_id,
+        target_api_type = %target_api_type,
+        client_protocol = ?client_protocol,
+        upstream_protocol = ?upstream_protocol,
+        image_omitted = sanitization.image_omitted,
+        file_omitted = sanitization.file_omitted,
+        "API bridge omitted unsupported request content before upstream forwarding"
+    );
 }
 
 fn client_api_type_from_scope(scope: &str) -> Option<&str> {
