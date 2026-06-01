@@ -13,7 +13,7 @@
 //! Codes expire after 1 minute. The frontend shows a countdown and a
 //! "refresh" button to generate a new code when the old one expires.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,10 +23,14 @@ use uuid::Uuid;
 
 /// How long a pairing code stays valid.
 const CODE_TTL: Duration = Duration::from_secs(60);
+const ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
+const MAX_VALIDATE_ATTEMPTS_PER_WINDOW: usize = 30;
 
 /// In-memory store of pending pair sessions.
 static STORE: LazyLock<Mutex<HashMap<String, PairEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static VALIDATE_ATTEMPTS: LazyLock<Mutex<VecDeque<Instant>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
 
 struct PairEntry {
     code: String,
@@ -61,6 +65,10 @@ pub fn generate() -> (String, String) {
 /// the daemon's auth token. Returns `None` if no match or expired.
 pub fn validate(code: &str) -> Option<String> {
     let code = code.trim();
+    if !record_validate_attempt() {
+        return None;
+    }
+
     let mut store = STORE.lock().unwrap();
     purge_expired(&mut store);
 
@@ -73,6 +81,7 @@ pub fn validate(code: &str) -> Option<String> {
     let session_id = session_id?;
     let entry = store.get_mut(&session_id)?;
     entry.verified = true;
+    clear_validate_attempts();
 
     // Return the auth token from disk.
     super::token::read_token_file().map(|f| f.token)
@@ -118,6 +127,26 @@ fn random_6_digits() -> String {
 fn purge_expired(store: &mut HashMap<String, PairEntry>) {
     let now = Instant::now();
     store.retain(|_, e| e.expires_at > now);
+}
+
+fn record_validate_attempt() -> bool {
+    let now = Instant::now();
+    let mut attempts = VALIDATE_ATTEMPTS.lock().unwrap();
+    while attempts
+        .front()
+        .is_some_and(|attempt| now.duration_since(*attempt) >= ATTEMPT_WINDOW)
+    {
+        attempts.pop_front();
+    }
+    if attempts.len() >= MAX_VALIDATE_ATTEMPTS_PER_WINDOW {
+        return false;
+    }
+    attempts.push_back(now);
+    true
+}
+
+fn clear_validate_attempts() {
+    VALIDATE_ATTEMPTS.lock().unwrap().clear();
 }
 
 #[cfg(test)]
