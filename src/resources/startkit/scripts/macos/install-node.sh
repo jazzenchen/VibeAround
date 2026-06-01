@@ -17,18 +17,24 @@ esac
 index_file="$STARTKIT_CACHE_DIR/node-index.json"
 curl -fsSL "${STARTKIT_NODE_INDEX_URL:-https://nodejs.org/dist/index.json}" -o "$index_file"
 
+min_major="$(printf '%s' "${STARTKIT_MIN_VERSION:-22.0.0}" | sed 's/^v//' | cut -d. -f1)"
 node_version="$(
-  python3 - "$index_file" "${STARTKIT_MIN_VERSION:-22.0.0}" <<'PY'
-import json, sys
-items = json.load(open(sys.argv[1], encoding="utf-8"))
-min_major = int(sys.argv[2].lstrip("v").split(".")[0])
-for item in items:
-    version = item.get("version", "")
-    major = int(version.lstrip("v").split(".")[0])
-    if major >= min_major and item.get("lts"):
-        print(version)
-        break
-PY
+  tr '{' '\n' < "$index_file" | awk -F'"' -v min_major="$min_major" '
+    /"version"/ && /"lts":/ && !/"lts":false/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "version") {
+          version = $(i + 2)
+          major = version
+          sub(/^v/, "", major)
+          sub(/\..*/, "", major)
+          if ((major + 0) >= (min_major + 0)) {
+            print version
+            exit
+          }
+        }
+      }
+    }
+  '
 )"
 
 if [ -z "$node_version" ]; then
@@ -52,4 +58,3 @@ cp -R "$tmp_dir"/. "$STARTKIT_NODE_DIR"/
 version="$("$STARTKIT_NODE_DIR/bin/node" --version)"
 printf '{"status":"ok","version":"%s","path":"%s","message":"Node.js installed","actions":[]}\n' \
   "$(json_escape "$version")" "$(json_escape "$STARTKIT_NODE_DIR/bin/node")"
-

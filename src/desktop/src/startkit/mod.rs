@@ -1108,16 +1108,25 @@ fn startkit_root() -> PathBuf {
     }
     #[cfg(not(debug_assertions))]
     {
-        // Best-effort fallback for release bundles. IPC entry points that have
-        // an AppHandle can swap this for app.path().resource_dir() later; this
-        // keeps the planner/test layer independent of Tauri state.
-        std::env::current_exe()
+        let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|path| path.parent().map(|parent| parent.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("_up_")
-            .join("resources")
-            .join("startkit")
+            .unwrap_or_else(|| PathBuf::from("."));
+        for candidate in [
+            exe_dir.join("_up_").join("resources").join("startkit"),
+            exe_dir
+                .join("..")
+                .join("Resources")
+                .join("_up_")
+                .join("resources")
+                .join("startkit"),
+            exe_dir.join("resources").join("startkit"),
+        ] {
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+        exe_dir.join("_up_").join("resources").join("startkit")
     }
 }
 
