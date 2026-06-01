@@ -1,20 +1,30 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronLeft, ChevronRight, Rocket } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Circle,
+  Download,
+  Globe,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
+  Rocket,
+  Settings2,
+  TerminalSquare,
+  Wrench,
+} from "lucide-react";
 import { useI18n } from "@va/i18n";
 
-import { Button } from "@/components/ui/button";
 import { LanguageMenu } from "@/components/LanguageMenu";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import { STEPS } from "./constants";
 import { StepAgents } from "./components/StepAgents";
 import { StepChannels } from "./components/StepChannels";
-import { StepConfirm } from "./components/StepConfirm";
 import { StepTunnel } from "./components/StepTunnel";
-import { StepWelcome } from "./components/StepWelcome";
 import { useChannelAuth } from "./hooks/useChannelAuth";
-import { useInstallFlow } from "./hooks/useInstallFlow";
+import { useStartkitFlow } from "./hooks/useStartkitFlow";
 import { buildSettings } from "./lib/buildSettings";
 import {
   createProfile,
@@ -32,14 +42,13 @@ import type {
   DiscoveredChannelPlugin,
   PluginRegistryEntry,
   Settings,
+  StartkitChoices,
+  StartkitItemReport,
+  StartkitManifestSummary,
+  StartkitStatus,
   TunnelSummary,
 } from "./types";
-import type {
-  AgentId,
-  OnboardingGoal,
-  OnboardingStep,
-  TunnelProvider,
-} from "./constants";
+import type { AgentId, TunnelProvider } from "./constants";
 
 const DEFAULT_ENABLED_AGENT_IDS = new Set<AgentId>(["claude", "codex"]);
 const AGENT_DISPLAY_ORDER = [
@@ -52,11 +61,7 @@ const AGENT_DISPLAY_ORDER = [
   "kiro",
   "qwen-code",
 ];
-const STEP_GOALS: Partial<Record<OnboardingStep, OnboardingGoal>> = {
-  "Quick Launch": "agents",
-  Channels: "channels",
-  Tunnel: "tunnel",
-};
+const GROUP_ORDER = ["computer", "agents", "remote", "messaging"];
 
 function orderAgents(agentDefs: AgentSummary[]): AgentSummary[] {
   const rank = new Map(AGENT_DISPLAY_ORDER.map((id, index) => [id, index]));
@@ -65,42 +70,30 @@ function orderAgents(agentDefs: AgentSummary[]): AgentSummary[] {
   );
 }
 
-function visibleStepsForGoals(
-  selectedGoals: Set<OnboardingGoal>,
-): OnboardingStep[] {
-  return STEPS.filter((candidate) => {
-    const goal = STEP_GOALS[candidate];
-    return !goal || selectedGoals.has(goal);
-  });
-}
-
 export default function Onboarding() {
   const { t } = useI18n();
   const isMacTitlebar =
     typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
-  const [step, setStep] = useState(0);
-  const [selectedGoals, setSelectedGoals] = useState<Set<OnboardingGoal>>(
-    () => new Set<OnboardingGoal>(),
-  );
+
   const [settings, setSettings] = useState<Settings>({});
-  const [discoveredPlugins, setDiscoveredPlugins] = useState<
-    DiscoveredChannelPlugin[]
-  >([]);
   const [loaded, setLoaded] = useState(false);
+  const [manifest, setManifest] = useState<StartkitManifestSummary | null>(
+    null,
+  );
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
-
-  // Resource data from backend
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [tunnels, setTunnels] = useState<TunnelSummary[]>([]);
   const [pluginRegistry, setPluginRegistry] = useState<PluginRegistryEntry[]>(
     [],
   );
+  const [discoveredPlugins, setDiscoveredPlugins] = useState<
+    DiscoveredChannelPlugin[]
+  >([]);
 
-  // Agents
+  const [downloadSource, setDownloadSource] = useState("global");
   const [enabledAgents, setEnabledAgents] = useState<Set<AgentId>>(new Set());
-  // Channels
   const [enabledChannels, setEnabledChannels] = useState<Set<string>>(
     new Set(),
   );
@@ -114,7 +107,6 @@ export default function Onboarding() {
     new Set(),
   );
 
-  // Tunnel
   const [tunnelProvider, setTunnelProvider] =
     useState<TunnelProvider>("cloudflare");
   const [ngrokToken, setNgrokToken] = useState("");
@@ -122,18 +114,8 @@ export default function Onboarding() {
   const [cfToken, setCfToken] = useState("");
   const [cfHostname, setCfHostname] = useState("");
 
-  const visibleSteps = useMemo(
-    () => visibleStepsForGoals(selectedGoals),
-    [selectedGoals],
-  );
-  const currentStep =
-    visibleSteps[Math.min(step, visibleSteps.length - 1)] ?? "Goals";
+  const startkit = useStartkitFlow();
 
-  useEffect(() => {
-    setStep((previous) => Math.min(previous, visibleSteps.length - 1));
-  }, [visibleSteps.length]);
-
-  // ---- Load existing settings + resources ----
   useEffect(() => {
     Promise.all([
       invoke<Settings>("get_settings"),
@@ -141,6 +123,7 @@ export default function Onboarding() {
       invoke<AgentSummary[]>("list_agents"),
       invoke<TunnelSummary[]>("list_tunnels"),
       invoke<PluginRegistryEntry[]>("list_plugin_registry"),
+      invoke<StartkitManifestSummary>("startkit_manifest"),
       listCatalog(),
       listProfiles(),
     ])
@@ -151,6 +134,7 @@ export default function Onboarding() {
           agentDefs,
           tunnelDefs,
           pluginDefs,
+          startkitManifest,
           catalogDefs,
           profileDefs,
         ]) => {
@@ -160,6 +144,7 @@ export default function Onboarding() {
           setAgents(orderedAgents);
           setTunnels(tunnelDefs);
           setPluginRegistry(pluginDefs);
+          setManifest(startkitManifest);
           setCatalog(catalogDefs);
           setProfiles(profileDefs);
 
@@ -178,6 +163,7 @@ export default function Onboarding() {
               ),
             );
           }
+
           const channels = loadedSettings.channels ?? {};
           const enabled = new Set<string>();
           const configs: Record<string, Record<string, string>> = {};
@@ -219,10 +205,76 @@ export default function Onboarding() {
           setLoaded(true);
         },
       )
-      .catch(() => setLoaded(true));
+      .catch((error) => {
+        console.error("failed to load onboarding data", error);
+        setLoaded(true);
+      });
   }, []);
 
-  // ---- Channel handlers ----
+  const registryPluginIds = useMemo(
+    () => new Set(pluginRegistry.map((plugin) => plugin.id)),
+    [pluginRegistry],
+  );
+
+  const choices: StartkitChoices = useMemo(
+    () => ({
+      agents: Array.from(enabledAgents),
+      tunnel: tunnelProvider,
+      channels: Array.from(enabledChannels),
+      source: downloadSource,
+    }),
+    [enabledAgents, tunnelProvider, enabledChannels, downloadSource],
+  );
+
+  const finalSettings = useMemo(
+    () =>
+      buildSettings({
+        settings,
+        configureAgents: true,
+        configureChannels: true,
+        configureTunnel: true,
+        enabledAgents,
+        enabledChannels,
+        registryPluginIds,
+        channelConfigs,
+        channelVerbose,
+        discoveredPlugins,
+        tunnelProvider,
+        ngrokToken,
+        ngrokDomain,
+        cfToken,
+        cfHostname,
+      }),
+    [
+      settings,
+      enabledAgents,
+      enabledChannels,
+      registryPluginIds,
+      channelConfigs,
+      channelVerbose,
+      discoveredPlugins,
+      tunnelProvider,
+      ngrokToken,
+      ngrokDomain,
+      cfToken,
+      cfHostname,
+    ],
+  );
+
+  useEffect(() => {
+    if (!loaded) return;
+    void startkit.refreshPlan(choices);
+  }, [loaded, choices, startkit.refreshPlan]);
+
+  const toggleAgent = useCallback((id: AgentId) => {
+    setEnabledAgents((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   const toggleChannel = useCallback((pluginId: string, enabled: boolean) => {
     setEnabledChannels((prev) => {
       const next = new Set(prev);
@@ -286,89 +338,12 @@ export default function Onboarding() {
     [],
   );
 
-  // ---- Auth flow + install orchestration (extracted hooks) ----
   const { authStates, startAuth, cancelAuth } = useChannelAuth({
-    currentStep,
+    active: true,
     discoveredPlugins,
     channelConfigs,
     onConfigChange: updateChannelConfig,
   });
-
-  const {
-    finishing,
-    isInstalling,
-    installComplete,
-    installTasks,
-    startInstall,
-    cancelInstall,
-    completeInstall,
-  } = useInstallFlow();
-
-  const handleFinish = useCallback(() => {
-    const configureAgents = selectedGoals.has("agents");
-    const configureChannels = selectedGoals.has("channels");
-    const configureTunnel = selectedGoals.has("tunnel");
-    const installScope = {
-      agents: configureAgents,
-      channels: configureChannels,
-    };
-    const finalSettings = buildSettings({
-      settings,
-      configureAgents,
-      configureChannels,
-      configureTunnel,
-      enabledAgents,
-      enabledChannels,
-      registryPluginIds: new Set(pluginRegistry.map((plugin) => plugin.id)),
-      channelConfigs,
-      channelVerbose,
-      discoveredPlugins,
-      tunnelProvider,
-      ngrokToken,
-      ngrokDomain,
-      cfToken,
-      cfHostname,
-    });
-    void startInstall(finalSettings, installScope);
-  }, [
-    settings,
-    selectedGoals,
-    enabledAgents,
-    enabledChannels,
-    channelConfigs,
-    channelVerbose,
-    discoveredPlugins,
-    tunnelProvider,
-    ngrokToken,
-    ngrokDomain,
-    cfToken,
-    cfHostname,
-    startInstall,
-  ]);
-
-  const toggleAgent = useCallback((id: AgentId) => {
-    setEnabledAgents((previous) => {
-      const next = new Set(previous);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleGoal = useCallback((goal: OnboardingGoal) => {
-    setSelectedGoals((previous) => {
-      const next = new Set(previous);
-      if (next.has(goal)) {
-        next.delete(goal);
-      } else {
-        next.add(goal);
-      }
-      return next;
-    });
-  }, []);
 
   const handleSaveProfile = useCallback(async (submit: ProfileFormSubmit) => {
     if (submit.type === "create") {
@@ -397,9 +372,22 @@ export default function Onboarding() {
     [profiles, t],
   );
 
+  const groupedReports = useMemo(
+    () => groupReports(startkit.plan?.items ?? [], startkit.reportById),
+    [startkit.plan, startkit.reportById],
+  );
+
+  const needsAttention = startkit.reports.some((report) =>
+    ["missing", "outdated", "broken", "needs_config", "blocked", "error"].includes(
+      report.status,
+    ),
+  );
+  const hasScanned = startkit.reports.some((report) => report.status !== "pending");
+  const canFinish = startkit.complete || (hasScanned && !needsAttention);
+
   if (!loaded) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex h-full items-center justify-center">
         <span className="text-sm text-muted-foreground animate-pulse">
           {t("Loading…")}
         </span>
@@ -407,13 +395,11 @@ export default function Onboarding() {
     );
   }
 
-  const isLast = step === visibleSteps.length - 1;
-
   return (
-    <div className="flex flex-col h-full bg-background">
-      <div
+    <div className="flex h-full flex-col bg-background">
+      <header
         className={cn(
-          "relative flex h-12 items-center gap-3 pr-6",
+          "relative flex h-12 items-center gap-3 border-b border-border pr-6",
           isMacTitlebar ? "pl-[82px]" : "pl-6",
         )}
       >
@@ -430,152 +416,183 @@ export default function Onboarding() {
             @{__APP_VERSION_LABEL__}
           </span>
         </div>
-        <div className="relative z-10 flex items-center gap-1 flex-1">
-          {visibleSteps.map((label, index) => (
-            <div key={label} className="flex items-center gap-1 flex-1">
-              <div
-                className={`h-1 flex-1 rounded-full transition-colors ${
-                  index <= step ? "bg-primary" : "bg-border"
-                }`}
-              />
-            </div>
-          ))}
+        <div className="relative z-10 min-w-0 flex-1">
+          <div className="truncate text-xs font-medium text-muted-foreground">
+            {t("Startkit prepares this computer for local agents, remote access, and messaging.")}
+          </div>
         </div>
         <div className="relative z-10">
           <LanguageMenu />
         </div>
-      </div>
-      <div className="px-6 pb-3">
-        <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
-          {t("Step {{current}} of {{total}} — {{step}}", {
-            current: step + 1,
-            total: visibleSteps.length,
-            step: t(currentStep),
-          })}
-        </span>
-      </div>
+      </header>
 
-      <div className="flex-1 overflow-y-auto px-6 pb-4">
-        {currentStep === "Goals" && (
-          <StepWelcome
-            selectedGoals={selectedGoals}
-            onToggleGoal={toggleGoal}
-          />
-        )}
-        {currentStep === "Quick Launch" && (
-          <StepAgents
-            agents={agents}
-            profiles={profiles}
-            enabled={enabledAgents}
-            onToggle={toggleAgent}
-            onCreateProfile={() => setProfileEditorOpen(true)}
-            onDeleteProfile={(id) => {
-              void handleDeleteProfile(id);
-            }}
-          />
-        )}
-        {currentStep === "Channels" && (
-          <StepChannels
-            pluginRegistry={pluginRegistry}
-            discoveredPlugins={discoveredPlugins}
-            enabledChannels={enabledChannels}
-            channelConfigs={channelConfigs}
-            channelVerbose={channelVerbose}
-            installingPlugins={installingPlugins}
-            authStates={authStates}
-            onToggleChannel={toggleChannel}
-            onConfigChange={updateChannelConfig}
-            onVerboseChange={updateChannelVerbose}
-            onInstallPlugin={installPlugin}
-            onStartAuth={startAuth}
-            onCancelAuth={cancelAuth}
-          />
-        )}
-        {currentStep === "Tunnel" && (
-          <StepTunnel
-            tunnels={tunnels}
-            provider={tunnelProvider}
-            onProvider={setTunnelProvider}
-            ngrokToken={ngrokToken}
-            onNgrokToken={setNgrokToken}
-            ngrokDomain={ngrokDomain}
-            onNgrokDomain={setNgrokDomain}
-            cfToken={cfToken}
-            onCfToken={setCfToken}
-            cfHostname={cfHostname}
-            onCfHostname={setCfHostname}
-          />
-        )}
-        {currentStep === "Confirm" && (
-          <StepConfirm
-            agents={agents}
-            tunnels={tunnels}
-            pluginRegistry={pluginRegistry}
-            selectedGoals={selectedGoals}
-            enabledAgents={enabledAgents}
-            tunnelProvider={tunnelProvider}
-            enabledChannels={enabledChannels}
-            isInstalling={isInstalling}
-            installComplete={installComplete}
-            installTasks={installTasks}
-          />
-        )}
-      </div>
+      <main className="grid min-h-0 flex-1 grid-cols-[minmax(360px,420px)_1fr] overflow-hidden">
+        <section className="min-h-0 overflow-y-auto border-r border-border p-5">
+          <div className="mb-5">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Settings2 className="h-4 w-4 text-primary" />
+              {t("Setup targets")}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("Pick what you want to use. Startkit only installs what these choices require.")}
+            </p>
+          </div>
 
-      <div className="flex items-center justify-between px-6 py-4 border-t border-border shrink-0">
-        {isInstalling ? (
-          <>
-            <div />
-            {installComplete ? (
-              <Button onClick={completeInstall}>
-                <Rocket className="w-4 h-4" />
-                {installTasks.some(
-                  (task) =>
-                    task.status === "error" || task.status === "cancelled",
-                )
-                  ? t("Continue Anyway")
-                  : t("Open VibeAround")}
-              </Button>
-            ) : (
-              <Button onClick={cancelInstall} variant="outline">
-                {t("Cancel")}
-              </Button>
-            )}
-          </>
-        ) : (
-          <>
-            <Button
-              onClick={() => setStep((v) => Math.max(0, v - 1))}
-              disabled={step === 0}
-              variant="ghost"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              {t("Back")}
-            </Button>
-            {isLast ? (
-              <Button onClick={handleFinish} disabled={finishing}>
-                {finishing ? (
-                  <>{t("Confirming…")}</>
+          <div className="space-y-6">
+            <SourceChooser
+              sources={manifest?.sources ?? {}}
+              value={downloadSource}
+              onChange={setDownloadSource}
+            />
+
+            <div className="rounded-md border border-border bg-card/40 p-3">
+              <StepAgents
+                agents={agents}
+                profiles={profiles}
+                enabled={enabledAgents}
+                onToggle={toggleAgent}
+                onCreateProfile={() => setProfileEditorOpen(true)}
+                onDeleteProfile={(id) => {
+                  void handleDeleteProfile(id);
+                }}
+              />
+            </div>
+
+            <div className="rounded-md border border-border bg-card/40 p-3">
+              <StepTunnel
+                tunnels={tunnels}
+                provider={tunnelProvider}
+                onProvider={setTunnelProvider}
+                ngrokToken={ngrokToken}
+                onNgrokToken={setNgrokToken}
+                ngrokDomain={ngrokDomain}
+                onNgrokDomain={setNgrokDomain}
+                cfToken={cfToken}
+                onCfToken={setCfToken}
+                cfHostname={cfHostname}
+                onCfHostname={setCfHostname}
+              />
+            </div>
+
+            <div className="rounded-md border border-border bg-card/40 p-3">
+              <StepChannels
+                pluginRegistry={pluginRegistry}
+                discoveredPlugins={discoveredPlugins}
+                enabledChannels={enabledChannels}
+                channelConfigs={channelConfigs}
+                channelVerbose={channelVerbose}
+                installingPlugins={installingPlugins}
+                authStates={authStates}
+                onToggleChannel={toggleChannel}
+                onConfigChange={updateChannelConfig}
+                onVerboseChange={updateChannelVerbose}
+                onInstallPlugin={installPlugin}
+                onStartAuth={startAuth}
+                onCancelAuth={cancelAuth}
+                switchSize="sm"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="flex min-h-0 flex-col">
+          <div className="border-b border-border p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Wrench className="h-4 w-4 text-primary" />
+                  {t("Computer readiness")}
+                </div>
+                <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
+                  {t("Scan first, then let Startkit install or repair the missing pieces inside VibeAround's managed toolchain.")}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void startkit.scan(finalSettings, choices)}
+                  disabled={startkit.scanning || startkit.running}
+                >
+                  {startkit.scanning ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  {t("Scan")}
+                </Button>
+                {startkit.running ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void startkit.cancel()}
+                  >
+                    {t("Cancel")}
+                  </Button>
                 ) : (
-                  <>
-                    <Rocket className="w-4 h-4" />
-                    {t("Confirm")}
-                  </>
+                  <Button
+                    type="button"
+                    onClick={() => void startkit.start(finalSettings, choices)}
+                    disabled={startkit.scanning}
+                  >
+                    <Download className="h-4 w-4" />
+                    {t("Fix selected")}
+                  </Button>
                 )}
-              </Button>
-            ) : (
-              <Button
-                onClick={() =>
-                  setStep((v) => Math.min(visibleSteps.length - 1, v + 1))
-                }
-              >
-                {currentStep === "Goals" ? t("Get Started") : t("Next")}
-                <ChevronRight className="w-4 h-4" />
-              </Button>
+                <Button
+                  type="button"
+                  onClick={() => void startkit.finish()}
+                  disabled={!canFinish || startkit.running}
+                >
+                  <Rocket className="h-4 w-4" />
+                  {startkit.finalStatus === "error"
+                    ? t("Continue Anyway")
+                    : t("Open VibeAround")}
+                </Button>
+              </div>
+            </div>
+            {startkit.error && (
+              <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                {startkit.error}
+              </div>
             )}
-          </>
-        )}
-      </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            {groupedReports.length === 0 ? (
+              <EmptyPlan />
+            ) : (
+              <div className="space-y-4">
+                {groupedReports.map((group) => (
+                  <section
+                    key={group.id}
+                    className="rounded-md border border-border bg-card/40"
+                  >
+                    <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        {groupIcon(group.id)}
+                        <div>
+                          <div className="text-sm font-medium">
+                            {groupTitle(group.id)}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {groupSummary(group.reports)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="divide-y divide-border">
+                      {group.reports.map((report) => (
+                        <StartkitReportRow key={report.id} report={report} />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
 
       {profileEditorOpen && (
         <ProfileFormDialog
@@ -587,6 +604,211 @@ export default function Onboarding() {
       )}
     </div>
   );
+}
+
+function SourceChooser({
+  sources,
+  value,
+  onChange,
+}: {
+  sources: StartkitManifestSummary["sources"];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const entries: Array<[string, { label: string }]> =
+    Object.keys(sources).length > 0
+      ? Object.entries(sources)
+      : [
+          ["global", { label: "Global" }],
+          ["cn", { label: "China mirror" }],
+        ];
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs font-medium">
+        <Globe className="h-3.5 w-3.5 text-primary" />
+        Download source
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {entries.map(([id, source]) => (
+          <Button
+            key={id}
+            type="button"
+            size="sm"
+            variant="outline"
+            className={cn(
+              "justify-center text-xs",
+              value === id && "border-primary bg-primary/10 text-primary",
+            )}
+            onClick={() => onChange(id)}
+          >
+            {source.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EmptyPlan() {
+  return (
+    <div className="flex h-full min-h-[320px] items-center justify-center rounded-md border border-dashed border-border">
+      <div className="max-w-sm text-center">
+        <Circle className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
+        <div className="text-sm font-medium">Ready to scan</div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Choose agents, tunnel, and messaging targets on the left, then scan
+          this computer.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function StartkitReportRow({ report }: { report: StartkitItemReport }) {
+  return (
+    <div className="grid grid-cols-[minmax(180px,1fr)_120px_minmax(180px,1.3fr)] items-center gap-3 px-4 py-3">
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium">{report.label}</div>
+        {report.path && (
+          <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+            {report.path}
+          </div>
+        )}
+      </div>
+      <div className={cn("inline-flex w-fit items-center gap-1.5 rounded border px-2 py-1 text-[11px]", statusClass(report.status))}>
+        {statusIcon(report.status)}
+        {statusLabel(report.status)}
+      </div>
+      <div className="min-w-0 text-xs text-muted-foreground">
+        <div className="truncate">
+          {report.message ?? report.version ?? "Waiting for scan"}
+        </div>
+        {report.version && report.message && (
+          <div className="mt-0.5 truncate font-mono text-[10px] opacity-80">
+            {report.version}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function groupReports(
+  planItems: { id: string; group: string; label: string; category: string; severity?: string; secret: boolean; settingsKey?: string }[],
+  reportById: Map<string, StartkitItemReport>,
+) {
+  const groups = new Map<string, StartkitItemReport[]>();
+  for (const item of planItems) {
+    const report =
+      reportById.get(item.id) ??
+      ({
+        id: item.id,
+        label: item.label,
+        group: item.group,
+        category: item.category,
+        status: "pending",
+        severity: item.severity,
+        actions: [],
+        secret: item.secret,
+        settingsKey: item.settingsKey,
+      } satisfies StartkitItemReport);
+    if (!groups.has(report.group)) groups.set(report.group, []);
+    groups.get(report.group)!.push(report);
+  }
+  return Array.from(groups.entries())
+    .sort(
+      ([a], [b]) =>
+        (GROUP_ORDER.indexOf(a) < 0 ? 99 : GROUP_ORDER.indexOf(a)) -
+        (GROUP_ORDER.indexOf(b) < 0 ? 99 : GROUP_ORDER.indexOf(b)),
+    )
+    .map(([id, reports]) => ({ id, reports }));
+}
+
+function groupTitle(id: string): string {
+  switch (id) {
+    case "computer":
+      return "Computer basics";
+    case "agents":
+      return "Coding agents";
+    case "remote":
+      return "Remote access";
+    case "messaging":
+      return "Messaging";
+    default:
+      return id;
+  }
+}
+
+function groupIcon(id: string) {
+  const className = "h-4 w-4 text-primary";
+  switch (id) {
+    case "agents":
+      return <TerminalSquare className={className} />;
+    case "remote":
+      return <Globe className={className} />;
+    case "messaging":
+      return <MessageSquare className={className} />;
+    default:
+      return <Settings2 className={className} />;
+  }
+}
+
+function groupSummary(reports: StartkitItemReport[]): string {
+  const counts = reports.reduce<Record<string, number>>((acc, report) => {
+    acc[report.status] = (acc[report.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  if (counts.error || counts.blocked) return "Needs attention";
+  if (counts.needs_config) return "Needs configuration";
+  if (counts.missing || counts.outdated || counts.broken) return "Fixes available";
+  if (counts.running) return "Running";
+  if (counts.ok && counts.ok === reports.length) return "Ready";
+  return `${reports.length} item${reports.length === 1 ? "" : "s"}`;
+}
+
+function statusClass(status: StartkitStatus): string {
+  switch (status) {
+    case "ok":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "running":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "missing":
+    case "outdated":
+    case "broken":
+    case "needs_config":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "blocked":
+    case "error":
+      return "border-destructive/30 bg-destructive/10 text-destructive";
+    case "skipped":
+      return "border-border bg-muted text-muted-foreground";
+    default:
+      return "border-border bg-background text-muted-foreground";
+  }
+}
+
+function statusIcon(status: StartkitStatus) {
+  const className = "h-3.5 w-3.5";
+  switch (status) {
+    case "ok":
+      return <CheckCircle2 className={className} />;
+    case "running":
+      return <Loader2 className={`${className} animate-spin`} />;
+    case "blocked":
+    case "error":
+      return <AlertCircle className={className} />;
+    default:
+      return <Circle className={className} />;
+  }
+}
+
+function statusLabel(status: StartkitStatus): string {
+  switch (status) {
+    case "needs_config":
+      return "needs config";
+    default:
+      return status.replace("_", " ");
+  }
 }
 
 function defaultChannelVerbose(): ChannelVerboseConfig {

@@ -195,3 +195,91 @@ export interface InstallTaskInfo {
   id: string;
   label: string;
 }
+
+export type StartkitStatus =
+  | "pending"
+  | "running"
+  | "ok"
+  | "missing"
+  | "outdated"
+  | "broken"
+  | "needs_config"
+  | "blocked"
+  | "error"
+  | "skipped";
+
+export interface StartkitChoices {
+  agents: string[];
+  tunnel: string;
+  channels: string[];
+  source: string;
+}
+
+export interface StartkitSource {
+  label: string;
+  node_index: string;
+  node_dist: string;
+  npm_registry: string;
+}
+
+export interface StartkitItemSummary {
+  id: string;
+  label: string;
+  group: string;
+  category: string;
+  description?: string;
+  severity?: string;
+  kind?: string;
+  managed: boolean;
+  hasRepair: boolean;
+  secret: boolean;
+  settingsKey?: string;
+}
+
+export interface StartkitManifestSummary {
+  id: string;
+  name: string;
+  schema: number;
+  version: string;
+  sources: Record<string, StartkitSource>;
+  items: StartkitItemSummary[];
+}
+
+export interface StartkitPlan {
+  platform: string;
+  source: string;
+  itemIds: string[];
+  items: StartkitItemSummary[];
+}
+
+export interface StartkitItemReport {
+  id: string;
+  label: string;
+  group: string;
+  category: string;
+  status: StartkitStatus;
+  severity?: string;
+  version?: string;
+  path?: string;
+  message?: string;
+  actions: string[];
+  secret: boolean;
+  settingsKey?: string;
+}
+
+export interface StartkitScanReport {
+  plan: StartkitPlan;
+  reports: StartkitItemReport[];
+}
+
+export interface StartkitProgressEvent {
+  id: string;
+  label: string;
+  status: StartkitStatus;
+  message?: string;
+  report?: StartkitItemReport;
+}
+
+export interface StartkitCompleteEvent {
+  status: string;
+}
