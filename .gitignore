@@ -59,6 +59,7 @@ demo*/
 
 # Exclude from commit (tooling / temp)
 .claude/
+.codex/
 .gemini/
 .specstory/
 .docs/
