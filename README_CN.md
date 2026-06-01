@@ -80,13 +80,13 @@ Profile 也可以接第三方 provider API。VibeAround 可以维护模型列表
 
 ## 下载
 
-最新版本：[VibeAround v0.6.9](https://github.com/jazzenchen/VibeAround/releases/tag/v0.6.9)。
+最新版本：[VibeAround v0.6.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.6.10)。
 
 | 平台 | 推荐下载 |
 |---|---|
-| macOS Apple Silicon | [VibeAround_0.6.9_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_arm64.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_x64-setup.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_x64_en-US.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround-win-0.6.9-portable.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_amd64.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.9/VibeAround_0.6.9_amd64.deb) |
+| macOS Apple Silicon | [VibeAround_0.6.10_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.10/VibeAround_0.6.10_arm64.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.10/VibeAround_0.6.10_x64-setup.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.10/VibeAround_0.6.10_x64_en-US.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.10/VibeAround-win-0.6.10-portable.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.10/VibeAround_0.6.10_amd64.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.6.10/VibeAround_0.6.10_amd64.deb) |
 
 Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前发布 Apple Silicon 版本。
 
@@ -223,9 +223,9 @@ bun run dev
 
 中文交流微信群：
 
-<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr.webp" width="180" alt="VibeAround 微信群二维码" />
+<img src="assets/community/wechat-group-qr-2026-06-08.jpg" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 6 月 8 日" />
 
-微信群二维码会周期性过期。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
+该微信群二维码有效期至 2026 年 6 月 8 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
 
 ## 许可证
 
