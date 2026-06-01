@@ -17,7 +17,8 @@ use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
     State,
 };
-use axum::response::Response;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use common::state::StateSource;
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -28,7 +29,15 @@ use super::AppState;
 // GET /ws/channels
 // ---------------------------------------------------------------------------
 
-pub async fn ws_channels_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
+pub async fn ws_channels_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if !allowed_ws_origin(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     ws.on_upgrade(move |socket| async move {
         let monitor = state.channel_hub.monitor();
         let rx = monitor.subscribe_changes();
@@ -68,7 +77,15 @@ async fn build_channels(
 // GET /ws/tunnels
 // ---------------------------------------------------------------------------
 
-pub async fn ws_tunnels_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
+pub async fn ws_tunnels_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if !allowed_ws_origin(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     ws.on_upgrade(move |socket| async move {
         let tunnels = state.tunnels.clone();
         let rx = tunnels.subscribe_changes();
@@ -103,8 +120,13 @@ async fn build_tunnels(
 
 pub async fn ws_agents_runtime_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if !allowed_ws_origin(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     ws.on_upgrade(move |socket| async move {
         let workspace_threads = state.channel_hub.workspace_thread_manager();
         let rx = workspace_threads.subscribe_changes();
@@ -171,6 +193,11 @@ async fn build_agents_runtime(
 // ---------------------------------------------------------------------------
 // Shared loop
 // ---------------------------------------------------------------------------
+
+fn allowed_ws_origin(state: &AppState, headers: &HeaderMap) -> bool {
+    let tunnel_urls = state.tunnels.public_urls();
+    super::auth::headers_have_allowed_ws_origin(headers, state.port, &tunnel_urls)
+}
 
 /// Runs a WS session: first emit, then emit on every `()` ping from the
 /// receiver. `build` produces the current list on demand; it's called

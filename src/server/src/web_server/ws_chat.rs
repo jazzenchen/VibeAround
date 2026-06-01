@@ -12,7 +12,8 @@ use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
     State,
 };
-use axum::response::Response;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt, StreamExt};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -28,7 +29,16 @@ use crate::api_types::{AgentInfo, ChatEvent};
 use super::AppState;
 
 /// WebSocket upgrade handler for web chat.
-pub async fn ws_chat_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
+pub async fn ws_chat_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let tunnel_urls = state.tunnels.public_urls();
+    if !super::auth::headers_have_allowed_ws_origin(&headers, state.port, &tunnel_urls) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
     ws.on_upgrade(move |socket| handle_chat_socket(socket, state))
 }
 

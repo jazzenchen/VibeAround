@@ -1,5 +1,5 @@
 import { browserBaseUrl } from "@va/client";
-import { getAuthToken, isLocalDashboard } from "@/lib/auth";
+import { getAuthToken } from "@/lib/auth";
 
 export function dataUrl(mimeType: string, data: string) {
   return data.startsWith("data:") ? data : `data:${mimeType};base64,${data}`;
@@ -81,7 +81,7 @@ export function proxiedFileUrl(
   if (options.mimeType) params.set("mime_type", options.mimeType);
   if (options.inline) params.set("inline", "true");
   const token = getAuthToken();
-  if (token && !isLocalDashboard()) {
+  if (token) {
     params.set("token", token);
   }
   return `${browserBaseUrl()}/api/chat/files/download?${params.toString()}`;

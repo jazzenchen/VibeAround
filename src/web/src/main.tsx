@@ -5,7 +5,7 @@ import App from "./App";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { PairingGate } from "./PairingGate";
 import { initTheme } from "./lib/theme";
-import { initAuthFromUrl, getAuthToken, isLocalDashboard } from "./lib/auth";
+import { initAuthFromUrl, getAuthToken } from "./lib/auth";
 import "./index.css";
 
 initTheme();
@@ -78,8 +78,7 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
 // regardless — this only changes what we render once React boots, so
 // anyone who loads the page without a token sees a clear explanation
 // instead of an empty broken-looking dashboard.
-const hasLocalAccess = isLocalDashboard();
-const hasToken = hasLocalAccess || getAuthToken() !== null;
+const hasToken = getAuthToken() !== null;
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

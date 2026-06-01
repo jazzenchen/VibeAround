@@ -5,6 +5,8 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
+use std::net::IpAddr;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::api_types::ChatUploadResponse;
@@ -16,6 +18,7 @@ const DEFAULT_UPLOAD_MIME_TYPE: &str = "application/octet-stream";
 /// before they touch disk. The route also carries `DefaultBodyLimit::max`
 /// at a higher value as a coarse safety net.
 const MAX_UPLOAD_SIZE_BYTES: usize = 20 * 1024 * 1024;
+const UPLOAD_CACHE_DIR: &str = "web-uploads";
 
 /// Allowed MIME prefixes for chat uploads. Specific exact types
 /// outside these prefixes are listed in `ALLOWED_EXACT_MIME_TYPES`.
@@ -128,10 +131,7 @@ pub async fn upload_chat_file_handler(
         ));
     }
 
-    let upload_dir = common::config::data_dir()
-        .join(".cache")
-        .join("web-uploads")
-        .join(&id);
+    let upload_dir = upload_cache_root().join(&id);
     tokio::fs::create_dir_all(&upload_dir)
         .await
         .map_err(|error| {
@@ -191,16 +191,7 @@ pub async fn download_chat_file_handler(
         return proxy_remote_file(&state, uri, &file_name, content_type, query.inline).await;
     }
 
-    let path = if let Some(path) = uri.strip_prefix("file://") {
-        std::path::PathBuf::from(percent_decode(path))
-    } else if uri.starts_with('/') {
-        std::path::PathBuf::from(uri)
-    } else {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "unsupported file uri scheme".to_string(),
-        ));
-    };
+    let path = uploaded_file_path_from_uri(uri).await?;
 
     let bytes = tokio::fs::read(&path).await.map_err(|error| {
         (
@@ -226,6 +217,7 @@ async fn proxy_remote_file(
     content_type: Option<String>,
     inline: bool,
 ) -> Result<Response, (StatusCode, String)> {
+    let uri = validate_remote_file_url(uri).await?;
     let upstream = state
         .preview_client
         .get(uri)
@@ -260,6 +252,150 @@ async fn proxy_remote_file(
         )
     })?;
     Ok(file_response(bytes, file_name, &content_type, inline))
+}
+
+async fn uploaded_file_path_from_uri(uri: &str) -> Result<PathBuf, (StatusCode, String)> {
+    let raw_path = local_file_path_from_uri(uri)?;
+    let canonical_root = tokio::fs::canonicalize(upload_cache_root())
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("upload cache is unavailable: {error}"),
+            )
+        })?;
+    let canonical_path = tokio::fs::canonicalize(&raw_path).await.map_err(|error| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("failed to read file {}: {error}", raw_path.display()),
+        )
+    })?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "file is outside the chat upload cache".to_string(),
+        ));
+    }
+    Ok(canonical_path)
+}
+
+fn local_file_path_from_uri(uri: &str) -> Result<PathBuf, (StatusCode, String)> {
+    if let Some(path) = uri.strip_prefix("file://") {
+        Ok(PathBuf::from(percent_decode(path)))
+    } else if uri.starts_with('/') {
+        Ok(PathBuf::from(uri))
+    } else {
+        Err((
+            StatusCode::BAD_REQUEST,
+            "unsupported file uri scheme".to_string(),
+        ))
+    }
+}
+
+fn upload_cache_root() -> PathBuf {
+    common::config::data_dir()
+        .join(".cache")
+        .join(UPLOAD_CACHE_DIR)
+}
+
+async fn validate_remote_file_url(uri: &str) -> Result<reqwest::Url, (StatusCode, String)> {
+    let parsed = reqwest::Url::parse(uri).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid remote file uri: {error}"),
+        )
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "unsupported remote file uri scheme".to_string(),
+        ));
+    }
+    let host = parsed
+        .host_str()
+        .map(|host| host.trim_matches(['[', ']']).to_ascii_lowercase())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "remote uri is missing a host".to_string(),
+            )
+        })?;
+    if host == "localhost" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "remote file host resolves to a local address".to_string(),
+        ));
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        reject_disallowed_remote_ip(ip)?;
+        return Ok(parsed);
+    }
+
+    let port = parsed.port_or_known_default().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "remote uri is missing a port".to_string(),
+        )
+    })?;
+    let addrs = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("failed to resolve remote file host: {error}"),
+            )
+        })?;
+    let mut resolved_any = false;
+    for addr in addrs {
+        resolved_any = true;
+        reject_disallowed_remote_ip(addr.ip())?;
+    }
+    if !resolved_any {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "remote file host did not resolve".to_string(),
+        ));
+    }
+    Ok(parsed)
+}
+
+fn reject_disallowed_remote_ip(ip: IpAddr) -> Result<(), (StatusCode, String)> {
+    if remote_ip_is_disallowed(ip) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "remote file host resolves to a local or private address".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn remote_ip_is_disallowed(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(addr) => {
+            let [a, b, _, _] = addr.octets();
+            addr.is_loopback()
+                || addr.is_unspecified()
+                || addr.is_private()
+                || addr.is_link_local()
+                || addr.is_multicast()
+                || addr.is_broadcast()
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 198 && matches!(b, 18 | 19))
+                || (a == 192 && b == 0)
+        }
+        IpAddr::V6(addr) => {
+            if let Some(mapped) = addr.to_ipv4_mapped() {
+                return remote_ip_is_disallowed(IpAddr::V4(mapped));
+            }
+            let segments = addr.segments();
+            addr.is_loopback()
+                || addr.is_unspecified()
+                || addr.is_multicast()
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 fn file_response(bytes: Bytes, file_name: &str, content_type: &str, inline: bool) -> Response {
@@ -470,9 +606,11 @@ fn from_hex(c: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        content_disposition, is_allowed_upload_mime, is_generic_upload_mime, mime_for_file_name,
-        safe_file_name,
+        content_disposition, is_allowed_upload_mime, is_generic_upload_mime,
+        local_file_path_from_uri, mime_for_file_name, remote_ip_is_disallowed, safe_file_name,
+        validate_remote_file_url,
     };
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn strips_path_segments_from_upload_names() {
@@ -557,5 +695,53 @@ mod tests {
             content_disposition("attachment", "报告.md"),
             "attachment; filename=\"__.md\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A.md"
         );
+    }
+
+    #[test]
+    fn parses_local_file_uris_without_path_traversal_claims() {
+        let file_path = local_file_path_from_uri("file:///tmp/report%20one.md").unwrap();
+        assert_eq!(file_path, std::path::PathBuf::from("/tmp/report one.md"));
+
+        let absolute_path = local_file_path_from_uri("/tmp/report.md").unwrap();
+        assert_eq!(absolute_path, std::path::PathBuf::from("/tmp/report.md"));
+
+        assert!(local_file_path_from_uri("relative/report.md").is_err());
+    }
+
+    #[test]
+    fn blocks_private_remote_ip_ranges() {
+        for ip in [
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+            IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1)),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V6("fc00::1".parse().unwrap()),
+            IpAddr::V6("fe80::1".parse().unwrap()),
+        ] {
+            assert!(remote_ip_is_disallowed(ip), "{ip} should be blocked");
+        }
+
+        assert!(!remote_ip_is_disallowed(IpAddr::V4(Ipv4Addr::new(
+            93, 184, 216, 34
+        ))));
+        assert!(!remote_ip_is_disallowed(IpAddr::V6(
+            "2606:2800:220:1:248:1893:25c8:1946".parse().unwrap()
+        )));
+    }
+
+    #[tokio::test]
+    async fn rejects_literal_local_remote_urls() {
+        let error = validate_remote_file_url("http://127.0.0.1/secret")
+            .await
+            .unwrap_err();
+        assert_eq!(error.0, axum::http::StatusCode::FORBIDDEN);
+
+        let error = validate_remote_file_url("http://[::1]/secret")
+            .await
+            .unwrap_err();
+        assert_eq!(error.0, axum::http::StatusCode::FORBIDDEN);
     }
 }
