@@ -108,7 +108,7 @@ pub(super) async fn run_install_inner(
     run_install_inner_with_progress(request, |_| {}, || false).await
 }
 
-pub(super) async fn run_install_inner_with_progress<F, C>(
+pub(crate) async fn run_install_inner_with_progress<F, C>(
     request: InstallPluginRequest,
     mut on_log: F,
     is_cancelled: C,

@@ -240,9 +240,6 @@ fn prepend_vibearound_managed_paths(env: &mut HashMap<String, String>) {
         .collect();
 
     for candidate in candidates.iter().rev() {
-        if !candidate.is_dir() {
-            continue;
-        }
         let value = candidate.to_string_lossy().to_string();
         let exists = if cfg!(windows) {
             parts.iter().any(|part| part.eq_ignore_ascii_case(&value))

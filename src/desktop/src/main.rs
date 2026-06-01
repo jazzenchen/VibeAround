@@ -13,6 +13,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use tokio::sync::{Mutex, Notify};
 
 use onboarding::{OnboardingGate, OnboardingInstallState, OnboardingSessions};
+use startkit::StartkitRunState;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -188,6 +189,7 @@ fn main() {
             onboarding_needed,
         )))
         .manage(OnboardingInstallState::default())
+        .manage(StartkitRunState::default())
         .invoke_handler(tauri::generate_handler![
             get_auth_token,
             get_app_info,
@@ -210,6 +212,11 @@ fn main() {
             onboarding::get_install_manifest,
             onboarding::start_onboarding_install,
             onboarding::cancel_onboarding_install,
+            startkit::startkit_manifest,
+            startkit::startkit_plan,
+            startkit::startkit_scan,
+            startkit::start_startkit_install,
+            startkit::cancel_startkit_install,
             profiles::profiles_list,
             profiles::profiles_get,
             profiles::profiles_create,

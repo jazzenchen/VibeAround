@@ -7,15 +7,32 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::{AppHandle, Emitter, Runtime, State};
 use tokio::process::Command;
 use tokio::time::timeout;
 
 const SETTINGS_TOML: &str = include_str!("../../../resources/startkit/settings.toml");
+const STARTKIT_PROGRESS_EVENT: &str = "startkit-progress";
+const STARTKIT_COMPLETE_EVENT: &str = "startkit-complete";
+
+pub struct StartkitRunState {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Default for StartkitRunState {
+    fn default() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Manifest {
@@ -169,6 +186,8 @@ pub struct StartkitItemSummary {
     pub description: Option<String>,
     pub severity: Option<String>,
     pub kind: Option<String>,
+    pub managed: bool,
+    pub has_repair: bool,
     pub secret: bool,
     pub settings_key: Option<String>,
 }
@@ -243,6 +262,22 @@ pub struct StartkitScanReport {
     pub reports: Vec<StartkitItemReport>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartkitProgressEvent {
+    pub id: String,
+    pub label: String,
+    pub status: StartkitItemStatus,
+    pub message: Option<String>,
+    pub report: Option<StartkitItemReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartkitCompleteEvent {
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ScriptOutput {
     status: String,
@@ -285,6 +320,66 @@ impl StartkitPaths {
 
 pub fn load_manifest() -> anyhow::Result<Manifest> {
     toml::from_str(SETTINGS_TOML).context("parsing startkit/settings.toml")
+}
+
+#[tauri::command]
+pub fn startkit_manifest() -> Result<StartkitManifestSummary, String> {
+    manifest_summary().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn startkit_plan(choices: StartkitChoices) -> Result<StartkitPlan, String> {
+    plan(&choices, None).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn startkit_scan(
+    settings: Value,
+    choices: StartkitChoices,
+) -> Result<StartkitScanReport, String> {
+    scan(&settings, &choices, None)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_startkit_install<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, StartkitRunState>,
+    settings: Value,
+    choices: StartkitChoices,
+) -> Result<(), String> {
+    state.cancelled.store(false, Ordering::Relaxed);
+    common::config::write_settings_json(&settings).map_err(|e| e.to_string())?;
+
+    let cancelled = Arc::clone(&state.cancelled);
+    tauri::async_runtime::spawn(async move {
+        let status = match run_startkit_install(app.clone(), settings, choices, cancelled).await {
+            Ok(status) => status,
+            Err(err) => {
+                let _ = app.emit(
+                    STARTKIT_PROGRESS_EVENT,
+                    StartkitProgressEvent {
+                        id: "startkit".to_string(),
+                        label: "Startkit".to_string(),
+                        status: StartkitItemStatus::Error,
+                        message: Some(err.to_string()),
+                        report: None,
+                    },
+                );
+                "error".to_string()
+            }
+        };
+        let _ = app.emit(STARTKIT_COMPLETE_EVENT, StartkitCompleteEvent { status });
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_startkit_install(state: State<'_, StartkitRunState>) -> Result<(), String> {
+    state.cancelled.store(true, Ordering::Relaxed);
+    Ok(())
 }
 
 pub fn manifest_summary() -> anyhow::Result<StartkitManifestSummary> {
@@ -363,6 +458,247 @@ pub async fn execute_item(
         },
     }
     .pipe(Ok)
+}
+
+async fn run_startkit_install<R: Runtime>(
+    app: AppHandle<R>,
+    settings: Value,
+    choices: StartkitChoices,
+    cancelled: Arc<AtomicBool>,
+) -> anyhow::Result<String> {
+    let manifest = load_manifest()?;
+    let platform = current_platform();
+    let plan = plan_from_manifest(&manifest, &choices, platform)?;
+    let mut had_error = false;
+    let mut needs_input = false;
+
+    for item_id in &plan.item_ids {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok("cancelled".to_string());
+        }
+
+        let item = find_item(&manifest, item_id)?;
+        emit_progress(
+            &app,
+            item,
+            StartkitItemStatus::Running,
+            Some("Checking".to_string()),
+            None,
+        );
+
+        let report = if item.kind.as_deref() == Some("builtin_channel_plugins") {
+            run_channel_plugins_item(&app, item, &settings, &choices, &cancelled).await
+        } else {
+            execute_item(&settings, &choices, item_id).await
+        };
+
+        match report {
+            Ok(report) => {
+                if matches!(report.status, StartkitItemStatus::Error | StartkitItemStatus::Blocked)
+                {
+                    had_error = true;
+                }
+                if matches!(report.status, StartkitItemStatus::NeedsConfig) {
+                    needs_input = true;
+                }
+                emit_progress(
+                    &app,
+                    item,
+                    report.status.clone(),
+                    report.message.clone(),
+                    Some(report),
+                );
+            }
+            Err(err) => {
+                had_error = true;
+                emit_progress(
+                    &app,
+                    item,
+                    StartkitItemStatus::Error,
+                    Some(err.to_string()),
+                    None,
+                );
+            }
+        }
+    }
+
+    Ok(if cancelled.load(Ordering::Relaxed) {
+        "cancelled"
+    } else if had_error {
+        "error"
+    } else if needs_input {
+        "needs_input"
+    } else {
+        "complete"
+    }
+    .to_string())
+}
+
+async fn run_channel_plugins_item<R: Runtime>(
+    app: &AppHandle<R>,
+    item: &StartkitItem,
+    _settings: &Value,
+    choices: &StartkitChoices,
+    cancelled: &Arc<AtomicBool>,
+) -> anyhow::Result<StartkitItemReport> {
+    if choices.channels.is_empty() {
+        return Ok(StartkitItemReport {
+            status: StartkitItemStatus::Skipped,
+            message: Some("No channel plugins selected".to_string()),
+            ..base_report(item)
+        });
+    }
+
+    for agent_id in &choices.agents {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(StartkitItemReport {
+                status: StartkitItemStatus::Skipped,
+                message: Some("Cancelled".to_string()),
+                ..base_report(item)
+            });
+        }
+        install_acp_adapter_for_agent(app, item, agent_id, cancelled).await?;
+    }
+
+    for channel_id in &choices.channels {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(StartkitItemReport {
+                status: StartkitItemStatus::Skipped,
+                message: Some("Cancelled".to_string()),
+                ..base_report(item)
+            });
+        }
+        install_channel_plugin(app, item, channel_id, cancelled).await?;
+    }
+
+    Ok(StartkitItemReport {
+        status: StartkitItemStatus::Ok,
+        message: Some("Channel plugins are ready".to_string()),
+        actions: Vec::new(),
+        ..base_report(item)
+    })
+}
+
+async fn install_acp_adapter_for_agent<R: Runtime>(
+    app: &AppHandle<R>,
+    item: &StartkitItem,
+    agent_id: &str,
+    cancelled: &Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    let Some(agent_def) = common::resources::agent_by_id(agent_id) else {
+        return Ok(());
+    };
+    let Some(npm_pkg) = agent_def.acp.npm_package.as_deref() else {
+        return Ok(());
+    };
+    let default_bin_name = common::agent::npm_package_bin_name(npm_pkg);
+    let bin_name = agent_def
+        .acp
+        .bin_name
+        .as_deref()
+        .unwrap_or(&default_bin_name);
+
+    if common::agent::npm_package_installed(npm_pkg, bin_name) {
+        emit_progress(
+            app,
+            item,
+            StartkitItemStatus::Running,
+            Some(format!("{} ACP adapter already installed", agent_def.display_name)),
+            None,
+        );
+        return Ok(());
+    }
+
+    emit_progress(
+        app,
+        item,
+        StartkitItemStatus::Running,
+        Some(format!("Installing {} ACP adapter", agent_def.display_name)),
+        None,
+    );
+
+    common::agent::auto_install_npm_agent_with_progress_and_cancel(
+        npm_pkg,
+        |line| {
+            emit_progress(
+                app,
+                item,
+                StartkitItemStatus::Running,
+                Some(line),
+                None,
+            );
+        },
+        || cancelled.load(Ordering::Relaxed),
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn install_channel_plugin<R: Runtime>(
+    app: &AppHandle<R>,
+    item: &StartkitItem,
+    channel_id: &str,
+    cancelled: &Arc<AtomicBool>,
+) -> anyhow::Result<()> {
+    if crate::onboarding::check_plugin_status(channel_id.to_string()) == "ready" {
+        emit_progress(
+            app,
+            item,
+            StartkitItemStatus::Running,
+            Some(format!("{channel_id} plugin already installed")),
+            None,
+        );
+        return Ok(());
+    }
+
+    let plugin = common::resources::plugin_by_id(channel_id)
+        .ok_or_else(|| anyhow!("channel plugin '{channel_id}' not found in registry"))?;
+
+    emit_progress(
+        app,
+        item,
+        StartkitItemStatus::Running,
+        Some(format!("Installing {} plugin", plugin.name)),
+        None,
+    );
+
+    crate::onboarding::plugin_install::run_install_inner_with_progress(
+        crate::onboarding::plugin_install::InstallPluginRequest {
+            plugin_id: channel_id.to_string(),
+            github_url: plugin.github.clone(),
+        },
+        |line| {
+            emit_progress(
+                app,
+                item,
+                StartkitItemStatus::Running,
+                Some(line),
+                None,
+            );
+        },
+        || cancelled.load(Ordering::Relaxed),
+    )
+    .await
+    .map(|_| ())
+}
+
+fn emit_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    item: &StartkitItem,
+    status: StartkitItemStatus,
+    message: Option<String>,
+    report: Option<StartkitItemReport>,
+) {
+    let _ = app.emit(
+        STARTKIT_PROGRESS_EVENT,
+        StartkitProgressEvent {
+            id: item.id.clone(),
+            label: item.label.clone(),
+            status,
+            message,
+            report,
+        },
+    );
 }
 
 async fn scan_item(
@@ -618,6 +954,8 @@ fn item_summary(item: &StartkitItem) -> StartkitItemSummary {
         description: item.description.clone(),
         severity: item.severity.clone(),
         kind: item.kind.clone(),
+        managed: item.managed,
+        has_repair: item.repair.is_some(),
         secret: item.secret,
         settings_key: item.settings_key.clone(),
     }

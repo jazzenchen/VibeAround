@@ -4,7 +4,7 @@
 
 mod agent_integrations;
 mod install_orchestration;
-mod plugin_install;
+pub(crate) mod plugin_install;
 mod plugin_session;
 
 pub use plugin_install::{
