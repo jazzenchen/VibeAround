@@ -340,11 +340,13 @@ pub(super) async fn models_handler(
         .map(|model| {
             let metadata =
                 bridge_model_metadata(&upstream.profile, &target_api_type, &model.upstream_model);
-            let input_modalities = if metadata.image_input {
-                vec!["text", "image"]
-            } else {
-                vec!["text"]
-            };
+            let mut input_modalities = vec!["text"];
+            if metadata.image_input {
+                input_modalities.push("image");
+            }
+            if metadata.file_input {
+                input_modalities.push("file");
+            }
             json!({
                 "id": model.agent_model.as_str(),
                 "type": "model",

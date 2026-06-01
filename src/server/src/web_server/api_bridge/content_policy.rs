@@ -1,25 +1,27 @@
-use std::collections::BTreeMap;
-
 #[cfg(test)]
 use common::profiles::catalog::EndpointDef;
 use common::profiles::catalog::{self, ContentCapabilities};
 use common::profiles::schema::ProfileDef;
+#[cfg(test)]
 use serde_json::Value;
-use va_ai_api_bridge::{ContentBlock, Role, UniversalItem, UniversalRequest};
+#[cfg(test)]
+use va_ai_api_bridge::{ContentBlock, UniversalItem};
+use va_ai_api_bridge::{
+    sanitize_unsupported_media, MediaSanitization, ModelCapabilities, ResolvedModelSpec,
+    UniversalRequest,
+};
 
+#[cfg(test)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct ContentUsage {
     image_input: bool,
     file_input: bool,
 }
 
+#[cfg(test)]
 impl ContentUsage {
     fn is_empty(self) -> bool {
         !self.image_input && !self.file_input
-    }
-
-    fn intersects(self, other: Self) -> bool {
-        (self.image_input && other.image_input) || (self.file_input && other.file_input)
     }
 }
 
@@ -33,15 +35,14 @@ impl ContentSanitization {
     pub(super) fn changed(self) -> bool {
         self.image_omitted || self.file_omitted
     }
+}
 
-    fn record_usage(&mut self, usage: ContentUsage) {
-        self.image_omitted |= usage.image_input;
-        self.file_omitted |= usage.file_input;
-    }
-
-    fn merge(&mut self, other: Self) {
-        self.image_omitted |= other.image_omitted;
-        self.file_omitted |= other.file_omitted;
+impl From<MediaSanitization> for ContentSanitization {
+    fn from(value: MediaSanitization) -> Self {
+        Self {
+            image_omitted: value.image_omitted,
+            file_omitted: value.file_omitted,
+        }
     }
 }
 
@@ -50,27 +51,44 @@ pub(super) fn sanitize_request_content(
     target_api_type: &str,
     request: &mut UniversalRequest,
 ) -> ContentSanitization {
-    let usage = request_content_usage(request);
-    if usage.is_empty() {
-        return ContentSanitization::default();
-    }
-
     let configured_model = configured_model(profile, target_api_type);
     let model = request.model.as_deref().or(configured_model.as_deref());
     let capabilities = resolve_content_capabilities(profile, target_api_type, model);
-    let unsupported = ContentUsage {
-        image_input: usage.image_input && !capabilities.image_input,
-        file_input: usage.file_input && !capabilities.file_input,
-    };
-    if unsupported.is_empty() {
-        return ContentSanitization::default();
-    }
+    let model_spec = resolved_model_spec(profile, model, capabilities);
+    sanitize_unsupported_media(request, &model_spec).into()
+}
 
-    let provider_label = catalog::get(&profile.provider)
-        .map(|provider| provider.label.as_str())
-        .unwrap_or(profile.provider.as_str());
-    let model_label = model.unwrap_or("selected model").to_string();
-    sanitize_universal_request(request, provider_label, &model_label, unsupported)
+fn resolved_model_spec(
+    profile: &ProfileDef,
+    model: Option<&str>,
+    capabilities: ContentCapabilities,
+) -> ResolvedModelSpec {
+    ResolvedModelSpec {
+        provider_label: Some(
+            catalog::get(&profile.provider)
+                .map(|provider| provider.label.clone())
+                .unwrap_or_else(|| profile.provider.clone()),
+        ),
+        model: model.unwrap_or("selected model").to_string(),
+        capabilities: ModelCapabilities {
+            vision: capabilities.image_input,
+            files: capabilities.file_input,
+            input_modalities: input_modalities(capabilities),
+            ..ModelCapabilities::default()
+        },
+        extensions: Default::default(),
+    }
+}
+
+fn input_modalities(capabilities: ContentCapabilities) -> Vec<String> {
+    let mut modalities = vec!["text".to_string()];
+    if capabilities.image_input {
+        modalities.push("image".to_string());
+    }
+    if capabilities.file_input {
+        modalities.push("file".to_string());
+    }
+    modalities
 }
 
 #[cfg(test)]
@@ -238,6 +256,7 @@ fn clean_model_id(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+#[cfg(test)]
 fn request_content_usage(request: &UniversalRequest) -> ContentUsage {
     let mut usage = ContentUsage::default();
     collect_blocks_usage(&request.instructions, &mut usage);
@@ -247,6 +266,7 @@ fn request_content_usage(request: &UniversalRequest) -> ContentUsage {
     usage
 }
 
+#[cfg(test)]
 fn collect_item_usage(item: &UniversalItem, usage: &mut ContentUsage) {
     match item {
         UniversalItem::Message { content, .. } | UniversalItem::ToolResult { content, .. } => {
@@ -257,12 +277,14 @@ fn collect_item_usage(item: &UniversalItem, usage: &mut ContentUsage) {
     }
 }
 
+#[cfg(test)]
 fn collect_blocks_usage(blocks: &[ContentBlock], usage: &mut ContentUsage) {
     for block in blocks {
         collect_block_usage(block, usage);
     }
 }
 
+#[cfg(test)]
 fn collect_block_usage(block: &ContentBlock, usage: &mut ContentUsage) {
     match block {
         ContentBlock::Image { .. } => usage.image_input = true,
@@ -275,6 +297,7 @@ fn collect_block_usage(block: &ContentBlock, usage: &mut ContentUsage) {
     }
 }
 
+#[cfg(test)]
 fn collect_value_usage(value: &Value, usage: &mut ContentUsage) {
     match value {
         Value::Array(values) => {
@@ -320,185 +343,13 @@ fn collect_value_usage(value: &Value, usage: &mut ContentUsage) {
     }
 }
 
-fn sanitize_universal_request(
-    request: &mut UniversalRequest,
-    provider_label: &str,
-    model_label: &str,
-    unsupported: ContentUsage,
-) -> ContentSanitization {
-    let mut sanitization = sanitize_blocks(
-        &mut request.instructions,
-        provider_label,
-        model_label,
-        unsupported,
-    );
-    for item in &mut request.input {
-        sanitization.merge(sanitize_item(
-            item,
-            provider_label,
-            model_label,
-            unsupported,
-        ));
-    }
-    sanitization
-}
-
-fn sanitize_item(
-    item: &mut UniversalItem,
-    provider_label: &str,
-    model_label: &str,
-    unsupported: ContentUsage,
-) -> ContentSanitization {
-    match item {
-        UniversalItem::Message { content, .. } | UniversalItem::ToolResult { content, .. } => {
-            sanitize_blocks(content, provider_label, model_label, unsupported)
-        }
-        UniversalItem::Unknown { raw } => {
-            let usage = value_content_usage(raw);
-            if !usage.intersects(unsupported) {
-                return ContentSanitization::default();
-            }
-            let omitted = omitted_usage(usage, unsupported);
-            *item = UniversalItem::Message {
-                role: Role::User,
-                id: None,
-                content: vec![omitted_content_block(omitted, provider_label, model_label)],
-                extensions: BTreeMap::new(),
-            };
-            sanitization_for_usage(omitted)
-        }
-        UniversalItem::ToolCall { .. } | UniversalItem::Reasoning { .. } => {
-            ContentSanitization::default()
-        }
-    }
-}
-
-fn sanitize_blocks(
-    blocks: &mut [ContentBlock],
-    provider_label: &str,
-    model_label: &str,
-    unsupported: ContentUsage,
-) -> ContentSanitization {
-    let mut sanitization = ContentSanitization::default();
-    for block in blocks {
-        sanitization.merge(sanitize_block(
-            block,
-            provider_label,
-            model_label,
-            unsupported,
-        ));
-    }
-    sanitization
-}
-
-fn sanitize_block(
-    block: &mut ContentBlock,
-    provider_label: &str,
-    model_label: &str,
-    unsupported: ContentUsage,
-) -> ContentSanitization {
-    match block {
-        ContentBlock::Image { .. } if unsupported.image_input => {
-            *block = omitted_content_block(
-                ContentUsage {
-                    image_input: true,
-                    file_input: false,
-                },
-                provider_label,
-                model_label,
-            );
-            ContentSanitization {
-                image_omitted: true,
-                file_omitted: false,
-            }
-        }
-        ContentBlock::File { .. } if unsupported.file_input => {
-            *block = omitted_content_block(
-                ContentUsage {
-                    image_input: false,
-                    file_input: true,
-                },
-                provider_label,
-                model_label,
-            );
-            ContentSanitization {
-                image_omitted: false,
-                file_omitted: true,
-            }
-        }
-        ContentBlock::ToolResult { content, .. } => {
-            sanitize_blocks(content, provider_label, model_label, unsupported)
-        }
-        ContentBlock::Unknown { raw } => {
-            let usage = value_content_usage(raw);
-            if !usage.intersects(unsupported) {
-                return ContentSanitization::default();
-            }
-            let omitted = omitted_usage(usage, unsupported);
-            *block = omitted_content_block(omitted, provider_label, model_label);
-            sanitization_for_usage(omitted)
-        }
-        ContentBlock::Text { .. }
-        | ContentBlock::Image { .. }
-        | ContentBlock::File { .. }
-        | ContentBlock::ToolCall { .. }
-        | ContentBlock::Reasoning { .. } => ContentSanitization::default(),
-    }
-}
-
-fn value_content_usage(value: &Value) -> ContentUsage {
-    let mut usage = ContentUsage::default();
-    collect_value_usage(value, &mut usage);
-    usage
-}
-
-fn omitted_usage(usage: ContentUsage, unsupported: ContentUsage) -> ContentUsage {
-    ContentUsage {
-        image_input: usage.image_input && unsupported.image_input,
-        file_input: usage.file_input && unsupported.file_input,
-    }
-}
-
-fn sanitization_for_usage(usage: ContentUsage) -> ContentSanitization {
-    let mut sanitization = ContentSanitization::default();
-    sanitization.record_usage(usage);
-    sanitization
-}
-
-fn omitted_content_block(
-    usage: ContentUsage,
-    provider_label: &str,
-    model_label: &str,
-) -> ContentBlock {
-    ContentBlock::Text {
-        text: omitted_content_message(usage, provider_label, model_label),
-    }
-}
-
-fn omitted_content_message(usage: ContentUsage, provider_label: &str, model_label: &str) -> String {
-    match (usage.image_input, usage.file_input) {
-        (true, true) => format!(
-            "[Attachment omitted: {provider_label} {model_label} does not support image or file input. Do not infer attachment contents; ask the user to describe it, paste relevant text, or switch models.]"
-        ),
-        (true, false) => format!(
-            "[Image attachment omitted: {provider_label} {model_label} does not support image input. Do not infer image contents; ask the user to describe it or switch models.]"
-        ),
-        (false, true) => format!(
-            "[File attachment omitted: {provider_label} {model_label} does not support file input. Do not infer file contents; ask the user to paste relevant text or switch models.]"
-        ),
-        (false, false) => format!(
-            "[Attachment omitted: {provider_label} {model_label} does not support this attachment type. Do not infer attachment contents; ask the user to describe it or switch models.]"
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use common::profiles::schema::{ApiTypeOverrides, AuthMode, ProviderSettings};
     use serde_json::json;
-    use va_ai_api_bridge::{AnthropicMessagesTranslator, OpenAiChatTranslator, WireTranslator};
+    use va_ai_api_bridge::{AnthropicMessagesTranslator, OpenAiChatTranslator, Role, WireTranslator};
 
     use super::*;
 

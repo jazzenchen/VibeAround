@@ -12,6 +12,7 @@
     "web:build": "bun run --cwd web build",
     "server:dev": "cargo run -p server",
     "server:build": "cargo build -p server",
+    "ws:matrix": "bun scripts/ws-matrix.mjs",
     "desktop:dev": "bun run --filter @vibearound/tauri dev",
     "desktop:build": "bun run --filter @vibearound/tauri build",
     "plugins:install": "node scripts/plugin-runner.mjs install",
