@@ -11,7 +11,7 @@
 //   against the public registry). A `workspace:*` specifier would break that.
 //
 // Usage (from any cwd, but paths are resolved relative to this file):
-//   node src/scripts/link-sdk.mjs --mode=local     # dev: file:../channel-sdk
+//   node src/scripts/link-sdk.mjs --mode=local     # dev: file:../va-plugin-channel-sdk
 //   node src/scripts/link-sdk.mjs --mode=release   # ship: ^<sdk version>
 //
 // Lives in `src/scripts/` (tracked by the main repo) rather than
@@ -21,13 +21,13 @@
 // and `cargo tauri build` can invoke it on any clone.
 //
 // Modes:
-//   local    — point every plugin at `file:../channel-sdk` and run
+//   local    — point every plugin at `file:../va-plugin-channel-sdk` and run
 //              `bun install` so hot edits to the SDK source are picked up on
 //              the next plugin restart. Mutates tracked `package.json`
 //              files; remember to `--mode=release` before committing.
 //
 //   release  — rewrite back to `^<version>` where <version> is read from
-//              `channel-sdk/package.json`. This is the canonical committed
+//              `va-plugin-channel-sdk/package.json`. This is the canonical committed
 //              state; `build.sh` and Tauri's `beforeBuildCommand` call this
 //              mode before building so shipped artifacts link against the
 //              public SDK on the npm registry.
@@ -41,8 +41,8 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const SDK_PACKAGE_NAME = '@vibearound/plugin-channel-sdk';
-const SDK_DIR_NAME = 'channel-sdk';
-const LOCAL_SPEC = 'file:../channel-sdk';
+const SDK_DIR_NAME = 'va-plugin-channel-sdk';
+const LOCAL_SPEC = 'file:../va-plugin-channel-sdk';
 
 const __filename = fileURLToPath(import.meta.url);
 const scriptsDir = dirname(__filename);
@@ -98,7 +98,7 @@ function targetSpec(mode) {
     if (mode === 'local') return LOCAL_SPEC;
     const sdkPkg = readJson(sdkPackagePath());
     if (!sdkPkg.version) {
-        throw new Error('channel-sdk/package.json is missing "version"');
+        throw new Error('va-plugin-channel-sdk/package.json is missing "version"');
     }
     return `^${sdkPkg.version}`;
 }
@@ -115,7 +115,7 @@ function sdkPackagePath() {
  * ported" channel plugins tracked in separate repos), we only touch a
  * plugin if its *current* SDK spec is one of:
  *
- *   - `file:../channel-sdk`  — it's in local mode already
+ *   - `file:../va-plugin-channel-sdk`  — it's in local mode already
  *   - `^<current-sdk-version>` — it's in release mode already
  *
  * A plugin opts in by manually bumping its SDK pin to the current
