@@ -9,14 +9,15 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Runtime, State};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::time::timeout;
+use tokio::time::sleep;
 
 const SETTINGS_TOML: &str = include_str!("../../../resources/startkit/settings.toml");
 const STARTKIT_PROGRESS_EVENT: &str = "startkit-progress";
@@ -424,10 +425,20 @@ pub async fn scan(
     Ok(StartkitScanReport { plan, reports })
 }
 
+#[allow(dead_code)]
 pub async fn execute_item(
     settings: &Value,
     choices: &StartkitChoices,
     item_id: &str,
+) -> anyhow::Result<StartkitItemReport> {
+    execute_item_with_cancel(settings, choices, item_id, None).await
+}
+
+async fn execute_item_with_cancel(
+    settings: &Value,
+    choices: &StartkitChoices,
+    item_id: &str,
+    cancelled: Option<&Arc<AtomicBool>>,
 ) -> anyhow::Result<StartkitItemReport> {
     let manifest = load_manifest()?;
     let platform = current_platform();
@@ -474,6 +485,7 @@ pub async fn execute_item(
         platform,
         script_path,
         script,
+        cancelled,
     )
     .await
     {
@@ -516,7 +528,7 @@ async fn run_startkit_install<R: Runtime>(
         let report = if item.kind.as_deref() == Some("builtin_channel_plugins") {
             run_channel_plugins_item(&app, item, &settings, &choices, &cancelled).await
         } else {
-            execute_item(&settings, &choices, item_id).await
+            execute_item_with_cancel(&settings, &choices, item_id, Some(&cancelled)).await
         };
 
         match report {
@@ -778,6 +790,7 @@ async fn scan_item(
         platform,
         script_path,
         detect,
+        None,
     )
     .await
     {
@@ -827,6 +840,7 @@ async fn run_script(
     platform: &str,
     script_path: &str,
     script: &PlatformScript,
+    cancelled: Option<&Arc<AtomicBool>>,
 ) -> anyhow::Result<ScriptOutput> {
     let full_path = paths.root.join(script_path);
     if !full_path.exists() {
@@ -851,12 +865,12 @@ async fn run_script(
     command.stdout(std::process::Stdio::piped());
     command.stderr(std::process::Stdio::piped());
 
-    let output = timeout(
+    let output = run_command_with_cancel(
+        command,
         Duration::from_secs(manifest.runner.default_timeout_secs),
-        command.output(),
+        cancelled,
     )
     .await
-    .context("startkit script timed out")?
     .context("running startkit script")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -879,6 +893,65 @@ async fn run_script(
     let parsed: ScriptOutput =
         serde_json::from_str(line).with_context(|| format!("parsing script JSON: {line}"))?;
     Ok(parsed)
+}
+
+async fn run_command_with_cancel(
+    mut command: Command,
+    max_duration: Duration,
+    cancelled: Option<&Arc<AtomicBool>>,
+) -> anyhow::Result<std::process::Output> {
+    let mut child = command.spawn().context("spawning startkit script")?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("startkit script stdout was not captured"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("startkit script stderr was not captured"))?;
+
+    let stdout_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).await.map(|_| buf)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = Vec::new();
+        stderr.read_to_end(&mut buf).await.map(|_| buf)
+    });
+
+    let started = Instant::now();
+    let status = loop {
+        if cancelled
+            .map(|flag| flag.load(Ordering::Relaxed))
+            .unwrap_or(false)
+        {
+            let _ = child.kill().await;
+            bail!("cancelled");
+        }
+        if started.elapsed() >= max_duration {
+            let _ = child.kill().await;
+            bail!("startkit script timed out");
+        }
+        if let Some(status) = child.try_wait().context("polling startkit script")? {
+            break status;
+        }
+        sleep(Duration::from_millis(200)).await;
+    };
+
+    let stdout = stdout_task
+        .await
+        .context("joining startkit stdout reader")?
+        .context("reading startkit stdout")?;
+    let stderr = stderr_task
+        .await
+        .context("joining startkit stderr reader")?
+        .context("reading startkit stderr")?;
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 fn apply_startkit_env(
