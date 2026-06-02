@@ -18,6 +18,9 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const NPM_REGISTRY_GLOBAL: &str = "https://registry.npmjs.org";
+const NPM_REGISTRY_CN: &str = "https://registry.npmmirror.com";
+
 /// Cached full environment from the user's login shell.
 static ENRICHED_ENV: OnceLock<HashMap<String, String>> = OnceLock::new();
 
@@ -66,6 +69,45 @@ pub fn std_command(program: &str) -> std::process::Command {
     cmd.env_clear();
     cmd.envs(child_env());
     cmd
+}
+
+/// Return npm registry flags for installs started from VibeAround.
+///
+/// Startkit lets users choose a download source during onboarding. Native
+/// Startkit scripts get the source through `STARTKIT_NPM_REGISTRY`; Rust-side
+/// npm installs for ACP adapters and channel plugins need the same policy.
+pub fn npm_registry_args() -> Vec<String> {
+    npm_registry_url()
+        .map(|registry| vec!["--registry".to_string(), registry])
+        .unwrap_or_default()
+}
+
+pub fn npm_registry_url() -> Option<String> {
+    for key in ["STARTKIT_NPM_REGISTRY", "VIBEAROUND_NPM_REGISTRY"] {
+        if let Ok(value) = std::env::var(key) {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+
+    let path = crate::config::data_dir().join("settings.json");
+    let contents = std::fs::read_to_string(path).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&contents).ok()?;
+    let source = json
+        .get("startkit")
+        .and_then(|value| value.get("source"))
+        .and_then(serde_json::Value::as_str)?;
+    npm_registry_for_source(source).map(str::to_string)
+}
+
+fn npm_registry_for_source(source: &str) -> Option<&'static str> {
+    match source {
+        "cn" => Some(NPM_REGISTRY_CN),
+        "global" => Some(NPM_REGISTRY_GLOBAL),
+        _ => None,
+    }
 }
 
 #[cfg(windows)]
@@ -407,6 +449,21 @@ fn enrich_windows_path(env: &mut HashMap<String, String>) {
         }
     }
     env.insert("PATH".to_string(), parts.join(sep));
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    #[test]
+    fn maps_startkit_sources_to_npm_registries() {
+        assert_eq!(npm_registry_for_source("cn"), Some(NPM_REGISTRY_CN));
+        assert_eq!(
+            npm_registry_for_source("global"),
+            Some(NPM_REGISTRY_GLOBAL)
+        );
+        assert_eq!(npm_registry_for_source("custom"), None);
+    }
 }
 
 #[cfg(all(test, windows))]

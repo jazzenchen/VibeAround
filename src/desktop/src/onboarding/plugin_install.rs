@@ -29,7 +29,7 @@ pub struct InstallPluginResponse {
 /// spawn directly. Locating npm-cli.js next to `node` and calling it via node
 /// works cross-platform without any PATH or shell workarounds.
 async fn npm_process(
-    args: &[&str],
+    args: &[String],
     cwd: &std::path::Path,
 ) -> std::io::Result<tokio::process::Command> {
     let node_info = common::process::env::command("node")
@@ -77,7 +77,7 @@ async fn npm_process(
         })?;
 
     let mut node_args: Vec<String> = vec![npm_cli.to_string_lossy().to_string()];
-    node_args.extend(args.iter().map(|s| s.to_string()));
+    node_args.extend(args.iter().cloned());
 
     tracing::info!(
         "[npm_command] node {} {}",
@@ -193,8 +193,10 @@ where
         tracing::info!("[install_plugin] npm install in {:?}", target_dir);
         logs.push("Running: npm install".into());
         on_log("Running: npm install".into());
+        let mut install_args = vec!["install".to_string()];
+        install_args.extend(common::process::env::npm_registry_args());
         let output = command_streaming(
-            npm_process(&["install"], &target_dir).await?,
+            npm_process(&install_args, &target_dir).await?,
             &mut on_log,
             &is_cancelled,
         )
@@ -213,8 +215,9 @@ where
         tracing::info!("[install_plugin] npm run build in {:?}", target_dir);
         logs.push("Running: npm run build".into());
         on_log("Running: npm run build".into());
+        let build_args = vec!["run".to_string(), "build".to_string()];
         let output = command_streaming(
-            npm_process(&["run", "build"], &target_dir).await?,
+            npm_process(&build_args, &target_dir).await?,
             &mut on_log,
             &is_cancelled,
         )

@@ -125,7 +125,7 @@ where
     }
 
     let output = npm_command_streaming(
-        &["install", npm_package],
+        &npm_install_args(&["install", npm_package]),
         &plugins_dir,
         &mut on_log,
         is_cancelled,
@@ -143,8 +143,14 @@ where
     Ok(InstallOutput { stdout, stderr })
 }
 
+fn npm_install_args(args: &[&str]) -> Vec<String> {
+    let mut out = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+    out.extend(crate::process::env::npm_registry_args());
+    out
+}
+
 async fn npm_process(
-    args: &[&str],
+    args: &[String],
     cwd: &std::path::Path,
 ) -> std::io::Result<tokio::process::Command> {
     let node_info = crate::process::env::command("node")
@@ -186,7 +192,7 @@ async fn npm_process(
         })?;
 
     let mut node_args: Vec<String> = vec![npm_cli.to_string_lossy().to_string()];
-    node_args.extend(args.iter().map(|s| s.to_string()));
+    node_args.extend(args.iter().cloned());
 
     let mut command = crate::process::env::command("node");
     command
@@ -198,7 +204,7 @@ async fn npm_process(
 }
 
 async fn npm_command_streaming<F>(
-    args: &[&str],
+    args: &[String],
     cwd: &std::path::Path,
     on_log: &mut F,
     is_cancelled: impl Fn() -> bool,
