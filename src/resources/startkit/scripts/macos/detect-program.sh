@@ -25,6 +25,17 @@ if [ -z "$candidate" ]; then
 fi
 
 path="$candidate"
-version="$("$candidate" "$version_arg" 2>&1 | head -n 1 || true)"
+set +e
+version_output="$("$candidate" "$version_arg" 2>&1)"
+version_status=$?
+set -e
+version="$(printf '%s' "$version_output" | head -n 1)"
+
+if [ "$version_status" -ne 0 ] || printf '%s' "$version_output" | grep -Eqi 'xcode-select|developer tools (were )?not found|no developer tools'; then
+  printf '{"status":"missing","version":"%s","path":"%s","message":"%s is present but not usable","actions":["install"]}\n' \
+    "$(json_escape "$version")" "$(json_escape "$path")" "$(json_escape "$program")"
+  exit 0
+fi
+
 printf '{"status":"ok","version":"%s","path":"%s","message":"%s is ready","actions":[]}\n' \
   "$(json_escape "$version")" "$(json_escape "$path")" "$(json_escape "$program")"
