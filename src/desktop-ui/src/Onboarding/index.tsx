@@ -18,6 +18,7 @@ import { useI18n } from "@va/i18n";
 
 import { LanguageMenu } from "@/components/LanguageMenu";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 import { StepAgents } from "./components/StepAgents";
@@ -96,6 +97,7 @@ export default function Onboarding() {
   const [toolchainMode, setToolchainMode] = useState<
     "auto" | "managed" | "system"
   >("auto");
+  const [shellPath, setShellPath] = useState(false);
   const [enabledAgents, setEnabledAgents] = useState<Set<AgentId>>(new Set());
   const [enabledChannels, setEnabledChannels] = useState<Set<string>>(
     new Set(),
@@ -157,6 +159,9 @@ export default function Onboarding() {
             loadedSettings.startkit?.toolchain_mode === "system"
           ) {
             setToolchainMode(loadedSettings.startkit.toolchain_mode);
+          }
+          if (typeof loadedSettings.startkit?.shell_path === "boolean") {
+            setShellPath(loadedSettings.startkit.shell_path);
           }
           setCatalog(catalogDefs);
           setProfiles(profileDefs);
@@ -236,8 +241,16 @@ export default function Onboarding() {
       channels: Array.from(enabledChannels),
       source: downloadSource,
       toolchainMode,
+      shellPath: toolchainMode === "system" ? false : shellPath,
     }),
-    [enabledAgents, tunnelProvider, enabledChannels, downloadSource, toolchainMode],
+    [
+      enabledAgents,
+      tunnelProvider,
+      enabledChannels,
+      downloadSource,
+      toolchainMode,
+      shellPath,
+    ],
   );
 
   const finalSettings = useMemo(
@@ -267,6 +280,7 @@ export default function Onboarding() {
             : {}),
           source: downloadSource,
           toolchain_mode: toolchainMode,
+          shell_path: toolchainMode === "system" ? false : shellPath,
         },
       };
     },
@@ -285,6 +299,7 @@ export default function Onboarding() {
       cfHostname,
       downloadSource,
       toolchainMode,
+      shellPath,
     ],
   );
 
@@ -472,6 +487,11 @@ export default function Onboarding() {
               onChange={setDownloadSource}
             />
             <ToolchainChooser value={toolchainMode} onChange={setToolchainMode} />
+            <ShellPathChooser
+              checked={shellPath && toolchainMode !== "system"}
+              disabled={toolchainMode === "system"}
+              onChange={setShellPath}
+            />
 
             <div className="rounded-md border border-border bg-card/40 p-3">
               <StepAgents
@@ -688,6 +708,45 @@ function ToolchainChooser({
             </span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ShellPathChooser({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div
+      className={cn(
+        "rounded-md border border-border bg-card/40 p-3",
+        disabled && "opacity-60",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <TerminalSquare className="h-3.5 w-3.5 text-primary" />
+            {t("Shell PATH")}
+          </div>
+          <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+            {t("Let Terminal sessions find VibeAround-managed Node, Codex, Claude, and helper tools.")}
+          </p>
+        </div>
+        <Switch
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={onChange}
+          aria-label={t("Write shell PATH")}
+        />
       </div>
     </div>
   );

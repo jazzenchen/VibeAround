@@ -52,6 +52,7 @@ export interface Settings {
   startkit?: {
     source?: string;
     toolchain_mode?: "auto" | "managed" | "system" | string;
+    shell_path?: boolean;
   };
   tunnel?: {
     provider?: string;
@@ -218,6 +219,7 @@ export interface StartkitChoices {
   channels: string[];
   source: string;
   toolchainMode: "auto" | "managed" | "system" | string;
+  shellPath: boolean;
 }
 
 export interface StartkitSource {

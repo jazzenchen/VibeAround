@@ -158,6 +158,8 @@ pub struct StartkitChoices {
     pub source: String,
     #[serde(default = "default_toolchain_mode")]
     pub toolchain_mode: String,
+    #[serde(default)]
+    pub shell_path: bool,
 }
 
 fn default_tunnel() -> String {
@@ -1186,6 +1188,7 @@ fn should_include(item: &StartkitItem, choices: &StartkitChoices) -> bool {
         "agent:any" => !choices.agents.is_empty(),
         "channels:any" => !choices.channels.is_empty(),
         "tunnel:any" => choices.tunnel != "none",
+        "shell_path:true" => choices.shell_path,
         rule if rule.starts_with("agent:") => {
             let agent = &rule["agent:".len()..];
             choices.agents.iter().any(|id| id == agent)
@@ -1293,6 +1296,7 @@ mod tests {
             channels: Vec::new(),
             source: "global".to_string(),
             toolchain_mode: "auto".to_string(),
+            shell_path: false,
         });
 
         assert!(item_ids.contains(&"essentials.node".to_string()));
@@ -1310,6 +1314,7 @@ mod tests {
             channels: Vec::new(),
             source: "cn".to_string(),
             toolchain_mode: "auto".to_string(),
+            shell_path: false,
         });
 
         assert_eq!(
@@ -1330,6 +1335,7 @@ mod tests {
             channels: vec!["telegram".to_string()],
             source: "global".to_string(),
             toolchain_mode: "auto".to_string(),
+            shell_path: false,
         });
 
         assert!(item_ids.contains(&"essentials.node".to_string()));
@@ -1348,5 +1354,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(choices.toolchain_mode, "auto");
+        assert!(!choices.shell_path);
+    }
+
+    #[test]
+    fn shell_path_choice_adds_environment_item() {
+        let item_ids = ids(StartkitChoices {
+            agents: vec!["codex".to_string()],
+            tunnel: "none".to_string(),
+            channels: Vec::new(),
+            source: "global".to_string(),
+            toolchain_mode: "managed".to_string(),
+            shell_path: true,
+        });
+
+        assert!(item_ids.contains(&"environment.shell_path".to_string()));
     }
 }

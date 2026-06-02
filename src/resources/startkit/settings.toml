@@ -5,7 +5,7 @@ schema = 1
 version = "0.1.0"
 
 [runner]
-default_timeout_secs = 600
+default_timeout_secs = 1200
 log_redact_keys = ["token", "api_key", "secret", "password"]
 
 [sources.global]
@@ -165,3 +165,22 @@ include_if = ["channels:any"]
 depends_on = ["essentials.node", "essentials.git"]
 severity = "blocker"
 kind = "builtin_channel_plugins"
+
+[[items]]
+id = "environment.shell_path"
+label = "Shell PATH"
+group = "computer"
+category = "environment"
+description = "Add VibeAround-managed tool directories to the user's shell PATH."
+platforms = ["macos", "windows"]
+include_if = ["shell_path:true"]
+severity = "warning"
+managed = true
+
+[items.detect]
+macos = "scripts/macos/detect-shell-path.sh"
+windows = "scripts/windows/detect-shell-path.ps1"
+
+[items.install]
+macos = "scripts/macos/install-shell-path.sh"
+windows = "scripts/windows/install-shell-path.ps1"
