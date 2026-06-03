@@ -490,12 +490,6 @@ export default function Onboarding() {
       <main className="grid min-h-0 flex-1 grid-cols-[minmax(320px,430px)_1fr] overflow-hidden">
         <QuestionPane
           step={activeStep}
-          choices={choices}
-          agents={agents}
-          pluginRegistry={pluginRegistry}
-          tunnelProvider={tunnelProvider}
-          reports={startkit.reports}
-          scanning={startkit.scanning}
         />
 
         <OnboardingStepContent

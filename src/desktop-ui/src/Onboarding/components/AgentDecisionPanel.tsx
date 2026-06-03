@@ -1,10 +1,13 @@
 import {
   Bot,
+  CheckCircle2,
+  ChevronDown,
   Globe,
   Loader2,
-  ShieldCheck,
+  SlidersHorizontal,
   TerminalSquare,
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import { BrandIcon } from "@/components/brand-icon";
 import { Button } from "@/components/ui/button";
@@ -13,10 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 import { PanelSection } from "./PanelSection";
-import {
-  compactReportLabel,
-  StartkitReportRow,
-} from "./startkitPresentation";
+import { compactReportLabel } from "./startkitPresentation";
 import type {
   AgentSummary,
   StartkitItemReport,
@@ -53,102 +53,181 @@ export function AgentDecisionPanel({
   onShellPath: (checked: boolean) => void;
   onToggleAgent: (id: AgentId) => void;
 }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showMoreAgents, setShowMoreAgents] = useState(false);
+
+  useEffect(() => {
+    if (toolchainMode !== "auto") onToolchainMode("auto");
+  }, [toolchainMode, onToolchainMode]);
+
+  const recommendedAgents = useMemo(
+    () => agents.filter((agent) => agent.id === "claude" || agent.id === "codex"),
+    [agents],
+  );
+  const otherAgents = useMemo(
+    () => agents.filter((agent) => agent.id !== "claude" && agent.id !== "codex"),
+    [agents],
+  );
+
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5">
-      <PanelSection
-        icon={<TerminalSquare className="h-4 w-4" />}
-        title="Install preference"
-        description="Auto is the safest default: system tools win when valid, managed tools fill the gaps."
-      >
-        <ToolchainChooser value={toolchainMode} onChange={onToolchainMode} />
-        <div className="mt-4 grid gap-3 lg:grid-cols-2">
-          <SourceChooser
-            sources={sources}
-            value={downloadSource}
-            onChange={onDownloadSource}
-          />
-          <ShellPathChooser
-            checked={shellPath}
-            disabled={shellPathDisabled}
-            onChange={onShellPath}
-          />
-        </div>
-      </PanelSection>
+    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-8">
+      <div className="w-full space-y-4">
+        <section className="rounded-md border border-border bg-card p-5">
+          <div className="flex items-start gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+              <CheckCircle2 className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-base font-semibold">Auto setup</div>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                VibeAround checks Node, Git, Claude, and Codex. Existing system
+                tools are reused; missing tools are prepared in the managed
+                directory.
+              </p>
+            </div>
+          </div>
+        </section>
 
-      <PanelSection
-        icon={<Bot className="h-4 w-4" />}
-        title="Coding agents"
-        description="Select the CLIs VibeAround should launch from the app and IM messages."
-      >
-        <AgentGrid
-          agents={agents}
-          enabled={enabledAgents}
-          reports={reports}
-          onToggle={onToggleAgent}
-        />
-      </PanelSection>
+        <PanelSection
+          icon={<Bot className="h-4 w-4" />}
+          title="Agents to enable"
+          description="Claude and Codex are selected by default."
+        >
+          <AgentGrid
+            agents={recommendedAgents}
+            enabled={enabledAgents}
+            reports={reports}
+            onToggle={onToggleAgent}
+          />
 
-      <PanelSection
-        icon={<ShieldCheck className="h-4 w-4" />}
-        title="Detected tools"
-        description="This refreshes automatically as your choices change."
-      >
-        <DetectedToolList reports={reports} scanning={scanning} />
-      </PanelSection>
+          {otherAgents.length > 0 && (
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="px-0 text-xs text-muted-foreground hover:bg-transparent"
+                onClick={() => setShowMoreAgents((value) => !value)}
+              >
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 transition-transform",
+                    showMoreAgents && "rotate-180",
+                  )}
+                />
+                {showMoreAgents ? "Hide more agents" : "More agents"}
+              </Button>
+              {showMoreAgents && (
+                <div className="mt-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <AgentGrid
+                    agents={otherAgents}
+                    enabled={enabledAgents}
+                    reports={reports}
+                    onToggle={onToggleAgent}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </PanelSection>
+
+        <DetectionSummary reports={reports} scanning={scanning} />
+
+        <section className="rounded-md border border-border bg-card">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+            onClick={() => setShowAdvanced((value) => !value)}
+          >
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <SlidersHorizontal className="h-4 w-4 text-primary" />
+              Advanced
+            </span>
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 text-muted-foreground transition-transform",
+                showAdvanced && "rotate-180",
+              )}
+            />
+          </button>
+          {showAdvanced && (
+            <div className="grid gap-3 border-t border-border p-4 lg:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
+              <SourceChooser
+                sources={sources}
+                value={downloadSource}
+                onChange={onDownloadSource}
+              />
+              <ShellPathChooser
+                checked={shellPath}
+                disabled={shellPathDisabled}
+                onChange={onShellPath}
+              />
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
 
-function ToolchainChooser({
-  value,
-  onChange,
+function DetectionSummary({
+  reports,
+  scanning,
 }: {
-  value: "auto" | "managed" | "system";
-  onChange: (value: "auto" | "managed" | "system") => void;
+  reports: Map<string, StartkitItemReport>;
+  scanning: boolean;
 }) {
-  const options: Array<{
-    id: "auto" | "managed" | "system";
-    label: string;
-    description: string;
-  }> = [
-    {
-      id: "auto",
-      label: "Auto prepare",
-      description: "Reuse valid system tools; install managed copies only when needed.",
-    },
-    {
-      id: "system",
-      label: "Already installed",
-      description: "Use PATH tools only; Startkit will report anything missing.",
-    },
-    {
-      id: "managed",
-      label: "Managed install",
-      description: "Install and prefer VibeAround-managed Node and agent CLIs.",
-    },
+  const visibleIds = [
+    "essentials.node",
+    "essentials.git",
+    "agents.claude.cli",
+    "agents.codex.cli",
   ];
+  const visibleReports = visibleIds
+    .map((id) => reports.get(id))
+    .filter((report): report is StartkitItemReport => Boolean(report));
+  const ready = visibleReports.filter((report) => report.status === "ok").length;
+  const needsSetup = visibleReports.filter((report) =>
+    ["missing", "outdated", "broken"].includes(report.status),
+  ).length;
 
   return (
-    <div className="grid gap-2 md:grid-cols-3">
-      {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          className={cn(
-            "min-h-[92px] rounded-md border p-3 text-left transition-colors",
-            value === option.id
-              ? "border-primary bg-primary/10 text-foreground"
-              : "border-border bg-background hover:border-primary/30",
-          )}
-          onClick={() => onChange(option.id)}
-        >
-          <span className="block text-sm font-medium">{option.label}</span>
-          <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-            {option.description}
-          </span>
-        </button>
-      ))}
-    </div>
+    <section className="rounded-md border border-border bg-card p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            {scanning ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            ) : (
+              <TerminalSquare className="h-4 w-4 text-primary" />
+            )}
+            Environment check
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {scanning
+              ? "Checking in the background."
+              : visibleReports.length === 0
+                ? "Detection starts automatically."
+                : `${ready} ready, ${needsSetup} to prepare.`}
+          </p>
+        </div>
+        <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+          {visibleReports.slice(0, 4).map((report) => (
+            <span
+              key={report.id}
+              className={cn(
+                "rounded-full border px-2 py-1",
+                report.status === "ok"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : "border-border bg-muted",
+              )}
+            >
+              {report.label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -244,7 +323,7 @@ function AgentGrid({
   onToggle: (id: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-2">
+    <div className="grid gap-2 sm:grid-cols-2">
       {agents.map((agent) => {
         const selected = enabled.has(agent.id);
         const report = reports.get(`agents.${agent.id}.cli`);
@@ -253,7 +332,7 @@ function AgentGrid({
             key={agent.id}
             type="button"
             className={cn(
-              "relative flex min-h-[74px] items-center gap-3 rounded-md border p-3 pr-9 text-left transition-colors",
+              "relative flex min-h-[68px] items-center gap-3 rounded-md border p-3 pr-9 text-left transition-colors",
               selected
                 ? "border-primary/50 bg-primary/10"
                 : "border-border bg-background hover:border-primary/30",
@@ -283,48 +362,6 @@ function AgentGrid({
           </button>
         );
       })}
-    </div>
-  );
-}
-
-function DetectedToolList({
-  reports,
-  scanning,
-}: {
-  reports: Map<string, StartkitItemReport>;
-  scanning: boolean;
-}) {
-  const visibleIds = [
-    "essentials.node",
-    "essentials.git",
-    "agents.claude.cli",
-    "agents.codex.cli",
-    "environment.shell_path",
-  ];
-  const visibleReports = visibleIds
-    .map((id) => reports.get(id))
-    .filter((report): report is StartkitItemReport => Boolean(report));
-
-  if (visibleReports.length === 0) {
-    return (
-      <div className="flex min-h-[96px] items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">
-        {scanning ? (
-          <>
-            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-            Checking selected tools...
-          </>
-        ) : (
-          "Detection starts automatically."
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="divide-y divide-border rounded-md border border-border bg-background">
-      {visibleReports.map((report) => (
-        <StartkitReportRow key={report.id} report={report} compact />
-      ))}
     </div>
   );
 }
