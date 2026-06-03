@@ -433,7 +433,7 @@ pub async fn execute_item(
     choices: &StartkitChoices,
     item_id: &str,
 ) -> anyhow::Result<StartkitItemReport> {
-    execute_item_with_cancel(settings, choices, item_id, None).await
+    execute_item_with_cancel(settings, choices, item_id, None, None).await
 }
 
 async fn execute_item_with_cancel(
@@ -441,11 +441,19 @@ async fn execute_item_with_cancel(
     choices: &StartkitChoices,
     item_id: &str,
     cancelled: Option<&Arc<AtomicBool>>,
+    progress: Option<&(dyn Fn(&StartkitItem, StartkitItemStatus, Option<String>) + Sync)>,
 ) -> anyhow::Result<StartkitItemReport> {
     let manifest = load_manifest()?;
     let platform = current_platform();
     let paths = StartkitPaths::new(startkit_root());
     let item = find_item(&manifest, item_id)?;
+    if let Some(progress) = progress {
+        progress(
+            item,
+            StartkitItemStatus::Running,
+            Some("Checking".to_string()),
+        );
+    }
     let before = scan_item(&manifest, &paths, item, settings, choices, platform).await;
 
     if !before.status.needs_install() {
@@ -478,6 +486,14 @@ async fn execute_item_with_cancel(
             ..base_report(item)
         });
     };
+
+    if let Some(progress) = progress {
+        progress(
+            item,
+            StartkitItemStatus::Running,
+            Some(install_phase_message(item)),
+        );
+    }
 
     match run_script(
         &manifest,
@@ -519,18 +535,21 @@ async fn run_startkit_install<R: Runtime>(
         }
 
         let item = find_item(&manifest, item_id)?;
-        emit_progress(
-            &app,
-            item,
-            StartkitItemStatus::Running,
-            Some("Checking".to_string()),
-            None,
-        );
-
         let report = if item.kind.as_deref() == Some("builtin_channel_plugins") {
             run_channel_plugins_item(&app, item, &settings, &choices, &cancelled).await
         } else {
-            execute_item_with_cancel(&settings, &choices, item_id, Some(&cancelled)).await
+            let progress =
+                |item: &StartkitItem, status: StartkitItemStatus, message: Option<String>| {
+                    emit_progress(&app, item, status, message, None);
+                };
+            execute_item_with_cancel(
+                &settings,
+                &choices,
+                item_id,
+                Some(&cancelled),
+                Some(&progress),
+            )
+            .await
         };
 
         match report {
@@ -714,6 +733,15 @@ async fn install_channel_plugin<R: Runtime>(
     )
     .await
     .map(|_| ())
+}
+
+fn install_phase_message(item: &StartkitItem) -> String {
+    match item.id.as_str() {
+        "essentials.node" => "Downloading Node.js".to_string(),
+        "tunnels.cloudflare.binary" => "Downloading cloudflared".to_string(),
+        "environment.shell_path" => "Updating shell PATH".to_string(),
+        _ => format!("Installing {}", item.label),
+    }
 }
 
 fn emit_progress<R: Runtime>(

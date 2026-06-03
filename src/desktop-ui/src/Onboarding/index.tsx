@@ -821,9 +821,14 @@ function StartkitReportRow({ report }: { report: StartkitItemReport }) {
           </div>
         )}
       </div>
-      <div className={cn("inline-flex w-fit items-center gap-1.5 rounded border px-2 py-1 text-[11px]", statusClass(report.status))}>
+      <div
+        className={cn(
+          "inline-flex w-fit items-center gap-1.5 rounded border px-2 py-1 text-[11px]",
+          statusClass(report.status),
+        )}
+      >
         {statusIcon(report.status)}
-        {statusLabel(report.status)}
+        {reportStatusLabel(report)}
       </div>
       <div className="min-w-0 text-xs text-muted-foreground">
         <div className="truncate">
@@ -905,9 +910,9 @@ function groupSummary(reports: StartkitItemReport[]): string {
     return acc;
   }, {});
   if (counts.error || counts.blocked) return "Needs attention";
+  if (counts.running) return groupActivityLabel(reports);
   if (counts.needs_config) return "Needs configuration";
   if (counts.missing || counts.outdated || counts.broken) return "Fixes available";
-  if (counts.running) return "Running";
   if (counts.ok && counts.ok === reports.length) return "Ready";
   return `${reports.length} item${reports.length === 1 ? "" : "s"}`;
 }
@@ -955,6 +960,42 @@ function statusLabel(status: StartkitStatus): string {
     default:
       return status.replace("_", " ");
   }
+}
+
+function reportStatusLabel(report: StartkitItemReport): string {
+  return report.status === "running"
+    ? reportActivityLabel(report)
+    : statusLabel(report.status);
+}
+
+function groupActivityLabel(reports: StartkitItemReport[]): string {
+  const activeLabels = reports
+    .map((report) =>
+      report.status === "running" ? reportActivityLabel(report) : null,
+    )
+    .filter((label): label is string => Boolean(label));
+
+  if (activeLabels.includes("downloading")) return "Downloading";
+  if (activeLabels.includes("installing")) return "Installing";
+  if (activeLabels.includes("updating")) return "Updating";
+  if (activeLabels.includes("checking")) return "Checking";
+  return "Working";
+}
+
+function reportActivityLabel(report: StartkitItemReport): string {
+  const message = (report.message ?? "").toLowerCase();
+  if (message.includes("download")) return "downloading";
+  if (
+    message.includes("install") ||
+    message.includes("npm") ||
+    message.includes("clone") ||
+    message.includes("build")
+  ) {
+    return "installing";
+  }
+  if (message.includes("path") || message.includes("updat")) return "updating";
+  if (message.includes("check") || message.includes("scan")) return "checking";
+  return "working";
 }
 
 function defaultChannelVerbose(): ChannelVerboseConfig {
