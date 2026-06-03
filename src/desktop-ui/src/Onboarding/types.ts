@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
-import type { AgentId, OnboardingGoal, TunnelProvider } from "./constants";
-import type { ProfileSummary } from "../Launch/types";
+import type { TunnelProvider } from "./constants";
 
-// Resource types — returned by Tauri commands
+// Resource types returned by Tauri commands.
 export interface AgentSummary {
   id: string;
   display_name: string;
@@ -102,7 +101,7 @@ export interface DiscoveredChannelPlugin {
   runtime: string;
   entry: string;
   source: "user" | "project";
-  /** Directory name on disk — may differ from id when plugin.json declares a different id. */
+  /** Directory name on disk; may differ from id when plugin.json declares a different id. */
   dirName: string;
   supportsQrcodeLogin: boolean;
   configSchema?: ConfigSchema;
@@ -124,15 +123,6 @@ export interface AuthFlowState {
   qrCodeUrl?: string;
   sessionKey?: string;
   resultData?: Record<string, unknown>;
-}
-
-export interface StepAgentsProps {
-  agents: AgentSummary[];
-  profiles: ProfileSummary[];
-  enabled: Set<AgentId>;
-  onToggle: (id: AgentId) => void;
-  onCreateProfile: () => void;
-  onDeleteProfile: (id: string) => void;
 }
 
 export interface StepChannelsProps {
@@ -171,35 +161,6 @@ export interface StepTunnelProps {
   cfHostname: string;
   onCfHostname: (value: string) => void;
   notice?: ReactNode;
-}
-
-export interface StepConfirmProps {
-  agents: AgentSummary[];
-  tunnels: TunnelSummary[];
-  pluginRegistry: PluginRegistryEntry[];
-  selectedGoals: Set<OnboardingGoal>;
-  enabledAgents: Set<AgentId>;
-  tunnelProvider: TunnelProvider;
-  enabledChannels: Set<string>;
-  // Install progress state
-  isInstalling: boolean;
-  installComplete: boolean;
-  installTasks: InstallTaskProgress[];
-}
-
-export type InstallTaskStatus = "pending" | "running" | "done" | "error" | "skipped" | "cancelled";
-
-export interface InstallTaskProgress {
-  id: string;
-  label: string;
-  status: InstallTaskStatus;
-  message?: string;
-  logs?: string[];
-}
-
-export interface InstallTaskInfo {
-  id: string;
-  label: string;
 }
 
 export type StartkitStatus =

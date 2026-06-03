@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-import type { OnboardingStep } from "../constants";
 import type { AuthFlowState, DiscoveredChannelPlugin } from "../types";
 
 interface UseChannelAuthInput {
-  currentStep?: OnboardingStep;
   active?: boolean;
   discoveredPlugins: DiscoveredChannelPlugin[];
   channelConfigs: Record<string, Record<string, string>>;
@@ -21,12 +19,11 @@ interface UseChannelAuthResult {
 /**
  * Owns the QR-login auth state machine for channel plugins.
  *
- * Each plugin goes through: generating → waiting → connected / error / idle.
+ * Each plugin goes through: generating -> waiting -> connected / error / idle.
  * Also cancels any in-flight auth session if the user navigates away from
- * the Channels step — otherwise the plugin process would keep polling.
+ * the active configuration step; otherwise the plugin process would keep polling.
  */
 export function useChannelAuth({
-  currentStep,
   active,
   discoveredPlugins,
   channelConfigs,
@@ -34,7 +31,7 @@ export function useChannelAuth({
 }: UseChannelAuthInput): UseChannelAuthResult {
   const [authStates, setAuthStates] = useState<Record<string, AuthFlowState>>({});
   const authStatesRef = useRef(authStates);
-  const keepAuthAlive = active ?? currentStep === "Channels";
+  const keepAuthAlive = active === true;
 
   useEffect(() => {
     authStatesRef.current = authStates;
@@ -44,7 +41,7 @@ export function useChannelAuth({
     async (pluginId: string) => {
       setAuthStates((prev) => ({
         ...prev,
-        [pluginId]: { status: "generating", message: "Connecting…" },
+        [pluginId]: { status: "generating", message: "Connecting..." },
       }));
 
       try {
