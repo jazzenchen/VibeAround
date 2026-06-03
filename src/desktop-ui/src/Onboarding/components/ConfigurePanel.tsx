@@ -79,74 +79,102 @@ export function ConfigurePanel({
   onCfToken: (value: string) => void;
   onCfHostname: (value: string) => void;
 }) {
+  const showNoConfig =
+    enabledChannels.size === 0 && tunnelProvider === "none" && profiles.length === 0;
+
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5">
-      <PanelSection
-        icon={<KeyRound className="h-4 w-4" />}
-        title="Agent API profiles"
-        description="Optional profiles are available from Launch after onboarding."
-        action={
-          <Button type="button" size="sm" variant="outline" onClick={onCreateProfile}>
-            Add API profile
-          </Button>
-        }
-      >
-        <ProfileList profiles={profiles} onDeleteProfile={onDeleteProfile} />
-      </PanelSection>
+    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-8">
+      <div className="w-full space-y-4">
+        {!showNoConfig && (
+          <section className="rounded-md border border-border bg-card p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <KeyRound className="h-4 w-4 text-primary" />
+                  Agent API profiles
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Optional. You can add or edit profiles from Launch later.
+                </p>
+              </div>
+              <Button type="button" size="sm" variant="outline" onClick={onCreateProfile}>
+                Add profile
+              </Button>
+            </div>
+            {profiles.length > 0 && (
+              <div className="mt-3">
+                <ProfileList profiles={profiles} onDeleteProfile={onDeleteProfile} />
+              </div>
+            )}
+          </section>
+        )}
 
-      {enabledChannels.size > 0 && (
-        <StepChannels
-          pluginRegistry={pluginRegistry}
-          discoveredPlugins={discoveredPlugins}
-          enabledChannels={enabledChannels}
-          channelConfigs={channelConfigs}
-          channelVerbose={channelVerbose}
-          installingPlugins={installingPlugins}
-          authStates={authStates}
-          onToggleChannel={onToggleChannel}
-          onConfigChange={onConfigChange}
-          onVerboseChange={onVerboseChange}
-          onInstallPlugin={onInstallPlugin}
-          onStartAuth={onStartAuth}
-          onCancelAuth={onCancelAuth}
-          switchSize="sm"
-          description="Finish credentials, QR login, and message detail for selected IM plugins."
-        />
-      )}
-
-      {tunnelProvider !== "none" && (
-        <PanelSection
-          icon={<Globe className="h-4 w-4" />}
-          title="Remote access configuration"
-          description="Cloudflare token and hostname can be pasted here after creating the tunnel."
-        >
-          <StepTunnel
-            tunnels={tunnels}
-            provider={tunnelProvider}
-            onProvider={onProvider}
-            ngrokToken={ngrokToken}
-            onNgrokToken={onNgrokToken}
-            ngrokDomain={ngrokDomain}
-            onNgrokDomain={onNgrokDomain}
-            cfToken={cfToken}
-            onCfToken={onCfToken}
-            cfHostname={cfHostname}
-            onCfHostname={onCfHostname}
+        {enabledChannels.size > 0 && (
+          <StepChannels
+            pluginRegistry={pluginRegistry}
+            discoveredPlugins={discoveredPlugins}
+            enabledChannels={enabledChannels}
+            channelConfigs={channelConfigs}
+            channelVerbose={channelVerbose}
+            installingPlugins={installingPlugins}
+            authStates={authStates}
+            onToggleChannel={onToggleChannel}
+            onConfigChange={onConfigChange}
+            onVerboseChange={onVerboseChange}
+            onInstallPlugin={onInstallPlugin}
+            onStartAuth={onStartAuth}
+            onCancelAuth={onCancelAuth}
+            switchSize="sm"
+            description="Finish credentials and QR login for selected IM plugins."
           />
-        </PanelSection>
-      )}
+        )}
 
-      {enabledChannels.size === 0 && tunnelProvider === "none" && profiles.length === 0 && (
-        <div className="rounded-md border border-border bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-          No extra configuration is required for the selected setup.
-        </div>
-      )}
+        {tunnelProvider !== "none" && (
+          <PanelSection
+            icon={<Globe className="h-4 w-4" />}
+            title="Remote access configuration"
+            description="Paste tunnel details when remote access was selected."
+          >
+            <StepTunnel
+              tunnels={tunnels}
+              provider={tunnelProvider}
+              onProvider={onProvider}
+              ngrokToken={ngrokToken}
+              onNgrokToken={onNgrokToken}
+              ngrokDomain={ngrokDomain}
+              onNgrokDomain={onNgrokDomain}
+              cfToken={cfToken}
+              onCfToken={onCfToken}
+              cfHostname={cfHostname}
+              onCfHostname={onCfHostname}
+            />
+          </PanelSection>
+        )}
 
-      {finishError && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-          {finishError}
-        </div>
-      )}
+        {showNoConfig && (
+          <div className="rounded-md border border-border bg-card px-4 py-10 text-center">
+            <CheckReady />
+            <div className="mt-3 text-sm font-medium">No extra configuration</div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              The selected setup can launch now.
+            </p>
+          </div>
+        )}
+
+        {finishError && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            {finishError}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CheckReady() {
+  return (
+    <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+      <KeyRound className="h-5 w-5" />
     </div>
   );
 }

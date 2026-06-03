@@ -171,8 +171,6 @@ export function OnboardingStepContent({
           finalStatus={finalStatus}
           error={startkitError}
           choices={choices}
-          agents={agents}
-          pluginRegistry={pluginRegistry}
           tunnelProvider={tunnelProvider}
         />
       )}
