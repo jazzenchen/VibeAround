@@ -14,15 +14,15 @@ import { WIZARD_STEPS, type WizardStepId } from "../wizardTypes";
 
 export function ProgressStepper({ activeIndex }: { activeIndex: number }) {
   return (
-    <div className="relative z-10 flex min-w-0 flex-1 items-center justify-center gap-2">
+    <div className="relative z-10 flex min-w-0 flex-1 items-center justify-center gap-1.5">
       {WIZARD_STEPS.map((step, index) => {
         const active = index === activeIndex;
         const done = index < activeIndex;
         return (
-          <div key={step.id} className="flex items-center gap-2">
+          <div key={step.id} className="flex min-w-0 items-center gap-1.5">
             <div
               className={cn(
-                "flex h-7 items-center gap-2 rounded-full px-2.5 text-xs transition-colors",
+                "flex h-7 min-w-0 items-center gap-1.5 rounded-full px-2 text-xs transition-colors",
                 active
                   ? "bg-primary/10 text-primary"
                   : done
@@ -42,12 +42,17 @@ export function ProgressStepper({ activeIndex }: { activeIndex: number }) {
               >
                 {done ? <CheckCircle2 className="h-3 w-3" /> : index + 1}
               </span>
-              <span className={cn("hidden font-medium md:inline", active && "inline")}>
+              <span
+                className={cn(
+                  "hidden whitespace-nowrap font-medium lg:inline",
+                  active && "inline",
+                )}
+              >
                 {step.label}
               </span>
             </div>
             {index < WIZARD_STEPS.length - 1 && (
-              <span className="h-px w-6 bg-border" aria-hidden="true" />
+              <span className="h-px w-4 bg-border" aria-hidden="true" />
             )}
           </div>
         );
@@ -64,7 +69,7 @@ export function QuestionPane({
   const meta = questionCopy(step);
 
   return (
-    <aside className="min-h-0 border-r border-border bg-muted/20 p-8">
+    <aside className="min-h-0 border-r border-border bg-muted/20 p-7">
       <div
         key={step}
         className="flex min-h-full flex-col justify-center animate-in fade-in slide-in-from-left-1 duration-300"

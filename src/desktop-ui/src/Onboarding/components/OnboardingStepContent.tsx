@@ -124,7 +124,7 @@ export function OnboardingStepContent({
   return (
     <section
       key={activeStep}
-      className="min-h-0 overflow-y-auto p-6 animate-in fade-in slide-in-from-bottom-1 duration-300"
+      className="min-h-0 overflow-y-auto p-5 animate-in fade-in slide-in-from-bottom-1 duration-300"
     >
       {activeStep === "agents" && (
         <AgentDecisionPanel

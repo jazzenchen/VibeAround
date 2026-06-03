@@ -6,9 +6,9 @@ export interface WizardStep {
 }
 
 export const WIZARD_STEPS: WizardStep[] = [
-  { id: "agents", label: "Coding agent" },
-  { id: "im", label: "IM access" },
-  { id: "remote", label: "Remote browser" },
+  { id: "agents", label: "Agents" },
+  { id: "im", label: "IM" },
+  { id: "remote", label: "Remote" },
   { id: "install", label: "Install" },
-  { id: "configure", label: "Configure" },
+  { id: "configure", label: "Config" },
 ];

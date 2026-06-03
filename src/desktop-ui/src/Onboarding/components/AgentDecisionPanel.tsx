@@ -70,21 +70,23 @@ export function AgentDecisionPanel({
   );
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-8">
-      <div className="w-full space-y-4">
+    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
+      <div className="w-full space-y-3">
         <section className="rounded-md border border-border bg-card p-5">
-          <div className="flex items-start gap-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-              <CheckCircle2 className="h-5 w-5" />
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-base font-semibold">Auto setup</div>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  VibeAround reuses working tools and prepares only what is
+                  missing in the managed directory.
+                </p>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-base font-semibold">Auto setup</div>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                VibeAround checks Node, Git, Claude, and Codex. Existing system
-                tools are reused; missing tools are prepared in the managed
-                directory.
-              </p>
-            </div>
+            <SetupReadiness reports={reports} scanning={scanning} />
           </div>
         </section>
 
@@ -101,12 +103,12 @@ export function AgentDecisionPanel({
           />
 
           {otherAgents.length > 0 && (
-            <div className="mt-3">
+            <div className="mt-2">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="px-0 text-xs text-muted-foreground hover:bg-transparent"
+                className="h-7 px-0 text-xs text-muted-foreground hover:bg-transparent"
                 onClick={() => setShowMoreAgents((value) => !value)}
               >
                 <ChevronDown
@@ -131,12 +133,10 @@ export function AgentDecisionPanel({
           )}
         </PanelSection>
 
-        <DetectionSummary reports={reports} scanning={scanning} />
-
-        <section className="rounded-md border border-border bg-card">
+        <section className="rounded-md border border-dashed border-border bg-muted/20">
           <button
             type="button"
-            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+            className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left"
             onClick={() => setShowAdvanced((value) => !value)}
           >
             <span className="flex items-center gap-2 text-sm font-medium">
@@ -170,7 +170,7 @@ export function AgentDecisionPanel({
   );
 }
 
-function DetectionSummary({
+function SetupReadiness({
   reports,
   scanning,
 }: {
@@ -192,42 +192,23 @@ function DetectionSummary({
   ).length;
 
   return (
-    <section className="rounded-md border border-border bg-card p-4">
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            {scanning ? (
-              <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            ) : (
-              <TerminalSquare className="h-4 w-4 text-primary" />
-            )}
-            Environment check
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {scanning
-              ? "Checking in the background."
-              : visibleReports.length === 0
-                ? "Detection starts automatically."
-                : `${ready} ready, ${needsSetup} to prepare.`}
-          </p>
-        </div>
-        <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
-          {visibleReports.slice(0, 4).map((report) => (
-            <span
-              key={report.id}
-              className={cn(
-                "rounded-full border px-2 py-1",
-                report.status === "ok"
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                  : "border-border bg-muted",
-              )}
-            >
-              {report.label}
-            </span>
-          ))}
-        </div>
+    <div className="rounded-md border border-border bg-background px-3 py-2 sm:min-w-[160px]">
+      <div className="flex items-center gap-2 text-xs font-medium">
+        {scanning ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+        ) : (
+          <TerminalSquare className="h-3.5 w-3.5 text-primary" />
+        )}
+        Environment check
       </div>
-    </section>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {scanning
+          ? "Checking now."
+          : visibleReports.length === 0
+            ? "Starts automatically."
+            : `${ready} ready, ${needsSetup} to prepare.`}
+      </p>
+    </div>
   );
 }
 
@@ -332,7 +313,7 @@ function AgentGrid({
             key={agent.id}
             type="button"
             className={cn(
-              "relative flex min-h-[68px] items-center gap-3 rounded-md border p-3 pr-9 text-left transition-colors",
+              "relative flex min-h-[58px] items-center gap-3 rounded-md border p-2.5 pr-9 text-left transition-colors",
               selected
                 ? "border-primary/50 bg-primary/10"
                 : "border-border bg-background hover:border-primary/30",
@@ -343,7 +324,7 @@ function AgentGrid({
               kind="cli"
               id={agent.id}
               label={agent.display_name}
-              className="h-8 w-8"
+              className="h-7 w-7"
             />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">
