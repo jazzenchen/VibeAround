@@ -37,6 +37,7 @@ export function StepChannels({
   onStartAuth,
   onCancelAuth,
   switchSize = "default",
+  description,
   notice,
 }: StepChannelsProps) {
   const { t } = useI18n();
@@ -50,7 +51,8 @@ export function StepChannels({
           {t("IM Channel")}
         </h2>
         <p className="text-xs text-muted-foreground mt-1">
-          {t("Connect messaging bots to vibe code from your phone. Install plugins from the registry, then configure and enable them.")}
+          {description ??
+            t("Connect messaging bots to vibe code from your phone. Install plugins from the registry, then configure and enable them.")}
         </p>
         {notice}
       </div>
