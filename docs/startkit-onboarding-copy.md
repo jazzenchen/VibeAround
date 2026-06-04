@@ -105,9 +105,8 @@ UI 是左右分屏：
 
 | Placement | Current English | Current Chinese |
 |---|---|---|
-| Left title | Finish the parts that need you. | 填写最后几项信息。 |
-| Left description | Add API profiles, IM login, or tunnel tokens only when selected. | 只会显示你前面选过的配置项。 |
-| Left hint | Empty sections are hidden automatically. | 不需要的部分会自动隐藏。 |
+| Left title | Complete the configuration. | 完成配置。 |
+| Left description | Fill in API keys and other required details for your selected options. | 填写所选选项的 API 密钥及其他必要信息。 |
 | API section title | Agent API profiles | API 配置 |
 | API section description | Optional. You can add or edit profiles from Launch later. | 可选。之后也可以在启动页里新增或编辑。 |
 | API empty state | No API profiles yet. | 还没有 API 配置。 |

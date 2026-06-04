@@ -104,7 +104,7 @@ export const zhCNOnboarding: Record<string, string> = {
   Agents: "Coding Agent",
   IM: "消息",
   Remote: "远程",
-  Config: "设置",
+  Config: "配置",
   "Start with your coding agents.": "选择 Coding Agent。",
   "Choose the coding agents VibeAround should prepare for this computer.":
     "选择要在这台电脑上使用的 Coding Agent。",
@@ -117,10 +117,9 @@ export const zhCNOnboarding: Record<string, string> = {
   "Skip for local-only use.": "仅本机使用时，可跳过此步骤。",
   "Install Components.": "安装组件。",
   "Only missing items will be installed.": "仅安装缺失项。",
-  "Finish the parts that need you.": "填写最后几项信息。",
-  "Add API profiles, IM login, or tunnel tokens only when selected.":
-    "只会显示你前面选过的配置项。",
-  "Empty sections are hidden automatically.": "不需要的部分会自动隐藏。",
+  "Complete the configuration.": "完成配置。",
+  "Fill in API keys and other required details for your selected options.":
+    "填写所选选项的 API 密钥及其他必要信息。",
   "Keep the defaults if you are not sure; everything can be changed later.":
     "不确定时请保持默认设置，所有设置后续均可更改。",
   Settings: "设置",

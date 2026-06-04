@@ -133,9 +133,8 @@ function questionCopy(step: WizardStepId): {
       };
     case "configure":
       return {
-        title: "Finish the parts that need you.",
-        body: "Add API profiles, IM login, or tunnel tokens only when selected.",
-        hint: "Empty sections are hidden automatically.",
+        title: "Complete the configuration.",
+        body: "Fill in API keys and other required details for your selected options.",
         icon: <KeyRound className="h-5 w-5" />,
       };
   }
