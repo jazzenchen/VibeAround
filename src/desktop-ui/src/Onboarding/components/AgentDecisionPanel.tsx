@@ -70,31 +70,22 @@ export function AgentDecisionPanel({
     <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
       <div className="w-full space-y-4">
         <section className="space-y-3">
-          <div className="px-1">
-            <div className="flex items-center gap-2 text-base font-semibold">
-              <Bot className="h-4 w-4 text-primary" />
-              Agents to enable
+          <div className="flex items-start justify-between gap-3 px-1">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-base font-semibold">
+                <Bot className="h-4 w-4 text-primary" />
+                Agents to enable
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Select your favorite agents.
+              </p>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Claude and Codex are selected by default.
-            </p>
-          </div>
-
-          <AgentGrid
-            agents={recommendedAgents}
-            enabled={enabledAgents}
-            reports={reports}
-            scanning={scanning}
-            onToggle={onToggleAgent}
-          />
-
-          {otherAgents.length > 0 && (
-            <div className="mt-2">
+            {otherAgents.length > 0 && (
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 px-0 text-xs text-muted-foreground hover:bg-transparent"
+                className="h-7 shrink-0 px-1 text-xs text-muted-foreground hover:bg-transparent"
                 onClick={() => setShowMoreAgents((value) => !value)}
               >
                 <ChevronDown
@@ -105,25 +96,34 @@ export function AgentDecisionPanel({
                 />
                 {showMoreAgents ? "Hide more agents" : "More agents"}
               </Button>
-              {showMoreAgents && (
-                <div className="mt-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                  <AgentGrid
-                    agents={otherAgents}
-                    enabled={enabledAgents}
-                    reports={reports}
-                    scanning={scanning}
-                    onToggle={onToggleAgent}
-                  />
-                </div>
-              )}
+            )}
+          </div>
+
+          <AgentGrid
+            agents={recommendedAgents}
+            enabled={enabledAgents}
+            reports={reports}
+            scanning={scanning}
+            onToggle={onToggleAgent}
+          />
+
+          {otherAgents.length > 0 && showMoreAgents && (
+            <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+              <AgentGrid
+                agents={otherAgents}
+                enabled={enabledAgents}
+                reports={reports}
+                scanning={scanning}
+                onToggle={onToggleAgent}
+              />
             </div>
           )}
         </section>
 
-        <section className="rounded-md border border-dashed border-border bg-muted/20">
+        <section className="space-y-3 px-1">
           <button
             type="button"
-            className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left"
+            className="flex w-full items-center justify-between gap-3 py-1 text-left"
             onClick={() => setShowAdvanced((value) => !value)}
           >
             <span className="flex items-center gap-2 text-sm font-medium">
@@ -138,7 +138,7 @@ export function AgentDecisionPanel({
             />
           </button>
           {showAdvanced && (
-            <div className="grid gap-3 border-t border-border p-4 lg:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
+            <div className="grid gap-3 lg:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
               <SourceChooser
                 sources={sources}
                 value={downloadSource}

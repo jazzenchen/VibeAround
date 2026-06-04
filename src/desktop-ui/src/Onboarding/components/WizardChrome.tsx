@@ -87,9 +87,9 @@ export function QuestionPane({
           <p className="text-sm leading-6 text-muted-foreground">
             {meta.body}
           </p>
-          <div className="rounded-md border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+          <p className="text-xs leading-5 text-muted-foreground">
             {meta.hint}
-          </div>
+          </p>
         </div>
       </div>
     </aside>
@@ -108,8 +108,8 @@ function questionCopy(step: WizardStepId): {
       return {
         eyebrow: "Step 1",
         title: "Start with your coding agents.",
-        body: "Auto setup reuses working tools and prepares only what is missing.",
-        hint: "Recommended defaults are safe. You can change everything later.",
+        body: "Pick the tools you want VibeAround to prepare on this computer.",
+        hint: "You can change this later.",
         icon: <Bot className="h-5 w-5" />,
       };
     case "im":
