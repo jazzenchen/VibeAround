@@ -129,12 +129,13 @@ export const zhCNOnboarding: Record<string, string> = {
     "只会显示你前面选过的配置项。",
   "Empty sections are hidden automatically.": "不需要的部分会自动隐藏。",
   "Keep the defaults if you are not sure; everything can be changed later.":
-    "不确定如何选择的话，可以先保持默认，所有设置之后都可以更改。",
+    "不确定时请保持默认设置，所有设置后续均可更改。",
   Settings: "设置",
-  "Agents to enable": "Coding Agent",
-  "Select your favorite agents.": "选择你想使用的 Coding Agent。",
-  "More agents": "更多 Coding Agent",
-  "Hide more agents": "收起更多 Coding Agent",
+  "Coding Agent": "Coding Agent",
+  "Choose the Coding Agents you want to use.":
+    "选择你想使用的 Coding Agent。",
+  "More Coding Agents": "更多 Coding Agent",
+  "Hide more Coding Agents": "收起更多 Coding Agent",
   Skip: "跳过",
   Ready: "可用",
   Installed: "已安装",

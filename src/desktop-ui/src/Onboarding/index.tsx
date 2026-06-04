@@ -377,10 +377,7 @@ export default function Onboarding() {
   }, [activeStep]);
 
   const skipStep = useCallback(() => {
-    if (activeStep === "agents") {
-      setEnabledAgents(new Set());
-      setActiveStep("im");
-    } else if (activeStep === "im") {
+    if (activeStep === "im") {
       setEnabledChannels(new Set());
       setActiveStep("remote");
     } else if (activeStep === "remote") {
@@ -439,7 +436,7 @@ export default function Onboarding() {
     return {
       label: t("Continue"),
       icon: <ArrowRight className="h-4 w-4" />,
-      disabled: false,
+      disabled: activeStep === "agents" && enabledAgents.size === 0,
       run: goNext,
     };
   }, [
@@ -451,6 +448,7 @@ export default function Onboarding() {
     finishing,
     goNext,
     hasScanned,
+    enabledAgents,
     startkit,
     t,
   ]);

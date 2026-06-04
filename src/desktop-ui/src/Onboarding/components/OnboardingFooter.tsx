@@ -34,7 +34,6 @@ export function OnboardingFooter({
 }) {
   const { t } = useI18n();
   const canSkip =
-    activeStep === "agents" ||
     activeStep === "im" ||
     activeStep === "remote";
   const footerHint = t(

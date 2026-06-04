@@ -50,10 +50,10 @@ export function AgentDecisionPanel({
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-base font-semibold">
                 <Bot className="h-4 w-4 text-primary" />
-                {t("Agents to enable")}
+                {t("Coding Agent")}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                {t("Select your favorite agents.")}
+                {t("Choose the Coding Agents you want to use.")}
               </p>
             </div>
           </div>
@@ -83,7 +83,7 @@ export function AgentDecisionPanel({
                     showMoreAgents && "rotate-180",
                   )}
                 />
-                {showMoreAgents ? t("Hide more agents") : t("More agents")}
+                {showMoreAgents ? t("Hide more Coding Agents") : t("More Coding Agents")}
               </Button>
               <span className="h-px flex-1 bg-border" aria-hidden="true" />
             </div>

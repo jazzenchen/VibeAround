@@ -25,7 +25,7 @@ UI 是左右分屏：
 
 - 左侧像 PPT section cover：一个大标题，一句简短说明，必要时有一句很轻的提示。
 - 右侧是对应步骤的设置项：标题、简短说明、选项描述或空状态。
-- 底部会常驻一句提示：不确定如何选择的话，可以先保持默认，所有设置之后都可以更改。
+- 底部会常驻一句提示：不确定时请保持默认设置，所有设置后续均可更改。
 - 我只需要优化引导性文案，不需要按钮文案、状态文案、安装进度文案、错误文案。
 
 ## 文案目标
@@ -50,7 +50,7 @@ UI 是左右分屏：
 
 | Placement | Current English | Current Chinese |
 |---|---|---|
-| Footer hint | Keep the defaults if you are not sure; everything can be changed later. | 不确定如何选择的话，可以先保持默认，所有设置之后都可以更改。 |
+| Footer hint | Keep the defaults if you are not sure; everything can be changed later. | 不确定时请保持默认设置，所有设置后续均可更改。 |
 
 ### Step 1: Agents
 
@@ -58,8 +58,8 @@ UI 是左右分屏：
 |---|---|---|
 | Left title | Start with your coding agents. | 选择 Coding Agent。 |
 | Left description | Claude Code and Codex CLI are recommended for most setups. | 推荐保留 Claude Code 和 Codex CLI。 |
-| Right title | Agents to enable | Coding Agent |
-| Right description | Select your favorite agents. | 选择你想使用的 Coding Agent。 |
+| Right title | Coding Agent | Coding Agent |
+| Right description | Choose the Coding Agents you want to use. | 选择你想使用的 Coding Agent。 |
 
 说明：Agent 名称来自动态配置，例如 Claude Code、Codex CLI、Pi、Gemini CLI、Opencode、Cursor CLI、Kiro CLI、Qwen Code。
 
