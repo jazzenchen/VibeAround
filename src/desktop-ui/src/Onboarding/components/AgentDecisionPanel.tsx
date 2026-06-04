@@ -13,7 +13,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
-import { PanelSection } from "./PanelSection";
 import { compactReportLabel } from "./startkitPresentation";
 import type {
   AgentSummary,
@@ -69,12 +68,18 @@ export function AgentDecisionPanel({
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
-      <div className="w-full space-y-3">
-        <PanelSection
-          icon={<Bot className="h-4 w-4" />}
-          title="Agents to enable"
-          description="Claude and Codex are selected by default."
-        >
+      <div className="w-full space-y-4">
+        <section className="space-y-3">
+          <div className="px-1">
+            <div className="flex items-center gap-2 text-base font-semibold">
+              <Bot className="h-4 w-4 text-primary" />
+              Agents to enable
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Claude and Codex are selected by default.
+            </p>
+          </div>
+
           <AgentGrid
             agents={recommendedAgents}
             enabled={enabledAgents}
@@ -113,7 +118,7 @@ export function AgentDecisionPanel({
               )}
             </div>
           )}
-        </PanelSection>
+        </section>
 
         <section className="rounded-md border border-dashed border-border bg-muted/20">
           <button
