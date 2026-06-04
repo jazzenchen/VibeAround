@@ -108,7 +108,7 @@ function questionCopy(step: WizardStepId): {
     case "agents":
       return {
         title: "Start with your coding agents.",
-        body: "Choose the coding agents VibeAround should prepare for this computer.",
+        body: "Claude Code and Codex CLI are recommended for most setups.",
         icon: <Bot className="h-5 w-5" />,
       };
     case "im":
