@@ -6,6 +6,7 @@ import {
   MessageSquare,
   Wrench,
 } from "lucide-react";
+import { useI18n } from "@va/i18n";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { WIZARD_STEPS, type WizardStepId } from "../wizardTypes";
 
 export function ProgressStepper({ activeIndex }: { activeIndex: number }) {
+  const { t } = useI18n();
   return (
     <div className="flex w-max items-center justify-center gap-1.5">
       {WIZARD_STEPS.map((step, index) => {
@@ -48,7 +50,7 @@ export function ProgressStepper({ activeIndex }: { activeIndex: number }) {
                   active && "inline",
                 )}
               >
-                {step.label}
+                {t(step.label)}
               </span>
             </div>
             {index < WIZARD_STEPS.length - 1 && (
@@ -66,6 +68,7 @@ export function QuestionPane({
 }: {
   step: WizardStepId;
 }) {
+  const { t } = useI18n();
   const meta = questionCopy(step);
 
   return (
@@ -79,14 +82,14 @@ export function QuestionPane({
             {meta.icon}
           </div>
           <h1 className="text-3xl font-semibold leading-tight">
-            {meta.title}
+            {t(meta.title)}
           </h1>
           <p className="text-sm leading-6 text-muted-foreground">
-            {meta.body}
+            {t(meta.body)}
           </p>
           {meta.hint && (
             <p className="text-xs leading-5 text-muted-foreground">
-              {meta.hint}
+              {t(meta.hint)}
             </p>
           )}
         </div>

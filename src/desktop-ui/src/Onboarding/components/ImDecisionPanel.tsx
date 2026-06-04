@@ -1,4 +1,5 @@
 import { CheckCircle2, Download, MessageSquare } from "lucide-react";
+import { useI18n } from "@va/i18n";
 
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ export function ImDecisionPanel({
   enabledChannels: Set<string>;
   onToggleChannel: (pluginId: string, enabled: boolean) => void;
 }) {
+  const { t } = useI18n();
   const discoveredMap = new Map(discoveredPlugins.map((plugin) => [plugin.id, plugin]));
 
   return (
@@ -27,16 +29,16 @@ export function ImDecisionPanel({
         <div className="px-1">
           <div className="flex items-center gap-2 text-base font-semibold">
             <MessageSquare className="h-4 w-4 text-primary" />
-            IM access
+            {t("IM access")}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Select the messaging apps you actually use.
+            {t("Select the messaging apps you actually use.")}
           </p>
         </div>
 
         {pluginRegistry.length === 0 ? (
           <div className="rounded-md border border-dashed border-border px-3 py-8 text-center text-xs text-muted-foreground">
-            No channel plugins are available.
+            {t("No channel plugins are available.")}
           </div>
         ) : (
           <div className="grid gap-2 lg:grid-cols-2">
@@ -46,10 +48,10 @@ export function ImDecisionPanel({
               const installed = Boolean(discovered);
               const installLabel =
                 installed && discovered?.version
-                  ? `Installed ${discovered.version}`
+                  ? t("Installed {{version}}", { version: discovered.version })
                   : installed
-                    ? "Installed"
-                    : "Not installed";
+                    ? t("Installed")
+                    : t("Not installed");
               return (
                 <button
                   key={entry.id}

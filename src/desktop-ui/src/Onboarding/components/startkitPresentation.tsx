@@ -14,13 +14,16 @@ import { cn } from "@/lib/utils";
 import type { StartkitItemReport, StartkitStatus } from "../types";
 
 const GROUP_ORDER = ["computer", "agents", "messaging", "remote"];
+type Translate = (key: string, params?: Record<string, string | number>) => string;
 
 export function StartkitReportRow({
   report,
   compact = false,
+  t,
 }: {
   report: StartkitItemReport;
   compact?: boolean;
+  t: Translate;
 }) {
   return (
     <div
@@ -39,11 +42,11 @@ export function StartkitReportRow({
           </div>
         )}
       </div>
-      <StatusPill report={report} />
+      <StatusPill report={report} t={t} />
       {!compact && (
         <div className="min-w-0 text-xs text-muted-foreground">
           <div className="truncate">
-            {report.message ?? report.version ?? "Waiting for check"}
+            {report.message ?? report.version ?? t("Waiting for check")}
           </div>
           {report.version && report.message && (
             <div className="mt-0.5 truncate font-mono text-[10px] opacity-80">
@@ -110,6 +113,10 @@ export function groupTitle(id: string): string {
   }
 }
 
+export function translatedGroupTitle(id: string, t: Translate): string {
+  return t(groupTitle(id));
+}
+
 export function groupIcon(id: string) {
   const className = "h-4 w-4 text-primary";
   switch (id) {
@@ -124,17 +131,19 @@ export function groupIcon(id: string) {
   }
 }
 
-export function groupSummary(reports: StartkitItemReport[]): string {
+export function groupSummary(reports: StartkitItemReport[], t: Translate): string {
   const counts = reports.reduce<Record<string, number>>((acc, report) => {
     acc[report.status] = (acc[report.status] ?? 0) + 1;
     return acc;
   }, {});
-  if (counts.error || counts.blocked) return "Needs attention";
-  if (counts.running) return groupActivityLabel(reports);
-  if (counts.needs_config) return "Configure later";
-  if (counts.missing || counts.outdated || counts.broken) return "Setup available";
-  if (counts.ok && counts.ok === reports.length) return "Ready";
-  return `${reports.length} item${reports.length === 1 ? "" : "s"}`;
+  if (counts.error || counts.blocked) return t("Needs attention");
+  if (counts.running) return groupActivityLabel(reports, t);
+  if (counts.needs_config) return t("Configure later");
+  if (counts.missing || counts.outdated || counts.broken) return t("Setup available");
+  if (counts.ok && counts.ok === reports.length) return t("Ready");
+  return reports.length === 1
+    ? t("{{count}} item", { count: reports.length })
+    : t("{{count}} items", { count: reports.length });
 }
 
 export function reportNeedsInstall(report: StartkitItemReport): boolean {
@@ -146,16 +155,18 @@ export function reportNeedsInstall(report: StartkitItemReport): boolean {
   );
 }
 
-export function compactReportLabel(report: StartkitItemReport): string {
+export function compactReportLabel(report: StartkitItemReport, t: Translate): string {
   if (report.status === "ok") {
-    return report.version ? `Installed ${report.version}` : "Installed";
+    return report.version
+      ? t("Installed {{version}}", { version: report.version })
+      : t("Installed");
   }
-  if (report.status === "pending") return "Checking";
-  if (report.status === "missing") return "Not installed";
-  if (report.status === "outdated") return "Outdated";
-  if (report.status === "broken") return "Needs repair";
-  if (report.status === "needs_config") return "Needs config";
-  return statusLabel(report.status);
+  if (report.status === "pending") return t("Checking");
+  if (report.status === "missing") return t("Not installed");
+  if (report.status === "outdated") return t("Outdated");
+  if (report.status === "broken") return t("Needs repair");
+  if (report.status === "needs_config") return t("Needs config");
+  return statusLabel(report.status, t);
 }
 
 export function installHeadline({
@@ -163,17 +174,19 @@ export function installHeadline({
   running,
   complete,
   finalStatus,
+  t,
 }: {
   scanning: boolean;
   running: boolean;
   complete: boolean;
   finalStatus: string | null;
+  t: Translate;
 }) {
-  if (running) return "Installing selected setup";
-  if (scanning) return "Checking this computer";
-  if (complete && finalStatus === "error") return "Setup finished with issues";
-  if (complete) return "Setup run finished";
-  return "Ready to prepare selected items";
+  if (running) return t("Installing selected setup");
+  if (scanning) return t("Checking this computer");
+  if (complete && finalStatus === "error") return t("Setup finished with issues");
+  if (complete) return t("Setup run finished");
+  return t("Ready to prepare selected items");
 }
 
 export function tunnelRank(id: string): number {
@@ -191,22 +204,22 @@ export function tunnelRank(id: string): number {
   }
 }
 
-export function tunnelDescription(id: string): string {
+export function tunnelDescription(id: string, t: Translate): string {
   switch (id) {
     case "cloudflare":
-      return "Stable named tunnel with a public hostname.";
+      return t("Stable named tunnel with a public hostname.");
     case "ngrok":
-      return "Useful when you already have an ngrok account and domain.";
+      return t("Useful when you already have an ngrok account and domain.");
     case "localtunnel":
-      return "Quick temporary public URL for lightweight testing.";
+      return t("Quick temporary public URL for lightweight testing.");
     case "none":
-      return "Keep everything local on this computer.";
+      return t("Keep everything local on this computer.");
     default:
-      return "Remote access provider.";
+      return t("Remote access provider.");
   }
 }
 
-function StatusPill({ report }: { report: StartkitItemReport }) {
+function StatusPill({ report, t }: { report: StartkitItemReport; t: Translate }) {
   return (
     <div
       className={cn(
@@ -215,7 +228,7 @@ function StatusPill({ report }: { report: StartkitItemReport }) {
       )}
     >
       {statusIcon(report.status)}
-      {reportStatusLabel(report)}
+      {reportStatusLabel(report, t)}
     </div>
   );
 }
@@ -256,36 +269,36 @@ function statusIcon(status: StartkitStatus) {
   }
 }
 
-function statusLabel(status: StartkitStatus): string {
+function statusLabel(status: StartkitStatus, t: Translate): string {
   switch (status) {
     case "needs_config":
-      return "needs config";
+      return t("needs config");
     default:
-      return status.replace("_", " ");
+      return t(status.replace("_", " "));
   }
 }
 
-function reportStatusLabel(report: StartkitItemReport): string {
+function reportStatusLabel(report: StartkitItemReport, t: Translate): string {
   return report.status === "running"
-    ? reportActivityLabel(report)
-    : statusLabel(report.status);
+    ? reportActivityLabel(report, t)
+    : statusLabel(report.status, t);
 }
 
-function groupActivityLabel(reports: StartkitItemReport[]): string {
+function groupActivityLabel(reports: StartkitItemReport[], t: Translate): string {
   const activeLabels = reports
     .map((report) =>
-      report.status === "running" ? reportActivityLabel(report) : null,
+      report.status === "running" ? reportActivityKey(report) : null,
     )
     .filter((label): label is string => Boolean(label));
 
-  if (activeLabels.includes("downloading")) return "Downloading";
-  if (activeLabels.includes("installing")) return "Installing";
-  if (activeLabels.includes("updating")) return "Updating";
-  if (activeLabels.includes("checking")) return "Checking";
-  return "Working";
+  if (activeLabels.includes("downloading")) return t("Downloading");
+  if (activeLabels.includes("installing")) return t("Installing");
+  if (activeLabels.includes("updating")) return t("Updating");
+  if (activeLabels.includes("checking")) return t("Checking");
+  return t("Working");
 }
 
-function reportActivityLabel(report: StartkitItemReport): string {
+function reportActivityKey(report: StartkitItemReport): string {
   const message = (report.message ?? "").toLowerCase();
   if (message.includes("download")) return "downloading";
   if (
@@ -299,6 +312,10 @@ function reportActivityLabel(report: StartkitItemReport): string {
   if (message.includes("path") || message.includes("updat")) return "updating";
   if (message.includes("check") || message.includes("scan")) return "checking";
   return "working";
+}
+
+function reportActivityLabel(report: StartkitItemReport, t: Translate): string {
+  return t(reportActivityKey(report));
 }
 
 function shortenHome(path: string): string {

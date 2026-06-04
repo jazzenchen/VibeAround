@@ -2,6 +2,7 @@ import {
   Bot,
   ChevronDown,
 } from "lucide-react";
+import { useI18n } from "@va/i18n";
 import { useMemo, useState } from "react";
 
 import { BrandIcon } from "@/components/brand-icon";
@@ -29,6 +30,7 @@ export function AgentDecisionPanel({
   scanning: boolean;
   onToggleAgent: (id: AgentId) => void;
 }) {
+  const { t } = useI18n();
   const [showMoreAgents, setShowMoreAgents] = useState(false);
 
   const recommendedAgents = useMemo(
@@ -48,10 +50,10 @@ export function AgentDecisionPanel({
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-base font-semibold">
                 <Bot className="h-4 w-4 text-primary" />
-                Agents to enable
+                {t("Agents to enable")}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                Select your favorite agents.
+                {t("Select your favorite agents.")}
               </p>
             </div>
           </div>
@@ -62,6 +64,7 @@ export function AgentDecisionPanel({
             reports={reports}
             scanning={scanning}
             onToggle={onToggleAgent}
+            t={t}
           />
 
           {otherAgents.length > 0 && (
@@ -80,7 +83,7 @@ export function AgentDecisionPanel({
                     showMoreAgents && "rotate-180",
                   )}
                 />
-                {showMoreAgents ? "Hide more agents" : "More agents"}
+                {showMoreAgents ? t("Hide more agents") : t("More agents")}
               </Button>
               <span className="h-px flex-1 bg-border" aria-hidden="true" />
             </div>
@@ -94,6 +97,7 @@ export function AgentDecisionPanel({
                 reports={reports}
                 scanning={scanning}
                 onToggle={onToggleAgent}
+                t={t}
               />
             </div>
           )}
@@ -109,12 +113,14 @@ function AgentGrid({
   reports,
   scanning,
   onToggle,
+  t,
 }: {
   agents: AgentSummary[];
   enabled: Set<string>;
   reports: Map<string, StartkitItemReport>;
   scanning: boolean;
   onToggle: (id: string) => void;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   return (
     <div className="grid gap-2 sm:grid-cols-2">
@@ -144,7 +150,7 @@ function AgentGrid({
                 {agent.display_name}
               </span>
               <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                {report ? compactReportLabel(report) : scanning ? "Checking" : "Not installed"}
+                {report ? compactReportLabel(report, t) : scanning ? t("Checking") : t("Not installed")}
               </span>
             </span>
             <Checkbox

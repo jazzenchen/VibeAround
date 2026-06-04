@@ -1,4 +1,5 @@
 import { ChevronDown, Globe } from "lucide-react";
+import { useI18n } from "@va/i18n";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ export function RemoteDecisionPanel({
   provider: TunnelProvider;
   onProvider: (value: TunnelProvider) => void;
 }) {
+  const { t } = useI18n();
   const [showMore, setShowMore] = useState(false);
   const cloudflare = tunnels.find((tunnel) => tunnel.id === "cloudflare");
   const none = tunnels.find((tunnel) => tunnel.id === "none");
@@ -33,10 +35,10 @@ export function RemoteDecisionPanel({
         <div className="px-1">
           <div className="flex items-center gap-2 text-base font-semibold">
             <Globe className="h-4 w-4 text-primary" />
-            Remote access
+            {t("Remote access")}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Choose how this computer can be reached from outside.
+            {t("Choose how this computer can be reached from outside.")}
           </p>
         </div>
 
@@ -46,6 +48,7 @@ export function RemoteDecisionPanel({
               tunnel={none}
               selected={provider === none.id}
               onSelect={() => onProvider(none.id)}
+              t={t}
             />
           )}
           {cloudflare && (
@@ -54,6 +57,7 @@ export function RemoteDecisionPanel({
               selected={provider === cloudflare.id}
               recommended
               onSelect={() => onProvider(cloudflare.id)}
+              t={t}
             />
           )}
         </div>
@@ -75,7 +79,7 @@ export function RemoteDecisionPanel({
                     showMore && "rotate-180",
                   )}
                 />
-                {showMore ? "Hide other options" : "Other options"}
+                {showMore ? t("Hide other options") : t("Other options")}
               </Button>
               <span className="h-px flex-1 bg-border" aria-hidden="true" />
             </div>
@@ -87,6 +91,7 @@ export function RemoteDecisionPanel({
                     tunnel={tunnel}
                     selected={provider === tunnel.id}
                     onSelect={() => onProvider(tunnel.id)}
+                    t={t}
                   />
                 ))}
               </div>
@@ -103,11 +108,13 @@ function TunnelCard({
   selected,
   recommended,
   onSelect,
+  t,
 }: {
   tunnel: TunnelSummary;
   selected: boolean;
   recommended?: boolean;
   onSelect: () => void;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   return (
     <button
@@ -124,12 +131,12 @@ function TunnelCard({
         <span className="text-sm font-medium">{tunnel.display_name}</span>
         {recommended && (
           <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
-            Recommended
+            {t("Recommended")}
           </span>
         )}
       </span>
       <span className="mt-2 block text-xs leading-5 text-muted-foreground">
-        {tunnelDescription(tunnel.id)}
+        {tunnelDescription(tunnel.id, t)}
       </span>
     </button>
   );

@@ -7,15 +7,16 @@ import {
   MessageSquare,
   TerminalSquare,
 } from "lucide-react";
+import { useI18n } from "@va/i18n";
 import { useMemo, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
 import {
   groupSummary,
-  groupTitle,
   installHeadline,
   StartkitReportRow,
+  translatedGroupTitle,
 } from "./startkitPresentation";
 import type { StartkitChoices, StartkitItemReport } from "../types";
 
@@ -42,6 +43,7 @@ export function InstallPanel({
   choices: StartkitChoices;
   tunnelProvider: string;
 }) {
+  const { t } = useI18n();
   const [showDetails, setShowDetails] = useState(false);
   const groups = useMemo(
     () =>
@@ -67,12 +69,12 @@ export function InstallPanel({
             )}
             <div>
               <div className="text-base font-semibold">
-                {installHeadline({ scanning, running, complete, finalStatus })}
+                {installHeadline({ scanning, running, complete, finalStatus, t })}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
                 {needsInput
-                  ? "Some items only need configuration in the next step."
-                  : "Ready items are skipped automatically."}
+                  ? t("Some items only need configuration in the next step.")
+                  : t("Ready items are skipped automatically.")}
               </p>
             </div>
           </div>
@@ -88,9 +90,9 @@ export function InstallPanel({
           <div className="flex min-h-[220px] items-center justify-center">
             <div className="max-w-sm text-center">
               <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-primary" />
-              <div className="text-sm font-medium">Preparing setup plan</div>
+              <div className="text-sm font-medium">{t("Preparing setup plan")}</div>
               <p className="mt-1 text-xs text-muted-foreground">
-                The environment check starts automatically.
+                {t("The environment check starts automatically.")}
               </p>
             </div>
           </div>
@@ -103,6 +105,7 @@ export function InstallPanel({
                 reports={group.reports}
                 choices={choices}
                 tunnelProvider={tunnelProvider}
+                t={t}
               />
             ))}
           </div>
@@ -117,7 +120,7 @@ export function InstallPanel({
             >
               <span className="h-px flex-1 bg-border" aria-hidden="true" />
               <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                Details
+                {t("Details")}
                 <ChevronDown
                   className={cn(
                     "h-3.5 w-3.5 transition-transform",
@@ -135,11 +138,11 @@ export function InstallPanel({
                     className="overflow-hidden rounded-md border border-border bg-background"
                   >
                     <div className="border-b border-border bg-muted/30 px-3 py-2 text-xs font-medium">
-                      {groupTitle(group.id)}
+                      {translatedGroupTitle(group.id, t)}
                     </div>
                     <div className="divide-y divide-border">
                       {group.reports.map((report) => (
-                        <StartkitReportRow key={report.id} report={report} />
+                        <StartkitReportRow key={report.id} report={report} t={t} />
                       ))}
                     </div>
                   </div>
@@ -158,22 +161,24 @@ function SetupGroupCard({
   reports,
   choices,
   tunnelProvider,
+  t,
 }: {
   id: string;
   reports: StartkitItemReport[];
   choices: StartkitChoices;
   tunnelProvider: string;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
-  const status = groupStatus(reports);
+  const status = groupStatus(reports, t);
   return (
     <div className="rounded-md border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <div className="mt-0.5 text-primary">{groupIcon(id)}</div>
           <div className="min-w-0">
-            <div className="text-sm font-medium">{groupTitle(id)}</div>
+            <div className="text-sm font-medium">{translatedGroupTitle(id, t)}</div>
             <div className="mt-1 truncate text-xs text-muted-foreground">
-              {groupDetail(id, choices, tunnelProvider)}
+              {groupDetail(id, choices, tunnelProvider, t)}
             </div>
           </div>
         </div>
@@ -182,28 +187,31 @@ function SetupGroupCard({
         </span>
       </div>
       <div className="mt-3 text-xs text-muted-foreground">
-        {groupSummary(reports)}
+        {groupSummary(reports, t)}
       </div>
     </div>
   );
 }
 
-function groupStatus(reports: StartkitItemReport[]) {
+function groupStatus(
+  reports: StartkitItemReport[],
+  t: (key: string, params?: Record<string, string | number>) => string,
+) {
   if (reports.some((report) => report.status === "running")) {
     return {
-      label: "Working",
+      label: t("Working"),
       className: "border-primary/30 bg-primary/10 text-primary",
     };
   }
   if (reports.some((report) => report.status === "error" || report.status === "blocked")) {
     return {
-      label: "Needs attention",
+      label: t("Needs attention"),
       className: "border-destructive/30 bg-destructive/10 text-destructive",
     };
   }
   if (reports.some((report) => report.status === "needs_config")) {
     return {
-      label: "Configure",
+      label: t("Configure"),
       className: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
     };
   }
@@ -216,18 +224,18 @@ function groupStatus(reports: StartkitItemReport[]) {
     )
   ) {
     return {
-      label: "Will install",
+      label: t("Will install"),
       className: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
     };
   }
   if (reports.every((report) => report.status === "ok" || report.status === "skipped")) {
     return {
-      label: "Ready",
+      label: t("Ready"),
       className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
     };
   }
   return {
-    label: "Checking",
+    label: t("Checking"),
     className: "border-border bg-muted text-muted-foreground",
   };
 }
@@ -250,19 +258,20 @@ function groupDetail(
   id: string,
   choices: StartkitChoices,
   tunnelProvider: string,
+  t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
   switch (id) {
     case "agents":
       return choices.agents.length > 0
-        ? `${choices.agents.length} selected`
-        : "Skipped";
+        ? t("{{count}} selected", { count: choices.agents.length })
+        : t("Skipped");
     case "messaging":
       return choices.channels.length > 0
-        ? `${choices.channels.length} selected`
-        : "Skipped";
+        ? t("{{count}} selected", { count: choices.channels.length })
+        : t("Skipped");
     case "remote":
-      return tunnelProvider === "none" ? "Skipped" : tunnelProvider;
+      return tunnelProvider === "none" ? t("Skipped") : tunnelProvider;
     default:
-      return choices.source === "cn" ? "China mirror" : "Global source";
+      return choices.source === "cn" ? t("China mirror") : t("Global source");
   }
 }

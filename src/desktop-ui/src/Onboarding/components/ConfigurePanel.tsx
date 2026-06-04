@@ -1,4 +1,5 @@
 import { Globe, KeyRound, Trash2 } from "lucide-react";
+import { useI18n } from "@va/i18n";
 
 import { BrandIcon } from "@/components/brand-icon";
 import { Button } from "@/components/ui/button";
@@ -78,6 +79,7 @@ export function ConfigurePanel({
   onCfToken: (value: string) => void;
   onCfHostname: (value: string) => void;
 }) {
+  const { t } = useI18n();
   const showNoConfig =
     enabledChannels.size === 0 && tunnelProvider === "none" && profiles.length === 0;
 
@@ -90,18 +92,18 @@ export function ConfigurePanel({
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-base font-semibold">
                   <KeyRound className="h-4 w-4 text-primary" />
-                  Agent API profiles
+                  {t("Agent API profiles")}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Optional. You can add or edit profiles from Launch later.
+                  {t("Optional. You can add or edit profiles from Launch later.")}
                 </p>
               </div>
               <Button type="button" size="sm" variant="outline" onClick={onCreateProfile}>
-                Add profile
+                {t("Add profile")}
               </Button>
             </div>
             {profiles.length > 0 && (
-              <ProfileList profiles={profiles} onDeleteProfile={onDeleteProfile} />
+              <ProfileList profiles={profiles} onDeleteProfile={onDeleteProfile} t={t} />
             )}
           </section>
         )}
@@ -122,7 +124,7 @@ export function ConfigurePanel({
             onStartAuth={onStartAuth}
             onCancelAuth={onCancelAuth}
             switchSize="sm"
-            description="Finish credentials and QR login for selected IM plugins."
+            description={t("Finish credentials and QR login for selected IM plugins.")}
           />
         )}
 
@@ -131,10 +133,10 @@ export function ConfigurePanel({
             <div>
               <div className="flex items-center gap-2 text-base font-semibold">
                 <Globe className="h-4 w-4 text-primary" />
-                Remote access configuration
+                {t("Remote access configuration")}
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                Paste tunnel details when remote access was selected.
+                {t("Paste tunnel details when remote access was selected.")}
               </p>
             </div>
             <StepTunnel
@@ -156,9 +158,9 @@ export function ConfigurePanel({
         {showNoConfig && (
           <div className="px-4 py-10 text-center">
             <CheckReady />
-            <div className="mt-3 text-sm font-medium">No extra configuration</div>
+            <div className="mt-3 text-sm font-medium">{t("No extra configuration")}</div>
             <p className="mt-1 text-xs text-muted-foreground">
-              The selected setup can launch now.
+              {t("The selected setup can launch now.")}
             </p>
           </div>
         )}
@@ -184,14 +186,16 @@ function CheckReady() {
 function ProfileList({
   profiles,
   onDeleteProfile,
+  t,
 }: {
   profiles: ProfileSummary[];
   onDeleteProfile: (id: string) => void;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   if (profiles.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
-        No API profiles yet.
+        {t("No API profiles yet.")}
       </div>
     );
   }
