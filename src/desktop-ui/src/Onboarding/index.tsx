@@ -16,6 +16,7 @@ import {
   type PrimaryAction,
 } from "./components/OnboardingFooter";
 import { OnboardingStepContent } from "./components/OnboardingStepContent";
+import { StartkitAdvancedMenu } from "./components/StartkitAdvancedMenu";
 import { ProgressStepper, QuestionPane } from "./components/WizardChrome";
 import { groupReports, reportNeedsInstall } from "./components/startkitPresentation";
 import { useChannelAuth } from "./hooks/useChannelAuth";
@@ -123,6 +124,10 @@ export default function Onboarding() {
     setCfToken,
     setCfHostname,
   });
+
+  useEffect(() => {
+    if (toolchainMode !== "auto") setToolchainMode("auto");
+  }, [toolchainMode]);
 
   const registryPluginIds = useMemo(
     () => new Set(pluginRegistry.map((plugin) => plugin.id)),
@@ -484,7 +489,15 @@ export default function Onboarding() {
         <div className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
           <ProgressStepper activeIndex={activeIndex} />
         </div>
-        <div className="relative z-10 ml-auto shrink-0">
+        <div className="relative z-10 ml-auto flex shrink-0 items-center gap-1">
+          <StartkitAdvancedMenu
+            sources={manifest?.sources ?? {}}
+            downloadSource={downloadSource}
+            onDownloadSource={setDownloadSource}
+            shellPath={shellPath && toolchainMode !== "system"}
+            shellPathDisabled={toolchainMode === "system"}
+            onShellPath={setShellPath}
+          />
           <LanguageMenu />
         </div>
       </header>
@@ -500,13 +513,6 @@ export default function Onboarding() {
           enabledAgents={enabledAgents}
           reportsById={startkit.reportById}
           scanning={startkit.scanning}
-          toolchainMode={toolchainMode}
-          onToolchainMode={setToolchainMode}
-          manifest={manifest}
-          downloadSource={downloadSource}
-          onDownloadSource={setDownloadSource}
-          shellPath={shellPath}
-          onShellPath={setShellPath}
           onToggleAgent={toggleAgent}
           pluginRegistry={pluginRegistry}
           discoveredPlugins={discoveredPlugins}

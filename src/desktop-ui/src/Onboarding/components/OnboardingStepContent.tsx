@@ -13,7 +13,6 @@ import type {
   PluginRegistryEntry,
   StartkitChoices,
   StartkitItemReport,
-  StartkitManifestSummary,
   TunnelSummary,
 } from "../types";
 import type { WizardStepId } from "../wizardTypes";
@@ -24,13 +23,6 @@ export function OnboardingStepContent({
   enabledAgents,
   reportsById,
   scanning,
-  toolchainMode,
-  onToolchainMode,
-  manifest,
-  downloadSource,
-  onDownloadSource,
-  shellPath,
-  onShellPath,
   onToggleAgent,
   pluginRegistry,
   discoveredPlugins,
@@ -73,13 +65,6 @@ export function OnboardingStepContent({
   enabledAgents: Set<AgentId>;
   reportsById: Map<string, StartkitItemReport>;
   scanning: boolean;
-  toolchainMode: "auto" | "managed" | "system";
-  onToolchainMode: (value: "auto" | "managed" | "system") => void;
-  manifest: StartkitManifestSummary | null;
-  downloadSource: string;
-  onDownloadSource: (value: string) => void;
-  shellPath: boolean;
-  onShellPath: (checked: boolean) => void;
   onToggleAgent: (id: AgentId) => void;
   pluginRegistry: PluginRegistryEntry[];
   discoveredPlugins: DiscoveredChannelPlugin[];
@@ -132,14 +117,6 @@ export function OnboardingStepContent({
           enabledAgents={enabledAgents}
           reports={reportsById}
           scanning={scanning}
-          toolchainMode={toolchainMode}
-          onToolchainMode={onToolchainMode}
-          sources={manifest?.sources ?? {}}
-          downloadSource={downloadSource}
-          onDownloadSource={onDownloadSource}
-          shellPath={shellPath && toolchainMode !== "system"}
-          shellPathDisabled={toolchainMode === "system"}
-          onShellPath={onShellPath}
           onToggleAgent={onToggleAgent}
         />
       )}
