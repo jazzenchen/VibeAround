@@ -1,9 +1,7 @@
 import {
   Bot,
-  CheckCircle2,
   ChevronDown,
   Globe,
-  Loader2,
   SlidersHorizontal,
   TerminalSquare,
 } from "lucide-react";
@@ -72,24 +70,6 @@ export function AgentDecisionPanel({
   return (
     <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
       <div className="w-full space-y-3">
-        <section className="rounded-md border border-border bg-card p-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <CheckCircle2 className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-base font-semibold">Auto setup</div>
-                <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  VibeAround reuses working tools and prepares only what is
-                  missing in the managed directory.
-                </p>
-              </div>
-            </div>
-            <SetupReadiness reports={reports} scanning={scanning} />
-          </div>
-        </section>
-
         <PanelSection
           icon={<Bot className="h-4 w-4" />}
           title="Agents to enable"
@@ -168,48 +148,6 @@ export function AgentDecisionPanel({
           )}
         </section>
       </div>
-    </div>
-  );
-}
-
-function SetupReadiness({
-  reports,
-  scanning,
-}: {
-  reports: Map<string, StartkitItemReport>;
-  scanning: boolean;
-}) {
-  const visibleIds = [
-    "essentials.node",
-    "essentials.git",
-    "agents.claude.cli",
-    "agents.codex.cli",
-  ];
-  const visibleReports = visibleIds
-    .map((id) => reports.get(id))
-    .filter((report): report is StartkitItemReport => Boolean(report));
-  const installed = visibleReports.filter((report) => report.status === "ok").length;
-  const needsSetup = visibleReports.filter((report) =>
-    ["missing", "outdated", "broken"].includes(report.status),
-  ).length;
-
-  return (
-    <div className="rounded-md border border-border bg-background px-3 py-2 sm:min-w-[160px]">
-      <div className="flex items-center gap-2 text-xs font-medium">
-        {scanning ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-        ) : (
-          <TerminalSquare className="h-3.5 w-3.5 text-primary" />
-        )}
-        Environment check
-      </div>
-      <p className="mt-1 text-[11px] text-muted-foreground">
-        {scanning
-          ? "Checking now."
-          : visibleReports.length === 0
-            ? "Starts automatically."
-            : `${installed} installed, ${needsSetup} to prepare.`}
-      </p>
     </div>
   );
 }

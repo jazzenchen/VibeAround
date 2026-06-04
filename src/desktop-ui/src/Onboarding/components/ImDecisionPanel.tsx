@@ -37,7 +37,14 @@ export function ImDecisionPanel({
           <div className="space-y-2">
             {pluginRegistry.map((entry) => {
               const selected = enabledChannels.has(entry.id);
-              const installed = discoveredMap.has(entry.id);
+              const discovered = discoveredMap.get(entry.id);
+              const installed = Boolean(discovered);
+              const installLabel =
+                installed && discovered?.version
+                  ? `Installed ${discovered.version}`
+                  : installed
+                    ? "Installed"
+                    : "Not installed";
               return (
                 <button
                   key={entry.id}
@@ -77,7 +84,7 @@ export function ImDecisionPanel({
                     ) : (
                       <Download className="h-3 w-3" />
                     )}
-                    {installed ? "Installed" : "Not installed"}
+                    {installLabel}
                   </span>
                 </button>
               );

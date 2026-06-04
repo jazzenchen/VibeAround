@@ -148,7 +148,7 @@ export function reportNeedsInstall(report: StartkitItemReport): boolean {
 
 export function compactReportLabel(report: StartkitItemReport): string {
   if (report.status === "ok") {
-    return report.version ?? report.path ?? "Installed";
+    return report.version ? `Installed ${report.version}` : "Installed";
   }
   if (report.status === "pending") return "Checking";
   if (report.status === "missing") return "Not installed";
