@@ -64,23 +64,21 @@ export function ImDecisionPanel({
                       {entry.description}
                     </span>
                   </span>
-                  {selected && (
-                    <span
-                      className={cn(
-                        "hidden shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] sm:inline-flex",
-                        installed
-                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                          : "border-border bg-muted text-muted-foreground",
-                      )}
-                    >
-                      {installed ? (
-                        <CheckCircle2 className="h-3 w-3" />
-                      ) : (
-                        <Download className="h-3 w-3" />
-                      )}
-                      {installed ? "Installed" : "Will install"}
-                    </span>
-                  )}
+                  <span
+                    className={cn(
+                      "hidden shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] sm:inline-flex",
+                      installed
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        : "border-border bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {installed ? (
+                      <CheckCircle2 className="h-3 w-3" />
+                    ) : (
+                      <Download className="h-3 w-3" />
+                    )}
+                    {installed ? "Installed" : "Not installed"}
+                  </span>
                 </button>
               );
             })}

@@ -151,6 +151,10 @@ export function compactReportLabel(report: StartkitItemReport): string {
     return report.version ?? report.path ?? "Installed";
   }
   if (report.status === "pending") return "Checking";
+  if (report.status === "missing") return "Not installed";
+  if (report.status === "outdated") return "Outdated";
+  if (report.status === "broken") return "Needs repair";
+  if (report.status === "needs_config") return "Needs config";
   return statusLabel(report.status);
 }
 

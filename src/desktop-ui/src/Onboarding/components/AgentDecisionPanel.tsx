@@ -99,6 +99,7 @@ export function AgentDecisionPanel({
             agents={recommendedAgents}
             enabled={enabledAgents}
             reports={reports}
+            scanning={scanning}
             onToggle={onToggleAgent}
           />
 
@@ -125,6 +126,7 @@ export function AgentDecisionPanel({
                     agents={otherAgents}
                     enabled={enabledAgents}
                     reports={reports}
+                    scanning={scanning}
                     onToggle={onToggleAgent}
                   />
                 </div>
@@ -186,7 +188,7 @@ function SetupReadiness({
   const visibleReports = visibleIds
     .map((id) => reports.get(id))
     .filter((report): report is StartkitItemReport => Boolean(report));
-  const ready = visibleReports.filter((report) => report.status === "ok").length;
+  const installed = visibleReports.filter((report) => report.status === "ok").length;
   const needsSetup = visibleReports.filter((report) =>
     ["missing", "outdated", "broken"].includes(report.status),
   ).length;
@@ -206,7 +208,7 @@ function SetupReadiness({
           ? "Checking now."
           : visibleReports.length === 0
             ? "Starts automatically."
-            : `${ready} ready, ${needsSetup} to prepare.`}
+            : `${installed} installed, ${needsSetup} to prepare.`}
       </p>
     </div>
   );
@@ -296,11 +298,13 @@ function AgentGrid({
   agents,
   enabled,
   reports,
+  scanning,
   onToggle,
 }: {
   agents: AgentSummary[];
   enabled: Set<string>;
   reports: Map<string, StartkitItemReport>;
+  scanning: boolean;
   onToggle: (id: string) => void;
 }) {
   return (
@@ -331,7 +335,7 @@ function AgentGrid({
                 {agent.display_name}
               </span>
               <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                {report ? compactReportLabel(report) : agent.install_type ?? "CLI"}
+                {report ? compactReportLabel(report) : scanning ? "Checking" : "Not installed"}
               </span>
             </span>
             <Checkbox
