@@ -87,9 +87,11 @@ export function QuestionPane({
           <p className="text-sm leading-6 text-muted-foreground">
             {meta.body}
           </p>
-          <p className="text-xs leading-5 text-muted-foreground">
-            {meta.hint}
-          </p>
+          {meta.hint && (
+            <p className="text-xs leading-5 text-muted-foreground">
+              {meta.hint}
+            </p>
+          )}
         </div>
       </div>
     </aside>
@@ -100,7 +102,7 @@ function questionCopy(step: WizardStepId): {
   eyebrow: string;
   title: string;
   body: string;
-  hint: string;
+  hint?: string;
   icon: ReactNode;
 } {
   switch (step) {
@@ -108,8 +110,7 @@ function questionCopy(step: WizardStepId): {
       return {
         eyebrow: "Step 1",
         title: "Start with your coding agents.",
-        body: "Pick the tools you want VibeAround to prepare on this computer.",
-        hint: "You can change this later.",
+        body: "Claude Code and Codex CLI are recommended; leave everything as default if you are not sure, and you can change them later.",
         icon: <Bot className="h-5 w-5" />,
       };
     case "im":

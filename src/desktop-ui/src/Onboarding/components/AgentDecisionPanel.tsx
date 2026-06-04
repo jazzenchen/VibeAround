@@ -80,12 +80,23 @@ export function AgentDecisionPanel({
                 Select your favorite agents.
               </p>
             </div>
-            {otherAgents.length > 0 && (
+          </div>
+
+          <AgentGrid
+            agents={recommendedAgents}
+            enabled={enabledAgents}
+            reports={reports}
+            scanning={scanning}
+            onToggle={onToggleAgent}
+          />
+
+          {otherAgents.length > 0 && (
+            <div className="flex justify-end">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 shrink-0 px-1 text-xs text-muted-foreground hover:bg-transparent"
+                className="h-7 px-1 text-xs text-muted-foreground hover:bg-transparent"
                 onClick={() => setShowMoreAgents((value) => !value)}
               >
                 <ChevronDown
@@ -96,16 +107,8 @@ export function AgentDecisionPanel({
                 />
                 {showMoreAgents ? "Hide more agents" : "More agents"}
               </Button>
-            )}
-          </div>
-
-          <AgentGrid
-            agents={recommendedAgents}
-            enabled={enabledAgents}
-            reports={reports}
-            scanning={scanning}
-            onToggle={onToggleAgent}
-          />
+            </div>
+          )}
 
           {otherAgents.length > 0 && showMoreAgents && (
             <div className="animate-in fade-in slide-in-from-top-1 duration-200">
@@ -123,16 +126,14 @@ export function AgentDecisionPanel({
         <section className="space-y-3 px-1">
           <button
             type="button"
-            className="flex w-full items-center justify-between gap-3 py-1 text-left"
+            className="ml-auto flex w-fit items-center gap-2 py-1 text-left text-sm font-medium text-muted-foreground hover:text-foreground"
             onClick={() => setShowAdvanced((value) => !value)}
           >
-            <span className="flex items-center gap-2 text-sm font-medium">
-              <SlidersHorizontal className="h-4 w-4 text-primary" />
-              Advanced
-            </span>
+            <SlidersHorizontal className="h-4 w-4 text-primary" />
+            Advanced
             <ChevronDown
               className={cn(
-                "h-4 w-4 text-muted-foreground transition-transform",
+                "h-4 w-4 transition-transform",
                 showAdvanced && "rotate-180",
               )}
             />
