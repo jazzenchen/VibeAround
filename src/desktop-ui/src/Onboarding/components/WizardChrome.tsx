@@ -75,15 +75,17 @@ export function QuestionPane({
         className="flex min-h-full flex-col justify-center animate-in fade-in slide-in-from-left-1 duration-300"
       >
         <div className="max-w-md space-y-5">
-          <div className="flex h-12 w-12 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
-            {meta.icon}
-          </div>
           <div className="text-[11px] font-medium uppercase text-muted-foreground">
             {meta.eyebrow}
           </div>
-          <h1 className="text-3xl font-semibold leading-tight">
-            {meta.title}
-          </h1>
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
+              {meta.icon}
+            </div>
+            <h1 className="min-w-0 text-3xl font-semibold leading-tight">
+              {meta.title}
+            </h1>
+          </div>
           <p className="text-sm leading-6 text-muted-foreground">
             {meta.body}
           </p>
