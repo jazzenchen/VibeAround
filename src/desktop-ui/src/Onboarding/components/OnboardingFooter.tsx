@@ -37,12 +37,9 @@ export function OnboardingFooter({
     activeStep === "agents" ||
     activeStep === "im" ||
     activeStep === "remote";
-  const footerHint =
-    activeStep === "agents"
-      ? t(
-          "Keep the defaults if you are not sure; everything can be changed later.",
-        )
-      : null;
+  const footerHint = t(
+    "Keep the defaults if you are not sure; everything can be changed later.",
+  );
 
   return (
     <footer className="relative flex h-14 items-center gap-3 border-t border-border px-5">

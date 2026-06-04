@@ -41,19 +41,19 @@ export function RemoteDecisionPanel({
         </div>
 
         <div className="grid gap-2 sm:grid-cols-2">
+          {none && (
+            <TunnelCard
+              tunnel={none}
+              selected={provider === none.id}
+              onSelect={() => onProvider(none.id)}
+            />
+          )}
           {cloudflare && (
             <TunnelCard
               tunnel={cloudflare}
               selected={provider === cloudflare.id}
               recommended
               onSelect={() => onProvider(cloudflare.id)}
-            />
-          )}
-          {none && (
-            <TunnelCard
-              tunnel={none}
-              selected={provider === none.id}
-              onSelect={() => onProvider(none.id)}
             />
           )}
         </div>
