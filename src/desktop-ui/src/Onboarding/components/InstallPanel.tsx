@@ -56,11 +56,18 @@ export function InstallPanel({
 }) {
   const { t } = useI18n();
   const [showDetails, setShowDetails] = useState(false);
+  const installReports = useMemo(
+    () => reports.filter(isInstallStepReport),
+    [reports],
+  );
   const groups = useMemo(
     () =>
       GROUP_ORDER.map((id) => ({
         id,
-        reports: groupedReports.find((group) => group.id === id)?.reports ?? [],
+        reports:
+          groupedReports
+            .find((group) => group.id === id)
+            ?.reports.filter(isInstallStepReport) ?? [],
       })).filter((group) => group.reports.length > 0),
     [groupedReports],
   );
@@ -81,7 +88,7 @@ export function InstallPanel({
     [choices, discoveredPlugins, groups, pluginRegistry],
   );
   const headline = running
-    ? installProgressLabel(reports, t)
+    ? installProgressLabel(installReports, t)
     : installHeadline({ scanning, running, complete, finalStatus, t });
 
   return (
@@ -308,10 +315,15 @@ function messagingPluginStatus(
   installed: boolean,
 ): StartkitStatus {
   if (rollup?.status === "running") return "running";
+  if (rollup?.status === "ok") return "ok";
   if (rollup?.status === "error" || rollup?.status === "blocked") {
     return rollup.status;
   }
   return installed ? "ok" : "missing";
+}
+
+function isInstallStepReport(report: StartkitItemReport): boolean {
+  return report.category !== "config" && report.status !== "needs_config";
 }
 
 function groupIcon(id: string) {
