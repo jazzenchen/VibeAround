@@ -41,6 +41,7 @@ import type {
   PluginRegistryEntry,
   Settings,
   StartkitChoices,
+  StartkitItemReport,
   StartkitManifestSummary,
   TunnelSummary,
 } from "./types";
@@ -99,7 +100,12 @@ export default function Onboarding() {
 
   const startkit = useStartkitFlow();
   const autoScanSignatureRef = useRef<string | null>(null);
+  const agentScanSignatureRef = useRef<string | null>(null);
   const refreshedPluginsAfterInstallRef = useRef(false);
+  const [agentInstallReports, setAgentInstallReports] = useState<
+    StartkitItemReport[]
+  >([]);
+  const [agentStatusScanning, setAgentStatusScanning] = useState(false);
 
   useOnboardingInitialLoad({
     setSettings,
@@ -204,6 +210,27 @@ export default function Onboarding() {
   );
 
   const scanSignature = useMemo(() => JSON.stringify(choices), [choices]);
+  const agentStatusChoices = useMemo<StartkitChoices>(
+    () => ({
+      agents: agents.map((agent) => agent.id),
+      tunnel: "none",
+      channels: [],
+      source: downloadSource,
+      toolchainMode,
+      shellPath: false,
+    }),
+    [agents, downloadSource, toolchainMode],
+  );
+  const agentStatusSignature = useMemo(
+    () =>
+      JSON.stringify({
+        agents: agentStatusChoices.agents,
+        source: agentStatusChoices.source,
+        toolchainMode: agentStatusChoices.toolchainMode,
+        installComplete: startkit.complete,
+      }),
+    [agentStatusChoices, startkit.complete],
+  );
 
   useEffect(() => {
     if (!loaded || startkit.running) return;
@@ -215,6 +242,39 @@ export default function Onboarding() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [loaded, scanSignature, startkit.running, startkit.scan, finalSettings, choices]);
+
+  useEffect(() => {
+    if (!loaded || agents.length === 0 || startkit.running) return;
+    if (agentScanSignatureRef.current === agentStatusSignature) return;
+    agentScanSignatureRef.current = agentStatusSignature;
+    let cancelled = false;
+
+    setAgentStatusScanning(true);
+    void invoke<StartkitItemReport[]>("scan_agent_install_status", {
+      settings,
+      choices: agentStatusChoices,
+    })
+      .then((reports) => {
+        if (!cancelled) setAgentInstallReports(reports);
+      })
+      .catch((error) => {
+        console.error("failed to scan agent install status", error);
+      })
+      .finally(() => {
+        if (!cancelled) setAgentStatusScanning(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    loaded,
+    agents.length,
+    startkit.running,
+    agentStatusSignature,
+    settings,
+    agentStatusChoices,
+  ]);
 
   useEffect(() => {
     if (startkit.running) {
@@ -353,6 +413,13 @@ export default function Onboarding() {
     () => groupReports(startkit.plan?.items ?? [], startkit.reportById),
     [startkit.plan, startkit.reportById],
   );
+  const agentReportsById = useMemo(() => {
+    const reports = new Map(agentInstallReports.map((report) => [report.id, report]));
+    for (const [id, report] of startkit.reportById.entries()) {
+      if (id.startsWith("agents.")) reports.set(id, report);
+    }
+    return reports;
+  }, [agentInstallReports, startkit.reportById]);
   const hasScanned = startkit.reports.some((report) => report.status !== "pending");
   const hasInstallWork = startkit.reports.some(reportNeedsInstall);
   const hasBlockingReport = startkit.reports.some((report) =>
@@ -509,8 +576,8 @@ export default function Onboarding() {
           activeStep={activeStep}
           agents={agents}
           enabledAgents={enabledAgents}
-          reportsById={startkit.reportById}
-          scanning={startkit.scanning}
+          reportsById={agentReportsById}
+          scanning={agentStatusScanning}
           onToggleAgent={toggleAgent}
           pluginRegistry={pluginRegistry}
           discoveredPlugins={discoveredPlugins}

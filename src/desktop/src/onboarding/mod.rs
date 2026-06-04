@@ -31,6 +31,8 @@ use tokio::sync::{Mutex, Notify};
 use crate::{restart_daemon, OnboardingActive};
 use common::{config, plugins};
 
+use crate::startkit::{StartkitChoices, StartkitItemReport, StartkitItemStatus};
+
 // ---------------------------------------------------------------------------
 // Shared state types
 // ---------------------------------------------------------------------------
@@ -205,6 +207,96 @@ pub fn list_agents() -> Vec<AgentSummary> {
             acp_bin_name: a.acp.bin_name.clone(),
         })
         .collect()
+}
+
+#[tauri::command]
+pub async fn scan_agent_install_status(
+    settings: Value,
+    choices: StartkitChoices,
+) -> Result<Vec<StartkitItemReport>, String> {
+    let all_agent_ids = common::resources::AGENTS
+        .iter()
+        .map(|agent| agent.id.clone())
+        .collect::<Vec<_>>();
+    let scan_choices = StartkitChoices {
+        agents: all_agent_ids,
+        tunnel: "none".to_string(),
+        channels: Vec::new(),
+        source: choices.source,
+        toolchain_mode: choices.toolchain_mode,
+        shell_path: false,
+    };
+    let startkit_report = crate::startkit::scan(&settings, &scan_choices, None)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut startkit_reports = startkit_report
+        .reports
+        .into_iter()
+        .map(|report| (report.id.clone(), report))
+        .collect::<HashMap<_, _>>();
+
+    Ok(common::resources::AGENTS
+        .iter()
+        .map(|agent| {
+            let report_id = format!("agents.{}.cli", agent.id);
+            startkit_reports
+                .remove(&report_id)
+                .unwrap_or_else(|| path_agent_report(agent, report_id))
+        })
+        .collect())
+}
+
+fn path_agent_report(agent: &common::resources::AgentDef, report_id: String) -> StartkitItemReport {
+    let program =
+        program_from_command(&agent.pty.command).unwrap_or_else(|| agent.acp.program.clone());
+    let path = resolve_program_path(&program);
+    let installed = path.is_some();
+    StartkitItemReport {
+        id: report_id,
+        label: agent.display_name.clone(),
+        group: "agents".to_string(),
+        category: "agents".to_string(),
+        status: if installed {
+            StartkitItemStatus::Ok
+        } else {
+            StartkitItemStatus::Missing
+        },
+        severity: None,
+        version: None,
+        path,
+        message: Some(if installed {
+            format!("{program} found")
+        } else {
+            format!("{program} not found in PATH")
+        }),
+        actions: Vec::new(),
+        secret: false,
+        settings_key: None,
+    }
+}
+
+fn program_from_command(command: &str) -> Option<String> {
+    command
+        .split_whitespace()
+        .next()
+        .map(|program| program.trim_matches(['"', '\'']).to_string())
+        .filter(|program| !program.is_empty())
+}
+
+fn resolve_program_path(program: &str) -> Option<String> {
+    let lookup = if cfg!(windows) { "where" } else { "which" };
+    let output = common::process::env::std_command(lookup)
+        .arg(program)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
 }
 
 #[tauri::command]

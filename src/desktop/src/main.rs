@@ -207,6 +207,7 @@ fn main() {
             onboarding::plugin_auth_cancel,
             onboarding::finish_onboarding,
             onboarding::list_agents,
+            onboarding::scan_agent_install_status,
             onboarding::list_tunnels,
             onboarding::list_plugin_registry,
             onboarding::get_install_manifest,
