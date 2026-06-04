@@ -57,7 +57,7 @@ UI 是左右分屏：
 | Placement | Current English | Current Chinese |
 |---|---|---|
 | Left title | Start with your coding agents. | 选择 Coding Agent。 |
-| Left description | Claude Code and Codex CLI are recommended for most setups. | 推荐保留 Claude Code 和 Codex CLI。 |
+| Left description | Claude Code and Codex CLI are recommended for daily vibe coding and vibe coding jobs. | 推荐使用 Claude Code 和 Codex CLI 进行氛围编程与氛围办公。 |
 | Right title | Coding Agent | Coding Agent |
 | Right description | Choose the Coding Agents you want to use. | 选择你想使用的 Coding Agent。 |
 

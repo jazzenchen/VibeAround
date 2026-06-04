@@ -108,8 +108,8 @@ export const zhCNOnboarding: Record<string, string> = {
   "Start with your coding agents.": "选择 Coding Agent。",
   "Choose the coding agents VibeAround should prepare for this computer.":
     "选择要在这台电脑上使用的 Coding Agent。",
-  "Claude Code and Codex CLI are recommended for most setups.":
-    "推荐保留 Claude Code 和 Codex CLI。",
+  "Claude Code and Codex CLI are recommended for daily vibe coding and vibe coding jobs.":
+    "推荐使用 Claude Code 和 Codex CLI 进行氛围编程与氛围办公。",
   "Choose your IM entry points.": "选择消息入口。",
   "Pick the apps you use. Login and tokens wait until the final step.":
     "勾选你常用的聊天工具，登录信息稍后再填。",

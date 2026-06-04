@@ -108,7 +108,7 @@ function questionCopy(step: WizardStepId): {
     case "agents":
       return {
         title: "Start with your coding agents.",
-        body: "Claude Code and Codex CLI are recommended for most setups.",
+        body: "Claude Code and Codex CLI are recommended for daily vibe coding and vibe coding jobs.",
         icon: <Bot className="h-5 w-5" />,
       };
     case "im":
