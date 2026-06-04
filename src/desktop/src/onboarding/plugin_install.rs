@@ -280,16 +280,22 @@ where
 
 #[tauri::command]
 pub fn check_plugin_status(plugin_id: String) -> String {
-    // Check both user plugins dir (~/.vibearound/plugins/) and project plugins dir (src/plugins/)
-    // via the discovery system which searches both paths.
-    if plugins::find(&plugin_id).is_some() {
-        return "ready".to_string();
-    }
-
     let plugin_def = resources::plugin_by_id(&plugin_id);
     let plugin_kind = plugin_def
         .map(|plugin| plugin.kind.as_str())
         .unwrap_or("channel");
+
+    // Onboarding installs must verify the per-user plugin tree. Project plugins
+    // are useful in debug builds, but they should not satisfy Startkit's
+    // "installed" check for a fresh user's ~/.vibearound/plugins directory.
+    let ready = match plugin_kind {
+        "channel" => plugins::channel::find_user(&plugin_id).is_some(),
+        _ => plugins::find_user(&plugin_id).is_some(),
+    };
+    if ready {
+        return "ready".to_string();
+    }
+
     let target_dir = plugins::user_plugins_dir().join(
         plugin_def
             .map(resources::PluginDef::install_dir_name)

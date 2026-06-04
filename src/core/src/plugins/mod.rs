@@ -161,9 +161,25 @@ pub fn discover_plugins() -> HashMap<String, DiscoveredPlugin> {
     discovered
 }
 
+/// Discover plugins installed in the per-user VibeAround data directory only.
+///
+/// Onboarding install checks use this path so development/project plugins do
+/// not make a fresh user install look complete before `~/.vibearound/plugins`
+/// has the requested plugin.
+pub fn discover_user_plugins() -> HashMap<String, DiscoveredPlugin> {
+    let mut discovered = HashMap::new();
+    load_plugins_from_dir(&user_plugins_dir(), PluginSource::User, &mut discovered);
+    discovered
+}
+
 /// Look up any plugin kind by manifest id.
 pub fn find(plugin_id: &str) -> Option<DiscoveredPlugin> {
     discover_plugins().remove(plugin_id)
+}
+
+/// Look up any plugin kind by manifest id in the per-user plugin directory.
+pub fn find_user(plugin_id: &str) -> Option<DiscoveredPlugin> {
+    discover_user_plugins().remove(plugin_id)
 }
 
 pub fn user_plugins_dir() -> PathBuf {

@@ -20,6 +20,14 @@ pub fn discover() -> HashMap<String, DiscoveredPlugin> {
         .collect()
 }
 
+/// All user-installed channel plugins keyed by id.
+pub fn discover_user() -> HashMap<String, DiscoveredPlugin> {
+    super::discover_user_plugins()
+        .into_iter()
+        .filter(|(_, plugin)| plugin.manifest.kind == CHANNEL_PLUGIN_KIND)
+        .collect()
+}
+
 /// Sorted summary list for UI display.
 pub fn list_summaries() -> Vec<DiscoveredPluginSummary> {
     let mut plugins = discover()
@@ -33,4 +41,9 @@ pub fn list_summaries() -> Vec<DiscoveredPluginSummary> {
 /// Look up a single channel plugin by id.
 pub fn find(plugin_id: &str) -> Option<DiscoveredPlugin> {
     discover().remove(plugin_id)
+}
+
+/// Look up a user-installed channel plugin by id.
+pub fn find_user(plugin_id: &str) -> Option<DiscoveredPlugin> {
+    discover_user().remove(plugin_id)
 }
