@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 
 import { StepChannels } from "./StepChannels";
 import { StepTunnel } from "./StepTunnel";
-import { PanelSection } from "./PanelSection";
 import type { ProfileSummary } from "../../Launch/types";
 import type {
   AuthFlowState,
@@ -83,17 +82,17 @@ export function ConfigurePanel({
     enabledChannels.size === 0 && tunnelProvider === "none" && profiles.length === 0;
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-8">
+    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
       <div className="w-full space-y-4">
         {!showNoConfig && (
-          <section className="rounded-md border border-border bg-card p-4">
+          <section className="space-y-3 px-1">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-medium">
+                <div className="flex items-center gap-2 text-base font-semibold">
                   <KeyRound className="h-4 w-4 text-primary" />
                   Agent API profiles
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-sm text-muted-foreground">
                   Optional. You can add or edit profiles from Launch later.
                 </p>
               </div>
@@ -102,9 +101,7 @@ export function ConfigurePanel({
               </Button>
             </div>
             {profiles.length > 0 && (
-              <div className="mt-3">
-                <ProfileList profiles={profiles} onDeleteProfile={onDeleteProfile} />
-              </div>
+              <ProfileList profiles={profiles} onDeleteProfile={onDeleteProfile} />
             )}
           </section>
         )}
@@ -130,11 +127,16 @@ export function ConfigurePanel({
         )}
 
         {tunnelProvider !== "none" && (
-          <PanelSection
-            icon={<Globe className="h-4 w-4" />}
-            title="Remote access configuration"
-            description="Paste tunnel details when remote access was selected."
-          >
+          <section className="space-y-3 px-1">
+            <div>
+              <div className="flex items-center gap-2 text-base font-semibold">
+                <Globe className="h-4 w-4 text-primary" />
+                Remote access configuration
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Paste tunnel details when remote access was selected.
+              </p>
+            </div>
             <StepTunnel
               tunnels={tunnels}
               provider={tunnelProvider}
@@ -148,11 +150,11 @@ export function ConfigurePanel({
               cfHostname={cfHostname}
               onCfHostname={onCfHostname}
             />
-          </PanelSection>
+          </section>
         )}
 
         {showNoConfig && (
-          <div className="rounded-md border border-border bg-card px-4 py-10 text-center">
+          <div className="px-4 py-10 text-center">
             <CheckReady />
             <div className="mt-3 text-sm font-medium">No extra configuration</div>
             <p className="mt-1 text-xs text-muted-foreground">

@@ -2,7 +2,6 @@ import {
   Bot,
   CheckCircle2,
   ChevronDown,
-  Circle,
   Globe,
   Loader2,
   MessageSquare,
@@ -55,25 +54,16 @@ export function InstallPanel({
   const needsInput = reports.some((report) => report.status === "needs_config");
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-8">
+    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
       <div className="w-full space-y-4">
-        <section
-          className={cn(
-            "rounded-md border px-5 py-4",
-            complete
-              ? "border-emerald-500/30 bg-emerald-500/10"
-              : running || scanning
-                ? "border-primary/30 bg-primary/10"
-                : "border-border bg-card",
-          )}
-        >
+        <section className="px-1">
           <div className="flex items-start gap-3">
             {running || scanning ? (
               <Loader2 className="mt-0.5 h-5 w-5 animate-spin text-primary" />
             ) : complete ? (
               <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
             ) : (
-              <Circle className="mt-0.5 h-5 w-5 text-muted-foreground" />
+              <TerminalSquare className="mt-0.5 h-5 w-5 text-primary" />
             )}
             <div>
               <div className="text-base font-semibold">
@@ -95,7 +85,7 @@ export function InstallPanel({
         )}
 
         {groups.length === 0 ? (
-          <div className="flex min-h-[220px] items-center justify-center rounded-md border border-dashed border-border bg-card">
+          <div className="flex min-h-[220px] items-center justify-center">
             <div className="max-w-sm text-center">
               <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-primary" />
               <div className="text-sm font-medium">Preparing setup plan</div>
@@ -119,22 +109,26 @@ export function InstallPanel({
         )}
 
         {groups.length > 0 && (
-          <section className="rounded-md border border-border bg-card">
+          <section className="space-y-3">
             <button
               type="button"
-              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+              className="flex w-full items-center gap-3 text-left"
               onClick={() => setShowDetails((value) => !value)}
             >
-              <span className="text-sm font-medium">Details</span>
-              <ChevronDown
-                className={cn(
-                  "h-4 w-4 text-muted-foreground transition-transform",
-                  showDetails && "rotate-180",
-                )}
-              />
+              <span className="h-px flex-1 bg-border" aria-hidden="true" />
+              <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                Details
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 transition-transform",
+                    showDetails && "rotate-180",
+                  )}
+                />
+              </span>
+              <span className="h-px flex-1 bg-border" aria-hidden="true" />
             </button>
             {showDetails && (
-              <div className="space-y-3 border-t border-border p-3 animate-in fade-in slide-in-from-top-1 duration-200">
+              <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
                 {groups.map((group) => (
                   <div
                     key={group.id}
