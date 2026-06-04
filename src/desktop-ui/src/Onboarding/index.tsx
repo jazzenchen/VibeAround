@@ -481,7 +481,9 @@ export default function Onboarding() {
             @{__APP_VERSION_LABEL__}
           </span>
         </div>
-        <ProgressStepper activeIndex={activeIndex} />
+        <div className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2">
+          <ProgressStepper activeIndex={activeIndex} />
+        </div>
         <div className="relative z-10 ml-auto shrink-0">
           <LanguageMenu />
         </div>

@@ -14,7 +14,7 @@ import { WIZARD_STEPS, type WizardStepId } from "../wizardTypes";
 
 export function ProgressStepper({ activeIndex }: { activeIndex: number }) {
   return (
-    <div className="relative z-10 flex min-w-0 flex-1 items-center justify-center gap-1.5">
+    <div className="flex w-max items-center justify-center gap-1.5">
       {WIZARD_STEPS.map((step, index) => {
         const active = index === activeIndex;
         const done = index < activeIndex;
