@@ -40,7 +40,7 @@ export function OnboardingFooter({
   const footerHint =
     activeStep === "agents"
       ? t(
-          "Claude Code and Codex CLI are recommended. Keep the defaults if you are not sure; you can change them later.",
+          "Keep the defaults if you are not sure; everything can be changed later.",
         )
       : null;
 
