@@ -127,9 +127,8 @@ function questionCopy(step: WizardStepId): {
       };
     case "install":
       return {
-        title: "Let Startkit prepare the computer.",
-        body: "The check runs automatically. Install only the selected pieces.",
-        hint: "Details stay available, but the main flow stays simple.",
+        title: "Install Components.",
+        body: "Only missing items will be installed.",
         icon: <Wrench className="h-5 w-5" />,
       };
     case "configure":

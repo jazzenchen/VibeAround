@@ -473,7 +473,7 @@ export default function Onboarding() {
       }
       if (canContinueFromInstall) {
         return {
-          label: t("Continue to configuration"),
+          label: t("Continue"),
           icon: <ArrowRight className="h-4 w-4" />,
           disabled: false,
           run: () => setActiveStep("configure"),

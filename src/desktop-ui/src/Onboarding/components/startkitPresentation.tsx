@@ -137,10 +137,10 @@ export function groupSummary(reports: StartkitItemReport[], t: Translate): strin
     return acc;
   }, {});
   if (counts.error || counts.blocked) return t("Needs attention");
-  if (counts.running) return groupActivityLabel(reports, t);
+  if (counts.running) return installProgressLabel(reports, t);
   if (counts.needs_config) return t("Configure later");
   if (counts.missing || counts.outdated || counts.broken) return t("Setup available");
-  if (counts.ok && counts.ok === reports.length) return t("Ready");
+  if (counts.ok && counts.ok === reports.length) return t("Installed");
   return reports.length === 1
     ? t("{{count}} item", { count: reports.length })
     : t("{{count}} items", { count: reports.length });
@@ -186,7 +186,22 @@ export function installHeadline({
   if (scanning) return t("Checking this computer");
   if (complete && finalStatus === "error") return t("Setup finished with issues");
   if (complete) return t("Setup run finished");
-  return t("Ready to prepare selected items");
+  return t("Ready to install");
+}
+
+export function installProgressLabel(
+  reports: StartkitItemReport[],
+  t: Translate,
+): string {
+  const work = reports.filter((report) =>
+    report.status !== "skipped" &&
+    report.status !== "needs_config"
+  );
+  const total = work.length;
+  if (total === 0) return groupActivityLabel(reports, t);
+  const done = work.filter((report) => report.status === "ok").length;
+  const current = Math.min(done + 1, total);
+  return t("Installing {{current}}/{{total}}", { current, total });
 }
 
 export function tunnelRank(id: string): number {
@@ -271,6 +286,8 @@ function statusIcon(status: StartkitStatus) {
 
 function statusLabel(status: StartkitStatus, t: Translate): string {
   switch (status) {
+    case "ok":
+      return t("Installed");
     case "needs_config":
       return t("needs config");
     default:

@@ -15,10 +15,17 @@ import { cn } from "@/lib/utils";
 import {
   groupSummary,
   installHeadline,
+  installProgressLabel,
   StartkitReportRow,
   translatedGroupTitle,
 } from "./startkitPresentation";
-import type { StartkitChoices, StartkitItemReport } from "../types";
+import type {
+  DiscoveredChannelPlugin,
+  PluginRegistryEntry,
+  StartkitChoices,
+  StartkitItemReport,
+  StartkitStatus,
+} from "../types";
 
 const GROUP_ORDER = ["computer", "agents", "messaging", "remote"];
 
@@ -32,6 +39,8 @@ export function InstallPanel({
   error,
   choices,
   tunnelProvider,
+  pluginRegistry,
+  discoveredPlugins,
 }: {
   groupedReports: Array<{ id: string; reports: StartkitItemReport[] }>;
   reports: StartkitItemReport[];
@@ -42,6 +51,8 @@ export function InstallPanel({
   error: string | null;
   choices: StartkitChoices;
   tunnelProvider: string;
+  pluginRegistry: PluginRegistryEntry[];
+  discoveredPlugins: DiscoveredChannelPlugin[];
 }) {
   const { t } = useI18n();
   const [showDetails, setShowDetails] = useState(false);
@@ -53,7 +64,25 @@ export function InstallPanel({
       })).filter((group) => group.reports.length > 0),
     [groupedReports],
   );
-  const needsInput = reports.some((report) => report.status === "needs_config");
+  const detailGroups = useMemo(
+    () =>
+      groups.map((group) => ({
+        id: group.id,
+        reports:
+          group.id === "messaging"
+            ? messagingDetailReports(
+                group.reports,
+                choices,
+                pluginRegistry,
+                discoveredPlugins,
+              )
+            : group.reports,
+      })),
+    [choices, discoveredPlugins, groups, pluginRegistry],
+  );
+  const headline = running
+    ? installProgressLabel(reports, t)
+    : installHeadline({ scanning, running, complete, finalStatus, t });
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
@@ -69,13 +98,8 @@ export function InstallPanel({
             )}
             <div>
               <div className="text-base font-semibold">
-                {installHeadline({ scanning, running, complete, finalStatus, t })}
+                {headline}
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {needsInput
-                  ? t("Some items only need configuration in the next step.")
-                  : t("Ready items are skipped automatically.")}
-              </p>
             </div>
           </div>
         </section>
@@ -132,7 +156,7 @@ export function InstallPanel({
             </button>
             {showDetails && (
               <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
-                {groups.map((group) => (
+                {detailGroups.map((group) => (
                   <div
                     key={group.id}
                     className="overflow-hidden rounded-md border border-border bg-background"
@@ -199,7 +223,7 @@ function groupStatus(
 ) {
   if (reports.some((report) => report.status === "running")) {
     return {
-      label: t("Working"),
+      label: installProgressLabel(reports, t),
       className: "border-primary/30 bg-primary/10 text-primary",
     };
   }
@@ -230,7 +254,7 @@ function groupStatus(
   }
   if (reports.every((report) => report.status === "ok" || report.status === "skipped")) {
     return {
-      label: t("Ready"),
+      label: t("Installed"),
       className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
     };
   }
@@ -238,6 +262,56 @@ function groupStatus(
     label: t("Checking"),
     className: "border-border bg-muted text-muted-foreground",
   };
+}
+
+function messagingDetailReports(
+  reports: StartkitItemReport[],
+  choices: StartkitChoices,
+  pluginRegistry: PluginRegistryEntry[],
+  discoveredPlugins: DiscoveredChannelPlugin[],
+): StartkitItemReport[] {
+  if (choices.channels.length === 0) return reports;
+
+  const rollup = reports.find((report) => report.id === "channels.plugins");
+  const registryById = new Map(pluginRegistry.map((plugin) => [plugin.id, plugin]));
+  const discoveredById = new Map(discoveredPlugins.map((plugin) => [plugin.id, plugin]));
+
+  return choices.channels.map((channelId) => {
+    const registryEntry = registryById.get(channelId);
+    const discovered = discoveredById.get(channelId);
+    const status = messagingPluginStatus(rollup, Boolean(discovered));
+    return {
+      id: `channels.plugins.${channelId}`,
+      label: registryEntry?.name ?? discovered?.name ?? channelId,
+      group: "messaging",
+      category: "channels",
+      status,
+      severity: rollup?.severity,
+      version: discovered?.version,
+      path: discovered?.entry,
+      message:
+        registryEntry?.description ??
+        rollup?.message ??
+        "Selected messaging app",
+      actions:
+        status === "missing" || status === "outdated" || status === "broken"
+          ? ["install"]
+          : [],
+      secret: false,
+      settingsKey: undefined,
+    };
+  });
+}
+
+function messagingPluginStatus(
+  rollup: StartkitItemReport | undefined,
+  installed: boolean,
+): StartkitStatus {
+  if (rollup?.status === "running") return "running";
+  if (rollup?.status === "error" || rollup?.status === "blocked") {
+    return rollup.status;
+  }
+  return installed ? "ok" : "missing";
 }
 
 function groupIcon(id: string) {

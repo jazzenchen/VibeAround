@@ -95,11 +95,8 @@ UI 是左右分屏：
 
 | Placement | Current English | Current Chinese |
 |---|---|---|
-| Left title | Let Startkit prepare the computer. | 开始安装需要的工具。 |
-| Left description | The check runs automatically. Install only the selected pieces. | VibeAround 会先自动检测，只安装缺少的部分。 |
-| Left hint | Details stay available, but the main flow stays simple. | 想看细节可以展开，不影响主流程。 |
-| Install guidance | Some items only need configuration in the next step. | 有些内容只需要下一步填写信息。 |
-| Install guidance | Ready items are skipped automatically. | 已经可用的工具会自动跳过。 |
+| Left title | Install Components. | 安装组件。 |
+| Left description | Only missing items will be installed. | 仅安装缺失项。 |
 | Empty/loading guidance | The environment check starts automatically. | 检测会自动开始。 |
 
 说明：安装分组来自 Startkit plan，概念上包括基础工具、Coding Agent、消息工具和远程访问。
