@@ -121,9 +121,8 @@ function questionCopy(step: WizardStepId): {
       };
     case "remote":
       return {
-        title: "Decide on remote access.",
-        body: "Cloudflare gives this machine a stable public route when you need one.",
-        hint: "Local-only setups can skip this step.",
+        title: "Configure remote access.",
+        body: "Skip for local-only use.",
         icon: <Globe className="h-5 w-5" />,
       };
     case "install":

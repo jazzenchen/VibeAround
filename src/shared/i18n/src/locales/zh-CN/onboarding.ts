@@ -112,11 +112,9 @@ export const zhCNOnboarding: Record<string, string> = {
     "推荐使用 Claude Code 和 Codex CLI 进行氛围编程与氛围办公。",
   "Choose your messaging apps.": "选择聊天工具。",
   "Skip if you only use the coding agents on desktop.":
-    "仅在桌面端使用代码助手时，跳过此页配置。",
-  "Decide on remote access.": "要不要开启远程访问？",
-  "Cloudflare gives this machine a stable public route when you need one.":
-    "需要从外面访问这台电脑时，推荐使用 Cloudflare。",
-  "Local-only setups can skip this step.": "只在本机使用就跳过。",
+    "仅在桌面端使用代码助手时，可跳过此步骤。",
+  "Configure remote access.": "配置远程访问。",
+  "Skip for local-only use.": "仅本机使用时，可跳过此步骤。",
   "Let Startkit prepare the computer.": "开始安装需要的工具。",
   "The check runs automatically. Install only the selected pieces.":
     "VibeAround 会先自动检测，只安装缺少的部分。",
@@ -147,10 +145,7 @@ export const zhCNOnboarding: Record<string, string> = {
   "Select the apps you want to connect.": "选择要连接的聊天工具。",
   "No channel plugins are available.": "暂时没有可安装的消息插件。",
   "Remote access": "远程访问",
-  "Choose how this computer can be reached from outside.":
-    "选择是否允许从外部访问这台电脑。",
-  "Other options": "其他选项",
-  "Hide other options": "收起其他选项",
+  "Allow external access to this computer.": "允许从外部访问这台电脑。",
   "Stable named tunnel with a public hostname.":
     "适合长期使用，会提供一个固定访问地址。",
   "Useful when you already have an ngrok account and domain.":

@@ -1,8 +1,6 @@
-import { ChevronDown, Globe } from "lucide-react";
+import { Globe } from "lucide-react";
 import { useI18n } from "@va/i18n";
-import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import {
@@ -22,12 +20,16 @@ export function RemoteDecisionPanel({
   onProvider: (value: TunnelProvider) => void;
 }) {
   const { t } = useI18n();
-  const [showMore, setShowMore] = useState(false);
   const cloudflare = tunnels.find((tunnel) => tunnel.id === "cloudflare");
   const none = tunnels.find((tunnel) => tunnel.id === "none");
   const moreTunnels = tunnels
     .filter((tunnel) => tunnel.id !== "cloudflare" && tunnel.id !== "none")
     .sort((a, b) => tunnelRank(a.id) - tunnelRank(b.id));
+  const visibleTunnels = [
+    ...(none ? [none] : []),
+    ...(cloudflare ? [cloudflare] : []),
+    ...moreTunnels,
+  ];
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
@@ -38,66 +40,22 @@ export function RemoteDecisionPanel({
             {t("Remote access")}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {t("Choose how this computer can be reached from outside.")}
+            {t("Allow external access to this computer.")}
           </p>
         </div>
 
         <div className="grid gap-2 sm:grid-cols-2">
-          {none && (
+          {visibleTunnels.map((tunnel) => (
             <TunnelCard
-              tunnel={none}
-              selected={provider === none.id}
-              onSelect={() => onProvider(none.id)}
+              key={tunnel.id}
+              tunnel={tunnel}
+              selected={provider === tunnel.id}
+              recommended={tunnel.id === "cloudflare"}
+              onSelect={() => onProvider(tunnel.id)}
               t={t}
             />
-          )}
-          {cloudflare && (
-            <TunnelCard
-              tunnel={cloudflare}
-              selected={provider === cloudflare.id}
-              recommended
-              onSelect={() => onProvider(cloudflare.id)}
-              t={t}
-            />
-          )}
+          ))}
         </div>
-
-        {moreTunnels.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <span className="h-px flex-1 bg-border" aria-hidden="true" />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 shrink-0 px-1 text-xs text-muted-foreground hover:bg-transparent"
-                onClick={() => setShowMore((value) => !value)}
-              >
-                <ChevronDown
-                  className={cn(
-                    "h-3.5 w-3.5 transition-transform",
-                    showMore && "rotate-180",
-                  )}
-                />
-                {showMore ? t("Hide other options") : t("Other options")}
-              </Button>
-              <span className="h-px flex-1 bg-border" aria-hidden="true" />
-            </div>
-            {showMore && (
-              <div className="grid gap-2 sm:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
-                {moreTunnels.map((tunnel) => (
-                  <TunnelCard
-                    key={tunnel.id}
-                    tunnel={tunnel}
-                    selected={provider === tunnel.id}
-                    onSelect={() => onProvider(tunnel.id)}
-                    t={t}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </section>
     </div>
   );
