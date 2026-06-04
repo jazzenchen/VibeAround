@@ -1,7 +1,5 @@
-import { Globe } from "lucide-react";
 import { useI18n } from "@va/i18n";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 import type { StepTunnelProps } from "../types";
@@ -9,7 +7,6 @@ import type { StepTunnelProps } from "../types";
 export function StepTunnel({
   tunnels,
   provider,
-  onProvider,
   ngrokToken,
   onNgrokToken,
   ngrokDomain,
@@ -18,46 +15,21 @@ export function StepTunnel({
   onCfToken,
   cfHostname,
   onCfHostname,
-  notice,
 }: StepTunnelProps) {
   const { t } = useI18n();
-  const orderedTunnels = [...tunnels].sort(
-    (a, b) => tunnelRank(a.id) - tunnelRank(b.id),
-  );
+  const selectedTunnel = tunnels.find((tunnel) => tunnel.id === provider);
+
+  if (!selectedTunnel || provider === "none") return null;
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-base font-semibold flex items-center gap-2">
-          <Globe className="w-4 h-4 text-primary" />
-          {t("Tunnel")}
-        </h2>
-        <p className="text-xs text-muted-foreground mt-1">
-          {t("Expose your local server to the internet for IM webhooks and remote access. Skip if you only use it locally.")}
-        </p>
-        {notice}
-      </div>
-
+    <div className="space-y-4">
       <div className="flex gap-2">
-        {orderedTunnels.map((tp) => (
-          <Button
-            key={tp.id}
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onProvider(tp.id)}
-            className={`flex-1 text-xs ${
-              provider === tp.id
-                ? "border-primary bg-primary/10 text-primary hover:bg-primary/10 hover:text-primary"
-                : "text-muted-foreground"
-            }`}
-          >
-            {tp.display_name}
-            {tp.id === "cloudflare" && (
-              <span className="ml-1 text-[10px] opacity-70">{t("Recommended")}</span>
-            )}
-          </Button>
-        ))}
+        <div className="flex min-h-8 flex-1 items-center justify-center rounded-md border border-primary bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary">
+          {selectedTunnel.display_name}
+          {selectedTunnel.id === "cloudflare" && (
+            <span className="ml-1 text-[10px] opacity-70">{t("Recommended")}</span>
+          )}
+        </div>
       </div>
 
       {provider === "ngrok" && (
@@ -111,19 +83,4 @@ export function StepTunnel({
       )}
     </div>
   );
-}
-
-function tunnelRank(id: string): number {
-  switch (id) {
-    case "none":
-      return 0;
-    case "cloudflare":
-      return 1;
-    case "ngrok":
-      return 2;
-    case "localtunnel":
-      return 3;
-    default:
-      return 10;
-  }
 }

@@ -115,12 +115,10 @@ UI 是左右分屏：
 | QR scan hint | Scan with the app and confirm on your phone. | 用 App 扫码，并在手机上确认。 |
 | Remote section title | Remote access configuration | 远程访问配置 |
 | Remote section description | Paste tunnel details when remote access was selected. | 如果选择了远程访问，在这里填写 Cloudflare 或 ngrok 信息。 |
-| Tunnel section title | Tunnel | 隧道 |
-| Tunnel section description | Expose your local server to the internet for IM webhooks and remote access. Skip if you only use it locally. | 将本地服务暴露到互联网，用于 IM webhook 和远程访问。如果只本地使用，可以跳过。 |
 | Empty state | No extra configuration | 没有额外配置 |
 | Empty state description | The selected setup can launch now. | 现在可以启动 VibeAround。 |
 
-说明：聊天工具只展示前面选择并进入安装流程的项目。插件配置字段、远程访问 provider 名称来自动态配置。
+说明：聊天工具只展示前面选择并进入安装流程的项目。远程访问只展示前面选择的 provider；选择 None 时不展示远程访问配置。插件配置字段、远程访问 provider 名称来自动态配置。
 
 ## 请输出
 
