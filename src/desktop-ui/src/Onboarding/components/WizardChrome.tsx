@@ -84,9 +84,11 @@ export function QuestionPane({
           <h1 className="text-3xl font-semibold leading-tight">
             {t(meta.title)}
           </h1>
-          <p className="text-sm leading-6 text-muted-foreground">
-            {t(meta.body)}
-          </p>
+          {meta.body && (
+            <p className="text-sm leading-6 text-muted-foreground">
+              {t(meta.body)}
+            </p>
+          )}
           {meta.hint && (
             <p className="text-xs leading-5 text-muted-foreground">
               {t(meta.hint)}
@@ -100,7 +102,7 @@ export function QuestionPane({
 
 function questionCopy(step: WizardStepId): {
   title: string;
-  body: string;
+  body?: string;
   hint?: string;
   icon: ReactNode;
 } {
@@ -113,9 +115,8 @@ function questionCopy(step: WizardStepId): {
       };
     case "im":
       return {
-        title: "Choose your IM entry points.",
-        body: "Pick the apps you use. Login and tokens wait until the final step.",
-        hint: "Skip this if you only plan to use the desktop app.",
+        title: "Choose your messaging apps.",
+        hint: "Skip if you only use the coding agents on desktop.",
         icon: <MessageSquare className="h-5 w-5" />,
       };
     case "remote":

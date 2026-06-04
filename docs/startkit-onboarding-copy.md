@@ -67,11 +67,10 @@ UI 是左右分屏：
 
 | Placement | Current English | Current Chinese |
 |---|---|---|
-| Left title | Choose your IM entry points. | 选择消息入口。 |
-| Left description | Pick the apps you use. Login and tokens wait until the final step. | 勾选你常用的聊天工具，登录信息稍后再填。 |
-| Left hint | Skip this if you only plan to use the desktop app. | 只用桌面端的话，可以跳过这一步。 |
-| Right title | IM access | 消息入口 |
-| Right description | Select the messaging apps you actually use. | 选择你常用的聊天工具。 |
+| Left title | Choose your messaging apps. | 选择聊天工具。 |
+| Left hint | Skip if you only use the coding agents on desktop. | 仅在桌面端使用代码助手时，跳过此页配置。 |
+| Right title | Messaging apps | 聊天工具 |
+| Right description | Select the apps you want to connect. | 选择要连接的聊天工具。 |
 | Empty state | No channel plugins are available. | 暂时没有可安装的消息插件。 |
 
 说明：插件名称和描述来自动态配置，例如 Telegram、Feishu (Lark)、Discord、Slack、WeChat、DingTalk、WeCom。

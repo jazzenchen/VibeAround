@@ -29,10 +29,10 @@ export function ImDecisionPanel({
         <div className="px-1">
           <div className="flex items-center gap-2 text-base font-semibold">
             <MessageSquare className="h-4 w-4 text-primary" />
-            {t("IM access")}
+            {t("Messaging apps")}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {t("Select the messaging apps you actually use.")}
+            {t("Select the apps you want to connect.")}
           </p>
         </div>
 

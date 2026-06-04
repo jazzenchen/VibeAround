@@ -110,11 +110,9 @@ export const zhCNOnboarding: Record<string, string> = {
     "选择要在这台电脑上使用的 Coding Agent。",
   "Claude Code and Codex CLI are recommended for daily vibe coding and vibe coding jobs.":
     "推荐使用 Claude Code 和 Codex CLI 进行氛围编程与氛围办公。",
-  "Choose your IM entry points.": "选择消息入口。",
-  "Pick the apps you use. Login and tokens wait until the final step.":
-    "勾选你常用的聊天工具，登录信息稍后再填。",
-  "Skip this if you only plan to use the desktop app.":
-    "只用桌面端的话，可以跳过这一步。",
+  "Choose your messaging apps.": "选择聊天工具。",
+  "Skip if you only use the coding agents on desktop.":
+    "仅在桌面端使用代码助手时，跳过此页配置。",
   "Decide on remote access.": "要不要开启远程访问？",
   "Cloudflare gives this machine a stable public route when you need one.":
     "需要从外面访问这台电脑时，推荐使用 Cloudflare。",
@@ -145,9 +143,8 @@ export const zhCNOnboarding: Record<string, string> = {
   Outdated: "有更新",
   "Needs repair": "需修复",
   "Needs config": "待配置",
-  "IM access": "消息入口",
-  "Select the messaging apps you actually use.":
-    "选择你常用的聊天工具。",
+  "Messaging apps": "聊天工具",
+  "Select the apps you want to connect.": "选择要连接的聊天工具。",
   "No channel plugins are available.": "暂时没有可安装的消息插件。",
   "Remote access": "远程访问",
   "Choose how this computer can be reached from outside.":
