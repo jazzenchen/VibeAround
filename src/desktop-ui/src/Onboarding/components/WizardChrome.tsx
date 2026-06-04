@@ -110,7 +110,7 @@ function questionCopy(step: WizardStepId): {
       return {
         eyebrow: "Step 1",
         title: "Start with your coding agents.",
-        body: "Claude Code and Codex CLI are recommended; leave everything as default if you are not sure, and you can change them later.",
+        body: "Choose the coding agents VibeAround should prepare for this computer.",
         icon: <Bot className="h-5 w-5" />,
       };
     case "im":

@@ -37,9 +37,15 @@ export function OnboardingFooter({
     activeStep === "agents" ||
     activeStep === "im" ||
     activeStep === "remote";
+  const footerHint =
+    activeStep === "agents"
+      ? t(
+          "Claude Code and Codex CLI are recommended. Keep the defaults if you are not sure; you can change them later.",
+        )
+      : null;
 
   return (
-    <footer className="flex h-14 items-center justify-between gap-3 border-t border-border px-5">
+    <footer className="relative flex h-14 items-center gap-3 border-t border-border px-5">
       <div className="flex items-center gap-2">
         <Button
           type="button"
@@ -50,21 +56,26 @@ export function OnboardingFooter({
           <ArrowLeft className="h-4 w-4" />
           {t("Back")}
         </Button>
-        {canSkip && (
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={onSkip}
-            disabled={running || finishing}
-          >
-            {t("Skip this step")}
-          </Button>
-        )}
       </div>
-      <div className="flex items-center gap-2">
+      {footerHint && (
+        <div className="pointer-events-none absolute left-1/2 max-w-md -translate-x-1/2 px-4 text-center text-xs text-muted-foreground">
+          {footerHint}
+        </div>
+      )}
+      <div className="ml-auto flex items-center gap-2">
         {running && activeStep === "install" && (
           <Button type="button" variant="outline" onClick={onCancel}>
             {t("Cancel")}
+          </Button>
+        )}
+        {canSkip && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onSkip}
+            disabled={running || finishing}
+          >
+            {t("Skip")}
           </Button>
         )}
         <Button

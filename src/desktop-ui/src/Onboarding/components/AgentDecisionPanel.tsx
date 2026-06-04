@@ -65,12 +65,13 @@ export function AgentDecisionPanel({
           />
 
           {otherAgents.length > 0 && (
-            <div className="flex justify-center">
+            <div className="flex items-center gap-3">
+              <span className="h-px flex-1 bg-border" aria-hidden="true" />
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 px-1 text-xs text-muted-foreground hover:bg-transparent"
+                className="h-7 shrink-0 px-1 text-xs text-muted-foreground hover:bg-transparent"
                 onClick={() => setShowMoreAgents((value) => !value)}
               >
                 <ChevronDown
@@ -81,6 +82,7 @@ export function AgentDecisionPanel({
                 />
                 {showMoreAgents ? "Hide more agents" : "More agents"}
               </Button>
+              <span className="h-px flex-1 bg-border" aria-hidden="true" />
             </div>
           )}
 

@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
@@ -38,17 +37,14 @@ export function StartkitAdvancedMenu({
           type="button"
           variant="ghost"
           size="icon-xs"
-          title="Startkit settings"
-          aria-label="Startkit settings"
+          title="Settings"
+          aria-label="Settings"
         >
           <SlidersHorizontal className="size-4 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80 p-3">
-        <DropdownMenuLabel className="px-1 pb-2 text-[11px] font-medium">
-          Startkit settings
-        </DropdownMenuLabel>
-        <div className="space-y-3">
+        <div className="space-y-4">
           <SourceChooser
             sources={sources}
             value={downloadSource}
@@ -83,7 +79,7 @@ function SourceChooser({
         ];
 
   return (
-    <div className="rounded-md border border-border bg-background p-3">
+    <div>
       <div className="mb-2 flex items-center gap-2 text-xs font-medium">
         <Globe className="h-3.5 w-3.5 text-primary" />
         Node/npm source
@@ -121,7 +117,7 @@ function ShellPathChooser({
   return (
     <div
       className={cn(
-        "rounded-md border border-border bg-background p-3",
+        "pt-1",
         disabled && "opacity-60",
       )}
     >

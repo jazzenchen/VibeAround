@@ -469,8 +469,8 @@ export default function Onboarding() {
     <div className="flex h-full flex-col bg-background">
       <header
         className={cn(
-          "relative flex h-14 items-center gap-4 border-b border-border pr-5",
-          isMacTitlebar ? "pl-[82px]" : "pl-5",
+          "relative flex h-12 items-center gap-4 border-b border-border pr-3",
+          isMacTitlebar ? "pl-[82px]" : "pl-3",
         )}
       >
         <div
