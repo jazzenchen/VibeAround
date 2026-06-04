@@ -3,7 +3,6 @@ import { CheckCircle2, Download, MessageSquare } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 
-import { PanelSection } from "./PanelSection";
 import type {
   DiscoveredChannelPlugin,
   PluginRegistryEntry,
@@ -23,18 +22,24 @@ export function ImDecisionPanel({
   const discoveredMap = new Map(discoveredPlugins.map((plugin) => [plugin.id, plugin]));
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-3xl items-center py-8">
-      <PanelSection
-        icon={<MessageSquare className="h-4 w-4" />}
-        title="Use IM access"
-        description="Select only the apps you actually use. Login happens later."
-      >
+    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
+      <section className="w-full space-y-3">
+        <div className="px-1">
+          <div className="flex items-center gap-2 text-base font-semibold">
+            <MessageSquare className="h-4 w-4 text-primary" />
+            IM access
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Select the messaging apps you actually use.
+          </p>
+        </div>
+
         {pluginRegistry.length === 0 ? (
           <div className="rounded-md border border-dashed border-border px-3 py-8 text-center text-xs text-muted-foreground">
             No channel plugins are available.
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="grid gap-2 lg:grid-cols-2">
             {pluginRegistry.map((entry) => {
               const selected = enabledChannels.has(entry.id);
               const discovered = discoveredMap.get(entry.id);
@@ -50,7 +55,7 @@ export function ImDecisionPanel({
                   key={entry.id}
                   type="button"
                   className={cn(
-                    "flex w-full items-center gap-3 rounded-md border p-3 text-left transition-colors",
+                    "relative flex min-h-[74px] w-full items-center gap-3 rounded-md border p-3 pr-9 text-left transition-colors",
                     selected
                       ? "border-primary/50 bg-primary/10"
                       : "border-border bg-background hover:border-primary/30",
@@ -61,7 +66,7 @@ export function ImDecisionPanel({
                     checked={selected}
                     aria-hidden="true"
                     tabIndex={-1}
-                    className="pointer-events-none"
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">
@@ -70,28 +75,28 @@ export function ImDecisionPanel({
                     <span className="block truncate text-xs text-muted-foreground">
                       {entry.description}
                     </span>
-                  </span>
-                  <span
-                    className={cn(
-                      "hidden shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-[11px] sm:inline-flex",
-                      installed
-                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                        : "border-border bg-muted text-muted-foreground",
-                    )}
-                  >
-                    {installed ? (
-                      <CheckCircle2 className="h-3 w-3" />
-                    ) : (
-                      <Download className="h-3 w-3" />
-                    )}
-                    {installLabel}
+                    <span
+                      className={cn(
+                        "mt-1 inline-flex items-center gap-1.5 text-[11px]",
+                        installed
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {installed ? (
+                        <CheckCircle2 className="h-3 w-3" />
+                      ) : (
+                        <Download className="h-3 w-3" />
+                      )}
+                      {installLabel}
+                    </span>
                   </span>
                 </button>
               );
             })}
           </div>
         )}
-      </PanelSection>
+      </section>
     </div>
   );
 }

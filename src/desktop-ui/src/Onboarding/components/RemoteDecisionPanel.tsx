@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import { PanelSection } from "./PanelSection";
 import {
   tunnelDescription,
   tunnelRank,
@@ -29,12 +28,18 @@ export function RemoteDecisionPanel({
     .sort((a, b) => tunnelRank(a.id) - tunnelRank(b.id));
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-3xl items-center py-8">
-      <PanelSection
-        icon={<Globe className="h-4 w-4" />}
-        title="Remote access"
-        description="Cloudflare is recommended when you need a stable public URL."
-      >
+    <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
+      <section className="w-full space-y-3">
+        <div className="px-1">
+          <div className="flex items-center gap-2 text-base font-semibold">
+            <Globe className="h-4 w-4 text-primary" />
+            Remote access
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Choose how this computer can be reached from outside.
+          </p>
+        </div>
+
         <div className="grid gap-2 sm:grid-cols-2">
           {cloudflare && (
             <TunnelCard
@@ -54,24 +59,28 @@ export function RemoteDecisionPanel({
         </div>
 
         {moreTunnels.length > 0 && (
-          <div className="mt-3">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="px-0 text-xs text-muted-foreground hover:bg-transparent"
-              onClick={() => setShowMore((value) => !value)}
-            >
-              <ChevronDown
-                className={cn(
-                  "h-3.5 w-3.5 transition-transform",
-                  showMore && "rotate-180",
-                )}
-              />
-              {showMore ? "Hide other options" : "Other options"}
-            </Button>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <span className="h-px flex-1 bg-border" aria-hidden="true" />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 shrink-0 px-1 text-xs text-muted-foreground hover:bg-transparent"
+                onClick={() => setShowMore((value) => !value)}
+              >
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 transition-transform",
+                    showMore && "rotate-180",
+                  )}
+                />
+                {showMore ? "Hide other options" : "Other options"}
+              </Button>
+              <span className="h-px flex-1 bg-border" aria-hidden="true" />
+            </div>
             {showMore && (
-              <div className="mt-2 grid gap-2 sm:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
+              <div className="grid gap-2 sm:grid-cols-2 animate-in fade-in slide-in-from-top-1 duration-200">
                 {moreTunnels.map((tunnel) => (
                   <TunnelCard
                     key={tunnel.id}
@@ -84,7 +93,7 @@ export function RemoteDecisionPanel({
             )}
           </div>
         )}
-      </PanelSection>
+      </section>
     </div>
   );
 }
@@ -104,7 +113,7 @@ function TunnelCard({
     <button
       type="button"
       className={cn(
-        "min-h-[112px] rounded-md border p-4 text-left transition-colors",
+        "min-h-[96px] rounded-md border p-4 text-left transition-colors",
         selected
           ? "border-primary/50 bg-primary/10"
           : "border-border bg-background hover:border-primary/30",

@@ -78,9 +78,6 @@ export function QuestionPane({
           <div className="flex h-12 w-12 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
             {meta.icon}
           </div>
-          <div className="text-[11px] font-medium uppercase text-muted-foreground">
-            {meta.eyebrow}
-          </div>
           <h1 className="text-3xl font-semibold leading-tight">
             {meta.title}
           </h1>
@@ -99,7 +96,6 @@ export function QuestionPane({
 }
 
 function questionCopy(step: WizardStepId): {
-  eyebrow: string;
   title: string;
   body: string;
   hint?: string;
@@ -108,14 +104,12 @@ function questionCopy(step: WizardStepId): {
   switch (step) {
     case "agents":
       return {
-        eyebrow: "Step 1",
         title: "Start with your coding agents.",
         body: "Choose the coding agents VibeAround should prepare for this computer.",
         icon: <Bot className="h-5 w-5" />,
       };
     case "im":
       return {
-        eyebrow: "Step 2",
         title: "Choose your IM entry points.",
         body: "Pick the apps you use. Login and tokens wait until the final step.",
         hint: "Skip this if you only plan to use the desktop app.",
@@ -123,7 +117,6 @@ function questionCopy(step: WizardStepId): {
       };
     case "remote":
       return {
-        eyebrow: "Step 3",
         title: "Decide on remote access.",
         body: "Cloudflare gives this machine a stable public route when you need one.",
         hint: "Local-only setups can skip this step.",
@@ -131,7 +124,6 @@ function questionCopy(step: WizardStepId): {
       };
     case "install":
       return {
-        eyebrow: "Setup",
         title: "Let Startkit prepare the computer.",
         body: "The check runs automatically. Install only the selected pieces.",
         hint: "Details stay available, but the main flow stays simple.",
@@ -139,7 +131,6 @@ function questionCopy(step: WizardStepId): {
       };
     case "configure":
       return {
-        eyebrow: "Final step",
         title: "Finish the parts that need you.",
         body: "Add API profiles, IM login, or tunnel tokens only when selected.",
         hint: "Empty sections are hidden automatically.",
