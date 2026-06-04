@@ -25,15 +25,6 @@ import { defaultChannelVerbose } from "./lib/channelConfig";
 import { buildSettings } from "./lib/buildSettings";
 import { useOnboardingInitialLoad } from "./hooks/useOnboardingInitialLoad";
 import { WIZARD_STEPS, type WizardStepId } from "./wizardTypes";
-import {
-  createProfile,
-  deleteProfile,
-  listProfiles,
-  upsertProfile,
-} from "../Launch/api";
-import { ProfileFormDialog } from "../Launch/ProfileFormDialog";
-import type { ProfileFormSubmit } from "../Launch/ProfileFormDialog";
-import type { CatalogEntry, ProfileSummary } from "../Launch/types";
 import type {
   AgentSummary,
   ChannelVerboseConfig,
@@ -58,9 +49,6 @@ export default function Onboarding() {
   const [manifest, setManifest] = useState<StartkitManifestSummary | null>(
     null,
   );
-  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
-  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
-  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [tunnels, setTunnels] = useState<TunnelSummary[]>([]);
   const [pluginRegistry, setPluginRegistry] = useState<PluginRegistryEntry[]>(
@@ -111,8 +99,6 @@ export default function Onboarding() {
     setSettings,
     setLoaded,
     setManifest,
-    setCatalog,
-    setProfiles,
     setAgents,
     setTunnels,
     setPluginRegistry,
@@ -370,33 +356,6 @@ export default function Onboarding() {
     onConfigChange: updateChannelConfig,
   });
 
-  const handleSaveProfile = useCallback(async (submit: ProfileFormSubmit) => {
-    if (submit.type === "create") {
-      await createProfile(submit.draft);
-    } else {
-      await upsertProfile(submit.profile);
-    }
-    const nextProfiles = await listProfiles();
-    setProfiles(nextProfiles);
-  }, []);
-
-  const handleDeleteProfile = useCallback(
-    async (id: string) => {
-      const profile = profiles.find((item) => item.id === id);
-      if (
-        profile &&
-        !window.confirm(
-          t('Delete profile "{{label}}"?', { label: profile.label }),
-        )
-      )
-        return;
-      await deleteProfile(id);
-      const nextProfiles = await listProfiles();
-      setProfiles(nextProfiles);
-    },
-    [profiles, t],
-  );
-
   const finishOnboarding = useCallback(async () => {
     setFinishing(true);
     setFinishError(null);
@@ -593,7 +552,6 @@ export default function Onboarding() {
           finalStatus={startkit.finalStatus}
           startkitError={startkit.error}
           choices={choices}
-          profiles={profiles}
           channelConfigs={channelConfigs}
           channelVerbose={channelVerbose}
           installingPlugins={installingPlugins}
@@ -603,10 +561,6 @@ export default function Onboarding() {
           cfToken={cfToken}
           cfHostname={cfHostname}
           finishError={finishError}
-          onCreateProfile={() => setProfileEditorOpen(true)}
-          onDeleteProfile={(id) => {
-            void handleDeleteProfile(id);
-          }}
           onConfigChange={updateChannelConfig}
           onVerboseChange={updateChannelVerbose}
           onInstallPlugin={installPlugin}
@@ -629,15 +583,6 @@ export default function Onboarding() {
         onSkip={skipStep}
         onCancel={() => void startkit.cancel()}
       />
-
-      {profileEditorOpen && (
-        <ProfileFormDialog
-          catalog={catalog}
-          initial={null}
-          onClose={() => setProfileEditorOpen(false)}
-          onSave={handleSaveProfile}
-        />
-      )}
     </div>
   );
 }

@@ -1,12 +1,8 @@
-import { Globe, KeyRound, Trash2 } from "lucide-react";
+import { Globe, KeyRound } from "lucide-react";
 import { useI18n } from "@va/i18n";
-
-import { BrandIcon } from "@/components/brand-icon";
-import { Button } from "@/components/ui/button";
 
 import { StepChannels } from "./StepChannels";
 import { StepTunnel } from "./StepTunnel";
-import type { ProfileSummary } from "../../Launch/types";
 import type {
   AuthFlowState,
   ChannelVerboseConfig,
@@ -17,7 +13,6 @@ import type {
 import type { TunnelProvider } from "../constants";
 
 export function ConfigurePanel({
-  profiles,
   enabledChannels,
   tunnelProvider,
   pluginRegistry,
@@ -32,8 +27,6 @@ export function ConfigurePanel({
   cfToken,
   cfHostname,
   finishError,
-  onCreateProfile,
-  onDeleteProfile,
   onToggleChannel,
   onConfigChange,
   onVerboseChange,
@@ -46,7 +39,6 @@ export function ConfigurePanel({
   onCfToken,
   onCfHostname,
 }: {
-  profiles: ProfileSummary[];
   enabledChannels: Set<string>;
   tunnelProvider: TunnelProvider;
   pluginRegistry: PluginRegistryEntry[];
@@ -61,8 +53,6 @@ export function ConfigurePanel({
   cfToken: string;
   cfHostname: string;
   finishError: string | null;
-  onCreateProfile: () => void;
-  onDeleteProfile: (id: string) => void;
   onToggleChannel: (pluginId: string, enabled: boolean) => void;
   onConfigChange: (pluginId: string, key: string, value: string) => void;
   onVerboseChange: (
@@ -80,37 +70,19 @@ export function ConfigurePanel({
   onCfHostname: (value: string) => void;
 }) {
   const { t } = useI18n();
-  const showNoConfig =
-    enabledChannels.size === 0 && tunnelProvider === "none" && profiles.length === 0;
+  const selectedPluginRegistry = pluginRegistry.filter((entry) =>
+    enabledChannels.has(entry.id),
+  );
+  const hasMessagingConfig = selectedPluginRegistry.length > 0;
+  const hasRemoteConfig = tunnelProvider !== "none";
+  const showNoConfig = !hasMessagingConfig && !hasRemoteConfig;
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
-      <div className="w-full space-y-4">
-        {!showNoConfig && (
-          <section className="space-y-3 px-1">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-base font-semibold">
-                  <KeyRound className="h-4 w-4 text-primary" />
-                  {t("Agent API profiles")}
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t("Optional. You can add or edit profiles from Launch later.")}
-                </p>
-              </div>
-              <Button type="button" size="sm" variant="outline" onClick={onCreateProfile}>
-                {t("Add profile")}
-              </Button>
-            </div>
-            {profiles.length > 0 && (
-              <ProfileList profiles={profiles} onDeleteProfile={onDeleteProfile} t={t} />
-            )}
-          </section>
-        )}
-
-        {enabledChannels.size > 0 && (
+      <div className="w-full space-y-8">
+        {hasMessagingConfig && (
           <StepChannels
-            pluginRegistry={pluginRegistry}
+            pluginRegistry={selectedPluginRegistry}
             discoveredPlugins={discoveredPlugins}
             enabledChannels={enabledChannels}
             channelConfigs={channelConfigs}
@@ -124,12 +96,17 @@ export function ConfigurePanel({
             onStartAuth={onStartAuth}
             onCancelAuth={onCancelAuth}
             switchSize="sm"
-            description={t("Finish credentials and QR login for selected IM plugins.")}
+            description={t("Finish credentials and QR login for selected messaging apps.")}
           />
         )}
 
-        {tunnelProvider !== "none" && (
-          <section className="space-y-3 px-1">
+        {hasRemoteConfig && (
+          <section
+            className={[
+              "space-y-3 px-1",
+              hasMessagingConfig ? "border-t border-border pt-6" : "",
+            ].join(" ")}
+          >
             <div>
               <div className="flex items-center gap-2 text-base font-semibold">
                 <Globe className="h-4 w-4 text-primary" />
@@ -179,60 +156,6 @@ function CheckReady() {
   return (
     <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
       <KeyRound className="h-5 w-5" />
-    </div>
-  );
-}
-
-function ProfileList({
-  profiles,
-  onDeleteProfile,
-  t,
-}: {
-  profiles: ProfileSummary[];
-  onDeleteProfile: (id: string) => void;
-  t: (key: string, params?: Record<string, string | number>) => string;
-}) {
-  if (profiles.length === 0) {
-    return (
-      <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
-        {t("No API profiles yet.")}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-2">
-      {profiles.map((profile) => (
-        <div
-          key={profile.id}
-          className="flex min-h-[58px] items-center gap-2 rounded-md border border-border bg-background p-2"
-        >
-          <BrandIcon
-            kind="provider"
-            id={profile.provider}
-            label={profile.providerLabel}
-            fallback={profile.providerIcon}
-            className="h-8 w-8"
-          />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] font-medium">
-              {profile.label}
-            </span>
-            <span className="block truncate text-[10px] text-muted-foreground">
-              {profile.providerLabel}
-            </span>
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-            onClick={() => onDeleteProfile(profile.id)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      ))}
     </div>
   );
 }

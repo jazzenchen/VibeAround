@@ -3,7 +3,6 @@ import { ConfigurePanel } from "./ConfigurePanel";
 import { ImDecisionPanel } from "./ImDecisionPanel";
 import { InstallPanel } from "./InstallPanel";
 import { RemoteDecisionPanel } from "./RemoteDecisionPanel";
-import type { ProfileSummary } from "../../Launch/types";
 import type { AgentId, TunnelProvider } from "../constants";
 import type {
   AgentSummary,
@@ -38,7 +37,6 @@ export function OnboardingStepContent({
   finalStatus,
   startkitError,
   choices,
-  profiles,
   channelConfigs,
   channelVerbose,
   installingPlugins,
@@ -48,8 +46,6 @@ export function OnboardingStepContent({
   cfToken,
   cfHostname,
   finishError,
-  onCreateProfile,
-  onDeleteProfile,
   onConfigChange,
   onVerboseChange,
   onInstallPlugin,
@@ -80,7 +76,6 @@ export function OnboardingStepContent({
   finalStatus: string | null;
   startkitError: string | null;
   choices: StartkitChoices;
-  profiles: ProfileSummary[];
   channelConfigs: Record<string, Record<string, string>>;
   channelVerbose: Record<string, ChannelVerboseConfig>;
   installingPlugins: Set<string>;
@@ -90,8 +85,6 @@ export function OnboardingStepContent({
   cfToken: string;
   cfHostname: string;
   finishError: string | null;
-  onCreateProfile: () => void;
-  onDeleteProfile: (id: string) => void;
   onConfigChange: (pluginId: string, key: string, value: string) => void;
   onVerboseChange: (
     pluginId: string,
@@ -156,7 +149,6 @@ export function OnboardingStepContent({
 
       {activeStep === "configure" && (
         <ConfigurePanel
-          profiles={profiles}
           enabledChannels={enabledChannels}
           tunnelProvider={tunnelProvider}
           pluginRegistry={pluginRegistry}
@@ -171,8 +163,6 @@ export function OnboardingStepContent({
           cfToken={cfToken}
           cfHostname={cfHostname}
           finishError={finishError}
-          onCreateProfile={onCreateProfile}
-          onDeleteProfile={onDeleteProfile}
           onToggleChannel={onToggleChannel}
           onConfigChange={onConfigChange}
           onVerboseChange={onVerboseChange}

@@ -107,12 +107,9 @@ UI 是左右分屏：
 |---|---|---|
 | Left title | Complete the configuration. | 完成配置。 |
 | Left description | Fill in API keys and other required details for your selected options. | 填写所选选项的 API 密钥及其他必要信息。 |
-| API section title | Agent API profiles | API 配置 |
-| API section description | Optional. You can add or edit profiles from Launch later. | 可选。之后也可以在启动页里新增或编辑。 |
-| API empty state | No API profiles yet. | 还没有 API 配置。 |
-| Messaging section title | IM Channel | 消息渠道 |
-| Messaging section description | Finish credentials and QR login for selected IM plugins. | 填写聊天工具需要的 token、密钥或扫码登录。 |
-| Message detail section | IM message detail | 消息显示 |
+| Messaging section title | Messaging apps | 聊天工具 |
+| Messaging section description | Finish credentials and QR login for selected messaging apps. | 填写所选聊天工具需要的 token、密钥或扫码登录。 |
+| Message detail section | Message detail | 消息显示 |
 | QR login title | QR Login | 二维码登录 |
 | QR login description | Generate a QR code, scan it with the app, then wait for authorization. | 生成二维码，用对应 App 扫描，然后等待授权。 |
 | QR scan hint | Scan with the app and confirm on your phone. | 用 App 扫码，并在手机上确认。 |
@@ -123,7 +120,7 @@ UI 是左右分屏：
 | Empty state | No extra configuration | 没有额外配置 |
 | Empty state description | The selected setup can launch now. | 现在可以启动 VibeAround。 |
 
-说明：profile 名称、provider 名称、插件配置字段、远程访问 provider 名称来自动态配置。
+说明：聊天工具只展示前面选择并进入安装流程的项目。插件配置字段、远程访问 provider 名称来自动态配置。
 
 ## 请输出
 

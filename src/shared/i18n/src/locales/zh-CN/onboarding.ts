@@ -41,9 +41,12 @@ export const zhCNOnboarding: Record<string, string> = {
     "还没有 API 配置。你可以现在添加，也可以跳过这一步。",
   "Default workspace": "默认工作区",
   "IM Channel": "消息渠道",
+  "Connect messaging apps to vibe code from your phone. Install plugins from the registry, then configure and enable them.":
+    "连接聊天工具后，就能在手机上继续使用 VibeAround。先安装插件，再完成配置并启用。",
   "Connect messaging bots to vibe code from your phone. Install plugins from the registry, then configure and enable them.":
     "连接聊天机器人后，就能在手机上继续使用 VibeAround。先安装插件，再完成配置并启用。",
   "IM message detail": "消息显示",
+  "Message detail": "消息显示",
   "Show thinking": "显示思考过程",
   "Show tool activity": "显示工具调用",
   "View on GitHub": "在 GitHub 查看",
@@ -198,6 +201,8 @@ export const zhCNOnboarding: Record<string, string> = {
   "No API profiles yet.": "还没有 API 配置。",
   "Finish credentials and QR login for selected IM plugins.":
     "填写聊天工具需要的 token、密钥或扫码登录。",
+  "Finish credentials and QR login for selected messaging apps.":
+    "填写所选聊天工具需要的 token、密钥或扫码登录。",
   "Remote access configuration": "远程访问配置",
   "Paste tunnel details when remote access was selected.":
     "如果选择了远程访问，在这里填写 Cloudflare 或 ngrok 信息。",

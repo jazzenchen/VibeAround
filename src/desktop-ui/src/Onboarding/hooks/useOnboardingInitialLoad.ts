@@ -7,8 +7,6 @@ import {
   hydrateStartkitPrefs,
   hydrateTunnel,
 } from "../lib/hydrateSettings";
-import { listCatalog, listProfiles } from "../../Launch/api";
-import type { CatalogEntry, ProfileSummary } from "../../Launch/types";
 import type { AgentId, TunnelProvider } from "../constants";
 import type {
   AgentSummary,
@@ -35,8 +33,6 @@ export function useOnboardingInitialLoad({
   setSettings,
   setLoaded,
   setManifest,
-  setCatalog,
-  setProfiles,
   setAgents,
   setTunnels,
   setPluginRegistry,
@@ -57,8 +53,6 @@ export function useOnboardingInitialLoad({
   setSettings: (value: Settings) => void;
   setLoaded: (value: boolean) => void;
   setManifest: (value: StartkitManifestSummary) => void;
-  setCatalog: (value: CatalogEntry[]) => void;
-  setProfiles: (value: ProfileSummary[]) => void;
   setAgents: (value: AgentSummary[]) => void;
   setTunnels: (value: TunnelSummary[]) => void;
   setPluginRegistry: (value: PluginRegistryEntry[]) => void;
@@ -84,8 +78,6 @@ export function useOnboardingInitialLoad({
       invoke<TunnelSummary[]>("list_tunnels"),
       invoke<PluginRegistryEntry[]>("list_plugin_registry"),
       invoke<StartkitManifestSummary>("startkit_manifest"),
-      listCatalog(),
-      listProfiles(),
     ])
       .then(
         ([
@@ -95,8 +87,6 @@ export function useOnboardingInitialLoad({
           tunnelDefs,
           pluginDefs,
           startkitManifest,
-          catalogDefs,
-          profileDefs,
         ]) => {
           const orderedAgents = orderAgents(agentDefs);
           setSettings(loadedSettings);
@@ -105,8 +95,6 @@ export function useOnboardingInitialLoad({
           setTunnels(tunnelDefs);
           setPluginRegistry(pluginDefs);
           setManifest(startkitManifest);
-          setCatalog(catalogDefs);
-          setProfiles(profileDefs);
 
           hydrateStartkitPrefs(loadedSettings, {
             setDownloadSource,
@@ -136,7 +124,6 @@ export function useOnboardingInitialLoad({
       });
   }, [
     setAgents,
-    setCatalog,
     setCfHostname,
     setCfToken,
     setChannelConfigs,
@@ -150,7 +137,6 @@ export function useOnboardingInitialLoad({
     setNgrokDomain,
     setNgrokToken,
     setPluginRegistry,
-    setProfiles,
     setSettings,
     setShellPath,
     setToolchainMode,
