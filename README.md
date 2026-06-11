@@ -200,17 +200,17 @@ Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki
 
 ## Download
 
-Latest release: [VibeAround v0.7.0-beta](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.0-beta).
+Latest release: [VibeAround v0.7.1-beta](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.1-beta).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround_0.7.0-beta_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround_0.7.0-beta_arm64.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround_0.7.0-beta_x64-setup.exe) or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround-win-0.7.0-beta-portable.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround_0.7.0-beta_amd64.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround_0.7.0-beta_amd64.deb) |
+| macOS Apple Silicon | [VibeAround_0.7.1-beta_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround_0.7.1-beta_arm64.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround_0.7.1-beta_x64-setup.exe) or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround-win-0.7.1-beta-portable.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround_0.7.1-beta_amd64.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround_0.7.1-beta_amd64.deb) |
 
-Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only. The v0.7.0-beta Windows MSI is intentionally omitted because Windows Installer requires numeric-only prerelease identifiers.
+Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only. The v0.7.1-beta Windows MSI is intentionally omitted because Windows Installer requires numeric-only prerelease identifiers.
 
-**Upgrade note:** v0.7.0-beta changes Startkit state, detected agent sources, desktop launch targets, and profile launch settings. Back up `~/.vibearound/settings.json` before upgrading from 0.6.x, then rerun onboarding / Startkit setup if Launch or desktop-agent settings look stale.
+**Upgrade note:** v0.7.1-beta changes Startkit state, detected agent sources, desktop launch targets, and profile launch settings. Back up `~/.vibearound/settings.json` before upgrading from 0.6.x, then rerun onboarding / Startkit setup if Launch or desktop-agent settings look stale.
 
 ## Develop Locally
 

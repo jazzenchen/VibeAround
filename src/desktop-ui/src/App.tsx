@@ -324,11 +324,12 @@ export default App;
 
 function VibeAroundMark() {
   return (
-    <span
-      className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-primary/25 bg-primary/10 text-[9px] font-black leading-none text-primary"
+    <img
+      src="/brand/vibearound-mark.svg"
+      alt=""
+      className="h-5 w-5 shrink-0 rounded-md"
       aria-hidden="true"
-    >
-      VA
-    </span>
+      draggable={false}
+    />
   );
 }

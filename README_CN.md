@@ -201,17 +201,17 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
 ## 下载
 
-最新版本：[VibeAround v0.7.0-beta](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.0-beta)。
+最新版本：[VibeAround v0.7.1-beta](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.1-beta)。
 
 | 平台 | 推荐下载 |
 |---|---|
-| macOS Apple Silicon | [VibeAround_0.7.0-beta_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround_0.7.0-beta_arm64.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround_0.7.0-beta_x64-setup.exe) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround-win-0.7.0-beta-portable.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround_0.7.0-beta_amd64.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.0-beta/VibeAround_0.7.0-beta_amd64.deb) |
+| macOS Apple Silicon | [VibeAround_0.7.1-beta_arm64.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround_0.7.1-beta_arm64.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround_0.7.1-beta_x64-setup.exe) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround-win-0.7.1-beta-portable.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround_0.7.1-beta_amd64.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.1-beta/VibeAround_0.7.1-beta_amd64.deb) |
 
-Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Silicon 版本。v0.7.0-beta 暂不提供 Windows MSI，因为 Windows Installer 要求 prerelease 标识只能包含数字。
+Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Silicon 版本。v0.7.1-beta 暂不提供 Windows MSI，因为 Windows Installer 要求 prerelease 标识只能包含数字。
 
-**升级提示：** v0.7.0-beta 调整了 Startkit 状态、Agent 来源检测、桌面启动目标和 Profile 启动设置。从 0.6.x 升级前请先备份 `~/.vibearound/settings.json`；如果 Launch 或桌面版 Agent 设置看起来异常，请重新跑 onboarding / Startkit 配置。
+**升级提示：** v0.7.1-beta 调整了 Startkit 状态、Agent 来源检测、桌面启动目标和 Profile 启动设置。从 0.6.x 升级前请先备份 `~/.vibearound/settings.json`；如果 Launch 或桌面版 Agent 设置看起来异常，请重新跑 onboarding / Startkit 配置。
 
 ## 本地开发
 

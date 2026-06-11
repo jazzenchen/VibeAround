@@ -64,7 +64,7 @@ jobs:
           fi
           ARGS="${{ matrix.args }}"
           if [ "${RUNNER_OS}" = "Windows" ] && [[ "${VERSION}" == *-* ]]; then
-            # MSI rejects textual prerelease identifiers such as 0.7.0-beta.
+            # MSI rejects textual prerelease identifiers such as x.y.z-beta.
             # Keep beta Windows releases on NSIS + portable ZIP; stable releases
             # still use the matrix default of NSIS + MSI.
             ARGS="--bundles nsis"
