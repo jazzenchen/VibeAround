@@ -7,7 +7,10 @@
 pub mod error;
 pub mod http;
 pub mod launcher;
+pub mod profiles;
+pub mod runtime;
 pub mod service;
+pub mod sessions;
 pub mod settings;
 pub mod workspaces;
 
