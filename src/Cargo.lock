@@ -5749,6 +5749,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "va-client"
+version = "0.7.8"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
