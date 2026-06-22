@@ -93,6 +93,17 @@ pub fn path_with_query(base: &str, params: &[(&str, Option<String>)]) -> String 
     format!("{base}{query}")
 }
 
+pub fn append_query_param(path: &str, key: &str, value: &str) -> String {
+    let separator = if path.contains('?') { '&' } else { '?' };
+    format!(
+        "{}{}{}={}",
+        path,
+        separator,
+        path_segment(key),
+        path_segment(value)
+    )
+}
+
 pub fn path_segment(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -147,6 +158,14 @@ mod tests {
                 &[("workspace_path", Some("/tmp/a b".into())), ("limit", None)]
             ),
             "/api/items?workspace_path=%2Ftmp%2Fa%20b"
+        );
+    }
+
+    #[test]
+    fn append_query_param_preserves_existing_query() {
+        assert_eq!(
+            append_query_param("/ws/chat?channel=web", "token", "a/b"),
+            "/ws/chat?channel=web&token=a%2Fb"
         );
     }
 }
