@@ -15,6 +15,7 @@ pub mod runtime;
 pub mod service;
 pub mod sessions;
 pub mod settings;
+pub mod state;
 pub mod workspaces;
 
 pub use error::{ClientError, Result};
