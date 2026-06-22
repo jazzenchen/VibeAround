@@ -147,6 +147,65 @@ pub fn launcher_preferences() -> Operation<LauncherPreferencesResponse> {
     )
 }
 
+pub fn launcher_set_default_agent(
+    agent_id: &str,
+    profile_id: Option<&str>,
+) -> Result<Operation<LauncherPreferencesResponse>> {
+    Ok(Operation::new(
+        crate::launcher::set_default_agent(agent_id, profile_id)?,
+        crate::launcher::decode_preferences,
+    ))
+}
+
+pub fn launcher_set_agent_profile(
+    agent_id: &str,
+    profile_id: Option<&str>,
+) -> Result<Operation<LauncherPreferencesResponse>> {
+    Ok(Operation::new(
+        crate::launcher::set_agent_profile(agent_id, profile_id)?,
+        crate::launcher::decode_preferences,
+    ))
+}
+
+pub fn launcher_set_agent_launch_args(
+    agent_id: &str,
+    launch_args: Value,
+) -> Result<Operation<LauncherPreferencesResponse>> {
+    Ok(Operation::new(
+        crate::launcher::set_agent_launch_args(agent_id, launch_args)?,
+        crate::launcher::decode_preferences,
+    ))
+}
+
+pub fn launcher_set_selected_agent(
+    agent_id: &str,
+) -> Result<Operation<LauncherPreferencesResponse>> {
+    Ok(Operation::new(
+        crate::launcher::set_selected_agent(agent_id)?,
+        crate::launcher::decode_preferences,
+    ))
+}
+
+pub fn launcher_set_local_agent_api(
+    enabled: bool,
+) -> Result<Operation<LauncherPreferencesResponse>> {
+    Ok(Operation::new(
+        crate::launcher::set_local_agent_api(enabled)?,
+        crate::launcher::decode_preferences,
+    ))
+}
+
+pub fn launcher_set_profile_connection(
+    profile_id: &str,
+    agent_id: &str,
+    preference: Value,
+) -> Result<Operation<LauncherPreferencesResponse>> {
+    Ok(Operation::new(
+        crate::launcher::set_profile_connection(profile_id, agent_id, preference)?,
+        crate::launcher::decode_preferences,
+    ))
+}
+
 pub fn launcher_plan(body: LaunchPlanBody<'_>) -> Result<Operation<LaunchPlanResponse>> {
     Ok(Operation::new(
         crate::launcher::plan(body)?,
@@ -203,6 +262,28 @@ pub fn launch_sessions_batch(
     ))
 }
 
+pub fn launch_session_archive(
+    agent_id: &str,
+    session_id: &str,
+    workspace_path: Option<&str>,
+) -> Result<Operation<()>> {
+    Ok(Operation::new(
+        crate::sessions::archive_launch_session(agent_id, session_id, workspace_path)?,
+        decode_success,
+    ))
+}
+
+pub fn launch_session_unarchive(
+    agent_id: &str,
+    session_id: &str,
+    workspace_path: Option<&str>,
+) -> Result<Operation<()>> {
+    Ok(Operation::new(
+        crate::sessions::unarchive_launch_session(agent_id, session_id, workspace_path)?,
+        decode_success,
+    ))
+}
+
 pub fn profile_launch_options() -> Operation<Vec<ProfileLaunchOption>> {
     Operation::new(
         crate::profiles::list_launch_options(),
@@ -235,6 +316,17 @@ pub fn model_profile_update(id: &str, profile: &ProfileDef) -> Result<Operation<
     Ok(Operation::new(
         crate::profiles::update_model_profile(id, profile)?,
         crate::profiles::decode_model_profile,
+    ))
+}
+
+pub fn model_profile_delete(id: &str) -> Operation<()> {
+    Operation::new(crate::profiles::delete_model_profile(id), decode_success)
+}
+
+pub fn model_profiles_reorder(profile_ids: &[&str]) -> Result<Operation<Vec<ModelProfileSummary>>> {
+    Ok(Operation::new(
+        crate::profiles::reorder_model_profiles(profile_ids)?,
+        crate::profiles::decode_model_profiles,
     ))
 }
 
@@ -314,5 +406,56 @@ mod tests {
             ))
             .expect("decode");
         assert_eq!(workspaces.default_workspace, "/tmp/project");
+    }
+
+    #[test]
+    fn launcher_write_operations_decode_preferences() {
+        let op = launcher_set_selected_agent("codex").expect("operation");
+        assert_eq!(op.request().method, HttpMethod::Put);
+        assert_eq!(op.request().path, "/api/launcher/selected-agent");
+        assert_eq!(op.request().body, Some(json!({ "agentId": "codex" })));
+
+        let preferences = op
+            .decode(ResponseSpec::json(
+                200,
+                json!({
+                    "selectedAgent": "codex",
+                    "defaultAgent": "codex",
+                    "defaultProfileId": null,
+                    "enabledAgents": ["codex"],
+                    "agentPreferences": {},
+                    "localAgentApiEnabled": true,
+                    "profileConnections": {}
+                }),
+            ))
+            .expect("decode");
+        assert_eq!(preferences.selected_agent, "codex");
+    }
+
+    #[test]
+    fn launch_session_archive_uses_success_decoder() {
+        let op =
+            launch_session_archive("codex", "abc/123", Some("/tmp/project")).expect("operation");
+        assert_eq!(
+            op.request().path,
+            "/api/agents/codex/launch-sessions/abc%2F123/archive"
+        );
+        assert_eq!(
+            op.request().body,
+            Some(json!({ "workspace_path": "/tmp/project" }))
+        );
+        op.decode(ResponseSpec::json(204, Value::Null))
+            .expect("success");
+    }
+
+    #[test]
+    fn model_profile_reorder_decodes_summaries() {
+        let op = model_profiles_reorder(&["p2", "p1"]).expect("operation");
+        assert_eq!(op.request().method, HttpMethod::Put);
+        assert_eq!(op.request().path, "/api/model-profiles/order");
+        assert_eq!(
+            op.request().body,
+            Some(json!({ "profile_ids": ["p2", "p1"] }))
+        );
     }
 }
