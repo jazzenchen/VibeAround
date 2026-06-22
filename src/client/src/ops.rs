@@ -54,10 +54,38 @@ pub fn workspaces() -> Operation<WorkspacesResponse> {
     Operation::new(crate::workspaces::list(), crate::workspaces::decode_list)
 }
 
+pub fn workspace_add(path: &str) -> Result<Operation<()>> {
+    Ok(Operation::new(
+        crate::workspaces::add(path)?,
+        decode_success,
+    ))
+}
+
 pub fn workspace_create(name: &str) -> Result<Operation<CreateWorkspaceResponse>> {
     Ok(Operation::new(
         crate::workspaces::create(name)?,
         crate::workspaces::decode_create,
+    ))
+}
+
+pub fn workspace_remove(path: &str) -> Result<Operation<()>> {
+    Ok(Operation::new(
+        crate::workspaces::remove(path)?,
+        decode_success,
+    ))
+}
+
+pub fn workspace_reorder(paths: &[&str]) -> Result<Operation<WorkspacesResponse>> {
+    Ok(Operation::new(
+        crate::workspaces::reorder(paths)?,
+        crate::workspaces::decode_list,
+    ))
+}
+
+pub fn workspace_set_default(path: &str) -> Result<Operation<WorkspacesResponse>> {
+    Ok(Operation::new(
+        crate::workspaces::set_default(path)?,
+        crate::workspaces::decode_list,
     ))
 }
 
@@ -78,6 +106,38 @@ pub fn runtime_agent_hosts() -> Operation<Vec<AgentRuntime>> {
         crate::runtime::agents_runtime(),
         crate::runtime::decode_agents_runtime,
     )
+}
+
+pub fn runtime_sync_channels() -> Operation<()> {
+    Operation::new(crate::runtime::sync_channels(), decode_success)
+}
+
+pub fn runtime_reload_settings() -> Operation<()> {
+    Operation::new(crate::runtime::reload_settings(), decode_success)
+}
+
+pub fn runtime_start_channel(kind: &str) -> Operation<()> {
+    Operation::new(crate::runtime::start_channel(kind), decode_success)
+}
+
+pub fn runtime_stop_channel(kind: &str) -> Operation<()> {
+    Operation::new(crate::runtime::stop_channel(kind), decode_success)
+}
+
+pub fn runtime_restart_channel(kind: &str) -> Operation<()> {
+    Operation::new(crate::runtime::restart_channel(kind), decode_success)
+}
+
+pub fn runtime_kill_tunnel(provider: &str) -> Operation<()> {
+    Operation::new(crate::runtime::kill_tunnel(provider), decode_success)
+}
+
+pub fn runtime_kill_agent(route_key: &str) -> Operation<()> {
+    Operation::new(crate::runtime::kill_agent(route_key), decode_success)
+}
+
+pub fn runtime_kill_pty(session_id: &str) -> Operation<()> {
+    Operation::new(crate::runtime::kill_pty(session_id), decode_success)
 }
 
 pub fn launcher_preferences() -> Operation<LauncherPreferencesResponse> {
@@ -103,6 +163,10 @@ pub fn session_create(body: CreateSessionBody<'_>) -> Result<Operation<CreateSes
         crate::sessions::create(body)?,
         crate::sessions::decode_create,
     ))
+}
+
+pub fn session_delete(session_id: &str) -> Operation<()> {
+    Operation::new(crate::sessions::delete(session_id), decode_success)
 }
 
 pub fn tmux_sessions() -> Operation<TmuxSessionsResponse> {
@@ -178,13 +242,17 @@ pub fn previews() -> Operation<PreviewsResponse> {
     Operation::new(crate::previews::list(), crate::previews::decode_list)
 }
 
+pub fn preview_delete(slug: &str) -> Operation<()> {
+    Operation::new(crate::previews::delete(slug), decode_success)
+}
+
 pub fn decode_success(response: ResponseSpec) -> Result<()> {
     response.ensure_success()
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::*;
     use crate::http::{AuthRequirement, HttpMethod};
@@ -215,5 +283,36 @@ mod tests {
     fn dynamic_model_profile_operation_encodes_path() {
         let op = model_profile("openai/default");
         assert_eq!(op.request().path, "/api/model-profiles/openai%2Fdefault");
+    }
+
+    #[test]
+    fn write_operations_pair_with_success_decoder() {
+        let op = runtime_restart_channel("feishu");
+        assert_eq!(op.request().method, HttpMethod::Post);
+        assert_eq!(op.request().path, "/api/channels/feishu/restart");
+        op.decode(ResponseSpec::json(204, Value::Null))
+            .expect("success");
+    }
+
+    #[test]
+    fn workspace_default_decodes_updated_list() {
+        let op = workspace_set_default("/tmp/project").expect("operation");
+        assert_eq!(op.request().method, HttpMethod::Put);
+        assert_eq!(op.request().path, "/api/workspaces/default");
+
+        let workspaces = op
+            .decode(ResponseSpec::json(
+                200,
+                json!({
+                    "default_workspace": "/tmp/project",
+                    "workspaces": [{
+                        "path": "/tmp/project",
+                        "is_default": true,
+                        "is_builtin": false
+                    }]
+                }),
+            ))
+            .expect("decode");
+        assert_eq!(workspaces.default_workspace, "/tmp/project");
     }
 }

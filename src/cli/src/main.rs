@@ -30,7 +30,7 @@ enum CliError {
     Client(#[from] va_client::ClientError),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Command {
     Help,
     Health,
@@ -43,6 +43,20 @@ enum Command {
     Workspaces,
     Previews,
     Profiles,
+    SettingsReload,
+    ChannelSync,
+    ChannelStart { kind: String },
+    ChannelStop { kind: String },
+    ChannelRestart { kind: String },
+    TunnelKill { provider: String },
+    AgentKill { route_key: String },
+    SessionKill { session_id: String },
+    PtyKill { session_id: String },
+    PreviewDelete { slug: String },
+    WorkspaceAdd { path: String },
+    WorkspaceRemove { path: String },
+    WorkspaceDefault { path: String },
+    WorkspaceCreate { name: String },
 }
 
 #[derive(Debug, Default)]
@@ -115,9 +129,10 @@ async fn main() {
 
 async fn run() -> Result<(), CliError> {
     let options = parse_args(env::args().skip(1))?;
-    let Some(command) = options.command else {
-        return Err(CliError::Usage("missing command".into()));
-    };
+    let command = options
+        .command
+        .clone()
+        .ok_or_else(|| CliError::Usage("missing command".into()))?;
 
     match command {
         Command::Help => {
@@ -212,8 +227,100 @@ async fn run() -> Result<(), CliError> {
                 );
             }
         }
+        Command::SettingsReload => {
+            run_unit(
+                &options,
+                ops::runtime_reload_settings(),
+                "settings reloaded",
+            )
+            .await?;
+        }
+        Command::ChannelSync => {
+            run_unit(&options, ops::runtime_sync_channels(), "channels synced").await?;
+        }
+        Command::ChannelStart { kind } => {
+            run_unit(
+                &options,
+                ops::runtime_start_channel(&kind),
+                "channel started",
+            )
+            .await?;
+        }
+        Command::ChannelStop { kind } => {
+            run_unit(
+                &options,
+                ops::runtime_stop_channel(&kind),
+                "channel stopped",
+            )
+            .await?;
+        }
+        Command::ChannelRestart { kind } => {
+            run_unit(
+                &options,
+                ops::runtime_restart_channel(&kind),
+                "channel restarted",
+            )
+            .await?;
+        }
+        Command::TunnelKill { provider } => {
+            run_unit(
+                &options,
+                ops::runtime_kill_tunnel(&provider),
+                "tunnel killed",
+            )
+            .await?;
+        }
+        Command::AgentKill { route_key } => {
+            run_unit(
+                &options,
+                ops::runtime_kill_agent(&route_key),
+                "agent killed",
+            )
+            .await?;
+        }
+        Command::SessionKill { session_id } => {
+            run_unit(&options, ops::session_delete(&session_id), "session killed").await?;
+        }
+        Command::PtyKill { session_id } => {
+            run_unit(&options, ops::runtime_kill_pty(&session_id), "pty killed").await?;
+        }
+        Command::PreviewDelete { slug } => {
+            run_unit(&options, ops::preview_delete(&slug), "preview deleted").await?;
+        }
+        Command::WorkspaceAdd { path } => {
+            run_unit(&options, ops::workspace_add(&path)?, "workspace added").await?;
+        }
+        Command::WorkspaceRemove { path } => {
+            run_unit(&options, ops::workspace_remove(&path)?, "workspace removed").await?;
+        }
+        Command::WorkspaceDefault { path } => {
+            let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            let workspaces = transport
+                .execute(ops::workspace_set_default(&path)?)
+                .await?;
+            println!("default: {}", workspaces.default_workspace);
+            println!("workspaces: {}", workspaces.workspaces.len());
+        }
+        Command::WorkspaceCreate { name } => {
+            let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            let response = transport.execute(ops::workspace_create(&name)?).await?;
+            println!("created: {}", response.workspace.path);
+            println!("default: {}", response.default_workspace);
+            println!("workspaces: {}", response.workspaces.len());
+        }
     }
 
+    Ok(())
+}
+
+async fn run_unit(
+    options: &Options,
+    operation: Operation<()>,
+    message: &'static str,
+) -> Result<(), CliError> {
+    let transport = transport_for(options, AuthRequirement::BearerToken)?;
+    transport.execute(operation).await?;
+    println!("{message}");
     Ok(())
 }
 
@@ -271,6 +378,7 @@ where
 {
     let mut options = Options::default();
     let mut args = args.into_iter().peekable();
+    let mut positionals = Vec::new();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => options.command = Some(Command::Help),
@@ -295,13 +403,17 @@ where
             value if value.starts_with('-') => {
                 return Err(CliError::Usage(format!("unknown option: {value}")));
             }
-            value => {
-                if options.command.is_some() {
-                    return Err(CliError::Usage(format!("unexpected argument: {value}")));
-                }
-                options.command = Some(parse_command(value)?);
-            }
+            value => positionals.push(value.to_string()),
         }
+    }
+    if !positionals.is_empty() {
+        if options.command.is_some() {
+            return Err(CliError::Usage(format!(
+                "unexpected argument: {}",
+                positionals[0]
+            )));
+        }
+        options.command = Some(parse_command(&positionals)?);
     }
     Ok(options)
 }
@@ -315,20 +427,106 @@ where
         .ok_or_else(|| CliError::Usage(format!("missing value for {flag}")))
 }
 
-fn parse_command(value: &str) -> Result<Command, CliError> {
-    match value {
-        "help" => Ok(Command::Help),
-        "health" => Ok(Command::Health),
-        "info" => Ok(Command::Info),
-        "status" => Ok(Command::Status),
-        "channels" => Ok(Command::Channels),
-        "tunnels" => Ok(Command::Tunnels),
-        "agents" => Ok(Command::Agents),
-        "sessions" => Ok(Command::Sessions),
-        "workspaces" => Ok(Command::Workspaces),
-        "previews" => Ok(Command::Previews),
-        "profiles" => Ok(Command::Profiles),
+fn parse_command(args: &[String]) -> Result<Command, CliError> {
+    let Some(command) = args.first().map(String::as_str) else {
+        return Err(CliError::Usage("missing command".into()));
+    };
+    let rest = &args[1..];
+    match command {
+        "help" => no_args(rest, "help").map(|()| Command::Help),
+        "health" => no_args(rest, "health").map(|()| Command::Health),
+        "info" => no_args(rest, "info").map(|()| Command::Info),
+        "status" => no_args(rest, "status").map(|()| Command::Status),
+        "channels" => no_args(rest, "channels").map(|()| Command::Channels),
+        "tunnels" => no_args(rest, "tunnels").map(|()| Command::Tunnels),
+        "agents" => no_args(rest, "agents").map(|()| Command::Agents),
+        "sessions" => no_args(rest, "sessions").map(|()| Command::Sessions),
+        "workspaces" => no_args(rest, "workspaces").map(|()| Command::Workspaces),
+        "previews" => no_args(rest, "previews").map(|()| Command::Previews),
+        "profiles" => no_args(rest, "profiles").map(|()| Command::Profiles),
+        "settings" => match rest {
+            [action] if action == "reload" => Ok(Command::SettingsReload),
+            _ => Err(CliError::Usage("usage: va settings reload".to_string())),
+        },
+        "channel" => parse_channel_command(rest),
+        "tunnel" => match rest {
+            [action, provider] if action == "kill" => Ok(Command::TunnelKill {
+                provider: provider.to_string(),
+            }),
+            _ => Err(CliError::Usage("usage: va tunnel kill PROVIDER".into())),
+        },
+        "agent" => match rest {
+            [action, route_key] if action == "kill" => Ok(Command::AgentKill {
+                route_key: route_key.to_string(),
+            }),
+            _ => Err(CliError::Usage("usage: va agent kill ROUTE_KEY".into())),
+        },
+        "session" => match rest {
+            [action, session_id] if action == "kill" => Ok(Command::SessionKill {
+                session_id: session_id.to_string(),
+            }),
+            _ => Err(CliError::Usage("usage: va session kill SESSION_ID".into())),
+        },
+        "pty" => match rest {
+            [action, session_id] if action == "kill" => Ok(Command::PtyKill {
+                session_id: session_id.to_string(),
+            }),
+            _ => Err(CliError::Usage("usage: va pty kill SESSION_ID".into())),
+        },
+        "preview" => match rest {
+            [action, slug] if action == "delete" => Ok(Command::PreviewDelete {
+                slug: slug.to_string(),
+            }),
+            _ => Err(CliError::Usage("usage: va preview delete SLUG".into())),
+        },
+        "workspace" => parse_workspace_command(rest),
         other => Err(CliError::Usage(format!("unknown command: {other}"))),
+    }
+}
+
+fn parse_channel_command(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [action] if action == "sync" => Ok(Command::ChannelSync),
+        [action, kind] if action == "start" => Ok(Command::ChannelStart {
+            kind: kind.to_string(),
+        }),
+        [action, kind] if action == "stop" => Ok(Command::ChannelStop {
+            kind: kind.to_string(),
+        }),
+        [action, kind] if action == "restart" => Ok(Command::ChannelRestart {
+            kind: kind.to_string(),
+        }),
+        _ => Err(CliError::Usage(
+            "usage: va channel sync|start|stop|restart [KIND]".into(),
+        )),
+    }
+}
+
+fn parse_workspace_command(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [action, path] if action == "add" => Ok(Command::WorkspaceAdd {
+            path: path.to_string(),
+        }),
+        [action, path] if action == "remove" => Ok(Command::WorkspaceRemove {
+            path: path.to_string(),
+        }),
+        [action, path] if action == "default" => Ok(Command::WorkspaceDefault {
+            path: path.to_string(),
+        }),
+        [action, name] if action == "create" => Ok(Command::WorkspaceCreate {
+            name: name.to_string(),
+        }),
+        _ => Err(CliError::Usage(
+            "usage: va workspace add|remove|default PATH; va workspace create NAME".into(),
+        )),
+    }
+}
+
+fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
+    if args.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::Usage(format!("usage: va {command}")))
     }
 }
 
@@ -346,6 +544,10 @@ fn endpoint_for(options: &Options, auth: AuthRequirement) -> Result<ServerEndpoi
             return Err(CliError::MissingToken);
         }
         return Ok(endpoint);
+    }
+
+    if let Some(token) = &options.token {
+        return Ok(ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token.as_str()));
     }
 
     let auth_path = options.auth_file.clone().unwrap_or_else(default_auth_path);
@@ -389,7 +591,7 @@ fn home_dir() -> PathBuf {
 }
 
 fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] <command>\n\nCommands:\n  help        Show this help\n  health      Check public server liveness\n  info        Show server metadata\n  status      Show a compact runtime summary\n  channels    List channel plugin runtimes\n  tunnels     List tunnel runtimes\n  agents      List enabled agents\n  sessions    List PTY sessions\n  workspaces  List registered workspaces\n  previews    List live previews\n  profiles    List model profiles"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -427,6 +629,46 @@ mod tests {
     }
 
     #[test]
+    fn parses_channel_action_command() {
+        let options = parse_args([
+            "channel".to_string(),
+            "restart".to_string(),
+            "feishu".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::ChannelRestart {
+                kind: "feishu".into()
+            })
+        );
+    }
+
+    #[test]
+    fn parses_workspace_action_command() {
+        let options = parse_args([
+            "workspace".to_string(),
+            "add".to_string(),
+            "/tmp/project".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::WorkspaceAdd {
+                path: "/tmp/project".into()
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_unexpected_subcommand_args() {
+        let error = parse_args(["status".to_string(), "extra".to_string()]).expect_err("error");
+        assert!(matches!(error, CliError::Usage(_)));
+    }
+
+    #[test]
     fn requires_token_for_authenticated_base_url() {
         let options = parse_args([
             "--base-url=http://localhost:12358/va".to_string(),
@@ -436,5 +678,15 @@ mod tests {
 
         let result = endpoint_for(&options, AuthRequirement::BearerToken);
         assert!(matches!(result, Err(CliError::MissingToken)));
+    }
+
+    #[test]
+    fn token_without_base_url_uses_default_endpoint() {
+        let options =
+            parse_args(["--token=abc".to_string(), "status".to_string()]).expect("options");
+
+        let endpoint = endpoint_for(&options, AuthRequirement::BearerToken).expect("endpoint");
+        assert_eq!(endpoint.base_url(), DEFAULT_BASE_URL);
+        assert_eq!(endpoint.token(), Some("abc"));
     }
 }
