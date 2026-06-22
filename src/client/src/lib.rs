@@ -8,6 +8,7 @@ pub mod error;
 pub mod events;
 pub mod http;
 pub mod launcher;
+pub mod operation;
 pub mod profiles;
 pub mod runtime;
 pub mod service;
@@ -17,3 +18,4 @@ pub mod workspaces;
 
 pub use error::{ClientError, Result};
 pub use http::{AuthRequirement, HttpMethod, RequestSpec, ResponseSpec};
+pub use operation::Operation;
