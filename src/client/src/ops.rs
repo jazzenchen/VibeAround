@@ -5,6 +5,7 @@
 
 use serde_json::Value;
 
+use crate::auth::{PairStartResponse, PairStatusResponse};
 use crate::launcher::{LaunchPlanBody, LaunchPlanResponse, LauncherPreferencesResponse};
 use crate::operation::Operation;
 use crate::previews::PreviewsResponse;
@@ -18,6 +19,17 @@ use crate::sessions::{
 use crate::settings::SettingsWriteResponse;
 use crate::workspaces::{CreateWorkspaceResponse, WorkspacesResponse};
 use crate::{ResponseSpec, Result};
+
+pub fn pair_start() -> Operation<PairStartResponse> {
+    Operation::new(crate::auth::pair_start(), crate::auth::decode_pair_start)
+}
+
+pub fn pair_status(sid: &str) -> Operation<PairStatusResponse> {
+    Operation::new(
+        crate::auth::pair_status(sid),
+        crate::auth::decode_pair_status,
+    )
+}
 
 pub fn service_health() -> Operation<ServiceHealthResponse> {
     Operation::new(crate::service::health(), crate::service::decode_health)

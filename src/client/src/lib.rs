@@ -4,6 +4,7 @@
 //! wire models for the `@va/server` HTTP contract. It deliberately does not
 //! own network I/O, process spawning, native commands, Tauri IPC, or UI state.
 
+pub mod auth;
 pub mod error;
 pub mod events;
 pub mod http;
