@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use common::config::{self, Retry429Config};
+use common::profiles::endpoint_url::join_protocol_endpoint;
 use common::profiles::schema::ProfileDef;
 use common::profiles::{catalog, normalize_legacy_profile_and_persist, schema};
 
@@ -185,14 +186,6 @@ pub(super) fn upstream_endpoint(
         kind,
         append_v1_path: endpoint.append_v1_path,
     })
-}
-
-fn join_protocol_endpoint(base_url: &str, endpoint: &str, append_v1_path: bool) -> String {
-    if !append_v1_path || base_url.ends_with("/v1") {
-        format!("{base_url}/{endpoint}")
-    } else {
-        format!("{base_url}/v1/{endpoint}")
-    }
 }
 
 fn join_gemini_generate_content_endpoint(base_url: &str, model: &str, stream: bool) -> String {
@@ -523,9 +516,11 @@ mod tests {
     use std::collections::BTreeMap;
     use std::time::Duration;
 
+    use common::profiles::endpoint_url::join_protocol_endpoint;
+
     use super::{
         apply_upstream_auth, enriched_content_risk_body, join_gemini_generate_content_endpoint,
-        join_protocol_endpoint, rate_limit_retry_delay, request_stream, BridgeProtocol,
+        rate_limit_retry_delay, request_stream, BridgeProtocol,
         UpstreamEndpoint, UpstreamKind,
     };
 

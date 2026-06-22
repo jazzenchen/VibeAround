@@ -10,6 +10,7 @@ mod bridge_launch;
 pub mod catalog;
 pub mod codex_metadata;
 pub mod connections;
+pub mod endpoint_url;
 pub mod google_oauth;
 pub mod headers;
 mod pi_launch;

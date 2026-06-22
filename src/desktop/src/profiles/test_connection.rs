@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use common::config;
 use common::profiles::catalog::{self, EndpointDef, ProviderCatalog};
+use common::profiles::endpoint_url::join_protocol_endpoint;
 use common::profiles::headers::merged_upstream_headers;
 use common::profiles::schema::{AuthMode, ProfileDef};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -215,14 +216,6 @@ fn apply_auth(
 
 fn is_openai_family(api_type: &str) -> bool {
     matches!(api_type, "openai-chat" | "openai-responses")
-}
-
-fn join_protocol_endpoint(base_url: &str, endpoint: &str, append_v1_path: bool) -> String {
-    if !append_v1_path || base_url.ends_with("/v1") {
-        format!("{base_url}/{endpoint}")
-    } else {
-        format!("{base_url}/v1/{endpoint}")
-    }
 }
 
 fn join_gemini_endpoint(base_url: &str, model: &str) -> String {
