@@ -9,6 +9,7 @@ pub mod events;
 pub mod http;
 pub mod launcher;
 pub mod operation;
+pub mod ops;
 pub mod previews;
 pub mod profiles;
 pub mod runtime;
