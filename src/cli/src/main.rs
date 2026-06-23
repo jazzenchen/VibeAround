@@ -15,7 +15,7 @@ enum CliError {
     Usage(String),
     #[error("auth is required; pass --base-url and --token, or start VibeAround so auth.json exists at {0}")]
     MissingAuth(String),
-    #[error("auth is required for this command; pass --token when using --base-url")]
+    #[error("auth is required for this command; pass --token or set VIBEAROUND_TOKEN when using --base-url")]
     MissingToken,
     #[error("failed to read auth file {path}: {source}")]
     ReadAuth {
@@ -23,8 +23,12 @@ enum CliError {
         #[source]
         source: std::io::Error,
     },
-    #[error("HTTP request failed: {0}")]
-    Http(#[from] reqwest::Error),
+    #[error("failed to reach {url}: {source}\ntry starting the server with `bun server:dev`, or pass --base-url")]
+    Http {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("client error: {0}")]
@@ -71,6 +75,29 @@ struct Options {
     json: bool,
 }
 
+#[derive(Debug, Default)]
+struct RuntimeEnv {
+    base_url: Option<String>,
+    token: Option<String>,
+    auth_file: Option<String>,
+    data_dir: Option<String>,
+    home_dir: Option<PathBuf>,
+}
+
+impl RuntimeEnv {
+    fn current() -> Self {
+        Self {
+            base_url: env_value("VIBEAROUND_BASE_URL"),
+            token: env_value("VIBEAROUND_TOKEN").or_else(|| env_value("VIBEAROUND_AUTH_TOKEN")),
+            auth_file: env_value("VIBEAROUND_AUTH_FILE"),
+            data_dir: env_value("VIBEAROUND_DATA_DIR"),
+            home_dir: env::var_os("HOME")
+                .or_else(|| env::var_os("USERPROFILE"))
+                .map(PathBuf::from),
+        }
+    }
+}
+
 struct HttpTransport {
     endpoint: ServerEndpoint,
     client: reqwest::Client,
@@ -103,9 +130,8 @@ impl HttpTransport {
             HttpMethod::Put => reqwest::Method::PUT,
             HttpMethod::Delete => reqwest::Method::DELETE,
         };
-        let mut builder = self
-            .client
-            .request(method, self.endpoint.http_url(&request));
+        let url = self.endpoint.http_url(&request);
+        let mut builder = self.client.request(method, &url);
         if let Some(auth) = self.endpoint.authorization_header(&request) {
             builder = builder.header(reqwest::header::AUTHORIZATION, auth);
         }
@@ -113,9 +139,15 @@ impl HttpTransport {
             builder = builder.json(&body);
         }
 
-        let response = builder.send().await?;
+        let response = builder.send().await.map_err(|source| CliError::Http {
+            url: url.clone(),
+            source,
+        })?;
         let status = response.status().as_u16();
-        let body = response.text().await?;
+        let body = response.text().await.map_err(|source| CliError::Http {
+            url: url.clone(),
+            source,
+        })?;
         let body = if body.trim().is_empty() {
             Value::Null
         } else {
@@ -672,10 +704,24 @@ fn transport_for(options: &Options, auth: AuthRequirement) -> Result<HttpTranspo
 }
 
 fn endpoint_for(options: &Options, auth: AuthRequirement) -> Result<ServerEndpoint, CliError> {
-    if let Some(base_url) = &options.base_url {
+    endpoint_for_env(options, auth, &RuntimeEnv::current())
+}
+
+fn endpoint_for_env(
+    options: &Options,
+    auth: AuthRequirement,
+    runtime_env: &RuntimeEnv,
+) -> Result<ServerEndpoint, CliError> {
+    let base_url = options
+        .base_url
+        .as_deref()
+        .or(runtime_env.base_url.as_deref());
+    let token = options.token.as_deref().or(runtime_env.token.as_deref());
+
+    if let Some(base_url) = base_url {
         let endpoint = ServerEndpoint::new(base_url);
-        if let Some(token) = &options.token {
-            return Ok(endpoint.with_token(token.as_str()));
+        if let Some(token) = token {
+            return Ok(endpoint.with_token(token));
         }
         if matches!(auth, AuthRequirement::BearerToken) {
             return Err(CliError::MissingToken);
@@ -683,11 +729,14 @@ fn endpoint_for(options: &Options, auth: AuthRequirement) -> Result<ServerEndpoi
         return Ok(endpoint);
     }
 
-    if let Some(token) = &options.token {
-        return Ok(ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token.as_str()));
+    if let Some(token) = token {
+        return Ok(ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token));
     }
 
-    let auth_path = options.auth_file.clone().unwrap_or_else(default_auth_path);
+    let auth_path = options
+        .auth_file
+        .clone()
+        .unwrap_or_else(|| default_auth_path_with_env(runtime_env));
     if auth_path.exists() {
         let body = std::fs::read_to_string(&auth_path).map_err(|source| CliError::ReadAuth {
             path: auth_path.display().to_string(),
@@ -704,27 +753,30 @@ fn endpoint_for(options: &Options, auth: AuthRequirement) -> Result<ServerEndpoi
     Err(CliError::MissingAuth(auth_path.display().to_string()))
 }
 
-fn default_auth_path() -> PathBuf {
-    if let Ok(path) = env::var("VIBEAROUND_AUTH_FILE") {
-        let path = path.trim();
-        if !path.is_empty() {
-            return PathBuf::from(path);
-        }
+fn default_auth_path_with_env(runtime_env: &RuntimeEnv) -> PathBuf {
+    if let Some(path) = &runtime_env.auth_file {
+        return PathBuf::from(path);
     }
-    if let Ok(path) = env::var("VIBEAROUND_DATA_DIR") {
-        let path = path.trim();
-        if !path.is_empty() {
-            return PathBuf::from(path).join("auth.json");
-        }
+    if let Some(path) = &runtime_env.data_dir {
+        return PathBuf::from(path).join("auth.json");
     }
-    home_dir().join(".vibearound").join("auth.json")
+    home_dir_with_env(runtime_env)
+        .join(".vibearound")
+        .join("auth.json")
 }
 
-fn home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .or_else(|| env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
+fn home_dir_with_env(runtime_env: &RuntimeEnv) -> PathBuf {
+    runtime_env
+        .home_dir
+        .clone()
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn env_value(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn usage() -> &'static str {
@@ -851,5 +903,58 @@ mod tests {
         let endpoint = endpoint_for(&options, AuthRequirement::BearerToken).expect("endpoint");
         assert_eq!(endpoint.base_url(), DEFAULT_BASE_URL);
         assert_eq!(endpoint.token(), Some("abc"));
+    }
+
+    #[test]
+    fn env_base_url_and_token_build_endpoint() {
+        let options = parse_args(["status".to_string()]).expect("options");
+        let runtime_env = RuntimeEnv {
+            base_url: Some("http://localhost:9000/va".into()),
+            token: Some("env-token".into()),
+            ..Default::default()
+        };
+
+        let endpoint =
+            endpoint_for_env(&options, AuthRequirement::BearerToken, &runtime_env).expect("url");
+        assert_eq!(endpoint.base_url(), "http://localhost:9000/va");
+        assert_eq!(endpoint.token(), Some("env-token"));
+    }
+
+    #[test]
+    fn cli_token_overrides_env_token() {
+        let options =
+            parse_args(["--token=cli-token".to_string(), "status".to_string()]).expect("options");
+        let runtime_env = RuntimeEnv {
+            base_url: Some("http://localhost:9000/va".into()),
+            token: Some("env-token".into()),
+            ..Default::default()
+        };
+
+        let endpoint =
+            endpoint_for_env(&options, AuthRequirement::BearerToken, &runtime_env).expect("url");
+        assert_eq!(endpoint.token(), Some("cli-token"));
+    }
+
+    #[test]
+    fn default_auth_path_uses_env_without_mutating_process_env() {
+        let auth_file_env = RuntimeEnv {
+            auth_file: Some("/tmp/va-auth.json".into()),
+            home_dir: Some(PathBuf::from("/home/test")),
+            ..Default::default()
+        };
+        assert_eq!(
+            default_auth_path_with_env(&auth_file_env),
+            PathBuf::from("/tmp/va-auth.json")
+        );
+
+        let data_dir_env = RuntimeEnv {
+            data_dir: Some("/tmp/va".into()),
+            home_dir: Some(PathBuf::from("/home/test")),
+            ..Default::default()
+        };
+        assert_eq!(
+            default_auth_path_with_env(&data_dir_env),
+            PathBuf::from("/tmp/va/auth.json")
+        );
     }
 }

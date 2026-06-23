@@ -34,6 +34,7 @@ Public commands such as `health` and `pair start` do not need a token.
 Protected commands read auth from, in order:
 
 - `--token` with optional `--base-url`
+- `$VIBEAROUND_TOKEN` or `$VIBEAROUND_AUTH_TOKEN` with optional `$VIBEAROUND_BASE_URL`
 - `--auth-file PATH`
 - `$VIBEAROUND_AUTH_FILE`
 - `$VIBEAROUND_DATA_DIR/auth.json`
@@ -45,6 +46,7 @@ Protected commands read auth from, in order:
 va health
 va status
 va --json status
+VIBEAROUND_BASE_URL=http://127.0.0.1:12358/va VIBEAROUND_TOKEN=... va status
 va pair start
 va pair status SID
 va channels
