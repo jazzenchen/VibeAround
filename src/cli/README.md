@@ -24,9 +24,19 @@ cargo build -p va-cli --release
 Package scripts are available from `src/`:
 
 ```bash
+bun va
+bun va tui --refresh-ms 1000
+bun va status
+bun va channel restart feishu
+bun va:build
 bun cli:dev help
 bun cli:build
+bun tui:dev
+bun tui:build
 ```
+
+`bun va` is a development launcher: no command opens the TUI, while CLI
+commands are forwarded to `va-cli`.
 
 ## Auth
 
