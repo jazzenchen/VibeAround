@@ -118,6 +118,9 @@ async fn run_dashboard(
                         KeyCode::End if app.view == AppView::Chat => {
                             app.move_chat_cursor_end();
                         }
+                        KeyCode::Delete if app.view == AppView::Chat => {
+                            app.delete_chat_forward_char();
+                        }
                         KeyCode::Left => app.select_left(),
                         KeyCode::Right => app.select_right(),
                         KeyCode::Up => app.select_up(),
@@ -147,6 +150,18 @@ async fn run_dashboard(
                                 && key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             app.delete_chat_word();
+                        }
+                        KeyCode::Char('a' | 'A')
+                            if app.view == AppView::Chat
+                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            app.move_chat_cursor_start();
+                        }
+                        KeyCode::Char('e' | 'E')
+                            if app.view == AppView::Chat
+                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            app.move_chat_cursor_end();
                         }
                         KeyCode::Backspace if app.view == AppView::Chat => {
                             app.delete_chat_char();

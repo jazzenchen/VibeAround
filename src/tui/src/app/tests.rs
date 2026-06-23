@@ -480,12 +480,33 @@ fn chat_input_cursor_edits_inside_text() {
     assert_eq!(app.chat_input, "hello");
     assert_eq!(app.chat_cursor, 3);
 
+    app.delete_chat_forward_char();
+    assert_eq!(app.chat_input, "helo");
+    assert_eq!(app.chat_cursor, 3);
+
     app.move_chat_cursor_start();
     app.insert_chat_text("> ");
     app.move_chat_cursor_end();
     app.insert_chat_text(" <");
-    assert_eq!(app.chat_input, "> hello <");
+    assert_eq!(app.chat_input, "> helo <");
     assert_eq!(app.chat_cursor, app.chat_input.len());
+}
+
+#[test]
+fn chat_input_cursor_respects_unicode_boundaries() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.insert_chat_text("你好吗");
+    app.move_chat_cursor_left();
+    app.delete_chat_forward_char();
+
+    assert_eq!(app.chat_input, "你好");
+    assert_eq!(app.chat_cursor, "你好".len());
+
+    app.move_chat_cursor_left();
+    app.insert_chat_text("也");
+    assert_eq!(app.chat_input, "你也好");
 }
 
 #[test]
@@ -715,6 +736,7 @@ async fn slash_help_renders_multiline_command_reference() {
     assert!(help.contains("Commands\n/status runtime status"));
     assert!(help.contains("/agent agent, profile, workspace, session"));
     assert!(help.contains("Shift+Enter newline"));
+    assert!(help.contains("Ctrl+A/E start/end"));
 }
 
 #[tokio::test]
