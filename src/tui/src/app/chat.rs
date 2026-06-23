@@ -43,6 +43,11 @@ impl TuiApp {
         self.chat_input.replace_range(self.chat_cursor..next, "");
     }
 
+    pub(crate) fn delete_chat_to_end(&mut self) {
+        self.clamp_chat_cursor();
+        self.chat_input.truncate(self.chat_cursor);
+    }
+
     pub(crate) fn clear_chat_input(&mut self) {
         self.chat_input.clear();
         self.chat_cursor = 0;
@@ -253,7 +258,7 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word".into(),
+            text: "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail".into(),
         });
     }
 

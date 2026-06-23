@@ -151,6 +151,12 @@ async fn run_dashboard(
                         {
                             app.delete_chat_word();
                         }
+                        KeyCode::Char('k' | 'K')
+                            if app.view == AppView::Chat
+                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            app.delete_chat_to_end();
+                        }
                         KeyCode::Char('a' | 'A')
                             if app.view == AppView::Chat
                                 && key.modifiers.contains(KeyModifiers::CONTROL) =>

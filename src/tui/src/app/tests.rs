@@ -523,6 +523,19 @@ fn chat_input_delete_word_preserves_text_after_cursor() {
 }
 
 #[test]
+fn chat_input_delete_to_end_preserves_text_before_cursor() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.set_chat_input_for_test("hello brave world");
+    app.set_chat_cursor_for_test("hello".len());
+    app.delete_chat_to_end();
+
+    assert_eq!(app.chat_input, "hello");
+    assert_eq!(app.chat_cursor, "hello".len());
+}
+
+#[test]
 fn chat_message_send_uses_selected_context() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
@@ -737,6 +750,7 @@ async fn slash_help_renders_multiline_command_reference() {
     assert!(help.contains("/agent agent, profile, workspace, session"));
     assert!(help.contains("Shift+Enter newline"));
     assert!(help.contains("Ctrl+A/E start/end"));
+    assert!(help.contains("Ctrl+K delete tail"));
 }
 
 #[tokio::test]
