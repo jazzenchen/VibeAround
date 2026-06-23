@@ -6110,11 +6110,13 @@ version = "0.7.8"
 dependencies = [
  "clap",
  "crossterm",
+ "futures-util",
  "ratatui",
  "reqwest 0.12.28",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-tungstenite",
  "va-client",
 ]
 

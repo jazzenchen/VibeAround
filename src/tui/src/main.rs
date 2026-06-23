@@ -10,6 +10,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use futures_util::{SinkExt, StreamExt};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -17,7 +18,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use serde_json::Value;
+use tokio::sync::mpsc;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 use va_client::endpoint::ServerEndpoint;
+use va_client::events::{
+    chat_ws, decode_chat_event, encode_chat_client_message, ChatClientMessage, ChatEvent,
+    ChatSessionAction,
+};
 use va_client::http::{HttpMethod, RequestSpec, ResponseSpec};
 use va_client::launcher::LauncherPreferencesResponse;
 use va_client::ops;
@@ -28,6 +36,7 @@ use va_client::runtime::{
 };
 use va_client::service::ServiceInfoResponse;
 use va_client::sessions::{PtyRunState, SessionListItem};
+use va_client::state::ChatState;
 use va_client::workspaces::WorkspaceItem;
 use va_client::Operation;
 
@@ -174,9 +183,19 @@ enum ChatRole {
 }
 
 #[derive(Debug)]
+enum ChatSocketEvent {
+    Connected,
+    Closed,
+    Error(String),
+    Event(ChatEvent),
+}
+
+#[derive(Debug)]
 struct TuiApp {
     endpoint: String,
     view: AppView,
+    chat_state: ChatState,
+    chat_connected: bool,
     snapshot: DashboardSnapshot,
     agent_picker: AgentPickerSnapshot,
     status_selection: StatusSelection,
@@ -199,6 +218,8 @@ impl TuiApp {
         Self {
             endpoint: endpoint.base_url().to_string(),
             view: AppView::Chat,
+            chat_state: ChatState::new(),
+            chat_connected: false,
             snapshot: DashboardSnapshot::default(),
             agent_picker: AgentPickerSnapshot::default(),
             status_selection: StatusSelection::default(),
@@ -353,34 +374,68 @@ impl TuiApp {
         }
     }
 
-    async fn submit_chat_input(&mut self, transport: &HttpTransport) {
+    async fn submit_chat_input(
+        &mut self,
+        transport: &HttpTransport,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
         let input = self.chat_input.trim().to_string();
         self.chat_input.clear();
         if input.is_empty() {
             return;
         }
         if input.starts_with('/') {
-            self.run_slash_command(&input, transport).await;
+            self.run_slash_command(&input, transport, chat_tx).await;
             return;
         }
 
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Request,
-            text: input,
+            text: input.clone(),
         });
-        self.chat_messages.push(ChatMessage {
-            role: ChatRole::Response,
-            text: "Chat transport is not connected yet. The next slice will attach /ws/chat and show raw agent events here.".into(),
-        });
+        self.send_chat_message(input, chat_tx);
     }
 
-    async fn run_slash_command(&mut self, command: &str, transport: &HttpTransport) {
-        match command {
+    async fn run_slash_command(
+        &mut self,
+        command: &str,
+        transport: &HttpTransport,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
+        let mut parts = command.split_whitespace();
+        let name = parts.next().unwrap_or(command);
+        match name {
             "/status" => self.open_status(transport).await,
             "/agent" => self.open_agent_picker(transport).await,
             "/help" => self.push_help_message(),
             "/clear" => self.chat_messages.clear(),
             "/back" => self.go_back(),
+            "/stop" => self.send_chat_command(ChatClientMessage::stop(), chat_tx),
+            "/allow" => {
+                if let Some(option_id) = parts.next() {
+                    if let Some(request_id) = self.chat_state.pending_permission_request_id.clone()
+                    {
+                        self.send_chat_command(
+                            ChatClientMessage::permission_selected(request_id, option_id),
+                            chat_tx,
+                        );
+                    } else {
+                        self.push_notice("No pending permission request.");
+                    }
+                } else {
+                    self.push_notice("Usage: /allow <option-id>");
+                }
+            }
+            "/deny" | "/cancel" => {
+                if let Some(request_id) = self.chat_state.pending_permission_request_id.clone() {
+                    self.send_chat_command(
+                        ChatClientMessage::permission_cancelled(request_id),
+                        chat_tx,
+                    );
+                } else {
+                    self.push_notice("No pending permission request.");
+                }
+            }
             unknown => self.chat_messages.push(ChatMessage {
                 role: ChatRole::Notice,
                 text: format!("Unknown command {unknown}. Try /status, /agent, /help, /clear."),
@@ -391,7 +446,171 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "/status runtime status  /agent agent context  /clear clear chat  Esc back  Ctrl+C Ctrl+C quit".into(),
+            text: "/status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat".into(),
+        });
+    }
+
+    fn push_notice(&mut self, text: impl Into<String>) {
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::Notice,
+            text: text.into(),
+        });
+    }
+
+    fn send_chat_message(
+        &mut self,
+        text: String,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
+        let message = ChatClientMessage::Message {
+            text,
+            message_id: None,
+            agent: self.selected_agent.clone(),
+            profile_id: self.selected_profile.clone(),
+            session_action: self
+                .selected_session
+                .as_ref()
+                .map(|_| ChatSessionAction::Resume),
+            session_id: self.selected_session.clone(),
+            session_workspace: self.selected_workspace.clone(),
+            permission_mode: None,
+            attachments: Vec::new(),
+        };
+        self.send_chat_command(message, chat_tx);
+    }
+
+    fn send_chat_command(
+        &mut self,
+        message: ChatClientMessage,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
+        if chat_tx.send(message).is_err() {
+            self.last_error = Some("chat websocket task is not running".into());
+        }
+    }
+
+    fn apply_chat_socket_event(&mut self, event: ChatSocketEvent) {
+        match event {
+            ChatSocketEvent::Connected => {
+                self.chat_connected = true;
+                self.last_error = None;
+            }
+            ChatSocketEvent::Closed => {
+                self.chat_connected = false;
+                self.push_notice("Chat websocket closed.");
+            }
+            ChatSocketEvent::Error(error) => {
+                self.chat_connected = false;
+                self.last_error = Some(error.clone());
+                self.push_notice(format!("Chat websocket error: {error}"));
+            }
+            ChatSocketEvent::Event(event) => self.apply_chat_event(event),
+        }
+    }
+
+    fn apply_chat_event(&mut self, event: ChatEvent) {
+        match &event {
+            ChatEvent::Config {
+                default_agent,
+                agents,
+                ..
+            } => {
+                if self.selected_agent.is_none() {
+                    self.selected_agent = Some(default_agent.clone());
+                }
+                self.agent_picker.agents = agents.clone();
+            }
+            ChatEvent::AgentReady { agent, version } => {
+                self.last_action = Some(format!("agent {agent} {version} ready"));
+            }
+            ChatEvent::SessionReady { .. } => {}
+            ChatEvent::SystemText { text } => {
+                self.append_response_text(text);
+            }
+            ChatEvent::PermissionRequest {
+                request_id,
+                request,
+            } => {
+                self.push_notice(permission_prompt_text(request_id, request));
+            }
+            ChatEvent::AcpNotification { payload } => {
+                self.apply_acp_notification(payload);
+            }
+            ChatEvent::Error { error } => {
+                self.last_error = Some(error.clone());
+                self.push_notice(format!("Error: {error}"));
+            }
+            ChatEvent::PromptDone { .. }
+            | ChatEvent::TurnStatus { .. }
+            | ChatEvent::SessionMode { .. }
+            | ChatEvent::CommandMenu { .. }
+            | ChatEvent::MultiAgentTurn { .. }
+            | ChatEvent::SubagentStatus { .. }
+            | ChatEvent::SubagentAcpNotification { .. } => {}
+        }
+        self.chat_state.apply_event(event);
+    }
+
+    fn apply_acp_notification(&mut self, payload: &Value) {
+        let Some(update) = payload.get("update") else {
+            return;
+        };
+        match update.get("sessionUpdate").and_then(Value::as_str) {
+            Some("agent_message_chunk") => {
+                if let Some(text) = content_text(update.get("content")) {
+                    self.append_response_text(text);
+                }
+            }
+            Some("user_message_chunk") => {
+                if let Some(text) = content_text(update.get("content")) {
+                    self.append_request_echo(text);
+                }
+            }
+            Some("agent_thought_chunk") => {
+                if let Some(text) = content_text(update.get("content")) {
+                    self.last_action = Some(format!("thinking: {}", one_line(text)));
+                }
+            }
+            Some("tool_call") | Some("tool_call_update") => {
+                self.push_notice(tool_activity_text(update));
+            }
+            Some("plan") => {
+                self.push_notice("Plan updated.");
+            }
+            _ => {}
+        }
+    }
+
+    fn append_response_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(message) = self.chat_messages.last_mut() {
+            if message.role == ChatRole::Response {
+                message.text.push_str(text);
+                return;
+            }
+        }
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::Response,
+            text: text.to_string(),
+        });
+    }
+
+    fn append_request_echo(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self
+            .chat_messages
+            .last()
+            .is_some_and(|message| message.role == ChatRole::Request && message.text == text)
+        {
+            return;
+        }
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::Request,
+            text: text.to_string(),
         });
     }
 
@@ -874,8 +1093,14 @@ async fn run_dashboard(
 ) -> Result<(), TuiError> {
     let (mut terminal, _guard) = enter_terminal()?;
     let mut app = TuiApp::new(&endpoint);
+    let (chat_tx, chat_rx) = mpsc::unbounded_channel::<ChatClientMessage>();
+    let (socket_event_tx, mut socket_event_rx) = mpsc::unbounded_channel::<ChatSocketEvent>();
+    let chat_task = tokio::spawn(run_chat_socket(endpoint.clone(), chat_rx, socket_event_tx));
 
     loop {
+        while let Ok(event) = socket_event_rx.try_recv() {
+            app.apply_chat_socket_event(event);
+        }
         app.clear_expired_exit_confirmation();
         terminal
             .draw(|frame| render(frame, &app))
@@ -906,7 +1131,7 @@ async fn run_dashboard(
                     KeyCode::Up => app.select_up(),
                     KeyCode::Down => app.select_down(),
                     KeyCode::Enter => match app.view {
-                        AppView::Chat => app.submit_chat_input(&transport).await,
+                        AppView::Chat => app.submit_chat_input(&transport, &chat_tx).await,
                         AppView::Status | AppView::Agent => app.enter_current_view(),
                         AppView::StatusDetail => {}
                     },
@@ -925,12 +1150,81 @@ async fn run_dashboard(
         }
     }
 
+    chat_task.abort();
     Ok(())
 }
 
 fn is_ctrl_c(key: &KeyEvent) -> bool {
     matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
         && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+async fn run_chat_socket(
+    endpoint: ServerEndpoint,
+    mut outgoing: mpsc::UnboundedReceiver<ChatClientMessage>,
+    incoming: mpsc::UnboundedSender<ChatSocketEvent>,
+) {
+    let url = endpoint.websocket_url(&chat_ws());
+    let (ws, _) = match connect_async(&url).await {
+        Ok(connection) => connection,
+        Err(error) => {
+            let _ = incoming.send(ChatSocketEvent::Error(format!(
+                "failed to connect chat websocket: {error}"
+            )));
+            return;
+        }
+    };
+    let _ = incoming.send(ChatSocketEvent::Connected);
+    let (mut ws_tx, mut ws_rx) = ws.split();
+
+    loop {
+        tokio::select! {
+            Some(message) = outgoing.recv() => {
+                let body = match encode_chat_client_message(&message) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        let _ = incoming.send(ChatSocketEvent::Error(format!("failed to encode chat message: {error}")));
+                        continue;
+                    }
+                };
+                if let Err(error) = ws_tx.send(Message::Text(body.into())).await {
+                    let _ = incoming.send(ChatSocketEvent::Error(format!("failed to send chat message: {error}")));
+                    break;
+                }
+            }
+            frame = ws_rx.next() => {
+                match frame {
+                    Some(Ok(Message::Text(text))) => {
+                        match serde_json::from_str::<Value>(&text) {
+                            Ok(value) => match decode_chat_event(value) {
+                                Ok(event) => {
+                                    let _ = incoming.send(ChatSocketEvent::Event(event));
+                                }
+                                Err(error) => {
+                                    let _ = incoming.send(ChatSocketEvent::Error(format!("failed to decode chat event: {error}")));
+                                }
+                            },
+                            Err(error) => {
+                                let _ = incoming.send(ChatSocketEvent::Error(format!("failed to parse chat event: {error}")));
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        let _ = incoming.send(ChatSocketEvent::Closed);
+                        break;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(error)) => {
+                        let _ = incoming.send(ChatSocketEvent::Error(format!("chat websocket read failed: {error}")));
+                        break;
+                    }
+                }
+            }
+            else => break,
+        }
+    }
+
+    let _ = ws_tx.close().await;
 }
 
 fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalGuard), TuiError> {
@@ -988,6 +1282,111 @@ async fn fetch_agent_picker(transport: &HttpTransport) -> Result<AgentPickerSnap
         sessions: transport.execute(ops::sessions()).await?,
         preferences: Some(preferences),
     })
+}
+
+fn content_text(content: Option<&Value>) -> Option<&str> {
+    let content = content?;
+    content
+        .as_str()
+        .or_else(|| content.get("text").and_then(Value::as_str))
+}
+
+fn permission_prompt_text(request_id: &str, request: &Value) -> String {
+    let options = permission_options(request);
+    let option_text = if options.is_empty() {
+        "no selectable options".to_string()
+    } else {
+        options
+            .iter()
+            .map(|option| match option.name.as_deref() {
+                Some(name) if name != option.option_id => format!("{name} ({})", option.option_id),
+                _ => option.option_id.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "Permission required: {} [{request_id}]. Options: {option_text}. Use /allow <option-id> or /deny.",
+        permission_title(request)
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PermissionOption {
+    option_id: String,
+    name: Option<String>,
+}
+
+fn permission_title(request: &Value) -> String {
+    request
+        .get("toolCall")
+        .and_then(|tool_call| {
+            value_string_field(tool_call, "title")
+                .or_else(|| value_string_field(tool_call, "kind"))
+                .or_else(|| value_string_field(tool_call, "name"))
+        })
+        .or_else(|| value_string_field(request, "title"))
+        .unwrap_or_else(|| "Permission requested".into())
+}
+
+fn permission_options(request: &Value) -> Vec<PermissionOption> {
+    request
+        .get("options")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let option_id = value_string_field(item, "optionId")
+                        .or_else(|| value_string_field(item, "option_id"))?;
+                    Some(PermissionOption {
+                        option_id,
+                        name: value_string_field(item, "name"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn tool_activity_text(update: &Value) -> String {
+    let tool = update
+        .get("toolCall")
+        .and_then(|tool_call| {
+            value_string_field(tool_call, "title")
+                .or_else(|| value_string_field(tool_call, "kind"))
+                .or_else(|| value_string_field(tool_call, "name"))
+        })
+        .or_else(|| value_string_field(update, "title"))
+        .or_else(|| value_string_field(update, "toolName"))
+        .unwrap_or_else(|| "tool".into());
+    let status = value_string_field(update, "status")
+        .or_else(|| value_string_field(update, "state"))
+        .or_else(|| value_string_field(update, "outcome"));
+    match status {
+        Some(status) => format!("Tool: {} ({status})", one_line(&tool)),
+        None => format!("Tool: {}", one_line(&tool)),
+    }
+}
+
+fn value_string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn one_line(value: &str) -> String {
+    let text = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    const LIMIT: usize = 120;
+    if text.chars().count() <= LIMIT {
+        return text;
+    }
+    let mut truncated = text.chars().take(LIMIT).collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 fn render(frame: &mut Frame<'_>, app: &TuiApp) {
@@ -1154,17 +1553,33 @@ fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
     let session_label = app
         .selected_session
         .as_deref()
+        .or(app.chat_state.session_id.as_deref())
         .map(short_id)
         .unwrap_or_else(|| "new".to_string());
+    let agent_label = app
+        .selected_agent
+        .as_deref()
+        .or(app.chat_state.default_agent.as_deref())
+        .unwrap_or("global");
     let mut spans = vec![Span::styled(
         "chat",
         Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
     )];
     spans.push(separator());
-    spans.extend(label_value_spans(
-        "agent",
-        app.selected_agent.as_deref().unwrap_or("global"),
+    spans.push(Span::styled(
+        if app.chat_connected {
+            "connected"
+        } else {
+            "offline"
+        },
+        if app.chat_connected {
+            Style::default().fg(OK).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
+        },
     ));
+    spans.push(separator());
+    spans.extend(label_value_spans("agent", agent_label));
     spans.push(Span::raw("  "));
     spans.extend(label_value_spans(
         "profile",
@@ -1621,7 +2036,15 @@ fn command_bar(app: &TuiApp) -> Paragraph<'static> {
 
 fn view_hint(app: &TuiApp) -> String {
     match app.view {
-        AppView::Chat => "type a message or slash command".to_string(),
+        AppView::Chat => {
+            if app.chat_state.pending_permission_request_id.is_some() {
+                "permission pending: /allow <option-id> or /deny".to_string()
+            } else if app.chat_state.turn_active {
+                "agent is working; /stop to interrupt".to_string()
+            } else {
+                "type a message or slash command".to_string()
+            }
+        }
         AppView::Status => app
             .last_refresh
             .map(|instant| format!("status loaded {}s ago", instant.elapsed().as_secs()))
@@ -2205,6 +2628,81 @@ mod tests {
         assert_eq!(notice, "* ready");
         assert!(!request.contains("you"));
         assert!(!notice.contains("system"));
+    }
+
+    #[test]
+    fn chat_message_send_uses_selected_context() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
+        app.selected_agent = Some("codex".into());
+        app.selected_profile = Some("default-profile".into());
+        app.selected_session = Some("session-1".into());
+        app.selected_workspace = Some("/tmp/work".into());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        app.send_chat_message("hello".into(), &tx);
+
+        assert_eq!(
+            rx.try_recv().expect("message"),
+            ChatClientMessage::Message {
+                text: "hello".into(),
+                message_id: None,
+                agent: Some("codex".into()),
+                profile_id: Some("default-profile".into()),
+                session_action: Some(ChatSessionAction::Resume),
+                session_id: Some("session-1".into()),
+                session_workspace: Some("/tmp/work".into()),
+                permission_mode: None,
+                attachments: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn chat_event_appends_raw_agent_chunks() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
+
+        app.apply_chat_event(ChatEvent::AcpNotification {
+            payload: serde_json::json!({
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "text": "hello **raw**" }
+                }
+            }),
+        });
+        app.apply_chat_event(ChatEvent::AcpNotification {
+            payload: serde_json::json!({
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": { "text": "\nworld" }
+                }
+            }),
+        });
+
+        assert_eq!(app.chat_messages.last().unwrap().role, ChatRole::Response);
+        assert_eq!(
+            app.chat_messages.last().unwrap().text,
+            "hello **raw**\nworld"
+        );
+    }
+
+    #[test]
+    fn permission_prompt_lists_allow_command_options() {
+        let text = permission_prompt_text(
+            "req-1",
+            &serde_json::json!({
+                "toolCall": { "title": "Read" },
+                "options": [
+                    { "optionId": "allow-once", "name": "Allow" },
+                    { "optionId": "reject", "name": "Reject" }
+                ]
+            }),
+        );
+
+        assert!(text.contains("Permission required: Read"));
+        assert!(text.contains("Allow (allow-once)"));
+        assert!(text.contains("/allow <option-id>"));
     }
 
     #[test]
