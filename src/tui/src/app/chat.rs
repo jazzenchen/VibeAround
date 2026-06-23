@@ -452,9 +452,12 @@ impl TuiApp {
                 self.push_notice("Chat websocket closed.");
             }
             ChatSocketEvent::Error(error) => {
+                let duplicate_error = self.last_error.as_deref() == Some(error.as_str());
                 self.chat_connected = false;
                 self.last_error = Some(error.clone());
-                self.push_notice(format!("Chat websocket error: {error}"));
+                if !duplicate_error {
+                    self.push_notice(format!("Chat websocket error: {error}"));
+                }
             }
             ChatSocketEvent::Event(event) => self.apply_chat_event(event),
         }

@@ -1,6 +1,7 @@
 use super::*;
 use std::collections::BTreeMap;
 
+use crate::chat_socket::ChatSocketEvent;
 use crate::config::DEFAULT_BASE_URL;
 use crate::render;
 use crate::runtime_socket::RuntimeSocketEvent;
@@ -475,6 +476,24 @@ fn chat_arrows_scroll_transcript() {
     assert_eq!(app.chat_scroll, 1);
     app.follow_chat_tail();
     assert_eq!(app.chat_scroll, 0);
+}
+
+#[test]
+fn repeated_chat_socket_errors_do_not_duplicate_notices() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let initial_messages = app.chat_messages.len();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()));
+    assert_eq!(app.last_error.as_deref(), Some("offline"));
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+
+    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()));
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+
+    app.apply_chat_socket_event(ChatSocketEvent::Error("still offline".into()));
+    assert_eq!(app.last_error.as_deref(), Some("still offline"));
+    assert_eq!(app.chat_messages.len(), initial_messages + 2);
 }
 
 #[test]
