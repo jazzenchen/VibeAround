@@ -736,6 +736,27 @@ async fn submit_chat_input_sends_multiline_prompt() {
 }
 
 #[tokio::test]
+async fn failed_chat_submit_restores_input_without_transcript_echo() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.set_chat_input_for_test("do not lose this");
+    let initial_messages = app.chat_messages.len();
+    let (tx, rx) = mpsc::unbounded_channel();
+    drop(rx);
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(app.chat_input, "do not lose this");
+    assert_eq!(app.chat_cursor, app.chat_input.len());
+    assert_eq!(app.chat_messages.len(), initial_messages);
+    assert_eq!(
+        app.last_error.as_deref(),
+        Some("chat websocket task is not running")
+    );
+}
+
+#[tokio::test]
 async fn slash_command_submission_trims_command_boundary_whitespace() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));

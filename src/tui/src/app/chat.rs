@@ -177,13 +177,18 @@ impl TuiApp {
         input: String,
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
     ) {
-        self.chat_messages.push(ChatMessage {
-            role: ChatRole::Request,
-            text: input.clone(),
-        });
+        let input_cursor = input.len();
         self.work_status = None;
-        self.follow_chat_tail();
-        self.send_chat_message(input, chat_tx);
+        if self.send_chat_message(input.clone(), chat_tx) {
+            self.chat_messages.push(ChatMessage {
+                role: ChatRole::Request,
+                text: input,
+            });
+            self.follow_chat_tail();
+        } else {
+            self.chat_input = input;
+            self.chat_cursor = input_cursor;
+        }
     }
 
     async fn run_slash_command(
@@ -318,7 +323,7 @@ impl TuiApp {
         &mut self,
         text: String,
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
-    ) {
+    ) -> bool {
         let force_new_session = self.force_new_session;
         let message = ChatClientMessage::Message {
             text,
@@ -339,9 +344,11 @@ impl TuiApp {
             permission_mode: None,
             attachments: Vec::new(),
         };
-        if self.send_chat_command(message, chat_tx) && force_new_session {
+        let sent = self.send_chat_command(message, chat_tx);
+        if sent && force_new_session {
             self.force_new_session = false;
         }
+        sent
     }
 
     fn send_chat_command(
