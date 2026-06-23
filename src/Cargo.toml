@@ -4,6 +4,7 @@ members = [
     "core",
     "client",
     "cli",
+    "tui",
     "server",
     "desktop",
 ]
