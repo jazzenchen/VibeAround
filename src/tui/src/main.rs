@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -35,6 +35,7 @@ const BRAND_LOGO: &str = r#" ██╗   ██╗ ██╗ ██████�
   ╚████╔╝  ██║ ██████╔╝ ███████╗ ██║  ██║ ██║  ██║ ╚██████╔╝ ╚██████╔╝ ██║ ╚████║ ██████╔╝
    ╚═══╝   ╚═╝ ╚═════╝  ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝   ╚═════╝  ╚═╝  ╚═══╝ ╚═════╝"#;
 const TAGLINE: &str = "unified runtime for ai coding agents";
+const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Parser)]
 #[command(name = "va-tui", version, about = "VibeAround terminal dashboard")]
@@ -149,6 +150,7 @@ struct TuiApp {
     last_error: Option<String>,
     last_action: Option<String>,
     last_refresh: Option<Instant>,
+    exit_confirmation_started: Option<Instant>,
 }
 
 impl TuiApp {
@@ -160,6 +162,7 @@ impl TuiApp {
             last_error: None,
             last_action: None,
             last_refresh: None,
+            exit_confirmation_started: None,
         }
     }
 
@@ -317,6 +320,42 @@ impl TuiApp {
             RuntimePanel::Agents => self.snapshot.agents.len(),
             RuntimePanel::Sessions => self.snapshot.sessions.len(),
         }
+    }
+
+    fn confirm_exit_request(&mut self) -> bool {
+        self.confirm_exit_request_at(Instant::now())
+    }
+
+    fn confirm_exit_request_at(&mut self, now: Instant) -> bool {
+        if self.exit_confirmation_active_at(now) {
+            self.exit_confirmation_started = None;
+            return true;
+        }
+
+        self.exit_confirmation_started = Some(now);
+        self.last_error = None;
+        self.last_action = None;
+        false
+    }
+
+    fn clear_expired_exit_confirmation(&mut self) {
+        self.clear_expired_exit_confirmation_at(Instant::now());
+    }
+
+    fn clear_expired_exit_confirmation_at(&mut self, now: Instant) {
+        if self.exit_confirmation_started.is_some() && !self.exit_confirmation_active_at(now) {
+            self.exit_confirmation_started = None;
+        }
+    }
+
+    fn exit_confirmation_active_at(&self, now: Instant) -> bool {
+        self.exit_confirmation_started
+            .and_then(|started| now.checked_duration_since(started))
+            .is_some_and(|elapsed| elapsed <= EXIT_CONFIRM_WINDOW)
+    }
+
+    fn exit_confirmation_pending(&self) -> bool {
+        self.exit_confirmation_started.is_some()
     }
 }
 
@@ -476,6 +515,7 @@ async fn run_dashboard(
     let mut last_tick = Instant::now();
 
     loop {
+        app.clear_expired_exit_confirmation();
         terminal
             .draw(|frame| render(frame, &app))
             .map_err(|source| TuiError::Io {
@@ -491,8 +531,14 @@ async fn run_dashboard(
                 action: "reading terminal events",
                 source,
             })? {
+                if is_ctrl_c(&key) {
+                    if app.confirm_exit_request() {
+                        break;
+                    }
+                    continue;
+                }
+
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Tab | KeyCode::Right => app.select_next_panel(),
                     KeyCode::BackTab | KeyCode::Left => app.select_previous_panel(),
                     KeyCode::Char('j') | KeyCode::Down => app.select_next_item(),
@@ -527,6 +573,11 @@ async fn run_dashboard(
     }
 
     Ok(())
+}
+
+fn is_ctrl_c(key: &KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
 fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalGuard), TuiError> {
@@ -908,18 +959,17 @@ fn command_bar(app: &TuiApp) -> Paragraph<'static> {
         .last_refresh
         .map(|instant| format!("refreshed {}s ago", instant.elapsed().as_secs()))
         .unwrap_or_else(|| "not refreshed yet".to_string());
-    let status = app
-        .last_error
-        .as_ref()
-        .map(|error| format!("error: {error}"))
-        .or_else(|| {
-            app.last_action
-                .as_ref()
-                .map(|action| format!("last: {action}"))
-        })
-        .unwrap_or(refreshed);
+    let (status, status_color) = if app.exit_confirmation_pending() {
+        ("press Ctrl+C again to quit".to_string(), Color::Yellow)
+    } else if let Some(error) = &app.last_error {
+        (format!("error: {error}"), Color::Red)
+    } else if let Some(action) = &app.last_action {
+        (format!("last: {action}"), Color::Gray)
+    } else {
+        (refreshed, Color::Gray)
+    };
     Paragraph::new(Line::from(vec![
-        Span::styled(status, Style::default().fg(Color::Gray)),
+        Span::styled(status, Style::default().fg(status_color)),
         Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
         key_span("Tab"),
         Span::raw("/"),
@@ -937,7 +987,9 @@ fn command_bar(app: &TuiApp) -> Paragraph<'static> {
         Span::raw(" restart  "),
         key_span("f"),
         Span::raw(" refresh  "),
-        key_span("q"),
+        key_span("Ctrl+C"),
+        Span::raw(" "),
+        key_span("Ctrl+C"),
         Span::raw(" quit"),
     ]))
     .alignment(Alignment::Center)
@@ -1364,6 +1416,35 @@ mod tests {
         assert_eq!(brand_mode(96, 24), BrandMode::FullLogo);
         assert_eq!(BrandMode::Narrow.height(), 3);
         assert_eq!(BrandMode::FullLogo.height(), 9);
+    }
+
+    #[test]
+    fn recognizes_ctrl_c_as_exit_key() {
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let plain_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
+        let ctrl_q = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+
+        assert!(is_ctrl_c(&ctrl_c));
+        assert!(!is_ctrl_c(&plain_c));
+        assert!(!is_ctrl_c(&ctrl_q));
+    }
+
+    #[test]
+    fn exit_requires_second_ctrl_c_within_window() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
+        let start = Instant::now();
+
+        assert!(!app.confirm_exit_request_at(start));
+        assert!(app.exit_confirmation_pending());
+        assert!(app.exit_confirmation_active_at(start + Duration::from_secs(1)));
+        assert!(app.confirm_exit_request_at(start + Duration::from_secs(1)));
+        assert!(!app.exit_confirmation_pending());
+
+        assert!(!app.confirm_exit_request_at(start + Duration::from_secs(4)));
+        app.clear_expired_exit_confirmation_at(start + Duration::from_secs(7));
+        assert!(!app.exit_confirmation_pending());
+        assert!(!app.confirm_exit_request_at(start + Duration::from_secs(8)));
     }
 
     #[test]
