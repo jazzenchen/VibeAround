@@ -227,9 +227,37 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
         "session-profile",
     )]));
     assert_eq!(app.snapshot.sessions[0].session_id, "session-1");
+    assert_eq!(app.agent_picker.sessions[0].session_id, "session-1");
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Error("runtime socket closed".into()));
     assert_eq!(app.last_error.as_deref(), Some("runtime socket closed"));
+}
+
+#[test]
+fn session_socket_updates_agent_picker_and_clears_stale_selection() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.view = AppView::Agent;
+    app.agent_picker.sessions = vec![session("old-session", "/tmp/old", "old-profile")];
+    app.selected_session = Some("old-session".into());
+    app.selected_profile = Some("old-profile".into());
+    app.selected_workspace = Some("/tmp/old".into());
+    app.agent_selection.panel = AgentPanel::Sessions;
+    app.agent_selection.clamp(&app.agent_picker);
+    assert_eq!(app.agent_selection.index(AgentPanel::Sessions), Some(0));
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Sessions(vec![session(
+        "new-session",
+        "/tmp/new",
+        "new-profile",
+    )]));
+
+    assert_eq!(app.agent_picker.sessions[0].session_id, "new-session");
+    assert_eq!(app.snapshot.sessions[0].session_id, "new-session");
+    assert_eq!(app.agent_selection.index(AgentPanel::Sessions), Some(0));
+    assert_eq!(app.selected_session, None);
+    assert_eq!(app.selected_profile.as_deref(), Some("old-profile"));
+    assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/old"));
 }
 
 #[test]
