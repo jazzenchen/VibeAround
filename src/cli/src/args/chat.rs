@@ -10,6 +10,7 @@ pub(crate) struct ChatSendArgs {
     pub(crate) profile_id: Option<String>,
     pub(crate) resume_session_id: Option<String>,
     pub(crate) new_session: bool,
+    pub(crate) continue_session: bool,
     pub(crate) workspace_path: Option<String>,
     pub(crate) permission_mode: Option<String>,
 }
@@ -32,6 +33,8 @@ pub(super) struct ChatSendCli {
     resume_session_id: Option<String>,
     #[arg(long = "new-session", alias = "new")]
     new_session: bool,
+    #[arg(long = "continue", aliases = ["last", "resume-last"])]
+    continue_session: bool,
     #[arg(long = "workspace", aliases = ["workspace-path", "cwd"])]
     workspace_path: Option<String>,
     #[arg(long = "permission-mode", aliases = ["mode", "mode-id"])]
@@ -51,9 +54,23 @@ impl ChatSendCli {
                 "chat send cannot combine --new-session with --resume".into(),
             ));
         }
-        if self.workspace_path.is_some() && !self.new_session && self.resume_session_id.is_none() {
+        if self.new_session && self.continue_session {
             return Err(CliError::Usage(
-                "chat send --workspace requires --new-session or --resume".into(),
+                "chat send cannot combine --new-session with --continue".into(),
+            ));
+        }
+        if self.resume_session_id.is_some() && self.continue_session {
+            return Err(CliError::Usage(
+                "chat send cannot combine --resume with --continue".into(),
+            ));
+        }
+        if self.workspace_path.is_some()
+            && !self.new_session
+            && self.resume_session_id.is_none()
+            && !self.continue_session
+        {
+            return Err(CliError::Usage(
+                "chat send --workspace requires --new-session, --resume, or --continue".into(),
             ));
         }
         let text = self.text.join(" ").trim().to_string();
@@ -66,6 +83,7 @@ impl ChatSendCli {
             profile_id: self.profile_id,
             resume_session_id: self.resume_session_id,
             new_session: self.new_session,
+            continue_session: self.continue_session,
             workspace_path: self.workspace_path,
             permission_mode: self.permission_mode,
         })

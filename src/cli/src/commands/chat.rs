@@ -12,10 +12,12 @@ use va_client::http::AuthRequirement;
 use va_client::state::ChatState;
 
 use crate::args::{ChatSendArgs, Options};
+use crate::chat_store::{save_session_for, saved_session_for, scope_for_args, ChatSessionScope};
 use crate::config::endpoint_for;
 use crate::error::CliError;
 
 pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), CliError> {
+    let session = resolve_session(options, args)?;
     let endpoint = endpoint_for(options, AuthRequirement::BearerToken)?;
     let socket = chat_ws();
     let url = endpoint.websocket_url(&socket);
@@ -24,7 +26,7 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
         .map_err(|source| ws_error(&url, source))?;
     let (mut ws_tx, mut ws_rx) = ws.split();
 
-    let body = encode_chat_client_message(&message_from_args(args))?;
+    let body = encode_chat_client_message(&message_from_args(args, &session))?;
     ws_tx
         .send(Message::Text(body.into()))
         .await
@@ -72,6 +74,11 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
                     ChatTerminalEvent::Done => {
                         finish_text_line(wrote_text_chunk)?;
                         let _ = ws_tx.close().await;
+                        if let (Some(scope), Some(session_id)) =
+                            (&session.store_scope, state.session_id.as_deref())
+                        {
+                            save_session_for(options, scope, session_id)?;
+                        }
                         return Ok(());
                     }
                     ChatTerminalEvent::Error(error) => {
@@ -92,21 +99,67 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
     ))
 }
 
-fn message_from_args(args: &ChatSendArgs) -> ChatClientMessage {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedChatSession {
+    resume_session_id: Option<String>,
+    session_action: Option<ChatSessionAction>,
+    session_workspace: Option<String>,
+    store_scope: Option<ChatSessionScope>,
+}
+
+fn resolve_session(
+    options: &Options,
+    args: &ChatSendArgs,
+) -> Result<ResolvedChatSession, CliError> {
+    if !args.new_session && args.resume_session_id.is_none() && !args.continue_session {
+        return Ok(ResolvedChatSession {
+            resume_session_id: None,
+            session_action: None,
+            session_workspace: args.workspace_path.clone(),
+            store_scope: None,
+        });
+    }
+
+    let scope = scope_for_args(args)?;
+    if args.continue_session {
+        let session_id = saved_session_for(options, &scope)?.ok_or_else(|| {
+            CliError::Chat(format!(
+                "no saved chat session for {}; run `va chat send --new-session ...` or pass --resume SESSION first",
+                scope.display()
+            ))
+        })?;
+        return Ok(ResolvedChatSession {
+            resume_session_id: Some(session_id),
+            session_action: Some(ChatSessionAction::Resume),
+            session_workspace: Some(scope.workspace.clone()),
+            store_scope: Some(scope),
+        });
+    }
+
+    Ok(ResolvedChatSession {
+        resume_session_id: args.resume_session_id.clone(),
+        session_action: if args.new_session {
+            Some(ChatSessionAction::New)
+        } else {
+            Some(ChatSessionAction::Resume)
+        },
+        session_workspace: args
+            .workspace_path
+            .clone()
+            .or_else(|| Some(scope.workspace.clone())),
+        store_scope: Some(scope),
+    })
+}
+
+fn message_from_args(args: &ChatSendArgs, session: &ResolvedChatSession) -> ChatClientMessage {
     ChatClientMessage::Message {
         text: args.text.clone(),
         message_id: None,
         agent: args.agent.clone(),
         profile_id: args.profile_id.clone(),
-        session_action: if args.new_session {
-            Some(ChatSessionAction::New)
-        } else if args.resume_session_id.is_some() {
-            Some(ChatSessionAction::Resume)
-        } else {
-            None
-        },
-        session_id: args.resume_session_id.clone(),
-        session_workspace: args.workspace_path.clone(),
+        session_action: session.session_action,
+        session_id: session.resume_session_id.clone(),
+        session_workspace: session.session_workspace.clone(),
         permission_mode: args.permission_mode.clone(),
         attachments: Vec::new(),
     }
@@ -320,21 +373,32 @@ fn ws_error(url: &str, source: tokio_tungstenite::tungstenite::Error) -> CliErro
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use serde_json::json;
 
     use super::*;
 
     #[test]
     fn chat_send_args_build_resume_message() {
-        let message = message_from_args(&ChatSendArgs {
-            text: "hello".into(),
-            agent: Some("codex".into()),
-            profile_id: Some("deepseek".into()),
-            resume_session_id: Some("sid-1".into()),
-            new_session: false,
-            workspace_path: Some("/tmp/project".into()),
-            permission_mode: Some("acceptEdits".into()),
-        });
+        let message = message_from_args(
+            &ChatSendArgs {
+                text: "hello".into(),
+                agent: Some("codex".into()),
+                profile_id: Some("deepseek".into()),
+                resume_session_id: Some("sid-1".into()),
+                new_session: false,
+                continue_session: false,
+                workspace_path: Some("/tmp/project".into()),
+                permission_mode: Some("acceptEdits".into()),
+            },
+            &ResolvedChatSession {
+                resume_session_id: Some("sid-1".into()),
+                session_action: Some(ChatSessionAction::Resume),
+                session_workspace: Some("/tmp/project".into()),
+                store_scope: None,
+            },
+        );
 
         let value = serde_json::to_value(message).expect("json");
         assert_eq!(
@@ -350,6 +414,42 @@ mod tests {
                 "permissionMode": "acceptEdits"
             })
         );
+    }
+
+    #[test]
+    fn resolve_continue_session_from_store() {
+        let root = std::env::temp_dir().join(format!(
+            "va-cli-chat-command-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("dir");
+        let options = Options {
+            auth_file: Some(root.join("auth.json")),
+            ..Default::default()
+        };
+        let args = ChatSendArgs {
+            text: "hello".into(),
+            agent: Some("codex".into()),
+            profile_id: Some("default".into()),
+            resume_session_id: None,
+            new_session: false,
+            continue_session: true,
+            workspace_path: Some("/tmp/project".into()),
+            permission_mode: None,
+        };
+        let scope = scope_for_args(&args).expect("scope");
+        save_session_for(&options, &scope, "session-1").expect("save");
+
+        let session = resolve_session(&options, &args).expect("session");
+
+        assert_eq!(session.resume_session_id.as_deref(), Some("session-1"));
+        assert_eq!(session.session_action, Some(ChatSessionAction::Resume));
+        assert_eq!(session.session_workspace.as_deref(), Some("/tmp/project"));
+        assert_eq!(session.store_scope, Some(scope));
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -142,6 +142,14 @@ pub(crate) fn auth_file_path(options: &Options) -> PathBuf {
     auth_file_path_with_env(options, &RuntimeEnv::current())
 }
 
+pub(crate) fn chat_sessions_path(options: &Options) -> PathBuf {
+    let auth_path = auth_file_path(options);
+    auth_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("chat-sessions.json")
+}
+
 pub(crate) fn save_auth_file(
     options: &Options,
     port: u16,
@@ -240,7 +248,7 @@ fn env_value(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn set_owner_only(path: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn set_owner_only(path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
