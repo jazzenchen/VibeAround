@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
-use crate::error::CliError;
+use clap::{Args, Parser, Subcommand};
 use va_client::sessions::PtyTool;
+
+use crate::error::CliError;
 
 mod pair;
 
@@ -86,482 +88,434 @@ pub(crate) struct Options {
     pub(crate) json: bool,
 }
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "va",
+    disable_help_flag = true,
+    disable_help_subcommand = true,
+    disable_version_flag = true
+)]
+struct CliArgs {
+    #[arg(long = "help", short = 'h', global = true)]
+    help: bool,
+    #[arg(long, global = true)]
+    auth_file: Option<PathBuf>,
+    #[arg(long, global = true)]
+    base_url: Option<String>,
+    #[arg(long, global = true)]
+    token: Option<String>,
+    #[arg(long, global = true)]
+    json: bool,
+    #[command(subcommand)]
+    command: Option<TopCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum TopCommand {
+    Help,
+    Health,
+    Info,
+    Status,
+    Doctor,
+    Channels,
+    Tunnels,
+    Agents,
+    Sessions,
+    Workspaces,
+    Previews,
+    Profiles,
+    Pair {
+        #[command(subcommand)]
+        command: pair::PairCommand,
+    },
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
+    Launch {
+        #[command(subcommand)]
+        command: LaunchCommand,
+    },
+    Tmux {
+        #[command(subcommand)]
+        command: TmuxCommand,
+    },
+    Settings {
+        #[command(subcommand)]
+        command: SettingsCommand,
+    },
+    Channel {
+        #[command(subcommand)]
+        command: ChannelCommand,
+    },
+    Tunnel {
+        #[command(subcommand)]
+        command: TunnelCommand,
+    },
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+    Pty {
+        #[command(subcommand)]
+        command: PtyCommand,
+    },
+    Preview {
+        #[command(subcommand)]
+        command: PreviewCommand,
+    },
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum AuthCommand {
+    Status,
+    Clear,
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum LaunchCommand {
+    Sessions(LaunchSessionsCli),
+    Archive(LaunchSessionMutationCli),
+    Unarchive(LaunchSessionMutationCli),
+}
+
+#[derive(Debug, Args)]
+struct LaunchSessionsCli {
+    #[arg(long = "agent", short = 'a')]
+    agent_ids: Vec<String>,
+    #[arg(value_name = "AGENT")]
+    positional_agent_ids: Vec<String>,
+    #[arg(long = "workspace", aliases = ["workspace-path", "cwd"])]
+    workspace_paths: Vec<String>,
+    #[arg(
+        long = "archived",
+        alias = "include-archived",
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    include_archived: bool,
+    #[arg(long, value_parser = parse_positive_usize)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Args)]
+struct LaunchSessionMutationCli {
+    #[arg(long = "agent", short = 'a')]
+    agent_id: Option<String>,
+    #[arg(long = "workspace", aliases = ["workspace-path", "cwd"])]
+    workspace_path: Option<String>,
+    #[arg(value_name = "ARG")]
+    positionals: Vec<String>,
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum TmuxCommand {
+    Sessions,
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum SettingsCommand {
+    Reload,
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum ChannelCommand {
+    Sync,
+    Start { kind: String },
+    Stop { kind: String },
+    Restart { kind: String },
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum TunnelCommand {
+    Kill { provider: String },
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum AgentCommand {
+    Kill { route_key: String },
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum SessionCommand {
+    Create(SessionCreateCli),
+    Attach { session_id: String },
+    Kill { session_id: String },
+}
+
+#[derive(Debug, Args)]
+struct SessionCreateCli {
+    #[arg(long, value_parser = parse_tool)]
+    tool: Option<PtyTool>,
+    #[arg(value_name = "TOOL", value_parser = parse_tool)]
+    positional_tool: Option<PtyTool>,
+    #[arg(long = "profile", alias = "profile-id")]
+    profile_id: Option<String>,
+    #[arg(long = "target", alias = "launch-target")]
+    launch_target: Option<String>,
+    #[arg(long = "resume", aliases = ["resume-session", "resume-session-id"])]
+    resume_session_id: Option<String>,
+    #[arg(long = "project", aliases = ["project-path", "cwd"])]
+    project_path: Option<String>,
+    #[arg(long = "tmux", alias = "tmux-session")]
+    tmux_session: Option<String>,
+    #[arg(
+        long,
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    attach: bool,
+    #[arg(long)]
+    theme: Option<String>,
+    #[arg(long, value_parser = parse_positive_u16)]
+    cols: Option<u16>,
+    #[arg(long, value_parser = parse_positive_u16)]
+    rows: Option<u16>,
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum PtyCommand {
+    Kill { session_id: String },
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum PreviewCommand {
+    Delete { slug: String },
+}
+
+#[derive(Debug, Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum WorkspaceCommand {
+    Add { path: String },
+    Remove { path: String },
+    Default { path: String },
+    Create { name: String },
+}
+
 pub(crate) fn parse_args<I>(args: I) -> Result<Options, CliError>
 where
     I: IntoIterator<Item = String>,
 {
-    let mut options = Options::default();
-    let mut args = args.into_iter().peekable();
-    let mut positionals = Vec::new();
-    let mut command_started = false;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--help" | "-h" => options.command = Some(Command::Help),
-            "--auth-file" => {
-                options.auth_file = Some(PathBuf::from(next_value(&mut args, "--auth-file")?));
-            }
-            "--base-url" => {
-                options.base_url = Some(next_value(&mut args, "--base-url")?);
-            }
-            "--token" => {
-                options.token = Some(next_value(&mut args, "--token")?);
-            }
-            "--json" => {
-                options.json = true;
-            }
-            value if value.starts_with("--auth-file=") => {
-                options.auth_file = Some(PathBuf::from(value.trim_start_matches("--auth-file=")));
-            }
-            value if value.starts_with("--base-url=") => {
-                options.base_url = Some(value.trim_start_matches("--base-url=").to_string());
-            }
-            value if value.starts_with("--token=") => {
-                options.token = Some(value.trim_start_matches("--token=").to_string());
-            }
-            value if value.starts_with('-') && !command_started => {
-                return Err(CliError::Usage(format!("unknown option: {value}")));
-            }
-            value => {
-                command_started = true;
-                positionals.push(value.to_string());
-            }
-        }
-    }
-    if !positionals.is_empty() {
-        if options.command.is_some() {
-            return Err(CliError::Usage(format!(
-                "unexpected argument: {}",
-                positionals[0]
-            )));
-        }
-        options.command = Some(parse_command(&positionals)?);
-    }
-    Ok(options)
-}
-
-fn next_value<I>(args: &mut std::iter::Peekable<I>, flag: &str) -> Result<String, CliError>
-where
-    I: Iterator<Item = String>,
-{
-    args.next()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| CliError::Usage(format!("missing value for {flag}")))
-}
-
-fn parse_command(args: &[String]) -> Result<Command, CliError> {
-    let Some(command) = args.first().map(String::as_str) else {
-        return Err(CliError::Usage("missing command".into()));
+    let cli = CliArgs::try_parse_from(std::iter::once("va".to_string()).chain(args))
+        .map_err(|error| CliError::Usage(error.to_string()))?;
+    let command = if cli.help {
+        Some(Command::Help)
+    } else {
+        cli.command.map(top_command_into_command).transpose()?
     };
-    let rest = &args[1..];
-    match command {
-        "help" => no_args(rest, "help").map(|()| Command::Help),
-        "health" => no_args(rest, "health").map(|()| Command::Health),
-        "info" => no_args(rest, "info").map(|()| Command::Info),
-        "status" => no_args(rest, "status").map(|()| Command::Status),
-        "doctor" => no_args(rest, "doctor").map(|()| Command::Doctor),
-        "channels" => no_args(rest, "channels").map(|()| Command::Channels),
-        "tunnels" => no_args(rest, "tunnels").map(|()| Command::Tunnels),
-        "agents" => no_args(rest, "agents").map(|()| Command::Agents),
-        "sessions" => no_args(rest, "sessions").map(|()| Command::Sessions),
-        "workspaces" => no_args(rest, "workspaces").map(|()| Command::Workspaces),
-        "previews" => no_args(rest, "previews").map(|()| Command::Previews),
-        "profiles" => no_args(rest, "profiles").map(|()| Command::Profiles),
-        "pair" => pair::parse_pair_command(rest),
-        "auth" => parse_auth_command(rest),
-        "launch" => parse_launch_command(rest),
-        "tmux" => parse_tmux_command(rest),
-        "settings" => match rest {
-            [action] if action == "reload" => Ok(Command::SettingsReload),
-            _ => Err(CliError::Usage("usage: va settings reload".to_string())),
-        },
-        "channel" => parse_channel_command(rest),
-        "tunnel" => match rest {
-            [action, provider] if action == "kill" => Ok(Command::TunnelKill {
-                provider: provider.to_string(),
-            }),
-            _ => Err(CliError::Usage("usage: va tunnel kill PROVIDER".into())),
-        },
-        "agent" => match rest {
-            [action, route_key] if action == "kill" => Ok(Command::AgentKill {
-                route_key: route_key.to_string(),
-            }),
-            _ => Err(CliError::Usage("usage: va agent kill ROUTE_KEY".into())),
-        },
-        "session" => parse_session_command(rest),
-        "pty" => match rest {
-            [action, session_id] if action == "kill" => Ok(Command::PtyKill {
-                session_id: session_id.to_string(),
-            }),
-            _ => Err(CliError::Usage("usage: va pty kill SESSION_ID".into())),
-        },
-        "preview" => match rest {
-            [action, slug] if action == "delete" => Ok(Command::PreviewDelete {
-                slug: slug.to_string(),
-            }),
-            _ => Err(CliError::Usage("usage: va preview delete SLUG".into())),
-        },
-        "workspace" => parse_workspace_command(rest),
-        other => Err(CliError::Usage(format!("unknown command: {other}"))),
-    }
-}
-
-fn parse_launch_command(args: &[String]) -> Result<Command, CliError> {
-    match args {
-        [action, rest @ ..] if action == "sessions" => {
-            parse_launch_sessions_args(rest).map(Command::LaunchSessions)
-        }
-        [action, rest @ ..] if action == "archive" => {
-            parse_launch_session_mutation_args("archive", rest).map(Command::LaunchSessionArchive)
-        }
-        [action, rest @ ..] if action == "unarchive" => parse_launch_session_mutation_args(
-            "unarchive",
-            rest,
-        )
-        .map(Command::LaunchSessionUnarchive),
-        _ => Err(CliError::Usage(
-            "usage: va launch sessions [--agent AGENT] [--workspace PATH]; va launch archive|unarchive --agent AGENT SESSION_ID".into(),
-        )),
-    }
-}
-
-fn parse_launch_sessions_args(args: &[String]) -> Result<LaunchSessionsArgs, CliError> {
-    let mut parsed = LaunchSessionsArgs::default();
-    let mut args = args.iter().peekable();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--agent" | "-a" => parsed.agent_ids.push(next_ref(&mut args, arg)?.to_string()),
-            "--workspace" | "--workspace-path" | "--cwd" => {
-                parsed
-                    .workspace_paths
-                    .push(next_ref(&mut args, arg)?.to_string());
-            }
-            "--archived" | "--include-archived" => parsed.include_archived = true,
-            "--limit" => {
-                parsed.limit = Some(parse_usize(next_ref(&mut args, "--limit")?, "--limit")?)
-            }
-            value if value.starts_with("--agent=") => {
-                parsed
-                    .agent_ids
-                    .push(value.trim_start_matches("--agent=").to_string());
-            }
-            value if value.starts_with("--workspace=") => {
-                parsed
-                    .workspace_paths
-                    .push(value.trim_start_matches("--workspace=").to_string());
-            }
-            value if value.starts_with("--workspace-path=") => {
-                parsed
-                    .workspace_paths
-                    .push(value.trim_start_matches("--workspace-path=").to_string());
-            }
-            value if value.starts_with("--cwd=") => {
-                parsed
-                    .workspace_paths
-                    .push(value.trim_start_matches("--cwd=").to_string());
-            }
-            value if value.starts_with("--archived=") => {
-                parsed.include_archived =
-                    parse_bool(value.trim_start_matches("--archived="), "--archived")?;
-            }
-            value if value.starts_with("--include-archived=") => {
-                parsed.include_archived = parse_bool(
-                    value.trim_start_matches("--include-archived="),
-                    "--include-archived",
-                )?;
-            }
-            value if value.starts_with("--limit=") => {
-                parsed.limit = Some(parse_usize(
-                    value.trim_start_matches("--limit="),
-                    "--limit",
-                )?);
-            }
-            value if value.starts_with('-') => {
-                return Err(CliError::Usage(format!(
-                    "unknown launch sessions option: {value}"
-                )));
-            }
-            value => parsed.agent_ids.push(value.to_string()),
-        }
-    }
-    Ok(parsed)
-}
-
-fn parse_launch_session_mutation_args(
-    action: &str,
-    args: &[String],
-) -> Result<LaunchSessionMutationArgs, CliError> {
-    let mut agent_id = None;
-    let mut workspace_path = None;
-    let mut positionals = Vec::new();
-    let mut args = args.iter().peekable();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--agent" | "-a" => agent_id = Some(next_ref(&mut args, arg)?.to_string()),
-            "--workspace" | "--workspace-path" | "--cwd" => {
-                workspace_path = Some(next_ref(&mut args, arg)?.to_string());
-            }
-            value if value.starts_with("--agent=") => {
-                agent_id = Some(value.trim_start_matches("--agent=").to_string());
-            }
-            value if value.starts_with("--workspace=") => {
-                workspace_path = Some(value.trim_start_matches("--workspace=").to_string());
-            }
-            value if value.starts_with("--workspace-path=") => {
-                workspace_path = Some(value.trim_start_matches("--workspace-path=").to_string());
-            }
-            value if value.starts_with("--cwd=") => {
-                workspace_path = Some(value.trim_start_matches("--cwd=").to_string());
-            }
-            value if value.starts_with('-') => {
-                return Err(CliError::Usage(format!(
-                    "unknown launch {action} option: {value}"
-                )));
-            }
-            value => positionals.push(value.to_string()),
-        }
-    }
-
-    let agent_id = match agent_id {
-        Some(agent_id) => agent_id,
-        None => {
-            if positionals.is_empty() {
-                return Err(CliError::Usage(format!(
-                    "usage: va launch {action} --agent AGENT SESSION_ID"
-                )));
-            }
-            positionals.remove(0)
-        }
-    };
-    if positionals.len() != 1 {
-        return Err(CliError::Usage(format!(
-            "usage: va launch {action} --agent AGENT SESSION_ID"
-        )));
-    }
-
-    Ok(LaunchSessionMutationArgs {
-        agent_id,
-        session_id: positionals.remove(0),
-        workspace_path,
+    Ok(Options {
+        command,
+        auth_file: cli.auth_file,
+        base_url: cli.base_url,
+        token: cli.token,
+        json: cli.json,
     })
 }
 
-fn parse_session_command(args: &[String]) -> Result<Command, CliError> {
-    match args {
-        [action, session_id] if action == "kill" => Ok(Command::SessionKill {
-            session_id: session_id.to_string(),
-        }),
-        [action, session_id] if action == "attach" => Ok(Command::SessionAttach {
-            session_id: session_id.to_string(),
-        }),
-        [action, rest @ ..] if action == "create" => {
-            parse_session_create_args(rest).map(Command::SessionCreate)
+fn top_command_into_command(command: TopCommand) -> Result<Command, CliError> {
+    Ok(match command {
+        TopCommand::Help => Command::Help,
+        TopCommand::Health => Command::Health,
+        TopCommand::Info => Command::Info,
+        TopCommand::Status => Command::Status,
+        TopCommand::Doctor => Command::Doctor,
+        TopCommand::Channels => Command::Channels,
+        TopCommand::Tunnels => Command::Tunnels,
+        TopCommand::Agents => Command::Agents,
+        TopCommand::Sessions => Command::Sessions,
+        TopCommand::Workspaces => Command::Workspaces,
+        TopCommand::Previews => Command::Previews,
+        TopCommand::Profiles => Command::Profiles,
+        TopCommand::Pair { command } => command.into_command(),
+        TopCommand::Auth { command } => match command {
+            AuthCommand::Status => Command::AuthStatus,
+            AuthCommand::Clear => Command::AuthClear,
+        },
+        TopCommand::Launch { command } => launch_command_into_command(command)?,
+        TopCommand::Tmux { command } => match command {
+            TmuxCommand::Sessions => Command::TmuxSessions,
+        },
+        TopCommand::Settings { command } => match command {
+            SettingsCommand::Reload => Command::SettingsReload,
+        },
+        TopCommand::Channel { command } => match command {
+            ChannelCommand::Sync => Command::ChannelSync,
+            ChannelCommand::Start { kind } => Command::ChannelStart { kind },
+            ChannelCommand::Stop { kind } => Command::ChannelStop { kind },
+            ChannelCommand::Restart { kind } => Command::ChannelRestart { kind },
+        },
+        TopCommand::Tunnel { command } => match command {
+            TunnelCommand::Kill { provider } => Command::TunnelKill { provider },
+        },
+        TopCommand::Agent { command } => match command {
+            AgentCommand::Kill { route_key } => Command::AgentKill { route_key },
+        },
+        TopCommand::Session { command } => session_command_into_command(command)?,
+        TopCommand::Pty { command } => match command {
+            PtyCommand::Kill { session_id } => Command::PtyKill { session_id },
+        },
+        TopCommand::Preview { command } => match command {
+            PreviewCommand::Delete { slug } => Command::PreviewDelete { slug },
+        },
+        TopCommand::Workspace { command } => match command {
+            WorkspaceCommand::Add { path } => Command::WorkspaceAdd { path },
+            WorkspaceCommand::Remove { path } => Command::WorkspaceRemove { path },
+            WorkspaceCommand::Default { path } => Command::WorkspaceDefault { path },
+            WorkspaceCommand::Create { name } => Command::WorkspaceCreate { name },
+        },
+    })
+}
+
+fn launch_command_into_command(command: LaunchCommand) -> Result<Command, CliError> {
+    Ok(match command {
+        LaunchCommand::Sessions(args) => Command::LaunchSessions(args.into_args()),
+        LaunchCommand::Archive(args) => Command::LaunchSessionArchive(args.into_args("archive")?),
+        LaunchCommand::Unarchive(args) => {
+            Command::LaunchSessionUnarchive(args.into_args("unarchive")?)
         }
-        _ => Err(CliError::Usage(
-            "usage: va session create --tool TOOL [--project PATH]; va session attach SESSION_ID; va session kill SESSION_ID".into(),
-        )),
+    })
+}
+
+impl LaunchSessionsCli {
+    fn into_args(mut self) -> LaunchSessionsArgs {
+        self.agent_ids.append(&mut self.positional_agent_ids);
+        LaunchSessionsArgs {
+            agent_ids: self.agent_ids,
+            workspace_paths: self.workspace_paths,
+            include_archived: self.include_archived,
+            limit: self.limit,
+        }
     }
 }
 
-fn parse_tmux_command(args: &[String]) -> Result<Command, CliError> {
-    match args {
-        [action] if action == "sessions" => Ok(Command::TmuxSessions),
-        _ => Err(CliError::Usage("usage: va tmux sessions".into())),
-    }
-}
-
-fn parse_session_create_args(args: &[String]) -> Result<SessionCreateArgs, CliError> {
-    let mut create = SessionCreateArgs::default();
-    let mut args = args.iter().peekable();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--tool" => create.tool = Some(parse_tool(&next_ref(&mut args, "--tool")?)?),
-            "--profile" | "--profile-id" => {
-                create.profile_id = Some(next_ref(&mut args, arg)?.to_string());
-            }
-            "--target" | "--launch-target" => {
-                create.launch_target = Some(next_ref(&mut args, arg)?.to_string());
-            }
-            "--resume" | "--resume-session" | "--resume-session-id" => {
-                create.resume_session_id = Some(next_ref(&mut args, arg)?.to_string());
-            }
-            "--project" | "--project-path" | "--cwd" => {
-                create.project_path = Some(next_ref(&mut args, arg)?.to_string());
-            }
-            "--tmux" | "--tmux-session" => {
-                create.tmux_session = Some(next_ref(&mut args, arg)?.to_string());
-            }
-            "--attach" => create.attach = true,
-            "--theme" => create.theme = Some(next_ref(&mut args, "--theme")?.to_string()),
-            "--cols" => create.cols = Some(parse_u16(&next_ref(&mut args, "--cols")?, "--cols")?),
-            "--rows" => create.rows = Some(parse_u16(&next_ref(&mut args, "--rows")?, "--rows")?),
-            value if value.starts_with("--tool=") => {
-                create.tool = Some(parse_tool(value.trim_start_matches("--tool="))?);
-            }
-            value if value.starts_with("--profile=") => {
-                create.profile_id = Some(value.trim_start_matches("--profile=").to_string());
-            }
-            value if value.starts_with("--profile-id=") => {
-                create.profile_id = Some(value.trim_start_matches("--profile-id=").to_string());
-            }
-            value if value.starts_with("--target=") => {
-                create.launch_target = Some(value.trim_start_matches("--target=").to_string());
-            }
-            value if value.starts_with("--launch-target=") => {
-                create.launch_target =
-                    Some(value.trim_start_matches("--launch-target=").to_string());
-            }
-            value if value.starts_with("--resume=") => {
-                create.resume_session_id = Some(value.trim_start_matches("--resume=").to_string());
-            }
-            value if value.starts_with("--resume-session=") => {
-                create.resume_session_id =
-                    Some(value.trim_start_matches("--resume-session=").to_string());
-            }
-            value if value.starts_with("--resume-session-id=") => {
-                create.resume_session_id =
-                    Some(value.trim_start_matches("--resume-session-id=").to_string());
-            }
-            value if value.starts_with("--project=") => {
-                create.project_path = Some(value.trim_start_matches("--project=").to_string());
-            }
-            value if value.starts_with("--project-path=") => {
-                create.project_path = Some(value.trim_start_matches("--project-path=").to_string());
-            }
-            value if value.starts_with("--cwd=") => {
-                create.project_path = Some(value.trim_start_matches("--cwd=").to_string());
-            }
-            value if value.starts_with("--tmux=") => {
-                create.tmux_session = Some(value.trim_start_matches("--tmux=").to_string());
-            }
-            value if value.starts_with("--tmux-session=") => {
-                create.tmux_session = Some(value.trim_start_matches("--tmux-session=").to_string());
-            }
-            value if value.starts_with("--attach=") => {
-                create.attach = parse_bool(value.trim_start_matches("--attach="), "--attach")?;
-            }
-            value if value.starts_with("--theme=") => {
-                create.theme = Some(value.trim_start_matches("--theme=").to_string());
-            }
-            value if value.starts_with("--cols=") => {
-                create.cols = Some(parse_u16(value.trim_start_matches("--cols="), "--cols")?);
-            }
-            value if value.starts_with("--rows=") => {
-                create.rows = Some(parse_u16(value.trim_start_matches("--rows="), "--rows")?);
-            }
-            value if value.starts_with('-') => {
-                return Err(CliError::Usage(format!(
-                    "unknown session create option: {value}"
-                )));
-            }
-            value => {
-                if create.tool.is_some() {
-                    return Err(CliError::Usage(format!("unexpected argument: {value}")));
+impl LaunchSessionMutationCli {
+    fn into_args(mut self, action: &str) -> Result<LaunchSessionMutationArgs, CliError> {
+        let agent_id = match self.agent_id.take() {
+            Some(agent_id) => agent_id,
+            None => {
+                if self.positionals.is_empty() {
+                    return Err(CliError::Usage(format!(
+                        "usage: va launch {action} --agent AGENT SESSION_ID"
+                    )));
                 }
-                create.tool = Some(parse_tool(value)?);
+                self.positionals.remove(0)
+            }
+        };
+        if self.positionals.len() != 1 {
+            return Err(CliError::Usage(format!(
+                "usage: va launch {action} --agent AGENT SESSION_ID"
+            )));
+        }
+        Ok(LaunchSessionMutationArgs {
+            agent_id,
+            session_id: self.positionals.remove(0),
+            workspace_path: self.workspace_path,
+        })
+    }
+}
+
+fn session_command_into_command(command: SessionCommand) -> Result<Command, CliError> {
+    Ok(match command {
+        SessionCommand::Create(args) => Command::SessionCreate(args.into_args()?),
+        SessionCommand::Attach { session_id } => Command::SessionAttach { session_id },
+        SessionCommand::Kill { session_id } => Command::SessionKill { session_id },
+    })
+}
+
+impl SessionCreateCli {
+    fn into_args(self) -> Result<SessionCreateArgs, CliError> {
+        if self.tool.is_some() && self.positional_tool.is_some() {
+            return Err(CliError::Usage(
+                "session create cannot specify TOOL both positionally and with --tool".into(),
+            ));
+        }
+        let mut create = SessionCreateArgs {
+            tool: self.tool.or(self.positional_tool),
+            profile_id: self.profile_id,
+            launch_target: self.launch_target,
+            resume_session_id: self.resume_session_id,
+            project_path: self.project_path,
+            tmux_session: self.tmux_session,
+            theme: self.theme,
+            cols: self.cols,
+            rows: self.rows,
+            attach: self.attach,
+        };
+
+        if create.profile_id.is_some() != create.launch_target.is_some() {
+            return Err(CliError::Usage(
+                "session create requires --profile and --target together".into(),
+            ));
+        }
+        if create.profile_id.is_some() && create.tool.is_some() {
+            return Err(CliError::Usage(
+                "session create cannot combine --tool with --profile/--target".into(),
+            ));
+        }
+        if create.profile_id.is_some() && create.tmux_session.is_some() {
+            return Err(CliError::Usage(
+                "session create cannot combine --tmux with --profile/--target".into(),
+            ));
+        }
+        if create.resume_session_id.is_some() && create.tmux_session.is_some() {
+            return Err(CliError::Usage(
+                "session create cannot combine --resume with --tmux".into(),
+            ));
+        }
+        if matches!(create.tool, Some(PtyTool::Generic)) && create.resume_session_id.is_some() {
+            return Err(CliError::Usage(
+                "session create --resume requires a coding-agent tool".into(),
+            ));
+        }
+        if create.tmux_session.is_some() {
+            match create.tool {
+                None => create.tool = Some(PtyTool::Generic),
+                Some(PtyTool::Generic) => {}
+                Some(_) => {
+                    return Err(CliError::Usage(
+                        "session create --tmux must use --tool generic".into(),
+                    ));
+                }
             }
         }
-    }
-
-    if create.profile_id.is_some() != create.launch_target.is_some() {
-        return Err(CliError::Usage(
-            "session create requires --profile and --target together".into(),
-        ));
-    }
-    if create.profile_id.is_some() && create.tool.is_some() {
-        return Err(CliError::Usage(
-            "session create cannot combine --tool with --profile/--target".into(),
-        ));
-    }
-    if create.profile_id.is_some() && create.tmux_session.is_some() {
-        return Err(CliError::Usage(
-            "session create cannot combine --tmux with --profile/--target".into(),
-        ));
-    }
-    if create.resume_session_id.is_some() && create.tmux_session.is_some() {
-        return Err(CliError::Usage(
-            "session create cannot combine --resume with --tmux".into(),
-        ));
-    }
-    if matches!(create.tool, Some(PtyTool::Generic)) && create.resume_session_id.is_some() {
-        return Err(CliError::Usage(
-            "session create --resume requires a coding-agent tool".into(),
-        ));
-    }
-    if create.tmux_session.is_some() {
-        match create.tool {
-            None => create.tool = Some(PtyTool::Generic),
-            Some(PtyTool::Generic) => {}
-            Some(_) => {
-                return Err(CliError::Usage(
-                    "session create --tmux must use --tool generic".into(),
-                ));
-            }
+        if create.profile_id.is_none() && create.tool.is_none() {
+            return Err(CliError::Usage(
+                "session create requires --tool TOOL, or --profile PROFILE --target TARGET".into(),
+            ));
         }
-    }
-    if create.profile_id.is_none() && create.tool.is_none() {
-        return Err(CliError::Usage(
-            "session create requires --tool TOOL, or --profile PROFILE --target TARGET".into(),
-        ));
-    }
 
-    Ok(create)
-}
-
-fn next_ref<'a, I>(args: &mut std::iter::Peekable<I>, flag: &str) -> Result<&'a str, CliError>
-where
-    I: Iterator<Item = &'a String>,
-{
-    args.next()
-        .map(String::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| CliError::Usage(format!("missing value for {flag}")))
-}
-
-fn parse_u16(value: &str, flag: &str) -> Result<u16, CliError> {
-    let value = value
-        .parse::<u16>()
-        .map_err(|_| CliError::Usage(format!("{flag} must be a positive integer")))?;
-    if value == 0 {
-        return Err(CliError::Usage(format!(
-            "{flag} must be a positive integer"
-        )));
-    }
-    Ok(value)
-}
-
-fn parse_usize(value: &str, flag: &str) -> Result<usize, CliError> {
-    let value = value
-        .parse::<usize>()
-        .map_err(|_| CliError::Usage(format!("{flag} must be a positive integer")))?;
-    if value == 0 {
-        return Err(CliError::Usage(format!(
-            "{flag} must be a positive integer"
-        )));
-    }
-    Ok(value)
-}
-
-fn parse_u64(value: &str, flag: &str) -> Result<u64, CliError> {
-    let value = value
-        .parse::<u64>()
-        .map_err(|_| CliError::Usage(format!("{flag} must be a positive integer")))?;
-    if value == 0 {
-        return Err(CliError::Usage(format!(
-            "{flag} must be a positive integer"
-        )));
-    }
-    Ok(value)
-}
-
-fn parse_bool(value: &str, flag: &str) -> Result<bool, CliError> {
-    match value {
-        "true" | "1" | "yes" | "on" => Ok(true),
-        "false" | "0" | "no" | "off" => Ok(false),
-        _ => Err(CliError::Usage(format!("{flag} must be true or false"))),
+        Ok(create)
     }
 }
 
-fn parse_tool(value: &str) -> Result<PtyTool, CliError> {
+fn parse_tool(value: &str) -> Result<PtyTool, String> {
     match value {
         "generic" => Ok(PtyTool::Generic),
         "claude" => Ok(PtyTool::Claude),
@@ -572,62 +526,38 @@ fn parse_tool(value: &str) -> Result<PtyTool, CliError> {
         "cursor" => Ok(PtyTool::Cursor),
         "kiro" => Ok(PtyTool::Kiro),
         "qwen-code" | "qwen" => Ok(PtyTool::QwenCode),
-        _ => Err(CliError::Usage(format!("unknown PTY tool: {value}"))),
+        _ => Err(format!("unknown PTY tool: {value}")),
     }
 }
 
-fn parse_auth_command(args: &[String]) -> Result<Command, CliError> {
-    match args {
-        [action] if action == "status" => Ok(Command::AuthStatus),
-        [action] if action == "clear" => Ok(Command::AuthClear),
-        _ => Err(CliError::Usage("usage: va auth status|clear".into())),
+fn parse_positive_u16(value: &str) -> Result<u16, String> {
+    let value = value
+        .parse::<u16>()
+        .map_err(|_| "must be a positive integer".to_string())?;
+    if value == 0 {
+        return Err("must be a positive integer".into());
     }
+    Ok(value)
 }
 
-fn parse_channel_command(args: &[String]) -> Result<Command, CliError> {
-    match args {
-        [action] if action == "sync" => Ok(Command::ChannelSync),
-        [action, kind] if action == "start" => Ok(Command::ChannelStart {
-            kind: kind.to_string(),
-        }),
-        [action, kind] if action == "stop" => Ok(Command::ChannelStop {
-            kind: kind.to_string(),
-        }),
-        [action, kind] if action == "restart" => Ok(Command::ChannelRestart {
-            kind: kind.to_string(),
-        }),
-        _ => Err(CliError::Usage(
-            "usage: va channel sync|start|stop|restart [KIND]".into(),
-        )),
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "must be a positive integer".to_string())?;
+    if value == 0 {
+        return Err("must be a positive integer".into());
     }
+    Ok(value)
 }
 
-fn parse_workspace_command(args: &[String]) -> Result<Command, CliError> {
-    match args {
-        [action, path] if action == "add" => Ok(Command::WorkspaceAdd {
-            path: path.to_string(),
-        }),
-        [action, path] if action == "remove" => Ok(Command::WorkspaceRemove {
-            path: path.to_string(),
-        }),
-        [action, path] if action == "default" => Ok(Command::WorkspaceDefault {
-            path: path.to_string(),
-        }),
-        [action, name] if action == "create" => Ok(Command::WorkspaceCreate {
-            name: name.to_string(),
-        }),
-        _ => Err(CliError::Usage(
-            "usage: va workspace add|remove|default PATH; va workspace create NAME".into(),
-        )),
+pub(super) fn parse_positive_u64(value: &str) -> Result<u64, String> {
+    let value = value
+        .parse::<u64>()
+        .map_err(|_| "must be a positive integer".to_string())?;
+    if value == 0 {
+        return Err("must be a positive integer".into());
     }
-}
-
-fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
-    if args.is_empty() {
-        Ok(())
-    } else {
-        Err(CliError::Usage(format!("usage: va {command}")))
-    }
+    Ok(value)
 }
 
 pub(crate) fn usage() -> &'static str {
@@ -666,6 +596,9 @@ mod tests {
     fn parses_help_as_command() {
         let options = parse_args(["--help".to_string()]).expect("options");
         assert_eq!(options.command, Some(Command::Help));
+
+        let help = parse_args(["help".to_string()]).expect("help");
+        assert_eq!(help.command, Some(Command::Help));
     }
 
     #[test]
@@ -749,6 +682,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_pair_start_explicit_false_flags() {
+        let options = parse_args([
+            "pair".to_string(),
+            "start".to_string(),
+            "--wait=false".to_string(),
+            "--save=false".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::PairStart(PairStartArgs {
+                wait: false,
+                save: false,
+                ..Default::default()
+            }))
+        );
+    }
+
+    #[test]
     fn parses_pair_status_save() {
         let options = parse_args([
             "pair".to_string(),
@@ -819,6 +772,24 @@ mod tests {
                 workspace_paths: vec!["/tmp/project".into()],
                 include_archived: true,
                 limit: Some(10),
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_launch_sessions_explicit_archived_false() {
+        let options = parse_args([
+            "launch".to_string(),
+            "sessions".to_string(),
+            "--archived=false".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::LaunchSessions(LaunchSessionsArgs {
+                include_archived: false,
+                ..Default::default()
             }))
         );
     }
@@ -907,6 +878,27 @@ mod tests {
             Some(Command::SessionCreate(SessionCreateArgs {
                 tool: Some(PtyTool::Codex),
                 attach: true,
+                ..Default::default()
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_session_create_with_explicit_attach_false() {
+        let options = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--tool".to_string(),
+            "codex".to_string(),
+            "--attach=false".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::SessionCreate(SessionCreateArgs {
+                tool: Some(PtyTool::Codex),
+                attach: false,
                 ..Default::default()
             }))
         );

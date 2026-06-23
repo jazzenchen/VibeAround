@@ -1,12 +1,32 @@
-use crate::error::CliError;
+use clap::{Args, Subcommand};
 
-use super::{next_ref, parse_bool, parse_u64, Command};
+use super::Command;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub(crate) struct PairStartArgs {
+    #[arg(
+        long,
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
     pub(crate) wait: bool,
+    #[arg(
+        long,
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
     pub(crate) save: bool,
+    #[arg(long = "timeout", alias = "timeout-secs", default_value_t = 60, value_parser = super::parse_positive_u64)]
     pub(crate) timeout_secs: u64,
+    #[arg(long, default_value_t = 2_000, value_parser = super::parse_positive_u64)]
     pub(crate) interval_ms: u64,
 }
 
@@ -21,11 +41,37 @@ impl Default for PairStartArgs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub(crate) struct PairStatusArgs {
+    pub(crate) sid: String,
+    #[arg(
+        long,
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
+    pub(crate) save: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub(crate) struct PairWaitArgs {
     pub(crate) sid: String,
+    #[arg(
+        long,
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        value_parser = clap::builder::BoolishValueParser::new()
+    )]
     pub(crate) save: bool,
+    #[arg(long = "timeout", alias = "timeout-secs", default_value_t = 60, value_parser = super::parse_positive_u64)]
     pub(crate) timeout_secs: u64,
+    #[arg(long, default_value_t = 2_000, value_parser = super::parse_positive_u64)]
     pub(crate) interval_ms: u64,
 }
 
@@ -40,143 +86,28 @@ impl Default for PairWaitArgs {
     }
 }
 
-pub(super) fn parse_pair_command(args: &[String]) -> Result<Command, CliError> {
-    match args {
-        [action, rest @ ..] if action == "start" => {
-            parse_pair_start_args(rest).map(Command::PairStart)
-        }
-        [action, rest @ ..] if action == "status" => parse_pair_status_args(rest),
-        [action, rest @ ..] if action == "wait" => {
-            parse_pair_wait_args(rest).map(Command::PairWait)
-        }
-        _ => Err(CliError::Usage(
-            "usage: va pair start [--wait] [--save]; va pair status SID [--save]; va pair wait SID [--save]".into(),
-        )),
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+#[command(rename_all = "kebab-case")]
+pub(crate) enum PairCommand {
+    Start(PairStartArgs),
+    Status(PairStatusArgs),
+    Wait(PairWaitArgs),
 }
 
-fn parse_pair_start_args(args: &[String]) -> Result<PairStartArgs, CliError> {
-    let mut parsed = PairStartArgs::default();
-    let mut args = args.iter().peekable();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--wait" => parsed.wait = true,
-            "--save" => {
-                parsed.save = true;
-                parsed.wait = true;
-            }
-            "--timeout" | "--timeout-secs" => {
-                parsed.timeout_secs = parse_u64(next_ref(&mut args, arg)?, arg)?;
-            }
-            "--interval-ms" => {
-                parsed.interval_ms = parse_u64(next_ref(&mut args, arg)?, arg)?;
-            }
-            value if value.starts_with("--wait=") => {
-                parsed.wait = parse_bool(value.trim_start_matches("--wait="), "--wait")?;
-            }
-            value if value.starts_with("--save=") => {
-                parsed.save = parse_bool(value.trim_start_matches("--save="), "--save")?;
-                if parsed.save {
-                    parsed.wait = true;
+impl PairCommand {
+    pub(super) fn into_command(self) -> Command {
+        match self {
+            Self::Start(mut args) => {
+                if args.save {
+                    args.wait = true;
                 }
+                Command::PairStart(args)
             }
-            value if value.starts_with("--timeout=") => {
-                parsed.timeout_secs =
-                    parse_u64(value.trim_start_matches("--timeout="), "--timeout")?;
-            }
-            value if value.starts_with("--timeout-secs=") => {
-                parsed.timeout_secs = parse_u64(
-                    value.trim_start_matches("--timeout-secs="),
-                    "--timeout-secs",
-                )?;
-            }
-            value if value.starts_with("--interval-ms=") => {
-                parsed.interval_ms =
-                    parse_u64(value.trim_start_matches("--interval-ms="), "--interval-ms")?;
-            }
-            value if value.starts_with('-') => {
-                return Err(CliError::Usage(format!(
-                    "unknown pair start option: {value}"
-                )));
-            }
-            value => return Err(CliError::Usage(format!("unexpected argument: {value}"))),
+            Self::Status(args) => Command::PairStatus {
+                sid: args.sid,
+                save: args.save,
+            },
+            Self::Wait(args) => Command::PairWait(args),
         }
     }
-    Ok(parsed)
-}
-
-fn parse_pair_status_args(args: &[String]) -> Result<Command, CliError> {
-    let mut sid = None;
-    let mut save = false;
-    for arg in args {
-        match arg.as_str() {
-            "--save" => save = true,
-            value if value.starts_with("--save=") => {
-                save = parse_bool(value.trim_start_matches("--save="), "--save")?;
-            }
-            value if value.starts_with('-') => {
-                return Err(CliError::Usage(format!(
-                    "unknown pair status option: {value}"
-                )));
-            }
-            value => {
-                if sid.is_some() {
-                    return Err(CliError::Usage("usage: va pair status SID [--save]".into()));
-                }
-                sid = Some(value.to_string());
-            }
-        }
-    }
-    Ok(Command::PairStatus {
-        sid: sid.ok_or_else(|| CliError::Usage("usage: va pair status SID [--save]".into()))?,
-        save,
-    })
-}
-
-fn parse_pair_wait_args(args: &[String]) -> Result<PairWaitArgs, CliError> {
-    let mut parsed = PairWaitArgs::default();
-    let mut args = args.iter().peekable();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--save" => parsed.save = true,
-            "--timeout" | "--timeout-secs" => {
-                parsed.timeout_secs = parse_u64(next_ref(&mut args, arg)?, arg)?;
-            }
-            "--interval-ms" => {
-                parsed.interval_ms = parse_u64(next_ref(&mut args, arg)?, arg)?;
-            }
-            value if value.starts_with("--save=") => {
-                parsed.save = parse_bool(value.trim_start_matches("--save="), "--save")?;
-            }
-            value if value.starts_with("--timeout=") => {
-                parsed.timeout_secs =
-                    parse_u64(value.trim_start_matches("--timeout="), "--timeout")?;
-            }
-            value if value.starts_with("--timeout-secs=") => {
-                parsed.timeout_secs = parse_u64(
-                    value.trim_start_matches("--timeout-secs="),
-                    "--timeout-secs",
-                )?;
-            }
-            value if value.starts_with("--interval-ms=") => {
-                parsed.interval_ms =
-                    parse_u64(value.trim_start_matches("--interval-ms="), "--interval-ms")?;
-            }
-            value if value.starts_with('-') => {
-                return Err(CliError::Usage(format!(
-                    "unknown pair wait option: {value}"
-                )));
-            }
-            value => {
-                if !parsed.sid.is_empty() {
-                    return Err(CliError::Usage("usage: va pair wait SID [--save]".into()));
-                }
-                parsed.sid = value.to_string();
-            }
-        }
-    }
-    if parsed.sid.is_empty() {
-        return Err(CliError::Usage("usage: va pair wait SID [--save]".into()));
-    }
-    Ok(parsed)
 }
