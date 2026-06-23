@@ -1,3 +1,4 @@
+mod chat;
 mod previews;
 mod profiles;
 mod runtime;
@@ -30,6 +31,7 @@ pub(crate) async fn dispatch(options: &Options, command: Command) -> Result<(), 
         Command::Workspaces => workspaces::list(options).await?,
         Command::Previews => previews::list(options).await?,
         Command::Profiles => profiles::list(options).await?,
+        Command::ChatSend(args) => chat::send(options, &args).await?,
         Command::PairStart(args) => {
             crate::pair::start(options, &args).await?;
         }

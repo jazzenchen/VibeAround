@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use super::{launch, pair, session, Command, Options};
+use super::{chat, launch, pair, session, Command, Options};
 use crate::error::CliError;
 
 #[derive(Debug, Parser)]
@@ -42,6 +42,10 @@ enum TopCommand {
     Workspaces,
     Previews,
     Profiles,
+    Chat {
+        #[command(subcommand)]
+        command: chat::ChatCommand,
+    },
     Pair {
         #[command(subcommand)]
         command: pair::PairCommand,
@@ -187,6 +191,7 @@ fn top_command_into_command(command: TopCommand) -> Result<Command, CliError> {
         TopCommand::Workspaces => Command::Workspaces,
         TopCommand::Previews => Command::Previews,
         TopCommand::Profiles => Command::Profiles,
+        TopCommand::Chat { command } => chat::command_into_command(command)?,
         TopCommand::Pair { command } => command.into_command(),
         TopCommand::Auth { command } => match command {
             AuthCommand::Status => Command::AuthStatus,

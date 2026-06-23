@@ -63,3 +63,50 @@ impl HttpTransport {
         Ok(ResponseSpec::json(status, body))
     }
 }
+
+pub(crate) fn redact_token_query(url: &str) -> String {
+    let Ok(mut parsed) = reqwest::Url::parse(url) else {
+        return url.to_string();
+    };
+    let pairs = parsed
+        .query_pairs()
+        .map(|(key, value)| {
+            let value = if key == "token" {
+                "redacted".to_string()
+            } else {
+                value.into_owned()
+            };
+            (key.into_owned(), value)
+        })
+        .collect::<Vec<_>>();
+    if !pairs.iter().any(|(key, _)| key == "token") {
+        return url.to_string();
+    }
+    parsed.query_pairs_mut().clear().extend_pairs(
+        pairs
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    );
+    parsed.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_token_query_hides_websocket_token() {
+        assert_eq!(
+            redact_token_query("ws://127.0.0.1:12358/va/ws/chat?token=secret&mode=chat"),
+            "ws://127.0.0.1:12358/va/ws/chat?token=redacted&mode=chat"
+        );
+    }
+
+    #[test]
+    fn redact_token_query_leaves_plain_urls_unchanged() {
+        assert_eq!(
+            redact_token_query("ws://127.0.0.1:12358/va/ws/chat"),
+            "ws://127.0.0.1:12358/va/ws/chat"
+        );
+    }
+}

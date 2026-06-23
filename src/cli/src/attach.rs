@@ -164,7 +164,7 @@ fn handle_text_frame(text: &str) -> Result<(), CliError> {
 
 fn ws_error(url: &str, source: tokio_tungstenite::tungstenite::Error) -> CliError {
     CliError::WebSocket {
-        url: url.to_string(),
+        url: crate::transport::redact_token_query(url),
         source,
     }
 }

@@ -187,6 +187,62 @@ fn parses_auth_commands() {
 }
 
 #[test]
+fn parses_chat_send_command() {
+    let options = parse_args([
+        "chat".to_string(),
+        "send".to_string(),
+        "--agent=codex".to_string(),
+        "--profile".to_string(),
+        "deepseek".to_string(),
+        "--resume=sid-1".to_string(),
+        "--workspace=/tmp/project".to_string(),
+        "--permission-mode".to_string(),
+        "acceptEdits".to_string(),
+        "hello".to_string(),
+        "there".to_string(),
+    ])
+    .expect("options");
+
+    assert_eq!(
+        options.command,
+        Some(Command::ChatSend(ChatSendArgs {
+            text: "hello there".into(),
+            agent: Some("codex".into()),
+            profile_id: Some("deepseek".into()),
+            resume_session_id: Some("sid-1".into()),
+            new_session: false,
+            workspace_path: Some("/tmp/project".into()),
+            permission_mode: Some("acceptEdits".into()),
+        }))
+    );
+}
+
+#[test]
+fn rejects_chat_send_conflicting_session_intent() {
+    let error = parse_args([
+        "chat".to_string(),
+        "send".to_string(),
+        "--new-session".to_string(),
+        "--resume=sid-1".to_string(),
+        "hello".to_string(),
+    ])
+    .expect_err("error");
+    assert!(matches!(error, CliError::Usage(_)));
+}
+
+#[test]
+fn rejects_chat_send_workspace_without_session_intent() {
+    let error = parse_args([
+        "chat".to_string(),
+        "send".to_string(),
+        "--workspace=/tmp/project".to_string(),
+        "hello".to_string(),
+    ])
+    .expect_err("error");
+    assert!(matches!(error, CliError::Usage(_)));
+}
+
+#[test]
 fn parses_launch_sessions_command() {
     let options = parse_args([
         "launch".to_string(),

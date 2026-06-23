@@ -28,6 +28,8 @@ pub(crate) enum CliError {
         #[source]
         source: tokio_tungstenite::tungstenite::Error,
     },
+    #[error("chat error: {0}")]
+    Chat(String),
     #[error("I/O error while {action}: {source}")]
     Io {
         action: &'static str,
