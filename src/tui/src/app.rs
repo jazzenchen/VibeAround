@@ -6,6 +6,7 @@ use va_client::state::ChatState;
 use crate::chat::{ChatMessage, ChatRole};
 use crate::data::{fetch_agent_picker, fetch_snapshot, AgentPickerSnapshot, DashboardSnapshot};
 use crate::detail::DetailContent;
+use crate::runtime_socket::RuntimeStream;
 use crate::selection::{AgentSelection, StatusSelection};
 use crate::transport::HttpTransport;
 
@@ -298,7 +299,7 @@ pub(crate) enum ErrorScope {
     Any,
     Agent,
     Chat,
-    Runtime,
+    Runtime(RuntimeStream),
     Status,
 }
 

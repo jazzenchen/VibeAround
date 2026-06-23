@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use crate::chat_socket::ChatSocketEvent;
 use crate::config::DEFAULT_BASE_URL;
 use crate::render;
-use crate::runtime_socket::RuntimeSocketEvent;
+use crate::runtime_socket::{RuntimeSocketEvent, RuntimeStream};
 use crate::selection::{AgentPanel, RuntimePanel};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Position;
@@ -234,7 +234,10 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
     app.status_selection.clamp(&app.snapshot);
     app.status_selection.select_next(&app.snapshot);
     assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(1));
-    app.set_error(ErrorScope::Runtime, "old runtime error");
+    app.set_error(
+        ErrorScope::Runtime(RuntimeStream::Channels),
+        "old runtime error",
+    );
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(vec![channel("feishu")]));
 
@@ -260,7 +263,10 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
     )]));
     assert_eq!(app.snapshot.sessions[0].session_id, "session-1");
 
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Error("runtime socket closed".into()));
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Error {
+        stream: RuntimeStream::Channels,
+        message: "runtime socket closed".into(),
+    });
     assert_eq!(app.last_error.as_deref(), Some("runtime socket closed"));
 }
 
@@ -268,7 +274,10 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
 fn chat_socket_connect_does_not_clear_runtime_error() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.set_error(ErrorScope::Runtime, "runtime stream failed");
+    app.set_error(
+        ErrorScope::Runtime(RuntimeStream::Channels),
+        "runtime stream failed",
+    );
 
     app.apply_chat_socket_event(ChatSocketEvent::Connected);
 
@@ -286,6 +295,26 @@ fn runtime_socket_update_does_not_clear_chat_error() {
 
     assert_eq!(app.snapshot.channels[0].kind, "feishu");
     assert_eq!(app.last_error.as_deref(), Some("chat websocket failed"));
+}
+
+#[test]
+fn runtime_socket_update_only_clears_matching_stream_error() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.set_error(
+        ErrorScope::Runtime(RuntimeStream::Tunnels),
+        "tunnel stream failed",
+    );
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(vec![channel("feishu")]));
+
+    assert_eq!(app.snapshot.channels[0].kind, "feishu");
+    assert_eq!(app.last_error.as_deref(), Some("tunnel stream failed"));
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Tunnels(vec![tunnel("cloudflare")]));
+
+    assert_eq!(app.snapshot.tunnels[0].provider, "cloudflare");
+    assert_eq!(app.last_error, None);
 }
 
 #[test]

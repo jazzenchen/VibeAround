@@ -15,13 +15,24 @@ use va_client::sessions::SessionListItem;
 
 const RUNTIME_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeStream {
+    Channels,
+    Tunnels,
+    Agents,
+    Sessions,
+}
+
 #[derive(Debug)]
 pub(crate) enum RuntimeSocketEvent {
     Channels(Vec<ChannelRuntime>),
     Tunnels(Vec<TunnelRuntime>),
     Agents(Vec<AgentRuntime>),
     Sessions(Vec<SessionListItem>),
-    Error(String),
+    Error {
+        stream: RuntimeStream,
+        message: String,
+    },
 }
 
 pub(crate) async fn run_runtime_sockets(
@@ -43,9 +54,13 @@ async fn run_channels_socket(
     endpoint: ServerEndpoint,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
-    run_snapshot_socket(endpoint, channels_ws(), incoming, |value| {
-        decode_channels_event(value).map(RuntimeSocketEvent::Channels)
-    })
+    run_snapshot_socket(
+        endpoint,
+        RuntimeStream::Channels,
+        channels_ws(),
+        incoming,
+        |value| decode_channels_event(value).map(RuntimeSocketEvent::Channels),
+    )
     .await;
 }
 
@@ -53,9 +68,13 @@ async fn run_tunnels_socket(
     endpoint: ServerEndpoint,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
-    run_snapshot_socket(endpoint, tunnels_ws(), incoming, |value| {
-        decode_tunnels_event(value).map(RuntimeSocketEvent::Tunnels)
-    })
+    run_snapshot_socket(
+        endpoint,
+        RuntimeStream::Tunnels,
+        tunnels_ws(),
+        incoming,
+        |value| decode_tunnels_event(value).map(RuntimeSocketEvent::Tunnels),
+    )
     .await;
 }
 
@@ -63,9 +82,13 @@ async fn run_agents_socket(
     endpoint: ServerEndpoint,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
-    run_snapshot_socket(endpoint, agents_runtime_ws(), incoming, |value| {
-        decode_agents_runtime_event(value).map(RuntimeSocketEvent::Agents)
-    })
+    run_snapshot_socket(
+        endpoint,
+        RuntimeStream::Agents,
+        agents_runtime_ws(),
+        incoming,
+        |value| decode_agents_runtime_event(value).map(RuntimeSocketEvent::Agents),
+    )
     .await;
 }
 
@@ -73,14 +96,19 @@ async fn run_sessions_socket(
     endpoint: ServerEndpoint,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
-    run_snapshot_socket(endpoint, sessions_ws(), incoming, |value| {
-        decode_sessions_event(value).map(RuntimeSocketEvent::Sessions)
-    })
+    run_snapshot_socket(
+        endpoint,
+        RuntimeStream::Sessions,
+        sessions_ws(),
+        incoming,
+        |value| decode_sessions_event(value).map(RuntimeSocketEvent::Sessions),
+    )
     .await;
 }
 
 async fn run_snapshot_socket(
     endpoint: ServerEndpoint,
+    stream: RuntimeStream,
     socket: WebSocketSpec,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
     decode: fn(Value) -> va_client::Result<RuntimeSocketEvent>,
@@ -98,9 +126,10 @@ async fn run_snapshot_socket(
             Err(error) => {
                 failed_attempts += 1;
                 if incoming
-                    .send(RuntimeSocketEvent::Error(format!(
-                        "failed to connect {label}: {error}"
-                    )))
+                    .send(RuntimeSocketEvent::Error {
+                        stream,
+                        message: format!("failed to connect {label}: {error}"),
+                    })
                     .is_err()
                 {
                     return;
@@ -121,9 +150,10 @@ async fn run_snapshot_socket(
                         }
                         Err(error) => {
                             if incoming
-                                .send(RuntimeSocketEvent::Error(format!(
-                                    "failed to decode {label}: {error}"
-                                )))
+                                .send(RuntimeSocketEvent::Error {
+                                    stream,
+                                    message: format!("failed to decode {label}: {error}"),
+                                })
                                 .is_err()
                             {
                                 return;
@@ -132,9 +162,10 @@ async fn run_snapshot_socket(
                     },
                     Err(error) => {
                         if incoming
-                            .send(RuntimeSocketEvent::Error(format!(
-                                "failed to parse {label}: {error}"
-                            )))
+                            .send(RuntimeSocketEvent::Error {
+                                stream,
+                                message: format!("failed to parse {label}: {error}"),
+                            })
                             .is_err()
                         {
                             return;
@@ -145,9 +176,10 @@ async fn run_snapshot_socket(
                 Ok(_) => {}
                 Err(error) => {
                     if incoming
-                        .send(RuntimeSocketEvent::Error(format!(
-                            "{label} websocket read failed: {error}"
-                        )))
+                        .send(RuntimeSocketEvent::Error {
+                            stream,
+                            message: format!("{label} websocket read failed: {error}"),
+                        })
                         .is_err()
                     {
                         return;
