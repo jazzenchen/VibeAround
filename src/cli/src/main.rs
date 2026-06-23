@@ -8,9 +8,10 @@ use std::env;
 use serde_json::Value;
 use va_client::auth::PairStatusResponse;
 use va_client::http::AuthRequirement;
+use va_client::sessions::{CreateSessionBody, PtyTool};
 use va_client::{ops, Operation};
 
-use args::{parse_args, usage, Command, Options};
+use args::{parse_args, usage, Command, Options, SessionCreateArgs};
 use config::{endpoint_for, resolve_endpoint_env, RuntimeEnv};
 use error::CliError;
 use transport::HttpTransport;
@@ -189,6 +190,18 @@ async fn run() -> Result<(), CliError> {
                 }
             }
         }
+        Command::TmuxSessions => {
+            let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::tmux_sessions()).await?)?;
+                return Ok(());
+            }
+            let tmux = transport.execute(ops::tmux_sessions()).await?;
+            println!("available: {}", tmux.available);
+            for session in tmux.sessions {
+                println!("{session}");
+            }
+        }
         Command::SettingsReload => {
             run_unit(
                 &options,
@@ -239,6 +252,9 @@ async fn run() -> Result<(), CliError> {
                 "agent killed",
             )
             .await?;
+        }
+        Command::SessionCreate(create) => {
+            run_session_create(&options, &create).await?;
         }
         Command::SessionKill { session_id } => {
             run_unit(&options, ops::session_delete(&session_id), "session killed").await?;
@@ -360,6 +376,39 @@ fn print_json(value: Value) -> Result<(), CliError> {
     Ok(())
 }
 
+async fn run_session_create(options: &Options, create: &SessionCreateArgs) -> Result<(), CliError> {
+    let transport = transport_for(options, AuthRequirement::BearerToken)?;
+    let operation = ops::session_create(CreateSessionBody {
+        tool: create.tool,
+        profile_id: create.profile_id.as_deref(),
+        launch_target: create.launch_target.as_deref(),
+        project_path: create.project_path.as_deref(),
+        tmux_session: create.tmux_session.as_deref(),
+        theme: create.theme.as_deref(),
+        cols: create.cols,
+        rows: create.rows,
+    })?;
+    if options.json {
+        print_json(transport.execute_json(operation).await?)?;
+        return Ok(());
+    }
+
+    let session = transport.execute(operation).await?;
+    println!("session: {}", session.session_id);
+    println!("tool: {}", pty_tool_name(session.tool));
+    println!("created_at: {}", session.created_at);
+    if let Some(path) = session.project_path {
+        println!("project: {path}");
+    }
+    if let Some(profile) = session.profile_label.or(session.profile_id) {
+        println!("profile: {profile}");
+    }
+    if let Some(target) = session.launch_target {
+        println!("target: {target}");
+    }
+    Ok(())
+}
+
 async fn run_unit(
     options: &Options,
     operation: Operation<()>,
@@ -450,4 +499,18 @@ async fn run_status(options: &Options) -> Result<(), CliError> {
 
 fn transport_for(options: &Options, auth: AuthRequirement) -> Result<HttpTransport, CliError> {
     Ok(HttpTransport::new(endpoint_for(options, auth)?))
+}
+
+fn pty_tool_name(tool: PtyTool) -> &'static str {
+    match tool {
+        PtyTool::Generic => "generic",
+        PtyTool::Claude => "claude",
+        PtyTool::Codex => "codex",
+        PtyTool::Pi => "pi",
+        PtyTool::Gemini => "gemini",
+        PtyTool::OpenCode => "opencode",
+        PtyTool::Cursor => "cursor",
+        PtyTool::Kiro => "kiro",
+        PtyTool::QwenCode => "qwen-code",
+    }
 }

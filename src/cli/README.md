@@ -53,6 +53,10 @@ va pair start
 va pair status SID
 va channels
 va channel restart feishu
+va session create --tool codex --project /path/to/project
+va session create --profile my-profile --target claude --project /path/to/project
+va session create --tmux existing-tmux-session
+va tmux sessions
 va workspaces
 va workspace add /path/to/project
 ```

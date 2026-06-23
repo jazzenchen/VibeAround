@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::error::CliError;
+use va_client::sessions::PtyTool;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -19,6 +20,8 @@ pub(crate) enum Command {
     PairStart,
     PairStatus { sid: String },
     SettingsReload,
+    TmuxSessions,
+    SessionCreate(SessionCreateArgs),
     ChannelSync,
     ChannelStart { kind: String },
     ChannelStop { kind: String },
@@ -32,6 +35,18 @@ pub(crate) enum Command {
     WorkspaceRemove { path: String },
     WorkspaceDefault { path: String },
     WorkspaceCreate { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct SessionCreateArgs {
+    pub(crate) tool: Option<PtyTool>,
+    pub(crate) profile_id: Option<String>,
+    pub(crate) launch_target: Option<String>,
+    pub(crate) project_path: Option<String>,
+    pub(crate) tmux_session: Option<String>,
+    pub(crate) theme: Option<String>,
+    pub(crate) cols: Option<u16>,
+    pub(crate) rows: Option<u16>,
 }
 
 #[derive(Debug, Default)]
@@ -50,6 +65,7 @@ where
     let mut options = Options::default();
     let mut args = args.into_iter().peekable();
     let mut positionals = Vec::new();
+    let mut command_started = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => options.command = Some(Command::Help),
@@ -74,10 +90,13 @@ where
             value if value.starts_with("--token=") => {
                 options.token = Some(value.trim_start_matches("--token=").to_string());
             }
-            value if value.starts_with('-') => {
+            value if value.starts_with('-') && !command_started => {
                 return Err(CliError::Usage(format!("unknown option: {value}")));
             }
-            value => positionals.push(value.to_string()),
+            value => {
+                command_started = true;
+                positionals.push(value.to_string());
+            }
         }
     }
     if !positionals.is_empty() {
@@ -120,6 +139,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         "previews" => no_args(rest, "previews").map(|()| Command::Previews),
         "profiles" => no_args(rest, "profiles").map(|()| Command::Profiles),
         "pair" => parse_pair_command(rest),
+        "tmux" => parse_tmux_command(rest),
         "settings" => match rest {
             [action] if action == "reload" => Ok(Command::SettingsReload),
             _ => Err(CliError::Usage("usage: va settings reload".to_string())),
@@ -137,12 +157,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
             }),
             _ => Err(CliError::Usage("usage: va agent kill ROUTE_KEY".into())),
         },
-        "session" => match rest {
-            [action, session_id] if action == "kill" => Ok(Command::SessionKill {
-                session_id: session_id.to_string(),
-            }),
-            _ => Err(CliError::Usage("usage: va session kill SESSION_ID".into())),
-        },
+        "session" => parse_session_command(rest),
         "pty" => match rest {
             [action, session_id] if action == "kill" => Ok(Command::PtyKill {
                 session_id: session_id.to_string(),
@@ -157,6 +172,175 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         },
         "workspace" => parse_workspace_command(rest),
         other => Err(CliError::Usage(format!("unknown command: {other}"))),
+    }
+}
+
+fn parse_session_command(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [action, session_id] if action == "kill" => Ok(Command::SessionKill {
+            session_id: session_id.to_string(),
+        }),
+        [action, rest @ ..] if action == "create" => {
+            parse_session_create_args(rest).map(Command::SessionCreate)
+        }
+        _ => Err(CliError::Usage(
+            "usage: va session create --tool TOOL [--project PATH]; va session kill SESSION_ID"
+                .into(),
+        )),
+    }
+}
+
+fn parse_tmux_command(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [action] if action == "sessions" => Ok(Command::TmuxSessions),
+        _ => Err(CliError::Usage("usage: va tmux sessions".into())),
+    }
+}
+
+fn parse_session_create_args(args: &[String]) -> Result<SessionCreateArgs, CliError> {
+    let mut create = SessionCreateArgs::default();
+    let mut args = args.iter().peekable();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--tool" => create.tool = Some(parse_tool(&next_ref(&mut args, "--tool")?)?),
+            "--profile" | "--profile-id" => {
+                create.profile_id = Some(next_ref(&mut args, arg)?.to_string());
+            }
+            "--target" | "--launch-target" => {
+                create.launch_target = Some(next_ref(&mut args, arg)?.to_string());
+            }
+            "--project" | "--project-path" | "--cwd" => {
+                create.project_path = Some(next_ref(&mut args, arg)?.to_string());
+            }
+            "--tmux" | "--tmux-session" => {
+                create.tmux_session = Some(next_ref(&mut args, arg)?.to_string());
+            }
+            "--theme" => create.theme = Some(next_ref(&mut args, "--theme")?.to_string()),
+            "--cols" => create.cols = Some(parse_u16(&next_ref(&mut args, "--cols")?, "--cols")?),
+            "--rows" => create.rows = Some(parse_u16(&next_ref(&mut args, "--rows")?, "--rows")?),
+            value if value.starts_with("--tool=") => {
+                create.tool = Some(parse_tool(value.trim_start_matches("--tool="))?);
+            }
+            value if value.starts_with("--profile=") => {
+                create.profile_id = Some(value.trim_start_matches("--profile=").to_string());
+            }
+            value if value.starts_with("--profile-id=") => {
+                create.profile_id = Some(value.trim_start_matches("--profile-id=").to_string());
+            }
+            value if value.starts_with("--target=") => {
+                create.launch_target = Some(value.trim_start_matches("--target=").to_string());
+            }
+            value if value.starts_with("--launch-target=") => {
+                create.launch_target =
+                    Some(value.trim_start_matches("--launch-target=").to_string());
+            }
+            value if value.starts_with("--project=") => {
+                create.project_path = Some(value.trim_start_matches("--project=").to_string());
+            }
+            value if value.starts_with("--project-path=") => {
+                create.project_path = Some(value.trim_start_matches("--project-path=").to_string());
+            }
+            value if value.starts_with("--cwd=") => {
+                create.project_path = Some(value.trim_start_matches("--cwd=").to_string());
+            }
+            value if value.starts_with("--tmux=") => {
+                create.tmux_session = Some(value.trim_start_matches("--tmux=").to_string());
+            }
+            value if value.starts_with("--tmux-session=") => {
+                create.tmux_session = Some(value.trim_start_matches("--tmux-session=").to_string());
+            }
+            value if value.starts_with("--theme=") => {
+                create.theme = Some(value.trim_start_matches("--theme=").to_string());
+            }
+            value if value.starts_with("--cols=") => {
+                create.cols = Some(parse_u16(value.trim_start_matches("--cols="), "--cols")?);
+            }
+            value if value.starts_with("--rows=") => {
+                create.rows = Some(parse_u16(value.trim_start_matches("--rows="), "--rows")?);
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!(
+                    "unknown session create option: {value}"
+                )));
+            }
+            value => {
+                if create.tool.is_some() {
+                    return Err(CliError::Usage(format!("unexpected argument: {value}")));
+                }
+                create.tool = Some(parse_tool(value)?);
+            }
+        }
+    }
+
+    if create.profile_id.is_some() != create.launch_target.is_some() {
+        return Err(CliError::Usage(
+            "session create requires --profile and --target together".into(),
+        ));
+    }
+    if create.profile_id.is_some() && create.tool.is_some() {
+        return Err(CliError::Usage(
+            "session create cannot combine --tool with --profile/--target".into(),
+        ));
+    }
+    if create.profile_id.is_some() && create.tmux_session.is_some() {
+        return Err(CliError::Usage(
+            "session create cannot combine --tmux with --profile/--target".into(),
+        ));
+    }
+    if create.tmux_session.is_some() {
+        match create.tool {
+            None => create.tool = Some(PtyTool::Generic),
+            Some(PtyTool::Generic) => {}
+            Some(_) => {
+                return Err(CliError::Usage(
+                    "session create --tmux must use --tool generic".into(),
+                ));
+            }
+        }
+    }
+    if create.profile_id.is_none() && create.tool.is_none() {
+        return Err(CliError::Usage(
+            "session create requires --tool TOOL, or --profile PROFILE --target TARGET".into(),
+        ));
+    }
+
+    Ok(create)
+}
+
+fn next_ref<'a, I>(args: &mut std::iter::Peekable<I>, flag: &str) -> Result<&'a str, CliError>
+where
+    I: Iterator<Item = &'a String>,
+{
+    args.next()
+        .map(String::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| CliError::Usage(format!("missing value for {flag}")))
+}
+
+fn parse_u16(value: &str, flag: &str) -> Result<u16, CliError> {
+    let value = value
+        .parse::<u16>()
+        .map_err(|_| CliError::Usage(format!("{flag} must be a positive integer")))?;
+    if value == 0 {
+        return Err(CliError::Usage(format!(
+            "{flag} must be a positive integer"
+        )));
+    }
+    Ok(value)
+}
+
+fn parse_tool(value: &str) -> Result<PtyTool, CliError> {
+    match value {
+        "generic" => Ok(PtyTool::Generic),
+        "claude" => Ok(PtyTool::Claude),
+        "codex" => Ok(PtyTool::Codex),
+        "pi" => Ok(PtyTool::Pi),
+        "gemini" => Ok(PtyTool::Gemini),
+        "opencode" | "open-code" => Ok(PtyTool::OpenCode),
+        "cursor" => Ok(PtyTool::Cursor),
+        "kiro" => Ok(PtyTool::Kiro),
+        "qwen-code" | "qwen" => Ok(PtyTool::QwenCode),
+        _ => Err(CliError::Usage(format!("unknown PTY tool: {value}"))),
     }
 }
 
@@ -219,7 +403,7 @@ fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -310,10 +494,121 @@ mod tests {
     }
 
     #[test]
+    fn parses_session_create_with_tool_and_project() {
+        let options = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--tool".to_string(),
+            "codex".to_string(),
+            "--project=/tmp/project".to_string(),
+            "--cols".to_string(),
+            "120".to_string(),
+            "--rows=40".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::SessionCreate(SessionCreateArgs {
+                tool: Some(PtyTool::Codex),
+                project_path: Some("/tmp/project".into()),
+                cols: Some(120),
+                rows: Some(40),
+                ..Default::default()
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_session_create_with_profile_target() {
+        let options = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--profile=p1".to_string(),
+            "--target".to_string(),
+            "claude".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::SessionCreate(SessionCreateArgs {
+                profile_id: Some("p1".into()),
+                launch_target: Some("claude".into()),
+                ..Default::default()
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_session_create_with_tmux_defaulting_generic_tool() {
+        let options = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--tmux".to_string(),
+            "server".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::SessionCreate(SessionCreateArgs {
+                tool: Some(PtyTool::Generic),
+                tmux_session: Some("server".into()),
+                ..Default::default()
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_profile_session_create() {
+        let error = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--profile=p1".to_string(),
+        ])
+        .expect_err("error");
+        assert!(matches!(error, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn parses_tmux_sessions_command() {
+        let options = parse_args(["tmux".to_string(), "sessions".to_string()]).expect("options");
+        assert_eq!(options.command, Some(Command::TmuxSessions));
+    }
+
+    #[test]
     fn parses_json_flag() {
         let options = parse_args(["--json".to_string(), "channels".to_string()]).expect("options");
         assert!(options.json);
         assert_eq!(options.command, Some(Command::Channels));
+    }
+
+    #[test]
+    fn parses_global_json_after_simple_command() {
+        let options = parse_args(["status".to_string(), "--json".to_string()]).expect("options");
+        assert!(options.json);
+        assert_eq!(options.command, Some(Command::Status));
+    }
+
+    #[test]
+    fn parses_global_json_after_command_with_local_options() {
+        let options = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--tool".to_string(),
+            "codex".to_string(),
+            "--json".to_string(),
+        ])
+        .expect("options");
+        assert!(options.json);
+        assert_eq!(
+            options.command,
+            Some(Command::SessionCreate(SessionCreateArgs {
+                tool: Some(PtyTool::Codex),
+                ..Default::default()
+            }))
+        );
     }
 
     #[test]
