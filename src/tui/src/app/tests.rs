@@ -536,6 +536,41 @@ fn chat_input_delete_to_end_preserves_text_before_cursor() {
 }
 
 #[test]
+fn chat_input_cursor_moves_by_word() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.set_chat_input_for_test("hello brave world");
+    app.move_chat_cursor_word_left();
+    assert_eq!(app.chat_cursor, "hello brave ".len());
+
+    app.move_chat_cursor_word_left();
+    assert_eq!(app.chat_cursor, "hello ".len());
+
+    app.move_chat_cursor_word_right();
+    assert_eq!(app.chat_cursor, "hello brave".len());
+
+    app.move_chat_cursor_word_right();
+    assert_eq!(app.chat_cursor, "hello brave world".len());
+}
+
+#[test]
+fn chat_input_word_cursor_respects_unicode_boundaries() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.set_chat_input_for_test("你好 世界 again");
+    app.move_chat_cursor_word_left();
+    assert_eq!(app.chat_cursor, "你好 世界 ".len());
+
+    app.move_chat_cursor_word_left();
+    assert_eq!(app.chat_cursor, "你好 ".len());
+
+    app.move_chat_cursor_word_right();
+    assert_eq!(app.chat_cursor, "你好 世界".len());
+}
+
+#[test]
 fn chat_message_send_uses_selected_context() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
@@ -749,6 +784,7 @@ async fn slash_help_renders_multiline_command_reference() {
     assert!(help.contains("Commands\n/status runtime status"));
     assert!(help.contains("/agent agent, profile, workspace, session"));
     assert!(help.contains("Shift+Enter newline"));
+    assert!(help.contains("Alt+Left/Right word"));
     assert!(help.contains("Ctrl+A/E start/end"));
     assert!(help.contains("Ctrl+K delete tail"));
 }

@@ -93,6 +93,38 @@ impl TuiApp {
         self.chat_cursor = next_boundary(&self.chat_input, self.chat_cursor);
     }
 
+    pub(crate) fn move_chat_cursor_word_left(&mut self) {
+        self.clamp_chat_cursor();
+        let before_cursor = &self.chat_input[..self.chat_cursor];
+        let trimmed_len = before_cursor.trim_end_matches(char::is_whitespace).len();
+        self.chat_cursor = self.chat_input[..trimmed_len]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| ch.is_whitespace())
+            .map(|(index, ch)| index + ch.len_utf8())
+            .unwrap_or(0);
+    }
+
+    pub(crate) fn move_chat_cursor_word_right(&mut self) {
+        self.clamp_chat_cursor();
+        if self.chat_cursor >= self.chat_input.len() {
+            return;
+        }
+
+        let mut saw_word = false;
+        for (relative_index, ch) in self.chat_input[self.chat_cursor..].char_indices() {
+            if ch.is_whitespace() {
+                if saw_word {
+                    self.chat_cursor += relative_index;
+                    return;
+                }
+            } else {
+                saw_word = true;
+            }
+        }
+        self.chat_cursor = self.chat_input.len();
+    }
+
     pub(crate) fn move_chat_cursor_start(&mut self) {
         self.chat_cursor = 0;
     }
@@ -258,7 +290,7 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail".into(),
+            text: "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail".into(),
         });
     }
 

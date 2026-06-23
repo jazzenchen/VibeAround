@@ -108,6 +108,18 @@ async fn run_dashboard(
 
                     match key.code {
                         KeyCode::Esc => app.go_back(),
+                        KeyCode::Left
+                            if app.view == AppView::Chat
+                                && key.modifiers.contains(KeyModifiers::ALT) =>
+                        {
+                            app.move_chat_cursor_word_left();
+                        }
+                        KeyCode::Right
+                            if app.view == AppView::Chat
+                                && key.modifiers.contains(KeyModifiers::ALT) =>
+                        {
+                            app.move_chat_cursor_word_right();
+                        }
                         KeyCode::Left if app.view == AppView::Chat => app.move_chat_cursor_left(),
                         KeyCode::Right if app.view == AppView::Chat => {
                             app.move_chat_cursor_right();
