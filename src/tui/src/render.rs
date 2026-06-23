@@ -554,10 +554,6 @@ fn selectable_list(
     active: bool,
 ) -> List<'static> {
     let mut items = Vec::new();
-    if !active {
-        items.push(ListItem::new(section_heading(title, false)));
-        items.push(ListItem::new(Line::raw("")));
-    }
     if rows.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled(
             "  no runtime entries",
@@ -581,12 +577,12 @@ fn selectable_list(
             }
         }))
     };
-    let list = List::new(items);
-    if active {
-        list.block(focus_block(title))
+    let block = if active {
+        focus_block(title)
     } else {
-        list
-    }
+        quiet_block(title)
+    };
+    List::new(items).block(block)
 }
 
 fn section_heading(title: &str, active: bool) -> Line<'static> {
@@ -608,6 +604,14 @@ fn focus_block(title: &str) -> Block<'static> {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BRAND))
         .title_style(Style::default().fg(BRAND).add_modifier(Modifier::BOLD))
+        .title(format!(" {title} "))
+}
+
+fn quiet_block(title: &str) -> Block<'static> {
+    Block::default()
+        .borders(Borders::TOP)
+        .border_style(muted_style())
+        .title_style(muted_style().add_modifier(Modifier::BOLD))
         .title(format!(" {title} "))
 }
 
