@@ -106,14 +106,11 @@ impl TuiApp {
         let message = ChatClientMessage::Message {
             text,
             message_id: None,
-            agent: self.selected_agent.clone(),
-            profile_id: self.selected_profile.clone(),
-            session_action: self
-                .selected_session
-                .as_ref()
-                .map(|_| ChatSessionAction::Resume),
-            session_id: self.selected_session.clone(),
-            session_workspace: self.selected_workspace.clone(),
+            agent: self.effective_agent().map(str::to_string),
+            profile_id: self.effective_profile().map(str::to_string),
+            session_action: self.effective_session().map(|_| ChatSessionAction::Resume),
+            session_id: self.effective_session().map(str::to_string),
+            session_workspace: self.effective_workspace().map(str::to_string),
             permission_mode: None,
             attachments: Vec::new(),
         };

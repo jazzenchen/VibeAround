@@ -8,7 +8,10 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 use va_client::launcher::{LauncherAgentPreferenceSummary, LauncherPreferencesResponse};
+use va_client::profiles::{AuthMode, ModelProfileSummary};
 use va_client::runtime::{AgentInfo, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus};
+use va_client::sessions::{PtyRunState, PtyTool, SessionListItem};
+use va_client::workspaces::WorkspaceItem;
 
 fn channel(kind: &str) -> ChannelRuntime {
     ChannelRuntime {
@@ -26,6 +29,55 @@ fn tunnel(provider: &str) -> TunnelRuntime {
         url: Some(format!("https://{provider}.example.test")),
         status: TunnelStatus::Running,
         uptime_secs: 10,
+    }
+}
+
+fn agent(id: &str) -> AgentInfo {
+    AgentInfo {
+        id: id.into(),
+        name: id.into(),
+        description: format!("{id} agent"),
+    }
+}
+
+fn profile(id: &str) -> ModelProfileSummary {
+    ModelProfileSummary {
+        id: id.into(),
+        label: id.into(),
+        provider: "provider".into(),
+        provider_label: "Provider".into(),
+        provider_icon: None,
+        auth_mode: AuthMode::ApiKey,
+        api_types: vec!["chat".into()],
+        launch_targets: Vec::new(),
+        api_type_warnings: BTreeMap::new(),
+        api_type_models: BTreeMap::new(),
+        api_type_model_options: BTreeMap::new(),
+        api_type_headers: BTreeMap::new(),
+    }
+}
+
+fn workspace(path: &str) -> WorkspaceItem {
+    WorkspaceItem {
+        path: path.into(),
+        is_default: false,
+        is_builtin: false,
+    }
+}
+
+fn session(session_id: &str, project_path: &str, profile_id: &str) -> SessionListItem {
+    SessionListItem {
+        session_id: session_id.into(),
+        tool: PtyTool::Codex,
+        status: PtyRunState::Running {
+            tool: PtyTool::Codex,
+        },
+        created_at: 1,
+        project_path: Some(project_path.into()),
+        profile_id: Some(profile_id.into()),
+        profile_label: Some(profile_id.into()),
+        launch_target: None,
+        tmux_session: None,
     }
 }
 
@@ -205,6 +257,77 @@ fn chat_message_send_uses_selected_context() {
             attachments: Vec::new(),
         }
     );
+}
+
+#[test]
+fn chat_message_send_uses_effective_launcher_context() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.preferences = Some(launcher_preferences(
+        "codex",
+        Some("codex-profile"),
+        Some("/tmp/codex"),
+    ));
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.send_chat_message("hello".into(), &tx);
+
+    assert_eq!(
+        rx.try_recv().expect("message"),
+        ChatClientMessage::Message {
+            text: "hello".into(),
+            message_id: None,
+            agent: Some("codex".into()),
+            profile_id: Some("codex-profile".into()),
+            session_action: None,
+            session_id: None,
+            session_workspace: Some("/tmp/codex".into()),
+            permission_mode: None,
+            attachments: Vec::new(),
+        }
+    );
+}
+
+#[test]
+fn agent_picker_context_changes_clear_stale_session_context() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.view = AppView::Agent;
+    app.agent_picker.agents = vec![agent("claude")];
+    app.agent_picker.profiles = vec![profile("claude-profile")];
+    app.agent_picker.workspaces = vec![workspace("/tmp/claude")];
+    app.agent_picker.sessions = vec![session("session-1", "/tmp/session", "session-profile")];
+    app.agent_selection.clamp(&app.agent_picker);
+    app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("codex-profile".into());
+    app.selected_workspace = Some("/tmp/codex".into());
+    app.selected_session = Some("old-session".into());
+
+    app.enter_current_view();
+
+    assert_eq!(app.selected_agent.as_deref(), Some("claude"));
+    assert_eq!(app.selected_profile, None);
+    assert_eq!(app.selected_workspace, None);
+    assert_eq!(app.selected_session, None);
+
+    app.select_right();
+    app.enter_current_view();
+
+    assert_eq!(app.selected_profile.as_deref(), Some("claude-profile"));
+    assert_eq!(app.selected_session, None);
+
+    app.select_down();
+    app.enter_current_view();
+
+    assert_eq!(app.selected_session.as_deref(), Some("session-1"));
+    assert_eq!(app.selected_profile.as_deref(), Some("session-profile"));
+    assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/session"));
+
+    app.select_left();
+    app.enter_current_view();
+
+    assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/claude"));
+    assert_eq!(app.selected_session, None);
 }
 
 #[test]

@@ -189,6 +189,11 @@ impl TuiApp {
         match self.agent_selection.panel {
             AgentPanel::Agents => {
                 if let Some(agent) = self.agent_selection.selected_agent(&self.agent_picker) {
+                    if self.selected_agent.as_deref() != Some(agent.id.as_str()) {
+                        self.selected_profile = None;
+                        self.selected_workspace = None;
+                        self.selected_session = None;
+                    }
                     self.selected_agent = Some(agent.id.clone());
                     self.last_action = Some(format!("selected agent {}", agent.id));
                 }
@@ -196,6 +201,7 @@ impl TuiApp {
             AgentPanel::Profiles => {
                 if let Some(profile) = self.agent_selection.selected_profile(&self.agent_picker) {
                     self.selected_profile = Some(profile.id.clone());
+                    self.selected_session = None;
                     self.last_action = Some(format!("selected profile {}", profile.label));
                 }
             }
@@ -203,12 +209,19 @@ impl TuiApp {
                 if let Some(workspace) = self.agent_selection.selected_workspace(&self.agent_picker)
                 {
                     self.selected_workspace = Some(workspace.path.clone());
+                    self.selected_session = None;
                     self.last_action = Some(format!("selected workspace {}", workspace.path));
                 }
             }
             AgentPanel::Sessions => {
                 if let Some(session) = self.agent_selection.selected_session(&self.agent_picker) {
                     self.selected_session = Some(session.session_id.clone());
+                    if let Some(profile_id) = &session.profile_id {
+                        self.selected_profile = Some(profile_id.clone());
+                    }
+                    if let Some(project_path) = &session.project_path {
+                        self.selected_workspace = Some(project_path.clone());
+                    }
                     self.last_action = Some(format!("selected session {}", session.session_id));
                 }
             }
