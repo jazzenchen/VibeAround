@@ -1,6 +1,6 @@
 use ratatui::style::{Color, Modifier, Style};
 
-pub(crate) const BRAND: Color = Color::Cyan;
+pub(crate) const BRAND: Color = Color::Rgb(79, 209, 197);
 pub(crate) const OK: Color = Color::Reset;
 pub(crate) const WARN: Color = Color::Yellow;
 pub(crate) const ERROR: Color = Color::Red;

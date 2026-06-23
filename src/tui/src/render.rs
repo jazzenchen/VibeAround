@@ -62,29 +62,29 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         .spacing(1)
         .constraints([Constraint::Min(6), Constraint::Length(input_height)])
         .split(area);
-    let visible_rows = usize::from(chunks[0].height.saturating_sub(2));
-    let content_width = usize::from(chunks[0].width.saturating_sub(2)).max(1);
+    let visible_rows = usize::from(chunks[0].height);
+    let content_width = usize::from(chunks[0].width.saturating_sub(1)).max(1);
     let message_lines = if app.chat_messages.is_empty() {
-        vec![ListItem::new(Line::from(Span::styled(
+        vec![Line::from(Span::styled(
             "Type /help for commands.",
             muted_style(),
-        )))]
+        ))]
     } else {
         visible_chat_lines(
             chat_message_lines_for_messages(&app.chat_messages, content_width),
             visible_rows,
             app.chat_scroll,
         )
-        .into_iter()
-        .map(ListItem::new)
-        .collect()
     };
-    let mut messages = vec![
-        ListItem::new(section_heading("chat", false)),
-        ListItem::new(Line::raw("")),
-    ];
-    messages.extend(message_lines);
-    frame.render_widget(List::new(messages), chunks[0]);
+    frame.render_widget(
+        List::new(
+            message_lines
+                .into_iter()
+                .map(ListItem::new)
+                .collect::<Vec<_>>(),
+        ),
+        chunks[0],
+    );
     frame.render_widget(
         Paragraph::new(vec![Line::from(vec![
             Span::styled("› ", Style::default().fg(BRAND)),

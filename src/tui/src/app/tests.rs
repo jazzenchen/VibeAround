@@ -329,6 +329,45 @@ fn default_view_is_chat() {
 }
 
 #[test]
+fn chat_render_uses_conversation_markers_without_panel_box() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_connected = true;
+    app.chat_messages = vec![
+        ChatMessage {
+            role: ChatRole::Request,
+            text: "hello".into(),
+        },
+        ChatMessage {
+            role: ChatRole::Response,
+            text: "hi there".into(),
+        },
+    ];
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| render::render(frame, &app))
+        .expect("draw");
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(screen.contains("› hello"));
+    assert!(screen.contains("• hi there"));
+    assert_eq!(screen.matches("chat").count(), 1);
+    assert!(!screen.contains('┌'));
+    assert!(!screen.contains('┐'));
+    assert!(!screen.contains('└'));
+    assert!(!screen.contains('┘'));
+}
+
+#[test]
 fn effective_chat_context_prefers_local_selection_over_launcher_preferences() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
