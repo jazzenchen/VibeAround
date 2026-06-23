@@ -638,7 +638,10 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         ])
         .split(area);
 
-    frame.render_widget(brand_header(app, brand_mode), chunks[0]);
+    frame.render_widget(
+        brand_header(app, brand_mode, chunks[0].width.saturating_sub(2)),
+        chunks[0],
+    );
     frame.render_widget(status_strip(app), chunks[1]);
 
     let columns = Layout::default()
@@ -716,63 +719,108 @@ fn brand_mode(width: u16, height: u16) -> BrandMode {
     }
 }
 
-fn brand_header(app: &TuiApp, mode: BrandMode) -> Paragraph<'static> {
+fn brand_header(app: &TuiApp, mode: BrandMode, content_width: u16) -> Paragraph<'static> {
+    let content_width = usize::from(content_width);
     let mut lines = Vec::new();
     match mode {
         BrandMode::FullLogo => {
-            lines.extend(BRAND_LOGO.lines().map(|line| {
-                Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ))
-            }));
-            lines.push(Line::from(vec![
-                Span::styled(
-                    TAGLINE,
-                    Style::default()
-                        .fg(Color::Gray)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("   /   ", Style::default().fg(Color::DarkGray)),
-                Span::styled(app.endpoint.clone(), Style::default().fg(Color::DarkGray)),
-            ]));
+            lines.extend(centered_brand_logo_lines(content_width));
+            lines.push(centered_line(
+                content_width,
+                vec![
+                    Span::styled(
+                        TAGLINE,
+                        Style::default()
+                            .fg(Color::Gray)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("   /   ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(app.endpoint.clone(), Style::default().fg(Color::DarkGray)),
+                ],
+            ));
         }
         BrandMode::Compact => {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "VibeAround",
+            lines.push(centered_line(
+                content_width,
+                vec![
+                    Span::styled(
+                        "VibeAround",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "  terminal runtime console",
+                        Style::default().fg(Color::Gray),
+                    ),
+                ],
+            ));
+            lines.push(centered_line(
+                content_width,
+                vec![Span::styled(
+                    app.endpoint.clone(),
+                    Style::default().fg(Color::DarkGray),
+                )],
+            ));
+        }
+        BrandMode::Narrow => {
+            lines.push(centered_line(
+                content_width,
+                vec![Span::styled(
+                    "VA",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    "  terminal runtime console",
-                    Style::default().fg(Color::Gray),
-                ),
-            ]));
-            lines.push(Line::from(Span::styled(
-                app.endpoint.clone(),
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-        BrandMode::Narrow => {
-            lines.push(Line::from(Span::styled(
-                "VA",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )));
+                )],
+            ));
         }
     }
 
-    Paragraph::new(lines).alignment(Alignment::Center).block(
+    Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Cyan)),
     )
+}
+
+fn centered_brand_logo_lines(content_width: usize) -> Vec<Line<'static>> {
+    let logo_lines = BRAND_LOGO.lines().collect::<Vec<_>>();
+    let widths = logo_lines
+        .iter()
+        .map(|line| Line::from((*line).to_string()).width())
+        .collect::<Vec<_>>();
+    let block_width = widths.iter().copied().max().unwrap_or(0);
+    let left_pad = content_width.saturating_sub(block_width) / 2;
+
+    logo_lines
+        .into_iter()
+        .zip(widths)
+        .map(|(line, width)| {
+            Line::from(Span::styled(
+                format!(
+                    "{}{}{}",
+                    " ".repeat(left_pad),
+                    line,
+                    " ".repeat(block_width.saturating_sub(width))
+                ),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect()
+}
+
+fn centered_line(content_width: usize, spans: Vec<Span<'static>>) -> Line<'static> {
+    let line_width = Line::from(spans.clone()).width();
+    let left_pad = content_width.saturating_sub(line_width) / 2;
+    let mut padded_spans = Vec::with_capacity(spans.len() + 1);
+    if left_pad > 0 {
+        padded_spans.push(Span::raw(" ".repeat(left_pad)));
+    }
+    padded_spans.extend(spans);
+    Line::from(padded_spans)
 }
 
 fn status_strip(app: &TuiApp) -> Paragraph<'static> {
@@ -1416,6 +1464,16 @@ mod tests {
         assert_eq!(brand_mode(96, 24), BrandMode::FullLogo);
         assert_eq!(BrandMode::Narrow.height(), 3);
         assert_eq!(BrandMode::FullLogo.height(), 9);
+    }
+
+    #[test]
+    fn centered_brand_logo_lines_share_one_block_width() {
+        let lines = centered_brand_logo_lines(120);
+        let widths = lines.iter().map(Line::width).collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), BRAND_LOGO.lines().count());
+        assert!(widths.iter().all(|width| *width == widths[0]));
+        assert!(widths[0] <= 120);
     }
 
     #[test]
