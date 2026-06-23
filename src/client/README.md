@@ -17,3 +17,13 @@ It deliberately does not own:
 
 Desktop, CLI, and future TUI code should provide their own host transport and
 pass `RequestSpec` / `ResponseSpec` values through this crate.
+
+## Layout
+
+- `auth`, `endpoint`, `http`, `operation`: shared protocol primitives.
+- `service`, `settings`, `runtime`, `launcher`, `sessions`, `profiles`,
+  `workspaces`, `previews`: per-domain request builders and wire models.
+- `ops/`: ready-to-send operation catalog, grouped by server domain and
+  re-exported from `va_client::ops`.
+- `events/`: WebSocket specs, PTY client frames, and typed event decoders.
+- `state/`: display-oriented reducers for CLI/TUI/desktop surfaces.
