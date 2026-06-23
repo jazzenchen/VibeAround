@@ -207,6 +207,7 @@ fn parses_chat_send_command() {
         options.command,
         Some(Command::ChatSend(ChatSendArgs {
             text: "hello there".into(),
+            read_stdin: false,
             agent: Some("codex".into()),
             profile_id: Some("deepseek".into()),
             resume_session_id: Some("sid-1".into()),
@@ -232,6 +233,7 @@ fn parses_chat_send_continue_command() {
         options.command,
         Some(Command::ChatSend(ChatSendArgs {
             text: "hello".into(),
+            read_stdin: false,
             agent: None,
             profile_id: None,
             resume_session_id: None,
@@ -241,6 +243,44 @@ fn parses_chat_send_continue_command() {
             permission_mode: None,
         }))
     );
+}
+
+#[test]
+fn parses_chat_send_stdin_command() {
+    let options = parse_args([
+        "chat".to_string(),
+        "send".to_string(),
+        "--stdin".to_string(),
+        "--new-session".to_string(),
+    ])
+    .expect("options");
+
+    assert_eq!(
+        options.command,
+        Some(Command::ChatSend(ChatSendArgs {
+            text: String::new(),
+            read_stdin: true,
+            agent: None,
+            profile_id: None,
+            resume_session_id: None,
+            new_session: true,
+            continue_session: false,
+            workspace_path: None,
+            permission_mode: None,
+        }))
+    );
+}
+
+#[test]
+fn rejects_chat_send_stdin_with_text() {
+    let error = parse_args([
+        "chat".to_string(),
+        "send".to_string(),
+        "--stdin".to_string(),
+        "hello".to_string(),
+    ])
+    .expect_err("error");
+    assert!(matches!(error, CliError::Usage(_)));
 }
 
 #[test]

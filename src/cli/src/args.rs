@@ -95,6 +95,7 @@ pub(crate) fn usage() -> &'static str {
         "  pair status SID [--save]     Poll pairing; save verified local auth with --save\n",
         "  pair wait SID [--save]       Wait for pairing verification\n",
         "  chat send TEXT               Send one prompt over /ws/chat and wait for completion\n",
+        "  chat send --stdin            Read one prompt from standard input\n",
         "  chat repl                    Start a line-oriented chat session\n",
         "  chat send --continue TEXT    Resume the saved chat session for this workspace\n",
         "  chat sessions                List locally saved chat sessions\n",

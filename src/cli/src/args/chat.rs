@@ -6,6 +6,7 @@ use crate::error::CliError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChatSendArgs {
     pub(crate) text: String,
+    pub(crate) read_stdin: bool,
     pub(crate) agent: Option<String>,
     pub(crate) profile_id: Option<String>,
     pub(crate) resume_session_id: Option<String>,
@@ -45,8 +46,10 @@ pub(super) enum ChatCommand {
 
 #[derive(Debug, Args)]
 pub(super) struct ChatSendCli {
-    #[arg(value_name = "TEXT", required = true, num_args = 1..)]
+    #[arg(value_name = "TEXT", num_args = 0..)]
     text: Vec<String>,
+    #[arg(long = "stdin")]
+    read_stdin: bool,
     #[arg(long = "agent", short = 'a')]
     agent: Option<String>,
     #[arg(long = "profile", alias = "profile-id")]
@@ -120,11 +123,17 @@ impl ChatSendCli {
             ));
         }
         let text = self.text.join(" ").trim().to_string();
-        if text.is_empty() {
-            return Err(CliError::Usage("chat send requires TEXT".into()));
+        if self.read_stdin && !text.is_empty() {
+            return Err(CliError::Usage(
+                "chat send cannot combine --stdin with TEXT".into(),
+            ));
+        }
+        if !self.read_stdin && text.is_empty() {
+            return Err(CliError::Usage("chat send requires TEXT or --stdin".into()));
         }
         Ok(ChatSendArgs {
             text,
+            read_stdin: self.read_stdin,
             agent: self.agent,
             profile_id: self.profile_id,
             resume_session_id: self.resume_session_id,

@@ -1,4 +1,4 @@
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -129,6 +129,9 @@ pub(super) async fn repl(options: &Options, args: &ChatReplArgs) -> Result<(), C
 pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), CliError> {
     let session = resolve_session(options, args)?;
     let endpoint = endpoint_for(options, AuthRequirement::BearerToken)?;
+    let text = prompt_text(args)?;
+    let mut args = args.clone();
+    args.text = text;
     let socket = chat_ws();
     let url = endpoint.websocket_url(&socket);
     let (ws, _) = connect_async(&url)
@@ -136,7 +139,7 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
         .map_err(|source| ws_error(&url, source))?;
     let (mut ws_tx, mut ws_rx) = ws.split();
 
-    let body = encode_chat_client_message(&message_from_args(args, &session))?;
+    let body = encode_chat_client_message(&message_from_args(&args, &session))?;
     ws_tx
         .send(Message::Text(body.into()))
         .await
@@ -223,11 +226,32 @@ fn label(value: Option<&str>) -> &str {
     value.unwrap_or("-")
 }
 
+fn prompt_text(args: &ChatSendArgs) -> Result<String, CliError> {
+    if !args.read_stdin {
+        return Ok(args.text.clone());
+    }
+
+    let mut text = String::new();
+    std::io::stdin()
+        .read_to_string(&mut text)
+        .map_err(|source| CliError::Io {
+            action: "reading chat prompt from stdin",
+            source,
+        })?;
+    if text.trim().is_empty() {
+        return Err(CliError::Usage(
+            "chat send --stdin received empty stdin".into(),
+        ));
+    }
+    Ok(text)
+}
+
 fn repl_turn_args(args: &ChatReplArgs, text: String, first_turn: bool) -> ChatSendArgs {
     let explicit_first_session =
         args.new_session || args.resume_session_id.is_some() || args.continue_session;
     ChatSendArgs {
         text,
+        read_stdin: false,
         agent: args.agent.clone(),
         profile_id: args.profile_id.clone(),
         resume_session_id: if first_turn {
@@ -535,6 +559,7 @@ mod tests {
         let message = message_from_args(
             &ChatSendArgs {
                 text: "hello".into(),
+                read_stdin: false,
                 agent: Some("codex".into()),
                 profile_id: Some("deepseek".into()),
                 resume_session_id: Some("sid-1".into()),
@@ -582,6 +607,7 @@ mod tests {
         };
         let args = ChatSendArgs {
             text: "hello".into(),
+            read_stdin: false,
             agent: Some("codex".into()),
             profile_id: Some("default".into()),
             resume_session_id: None,
