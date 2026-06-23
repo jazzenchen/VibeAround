@@ -48,6 +48,7 @@ pub(crate) struct SessionCreateArgs {
     pub(crate) theme: Option<String>,
     pub(crate) cols: Option<u16>,
     pub(crate) rows: Option<u16>,
+    pub(crate) attach: bool,
 }
 
 #[derive(Debug, Default)]
@@ -218,6 +219,7 @@ fn parse_session_create_args(args: &[String]) -> Result<SessionCreateArgs, CliEr
             "--tmux" | "--tmux-session" => {
                 create.tmux_session = Some(next_ref(&mut args, arg)?.to_string());
             }
+            "--attach" => create.attach = true,
             "--theme" => create.theme = Some(next_ref(&mut args, "--theme")?.to_string()),
             "--cols" => create.cols = Some(parse_u16(&next_ref(&mut args, "--cols")?, "--cols")?),
             "--rows" => create.rows = Some(parse_u16(&next_ref(&mut args, "--rows")?, "--rows")?),
@@ -251,6 +253,9 @@ fn parse_session_create_args(args: &[String]) -> Result<SessionCreateArgs, CliEr
             }
             value if value.starts_with("--tmux-session=") => {
                 create.tmux_session = Some(value.trim_start_matches("--tmux-session=").to_string());
+            }
+            value if value.starts_with("--attach=") => {
+                create.attach = parse_bool(value.trim_start_matches("--attach="), "--attach")?;
             }
             value if value.starts_with("--theme=") => {
                 create.theme = Some(value.trim_start_matches("--theme=").to_string());
@@ -332,6 +337,14 @@ fn parse_u16(value: &str, flag: &str) -> Result<u16, CliError> {
     Ok(value)
 }
 
+fn parse_bool(value: &str, flag: &str) -> Result<bool, CliError> {
+    match value {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(CliError::Usage(format!("{flag} must be true or false"))),
+    }
+}
+
 fn parse_tool(value: &str) -> Result<PtyTool, CliError> {
     match value {
         "generic" => Ok(PtyTool::Generic),
@@ -406,7 +419,7 @@ fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create a PTY session\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -517,6 +530,27 @@ mod tests {
                 project_path: Some("/tmp/project".into()),
                 cols: Some(120),
                 rows: Some(40),
+                ..Default::default()
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_session_create_with_attach() {
+        let options = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--tool".to_string(),
+            "codex".to_string(),
+            "--attach".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::SessionCreate(SessionCreateArgs {
+                tool: Some(PtyTool::Codex),
+                attach: true,
                 ..Default::default()
             }))
         );

@@ -381,6 +381,12 @@ fn print_json(value: Value) -> Result<(), CliError> {
 }
 
 async fn run_session_create(options: &Options, create: &SessionCreateArgs) -> Result<(), CliError> {
+    if create.attach && options.json {
+        return Err(CliError::Usage(
+            "session create --attach does not support --json".into(),
+        ));
+    }
+
     let transport = transport_for(options, AuthRequirement::BearerToken)?;
     let operation = ops::session_create(CreateSessionBody {
         tool: create.tool,
@@ -398,6 +404,11 @@ async fn run_session_create(options: &Options, create: &SessionCreateArgs) -> Re
     }
 
     let session = transport.execute(operation).await?;
+    if create.attach {
+        eprintln!("created session {}", session.session_id);
+        return attach::attach_session(options, &session.session_id).await;
+    }
+
     println!("session: {}", session.session_id);
     println!("tool: {}", pty_tool_name(session.tool));
     println!("created_at: {}", session.created_at);
