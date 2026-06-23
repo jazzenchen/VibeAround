@@ -3,26 +3,21 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
-use va_client::profiles::ModelProfileSummary;
-use va_client::runtime::{
-    AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
-};
-use va_client::sessions::{PtyRunState, SessionListItem};
-use va_client::workspaces::WorkspaceItem;
+use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
+use va_client::sessions::SessionListItem;
 
 use crate::app::{AppView, TuiApp};
 use crate::chat::{chat_message_lines_for_messages, input_box_height, visible_chat_lines};
-use crate::detail::{channel_status_label, session_status_label, tunnel_status_label};
 use crate::selection::{AgentPanel, RuntimePanel};
-use crate::theme::{muted_style, BRAND, ERROR, NEUTRAL, OK, WARN};
+use crate::theme::{muted_style, BRAND, ERROR, OK, WARN};
 
-const BRAND_LOGO: &str = r#" ██╗   ██╗ ██╗ ██████╗  ███████╗  █████╗  ██████╗   ██████╗  ██╗   ██╗ ███╗   ██╗ ██████╗
- ██║   ██║ ██║ ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔══██╗ ██╔═══██╗ ██║   ██║ ████╗  ██║ ██╔══██╗
- ██║   ██║ ██║ ██████╔╝ █████╗   ███████║ ██████╔╝ ██║   ██║ ██║   ██║ ██╔██╗ ██║ ██║  ██║
- ╚██╗ ██╔╝ ██║ ██╔══██╗ ██╔══╝   ██╔══██║ ██╔══██╗ ██║   ██║ ██║   ██║ ██║╚██╗██║ ██║  ██║
-  ╚████╔╝  ██║ ██████╔╝ ███████╗ ██║  ██║ ██║  ██║ ╚██████╔╝ ╚██████╔╝ ██║ ╚████║ ██████╔╝
-   ╚═══╝   ╚═╝ ╚═════╝  ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝   ╚═════╝  ╚═╝  ╚═══╝ ╚═════╝"#;
-const TAGLINE: &str = "unified runtime for ai coding agents";
+mod brand;
+mod rows;
+
+use brand::{brand_header, brand_mode};
+use rows::{
+    agent_info_row, agent_row, channel_row, profile_row, session_row, tunnel_row, workspace_row,
+};
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
@@ -49,115 +44,6 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         AppView::Agent => render_agent_view(frame, app, chunks[2]),
     }
     frame.render_widget(command_bar(app), chunks[3]);
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BrandMode {
-    Narrow,
-    Compact,
-    FullLogo,
-}
-
-impl BrandMode {
-    fn height(self) -> u16 {
-        match self {
-            Self::Narrow => 3,
-            Self::Compact => 4,
-            Self::FullLogo => 9,
-        }
-    }
-}
-
-fn brand_mode(width: u16, height: u16) -> BrandMode {
-    if width >= 96 && height >= 24 {
-        BrandMode::FullLogo
-    } else if width >= 56 && height >= 14 {
-        BrandMode::Compact
-    } else {
-        BrandMode::Narrow
-    }
-}
-
-fn brand_header(app: &TuiApp, mode: BrandMode, content_width: u16) -> Paragraph<'static> {
-    let content_width = usize::from(content_width);
-    let mut lines = Vec::new();
-    match mode {
-        BrandMode::FullLogo => {
-            lines.extend(centered_brand_logo_lines(content_width));
-            lines.push(centered_line(
-                content_width,
-                vec![
-                    Span::styled(TAGLINE, muted_style().add_modifier(Modifier::BOLD)),
-                    Span::styled("   /   ", muted_style()),
-                    Span::raw(app.endpoint.clone()),
-                ],
-            ));
-        }
-        BrandMode::Compact => {
-            lines.push(centered_line(
-                content_width,
-                vec![
-                    Span::styled(
-                        "VibeAround",
-                        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled("  terminal runtime console", muted_style()),
-                ],
-            ));
-            lines.push(centered_line(
-                content_width,
-                vec![Span::raw(app.endpoint.clone())],
-            ));
-        }
-        BrandMode::Narrow => {
-            lines.push(centered_line(
-                content_width,
-                vec![Span::styled(
-                    "VA",
-                    Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
-                )],
-            ));
-        }
-    }
-
-    Paragraph::new(lines).alignment(Alignment::Center)
-}
-
-fn centered_brand_logo_lines(content_width: usize) -> Vec<Line<'static>> {
-    let logo_lines = BRAND_LOGO.lines().collect::<Vec<_>>();
-    let widths = logo_lines
-        .iter()
-        .map(|line| Line::from((*line).to_string()).width())
-        .collect::<Vec<_>>();
-    let block_width = widths.iter().copied().max().unwrap_or(0);
-    let left_pad = content_width.saturating_sub(block_width) / 2;
-
-    logo_lines
-        .into_iter()
-        .zip(widths)
-        .map(|(line, width)| {
-            Line::from(Span::styled(
-                format!(
-                    "{}{}{}",
-                    " ".repeat(left_pad),
-                    line,
-                    " ".repeat(block_width.saturating_sub(width))
-                ),
-                Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
-            ))
-        })
-        .collect()
-}
-
-fn centered_line(content_width: usize, spans: Vec<Span<'static>>) -> Line<'static> {
-    let line_width = Line::from(spans.clone()).width();
-    let left_pad = content_width.saturating_sub(line_width) / 2;
-    let mut padded_spans = Vec::with_capacity(spans.len() + 1);
-    if left_pad > 0 {
-        padded_spans.push(Span::raw(" ".repeat(left_pad)));
-    }
-    padded_spans.extend(spans);
-    Line::from(padded_spans)
 }
 
 fn context_strip(app: &TuiApp) -> Paragraph<'static> {
@@ -310,6 +196,10 @@ fn metric_spans(label: &'static str, value: usize, color: Color) -> Vec<Span<'st
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
     ]
+}
+
+fn short_id(value: &str) -> String {
+    value.chars().take(12).collect()
 }
 
 fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
@@ -711,231 +601,4 @@ fn key_span(value: &'static str) -> Span<'static> {
         value,
         Style::default().fg(WARN).add_modifier(Modifier::BOLD),
     )
-}
-
-fn channel_row(channel: &ChannelRuntime) -> Vec<Span<'static>> {
-    let mut spans = vec![
-        Span::styled(
-            fixed(&channel.kind, 14),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        status_span(
-            channel_status_label(channel.status),
-            channel_status_color(channel.status),
-            12,
-        ),
-        Span::styled(
-            channel.version.as_deref().unwrap_or("-").to_string(),
-            muted_style(),
-        ),
-    ];
-    if let Some(reason) = channel.reason.as_ref().filter(|reason| !reason.is_empty()) {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(reason.clone(), Style::default().fg(ERROR)));
-    }
-    spans
-}
-
-fn tunnel_row(tunnel: &TunnelRuntime) -> Vec<Span<'static>> {
-    vec![
-        Span::styled(
-            fixed(&tunnel.provider, 14),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        status_span(
-            tunnel_status_label(&tunnel.status),
-            tunnel_status_color(&tunnel.status),
-            10,
-        ),
-        Span::styled(
-            tunnel.url.as_deref().unwrap_or("-").to_string(),
-            muted_style(),
-        ),
-    ]
-}
-
-fn agent_row(agent: &AgentRuntime) -> Vec<Span<'static>> {
-    let name = agent
-        .agent_title
-        .as_deref()
-        .or(agent.agent_name.as_deref())
-        .or(agent.cli_kind.as_deref())
-        .unwrap_or("-");
-    vec![
-        Span::styled(
-            fixed(&agent.route_key, 18),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        status_span(
-            if agent.busy { "busy" } else { "idle" },
-            if agent.busy { WARN } else { OK },
-            8,
-        ),
-        Span::styled(name.to_string(), muted_style()),
-    ]
-}
-
-fn session_row(session: &SessionListItem) -> Vec<Span<'static>> {
-    let status = session_status_label(&session.status);
-    let tool = format!("{:?}", session.tool).to_ascii_lowercase();
-    vec![
-        Span::styled(
-            fixed(&short_id(&session.session_id), 14),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        status_span(status, session_status_color(&session.status), 10),
-        Span::styled(fixed(&tool, 12), muted_style()),
-        Span::styled(
-            session.project_path.as_deref().unwrap_or("-").to_string(),
-            muted_style(),
-        ),
-    ]
-}
-
-fn agent_info_row(agent: &AgentInfo) -> Vec<Span<'static>> {
-    vec![
-        Span::styled(
-            fixed(&agent.id, 14),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(agent.name.clone(), muted_style()),
-    ]
-}
-
-fn profile_row(profile: &ModelProfileSummary) -> Vec<Span<'static>> {
-    vec![
-        Span::styled(
-            fixed(&profile.label, 18),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(profile.provider_label.clone(), muted_style()),
-    ]
-}
-
-fn workspace_row(workspace: &WorkspaceItem) -> Vec<Span<'static>> {
-    let marker = if workspace.is_default { "* " } else { "  " };
-    vec![
-        Span::styled(marker, Style::default().fg(BRAND)),
-        Span::styled(workspace.path.clone(), Style::default()),
-    ]
-}
-
-fn fixed(value: &str, width: usize) -> String {
-    format!("{value:<width$}")
-}
-
-fn status_span(label: &'static str, color: Color, width: usize) -> Span<'static> {
-    Span::styled(
-        fixed(label, width),
-        Style::default().fg(color).add_modifier(Modifier::BOLD),
-    )
-}
-
-fn short_id(value: &str) -> String {
-    value.chars().take(12).collect()
-}
-
-fn channel_status_color(status: ChannelStatus) -> Color {
-    match status {
-        ChannelStatus::Running => OK,
-        ChannelStatus::Spawning => WARN,
-        ChannelStatus::Crashed => ERROR,
-        ChannelStatus::Stopped | ChannelStatus::NotStarted => NEUTRAL,
-    }
-}
-
-fn tunnel_status_color(status: &TunnelStatus) -> Color {
-    match status {
-        TunnelStatus::Running => OK,
-        TunnelStatus::Stopped { .. } => NEUTRAL,
-        TunnelStatus::Failed { .. } => ERROR,
-    }
-}
-
-fn session_status_color(status: &PtyRunState) -> Color {
-    match status {
-        PtyRunState::Running { .. } => OK,
-        PtyRunState::Exited { .. } => NEUTRAL,
-    }
-}
-
-#[cfg(test)]
-fn row_text(row: Vec<Span<'static>>) -> String {
-    row.into_iter()
-        .map(|span| span.content.into_owned())
-        .collect::<String>()
-        .trim_end()
-        .to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn channel(kind: &str) -> ChannelRuntime {
-        ChannelRuntime {
-            kind: kind.into(),
-            version: Some("0.1.0".into()),
-            plugin_dir: None,
-            status: ChannelStatus::Running,
-            reason: None,
-        }
-    }
-
-    #[test]
-    fn brand_mode_scales_with_terminal_size() {
-        assert_eq!(brand_mode(40, 24), BrandMode::Narrow);
-        assert_eq!(brand_mode(80, 18), BrandMode::Compact);
-        assert_eq!(brand_mode(96, 24), BrandMode::FullLogo);
-        assert_eq!(BrandMode::Narrow.height(), 3);
-        assert_eq!(BrandMode::FullLogo.height(), 9);
-    }
-
-    #[test]
-    fn centered_brand_logo_lines_share_one_block_width() {
-        let lines = centered_brand_logo_lines(120);
-        let widths = lines.iter().map(Line::width).collect::<Vec<_>>();
-
-        assert_eq!(lines.len(), BRAND_LOGO.lines().count());
-        assert!(widths.iter().all(|width| *width == widths[0]));
-        assert!(widths[0] <= 120);
-    }
-
-    #[test]
-    fn formats_runtime_lines() {
-        let channel = channel("feishu");
-        assert_eq!(
-            row_text(channel_row(&channel)),
-            "feishu        running     0.1.0"
-        );
-
-        let tunnel = TunnelRuntime {
-            provider: "cloudflare".into(),
-            url: Some("https://example.test".into()),
-            status: TunnelStatus::Running,
-            uptime_secs: 10,
-        };
-        assert_eq!(
-            row_text(tunnel_row(&tunnel)),
-            "cloudflare    running   https://example.test"
-        );
-
-        let session = SessionListItem {
-            session_id: "abcdef1234567890".into(),
-            tool: va_client::sessions::PtyTool::Codex,
-            status: PtyRunState::Running {
-                tool: va_client::sessions::PtyTool::Codex,
-            },
-            created_at: 1,
-            project_path: Some("/tmp/project".into()),
-            profile_id: None,
-            profile_label: None,
-            launch_target: None,
-            tmux_session: None,
-        };
-        assert_eq!(
-            row_text(session_row(&session)),
-            "abcdef123456  running   codex       /tmp/project"
-        );
-    }
 }
