@@ -4,8 +4,9 @@ use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 
 use crate::app::TuiApp;
 use crate::chat::{
-    content_text, one_line, permission_prompt_text, resolve_permission_option, tool_activity_text,
-    ChatMessage, ChatRole,
+    content_text, one_line, permission_prompt_text, resolve_permission_option,
+    resolve_session_mode_value, session_mode_options_text, tool_activity_text, ChatMessage,
+    ChatRole, SessionModeSource,
 };
 use crate::chat_socket::ChatSocketEvent;
 use crate::transport::HttpTransport;
@@ -113,7 +114,12 @@ impl TuiApp {
                 if let Some(mode_id) = parts.next() {
                     self.set_chat_mode(mode_id, chat_tx);
                 } else {
-                    self.push_notice("Usage: /mode default|plan|accept|bypass|dontask");
+                    self.push_notice(
+                        session_mode_options_text(self.chat_state.session_mode.as_ref())
+                            .unwrap_or_else(|| {
+                                "Usage: /mode default|plan|accept|bypass|dontask".into()
+                            }),
+                    );
                 }
                 true
             }
@@ -245,12 +251,40 @@ impl TuiApp {
     }
 
     fn set_chat_mode(&mut self, mode_id: &str, chat_tx: &mpsc::UnboundedSender<ChatClientMessage>) {
-        let Some(canonical) = canonical_chat_mode(mode_id) else {
+        if let Some(state) =
+            crate::chat::parse_session_mode_state(self.chat_state.session_mode.as_ref())
+        {
+            let Some(mode_value) =
+                resolve_session_mode_value(self.chat_state.session_mode.as_ref(), mode_id)
+            else {
+                self.push_notice(
+                    session_mode_options_text(self.chat_state.session_mode.as_ref())
+                        .unwrap_or_else(|| "Unknown mode.".into()),
+                );
+                return;
+            };
+            let message = match state.source {
+                SessionModeSource::ConfigOption => {
+                    let Some(config_id) = state.config_id else {
+                        self.push_notice("Session mode config is missing a config id.");
+                        return;
+                    };
+                    ChatClientMessage::set_config_option(config_id, mode_value.clone())
+                }
+                SessionModeSource::SessionMode => ChatClientMessage::set_mode(mode_value.clone()),
+            };
+            if self.send_chat_command(message, chat_tx) {
+                self.last_action = Some(format!("requested mode {mode_value}"));
+            }
+            return;
+        }
+
+        let Some(mode_value) = canonical_chat_mode(mode_id) else {
             self.push_notice("Unknown mode. Valid: default, plan, accept, bypass, dontask.");
             return;
         };
-        if self.send_chat_command(ChatClientMessage::set_mode(canonical), chat_tx) {
-            self.last_action = Some(format!("requested mode {canonical}"));
+        if self.send_chat_command(ChatClientMessage::set_mode(mode_value), chat_tx) {
+            self.last_action = Some(format!("requested mode {mode_value}"));
         }
     }
 

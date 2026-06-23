@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{AppView, TuiApp};
+use crate::chat::session_mode_display_label;
 use crate::theme::{muted_style, BRAND, ERROR, OK, WARN};
 
 pub(super) fn context_strip(app: &TuiApp) -> Paragraph<'static> {
@@ -56,7 +57,7 @@ fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
     ));
     spans.push(Span::raw("  "));
     spans.extend(label_value_spans("session", &session_label));
-    if let Some(mode) = session_mode_label(app.chat_state.session_mode.as_ref()) {
+    if let Some(mode) = session_mode_display_label(app.chat_state.session_mode.as_ref()) {
         spans.push(Span::raw("  "));
         spans.extend(label_value_spans("mode", &mode));
     }
@@ -158,16 +159,6 @@ fn metric_spans(label: &'static str, value: usize) -> Vec<Span<'static>> {
 
 fn short_id(value: &str) -> String {
     value.chars().take(12).collect()
-}
-
-fn session_mode_label(value: Option<&serde_json::Value>) -> Option<String> {
-    let value = value?;
-    ["currentValue", "currentModeId", "modeId", "mode_id"]
-        .into_iter()
-        .find_map(|key| value.get(key).and_then(serde_json::Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
 }
 
 pub(super) fn command_bar(app: &TuiApp) -> Paragraph<'static> {

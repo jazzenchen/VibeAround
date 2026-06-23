@@ -26,11 +26,108 @@ pub(crate) struct PermissionOption {
     pub(crate) kind: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionModeSource {
+    ConfigOption,
+    SessionMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionModeState {
+    pub(crate) source: SessionModeSource,
+    pub(crate) config_id: Option<String>,
+    pub(crate) name: Option<String>,
+    pub(crate) current_value: String,
+    pub(crate) options: Vec<SessionModeOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionModeOption {
+    pub(crate) value: String,
+    pub(crate) name: String,
+    pub(crate) description: Option<String>,
+    pub(crate) group: Option<String>,
+}
+
 pub(crate) fn content_text(content: Option<&Value>) -> Option<&str> {
     let content = content?;
     content
         .as_str()
         .or_else(|| content.get("text").and_then(Value::as_str))
+}
+
+pub(crate) fn parse_session_mode_state(value: Option<&Value>) -> Option<SessionModeState> {
+    let value = value?;
+    let source = match value_string_field(value, "source")?.as_str() {
+        "config_option" => SessionModeSource::ConfigOption,
+        "session_mode" => SessionModeSource::SessionMode,
+        _ => return None,
+    };
+    let current_value = value_string_field(value, "currentValue")
+        .or_else(|| value_string_field(value, "currentModeId"))
+        .or_else(|| value_string_field(value, "modeId"))
+        .or_else(|| value_string_field(value, "mode_id"))?;
+    let options = session_mode_options(value.get("options"));
+    if options.is_empty() {
+        return None;
+    }
+    Some(SessionModeState {
+        source,
+        config_id: value_string_field(value, "configId"),
+        name: value_string_field(value, "name"),
+        current_value,
+        options,
+    })
+}
+
+pub(crate) fn session_mode_display_label(value: Option<&Value>) -> Option<String> {
+    let state = parse_session_mode_state(value)?;
+    state
+        .options
+        .iter()
+        .find(|option| option.value == state.current_value)
+        .map(|option| option.name.clone())
+        .or(Some(state.current_value))
+}
+
+pub(crate) fn session_mode_options_text(value: Option<&Value>) -> Option<String> {
+    let state = parse_session_mode_state(value)?;
+    let label = state.name.as_deref().unwrap_or("Session mode");
+    let options = state
+        .options
+        .iter()
+        .enumerate()
+        .map(|(index, option)| {
+            let current = if option.value == state.current_value {
+                " *"
+            } else {
+                ""
+            };
+            format!("{} {} ({}){current}", index + 1, option.name, option.value)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("{label}: {options}. Use /mode <number|value>."))
+}
+
+pub(crate) fn resolve_session_mode_value(value: Option<&Value>, selector: &str) -> Option<String> {
+    let state = parse_session_mode_state(value)?;
+    let selector = selector.trim();
+    if selector.is_empty() {
+        return None;
+    }
+    if let Some(index) = selector
+        .parse::<usize>()
+        .ok()
+        .and_then(|index| index.checked_sub(1))
+    {
+        return state.options.get(index).map(|option| option.value.clone());
+    }
+    state
+        .options
+        .iter()
+        .find(|option| option.value == selector || option.name.eq_ignore_ascii_case(selector))
+        .map(|option| option.value.clone())
 }
 
 pub(crate) fn permission_prompt_text(request_id: &str, request: &Value) -> String {
@@ -264,6 +361,39 @@ fn default_permission_option(options: &[PermissionOption]) -> Option<&Permission
         .or_else(|| options.first())
 }
 
+fn session_mode_options(value: Option<&Value>) -> Vec<SessionModeOption> {
+    let Some(Value::Array(items)) = value else {
+        return Vec::new();
+    };
+    collect_session_mode_options(items, None)
+}
+
+fn collect_session_mode_options(items: &[Value], group: Option<&str>) -> Vec<SessionModeOption> {
+    items
+        .iter()
+        .flat_map(|item| {
+            if let Some(Value::Array(children)) = item.get("options") {
+                let child_group = value_string_field(item, "name");
+                collect_session_mode_options(children, child_group.as_deref().or(group))
+            } else {
+                let Some(value) = value_string_field(item, "value") else {
+                    return Vec::new();
+                };
+                let Some(name) = value_string_field(item, "name") else {
+                    return Vec::new();
+                };
+                vec![SessionModeOption {
+                    value,
+                    name,
+                    description: value_string_field(item, "description"),
+                    group: value_string_field(item, "group")
+                        .or_else(|| group.map(ToOwned::to_owned)),
+                }]
+            }
+        })
+        .collect()
+}
+
 fn value_string_field(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -485,5 +615,46 @@ mod tests {
             Some("reject")
         );
         assert_eq!(resolve_permission_option(&request, Some("9")), None);
+    }
+
+    #[test]
+    fn session_mode_state_parses_nested_options() {
+        let value = serde_json::json!({
+            "source": "config_option",
+            "configId": "permissions",
+            "name": "Permission mode",
+            "currentValue": "acceptEdits",
+            "options": [
+                { "name": "Safe", "options": [
+                    { "value": "default", "name": "Default" },
+                    { "value": "acceptEdits", "name": "Accept edits" }
+                ]},
+                { "value": "bypassPermissions", "name": "Bypass permissions" }
+            ]
+        });
+
+        let state = parse_session_mode_state(Some(&value)).expect("mode state");
+
+        assert_eq!(state.source, SessionModeSource::ConfigOption);
+        assert_eq!(state.config_id.as_deref(), Some("permissions"));
+        assert_eq!(state.current_value, "acceptEdits");
+        assert_eq!(state.options.len(), 3);
+        assert_eq!(state.options[1].name, "Accept edits");
+        assert_eq!(state.options[1].group.as_deref(), Some("Safe"));
+        assert_eq!(
+            session_mode_display_label(Some(&value)).as_deref(),
+            Some("Accept edits")
+        );
+        assert_eq!(
+            resolve_session_mode_value(Some(&value), "2").as_deref(),
+            Some("acceptEdits")
+        );
+        assert_eq!(
+            resolve_session_mode_value(Some(&value), "Bypass permissions").as_deref(),
+            Some("bypassPermissions")
+        );
+        assert!(session_mode_options_text(Some(&value))
+            .unwrap()
+            .contains("2 Accept edits (acceptEdits) *"));
     }
 }

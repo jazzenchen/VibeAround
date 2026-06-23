@@ -658,6 +658,90 @@ async fn slash_mode_sends_set_mode_command() {
 }
 
 #[tokio::test]
+async fn slash_mode_lists_dynamic_session_mode_options_without_sending() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_state.session_mode = Some(serde_json::json!({
+        "source": "session_mode",
+        "name": "Permission mode",
+        "currentValue": "default",
+        "options": [
+            { "value": "default", "name": "Default" },
+            { "value": "acceptEdits", "name": "Accept edits" }
+        ]
+    }));
+    app.chat_input = "/mode".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert!(rx.try_recv().is_err());
+    let notice = &app.chat_messages.last().unwrap().text;
+    assert!(notice.contains("Permission mode"));
+    assert!(notice.contains("1 Default (default) *"));
+    assert!(notice.contains("2 Accept edits (acceptEdits)"));
+}
+
+#[tokio::test]
+async fn slash_mode_uses_config_option_source_when_present() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_state.session_mode = Some(serde_json::json!({
+        "source": "config_option",
+        "configId": "permissions",
+        "currentValue": "default",
+        "options": [
+            { "value": "default", "name": "Default" },
+            { "value": "acceptEdits", "name": "Accept edits" }
+        ]
+    }));
+    app.chat_input = "/mode 2".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("config option"),
+        ChatClientMessage::SetConfigOption {
+            config_id: "permissions".into(),
+            value: "acceptEdits".into(),
+        }
+    );
+    assert_eq!(
+        app.last_action.as_deref(),
+        Some("requested mode acceptEdits")
+    );
+}
+
+#[tokio::test]
+async fn slash_mode_uses_session_mode_source_when_present() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_state.session_mode = Some(serde_json::json!({
+        "source": "session_mode",
+        "currentValue": "default",
+        "options": [
+            { "value": "default", "name": "Default" },
+            { "value": "bypassPermissions", "name": "Bypass permissions" }
+        ]
+    }));
+    app.chat_input = "/mode bypassPermissions".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("mode command"),
+        ChatClientMessage::SetMode {
+            mode_id: "bypassPermissions".into(),
+        }
+    );
+}
+
+#[tokio::test]
 async fn slash_mode_rejects_unknown_mode_without_sending() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
@@ -899,7 +983,7 @@ fn chat_context_renders_session_mode() {
         .join("");
 
     assert!(screen.contains("mode"));
-    assert!(screen.contains("acceptEdits"));
+    assert!(screen.contains("Accept edits"));
 }
 
 #[test]
