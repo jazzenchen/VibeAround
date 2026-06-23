@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{AppView, TuiApp};
 use crate::chat::session_mode_display_label;
-use crate::theme::{muted_style, BRAND, ERROR, OK, WARN};
+use crate::theme::{muted_style, BRAND, ERROR, OK, SEMANTIC_BORDER, WARN};
 
 pub(super) fn context_strip(app: &TuiApp) -> Paragraph<'static> {
     let spans = match app.view {
@@ -274,5 +274,6 @@ fn key_span(value: &'static str) -> Span<'static> {
 fn chrome_separator() -> Block<'static> {
     Block::default()
         .borders(Borders::TOP)
+        .border_set(SEMANTIC_BORDER)
         .border_style(muted_style())
 }

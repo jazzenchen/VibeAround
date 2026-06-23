@@ -12,7 +12,7 @@ use crate::chat::{
     visible_chat_lines,
 };
 use crate::selection::{AgentPanel, RuntimePanel};
-use crate::theme::{muted_style, BRAND};
+use crate::theme::{muted_style, BRAND, SEMANTIC_BORDER};
 
 mod brand;
 mod chrome;
@@ -393,6 +393,7 @@ fn section_heading(title: &str, active: bool) -> Line<'static> {
 fn focus_block(title: &str) -> Block<'static> {
     Block::default()
         .borders(Borders::LEFT | Borders::TOP)
+        .border_set(SEMANTIC_BORDER)
         .border_style(Style::default().fg(BRAND))
         .title_style(Style::default().fg(BRAND).add_modifier(Modifier::BOLD))
         .title(format!(" {title} "))
@@ -401,16 +402,21 @@ fn focus_block(title: &str) -> Block<'static> {
 fn panel_block(active: bool) -> Block<'static> {
     if active {
         Block::default()
-            .borders(Borders::LEFT)
+            .borders(Borders::LEFT | Borders::TOP)
+            .border_set(SEMANTIC_BORDER)
             .border_style(Style::default().fg(BRAND))
     } else {
         Block::default()
+            .borders(Borders::TOP)
+            .border_set(SEMANTIC_BORDER)
+            .border_style(muted_style())
     }
 }
 
 fn input_block() -> Block<'static> {
     Block::default()
         .borders(Borders::TOP)
+        .border_set(SEMANTIC_BORDER)
         .border_style(Style::default().fg(BRAND))
 }
 
