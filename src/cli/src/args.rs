@@ -4,6 +4,7 @@ mod chat;
 mod cli;
 mod launch;
 mod pair;
+mod serve;
 mod session;
 
 #[cfg(test)]
@@ -13,6 +14,7 @@ pub(crate) use chat::{ChatForgetArgs, ChatReplArgs, ChatSendArgs};
 pub(crate) use cli::parse_args;
 pub(crate) use launch::{LaunchSessionMutationArgs, LaunchSessionsArgs};
 pub(crate) use pair::{PairStartArgs, PairWaitArgs};
+pub(crate) use serve::ServeArgs;
 pub(crate) use session::SessionCreateArgs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +31,7 @@ pub(crate) enum Command {
     Workspaces,
     Previews,
     Profiles,
+    Serve(ServeArgs),
     ChatSend(ChatSendArgs),
     ChatRepl(ChatReplArgs),
     ChatSessions,
@@ -88,6 +91,7 @@ pub(crate) fn usage() -> &'static str {
         "  info                         Show server metadata\n",
         "  status                       Show a compact runtime summary\n",
         "  doctor                       Diagnose endpoint, auth, and server health\n",
+        "  serve                        Start the standalone VibeAround server\n",
         "  auth status                  Show resolved auth configuration\n",
         "  auth clear                   Remove the saved auth file\n",
         "  pair start                   Start browser/IM pairing\n",

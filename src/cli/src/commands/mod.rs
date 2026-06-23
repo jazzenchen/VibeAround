@@ -2,6 +2,7 @@ mod chat;
 mod previews;
 mod profiles;
 mod runtime;
+mod serve;
 mod service;
 mod sessions;
 mod workspaces;
@@ -24,6 +25,7 @@ pub(crate) async fn dispatch(options: &Options, command: Command) -> Result<(), 
         Command::Info => service::info(options).await?,
         Command::Status => service::status(options).await?,
         Command::Doctor => service::doctor(options).await?,
+        Command::Serve(args) => serve::run(options, &args)?,
         Command::Channels => runtime::channels(options).await?,
         Command::Tunnels => runtime::tunnels(options).await?,
         Command::Agents => runtime::agents(options).await?,

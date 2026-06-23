@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use super::{chat, launch, pair, session, Command, Options};
+use super::{chat, launch, pair, serve, session, Command, Options};
 use crate::error::CliError;
 
 #[derive(Debug, Parser)]
@@ -35,6 +35,7 @@ enum TopCommand {
     Info,
     Status,
     Doctor,
+    Serve(serve::ServeArgs),
     Channels,
     Tunnels,
     Agents,
@@ -184,6 +185,7 @@ fn top_command_into_command(command: TopCommand) -> Result<Command, CliError> {
         TopCommand::Info => Command::Info,
         TopCommand::Status => Command::Status,
         TopCommand::Doctor => Command::Doctor,
+        TopCommand::Serve(args) => Command::Serve(args),
         TopCommand::Channels => Command::Channels,
         TopCommand::Tunnels => Command::Tunnels,
         TopCommand::Agents => Command::Agents,

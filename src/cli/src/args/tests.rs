@@ -37,6 +37,33 @@ fn parses_help_as_command() {
 }
 
 #[test]
+fn parses_serve_command() {
+    let options = parse_args([
+        "serve".to_string(),
+        "--port=12358".to_string(),
+        "--data-dir".to_string(),
+        "/tmp/va-data".to_string(),
+        "--web-dist=/tmp/web".to_string(),
+        "--auth-mode".to_string(),
+        "token".to_string(),
+        "--server-bin".to_string(),
+        "/tmp/vibearound-server".to_string(),
+    ])
+    .expect("options");
+
+    assert_eq!(
+        options.command,
+        Some(Command::Serve(ServeArgs {
+            port: Some(12358),
+            data_dir: Some("/tmp/va-data".into()),
+            web_dist: Some("/tmp/web".into()),
+            auth_mode: Some("token".into()),
+            server_bin: Some("/tmp/vibearound-server".into()),
+        }))
+    );
+}
+
+#[test]
 fn parses_channel_action_command() {
     let options = parse_args([
         "channel".to_string(),

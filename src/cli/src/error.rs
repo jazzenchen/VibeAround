@@ -36,6 +36,11 @@ pub(crate) enum CliError {
         #[source]
         source: std::io::Error,
     },
+    #[error("{program} exited with {status}")]
+    ProcessExit {
+        program: String,
+        status: std::process::ExitStatus,
+    },
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("client error: {0}")]
