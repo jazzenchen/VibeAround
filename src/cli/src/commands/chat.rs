@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -38,6 +38,32 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
             Message::Text(text) => {
                 let raw = serde_json::from_str::<Value>(&text)?;
                 let event = decode_chat_event(raw.clone())?;
+                if let ChatEvent::PermissionRequest {
+                    request_id,
+                    request,
+                } = &event
+                {
+                    if options.json || !std::io::stdin().is_terminal() {
+                        render_event(options, &event, &raw, &mut wrote_text_chunk)?;
+                        state.apply_event(event);
+                        let _ = ws_tx.close().await;
+                        return Err(CliError::Chat(
+                            "permission request received; rerun without --json from a terminal to respond interactively"
+                                .into(),
+                        ));
+                    }
+                    finish_text_line(wrote_text_chunk)?;
+                    wrote_text_chunk = false;
+                    let response = prompt_permission_response(request_id, request)?;
+                    state.apply_event(event);
+                    let body = encode_chat_client_message(&response)?;
+                    ws_tx
+                        .send(Message::Text(body.into()))
+                        .await
+                        .map_err(|source| ws_error(&url, source))?;
+                    continue;
+                }
+
                 render_event(options, &event, &raw, &mut wrote_text_chunk)?;
                 let terminal = terminal_event(&event);
                 state.apply_event(event);
@@ -47,13 +73,6 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
                         finish_text_line(wrote_text_chunk)?;
                         let _ = ws_tx.close().await;
                         return Ok(());
-                    }
-                    ChatTerminalEvent::PermissionRequired => {
-                        let _ = ws_tx.close().await;
-                        return Err(CliError::Chat(
-                            "permission request received; interactive chat send is not supported yet"
-                                .into(),
-                        ));
                     }
                     ChatTerminalEvent::Error(error) => {
                         finish_text_line(wrote_text_chunk)?;
@@ -96,17 +115,126 @@ fn message_from_args(args: &ChatSendArgs) -> ChatClientMessage {
 enum ChatTerminalEvent {
     Continue,
     Done,
-    PermissionRequired,
     Error(String),
 }
 
 fn terminal_event(event: &ChatEvent) -> ChatTerminalEvent {
     match event {
         ChatEvent::PromptDone { .. } => ChatTerminalEvent::Done,
-        ChatEvent::PermissionRequest { .. } => ChatTerminalEvent::PermissionRequired,
         ChatEvent::Error { error } => ChatTerminalEvent::Error(error.clone()),
         _ => ChatTerminalEvent::Continue,
     }
+}
+
+fn prompt_permission_response(
+    request_id: &str,
+    request: &Value,
+) -> Result<ChatClientMessage, CliError> {
+    let options = permission_options(request);
+    let title = permission_title(request);
+
+    eprintln!("permission required: {title}");
+    if options.is_empty() {
+        eprintln!("no selectable permission options were provided; cancelling request");
+        return Ok(ChatClientMessage::permission_cancelled(request_id));
+    }
+
+    for (index, option) in options.iter().enumerate() {
+        let kind = option
+            .kind
+            .as_deref()
+            .map(|kind| format!("; {kind}"))
+            .unwrap_or_default();
+        eprintln!(
+            "  {}. {} ({}){}",
+            index + 1,
+            option.name,
+            option.option_id,
+            kind
+        );
+    }
+    loop {
+        eprint!(
+            "select permission option [1-{}] or c to cancel: ",
+            options.len()
+        );
+        std::io::stderr().flush().map_err(|source| CliError::Io {
+            action: "flushing permission prompt",
+            source,
+        })?;
+
+        let mut input = String::new();
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|source| CliError::Io {
+                action: "reading permission response",
+                source,
+            })?;
+        let input = input.trim();
+        if matches!(input, "c" | "C" | "cancel" | "Cancel") {
+            return Ok(ChatClientMessage::permission_cancelled(request_id));
+        }
+        if let Ok(index) = input.parse::<usize>() {
+            if let Some(option) = index.checked_sub(1).and_then(|index| options.get(index)) {
+                return Ok(ChatClientMessage::permission_selected(
+                    request_id,
+                    option.option_id.clone(),
+                ));
+            }
+        }
+        if let Some(option) = options.iter().find(|option| option.option_id == input) {
+            return Ok(ChatClientMessage::permission_selected(
+                request_id,
+                option.option_id.clone(),
+            ));
+        }
+        eprintln!("invalid selection");
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PermissionOption {
+    option_id: String,
+    name: String,
+    kind: Option<String>,
+}
+
+fn permission_title(request: &Value) -> String {
+    request
+        .get("toolCall")
+        .and_then(|tool_call| {
+            string_field(tool_call, "title").or_else(|| string_field(tool_call, "kind"))
+        })
+        .unwrap_or_else(|| "Permission requested".into())
+}
+
+fn permission_options(request: &Value) -> Vec<PermissionOption> {
+    request
+        .get("options")
+        .and_then(Value::as_array)
+        .map(|options| {
+            options
+                .iter()
+                .filter_map(|option| {
+                    let option_id = string_field(option, "optionId")?;
+                    Some(PermissionOption {
+                        name: string_field(option, "name").unwrap_or_else(|| option_id.clone()),
+                        kind: string_field(option, "kind"),
+                        option_id,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn render_event(
@@ -245,6 +373,45 @@ mod tests {
                 }
             })),
             None
+        );
+    }
+
+    #[test]
+    fn extracts_permission_prompt_options() {
+        let request = json!({
+            "toolCall": {
+                "title": "Read file"
+            },
+            "options": [
+                {
+                    "optionId": "allow_once",
+                    "name": "Allow",
+                    "kind": "accept"
+                },
+                {
+                    "optionId": "reject"
+                },
+                {
+                    "name": "Missing id"
+                }
+            ]
+        });
+
+        assert_eq!(permission_title(&request), "Read file");
+        assert_eq!(
+            permission_options(&request),
+            vec![
+                PermissionOption {
+                    option_id: "allow_once".into(),
+                    name: "Allow".into(),
+                    kind: Some("accept".into()),
+                },
+                PermissionOption {
+                    option_id: "reject".into(),
+                    name: "reject".into(),
+                    kind: None,
+                },
+            ]
         );
     }
 }

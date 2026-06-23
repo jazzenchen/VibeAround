@@ -1,7 +1,8 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use va_client::auth::AuthFile;
 use va_client::endpoint::ServerEndpoint;
 use va_client::http::AuthRequirement;
 
@@ -74,6 +75,8 @@ pub(crate) fn resolve_endpoint_env(
                 .map(|token| ("env-token", token))
         });
 
+    let auth_path = auth_file_path_with_env(options, runtime_env);
+
     if let Some(base_url) = base_url {
         let endpoint = ServerEndpoint::new(base_url);
         if let Some((auth_source, token)) = token {
@@ -85,7 +88,16 @@ pub(crate) fn resolve_endpoint_env(
             });
         }
         if matches!(auth, AuthRequirement::BearerToken) {
-            return Err(CliError::MissingToken);
+            if auth_path.exists() {
+                let auth_file = read_auth_file(&auth_path)?;
+                return Ok(ResolvedEndpoint {
+                    endpoint: endpoint.with_token(auth_file.token),
+                    base_url_source,
+                    auth_source: "auth-file",
+                    auth_file: Some(auth_path),
+                });
+            }
+            return Err(CliError::MissingAuth(auth_path.display().to_string()));
         }
         return Ok(ResolvedEndpoint {
             endpoint,
@@ -104,13 +116,8 @@ pub(crate) fn resolve_endpoint_env(
         });
     }
 
-    let auth_path = auth_file_path_with_env(options, runtime_env);
     if auth_path.exists() {
-        let body = std::fs::read_to_string(&auth_path).map_err(|source| CliError::ReadAuth {
-            path: auth_path.display().to_string(),
-            source,
-        })?;
-        let auth = va_client::auth::parse_auth_file(&body)?;
+        let auth = read_auth_file(&auth_path)?;
         return Ok(ResolvedEndpoint {
             endpoint: ServerEndpoint::from_auth_file(&auth),
             base_url_source: "auth-file",
@@ -246,6 +253,14 @@ fn set_owner_only(path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn read_auth_file(path: &Path) -> Result<AuthFile, CliError> {
+    let body = fs::read_to_string(path).map_err(|source| CliError::ReadAuth {
+        path: path.display().to_string(),
+        source,
+    })?;
+    va_client::auth::parse_auth_file(&body).map_err(CliError::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,7 +277,37 @@ mod tests {
             AuthRequirement::BearerToken,
             &RuntimeEnv::default(),
         );
-        assert!(matches!(result, Err(CliError::MissingToken)));
+        assert!(matches!(result, Err(CliError::MissingAuth(_))));
+    }
+
+    #[test]
+    fn base_url_reads_token_from_auth_file_when_token_missing() {
+        let path = std::env::temp_dir().join(format!(
+            "va-cli-auth-base-url-test-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, r#"{ "port": 12358, "token": "local-secret" }"#).expect("write auth");
+        let options = Options {
+            base_url: Some("http://localhost:9000/va".into()),
+            auth_file: Some(path.clone()),
+            ..Default::default()
+        };
+
+        let endpoint = resolve_endpoint_env(
+            &options,
+            AuthRequirement::BearerToken,
+            &RuntimeEnv::default(),
+        )
+        .expect("endpoint");
+        assert_eq!(endpoint.endpoint.base_url(), "http://localhost:9000/va");
+        assert_eq!(endpoint.endpoint.token(), Some("local-secret"));
+        assert_eq!(endpoint.base_url_source, "cli");
+        assert_eq!(endpoint.auth_source, "auth-file");
+        assert_eq!(endpoint.auth_file.as_deref(), Some(path.as_path()));
+
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

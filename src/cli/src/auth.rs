@@ -21,7 +21,7 @@ pub(crate) fn status(options: &Options) -> Result<(), CliError> {
                     "resolved_auth_file": path.display().to_string()
                 }))?;
             }
-            Err(CliError::MissingAuth(_)) | Err(CliError::MissingToken) => {
+            Err(CliError::MissingAuth(_)) => {
                 crate::print_json(serde_json::json!({
                     "configured": false,
                     "auth_file": path.display().to_string()
@@ -40,7 +40,7 @@ pub(crate) fn status(options: &Options) -> Result<(), CliError> {
             println!("base url source: {}", endpoint.base_url_source);
             println!("auth source: {}", endpoint.auth_source);
         }
-        Err(CliError::MissingAuth(_)) | Err(CliError::MissingToken) => {
+        Err(CliError::MissingAuth(_)) => {
             println!("configured: no");
         }
         Err(error) => return Err(error),

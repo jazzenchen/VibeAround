@@ -2,10 +2,10 @@
 pub(crate) enum CliError {
     #[error("{0}")]
     Usage(String),
-    #[error("auth is required; pass --base-url and --token, or start VibeAround so auth.json exists at {0}")]
+    #[error(
+        "auth is required; pass --token, run `va pair start --wait --save`, or start VibeAround so auth.json exists at {0}"
+    )]
     MissingAuth(String),
-    #[error("auth is required for this command; pass --token or set VIBEAROUND_TOKEN when using --base-url")]
-    MissingToken,
     #[error("pairing session expired")]
     PairExpired,
     #[error("pairing was not verified within {0} seconds")]
