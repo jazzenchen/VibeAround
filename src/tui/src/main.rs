@@ -138,7 +138,9 @@ struct DashboardSnapshot {
 struct TuiApp {
     endpoint: String,
     snapshot: DashboardSnapshot,
+    selected_channel_index: Option<usize>,
     last_error: Option<String>,
+    last_action: Option<String>,
     last_refresh: Option<Instant>,
 }
 
@@ -147,7 +149,9 @@ impl TuiApp {
         Self {
             endpoint: endpoint.base_url().to_string(),
             snapshot: DashboardSnapshot::default(),
+            selected_channel_index: None,
             last_error: None,
+            last_action: None,
             last_refresh: None,
         }
     }
@@ -156,6 +160,7 @@ impl TuiApp {
         match fetch_snapshot(transport).await {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
+                self.clamp_channel_selection();
                 self.last_error = None;
                 self.last_refresh = Some(Instant::now());
             }
@@ -163,6 +168,91 @@ impl TuiApp {
                 self.last_error = Some(error.to_string());
                 self.last_refresh = Some(Instant::now());
             }
+        }
+    }
+
+    fn select_next_channel(&mut self) {
+        if self.snapshot.channels.is_empty() {
+            self.selected_channel_index = None;
+            return;
+        }
+        self.selected_channel_index = Some(
+            self.selected_channel_index
+                .map(|index| (index + 1) % self.snapshot.channels.len())
+                .unwrap_or(0),
+        );
+    }
+
+    fn select_previous_channel(&mut self) {
+        if self.snapshot.channels.is_empty() {
+            self.selected_channel_index = None;
+            return;
+        }
+        let last = self.snapshot.channels.len() - 1;
+        self.selected_channel_index = Some(
+            self.selected_channel_index
+                .map(|index| if index == 0 { last } else { index - 1 })
+                .unwrap_or(0),
+        );
+    }
+
+    fn selected_channel_kind(&self) -> Option<String> {
+        self.selected_channel_index
+            .and_then(|index| self.snapshot.channels.get(index))
+            .map(|channel| channel.kind.clone())
+    }
+
+    async fn run_channel_action(&mut self, transport: &HttpTransport, action: ChannelAction) {
+        let Some(kind) = self.selected_channel_kind() else {
+            self.last_error = Some("no channel selected".to_string());
+            return;
+        };
+
+        let result = match action {
+            ChannelAction::Start => transport.execute(ops::runtime_start_channel(&kind)).await,
+            ChannelAction::Stop => transport.execute(ops::runtime_stop_channel(&kind)).await,
+            ChannelAction::Restart => transport.execute(ops::runtime_restart_channel(&kind)).await,
+        };
+
+        match result {
+            Ok(()) => {
+                self.last_error = None;
+                self.last_action = Some(format!("{} channel {kind}", action.label()));
+                self.refresh(transport).await;
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+                self.last_action = None;
+            }
+        }
+    }
+
+    fn clamp_channel_selection(&mut self) {
+        if self.snapshot.channels.is_empty() {
+            self.selected_channel_index = None;
+            return;
+        }
+        self.selected_channel_index = Some(
+            self.selected_channel_index
+                .unwrap_or(0)
+                .min(self.snapshot.channels.len() - 1),
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChannelAction {
+    Start,
+    Stop,
+    Restart,
+}
+
+impl ChannelAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Start => "started",
+            Self::Stop => "stopped",
+            Self::Restart => "restarted",
         }
     }
 }
@@ -218,8 +308,30 @@ async fn run_dashboard(
                 action: "reading terminal events",
                 source,
             })? {
-                if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
-                    break;
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Char('j') | KeyCode::Down => app.select_next_channel(),
+                    KeyCode::Char('k') | KeyCode::Up => app.select_previous_channel(),
+                    KeyCode::Char('f') => {
+                        app.refresh(&transport).await;
+                        last_tick = Instant::now();
+                    }
+                    KeyCode::Char('s') => {
+                        app.run_channel_action(&transport, ChannelAction::Start)
+                            .await;
+                        last_tick = Instant::now();
+                    }
+                    KeyCode::Char('x') => {
+                        app.run_channel_action(&transport, ChannelAction::Stop)
+                            .await;
+                        last_tick = Instant::now();
+                    }
+                    KeyCode::Char('r') => {
+                        app.run_channel_action(&transport, ChannelAction::Restart)
+                            .await;
+                        last_tick = Instant::now();
+                    }
+                    _ => {}
                 }
             }
         }
@@ -306,7 +418,10 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(columns[1]);
 
-    frame.render_widget(channel_list(&app.snapshot.channels), left[0]);
+    frame.render_widget(
+        channel_list(&app.snapshot.channels, app.selected_channel_index),
+        left[0],
+    );
     frame.render_widget(tunnel_list(&app.snapshot.tunnels), left[1]);
     frame.render_widget(agent_list(&app.snapshot.agents), right[0]);
     frame.render_widget(session_list(&app.snapshot.sessions), right[1]);
@@ -356,11 +471,29 @@ fn summary(app: &TuiApp) -> Paragraph<'static> {
         .block(Block::default().borders(Borders::ALL).title("summary"))
 }
 
-fn channel_list(channels: &[ChannelRuntime]) -> List<'static> {
-    list_widget(
-        "channels",
-        channels.iter().map(channel_line).collect::<Vec<_>>(),
-    )
+fn channel_list(channels: &[ChannelRuntime], selected: Option<usize>) -> List<'static> {
+    let items = if channels.is_empty() {
+        vec![ListItem::new("-")]
+    } else {
+        channels
+            .iter()
+            .enumerate()
+            .map(|(index, channel)| {
+                let marker = if Some(index) == selected { "> " } else { "  " };
+                let item = ListItem::new(format!("{marker}{}", channel_line(channel)));
+                if Some(index) == selected {
+                    item.style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    item
+                }
+            })
+            .collect()
+    };
+    List::new(items).block(Block::default().borders(Borders::ALL).title("channels"))
 }
 
 fn tunnel_list(tunnels: &[TunnelRuntime]) -> List<'static> {
@@ -395,8 +528,20 @@ fn footer(app: &TuiApp) -> Paragraph<'static> {
         .last_refresh
         .map(|instant| format!("refreshed {}s ago", instant.elapsed().as_secs()))
         .unwrap_or_else(|| "not refreshed yet".to_string());
-    Paragraph::new(Line::from(format!("{refreshed} | q/Esc quit")))
-        .block(Block::default().borders(Borders::ALL))
+    let status = app
+        .last_error
+        .as_ref()
+        .map(|error| format!("error: {error}"))
+        .or_else(|| {
+            app.last_action
+                .as_ref()
+                .map(|action| format!("last: {action}"))
+        })
+        .unwrap_or(refreshed);
+    Paragraph::new(Line::from(format!(
+        "{status} | Up/Down or j/k select | s start | x stop | r restart | f refresh | q/Esc quit"
+    )))
+    .block(Block::default().borders(Borders::ALL))
 }
 
 fn channel_line(channel: &ChannelRuntime) -> String {
@@ -571,6 +716,16 @@ fn env_value(key: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn channel(kind: &str) -> ChannelRuntime {
+        ChannelRuntime {
+            kind: kind.into(),
+            version: Some("0.1.0".into()),
+            plugin_dir: None,
+            status: ChannelStatus::Running,
+            reason: None,
+        }
+    }
+
     #[test]
     fn resolves_base_url_with_auth_file_token() {
         let path = std::env::temp_dir().join(format!(
@@ -608,14 +763,47 @@ mod tests {
     }
 
     #[test]
+    fn selects_channels_with_wrapping_and_clamping() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
+
+        app.select_next_channel();
+        assert_eq!(app.selected_channel_index, None);
+
+        app.snapshot.channels = vec![channel("feishu"), channel("discord")];
+        app.clamp_channel_selection();
+        assert_eq!(app.selected_channel_index, Some(0));
+        assert_eq!(app.selected_channel_kind().as_deref(), Some("feishu"));
+
+        app.select_next_channel();
+        assert_eq!(app.selected_channel_index, Some(1));
+        assert_eq!(app.selected_channel_kind().as_deref(), Some("discord"));
+
+        app.select_next_channel();
+        assert_eq!(app.selected_channel_index, Some(0));
+
+        app.select_previous_channel();
+        assert_eq!(app.selected_channel_index, Some(1));
+
+        app.snapshot.channels.pop();
+        app.clamp_channel_selection();
+        assert_eq!(app.selected_channel_index, Some(0));
+
+        app.snapshot.channels.clear();
+        app.clamp_channel_selection();
+        assert_eq!(app.selected_channel_index, None);
+    }
+
+    #[test]
+    fn channel_action_labels_match_runtime_actions() {
+        assert_eq!(ChannelAction::Start.label(), "started");
+        assert_eq!(ChannelAction::Stop.label(), "stopped");
+        assert_eq!(ChannelAction::Restart.label(), "restarted");
+    }
+
+    #[test]
     fn formats_runtime_lines() {
-        let channel = ChannelRuntime {
-            kind: "feishu".into(),
-            version: Some("0.1.0".into()),
-            plugin_dir: None,
-            status: ChannelStatus::Running,
-            reason: None,
-        };
+        let channel = channel("feishu");
         assert_eq!(channel_line(&channel), "feishu  running");
 
         let tunnel = TunnelRuntime {
