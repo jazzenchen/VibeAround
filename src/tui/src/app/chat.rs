@@ -448,8 +448,11 @@ impl TuiApp {
                 self.last_error = None;
             }
             ChatSocketEvent::Closed => {
+                let duplicate_closed = self.last_notice_is("Chat websocket closed.");
                 self.chat_connected = false;
-                self.push_notice("Chat websocket closed.");
+                if !duplicate_closed {
+                    self.push_notice("Chat websocket closed.");
+                }
             }
             ChatSocketEvent::Error(error) => {
                 let duplicate_error = self.last_error.as_deref() == Some(error.as_str());
@@ -461,6 +464,12 @@ impl TuiApp {
             }
             ChatSocketEvent::Event(event) => self.apply_chat_event(event),
         }
+    }
+
+    fn last_notice_is(&self, text: &str) -> bool {
+        self.chat_messages
+            .last()
+            .is_some_and(|message| message.role == ChatRole::Notice && message.text == text)
     }
 
     pub(crate) fn apply_chat_event(&mut self, event: ChatEvent) {

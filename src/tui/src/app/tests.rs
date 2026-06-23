@@ -513,6 +513,27 @@ fn repeated_chat_socket_errors_do_not_duplicate_notices() {
 }
 
 #[test]
+fn repeated_chat_socket_closed_events_do_not_duplicate_notices() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_connected = true;
+    let initial_messages = app.chat_messages.len();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    assert!(!app.chat_connected);
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+
+    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+
+    app.apply_chat_event(ChatEvent::SystemText {
+        text: "agent replied".into(),
+    });
+    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    assert_eq!(app.chat_messages.len(), initial_messages + 3);
+}
+
+#[test]
 fn chat_input_editing_supports_paste_multiline_and_word_delete() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
