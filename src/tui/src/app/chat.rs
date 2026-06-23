@@ -218,7 +218,7 @@ impl TuiApp {
                 if let Some(session_id) = args {
                     self.resume_chat_session(session_id, chat_tx);
                 } else {
-                    self.push_notice("Usage: /resume <session-id>");
+                    self.push_local_notice("Usage: /resume <session-id>");
                 }
                 true
             }
@@ -226,7 +226,7 @@ impl TuiApp {
                 if let Some(mode_id) = args {
                     self.set_chat_mode(mode_id, chat_tx);
                 } else {
-                    self.push_notice(
+                    self.push_local_notice(
                         session_mode_options_text(self.chat_state.session_mode.as_ref())
                             .unwrap_or_else(|| {
                                 "Usage: /mode default|plan|accept|bypass|dontask".into()
@@ -261,12 +261,12 @@ impl TuiApp {
                             ));
                         }
                     } else {
-                        self.push_notice(
+                        self.push_local_notice(
                             "Unknown permission option. Use /allow [number|option-id] or /deny.",
                         );
                     }
                 } else {
-                    self.push_notice("No pending permission request.");
+                    self.push_local_notice("No pending permission request.");
                 }
                 true
             }
@@ -279,7 +279,7 @@ impl TuiApp {
                         self.clear_pending_permission_after_response("permission denied");
                     }
                 } else {
-                    self.push_notice("No pending permission request.");
+                    self.push_local_notice("No pending permission request.");
                 }
                 true
             }
@@ -292,6 +292,7 @@ impl TuiApp {
             role: ChatRole::Notice,
             text: "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail".into(),
         });
+        self.follow_chat_tail();
     }
 
     fn push_notice(&mut self, text: impl Into<String>) {
@@ -299,6 +300,11 @@ impl TuiApp {
             role: ChatRole::Notice,
             text: text.into(),
         });
+    }
+
+    fn push_local_notice(&mut self, text: impl Into<String>) {
+        self.push_notice(text);
+        self.follow_chat_tail();
     }
 
     fn clear_pending_permission_after_response(&mut self, action: impl Into<String>) {
@@ -351,7 +357,9 @@ impl TuiApp {
 
     fn prepare_new_chat_session(&mut self) {
         if self.chat_state.turn_active {
-            self.push_notice("Stop or wait for the current turn before starting a new session.");
+            self.push_local_notice(
+                "Stop or wait for the current turn before starting a new session.",
+            );
             return;
         }
         self.force_new_session = true;
@@ -371,7 +379,7 @@ impl TuiApp {
             let Some(mode_value) =
                 resolve_session_mode_value(self.chat_state.session_mode.as_ref(), mode_id)
             else {
-                self.push_notice(
+                self.push_local_notice(
                     session_mode_options_text(self.chat_state.session_mode.as_ref())
                         .unwrap_or_else(|| "Unknown mode.".into()),
                 );
@@ -380,7 +388,7 @@ impl TuiApp {
             let message = match state.source {
                 SessionModeSource::ConfigOption => {
                     let Some(config_id) = state.config_id else {
-                        self.push_notice("Session mode config is missing a config id.");
+                        self.push_local_notice("Session mode config is missing a config id.");
                         return;
                     };
                     ChatClientMessage::set_config_option(config_id, mode_value.clone())
@@ -394,7 +402,7 @@ impl TuiApp {
         }
 
         let Some(mode_value) = canonical_chat_mode(mode_id) else {
-            self.push_notice("Unknown mode. Valid: default, plan, accept, bypass, dontask.");
+            self.push_local_notice("Unknown mode. Valid: default, plan, accept, bypass, dontask.");
             return;
         };
         if self.send_chat_command(ChatClientMessage::set_mode(mode_value), chat_tx) {
@@ -409,7 +417,7 @@ impl TuiApp {
     ) {
         let session_id = session_id.trim();
         if session_id.is_empty() {
-            self.push_notice("Usage: /resume <session-id>");
+            self.push_local_notice("Usage: /resume <session-id>");
             return;
         }
         let message = ChatClientMessage::resume_session_with_options(

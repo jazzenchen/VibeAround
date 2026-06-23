@@ -775,11 +775,13 @@ async fn slash_help_renders_multiline_command_reference() {
     let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
     let mut app = TuiApp::new(&endpoint);
     app.chat_input = "/help".into();
+    app.chat_scroll = 3;
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     app.submit_chat_input(&transport, &tx).await;
 
     assert!(rx.try_recv().is_err());
+    assert_eq!(app.chat_scroll, 0);
     let help = &app.chat_messages.last().unwrap().text;
     assert!(help.contains("Commands\n/status runtime status"));
     assert!(help.contains("/agent agent, profile, workspace, session"));
@@ -907,11 +909,13 @@ async fn slash_mode_rejects_unknown_mode_without_sending() {
     let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
     let mut app = TuiApp::new(&endpoint);
     app.chat_input = "/mode turbo".into();
+    app.chat_scroll = 2;
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     app.submit_chat_input(&transport, &tx).await;
 
     assert!(rx.try_recv().is_err());
+    assert_eq!(app.chat_scroll, 0);
     assert!(app
         .chat_messages
         .last()
