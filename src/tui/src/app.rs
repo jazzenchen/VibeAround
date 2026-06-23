@@ -1,15 +1,15 @@
 use std::time::{Duration, Instant};
 
 use va_client::endpoint::ServerEndpoint;
-use va_client::ops;
 use va_client::state::ChatState;
 
 use crate::chat::{ChatMessage, ChatRole};
 use crate::data::{fetch_agent_picker, fetch_snapshot, AgentPickerSnapshot, DashboardSnapshot};
 use crate::detail::DetailContent;
-use crate::selection::{AgentPanel, AgentSelection, StatusSelection};
+use crate::selection::{AgentSelection, StatusSelection};
 use crate::transport::HttpTransport;
 
+mod agent;
 mod chat;
 
 const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
@@ -183,97 +183,6 @@ impl TuiApp {
             }
             AppView::Agent => self.select_agent_picker_item(),
             AppView::Chat | AppView::StatusDetail => {}
-        }
-    }
-
-    pub(crate) async fn sync_agent_picker_selection(&mut self, transport: &HttpTransport) {
-        let operation = match self.agent_selection.panel {
-            AgentPanel::Agents => {
-                let Some(agent_id) = self.selected_agent.clone() else {
-                    return;
-                };
-                ops::launcher_set_selected_agent(&agent_id)
-            }
-            AgentPanel::Profiles => {
-                let Some(profile_id) = self.selected_profile.clone() else {
-                    return;
-                };
-                let Some(agent_id) = self.effective_agent().map(str::to_string) else {
-                    self.last_error = Some("select an agent before choosing a profile".into());
-                    return;
-                };
-                ops::launcher_set_agent_profile(&agent_id, Some(&profile_id))
-            }
-            AgentPanel::Workspaces => {
-                let Some(workspace) = self.selected_workspace.clone() else {
-                    return;
-                };
-                let Some(agent_id) = self.effective_agent().map(str::to_string) else {
-                    self.last_error = Some("select an agent before choosing a workspace".into());
-                    return;
-                };
-                ops::launcher_set_agent_workspace(&agent_id, &workspace)
-            }
-            AgentPanel::Sessions => return,
-        };
-
-        match operation {
-            Ok(operation) => match transport.execute(operation).await {
-                Ok(preferences) => {
-                    self.agent_picker.preferences = Some(preferences);
-                    self.last_error = None;
-                    self.last_refresh = Some(Instant::now());
-                }
-                Err(error) => {
-                    self.last_error = Some(error.to_string());
-                }
-            },
-            Err(error) => {
-                self.last_error = Some(error.to_string());
-            }
-        }
-    }
-
-    fn select_agent_picker_item(&mut self) {
-        match self.agent_selection.panel {
-            AgentPanel::Agents => {
-                if let Some(agent) = self.agent_selection.selected_agent(&self.agent_picker) {
-                    if self.selected_agent.as_deref() != Some(agent.id.as_str()) {
-                        self.selected_profile = None;
-                        self.selected_workspace = None;
-                        self.selected_session = None;
-                    }
-                    self.selected_agent = Some(agent.id.clone());
-                    self.last_action = Some(format!("selected agent {}", agent.id));
-                }
-            }
-            AgentPanel::Profiles => {
-                if let Some(profile) = self.agent_selection.selected_profile(&self.agent_picker) {
-                    self.selected_profile = Some(profile.id.clone());
-                    self.selected_session = None;
-                    self.last_action = Some(format!("selected profile {}", profile.label));
-                }
-            }
-            AgentPanel::Workspaces => {
-                if let Some(workspace) = self.agent_selection.selected_workspace(&self.agent_picker)
-                {
-                    self.selected_workspace = Some(workspace.path.clone());
-                    self.selected_session = None;
-                    self.last_action = Some(format!("selected workspace {}", workspace.path));
-                }
-            }
-            AgentPanel::Sessions => {
-                if let Some(session) = self.agent_selection.selected_session(&self.agent_picker) {
-                    self.selected_session = Some(session.session_id.clone());
-                    if let Some(profile_id) = &session.profile_id {
-                        self.selected_profile = Some(profile_id.clone());
-                    }
-                    if let Some(project_path) = &session.project_path {
-                        self.selected_workspace = Some(project_path.clone());
-                    }
-                    self.last_action = Some(format!("selected session {}", session.session_id));
-                }
-            }
         }
     }
 

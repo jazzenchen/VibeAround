@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use crate::config::DEFAULT_BASE_URL;
 use crate::render;
-use crate::selection::RuntimePanel;
+use crate::selection::{AgentPanel, RuntimePanel};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
@@ -400,6 +400,77 @@ fn agent_picker_selection_updates_chat_context() {
 
     assert_eq!(app.selected_agent.as_deref(), Some("codex"));
     assert_eq!(app.last_action.as_deref(), Some("selected agent codex"));
+}
+
+#[test]
+fn agent_picker_sync_builds_launcher_preference_operations() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_agent = Some("codex".into());
+
+    app.agent_selection.panel = AgentPanel::Agents;
+    let operation = app
+        .launcher_preference_operation_for_selection()
+        .expect("agent operation")
+        .expect("agent writes preference");
+    assert_eq!(operation.request().path, "/api/launcher/selected-agent");
+    assert_eq!(
+        operation.request().body,
+        Some(serde_json::json!({ "agentId": "codex" }))
+    );
+
+    app.agent_selection.panel = AgentPanel::Profiles;
+    app.selected_profile = Some("profile-1".into());
+    let operation = app
+        .launcher_preference_operation_for_selection()
+        .expect("profile operation")
+        .expect("profile writes preference");
+    assert_eq!(operation.request().path, "/api/launcher/agent-profile");
+    assert_eq!(
+        operation.request().body,
+        Some(serde_json::json!({ "agentId": "codex", "profileId": "profile-1" }))
+    );
+
+    app.agent_selection.panel = AgentPanel::Workspaces;
+    app.selected_workspace = Some("/tmp/project".into());
+    let operation = app
+        .launcher_preference_operation_for_selection()
+        .expect("workspace operation")
+        .expect("workspace writes preference");
+    assert_eq!(operation.request().path, "/api/launcher/agent-workspace");
+    assert_eq!(
+        operation.request().body,
+        Some(serde_json::json!({ "agentId": "codex", "workspace": "/tmp/project" }))
+    );
+
+    app.agent_selection.panel = AgentPanel::Sessions;
+    assert!(app
+        .launcher_preference_operation_for_selection()
+        .expect("session sync decision")
+        .is_none());
+}
+
+#[test]
+fn agent_picker_sync_requires_agent_for_profile_or_workspace_preferences() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_selection.panel = AgentPanel::Profiles;
+    app.selected_profile = Some("profile-1".into());
+
+    let error = match app.launcher_preference_operation_for_selection() {
+        Err(error) => error,
+        Ok(_) => panic!("expected missing agent error"),
+    };
+    assert_eq!(error, "select an agent before choosing a profile");
+
+    app.agent_selection.panel = AgentPanel::Workspaces;
+    app.selected_profile = None;
+    app.selected_workspace = Some("/tmp/project".into());
+    let error = match app.launcher_preference_operation_for_selection() {
+        Err(error) => error,
+        Ok(_) => panic!("expected missing agent error"),
+    };
+    assert_eq!(error, "select an agent before choosing a workspace");
 }
 
 #[test]
