@@ -22,6 +22,7 @@ pub(crate) enum Command {
     SettingsReload,
     TmuxSessions,
     SessionCreate(SessionCreateArgs),
+    SessionAttach { session_id: String },
     ChannelSync,
     ChannelStart { kind: String },
     ChannelStop { kind: String },
@@ -180,12 +181,14 @@ fn parse_session_command(args: &[String]) -> Result<Command, CliError> {
         [action, session_id] if action == "kill" => Ok(Command::SessionKill {
             session_id: session_id.to_string(),
         }),
+        [action, session_id] if action == "attach" => Ok(Command::SessionAttach {
+            session_id: session_id.to_string(),
+        }),
         [action, rest @ ..] if action == "create" => {
             parse_session_create_args(rest).map(Command::SessionCreate)
         }
         _ => Err(CliError::Usage(
-            "usage: va session create --tool TOOL [--project PATH]; va session kill SESSION_ID"
-                .into(),
+            "usage: va session create --tool TOOL [--project PATH]; va session attach SESSION_ID; va session kill SESSION_ID".into(),
         )),
     }
 }
@@ -403,7 +406,7 @@ fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create a PTY session\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -516,6 +519,23 @@ mod tests {
                 rows: Some(40),
                 ..Default::default()
             }))
+        );
+    }
+
+    #[test]
+    fn parses_session_attach_command() {
+        let options = parse_args([
+            "session".to_string(),
+            "attach".to_string(),
+            "sid-1".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::SessionAttach {
+                session_id: "sid-1".into()
+            })
         );
     }
 

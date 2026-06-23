@@ -1,4 +1,5 @@
 mod args;
+mod attach;
 mod config;
 mod error;
 mod transport;
@@ -255,6 +256,9 @@ async fn run() -> Result<(), CliError> {
         }
         Command::SessionCreate(create) => {
             run_session_create(&options, &create).await?;
+        }
+        Command::SessionAttach { session_id } => {
+            attach::attach_session(&options, &session_id).await?;
         }
         Command::SessionKill { session_id } => {
             run_unit(&options, ops::session_delete(&session_id), "session killed").await?;

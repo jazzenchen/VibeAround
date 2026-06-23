@@ -18,6 +18,18 @@ pub(crate) enum CliError {
         #[source]
         source: reqwest::Error,
     },
+    #[error("websocket error for {url}: {source}")]
+    WebSocket {
+        url: String,
+        #[source]
+        source: tokio_tungstenite::tungstenite::Error,
+    },
+    #[error("I/O error while {action}: {source}")]
+    Io {
+        action: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("client error: {0}")]
