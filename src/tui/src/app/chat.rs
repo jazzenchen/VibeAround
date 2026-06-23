@@ -51,6 +51,13 @@ impl TuiApp {
                 self.follow_chat_tail();
             }
             "/new" => self.prepare_new_chat_session(),
+            "/mode" => {
+                if let Some(mode_id) = parts.next() {
+                    self.set_chat_mode(mode_id, chat_tx);
+                } else {
+                    self.push_notice("Usage: /mode default|plan|accept|bypass|dontask");
+                }
+            }
             "/back" => self.go_back(),
             "/stop" => {
                 self.send_chat_command(ChatClientMessage::stop(), chat_tx);
@@ -83,7 +90,7 @@ impl TuiApp {
             unknown => self.chat_messages.push(ChatMessage {
                 role: ChatRole::Notice,
                 text: format!(
-                    "Unknown command {unknown}. Try /new, /status, /agent, /help, /clear."
+                    "Unknown command {unknown}. Try /new, /mode, /status, /agent, /help, /clear."
                 ),
             }),
         }
@@ -92,7 +99,7 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "/new next message starts a new session  /status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat".into(),
+            text: "/new next message starts a new session  /mode set permission mode  /status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat".into(),
         });
     }
 
@@ -158,6 +165,16 @@ impl TuiApp {
         self.last_action = Some("next message starts a new session".into());
         self.push_notice("Next message will start a new session.");
         self.follow_chat_tail();
+    }
+
+    fn set_chat_mode(&mut self, mode_id: &str, chat_tx: &mpsc::UnboundedSender<ChatClientMessage>) {
+        let Some(canonical) = canonical_chat_mode(mode_id) else {
+            self.push_notice("Unknown mode. Valid: default, plan, accept, bypass, dontask.");
+            return;
+        };
+        if self.send_chat_command(ChatClientMessage::set_mode(canonical), chat_tx) {
+            self.last_action = Some(format!("requested mode {canonical}"));
+        }
     }
 
     pub(crate) fn apply_chat_socket_event(&mut self, event: ChatSocketEvent) {
@@ -295,5 +312,21 @@ impl TuiApp {
             role: ChatRole::Request,
             text: text.to_string(),
         });
+    }
+}
+
+fn canonical_chat_mode(mode_id: &str) -> Option<&'static str> {
+    match mode_id
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['_', '-'], "")
+        .as_str()
+    {
+        "default" => Some("default"),
+        "plan" => Some("plan"),
+        "accept" | "acceptedits" => Some("acceptEdits"),
+        "bypass" | "bypasspermissions" => Some("bypassPermissions"),
+        "dontask" => Some("dontAsk"),
+        _ => None,
     }
 }

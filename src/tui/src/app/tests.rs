@@ -479,6 +479,47 @@ fn new_session_intent_survives_failed_send() {
     );
 }
 
+#[tokio::test]
+async fn slash_mode_sends_set_mode_command() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_input = "/mode accept".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("mode command"),
+        ChatClientMessage::SetMode {
+            mode_id: "acceptEdits".into(),
+        }
+    );
+    assert_eq!(
+        app.last_action.as_deref(),
+        Some("requested mode acceptEdits")
+    );
+}
+
+#[tokio::test]
+async fn slash_mode_rejects_unknown_mode_without_sending() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_input = "/mode turbo".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert!(rx.try_recv().is_err());
+    assert!(app
+        .chat_messages
+        .last()
+        .unwrap()
+        .text
+        .contains("Unknown mode"));
+}
+
 #[test]
 fn session_ready_updates_chat_context_for_followup_messages() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
@@ -513,6 +554,34 @@ fn session_ready_updates_chat_context_for_followup_messages() {
             attachments: Vec::new(),
         }
     );
+}
+
+#[test]
+fn chat_context_renders_session_mode() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_state.session_mode = Some(serde_json::json!({
+        "source": "session_mode",
+        "currentValue": "acceptEdits",
+        "options": [{ "value": "acceptEdits", "name": "Accept edits" }]
+    }));
+
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| render::render(frame, &app))
+        .expect("draw");
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(screen.contains("mode"));
+    assert!(screen.contains("acceptEdits"));
 }
 
 #[test]
