@@ -203,7 +203,7 @@ pub(crate) fn view_hint(app: &TuiApp) -> String {
     match app.view {
         AppView::Chat => {
             if app.chat_state.pending_permission_request_id.is_some() {
-                "permission pending: /allow <option-id> or /deny".to_string()
+                "permission pending: /allow [number|option-id] or /deny".to_string()
             } else if app.chat_state.turn_active {
                 app.work_status
                     .clone()

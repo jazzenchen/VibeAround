@@ -822,6 +822,10 @@ async fn slash_allow_defaults_to_first_non_reject_permission_option() {
             ]
         }),
     });
+    assert_eq!(
+        render::view_hint(&app),
+        "permission pending: /allow [number|option-id] or /deny"
+    );
     app.chat_input = "/allow".into();
     let (tx, mut rx) = mpsc::unbounded_channel();
 
@@ -833,7 +837,10 @@ async fn slash_allow_defaults_to_first_non_reject_permission_option() {
     );
     assert_eq!(app.chat_state.pending_permission_request_id, None);
     assert_eq!(app.chat_state.pending_permission, None);
-    assert_eq!(app.last_action.as_deref(), Some("permission response sent"));
+    assert_eq!(
+        app.last_action.as_deref(),
+        Some("permission selected: allow-once")
+    );
 }
 
 #[tokio::test]
@@ -862,6 +869,10 @@ async fn slash_allow_accepts_numbered_permission_option() {
         ChatClientMessage::permission_selected("req-2", "allow-always")
     );
     assert_eq!(app.chat_state.pending_permission_request_id, None);
+    assert_eq!(
+        app.last_action.as_deref(),
+        Some("permission selected: allow-always")
+    );
 }
 
 #[tokio::test]
@@ -917,6 +928,7 @@ async fn slash_deny_clears_pending_permission_after_send() {
     );
     assert_eq!(app.chat_state.pending_permission_request_id, None);
     assert_eq!(app.chat_state.pending_permission, None);
+    assert_eq!(app.last_action.as_deref(), Some("permission denied"));
 }
 
 #[tokio::test]

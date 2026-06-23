@@ -139,11 +139,13 @@ impl TuiApp {
                         if self.send_chat_command(
                             ChatClientMessage::permission_selected(
                                 permission.request_id.clone(),
-                                option_id,
+                                option_id.clone(),
                             ),
                             chat_tx,
                         ) {
-                            self.clear_pending_permission_after_response();
+                            self.clear_pending_permission_after_response(format!(
+                                "permission selected: {option_id}"
+                            ));
                         }
                     } else {
                         self.push_notice(
@@ -161,7 +163,7 @@ impl TuiApp {
                         ChatClientMessage::permission_cancelled(request_id),
                         chat_tx,
                     ) {
-                        self.clear_pending_permission_after_response();
+                        self.clear_pending_permission_after_response("permission denied");
                     }
                 } else {
                     self.push_notice("No pending permission request.");
@@ -186,10 +188,10 @@ impl TuiApp {
         });
     }
 
-    fn clear_pending_permission_after_response(&mut self) {
+    fn clear_pending_permission_after_response(&mut self, action: impl Into<String>) {
         self.chat_state.pending_permission_request_id = None;
         self.chat_state.pending_permission = None;
-        self.last_action = Some("permission response sent".into());
+        self.last_action = Some(action.into());
     }
 
     pub(crate) fn send_chat_message(
