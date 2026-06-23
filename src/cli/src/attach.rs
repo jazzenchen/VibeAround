@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 
 use crossterm::terminal;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -16,6 +16,7 @@ const DETACH_BYTE: u8 = 0x1d; // Ctrl-]
 
 enum InputEvent {
     Bytes(Vec<u8>),
+    Resize { cols: u16, rows: u16 },
     Detach,
 }
 
@@ -35,17 +36,14 @@ pub(crate) async fn attach_session(options: &Options, session_id: &str) -> Resul
     let (mut ws_tx, mut ws_rx) = ws.split();
 
     if let Ok((cols, rows)) = terminal::size() {
-        let resize = encode_pty_client_message(&pty_resize(cols, rows))?;
-        ws_tx
-            .send(Message::Text(resize.into()))
-            .await
-            .map_err(|source| ws_error(&url, source))?;
+        send_resize(&mut ws_tx, &url, cols, rows).await?;
     }
 
     eprintln!("attached to {session_id}; press Ctrl-] to detach");
     let _raw_mode = RawModeGuard::enable()?;
     let (input_tx, mut input_rx) = mpsc::channel(32);
-    spawn_stdin_reader(input_tx);
+    spawn_stdin_reader(input_tx.clone());
+    spawn_resize_watcher(input_tx);
 
     loop {
         tokio::select! {
@@ -56,6 +54,9 @@ pub(crate) async fn attach_session(options: &Options, session_id: &str) -> Resul
                             .send(Message::Binary(bytes.into()))
                             .await
                             .map_err(|source| ws_error(&url, source))?;
+                    }
+                    Some(InputEvent::Resize { cols, rows }) => {
+                        send_resize(&mut ws_tx, &url, cols, rows).await?;
                     }
                     Some(InputEvent::Detach) | None => {
                         let _ = ws_tx.close().await;
@@ -103,6 +104,39 @@ fn spawn_stdin_reader(tx: mpsc::Sender<InputEvent>) {
             }
         }
     });
+}
+
+#[cfg(unix)]
+fn spawn_resize_watcher(tx: mpsc::Sender<InputEvent>) {
+    tokio::spawn(async move {
+        let Ok(mut resize_signal) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
+        else {
+            return;
+        };
+        while resize_signal.recv().await.is_some() {
+            let Ok((cols, rows)) = terminal::size() else {
+                continue;
+            };
+            if tx.send(InputEvent::Resize { cols, rows }).await.is_err() {
+                break;
+            }
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn spawn_resize_watcher(_tx: mpsc::Sender<InputEvent>) {}
+
+async fn send_resize<S>(ws_tx: &mut S, url: &str, cols: u16, rows: u16) -> Result<(), CliError>
+where
+    S: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    let resize = encode_pty_client_message(&pty_resize(cols, rows))?;
+    ws_tx
+        .send(Message::Text(resize.into()))
+        .await
+        .map_err(|source| ws_error(url, source))
 }
 
 fn write_stdout(bytes: &[u8]) -> Result<(), CliError> {
