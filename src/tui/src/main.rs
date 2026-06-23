@@ -103,7 +103,11 @@ async fn run_dashboard(
                     KeyCode::PageDown if app.view == AppView::Chat => app.scroll_chat_down(10),
                     KeyCode::Enter => match app.view {
                         AppView::Chat => app.submit_chat_input(&transport, &chat_tx).await,
-                        AppView::Status | AppView::Agent => app.enter_current_view(),
+                        AppView::Status => app.enter_current_view(),
+                        AppView::Agent => {
+                            app.enter_current_view();
+                            app.sync_agent_picker_selection(&transport).await;
+                        }
                         AppView::StatusDetail => {}
                     },
                     KeyCode::Backspace if app.view == AppView::Chat => {

@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use va_client::endpoint::ServerEndpoint;
+use va_client::ops;
 use va_client::state::ChatState;
 
 use crate::chat::{ChatMessage, ChatRole};
@@ -182,6 +183,54 @@ impl TuiApp {
             }
             AppView::Agent => self.select_agent_picker_item(),
             AppView::Chat | AppView::StatusDetail => {}
+        }
+    }
+
+    pub(crate) async fn sync_agent_picker_selection(&mut self, transport: &HttpTransport) {
+        let operation = match self.agent_selection.panel {
+            AgentPanel::Agents => {
+                let Some(agent_id) = self.selected_agent.clone() else {
+                    return;
+                };
+                ops::launcher_set_selected_agent(&agent_id)
+            }
+            AgentPanel::Profiles => {
+                let Some(profile_id) = self.selected_profile.clone() else {
+                    return;
+                };
+                let Some(agent_id) = self.effective_agent().map(str::to_string) else {
+                    self.last_error = Some("select an agent before choosing a profile".into());
+                    return;
+                };
+                ops::launcher_set_agent_profile(&agent_id, Some(&profile_id))
+            }
+            AgentPanel::Workspaces => {
+                let Some(workspace) = self.selected_workspace.clone() else {
+                    return;
+                };
+                let Some(agent_id) = self.effective_agent().map(str::to_string) else {
+                    self.last_error = Some("select an agent before choosing a workspace".into());
+                    return;
+                };
+                ops::launcher_set_agent_workspace(&agent_id, &workspace)
+            }
+            AgentPanel::Sessions => return,
+        };
+
+        match operation {
+            Ok(operation) => match transport.execute(operation).await {
+                Ok(preferences) => {
+                    self.agent_picker.preferences = Some(preferences);
+                    self.last_error = None;
+                    self.last_refresh = Some(Instant::now());
+                }
+                Err(error) => {
+                    self.last_error = Some(error.to_string());
+                }
+            },
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+            }
         }
     }
 

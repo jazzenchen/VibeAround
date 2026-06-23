@@ -34,6 +34,13 @@ pub struct AgentProfileBody<'a> {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentWorkspaceBody<'a> {
+    pub agent_id: &'a str,
+    pub workspace: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentLaunchArgsBody<'a> {
     pub agent_id: &'a str,
     pub launch_args: Value,

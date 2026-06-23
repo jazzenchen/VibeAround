@@ -6,8 +6,8 @@ use crate::http::{AuthRequirement, HttpMethod, RequestSpec, ResponseSpec};
 use crate::Result;
 
 use super::{
-    AgentLaunchArgsBody, AgentProfileBody, EnabledBody, LaunchPlanBody, LaunchPlanResponse,
-    LauncherPreferencesResponse, ProfileConnectionBody, SelectedAgentBody,
+    AgentLaunchArgsBody, AgentProfileBody, AgentWorkspaceBody, EnabledBody, LaunchPlanBody,
+    LaunchPlanResponse, LauncherPreferencesResponse, ProfileConnectionBody, SelectedAgentBody,
 };
 
 pub fn preferences() -> RequestSpec {
@@ -38,6 +38,16 @@ pub fn set_agent_profile(agent_id: &str, profile_id: Option<&str>) -> Result<Req
         AgentProfileBody {
             agent_id,
             profile_id,
+        },
+    )
+}
+
+pub fn set_agent_workspace(agent_id: &str, workspace: &str) -> Result<RequestSpec> {
+    launcher_put(
+        "/api/launcher/agent-workspace",
+        AgentWorkspaceBody {
+            agent_id,
+            workspace,
         },
     )
 }
@@ -110,6 +120,17 @@ mod tests {
         assert_eq!(request.method, HttpMethod::Put);
         assert_eq!(request.path, "/api/launcher/selected-agent");
         assert_eq!(request.body, Some(json!({ "agentId": "codex" })));
+    }
+
+    #[test]
+    fn agent_workspace_request_uses_camel_case_body() {
+        let request = set_agent_workspace("codex", "/tmp/project").expect("request");
+        assert_eq!(request.method, HttpMethod::Put);
+        assert_eq!(request.path, "/api/launcher/agent-workspace");
+        assert_eq!(
+            request.body,
+            Some(json!({ "agentId": "codex", "workspace": "/tmp/project" }))
+        );
     }
 
     #[test]

@@ -31,6 +31,16 @@ pub fn launcher_set_agent_profile(
     ))
 }
 
+pub fn launcher_set_agent_workspace(
+    agent_id: &str,
+    workspace: &str,
+) -> Result<Operation<LauncherPreferencesResponse>> {
+    Ok(Operation::new(
+        crate::launcher::set_agent_workspace(agent_id, workspace)?,
+        crate::launcher::decode_preferences,
+    ))
+}
+
 pub fn launcher_set_agent_launch_args(
     agent_id: &str,
     launch_args: Value,
@@ -91,6 +101,15 @@ mod tests {
         assert_eq!(op.request().method, HttpMethod::Put);
         assert_eq!(op.request().path, "/api/launcher/selected-agent");
         assert_eq!(op.request().body, Some(json!({ "agentId": "codex" })));
+
+        let workspace_op =
+            launcher_set_agent_workspace("codex", "/tmp/project").expect("workspace operation");
+        assert_eq!(workspace_op.request().method, HttpMethod::Put);
+        assert_eq!(workspace_op.request().path, "/api/launcher/agent-workspace");
+        assert_eq!(
+            workspace_op.request().body,
+            Some(json!({ "agentId": "codex", "workspace": "/tmp/project" }))
+        );
 
         let preferences = op
             .decode(ResponseSpec::json(

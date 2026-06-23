@@ -301,6 +301,10 @@ pub async fn run_web_server(
             put(api::set_agent_profile_handler),
         )
         .route(
+            "/api/launcher/agent-workspace",
+            put(api::set_agent_workspace_handler),
+        )
+        .route(
             "/api/launcher/agent-launch-args",
             put(api::set_agent_launch_args_handler),
         )

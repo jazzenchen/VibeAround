@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
 use va_client::sessions::SessionListItem;
@@ -52,10 +52,13 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
 }
 
 fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
-    let input_content_width = usize::from(area.width.saturating_sub(4)).max(1);
-    let input_height = input_box_height(&app.chat_input, input_content_width, 4);
+    let input_content_width = usize::from(area.width.saturating_sub(2)).max(1);
+    let input_height = input_box_height(&app.chat_input, input_content_width, 4)
+        .saturating_sub(1)
+        .max(2);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
+        .spacing(1)
         .constraints([Constraint::Min(6), Constraint::Length(input_height)])
         .split(area);
     let visible_rows = usize::from(chunks[0].height.saturating_sub(2));
@@ -87,7 +90,7 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
             Span::raw(app.chat_input.clone()),
         ])])
         .wrap(Wrap { trim: false })
-        .block(focus_block("message")),
+        .block(input_block()),
         chunks[1],
     );
 }
@@ -95,14 +98,17 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
 fn render_status_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
+        .spacing(2)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
     let left = Layout::default()
         .direction(Direction::Vertical)
+        .spacing(1)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(columns[0]);
     let right = Layout::default()
         .direction(Direction::Vertical)
+        .spacing(1)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(columns[1]);
 
@@ -160,14 +166,17 @@ fn render_status_detail_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui:
 fn render_agent_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
+        .spacing(2)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
     let left = Layout::default()
         .direction(Direction::Vertical)
+        .spacing(1)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(columns[0]);
     let right = Layout::default()
         .direction(Direction::Vertical)
+        .spacing(1)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(columns[1]);
 
@@ -370,8 +379,7 @@ fn section_heading(title: &str, active: bool) -> Line<'static> {
 
 fn focus_block(title: &str) -> Block<'static> {
     Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .borders(Borders::LEFT | Borders::TOP)
         .border_style(Style::default().fg(BRAND))
         .title_style(Style::default().fg(BRAND).add_modifier(Modifier::BOLD))
         .title(format!(" {title} "))
@@ -383,4 +391,10 @@ fn quiet_block(title: &str) -> Block<'static> {
         .border_style(muted_style())
         .title_style(muted_style().add_modifier(Modifier::BOLD))
         .title(format!(" {title} "))
+}
+
+fn input_block() -> Block<'static> {
+    Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(BRAND))
 }

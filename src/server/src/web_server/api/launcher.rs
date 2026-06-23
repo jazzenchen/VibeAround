@@ -31,6 +31,13 @@ pub struct AgentProfileBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentWorkspaceBody {
+    pub agent_id: String,
+    pub workspace: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentLaunchArgsBody {
     pub agent_id: String,
     pub launch_args: agent_state::AgentLaunchArgs,
@@ -86,6 +93,17 @@ pub async fn set_agent_profile_handler(
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
     let (agent_id, profile_id) = validate_agent_profile_selection(&body.agent_id, body.profile_id)?;
     agent_state::write_agent_profile(&agent_id, profile_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(launcher_preferences()))
+}
+
+/// PUT /api/launcher/agent-workspace -- set one agent's default workspace.
+pub async fn set_agent_workspace_handler(
+    Json(body): Json<AgentWorkspaceBody>,
+) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
+    let (agent_id, workspace) =
+        validate_agent_workspace_selection(&body.agent_id, &body.workspace)?;
+    agent_state::write_agent_workspace(&agent_id, workspace)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(launcher_preferences()))
 }
@@ -222,6 +240,24 @@ fn validate_agent_profile_selection(
     }
 
     Ok((agent_id, profile_id))
+}
+
+fn validate_agent_workspace_selection(
+    agent_id: &str,
+    workspace: &str,
+) -> Result<(String, std::path::PathBuf), (StatusCode, String)> {
+    let agent_id = canonical_agent_id(agent_id)?;
+    let workspace = common::workspace::normalize_workspace_cwd(std::path::PathBuf::from(workspace));
+    if !workspace.exists() || !workspace.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "workspace does not exist or is not a directory: {}",
+                workspace.to_string_lossy()
+            ),
+        ));
+    }
+    Ok((agent_id, workspace))
 }
 
 fn canonical_agent_id(agent_id: &str) -> Result<String, (StatusCode, String)> {
@@ -473,4 +509,31 @@ fn resume_command_for_agent(
         }
     };
     Ok(command)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_agent_workspace_selection() {
+        let path =
+            std::env::temp_dir().join(format!("va-launcher-workspace-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path).expect("create temp workspace");
+
+        let (agent_id, workspace) =
+            validate_agent_workspace_selection("codex", path.to_str().expect("utf8 path"))
+                .expect("valid workspace");
+
+        assert_eq!(agent_id, "codex");
+        assert_eq!(
+            workspace,
+            std::fs::canonicalize(&path).expect("canonical path")
+        );
+
+        std::fs::remove_dir_all(&path).expect("remove temp workspace");
+        let error = validate_agent_workspace_selection("codex", path.to_str().expect("utf8 path"))
+            .expect_err("missing workspace");
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+    }
 }
