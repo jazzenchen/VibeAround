@@ -11,10 +11,10 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use serde_json::Value;
 use va_client::endpoint::ServerEndpoint;
@@ -24,10 +24,17 @@ use va_client::runtime::{
     AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
 };
 use va_client::service::ServiceInfoResponse;
-use va_client::sessions::SessionListItem;
+use va_client::sessions::{PtyRunState, SessionListItem};
 use va_client::Operation;
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:12358/va";
+const BRAND_LOGO: &str = r#" ██╗   ██╗ ██╗ ██████╗  ███████╗  █████╗  ██████╗   ██████╗  ██╗   ██╗ ███╗   ██╗ ██████╗
+ ██║   ██║ ██║ ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔══██╗ ██╔═══██╗ ██║   ██║ ████╗  ██║ ██╔══██╗
+ ██║   ██║ ██║ ██████╔╝ █████╗   ███████║ ██████╔╝ ██║   ██║ ██║   ██║ ██╔██╗ ██║ ██║  ██║
+ ╚██╗ ██╔╝ ██║ ██╔══██╗ ██╔══╝   ██╔══██║ ██╔══██╗ ██║   ██║ ██║   ██║ ██║╚██╗██║ ██║  ██║
+  ╚████╔╝  ██║ ██████╔╝ ███████╗ ██║  ██║ ██║  ██║ ╚██████╔╝ ╚██████╔╝ ██║ ╚████║ ██████╔╝
+   ╚═══╝   ╚═╝ ╚═════╝  ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝   ╚═════╝  ╚═╝  ╚═══╝ ╚═════╝"#;
+const TAGLINE: &str = "unified runtime for ai coding agents";
 
 #[derive(Debug, Parser)]
 #[command(name = "va-tui", version, about = "VibeAround terminal dashboard")]
@@ -569,18 +576,19 @@ async fn fetch_snapshot(transport: &HttpTransport) -> Result<DashboardSnapshot, 
 
 fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
+    let brand_mode = brand_mode(area.width, area.height);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(brand_mode.height()),
             Constraint::Length(3),
-            Constraint::Length(5),
             Constraint::Min(8),
             Constraint::Length(3),
         ])
         .split(area);
 
-    frame.render_widget(header(app), chunks[0]);
-    frame.render_widget(summary(app), chunks[1]);
+    frame.render_widget(brand_header(app, brand_mode), chunks[0]);
+    frame.render_widget(status_strip(app), chunks[1]);
 
     let columns = Layout::default()
         .direction(Direction::Horizontal)
@@ -627,50 +635,173 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         ),
         right[1],
     );
-    frame.render_widget(footer(app), chunks[3]);
+    frame.render_widget(command_bar(app), chunks[3]);
 }
 
-fn header(app: &TuiApp) -> Paragraph<'static> {
-    let mut lines = vec![Line::from(vec![
-        Span::styled(
-            "VibeAround",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::raw(app.endpoint.clone()),
-    ])];
-    if let Some(error) = &app.last_error {
-        lines.push(Line::from(Span::styled(
-            error.clone(),
-            Style::default().fg(Color::Red),
-        )));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrandMode {
+    Narrow,
+    Compact,
+    FullLogo,
+}
+
+impl BrandMode {
+    fn height(self) -> u16 {
+        match self {
+            Self::Narrow => 3,
+            Self::Compact => 4,
+            Self::FullLogo => 9,
+        }
     }
-    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("va-tui"))
 }
 
-fn summary(app: &TuiApp) -> Paragraph<'static> {
-    let service = app
+fn brand_mode(width: u16, height: u16) -> BrandMode {
+    if width >= 96 && height >= 24 {
+        BrandMode::FullLogo
+    } else if width >= 56 && height >= 14 {
+        BrandMode::Compact
+    } else {
+        BrandMode::Narrow
+    }
+}
+
+fn brand_header(app: &TuiApp, mode: BrandMode) -> Paragraph<'static> {
+    let mut lines = Vec::new();
+    match mode {
+        BrandMode::FullLogo => {
+            lines.extend(BRAND_LOGO.lines().map(|line| {
+                Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            }));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    TAGLINE,
+                    Style::default()
+                        .fg(Color::Gray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("   /   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(app.endpoint.clone(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+        BrandMode::Compact => {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "VibeAround",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "  terminal runtime console",
+                    Style::default().fg(Color::Gray),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                app.endpoint.clone(),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        BrandMode::Narrow => {
+            lines.push(Line::from(Span::styled(
+                "VA",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
+    }
+
+    Paragraph::new(lines).alignment(Alignment::Center).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan)),
+    )
+}
+
+fn status_strip(app: &TuiApp) -> Paragraph<'static> {
+    let service_spans = app
         .snapshot
         .service
         .as_ref()
         .map(|service| {
-            format!(
-                "{} {}  mode={}  port={}",
-                service.service, service.version, service.mode, service.port
-            )
+            vec![
+                Span::styled(
+                    service.service.clone(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(service.version.clone(), Style::default().fg(Color::Gray)),
+                Span::raw("  "),
+                Span::styled("mode ", Style::default().fg(Color::DarkGray)),
+                Span::styled(service.mode.clone(), Style::default().fg(Color::Cyan)),
+                Span::raw("  "),
+                Span::styled("port ", Style::default().fg(Color::DarkGray)),
+                Span::styled(service.port.to_string(), Style::default().fg(Color::Yellow)),
+            ]
         })
-        .unwrap_or_else(|| "service unavailable".to_string());
-    let counts = format!(
-        "channels={} tunnels={} agents={} sessions={}",
+        .unwrap_or_else(|| {
+            vec![Span::styled(
+                "service unavailable",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )]
+        });
+
+    let mut spans = service_spans;
+    spans.push(Span::styled(
+        "   |   ",
+        Style::default().fg(Color::DarkGray),
+    ));
+    spans.extend(metric_spans(
+        "channels",
         app.snapshot.channels.len(),
+        Color::Cyan,
+    ));
+    spans.push(Span::raw("  "));
+    spans.extend(metric_spans(
+        "tunnels",
         app.snapshot.tunnels.len(),
+        Color::Magenta,
+    ));
+    spans.push(Span::raw("  "));
+    spans.extend(metric_spans(
+        "agents",
         app.snapshot.agents.len(),
-        app.snapshot.sessions.len()
-    );
-    Paragraph::new(vec![Line::from(service), Line::from(counts)])
-        .block(Block::default().borders(Borders::ALL).title("summary"))
+        Color::Green,
+    ));
+    spans.push(Span::raw("  "));
+    spans.extend(metric_spans(
+        "sessions",
+        app.snapshot.sessions.len(),
+        Color::Yellow,
+    ));
+
+    Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        )
+}
+
+fn metric_spans(label: &'static str, value: usize, color: Color) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(label, Style::default().fg(Color::DarkGray)),
+        Span::raw(" "),
+        Span::styled(
+            value.to_string(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ]
 }
 
 fn channel_list(
@@ -680,7 +811,7 @@ fn channel_list(
 ) -> List<'static> {
     selectable_list(
         "channels",
-        channels.iter().map(channel_line).collect::<Vec<_>>(),
+        channels.iter().map(channel_row).collect::<Vec<_>>(),
         selected,
         active,
     )
@@ -689,7 +820,7 @@ fn channel_list(
 fn tunnel_list(tunnels: &[TunnelRuntime], selected: Option<usize>, active: bool) -> List<'static> {
     selectable_list(
         "tunnels",
-        tunnels.iter().map(tunnel_line).collect::<Vec<_>>(),
+        tunnels.iter().map(tunnel_row).collect::<Vec<_>>(),
         selected,
         active,
     )
@@ -698,7 +829,7 @@ fn tunnel_list(tunnels: &[TunnelRuntime], selected: Option<usize>, active: bool)
 fn agent_list(agents: &[AgentRuntime], selected: Option<usize>, active: bool) -> List<'static> {
     selectable_list(
         "agents",
-        agents.iter().map(agent_line).collect::<Vec<_>>(),
+        agents.iter().map(agent_row).collect::<Vec<_>>(),
         selected,
         active,
     )
@@ -711,7 +842,7 @@ fn session_list(
 ) -> List<'static> {
     selectable_list(
         "pty sessions",
-        sessions.iter().map(session_line).collect::<Vec<_>>(),
+        sessions.iter().map(session_row).collect::<Vec<_>>(),
         selected,
         active,
     )
@@ -719,25 +850,32 @@ fn session_list(
 
 fn selectable_list(
     title: &'static str,
-    lines: Vec<String>,
+    rows: Vec<Vec<Span<'static>>>,
     selected: Option<usize>,
     active: bool,
 ) -> List<'static> {
-    let items = if lines.is_empty() {
-        vec![ListItem::new("-")]
+    let items = if rows.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "  no runtime entries",
+            Style::default().fg(Color::DarkGray),
+        )))]
     } else {
-        lines
-            .into_iter()
+        rows.into_iter()
             .enumerate()
-            .map(|(index, line)| {
+            .map(|(index, row)| {
                 let marker = if Some(index) == selected { "> " } else { "  " };
-                let item = ListItem::new(format!("{marker}{line}"));
+                let mut spans = vec![Span::styled(
+                    marker,
+                    Style::default().fg(if active {
+                        Color::Yellow
+                    } else {
+                        Color::DarkGray
+                    }),
+                )];
+                spans.extend(row);
+                let item = ListItem::new(Line::from(spans));
                 if Some(index) == selected {
-                    item.style(
-                        Style::default()
-                            .fg(if active { Color::Yellow } else { Color::Gray })
-                            .add_modifier(Modifier::BOLD),
-                    )
+                    item.style(Style::default().add_modifier(Modifier::BOLD))
                 } else {
                     item
                 }
@@ -748,7 +886,10 @@ fn selectable_list(
 }
 
 fn list_block(title: &'static str, active: bool) -> Block<'static> {
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(format!(" {title} "));
     if active {
         block
             .border_style(Style::default().fg(Color::Cyan))
@@ -758,11 +899,11 @@ fn list_block(title: &'static str, active: bool) -> Block<'static> {
                     .add_modifier(Modifier::BOLD),
             )
     } else {
-        block
+        block.border_style(Style::default().fg(Color::DarkGray))
     }
 }
 
-fn footer(app: &TuiApp) -> Paragraph<'static> {
+fn command_bar(app: &TuiApp) -> Paragraph<'static> {
     let refreshed = app
         .last_refresh
         .map(|instant| format!("refreshed {}s ago", instant.elapsed().as_secs()))
@@ -777,55 +918,153 @@ fn footer(app: &TuiApp) -> Paragraph<'static> {
                 .map(|action| format!("last: {action}"))
         })
         .unwrap_or(refreshed);
-    Paragraph::new(Line::from(format!(
-        "{status} | Tab/Left/Right panel | Up/Down or j/k select | s start channel | x stop/kill | r restart channel | f refresh | q/Esc quit"
-    )))
-    .block(Block::default().borders(Borders::ALL))
-}
-
-fn channel_line(channel: &ChannelRuntime) -> String {
-    format!(
-        "{}  {}{}",
-        channel.kind,
-        channel_status_label(channel.status),
-        channel
-            .reason
-            .as_ref()
-            .map(|reason| format!("  {reason}"))
-            .unwrap_or_default()
+    Paragraph::new(Line::from(vec![
+        Span::styled(status, Style::default().fg(Color::Gray)),
+        Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
+        key_span("Tab"),
+        Span::raw("/"),
+        key_span("Left"),
+        Span::raw("/"),
+        key_span("Right"),
+        Span::raw(" panel  "),
+        key_span("j/k"),
+        Span::raw(" select  "),
+        key_span("s"),
+        Span::raw(" start  "),
+        key_span("x"),
+        Span::raw(" stop/kill  "),
+        key_span("r"),
+        Span::raw(" restart  "),
+        key_span("f"),
+        Span::raw(" refresh  "),
+        key_span("q"),
+        Span::raw(" quit"),
+    ]))
+    .alignment(Alignment::Center)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::DarkGray)),
     )
 }
 
-fn tunnel_line(tunnel: &TunnelRuntime) -> String {
-    format!(
-        "{}  {}  {}",
-        tunnel.provider,
-        tunnel_status_label(&tunnel.status),
-        tunnel.url.as_deref().unwrap_or("-")
+fn key_span(value: &'static str) -> Span<'static> {
+    Span::styled(
+        value,
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     )
 }
 
-fn agent_line(agent: &AgentRuntime) -> String {
-    format!(
-        "{}  {}  {}",
-        agent.route_key,
-        if agent.busy { "busy" } else { "idle" },
-        agent
-            .agent_title
-            .as_deref()
-            .or(agent.agent_name.as_deref())
-            .or(agent.cli_kind.as_deref())
-            .unwrap_or("-")
+fn channel_row(channel: &ChannelRuntime) -> Vec<Span<'static>> {
+    let mut spans = vec![
+        Span::styled(
+            fixed(&channel.kind, 14),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        status_span(
+            channel_status_label(channel.status),
+            channel_status_color(channel.status),
+            12,
+        ),
+        Span::styled(
+            channel.version.as_deref().unwrap_or("-").to_string(),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+    if let Some(reason) = channel.reason.as_ref().filter(|reason| !reason.is_empty()) {
+        spans.push(Span::styled("  ", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            reason.clone(),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    spans
+}
+
+fn tunnel_row(tunnel: &TunnelRuntime) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            fixed(&tunnel.provider, 14),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        status_span(
+            tunnel_status_label(&tunnel.status),
+            tunnel_status_color(&tunnel.status),
+            10,
+        ),
+        Span::styled(
+            tunnel.url.as_deref().unwrap_or("-").to_string(),
+            Style::default().fg(Color::Gray),
+        ),
+    ]
+}
+
+fn agent_row(agent: &AgentRuntime) -> Vec<Span<'static>> {
+    let name = agent
+        .agent_title
+        .as_deref()
+        .or(agent.agent_name.as_deref())
+        .or(agent.cli_kind.as_deref())
+        .unwrap_or("-");
+    vec![
+        Span::styled(
+            fixed(&agent.route_key, 18),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        status_span(
+            if agent.busy { "busy" } else { "idle" },
+            if agent.busy {
+                Color::Yellow
+            } else {
+                Color::Green
+            },
+            8,
+        ),
+        Span::styled(name.to_string(), Style::default().fg(Color::Gray)),
+    ]
+}
+
+fn session_row(session: &SessionListItem) -> Vec<Span<'static>> {
+    let status = session_status_label(&session.status);
+    let tool = format!("{:?}", session.tool).to_ascii_lowercase();
+    vec![
+        Span::styled(
+            fixed(&short_id(&session.session_id), 14),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        status_span(status, session_status_color(&session.status), 10),
+        Span::styled(fixed(&tool, 12), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            session.project_path.as_deref().unwrap_or("-").to_string(),
+            Style::default().fg(Color::Gray),
+        ),
+    ]
+}
+
+fn fixed(value: &str, width: usize) -> String {
+    format!("{value:<width$}")
+}
+
+fn status_span(label: &'static str, color: Color, width: usize) -> Span<'static> {
+    Span::styled(
+        fixed(label, width),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
     )
 }
 
-fn session_line(session: &SessionListItem) -> String {
-    format!(
-        "{}  {:?}  {}",
-        session.session_id,
-        session.tool,
-        session.project_path.as_deref().unwrap_or("-")
-    )
+fn short_id(value: &str) -> String {
+    value.chars().take(12).collect()
 }
 
 fn channel_status_label(status: ChannelStatus) -> &'static str {
@@ -838,12 +1077,52 @@ fn channel_status_label(status: ChannelStatus) -> &'static str {
     }
 }
 
+fn channel_status_color(status: ChannelStatus) -> Color {
+    match status {
+        ChannelStatus::Running => Color::Green,
+        ChannelStatus::Spawning => Color::Yellow,
+        ChannelStatus::Crashed => Color::Red,
+        ChannelStatus::Stopped | ChannelStatus::NotStarted => Color::DarkGray,
+    }
+}
+
 fn tunnel_status_label(status: &TunnelStatus) -> &'static str {
     match status {
         TunnelStatus::Running => "running",
         TunnelStatus::Stopped { .. } => "stopped",
         TunnelStatus::Failed { .. } => "failed",
     }
+}
+
+fn tunnel_status_color(status: &TunnelStatus) -> Color {
+    match status {
+        TunnelStatus::Running => Color::Green,
+        TunnelStatus::Stopped { .. } => Color::DarkGray,
+        TunnelStatus::Failed { .. } => Color::Red,
+    }
+}
+
+fn session_status_label(status: &PtyRunState) -> &'static str {
+    match status {
+        PtyRunState::Running { .. } => "running",
+        PtyRunState::Exited { .. } => "exited",
+    }
+}
+
+fn session_status_color(status: &PtyRunState) -> Color {
+    match status {
+        PtyRunState::Running { .. } => Color::Green,
+        PtyRunState::Exited { .. } => Color::DarkGray,
+    }
+}
+
+#[cfg(test)]
+fn row_text(row: Vec<Span<'static>>) -> String {
+    row.into_iter()
+        .map(|span| span.content.into_owned())
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 fn print_once(endpoint: &ServerEndpoint, snapshot: &DashboardSnapshot) {
@@ -1079,9 +1358,21 @@ mod tests {
     }
 
     #[test]
+    fn brand_mode_scales_with_terminal_size() {
+        assert_eq!(brand_mode(40, 24), BrandMode::Narrow);
+        assert_eq!(brand_mode(80, 18), BrandMode::Compact);
+        assert_eq!(brand_mode(96, 24), BrandMode::FullLogo);
+        assert_eq!(BrandMode::Narrow.height(), 3);
+        assert_eq!(BrandMode::FullLogo.height(), 9);
+    }
+
+    #[test]
     fn formats_runtime_lines() {
         let channel = channel("feishu");
-        assert_eq!(channel_line(&channel), "feishu  running");
+        assert_eq!(
+            row_text(channel_row(&channel)),
+            "feishu        running     0.1.0"
+        );
 
         let tunnel = TunnelRuntime {
             provider: "cloudflare".into(),
@@ -1090,8 +1381,26 @@ mod tests {
             uptime_secs: 10,
         };
         assert_eq!(
-            tunnel_line(&tunnel),
-            "cloudflare  running  https://example.test"
+            row_text(tunnel_row(&tunnel)),
+            "cloudflare    running   https://example.test"
+        );
+
+        let session = SessionListItem {
+            session_id: "abcdef1234567890".into(),
+            tool: va_client::sessions::PtyTool::Codex,
+            status: PtyRunState::Running {
+                tool: va_client::sessions::PtyTool::Codex,
+            },
+            created_at: 1,
+            project_path: Some("/tmp/project".into()),
+            profile_id: None,
+            profile_label: None,
+            launch_target: None,
+            tmux_session: None,
+        };
+        assert_eq!(
+            row_text(session_row(&session)),
+            "abcdef123456  running   codex       /tmp/project"
         );
     }
 }
