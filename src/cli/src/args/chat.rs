@@ -15,10 +15,20 @@ pub(crate) struct ChatSendArgs {
     pub(crate) permission_mode: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChatForgetArgs {
+    pub(crate) agent: Option<String>,
+    pub(crate) profile_id: Option<String>,
+    pub(crate) workspace_path: Option<String>,
+    pub(crate) all: bool,
+}
+
 #[derive(Debug, Subcommand)]
 #[command(rename_all = "kebab-case")]
 pub(super) enum ChatCommand {
     Send(ChatSendCli),
+    Sessions,
+    Forget(ChatForgetCli),
 }
 
 #[derive(Debug, Args)]
@@ -41,9 +51,23 @@ pub(super) struct ChatSendCli {
     permission_mode: Option<String>,
 }
 
+#[derive(Debug, Args)]
+pub(super) struct ChatForgetCli {
+    #[arg(long = "agent", short = 'a')]
+    agent: Option<String>,
+    #[arg(long = "profile", alias = "profile-id")]
+    profile_id: Option<String>,
+    #[arg(long = "workspace", aliases = ["workspace-path", "cwd"])]
+    workspace_path: Option<String>,
+    #[arg(long)]
+    all: bool,
+}
+
 pub(super) fn command_into_command(command: ChatCommand) -> Result<Command, CliError> {
     Ok(match command {
         ChatCommand::Send(args) => Command::ChatSend(args.into_args()?),
+        ChatCommand::Sessions => Command::ChatSessions,
+        ChatCommand::Forget(args) => Command::ChatForget(args.into_args()?),
     })
 }
 
@@ -86,6 +110,24 @@ impl ChatSendCli {
             continue_session: self.continue_session,
             workspace_path: self.workspace_path,
             permission_mode: self.permission_mode,
+        })
+    }
+}
+
+impl ChatForgetCli {
+    fn into_args(self) -> Result<ChatForgetArgs, CliError> {
+        if self.all
+            && (self.agent.is_some() || self.profile_id.is_some() || self.workspace_path.is_some())
+        {
+            return Err(CliError::Usage(
+                "chat forget --all cannot combine with --agent, --profile, or --workspace".into(),
+            ));
+        }
+        Ok(ChatForgetArgs {
+            agent: self.agent,
+            profile_id: self.profile_id,
+            workspace_path: self.workspace_path,
+            all: self.all,
         })
     }
 }

@@ -32,6 +32,8 @@ pub(crate) async fn dispatch(options: &Options, command: Command) -> Result<(), 
         Command::Previews => previews::list(options).await?,
         Command::Profiles => profiles::list(options).await?,
         Command::ChatSend(args) => chat::send(options, &args).await?,
+        Command::ChatSessions => chat::sessions(options)?,
+        Command::ChatForget(args) => chat::forget(options, &args)?,
         Command::PairStart(args) => {
             crate::pair::start(options, &args).await?;
         }

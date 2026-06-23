@@ -9,7 +9,7 @@ mod session;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use chat::ChatSendArgs;
+pub(crate) use chat::{ChatForgetArgs, ChatSendArgs};
 pub(crate) use cli::parse_args;
 pub(crate) use launch::{LaunchSessionMutationArgs, LaunchSessionsArgs};
 pub(crate) use pair::{PairStartArgs, PairWaitArgs};
@@ -30,6 +30,8 @@ pub(crate) enum Command {
     Previews,
     Profiles,
     ChatSend(ChatSendArgs),
+    ChatSessions,
+    ChatForget(ChatForgetArgs),
     PairStart(PairStartArgs),
     PairStatus { sid: String, save: bool },
     PairWait(PairWaitArgs),
@@ -93,6 +95,8 @@ pub(crate) fn usage() -> &'static str {
         "  pair wait SID [--save]       Wait for pairing verification\n",
         "  chat send TEXT               Send one prompt over /ws/chat and wait for completion\n",
         "  chat send --continue TEXT    Resume the saved chat session for this workspace\n",
+        "  chat sessions                List locally saved chat sessions\n",
+        "  chat forget [--all]          Forget a saved chat session scope\n",
         "  channels                     List channel plugin runtimes\n",
         "  channel sync                 Reconcile channel plugins with settings\n",
         "  channel start KIND           Start a stopped channel plugin\n",

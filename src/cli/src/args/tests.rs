@@ -244,6 +244,59 @@ fn parses_chat_send_continue_command() {
 }
 
 #[test]
+fn parses_chat_session_management_commands() {
+    let sessions = parse_args(["chat".to_string(), "sessions".to_string()]).expect("sessions");
+    assert_eq!(sessions.command, Some(Command::ChatSessions));
+
+    let forget = parse_args([
+        "chat".to_string(),
+        "forget".to_string(),
+        "--agent".to_string(),
+        "codex".to_string(),
+        "--profile=default".to_string(),
+        "--workspace=/tmp/project".to_string(),
+    ])
+    .expect("forget");
+    assert_eq!(
+        forget.command,
+        Some(Command::ChatForget(ChatForgetArgs {
+            agent: Some("codex".into()),
+            profile_id: Some("default".into()),
+            workspace_path: Some("/tmp/project".into()),
+            all: false,
+        }))
+    );
+
+    let forget_all = parse_args([
+        "chat".to_string(),
+        "forget".to_string(),
+        "--all".to_string(),
+    ])
+    .expect("forget all");
+    assert_eq!(
+        forget_all.command,
+        Some(Command::ChatForget(ChatForgetArgs {
+            agent: None,
+            profile_id: None,
+            workspace_path: None,
+            all: true,
+        }))
+    );
+}
+
+#[test]
+fn rejects_chat_forget_all_with_scope_filters() {
+    let error = parse_args([
+        "chat".to_string(),
+        "forget".to_string(),
+        "--all".to_string(),
+        "--agent=codex".to_string(),
+    ])
+    .expect_err("error");
+    assert!(matches!(error, CliError::Usage(_)));
+}
+
+#[test]
 fn rejects_chat_send_conflicting_session_intent() {
     let error = parse_args([
         "chat".to_string(),

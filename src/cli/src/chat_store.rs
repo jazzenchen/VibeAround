@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::args::{ChatSendArgs, Options};
+use crate::args::{ChatForgetArgs, ChatSendArgs, Options};
 use crate::config::{chat_sessions_path, set_owner_only};
 use crate::error::CliError;
 
@@ -39,6 +39,15 @@ struct ChatSessionEntry {
     updated_at_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StoredChatSession {
+    pub(crate) workspace: String,
+    pub(crate) agent: Option<String>,
+    pub(crate) profile_id: Option<String>,
+    pub(crate) session_id: String,
+    pub(crate) updated_at_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 struct ChatSessionStore {
@@ -56,11 +65,41 @@ impl Default for ChatSessionStore {
 }
 
 pub(crate) fn scope_for_args(args: &ChatSendArgs) -> Result<ChatSessionScope, CliError> {
+    scope_for_parts(
+        args.workspace_path.as_deref(),
+        args.agent.as_deref(),
+        args.profile_id.as_deref(),
+    )
+}
+
+pub(crate) fn scope_for_forget_args(args: &ChatForgetArgs) -> Result<ChatSessionScope, CliError> {
+    scope_for_parts(
+        args.workspace_path.as_deref(),
+        args.agent.as_deref(),
+        args.profile_id.as_deref(),
+    )
+}
+
+fn scope_for_parts(
+    workspace_path: Option<&str>,
+    agent: Option<&str>,
+    profile_id: Option<&str>,
+) -> Result<ChatSessionScope, CliError> {
     Ok(ChatSessionScope {
-        workspace: workspace_key(args.workspace_path.as_deref())?,
-        agent: trimmed(args.agent.as_deref()),
-        profile_id: trimmed(args.profile_id.as_deref()),
+        workspace: workspace_key(workspace_path)?,
+        agent: trimmed(agent),
+        profile_id: trimmed(profile_id),
     })
+}
+
+pub(crate) fn list_sessions(options: &Options) -> Result<Vec<StoredChatSession>, CliError> {
+    let mut sessions = ChatSessionStore::load(&chat_sessions_path(options))?
+        .entries
+        .into_iter()
+        .map(StoredChatSession::from)
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| right.updated_at_ms.cmp(&left.updated_at_ms));
+    Ok(sessions)
 }
 
 pub(crate) fn saved_session_for(
@@ -80,6 +119,35 @@ pub(crate) fn save_session_for(
     let mut store = ChatSessionStore::load(&path)?;
     store.upsert(scope, session_id);
     store.save(&path)
+}
+
+pub(crate) fn forget_session_for(
+    options: &Options,
+    scope: &ChatSessionScope,
+) -> Result<bool, CliError> {
+    let path = chat_sessions_path(options);
+    let mut store = ChatSessionStore::load(&path)?;
+    let removed = store.remove(scope);
+    if removed {
+        store.save(&path)?;
+    }
+    Ok(removed)
+}
+
+pub(crate) fn clear_sessions(options: &Options) -> Result<usize, CliError> {
+    let path = chat_sessions_path(options);
+    let store = ChatSessionStore::load(&path)?;
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(CliError::Io {
+                action: "removing chat session store",
+                source,
+            });
+        }
+    }
+    Ok(store.entries.len())
 }
 
 fn workspace_key(workspace: Option<&str>) -> Result<String, CliError> {
@@ -168,6 +236,12 @@ impl ChatSessionStore {
             updated_at_ms,
         });
     }
+
+    fn remove(&mut self, scope: &ChatSessionScope) -> bool {
+        let before = self.entries.len();
+        self.entries.retain(|entry| !entry.matches(scope));
+        self.entries.len() != before
+    }
 }
 
 impl ChatSessionEntry {
@@ -175,6 +249,18 @@ impl ChatSessionEntry {
         self.workspace == scope.workspace
             && self.agent == scope.agent
             && self.profile_id == scope.profile_id
+    }
+}
+
+impl From<ChatSessionEntry> for StoredChatSession {
+    fn from(entry: ChatSessionEntry) -> Self {
+        Self {
+            workspace: entry.workspace,
+            agent: entry.agent,
+            profile_id: entry.profile_id,
+            session_id: entry.session_id,
+            updated_at_ms: entry.updated_at_ms,
+        }
     }
 }
 
@@ -230,5 +316,54 @@ mod tests {
 
         assert_eq!(store.entries.len(), 1);
         assert_eq!(store.entries[0].session_id, "session-2");
+    }
+
+    #[test]
+    fn store_removes_matching_scope_only() {
+        let scope = ChatSessionScope {
+            workspace: "/tmp/project".into(),
+            agent: None,
+            profile_id: None,
+        };
+        let other = ChatSessionScope {
+            workspace: "/tmp/project".into(),
+            agent: Some("codex".into()),
+            profile_id: None,
+        };
+        let mut store = ChatSessionStore::default();
+        store.upsert(&scope, "session-1");
+        store.upsert(&other, "session-2");
+
+        assert!(store.remove(&scope));
+        assert_eq!(store.entries.len(), 1);
+        assert_eq!(store.entries[0].session_id, "session-2");
+        assert!(!store.remove(&scope));
+    }
+
+    #[test]
+    fn list_and_clear_sessions_use_options_path() {
+        let root = std::env::temp_dir().join(format!(
+            "va-cli-chat-store-options-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("dir");
+        let options = Options {
+            auth_file: Some(root.join("auth.json")),
+            ..Default::default()
+        };
+        let scope = ChatSessionScope {
+            workspace: "/tmp/project".into(),
+            agent: None,
+            profile_id: None,
+        };
+
+        save_session_for(&options, &scope, "session-1").expect("save");
+        assert_eq!(list_sessions(&options).expect("list").len(), 1);
+        assert_eq!(clear_sessions(&options).expect("clear"), 1);
+        assert!(list_sessions(&options).expect("list").is_empty());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

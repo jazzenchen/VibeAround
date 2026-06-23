@@ -11,10 +11,73 @@ use va_client::events::{
 use va_client::http::AuthRequirement;
 use va_client::state::ChatState;
 
-use crate::args::{ChatSendArgs, Options};
-use crate::chat_store::{save_session_for, saved_session_for, scope_for_args, ChatSessionScope};
+use crate::args::{ChatForgetArgs, ChatSendArgs, Options};
+use crate::chat_store::{
+    clear_sessions, forget_session_for, list_sessions, save_session_for, saved_session_for,
+    scope_for_args, scope_for_forget_args, ChatSessionScope, StoredChatSession,
+};
 use crate::config::endpoint_for;
 use crate::error::CliError;
+
+pub(super) fn sessions(options: &Options) -> Result<(), CliError> {
+    let sessions = list_sessions(options)?;
+    if options.json {
+        crate::print_json(serde_json::json!({
+            "sessions": sessions.iter().map(session_json).collect::<Vec<_>>()
+        }))?;
+        return Ok(());
+    }
+
+    if sessions.is_empty() {
+        println!("no saved chat sessions");
+        return Ok(());
+    }
+
+    for session in sessions {
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            session.session_id,
+            session.updated_at_ms,
+            session.workspace,
+            label(session.agent.as_deref()),
+            label(session.profile_id.as_deref())
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn forget(options: &Options, args: &ChatForgetArgs) -> Result<(), CliError> {
+    if args.all {
+        let removed = clear_sessions(options)?;
+        if options.json {
+            crate::print_json(serde_json::json!({
+                "removed": removed,
+                "all": true
+            }))?;
+        } else {
+            println!("forgot {removed} saved chat sessions");
+        }
+        return Ok(());
+    }
+
+    let scope = scope_for_forget_args(args)?;
+    let removed = forget_session_for(options, &scope)?;
+    if options.json {
+        crate::print_json(serde_json::json!({
+            "removed": removed,
+            "scope": {
+                "workspace": scope.workspace,
+                "agent": scope.agent,
+                "profile_id": scope.profile_id
+            }
+        }))?;
+    } else if removed {
+        println!("forgot saved chat session for {}", scope.display());
+    } else {
+        println!("no saved chat session for {}", scope.display());
+    }
+    Ok(())
+}
 
 pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), CliError> {
     let session = resolve_session(options, args)?;
@@ -97,6 +160,20 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
     Err(CliError::Chat(
         "chat websocket closed before prompt_done".into(),
     ))
+}
+
+fn session_json(session: &StoredChatSession) -> serde_json::Value {
+    serde_json::json!({
+        "workspace": session.workspace,
+        "agent": session.agent,
+        "profile_id": session.profile_id,
+        "session_id": session.session_id,
+        "updated_at_ms": session.updated_at_ms
+    })
+}
+
+fn label(value: Option<&str>) -> &str {
+    value.unwrap_or("-")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
