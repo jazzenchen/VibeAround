@@ -1,6 +1,6 @@
 use va_client::profiles::ModelProfileSummary;
 use va_client::runtime::AgentInfo;
-use va_client::sessions::SessionListItem;
+use va_client::sessions::LaunchSessionInfo;
 use va_client::workspaces::WorkspaceItem;
 
 use crate::data::{AgentPickerSnapshot, DashboardSnapshot};
@@ -399,7 +399,7 @@ impl AgentSelection {
     pub(crate) fn selected_session<'a>(
         &self,
         snapshot: &'a AgentPickerSnapshot,
-    ) -> Option<&'a SessionListItem> {
+    ) -> Option<&'a LaunchSessionInfo> {
         self.session_index
             .and_then(|index| snapshot.sessions.get(index))
     }

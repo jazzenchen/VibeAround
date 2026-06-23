@@ -98,14 +98,11 @@ impl TuiApp {
             }
             AgentPanel::Sessions => {
                 if let Some(session) = self.agent_selection.selected_session(&self.agent_picker) {
+                    self.selected_agent = Some(session.agent_id.clone());
+                    self.selected_profile = None;
+                    self.selected_workspace = Some(session.workspace.clone());
                     self.selected_session = Some(session.session_id.clone());
-                    if let Some(profile_id) = &session.profile_id {
-                        self.selected_profile = Some(profile_id.clone());
-                    }
-                    if let Some(project_path) = &session.project_path {
-                        self.selected_workspace = Some(project_path.clone());
-                    }
-                    self.last_action = Some(format!("selected session {}", session.session_id));
+                    self.last_action = Some(format!("selected session {}", session.short_id));
                 }
             }
         }

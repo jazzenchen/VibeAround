@@ -26,18 +26,7 @@ impl TuiApp {
             }
             RuntimeSocketEvent::Sessions(sessions) => {
                 self.snapshot.sessions = sessions;
-                self.agent_picker.sessions = self.snapshot.sessions.clone();
-                if self.selected_session.as_deref().is_some_and(|session_id| {
-                    !self
-                        .snapshot
-                        .sessions
-                        .iter()
-                        .any(|session| session.session_id == session_id)
-                }) {
-                    self.selected_session = None;
-                }
                 self.status_selection.clamp(&self.snapshot);
-                self.agent_selection.clamp(&self.agent_picker);
                 self.last_error = None;
                 self.last_refresh = Some(Instant::now());
             }

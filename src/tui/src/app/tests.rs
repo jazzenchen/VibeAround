@@ -15,7 +15,7 @@ use va_client::profiles::{AuthMode, ModelProfileSummary};
 use va_client::runtime::{
     AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
 };
-use va_client::sessions::{PtyRunState, PtyTool, SessionListItem};
+use va_client::sessions::{LaunchSessionInfo, PtyRunState, PtyTool, SessionListItem};
 use va_client::workspaces::WorkspaceItem;
 
 fn channel(kind: &str) -> ChannelRuntime {
@@ -105,6 +105,19 @@ fn session(session_id: &str, project_path: &str, profile_id: &str) -> SessionLis
         profile_label: Some(profile_id.into()),
         launch_target: None,
         tmux_session: None,
+    }
+}
+
+fn launch_session(session_id: &str, agent_id: &str, workspace: &str) -> LaunchSessionInfo {
+    LaunchSessionInfo {
+        agent_id: agent_id.into(),
+        session_id: session_id.into(),
+        title: format!("{agent_id} session"),
+        workspace: workspace.into(),
+        updated_at: 1,
+        short_id: session_id.chars().take(8).collect(),
+        archived: false,
+        active: false,
     }
 }
 
@@ -227,21 +240,18 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
         "session-profile",
     )]));
     assert_eq!(app.snapshot.sessions[0].session_id, "session-1");
-    assert_eq!(app.agent_picker.sessions[0].session_id, "session-1");
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Error("runtime socket closed".into()));
     assert_eq!(app.last_error.as_deref(), Some("runtime socket closed"));
 }
 
 #[test]
-fn session_socket_updates_agent_picker_and_clears_stale_selection() {
+fn pty_session_socket_does_not_mutate_agent_picker_sessions() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
     app.view = AppView::Agent;
-    app.agent_picker.sessions = vec![session("old-session", "/tmp/old", "old-profile")];
-    app.selected_session = Some("old-session".into());
-    app.selected_profile = Some("old-profile".into());
-    app.selected_workspace = Some("/tmp/old".into());
+    app.agent_picker.sessions = vec![launch_session("launch-1", "codex", "/tmp/launch")];
+    app.selected_session = Some("launch-1".into());
     app.agent_selection.panel = AgentPanel::Sessions;
     app.agent_selection.clamp(&app.agent_picker);
     assert_eq!(app.agent_selection.index(AgentPanel::Sessions), Some(0));
@@ -252,12 +262,10 @@ fn session_socket_updates_agent_picker_and_clears_stale_selection() {
         "new-profile",
     )]));
 
-    assert_eq!(app.agent_picker.sessions[0].session_id, "new-session");
+    assert_eq!(app.agent_picker.sessions[0].session_id, "launch-1");
     assert_eq!(app.snapshot.sessions[0].session_id, "new-session");
     assert_eq!(app.agent_selection.index(AgentPanel::Sessions), Some(0));
-    assert_eq!(app.selected_session, None);
-    assert_eq!(app.selected_profile.as_deref(), Some("old-profile"));
-    assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/old"));
+    assert_eq!(app.selected_session.as_deref(), Some("launch-1"));
 }
 
 #[test]
@@ -479,7 +487,7 @@ fn agent_picker_context_changes_clear_stale_session_context() {
     app.agent_picker.agents = vec![agent("claude")];
     app.agent_picker.profiles = vec![profile("claude-profile")];
     app.agent_picker.workspaces = vec![workspace("/tmp/claude")];
-    app.agent_picker.sessions = vec![session("session-1", "/tmp/session", "session-profile")];
+    app.agent_picker.sessions = vec![launch_session("session-1", "claude", "/tmp/session")];
     app.agent_selection.clamp(&app.agent_picker);
     app.selected_agent = Some("codex".into());
     app.selected_profile = Some("codex-profile".into());
@@ -502,8 +510,9 @@ fn agent_picker_context_changes_clear_stale_session_context() {
     app.select_down();
     app.enter_current_view();
 
+    assert_eq!(app.selected_agent.as_deref(), Some("claude"));
     assert_eq!(app.selected_session.as_deref(), Some("session-1"));
-    assert_eq!(app.selected_profile.as_deref(), Some("session-profile"));
+    assert_eq!(app.selected_profile, None);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/session"));
 
     app.select_left();

@@ -3,7 +3,7 @@ use va_client::ops;
 use va_client::profiles::ModelProfileSummary;
 use va_client::runtime::{AgentInfo, AgentRuntime, AgentsConfig, ChannelRuntime, TunnelRuntime};
 use va_client::service::ServiceInfoResponse;
-use va_client::sessions::SessionListItem;
+use va_client::sessions::{LaunchSessionInfo, SessionListItem};
 use va_client::workspaces::WorkspaceItem;
 
 use crate::transport::{HttpTransport, TuiError};
@@ -22,7 +22,7 @@ pub(crate) struct AgentPickerSnapshot {
     pub(crate) agents: Vec<AgentInfo>,
     pub(crate) profiles: Vec<ModelProfileSummary>,
     pub(crate) workspaces: Vec<WorkspaceItem>,
-    pub(crate) sessions: Vec<SessionListItem>,
+    pub(crate) sessions: Vec<LaunchSessionInfo>,
     pub(crate) preferences: Option<LauncherPreferencesResponse>,
 }
 
@@ -43,11 +43,37 @@ pub(crate) async fn fetch_agent_picker(
 ) -> Result<AgentPickerSnapshot, TuiError> {
     let preferences = transport.execute(ops::launcher_preferences()).await?;
     let agents: AgentsConfig = transport.execute(ops::runtime_agents()).await?;
+    let profiles = transport.execute(ops::model_profiles()).await?;
+    let workspaces = transport.execute(ops::workspaces()).await?.workspaces;
+    let mut session_agent_ids = preferences.enabled_agents.clone();
+    if session_agent_ids.is_empty() {
+        session_agent_ids = agents.agents.iter().map(|agent| agent.id.clone()).collect();
+    }
+    let agent_refs = session_agent_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let workspace_refs = workspaces
+        .iter()
+        .map(|workspace| workspace.path.as_str())
+        .collect::<Vec<_>>();
+    let sessions = if agent_refs.is_empty() {
+        Vec::new()
+    } else {
+        transport
+            .execute(ops::launch_sessions_batch(
+                &agent_refs,
+                &workspace_refs,
+                Some(false),
+                Some(50),
+            )?)
+            .await?
+    };
     Ok(AgentPickerSnapshot {
         agents: agents.agents,
-        profiles: transport.execute(ops::model_profiles()).await?,
-        workspaces: transport.execute(ops::workspaces()).await?.workspaces,
-        sessions: transport.execute(ops::sessions()).await?,
+        profiles,
+        workspaces,
+        sessions,
         preferences: Some(preferences),
     })
 }

@@ -4,7 +4,7 @@ use va_client::profiles::ModelProfileSummary;
 use va_client::runtime::{
     AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
 };
-use va_client::sessions::{PtyRunState, SessionListItem};
+use va_client::sessions::{LaunchSessionInfo, PtyRunState, SessionListItem};
 use va_client::workspaces::WorkspaceItem;
 
 use crate::detail::{channel_status_label, session_status_label, tunnel_status_label};
@@ -86,6 +86,29 @@ pub(super) fn session_row(session: &SessionListItem) -> Vec<Span<'static>> {
             session.project_path.as_deref().unwrap_or("-").to_string(),
             muted_style(),
         ),
+    ]
+}
+
+pub(super) fn launch_session_row(session: &LaunchSessionInfo) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            fixed(&session.short_id, 10),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        status_span(
+            if session.active {
+                "active"
+            } else if session.archived {
+                "archived"
+            } else {
+                "saved"
+            },
+            if session.active { BRAND } else { NEUTRAL },
+            10,
+        ),
+        Span::styled(fixed(&session.agent_id, 12), muted_style()),
+        Span::styled(session.title.clone(), Style::default()),
+        Span::styled(format!("  {}", session.workspace), muted_style()),
     ]
 }
 
@@ -214,6 +237,21 @@ mod tests {
         assert_eq!(
             row_text(session_row(&session)),
             "abcdef123456  running   codex       /tmp/project"
+        );
+
+        let launch_session = LaunchSessionInfo {
+            agent_id: "codex".into(),
+            session_id: "abcdef1234567890".into(),
+            title: "Fix tests".into(),
+            workspace: "/tmp/project".into(),
+            updated_at: 10,
+            short_id: "abcdef12".into(),
+            archived: false,
+            active: true,
+        };
+        assert_eq!(
+            row_text(launch_session_row(&launch_session)),
+            "abcdef12  active    codex       Fix tests  /tmp/project"
         );
     }
 }

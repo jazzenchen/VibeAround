@@ -18,7 +18,8 @@ mod rows;
 use brand::{brand_header, brand_mode};
 use chrome::{command_bar, context_strip};
 use rows::{
-    agent_info_row, agent_row, channel_row, profile_row, session_row, tunnel_row, workspace_row,
+    agent_info_row, agent_row, channel_row, launch_session_row, profile_row, session_row,
+    tunnel_row, workspace_row,
 };
 
 #[cfg(test)]
@@ -242,7 +243,7 @@ fn render_agent_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout:
                 .iter()
                 .map(|session| {
                     selected_context_row(
-                        session_row(session),
+                        launch_session_row(session),
                         app.effective_session() == Some(session.session_id.as_str()),
                     )
                 })
