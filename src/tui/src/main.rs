@@ -168,8 +168,9 @@ struct ChatMessage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatRole {
-    System,
-    User,
+    Notice,
+    Request,
+    Response,
 }
 
 #[derive(Debug)]
@@ -203,7 +204,7 @@ impl TuiApp {
             status_selection: StatusSelection::default(),
             agent_selection: AgentSelection::default(),
             chat_messages: vec![ChatMessage {
-                role: ChatRole::System,
+                role: ChatRole::Notice,
                 text: "Type /status for runtime status, /agent for agent settings, /help for commands.".into(),
             }],
             chat_input: String::new(),
@@ -364,11 +365,11 @@ impl TuiApp {
         }
 
         self.chat_messages.push(ChatMessage {
-            role: ChatRole::User,
+            role: ChatRole::Request,
             text: input,
         });
         self.chat_messages.push(ChatMessage {
-            role: ChatRole::System,
+            role: ChatRole::Response,
             text: "Chat transport is not connected yet. The next slice will attach /ws/chat and show raw agent events here.".into(),
         });
     }
@@ -381,7 +382,7 @@ impl TuiApp {
             "/clear" => self.chat_messages.clear(),
             "/back" => self.go_back(),
             unknown => self.chat_messages.push(ChatMessage {
-                role: ChatRole::System,
+                role: ChatRole::Notice,
                 text: format!("Unknown command {unknown}. Try /status, /agent, /help, /clear."),
             }),
         }
@@ -389,7 +390,7 @@ impl TuiApp {
 
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
-            role: ChatRole::System,
+            role: ChatRole::Notice,
             text: "/status runtime status  /agent agent context  /clear clear chat  Esc back  Ctrl+C Ctrl+C quit".into(),
         });
     }
@@ -1303,7 +1304,7 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
     );
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("> ", Style::default().fg(BRAND)),
+            Span::styled("› ", Style::default().fg(BRAND)),
             Span::raw(app.chat_input.clone()),
         ]))
         .block(
@@ -1318,14 +1319,22 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
 }
 
 fn chat_message_item(message: &ChatMessage) -> ListItem<'static> {
-    let (label, style) = match message.role {
-        ChatRole::System => ("system", muted_style()),
-        ChatRole::User => ("you", Style::default().fg(BRAND)),
+    ListItem::new(chat_message_line(message))
+}
+
+fn chat_message_line(message: &ChatMessage) -> Line<'static> {
+    let (marker, style) = match message.role {
+        ChatRole::Notice => ("* ", muted_style()),
+        ChatRole::Request => (
+            "› ",
+            Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+        ),
+        ChatRole::Response => ("• ", Style::default()),
     };
-    ListItem::new(Line::from(vec![
-        Span::styled(format!("{label:<7}"), style.add_modifier(Modifier::BOLD)),
+    Line::from(vec![
+        Span::styled(marker, style),
         Span::raw(message.text.clone()),
-    ]))
+    ])
 }
 
 fn render_status_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
@@ -2165,6 +2174,37 @@ mod tests {
 
         assert_eq!(app.view, AppView::Chat);
         assert!(app.chat_messages[0].text.contains("/status"));
+    }
+
+    #[test]
+    fn chat_items_use_terminal_markers_without_role_labels() {
+        let request = row_text(
+            chat_message_line(&ChatMessage {
+                role: ChatRole::Request,
+                text: "hello".into(),
+            })
+            .spans,
+        );
+        let response = row_text(
+            chat_message_line(&ChatMessage {
+                role: ChatRole::Response,
+                text: "hi".into(),
+            })
+            .spans,
+        );
+        let notice = row_text(
+            chat_message_line(&ChatMessage {
+                role: ChatRole::Notice,
+                text: "ready".into(),
+            })
+            .spans,
+        );
+
+        assert_eq!(request, "› hello");
+        assert_eq!(response, "• hi");
+        assert_eq!(notice, "* ready");
+        assert!(!request.contains("you"));
+        assert!(!notice.contains("system"));
     }
 
     #[test]
