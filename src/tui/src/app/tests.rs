@@ -286,7 +286,7 @@ fn enter_status_item_opens_detail_and_escape_returns() {
 }
 
 #[test]
-fn status_render_uses_light_panel_boundaries() {
+fn status_render_uses_minimal_semantic_boundaries() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
     app.view = AppView::Status;
@@ -313,7 +313,10 @@ fn status_render_uses_light_panel_boundaries() {
     assert!(screen.contains("channels"));
     assert!(screen.contains("feishu"));
     assert!(screen.contains('│'));
-    assert!(!screen.contains('─'));
+    assert!(!screen.contains('┌'));
+    assert!(!screen.contains('┐'));
+    assert!(!screen.contains('└'));
+    assert!(!screen.contains('┘'));
 }
 
 #[test]
@@ -460,6 +463,38 @@ async fn slash_new_prepares_next_message_for_new_session() {
         }
     );
     assert!(!app.force_new_session);
+}
+
+#[tokio::test]
+async fn unknown_slash_command_is_forwarded_to_agent() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_agent = Some("codex".into());
+    app.chat_input = "/review current changes".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("forwarded slash command"),
+        ChatClientMessage::Message {
+            text: "/review current changes".into(),
+            message_id: None,
+            agent: Some("codex".into()),
+            profile_id: None,
+            session_action: None,
+            session_id: None,
+            session_workspace: None,
+            permission_mode: None,
+            attachments: Vec::new(),
+        }
+    );
+    assert_eq!(app.chat_messages.last().unwrap().role, ChatRole::Request);
+    assert_eq!(
+        app.chat_messages.last().unwrap().text,
+        "/review current changes"
+    );
 }
 
 #[test]

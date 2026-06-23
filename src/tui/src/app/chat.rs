@@ -20,11 +20,18 @@ impl TuiApp {
         if input.is_empty() {
             return;
         }
-        if input.starts_with('/') {
-            self.run_slash_command(&input, transport, chat_tx).await;
+        if input.starts_with('/') && self.run_slash_command(&input, transport, chat_tx).await {
             return;
         }
 
+        self.submit_user_message(input, chat_tx);
+    }
+
+    fn submit_user_message(
+        &mut self,
+        input: String,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Request,
             text: input.clone(),
@@ -39,24 +46,38 @@ impl TuiApp {
         command: &str,
         transport: &HttpTransport,
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
-    ) {
+    ) -> bool {
         let mut parts = command.split_whitespace();
         let name = parts.next().unwrap_or(command);
         match name {
-            "/status" => self.open_status(transport).await,
-            "/agent" => self.open_agent_picker(transport).await,
-            "/help" => self.push_help_message(),
+            "/status" => {
+                self.open_status(transport).await;
+                true
+            }
+            "/agent" => {
+                self.open_agent_picker(transport).await;
+                true
+            }
+            "/help" => {
+                self.push_help_message();
+                true
+            }
             "/clear" => {
                 self.chat_messages.clear();
                 self.follow_chat_tail();
+                true
             }
-            "/new" => self.prepare_new_chat_session(),
+            "/new" => {
+                self.prepare_new_chat_session();
+                true
+            }
             "/resume" | "/session" => {
                 if let Some(session_id) = parts.next() {
                     self.resume_chat_session(session_id, chat_tx);
                 } else {
                     self.push_notice("Usage: /resume <session-id>");
                 }
+                true
             }
             "/mode" => {
                 if let Some(mode_id) = parts.next() {
@@ -64,10 +85,15 @@ impl TuiApp {
                 } else {
                     self.push_notice("Usage: /mode default|plan|accept|bypass|dontask");
                 }
+                true
             }
-            "/back" => self.go_back(),
+            "/back" => {
+                self.go_back();
+                true
+            }
             "/stop" => {
                 self.send_chat_command(ChatClientMessage::stop(), chat_tx);
+                true
             }
             "/allow" => {
                 if let Some(option_id) = parts.next() {
@@ -83,6 +109,7 @@ impl TuiApp {
                 } else {
                     self.push_notice("Usage: /allow <option-id>");
                 }
+                true
             }
             "/deny" | "/cancel" => {
                 if let Some(request_id) = self.chat_state.pending_permission_request_id.clone() {
@@ -93,13 +120,9 @@ impl TuiApp {
                 } else {
                     self.push_notice("No pending permission request.");
                 }
+                true
             }
-            unknown => self.chat_messages.push(ChatMessage {
-                role: ChatRole::Notice,
-                text: format!(
-                    "Unknown command {unknown}. Try /new, /resume, /mode, /status, /agent, /help, /clear."
-                ),
-            }),
+            _ => false,
         }
     }
 
