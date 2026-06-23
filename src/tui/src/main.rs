@@ -138,7 +138,7 @@ struct DashboardSnapshot {
 struct TuiApp {
     endpoint: String,
     snapshot: DashboardSnapshot,
-    selected_channel_index: Option<usize>,
+    selection: SelectionState,
     last_error: Option<String>,
     last_action: Option<String>,
     last_refresh: Option<Instant>,
@@ -149,7 +149,7 @@ impl TuiApp {
         Self {
             endpoint: endpoint.base_url().to_string(),
             snapshot: DashboardSnapshot::default(),
-            selected_channel_index: None,
+            selection: SelectionState::default(),
             last_error: None,
             last_action: None,
             last_refresh: None,
@@ -160,7 +160,7 @@ impl TuiApp {
         match fetch_snapshot(transport).await {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
-                self.clamp_channel_selection();
+                self.clamp_selection();
                 self.last_error = None;
                 self.last_refresh = Some(Instant::now());
             }
@@ -171,35 +171,50 @@ impl TuiApp {
         }
     }
 
-    fn select_next_channel(&mut self) {
-        if self.snapshot.channels.is_empty() {
-            self.selected_channel_index = None;
-            return;
-        }
-        self.selected_channel_index = Some(
-            self.selected_channel_index
-                .map(|index| (index + 1) % self.snapshot.channels.len())
-                .unwrap_or(0),
-        );
+    fn select_next_panel(&mut self) {
+        self.selection.active_panel = self.selection.active_panel.next();
     }
 
-    fn select_previous_channel(&mut self) {
-        if self.snapshot.channels.is_empty() {
-            self.selected_channel_index = None;
-            return;
-        }
-        let last = self.snapshot.channels.len() - 1;
-        self.selected_channel_index = Some(
-            self.selected_channel_index
-                .map(|index| if index == 0 { last } else { index - 1 })
-                .unwrap_or(0),
-        );
+    fn select_previous_panel(&mut self) {
+        self.selection.active_panel = self.selection.active_panel.previous();
+    }
+
+    fn select_next_item(&mut self) {
+        self.selection
+            .select_next(self.selection.active_panel, self.active_item_count());
+    }
+
+    fn select_previous_item(&mut self) {
+        self.selection
+            .select_previous(self.selection.active_panel, self.active_item_count());
     }
 
     fn selected_channel_kind(&self) -> Option<String> {
-        self.selected_channel_index
+        self.selection
+            .index(RuntimePanel::Channels)
             .and_then(|index| self.snapshot.channels.get(index))
             .map(|channel| channel.kind.clone())
+    }
+
+    fn selected_tunnel_provider(&self) -> Option<String> {
+        self.selection
+            .index(RuntimePanel::Tunnels)
+            .and_then(|index| self.snapshot.tunnels.get(index))
+            .map(|tunnel| tunnel.provider.clone())
+    }
+
+    fn selected_agent_route_key(&self) -> Option<String> {
+        self.selection
+            .index(RuntimePanel::Agents)
+            .and_then(|index| self.snapshot.agents.get(index))
+            .map(|agent| agent.route_key.clone())
+    }
+
+    fn selected_session_id(&self) -> Option<String> {
+        self.selection
+            .index(RuntimePanel::Sessions)
+            .and_then(|index| self.snapshot.sessions.get(index))
+            .map(|session| session.session_id.clone())
     }
 
     async fn run_channel_action(&mut self, transport: &HttpTransport, action: ChannelAction) {
@@ -214,10 +229,60 @@ impl TuiApp {
             ChannelAction::Restart => transport.execute(ops::runtime_restart_channel(&kind)).await,
         };
 
+        self.finish_runtime_action(
+            result,
+            format!("{} channel {kind}", action.label()),
+            transport,
+        )
+        .await;
+    }
+
+    async fn run_stop_or_kill_action(&mut self, transport: &HttpTransport) {
+        match self.selection.active_panel {
+            RuntimePanel::Channels => {
+                self.run_channel_action(transport, ChannelAction::Stop)
+                    .await;
+            }
+            RuntimePanel::Tunnels => {
+                let Some(provider) = self.selected_tunnel_provider() else {
+                    self.last_error = Some("no tunnel selected".to_string());
+                    return;
+                };
+                let result = transport.execute(ops::runtime_kill_tunnel(&provider)).await;
+                self.finish_runtime_action(result, format!("killed tunnel {provider}"), transport)
+                    .await;
+            }
+            RuntimePanel::Agents => {
+                let Some(route_key) = self.selected_agent_route_key() else {
+                    self.last_error = Some("no agent selected".to_string());
+                    return;
+                };
+                let result = transport.execute(ops::runtime_kill_agent(&route_key)).await;
+                self.finish_runtime_action(result, format!("killed agent {route_key}"), transport)
+                    .await;
+            }
+            RuntimePanel::Sessions => {
+                let Some(session_id) = self.selected_session_id() else {
+                    self.last_error = Some("no session selected".to_string());
+                    return;
+                };
+                let result = transport.execute(ops::runtime_kill_pty(&session_id)).await;
+                self.finish_runtime_action(result, format!("killed pty {session_id}"), transport)
+                    .await;
+            }
+        }
+    }
+
+    async fn finish_runtime_action(
+        &mut self,
+        result: Result<(), TuiError>,
+        action: String,
+        transport: &HttpTransport,
+    ) {
         match result {
             Ok(()) => {
                 self.last_error = None;
-                self.last_action = Some(format!("{} channel {kind}", action.label()));
+                self.last_action = Some(action);
                 self.refresh(transport).await;
             }
             Err(error) => {
@@ -227,16 +292,127 @@ impl TuiApp {
         }
     }
 
-    fn clamp_channel_selection(&mut self) {
-        if self.snapshot.channels.is_empty() {
-            self.selected_channel_index = None;
+    fn clamp_selection(&mut self) {
+        self.selection
+            .clamp(RuntimePanel::Channels, self.snapshot.channels.len());
+        self.selection
+            .clamp(RuntimePanel::Tunnels, self.snapshot.tunnels.len());
+        self.selection
+            .clamp(RuntimePanel::Agents, self.snapshot.agents.len());
+        self.selection
+            .clamp(RuntimePanel::Sessions, self.snapshot.sessions.len());
+    }
+
+    fn active_item_count(&self) -> usize {
+        match self.selection.active_panel {
+            RuntimePanel::Channels => self.snapshot.channels.len(),
+            RuntimePanel::Tunnels => self.snapshot.tunnels.len(),
+            RuntimePanel::Agents => self.snapshot.agents.len(),
+            RuntimePanel::Sessions => self.snapshot.sessions.len(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimePanel {
+    Channels,
+    Tunnels,
+    Agents,
+    Sessions,
+}
+
+impl RuntimePanel {
+    fn next(self) -> Self {
+        match self {
+            Self::Channels => Self::Tunnels,
+            Self::Tunnels => Self::Agents,
+            Self::Agents => Self::Sessions,
+            Self::Sessions => Self::Channels,
+        }
+    }
+
+    fn previous(self) -> Self {
+        match self {
+            Self::Channels => Self::Sessions,
+            Self::Tunnels => Self::Channels,
+            Self::Agents => Self::Tunnels,
+            Self::Sessions => Self::Agents,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SelectionState {
+    active_panel: RuntimePanel,
+    channel_index: Option<usize>,
+    tunnel_index: Option<usize>,
+    agent_index: Option<usize>,
+    session_index: Option<usize>,
+}
+
+impl Default for SelectionState {
+    fn default() -> Self {
+        Self {
+            active_panel: RuntimePanel::Channels,
+            channel_index: None,
+            tunnel_index: None,
+            agent_index: None,
+            session_index: None,
+        }
+    }
+}
+
+impl SelectionState {
+    fn index(&self, panel: RuntimePanel) -> Option<usize> {
+        match panel {
+            RuntimePanel::Channels => self.channel_index,
+            RuntimePanel::Tunnels => self.tunnel_index,
+            RuntimePanel::Agents => self.agent_index,
+            RuntimePanel::Sessions => self.session_index,
+        }
+    }
+
+    fn set_index(&mut self, panel: RuntimePanel, index: Option<usize>) {
+        match panel {
+            RuntimePanel::Channels => self.channel_index = index,
+            RuntimePanel::Tunnels => self.tunnel_index = index,
+            RuntimePanel::Agents => self.agent_index = index,
+            RuntimePanel::Sessions => self.session_index = index,
+        }
+    }
+
+    fn select_next(&mut self, panel: RuntimePanel, item_count: usize) {
+        if item_count == 0 {
+            self.set_index(panel, None);
             return;
         }
-        self.selected_channel_index = Some(
-            self.selected_channel_index
-                .unwrap_or(0)
-                .min(self.snapshot.channels.len() - 1),
-        );
+        let next = self
+            .index(panel)
+            .map(|index| (index + 1) % item_count)
+            .unwrap_or(0);
+        self.set_index(panel, Some(next));
+    }
+
+    fn select_previous(&mut self, panel: RuntimePanel, item_count: usize) {
+        if item_count == 0 {
+            self.set_index(panel, None);
+            return;
+        }
+        let last = item_count - 1;
+        let previous = self
+            .index(panel)
+            .map(|index| if index == 0 { last } else { index - 1 })
+            .unwrap_or(0);
+        self.set_index(panel, Some(previous));
+    }
+
+    fn clamp(&mut self, panel: RuntimePanel, item_count: usize) {
+        if item_count == 0 {
+            self.set_index(panel, None);
+            return;
+        }
+        let index = self.index(panel).unwrap_or(0).min(item_count - 1);
+        self.set_index(panel, Some(index));
     }
 }
 
@@ -310,8 +486,10 @@ async fn run_dashboard(
             })? {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('j') | KeyCode::Down => app.select_next_channel(),
-                    KeyCode::Char('k') | KeyCode::Up => app.select_previous_channel(),
+                    KeyCode::Tab | KeyCode::Right => app.select_next_panel(),
+                    KeyCode::BackTab | KeyCode::Left => app.select_previous_panel(),
+                    KeyCode::Char('j') | KeyCode::Down => app.select_next_item(),
+                    KeyCode::Char('k') | KeyCode::Up => app.select_previous_item(),
                     KeyCode::Char('f') => {
                         app.refresh(&transport).await;
                         last_tick = Instant::now();
@@ -322,8 +500,7 @@ async fn run_dashboard(
                         last_tick = Instant::now();
                     }
                     KeyCode::Char('x') => {
-                        app.run_channel_action(&transport, ChannelAction::Stop)
-                            .await;
+                        app.run_stop_or_kill_action(&transport).await;
                         last_tick = Instant::now();
                     }
                     KeyCode::Char('r') => {
@@ -419,12 +596,37 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         .split(columns[1]);
 
     frame.render_widget(
-        channel_list(&app.snapshot.channels, app.selected_channel_index),
+        channel_list(
+            &app.snapshot.channels,
+            app.selection.index(RuntimePanel::Channels),
+            app.selection.active_panel == RuntimePanel::Channels,
+        ),
         left[0],
     );
-    frame.render_widget(tunnel_list(&app.snapshot.tunnels), left[1]);
-    frame.render_widget(agent_list(&app.snapshot.agents), right[0]);
-    frame.render_widget(session_list(&app.snapshot.sessions), right[1]);
+    frame.render_widget(
+        tunnel_list(
+            &app.snapshot.tunnels,
+            app.selection.index(RuntimePanel::Tunnels),
+            app.selection.active_panel == RuntimePanel::Tunnels,
+        ),
+        left[1],
+    );
+    frame.render_widget(
+        agent_list(
+            &app.snapshot.agents,
+            app.selection.index(RuntimePanel::Agents),
+            app.selection.active_panel == RuntimePanel::Agents,
+        ),
+        right[0],
+    );
+    frame.render_widget(
+        session_list(
+            &app.snapshot.sessions,
+            app.selection.index(RuntimePanel::Sessions),
+            app.selection.active_panel == RuntimePanel::Sessions,
+        ),
+        right[1],
+    );
     frame.render_widget(footer(app), chunks[3]);
 }
 
@@ -471,20 +673,69 @@ fn summary(app: &TuiApp) -> Paragraph<'static> {
         .block(Block::default().borders(Borders::ALL).title("summary"))
 }
 
-fn channel_list(channels: &[ChannelRuntime], selected: Option<usize>) -> List<'static> {
-    let items = if channels.is_empty() {
+fn channel_list(
+    channels: &[ChannelRuntime],
+    selected: Option<usize>,
+    active: bool,
+) -> List<'static> {
+    selectable_list(
+        "channels",
+        channels.iter().map(channel_line).collect::<Vec<_>>(),
+        selected,
+        active,
+    )
+}
+
+fn tunnel_list(tunnels: &[TunnelRuntime], selected: Option<usize>, active: bool) -> List<'static> {
+    selectable_list(
+        "tunnels",
+        tunnels.iter().map(tunnel_line).collect::<Vec<_>>(),
+        selected,
+        active,
+    )
+}
+
+fn agent_list(agents: &[AgentRuntime], selected: Option<usize>, active: bool) -> List<'static> {
+    selectable_list(
+        "agents",
+        agents.iter().map(agent_line).collect::<Vec<_>>(),
+        selected,
+        active,
+    )
+}
+
+fn session_list(
+    sessions: &[SessionListItem],
+    selected: Option<usize>,
+    active: bool,
+) -> List<'static> {
+    selectable_list(
+        "pty sessions",
+        sessions.iter().map(session_line).collect::<Vec<_>>(),
+        selected,
+        active,
+    )
+}
+
+fn selectable_list(
+    title: &'static str,
+    lines: Vec<String>,
+    selected: Option<usize>,
+    active: bool,
+) -> List<'static> {
+    let items = if lines.is_empty() {
         vec![ListItem::new("-")]
     } else {
-        channels
-            .iter()
+        lines
+            .into_iter()
             .enumerate()
-            .map(|(index, channel)| {
+            .map(|(index, line)| {
                 let marker = if Some(index) == selected { "> " } else { "  " };
-                let item = ListItem::new(format!("{marker}{}", channel_line(channel)));
+                let item = ListItem::new(format!("{marker}{line}"));
                 if Some(index) == selected {
                     item.style(
                         Style::default()
-                            .fg(Color::Yellow)
+                            .fg(if active { Color::Yellow } else { Color::Gray })
                             .add_modifier(Modifier::BOLD),
                     )
                 } else {
@@ -493,34 +744,22 @@ fn channel_list(channels: &[ChannelRuntime], selected: Option<usize>) -> List<'s
             })
             .collect()
     };
-    List::new(items).block(Block::default().borders(Borders::ALL).title("channels"))
+    List::new(items).block(list_block(title, active))
 }
 
-fn tunnel_list(tunnels: &[TunnelRuntime]) -> List<'static> {
-    list_widget(
-        "tunnels",
-        tunnels.iter().map(tunnel_line).collect::<Vec<_>>(),
-    )
-}
-
-fn agent_list(agents: &[AgentRuntime]) -> List<'static> {
-    list_widget("agents", agents.iter().map(agent_line).collect::<Vec<_>>())
-}
-
-fn session_list(sessions: &[SessionListItem]) -> List<'static> {
-    list_widget(
-        "pty sessions",
-        sessions.iter().map(session_line).collect::<Vec<_>>(),
-    )
-}
-
-fn list_widget(title: &'static str, lines: Vec<String>) -> List<'static> {
-    let items = if lines.is_empty() {
-        vec![ListItem::new("-")]
+fn list_block(title: &'static str, active: bool) -> Block<'static> {
+    let block = Block::default().borders(Borders::ALL).title(title);
+    if active {
+        block
+            .border_style(Style::default().fg(Color::Cyan))
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
     } else {
-        lines.into_iter().map(ListItem::new).collect()
-    };
-    List::new(items).block(Block::default().borders(Borders::ALL).title(title))
+        block
+    }
 }
 
 fn footer(app: &TuiApp) -> Paragraph<'static> {
@@ -539,7 +778,7 @@ fn footer(app: &TuiApp) -> Paragraph<'static> {
         })
         .unwrap_or(refreshed);
     Paragraph::new(Line::from(format!(
-        "{status} | Up/Down or j/k select | s start | x stop | r restart | f refresh | q/Esc quit"
+        "{status} | Tab/Left/Right panel | Up/Down or j/k select | s start channel | x stop/kill | r restart channel | f refresh | q/Esc quit"
     )))
     .block(Block::default().borders(Borders::ALL))
 }
@@ -726,6 +965,15 @@ mod tests {
         }
     }
 
+    fn tunnel(provider: &str) -> TunnelRuntime {
+        TunnelRuntime {
+            provider: provider.into(),
+            url: Some(format!("https://{provider}.example.test")),
+            status: TunnelStatus::Running,
+            uptime_secs: 10,
+        }
+    }
+
     #[test]
     fn resolves_base_url_with_auth_file_token() {
         let path = std::env::temp_dir().join(format!(
@@ -763,35 +1011,64 @@ mod tests {
     }
 
     #[test]
-    fn selects_channels_with_wrapping_and_clamping() {
+    fn selects_active_panel_items_with_wrapping_and_clamping() {
         let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
         let mut app = TuiApp::new(&endpoint);
 
-        app.select_next_channel();
-        assert_eq!(app.selected_channel_index, None);
+        app.select_next_item();
+        assert_eq!(app.selection.index(RuntimePanel::Channels), None);
 
         app.snapshot.channels = vec![channel("feishu"), channel("discord")];
-        app.clamp_channel_selection();
-        assert_eq!(app.selected_channel_index, Some(0));
+        app.clamp_selection();
+        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(0));
         assert_eq!(app.selected_channel_kind().as_deref(), Some("feishu"));
 
-        app.select_next_channel();
-        assert_eq!(app.selected_channel_index, Some(1));
+        app.select_next_item();
+        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(1));
         assert_eq!(app.selected_channel_kind().as_deref(), Some("discord"));
 
-        app.select_next_channel();
-        assert_eq!(app.selected_channel_index, Some(0));
+        app.select_next_item();
+        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(0));
 
-        app.select_previous_channel();
-        assert_eq!(app.selected_channel_index, Some(1));
+        app.select_previous_item();
+        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(1));
 
         app.snapshot.channels.pop();
-        app.clamp_channel_selection();
-        assert_eq!(app.selected_channel_index, Some(0));
+        app.clamp_selection();
+        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(0));
 
         app.snapshot.channels.clear();
-        app.clamp_channel_selection();
-        assert_eq!(app.selected_channel_index, None);
+        app.clamp_selection();
+        assert_eq!(app.selection.index(RuntimePanel::Channels), None);
+    }
+
+    #[test]
+    fn cycles_panels_and_selects_each_panel_independently() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
+        app.snapshot.channels = vec![channel("feishu")];
+        app.snapshot.tunnels = vec![tunnel("cloudflare"), tunnel("ngrok")];
+        app.clamp_selection();
+
+        assert_eq!(app.selection.active_panel, RuntimePanel::Channels);
+        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(0));
+
+        app.select_next_panel();
+        assert_eq!(app.selection.active_panel, RuntimePanel::Tunnels);
+        assert_eq!(app.selection.index(RuntimePanel::Tunnels), Some(0));
+        app.select_next_item();
+        assert_eq!(app.selection.index(RuntimePanel::Tunnels), Some(1));
+        assert_eq!(app.selected_tunnel_provider().as_deref(), Some("ngrok"));
+
+        app.select_next_panel();
+        assert_eq!(app.selection.active_panel, RuntimePanel::Agents);
+        app.select_next_panel();
+        assert_eq!(app.selection.active_panel, RuntimePanel::Sessions);
+        app.select_next_panel();
+        assert_eq!(app.selection.active_panel, RuntimePanel::Channels);
+
+        app.select_previous_panel();
+        assert_eq!(app.selection.active_panel, RuntimePanel::Sessions);
     }
 
     #[test]
