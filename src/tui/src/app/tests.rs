@@ -480,6 +480,42 @@ fn new_session_intent_survives_failed_send() {
 }
 
 #[test]
+fn session_ready_updates_chat_context_for_followup_messages() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.force_new_session = true;
+    app.selected_agent = Some("codex".into());
+    app.apply_chat_event(ChatEvent::SessionReady {
+        session_id: "session-ready-1".into(),
+    });
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    assert_eq!(app.selected_session.as_deref(), Some("session-ready-1"));
+    assert_eq!(
+        app.chat_state.session_id.as_deref(),
+        Some("session-ready-1")
+    );
+    assert!(!app.force_new_session);
+
+    app.send_chat_message("continue".into(), &tx);
+
+    assert_eq!(
+        rx.try_recv().expect("message"),
+        ChatClientMessage::Message {
+            text: "continue".into(),
+            message_id: None,
+            agent: Some("codex".into()),
+            profile_id: None,
+            session_action: Some(ChatSessionAction::Resume),
+            session_id: Some("session-ready-1".into()),
+            session_workspace: None,
+            permission_mode: None,
+            attachments: Vec::new(),
+        }
+    );
+}
+
+#[test]
 fn agent_picker_context_changes_clear_stale_session_context() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);

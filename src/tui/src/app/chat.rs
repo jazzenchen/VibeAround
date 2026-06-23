@@ -194,7 +194,10 @@ impl TuiApp {
             ChatEvent::AgentReady { agent, version } => {
                 self.last_action = Some(format!("agent {agent} {version} ready"));
             }
-            ChatEvent::SessionReady { .. } => {}
+            ChatEvent::SessionReady { session_id } => {
+                self.selected_session = Some(session_id.clone());
+                self.force_new_session = false;
+            }
             ChatEvent::SystemText { text } => {
                 self.append_response_text(text);
             }
