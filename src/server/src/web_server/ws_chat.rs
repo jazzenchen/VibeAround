@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
-    State,
+    Query, State,
 };
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -36,6 +36,7 @@ use super::AppState;
 /// WebSocket upgrade handler for web chat.
 pub async fn ws_chat_handler(
     State(state): State<AppState>,
+    Query(query): Query<WsChatQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -44,23 +45,51 @@ pub async fn ws_chat_handler(
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    ws.on_upgrade(move |socket| handle_chat_socket(socket, state))
+    let Ok(client) = ChatSocketClient::from_query(query.channel.as_deref()) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+
+    ws.on_upgrade(move |socket| handle_chat_socket(socket, state, client))
 }
 
-async fn handle_chat_socket(socket: WebSocket, state: AppState) {
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct WsChatQuery {
+    channel: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ChatSocketClient {
+    channel_kind: &'static str,
+    sender_id: &'static str,
+}
+
+impl ChatSocketClient {
+    fn from_query(channel: Option<&str>) -> Result<Self, ()> {
+        match channel.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("web") => Ok(Self {
+                channel_kind: "web",
+                sender_id: "web-user",
+            }),
+            Some("tui") => Ok(Self {
+                channel_kind: "tui",
+                sender_id: "tui-user",
+            }),
+            Some(_) => Err(()),
+        }
+    }
+}
+
+async fn handle_chat_socket(socket: WebSocket, state: AppState, client: ChatSocketClient) {
     let connection_id = Uuid::new_v4().to_string();
     let chat_id = Uuid::new_v4().to_string();
-    let channel_id = format!("web:{}", chat_id);
-    let mut active_route = RouteKey::new("web", &chat_id);
+    let channel_id = format!("{}:{}", client.channel_kind, chat_id);
+    let mut active_route = RouteKey::new(client.channel_kind, &chat_id);
 
     // Register this connection for outbound ACP events
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelOutput>();
-    state.web_channel.register_connection(
-        active_route.chat_id.clone(),
-        connection_id.clone(),
-        tx.clone(),
-        false,
-    );
+    state
+        .web_channel
+        .register_connection(&active_route, connection_id.clone(), tx.clone(), false);
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
@@ -98,7 +127,7 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             Message::Text(text) => {
-                if let Some(input) = parse_web_chat_input(&active_route.chat_id, &text) {
+                if let Some(input) = parse_web_chat_input(&active_route, client.sender_id, &text) {
                     match input {
                         WebChatInput::Message {
                             input,
@@ -233,11 +262,11 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
                             response,
                         } => {
                             state.web_channel.clear_pending_permission(&request_id);
-                            if let Err(error) =
-                                state
-                                    .channel_hub
-                                    .respond_permission("web", &request_id, response)
-                            {
+                            if let Err(error) = state.channel_hub.respond_permission(
+                                &active_route.channel_kind,
+                                &request_id,
+                                response,
+                            ) {
                                 tracing::warn!(
                                     request_id = %request_id,
                                     error = %error,
@@ -261,16 +290,16 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
                                 resolve_web_session_agent(&state, &active_route, agent.clone())
                                     .await
                             {
-                                if let Some(route_chat_id) =
+                                if let Some(route) =
                                     state.web_channel.route_for_session(&agent_id, &session_id)
                                 {
                                     state.web_channel.unregister_connection(
                                         &active_route.chat_id,
                                         &connection_id,
                                     );
-                                    active_route = RouteKey::new("web", &route_chat_id);
+                                    active_route = route;
                                     state.web_channel.register_connection(
-                                        active_route.chat_id.clone(),
+                                        &active_route,
                                         connection_id.clone(),
                                         tx.clone(),
                                         true,
@@ -889,7 +918,7 @@ enum WebChatSessionIntent {
     },
 }
 
-fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
+fn parse_web_chat_input(route: &RouteKey, sender_id: &str, text: &str) -> Option<WebChatInput> {
     let parsed = serde_json::from_str::<serde_json::Value>(text);
 
     match parsed {
@@ -914,11 +943,11 @@ fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
                     Some(WebChatInput::Message {
                         input: ChannelInput::Message {
                             envelope: ChannelEnvelope {
-                                route: RouteKey::new("web", chat_id),
+                                route: route.clone(),
                                 message_id,
                                 turn_id: None,
                                 text: text.to_string(),
-                                sender_id: "web-user".to_string(),
+                                sender_id: sender_id.to_string(),
                                 attachments,
                                 parent_id: None,
                                 cli_kind: agent,
@@ -962,7 +991,7 @@ fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
                     })
                 }
                 "stop" => Some(WebChatInput::Stop(ChannelInput::Stop {
-                    route: RouteKey::new("web", chat_id),
+                    route: route.clone(),
                 })),
                 "permission_response" => {
                     let request_id = v.get("requestId").and_then(|x| x.as_str())?.to_string();
@@ -991,11 +1020,11 @@ fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
                 Some(WebChatInput::Message {
                     input: ChannelInput::Message {
                         envelope: ChannelEnvelope {
-                            route: RouteKey::new("web", chat_id),
+                            route: route.clone(),
                             message_id: Uuid::new_v4().to_string(),
                             turn_id: None,
                             text: trimmed.to_string(),
-                            sender_id: "web-user".to_string(),
+                            sender_id: sender_id.to_string(),
                             attachments: vec![],
                             parent_id: None,
                             cli_kind: None,
@@ -1208,6 +1237,56 @@ fn acp_passthrough(payload: serde_json::Value) -> ChatEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn web_client() -> ChatSocketClient {
+        ChatSocketClient::from_query(None).expect("web client")
+    }
+
+    fn tui_client() -> ChatSocketClient {
+        ChatSocketClient::from_query(Some("tui")).expect("tui client")
+    }
+
+    fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
+        let client = web_client();
+        let route = RouteKey::new(client.channel_kind, chat_id);
+        super::parse_web_chat_input(&route, client.sender_id, text)
+    }
+
+    #[test]
+    fn chat_socket_client_defaults_to_web_and_accepts_tui() {
+        assert_eq!(web_client().channel_kind, "web");
+        assert_eq!(web_client().sender_id, "web-user");
+        assert_eq!(tui_client().channel_kind, "tui");
+        assert_eq!(tui_client().sender_id, "tui-user");
+        assert!(ChatSocketClient::from_query(Some("unknown")).is_err());
+    }
+
+    #[test]
+    fn parses_tui_message_with_tui_route_identity() {
+        let input = super::parse_web_chat_input(
+            &RouteKey::new("tui", "chat-1"),
+            tui_client().sender_id,
+            r#"{"type":"message","text":"hello"}"#,
+        )
+        .expect("message input");
+
+        let WebChatInput::Message {
+            input:
+                ChannelInput::Message {
+                    envelope:
+                        ChannelEnvelope {
+                            route, sender_id, ..
+                        },
+                },
+            ..
+        } = input
+        else {
+            panic!("expected tui message");
+        };
+
+        assert_eq!(route, RouteKey::new("tui", "chat-1"));
+        assert_eq!(sender_id, "tui-user");
+    }
 
     #[test]
     fn parses_selected_permission_response() {

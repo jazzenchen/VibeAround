@@ -124,4 +124,13 @@ mod tests {
             "wss://example.test/va/ws/chat?token=tok%2Fen"
         );
     }
+
+    #[test]
+    fn websocket_url_appends_token_to_existing_query() {
+        let endpoint = ServerEndpoint::new("https://example.test/va").with_token("tok/en");
+        assert_eq!(
+            endpoint.websocket_url(&events::chat_ws_for_channel("tui")),
+            "wss://example.test/va/ws/chat?channel=tui&token=tok%2Fen"
+        );
+    }
 }

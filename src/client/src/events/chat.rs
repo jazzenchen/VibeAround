@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::WebSocketSpec;
+use crate::http::path_with_query;
 use crate::http::AuthRequirement;
 use crate::runtime::AgentInfo;
 
@@ -254,6 +255,13 @@ pub fn chat_ws() -> WebSocketSpec {
     WebSocketSpec::new("/ws/chat", AuthRequirement::BearerToken)
 }
 
+pub fn chat_ws_for_channel(channel: &str) -> WebSocketSpec {
+    WebSocketSpec::new(
+        path_with_query("/ws/chat", &[("channel", Some(channel.to_string()))]),
+        AuthRequirement::BearerToken,
+    )
+}
+
 pub fn decode_chat_event(value: Value) -> crate::Result<ChatEvent> {
     serde_json::from_value(value).map_err(crate::ClientError::Decode)
 }
@@ -272,6 +280,13 @@ mod tests {
     fn chat_ws_requires_bearer_token() {
         let spec = chat_ws();
         assert_eq!(spec.path, "/ws/chat");
+        assert_eq!(spec.auth, AuthRequirement::BearerToken);
+    }
+
+    #[test]
+    fn chat_ws_channel_adds_query_param() {
+        let spec = chat_ws_for_channel("tui");
+        assert_eq!(spec.path, "/ws/chat?channel=tui");
         assert_eq!(spec.auth, AuthRequirement::BearerToken);
     }
 
