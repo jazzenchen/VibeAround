@@ -4,6 +4,8 @@ use serde_json::Value;
 
 use crate::theme::{muted_style, BRAND};
 
+const CHAT_MARKER_WIDTH: usize = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChatMessage {
     pub(crate) role: ChatRole,
@@ -108,16 +110,30 @@ pub(crate) fn visible_chat_lines(
     lines.into_iter().skip(start).take(capacity).collect()
 }
 
+pub(crate) fn input_box_height(input: &str, content_width: usize, max_body_rows: u16) -> u16 {
+    let body_width = marker_body_width(content_width);
+    let rows = input
+        .split('\n')
+        .flat_map(|line| wrap_chat_text_line(line, body_width))
+        .count()
+        .max(1)
+        .min(usize::from(max_body_rows.max(1)));
+    u16::try_from(rows)
+        .unwrap_or(max_body_rows)
+        .saturating_add(2)
+}
+
 #[cfg(test)]
 fn chat_message_lines(message: &ChatMessage) -> Vec<Line<'static>> {
     chat_message_wrapped_lines(message, usize::MAX)
 }
 
 fn chat_message_wrapped_lines(message: &ChatMessage, content_width: usize) -> Vec<Line<'static>> {
+    let body_width = marker_body_width(content_width);
     message
         .text
         .split('\n')
-        .flat_map(|text| wrap_chat_text_line(text, content_width))
+        .flat_map(|text| wrap_chat_text_line(text, body_width))
         .enumerate()
         .map(|(index, text)| chat_message_line_at(message.role, &text, index == 0))
         .collect()
@@ -142,6 +158,13 @@ fn chat_message_line_at(role: ChatRole, text: &str, first_line: bool) -> Line<'s
         Span::styled(marker, style),
         Span::raw(text.to_string()),
     ])
+}
+
+fn marker_body_width(content_width: usize) -> usize {
+    if content_width == usize::MAX {
+        return content_width;
+    }
+    content_width.saturating_sub(CHAT_MARKER_WIDTH).max(1)
 }
 
 fn permission_title(request: &Value) -> String {
@@ -273,13 +296,41 @@ mod tests {
                 role: ChatRole::Request,
                 text: "abcdef".into(),
             },
-            3,
+            5,
         )
         .into_iter()
-        .map(|line| row_text(line.spans))
+        .map(|line| {
+            let width = line.width();
+            let text = row_text(line.spans);
+            (text, width)
+        })
         .collect::<Vec<_>>();
 
-        assert_eq!(lines, vec!["› abc", "  def"]);
+        assert_eq!(
+            lines,
+            vec![("› abc".to_string(), 5), ("  def".to_string(), 5)]
+        );
+    }
+
+    #[test]
+    fn chat_lines_never_exceed_available_width() {
+        let max_width = 8;
+        let lines = chat_message_wrapped_lines(
+            &ChatMessage {
+                role: ChatRole::Response,
+                text: "abcdefghijkl".into(),
+            },
+            max_width,
+        );
+
+        assert!(lines.iter().all(|line| line.width() <= max_width));
+    }
+
+    #[test]
+    fn input_box_height_grows_with_wrapped_input() {
+        assert_eq!(input_box_height("", 10, 4), 3);
+        assert_eq!(input_box_height("abcdefghijkl", 8, 4), 4);
+        assert_eq!(input_box_height("abcdefghijklmnop", 4, 4), 6);
     }
 
     #[test]

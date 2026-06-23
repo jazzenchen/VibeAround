@@ -14,7 +14,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -39,8 +39,8 @@ mod chat_socket;
 mod theme;
 
 use chat::{
-    chat_message_lines_for_messages, content_text, one_line, permission_prompt_text,
-    tool_activity_text, visible_chat_lines, ChatMessage, ChatRole,
+    chat_message_lines_for_messages, content_text, input_box_height, one_line,
+    permission_prompt_text, tool_activity_text, visible_chat_lines, ChatMessage, ChatRole,
 };
 use chat_socket::{run_chat_socket, ChatSocketEvent};
 use theme::{muted_style, BRAND, ERROR, NEUTRAL, OK, WARN};
@@ -390,6 +390,7 @@ impl TuiApp {
             role: ChatRole::Request,
             text: input.clone(),
         });
+        self.work_status = None;
         self.follow_chat_tail();
         self.send_chat_message(input, chat_tx);
     }
@@ -532,6 +533,7 @@ impl TuiApp {
                 request_id,
                 request,
             } => {
+                self.work_status = None;
                 self.push_notice(permission_prompt_text(request_id, request));
             }
             ChatEvent::AcpNotification { payload } => {
@@ -546,8 +548,9 @@ impl TuiApp {
                 self.work_status = None;
             }
             ChatEvent::TurnStatus { active } => {
-                if !active {
-                    self.work_status = None;
+                self.work_status = None;
+                if *active {
+                    self.last_action = None;
                 }
             }
             ChatEvent::SessionMode { .. }
@@ -1526,9 +1529,11 @@ fn metric_spans(label: &'static str, value: usize, color: Color) -> Vec<Span<'st
 }
 
 fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    let input_content_width = usize::from(area.width.saturating_sub(4)).max(1);
+    let input_height = input_box_height(&app.chat_input, input_content_width, 4);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(3)])
+        .constraints([Constraint::Min(6), Constraint::Length(input_height)])
         .split(area);
     let visible_rows = usize::from(chunks[0].height.saturating_sub(2));
     let content_width = usize::from(chunks[0].width.saturating_sub(4)).max(1);
@@ -1561,6 +1566,7 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
             Span::styled("› ", Style::default().fg(BRAND)),
             Span::raw(app.chat_input.clone()),
         ]))
+        .wrap(Wrap { trim: false })
         .block(
             Block::default()
                 .borders(Borders::ALL)
