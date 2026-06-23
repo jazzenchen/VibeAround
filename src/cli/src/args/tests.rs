@@ -244,6 +244,34 @@ fn parses_chat_send_continue_command() {
 }
 
 #[test]
+fn parses_chat_repl_command() {
+    let options = parse_args([
+        "chat".to_string(),
+        "repl".to_string(),
+        "--agent=codex".to_string(),
+        "--profile".to_string(),
+        "default".to_string(),
+        "--continue".to_string(),
+        "--workspace=/tmp/project".to_string(),
+        "--permission-mode=acceptEdits".to_string(),
+    ])
+    .expect("options");
+
+    assert_eq!(
+        options.command,
+        Some(Command::ChatRepl(ChatReplArgs {
+            agent: Some("codex".into()),
+            profile_id: Some("default".into()),
+            resume_session_id: None,
+            new_session: false,
+            continue_session: true,
+            workspace_path: Some("/tmp/project".into()),
+            permission_mode: Some("acceptEdits".into()),
+        }))
+    );
+}
+
+#[test]
 fn parses_chat_session_management_commands() {
     let sessions = parse_args(["chat".to_string(), "sessions".to_string()]).expect("sessions");
     assert_eq!(sessions.command, Some(Command::ChatSessions));
@@ -291,6 +319,18 @@ fn rejects_chat_forget_all_with_scope_filters() {
         "forget".to_string(),
         "--all".to_string(),
         "--agent=codex".to_string(),
+    ])
+    .expect_err("error");
+    assert!(matches!(error, CliError::Usage(_)));
+}
+
+#[test]
+fn rejects_chat_repl_continue_conflicts() {
+    let error = parse_args([
+        "chat".to_string(),
+        "repl".to_string(),
+        "--resume=sid-1".to_string(),
+        "--continue".to_string(),
     ])
     .expect_err("error");
     assert!(matches!(error, CliError::Usage(_)));

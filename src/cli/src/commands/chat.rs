@@ -11,7 +11,7 @@ use va_client::events::{
 use va_client::http::AuthRequirement;
 use va_client::state::ChatState;
 
-use crate::args::{ChatForgetArgs, ChatSendArgs, Options};
+use crate::args::{ChatForgetArgs, ChatReplArgs, ChatSendArgs, Options};
 use crate::chat_store::{
     clear_sessions, forget_session_for, list_sessions, save_session_for, saved_session_for,
     scope_for_args, scope_for_forget_args, ChatSessionScope, StoredChatSession,
@@ -76,6 +76,53 @@ pub(super) fn forget(options: &Options, args: &ChatForgetArgs) -> Result<(), Cli
     } else {
         println!("no saved chat session for {}", scope.display());
     }
+    Ok(())
+}
+
+pub(super) async fn repl(options: &Options, args: &ChatReplArgs) -> Result<(), CliError> {
+    if options.json {
+        return Err(CliError::Usage("chat repl does not support --json".into()));
+    }
+
+    let interactive = std::io::stdin().is_terminal();
+    if interactive {
+        eprintln!("va chat repl; type /exit or /quit to leave");
+    }
+
+    let mut first_turn = true;
+    loop {
+        if interactive {
+            eprint!("va> ");
+            std::io::stderr().flush().map_err(|source| CliError::Io {
+                action: "flushing chat repl prompt",
+                source,
+            })?;
+        }
+
+        let mut input = String::new();
+        let read = std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|source| CliError::Io {
+                action: "reading chat repl input",
+                source,
+            })?;
+        if read == 0 {
+            break;
+        }
+
+        let text = input.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if is_repl_exit(text) {
+            break;
+        }
+
+        let turn = repl_turn_args(args, text.to_string(), first_turn);
+        send(options, &turn).await?;
+        first_turn = false;
+    }
+
     Ok(())
 }
 
@@ -174,6 +221,33 @@ fn session_json(session: &StoredChatSession) -> serde_json::Value {
 
 fn label(value: Option<&str>) -> &str {
     value.unwrap_or("-")
+}
+
+fn repl_turn_args(args: &ChatReplArgs, text: String, first_turn: bool) -> ChatSendArgs {
+    let explicit_first_session =
+        args.new_session || args.resume_session_id.is_some() || args.continue_session;
+    ChatSendArgs {
+        text,
+        agent: args.agent.clone(),
+        profile_id: args.profile_id.clone(),
+        resume_session_id: if first_turn {
+            args.resume_session_id.clone()
+        } else {
+            None
+        },
+        new_session: first_turn && (args.new_session || !explicit_first_session),
+        continue_session: if first_turn {
+            args.continue_session
+        } else {
+            true
+        },
+        workspace_path: args.workspace_path.clone(),
+        permission_mode: args.permission_mode.clone(),
+    }
+}
+
+fn is_repl_exit(input: &str) -> bool {
+    matches!(input, "/exit" | "/quit" | ":q" | "exit" | "quit")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -527,6 +601,59 @@ mod tests {
         assert_eq!(session.store_scope, Some(scope));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn repl_default_first_turn_starts_new_then_continues() {
+        let args = ChatReplArgs {
+            agent: Some("codex".into()),
+            profile_id: Some("default".into()),
+            resume_session_id: None,
+            new_session: false,
+            continue_session: false,
+            workspace_path: Some("/tmp/project".into()),
+            permission_mode: Some("acceptEdits".into()),
+        };
+
+        let first = repl_turn_args(&args, "hello".into(), true);
+        assert_eq!(first.text, "hello");
+        assert!(first.new_session);
+        assert!(!first.continue_session);
+        assert_eq!(first.resume_session_id, None);
+        assert_eq!(first.workspace_path.as_deref(), Some("/tmp/project"));
+        assert_eq!(first.permission_mode.as_deref(), Some("acceptEdits"));
+
+        let next = repl_turn_args(&args, "again".into(), false);
+        assert_eq!(next.text, "again");
+        assert!(!next.new_session);
+        assert!(next.continue_session);
+        assert_eq!(next.resume_session_id, None);
+    }
+
+    #[test]
+    fn repl_preserves_explicit_first_resume() {
+        let args = ChatReplArgs {
+            agent: None,
+            profile_id: None,
+            resume_session_id: Some("session-1".into()),
+            new_session: false,
+            continue_session: false,
+            workspace_path: None,
+            permission_mode: None,
+        };
+
+        let first = repl_turn_args(&args, "hello".into(), true);
+        assert!(!first.new_session);
+        assert!(!first.continue_session);
+        assert_eq!(first.resume_session_id.as_deref(), Some("session-1"));
+    }
+
+    #[test]
+    fn repl_exit_commands_are_recognized() {
+        assert!(is_repl_exit("/exit"));
+        assert!(is_repl_exit(":q"));
+        assert!(is_repl_exit("quit"));
+        assert!(!is_repl_exit("hello"));
     }
 
     #[test]
