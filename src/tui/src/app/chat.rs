@@ -10,6 +10,35 @@ use crate::chat_socket::ChatSocketEvent;
 use crate::transport::HttpTransport;
 
 impl TuiApp {
+    pub(crate) fn insert_chat_text(&mut self, text: &str) {
+        self.chat_input.push_str(&normalize_input_text(text));
+    }
+
+    pub(crate) fn insert_chat_newline(&mut self) {
+        self.chat_input.push('\n');
+    }
+
+    pub(crate) fn delete_chat_char(&mut self) {
+        self.chat_input.pop();
+    }
+
+    pub(crate) fn clear_chat_input(&mut self) {
+        self.chat_input.clear();
+    }
+
+    pub(crate) fn delete_chat_word(&mut self) {
+        let trimmed_len = self.chat_input.trim_end_matches(char::is_whitespace).len();
+        self.chat_input.truncate(trimmed_len);
+        let word_start = self
+            .chat_input
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| ch.is_whitespace())
+            .map(|(index, ch)| index + ch.len_utf8())
+            .unwrap_or(0);
+        self.chat_input.truncate(word_start);
+    }
+
     pub(crate) async fn submit_chat_input(
         &mut self,
         transport: &HttpTransport,
@@ -129,7 +158,7 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "/new next message starts a new session  /resume session-id resume a session  /mode set permission mode  /status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat".into(),
+            text: "/new next message starts a new session  /resume session-id resume a session  /mode set permission mode  /status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat  Shift+Enter newline  Ctrl+U clear input  Ctrl+W delete word".into(),
         });
     }
 
@@ -386,4 +415,8 @@ fn canonical_chat_mode(mode_id: &str) -> Option<&'static str> {
         "dontask" => Some("dontAsk"),
         _ => None,
     }
+}
+
+fn normalize_input_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }

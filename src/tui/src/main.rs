@@ -2,7 +2,9 @@ use std::io;
 use std::time::Duration;
 
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -89,45 +91,66 @@ async fn run_dashboard(
             action: "polling terminal events",
             source,
         })? {
-            if let Event::Key(key) = event::read().map_err(|source| TuiError::Io {
+            match event::read().map_err(|source| TuiError::Io {
                 action: "reading terminal events",
                 source,
             })? {
-                if is_ctrl_c(&key) {
-                    if app.confirm_exit_request() {
-                        break;
-                    }
-                    continue;
+                Event::Paste(text) if app.view == AppView::Chat => {
+                    app.insert_chat_text(&text);
                 }
-
-                match key.code {
-                    KeyCode::Esc => app.go_back(),
-                    KeyCode::Left => app.select_left(),
-                    KeyCode::Right => app.select_right(),
-                    KeyCode::Up => app.select_up(),
-                    KeyCode::Down => app.select_down(),
-                    KeyCode::PageUp if app.view == AppView::Chat => app.scroll_chat_up(10),
-                    KeyCode::PageDown if app.view == AppView::Chat => app.scroll_chat_down(10),
-                    KeyCode::Enter => match app.view {
-                        AppView::Chat => app.submit_chat_input(&transport, &chat_tx).await,
-                        AppView::Status => app.enter_current_view(),
-                        AppView::Agent => {
-                            app.enter_current_view();
-                            app.sync_agent_picker_selection(&transport).await;
+                Event::Key(key) => {
+                    if is_ctrl_c(&key) {
+                        if app.confirm_exit_request() {
+                            break;
                         }
-                        AppView::StatusDetail => {}
-                    },
-                    KeyCode::Backspace if app.view == AppView::Chat => {
-                        app.chat_input.pop();
+                        continue;
                     }
-                    KeyCode::Char(ch)
-                        if app.view == AppView::Chat
-                            && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        app.chat_input.push(ch);
+
+                    match key.code {
+                        KeyCode::Esc => app.go_back(),
+                        KeyCode::Left => app.select_left(),
+                        KeyCode::Right => app.select_right(),
+                        KeyCode::Up => app.select_up(),
+                        KeyCode::Down => app.select_down(),
+                        KeyCode::PageUp if app.view == AppView::Chat => app.scroll_chat_up(10),
+                        KeyCode::PageDown if app.view == AppView::Chat => app.scroll_chat_down(10),
+                        KeyCode::Enter if app.view == AppView::Chat && is_multiline_enter(&key) => {
+                            app.insert_chat_newline();
+                        }
+                        KeyCode::Enter => match app.view {
+                            AppView::Chat => app.submit_chat_input(&transport, &chat_tx).await,
+                            AppView::Status => app.enter_current_view(),
+                            AppView::Agent => {
+                                app.enter_current_view();
+                                app.sync_agent_picker_selection(&transport).await;
+                            }
+                            AppView::StatusDetail => {}
+                        },
+                        KeyCode::Char('u' | 'U')
+                            if app.view == AppView::Chat
+                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            app.clear_chat_input();
+                        }
+                        KeyCode::Char('w' | 'W')
+                            if app.view == AppView::Chat
+                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            app.delete_chat_word();
+                        }
+                        KeyCode::Backspace if app.view == AppView::Chat => {
+                            app.delete_chat_char();
+                        }
+                        KeyCode::Char(ch)
+                            if app.view == AppView::Chat
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            app.insert_chat_text(&ch.to_string());
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
+                _ => {}
             }
         }
     }
@@ -142,13 +165,18 @@ fn is_ctrl_c(key: &KeyEvent) -> bool {
         && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+fn is_multiline_enter(key: &KeyEvent) -> bool {
+    key.modifiers
+        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+}
+
 fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalGuard), TuiError> {
     enable_raw_mode().map_err(|source| TuiError::Io {
         action: "enabling raw mode",
         source,
     })?;
     let mut stdout = io::stdout();
-    if let Err(source) = execute!(stdout, EnterAlternateScreen) {
+    if let Err(source) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste) {
         let _ = disable_raw_mode();
         return Err(TuiError::Io {
             action: "entering alternate screen",
@@ -159,7 +187,7 @@ fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalG
         Ok(terminal) => Ok((terminal, TerminalGuard)),
         Err(source) => {
             let _ = disable_raw_mode();
-            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+            let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
             Err(TuiError::Io {
                 action: "creating terminal",
                 source,
@@ -173,7 +201,7 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
     }
 }
 
@@ -207,5 +235,16 @@ mod tests {
         assert!(is_ctrl_c(&ctrl_c));
         assert!(!is_ctrl_c(&plain_c));
         assert!(!is_ctrl_c(&ctrl_q));
+    }
+
+    #[test]
+    fn recognizes_modified_enter_as_multiline_input() {
+        let plain_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let shift_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT);
+        let alt_enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT);
+
+        assert!(!is_multiline_enter(&plain_enter));
+        assert!(is_multiline_enter(&shift_enter));
+        assert!(is_multiline_enter(&alt_enter));
     }
 }

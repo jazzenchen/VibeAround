@@ -54,9 +54,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
 
 fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
     let input_content_width = usize::from(area.width.saturating_sub(2)).max(1);
-    let input_height = input_box_height(&app.chat_input, input_content_width, 4)
-        .saturating_sub(1)
-        .max(2);
+    let input_height = input_box_height(&app.chat_input, input_content_width, 4);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .spacing(1)
@@ -86,12 +84,9 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new(vec![Line::from(vec![
-            Span::styled("› ", Style::default().fg(BRAND)),
-            Span::raw(app.chat_input.clone()),
-        ])])
-        .wrap(Wrap { trim: false })
-        .block(input_block()),
+        Paragraph::new(chat_input_lines(&app.chat_input))
+            .wrap(Wrap { trim: false })
+            .block(input_block()),
         chunks[1],
     );
 }
@@ -398,4 +393,18 @@ fn input_block() -> Block<'static> {
     Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(BRAND))
+}
+
+fn chat_input_lines(input: &str) -> Vec<Line<'static>> {
+    input
+        .split('\n')
+        .enumerate()
+        .map(|(index, line)| {
+            let marker = if index == 0 { "› " } else { "  " };
+            Line::from(vec![
+                Span::styled(marker, Style::default().fg(BRAND)),
+                Span::raw(line.to_string()),
+            ])
+        })
+        .collect()
 }

@@ -32,7 +32,7 @@ impl BrandMode {
 }
 
 pub(super) fn brand_mode(width: u16, height: u16) -> BrandMode {
-    if width >= 96 && height >= 24 {
+    if width >= 96 && height >= 28 {
         BrandMode::FullLogo
     } else if width >= 56 && height >= 14 {
         BrandMode::Compact
@@ -135,7 +135,8 @@ mod tests {
     fn brand_mode_scales_with_terminal_size() {
         assert_eq!(brand_mode(40, 24), BrandMode::Narrow);
         assert_eq!(brand_mode(80, 18), BrandMode::Compact);
-        assert_eq!(brand_mode(96, 24), BrandMode::FullLogo);
+        assert_eq!(brand_mode(96, 24), BrandMode::Compact);
+        assert_eq!(brand_mode(96, 28), BrandMode::FullLogo);
         assert_eq!(BrandMode::Narrow.height(), 3);
         assert_eq!(BrandMode::FullLogo.height(), 9);
     }

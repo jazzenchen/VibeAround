@@ -368,6 +368,30 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
 }
 
 #[test]
+fn chat_render_shows_multiline_input_with_continuation_indent() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_input = "first line\nsecond line".into();
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| render::render(frame, &app))
+        .expect("draw");
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(screen.contains("› first line"));
+    assert!(screen.contains("  second line"));
+}
+
+#[test]
 fn effective_chat_context_prefers_local_selection_over_launcher_preferences() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
@@ -405,6 +429,29 @@ fn chat_arrows_scroll_transcript() {
     assert_eq!(app.chat_scroll, 1);
     app.follow_chat_tail();
     assert_eq!(app.chat_scroll, 0);
+}
+
+#[test]
+fn chat_input_editing_supports_paste_multiline_and_word_delete() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.insert_chat_text("hello\r\nworld  ");
+    assert_eq!(app.chat_input, "hello\nworld  ");
+
+    app.delete_chat_word();
+    assert_eq!(app.chat_input, "hello\n");
+
+    app.insert_chat_text("again");
+    app.insert_chat_newline();
+    app.insert_chat_text("tail");
+    assert_eq!(app.chat_input, "hello\nagain\ntail");
+
+    app.delete_chat_char();
+    assert_eq!(app.chat_input, "hello\nagain\ntai");
+
+    app.clear_chat_input();
+    assert!(app.chat_input.is_empty());
 }
 
 #[test]
@@ -533,6 +580,37 @@ async fn unknown_slash_command_is_forwarded_to_agent() {
     assert_eq!(
         app.chat_messages.last().unwrap().text,
         "/review current changes"
+    );
+}
+
+#[tokio::test]
+async fn submit_chat_input_sends_multiline_prompt() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_input = "first line\nsecond line".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("message"),
+        ChatClientMessage::Message {
+            text: "first line\nsecond line".into(),
+            message_id: None,
+            agent: None,
+            profile_id: None,
+            session_action: None,
+            session_id: None,
+            session_workspace: None,
+            permission_mode: None,
+            attachments: Vec::new(),
+        }
+    );
+    assert!(app.chat_input.is_empty());
+    assert_eq!(
+        app.chat_messages.last().unwrap().text,
+        "first line\nsecond line"
     );
 }
 
