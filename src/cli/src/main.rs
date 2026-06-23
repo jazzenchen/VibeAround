@@ -1,29 +1,23 @@
 mod args;
 mod attach;
+mod auth;
 mod config;
 mod error;
+mod pair;
 mod transport;
 
-use std::{
-    env,
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::env;
 
 use serde_json::Value;
-use va_client::auth::{PairStartResponse, PairStatusResponse};
 use va_client::http::AuthRequirement;
 use va_client::sessions::{CreateSessionBody, LaunchSessionInfo, PtyTool};
 use va_client::{ops, Operation};
 
 use args::{
     parse_args, usage, Command, LaunchSessionMutationArgs, LaunchSessionsArgs, Options,
-    PairStartArgs, PairWaitArgs, SessionCreateArgs,
+    SessionCreateArgs,
 };
-use config::{
-    auth_file_path, endpoint_for, local_auth_port, remove_auth_file, resolve_endpoint_env,
-    save_auth_file, RuntimeEnv,
-};
+use config::{endpoint_for, resolve_endpoint_env, RuntimeEnv};
 use error::CliError;
 use transport::HttpTransport;
 
@@ -177,19 +171,19 @@ async fn run() -> Result<(), CliError> {
             }
         }
         Command::PairStart(args) => {
-            run_pair_start(&options, &args).await?;
+            pair::start(&options, &args).await?;
         }
         Command::PairStatus { sid, save } => {
-            run_pair_status(&options, &sid, save).await?;
+            pair::status(&options, &sid, save).await?;
         }
         Command::PairWait(args) => {
-            run_pair_wait(&options, &args).await?;
+            pair::wait(&options, &args).await?;
         }
         Command::AuthStatus => {
-            run_auth_status(&options)?;
+            auth::status(&options)?;
         }
         Command::AuthClear => {
-            run_auth_clear(&options)?;
+            auth::clear(&options)?;
         }
         Command::TmuxSessions => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
@@ -384,248 +378,7 @@ async fn run_doctor(options: &Options) -> Result<(), CliError> {
     Ok(())
 }
 
-async fn run_pair_start(options: &Options, args: &PairStartArgs) -> Result<(), CliError> {
-    let transport = transport_for(options, AuthRequirement::None)?;
-    let pair = transport.execute(ops::pair_start()).await?;
-    if !args.wait {
-        if options.json {
-            print_json(pair_start_json(&pair))?;
-            return Ok(());
-        }
-        println!("code: {}", pair.code);
-        println!("sid: {}", pair.sid);
-        return Ok(());
-    }
-
-    if !options.json {
-        println!("code: {}", pair.code);
-        println!("sid: {}", pair.sid);
-        println!("waiting: {}s", args.timeout_secs);
-    }
-
-    let verified = wait_for_pair_verification(
-        options,
-        &pair.sid,
-        args.save,
-        args.timeout_secs,
-        args.interval_ms,
-    )
-    .await?;
-    if options.json {
-        let mut value = pair_verified_json(&verified);
-        value["code"] = serde_json::json!(pair.code);
-        value["sid"] = serde_json::json!(pair.sid);
-        print_json(value)?;
-        return Ok(());
-    }
-    print_pair_verified(&verified);
-    Ok(())
-}
-
-async fn run_pair_status(options: &Options, sid: &str, save: bool) -> Result<(), CliError> {
-    let transport = transport_for(options, AuthRequirement::None)?;
-    let status = transport.execute(ops::pair_status(sid)).await?;
-    let saved_path = if save {
-        match &status {
-            PairStatusResponse::Verified { token } => {
-                Some(save_verified_pair_token(options, token)?)
-            }
-            PairStatusResponse::Pending | PairStatusResponse::Expired => None,
-        }
-    } else {
-        None
-    };
-
-    if options.json {
-        print_json(pair_status_json(&status, saved_path.as_ref()))?;
-        return Ok(());
-    }
-
-    match status {
-        PairStatusResponse::Pending => println!("pending"),
-        PairStatusResponse::Expired => println!("expired"),
-        PairStatusResponse::Verified { token } => {
-            println!("verified");
-            if let Some(path) = saved_path {
-                println!("saved: {}", path.display());
-            } else {
-                println!("token: {token}");
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn run_pair_wait(options: &Options, args: &PairWaitArgs) -> Result<(), CliError> {
-    if !options.json {
-        println!("waiting: {}s", args.timeout_secs);
-    }
-    let verified = wait_for_pair_verification(
-        options,
-        &args.sid,
-        args.save,
-        args.timeout_secs,
-        args.interval_ms,
-    )
-    .await?;
-    if options.json {
-        print_json(pair_verified_json(&verified))?;
-        return Ok(());
-    }
-    print_pair_verified(&verified);
-    Ok(())
-}
-
-struct VerifiedPair {
-    token: String,
-    saved_path: Option<PathBuf>,
-}
-
-async fn wait_for_pair_verification(
-    options: &Options,
-    sid: &str,
-    save: bool,
-    timeout_secs: u64,
-    interval_ms: u64,
-) -> Result<VerifiedPair, CliError> {
-    let transport = transport_for(options, AuthRequirement::None)?;
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        match transport.execute(ops::pair_status(sid)).await? {
-            PairStatusResponse::Pending => {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err(CliError::PairTimeout(timeout_secs));
-                }
-                let remaining = deadline.saturating_duration_since(now);
-                tokio::time::sleep(Duration::from_millis(interval_ms).min(remaining)).await;
-            }
-            PairStatusResponse::Expired => return Err(CliError::PairExpired),
-            PairStatusResponse::Verified { token } => {
-                let saved_path = if save {
-                    Some(save_verified_pair_token(options, &token)?)
-                } else {
-                    None
-                };
-                return Ok(VerifiedPair { token, saved_path });
-            }
-        }
-    }
-}
-
-fn pair_start_json(pair: &PairStartResponse) -> Value {
-    serde_json::json!({
-        "code": pair.code,
-        "sid": pair.sid
-    })
-}
-
-fn pair_verified_json(verified: &VerifiedPair) -> Value {
-    let mut value = serde_json::json!({
-        "status": "verified",
-        "token": verified.token
-    });
-    if let Some(path) = &verified.saved_path {
-        value["saved_auth_file"] = serde_json::json!(path.display().to_string());
-    }
-    value
-}
-
-fn print_pair_verified(verified: &VerifiedPair) {
-    println!("verified");
-    if let Some(path) = &verified.saved_path {
-        println!("saved: {}", path.display());
-    } else {
-        println!("token: {}", verified.token);
-    }
-}
-
-fn save_verified_pair_token(
-    options: &Options,
-    token: &str,
-) -> Result<std::path::PathBuf, CliError> {
-    let public_endpoint =
-        resolve_endpoint_env(options, AuthRequirement::None, &RuntimeEnv::current())?;
-    let port = local_auth_port(public_endpoint.endpoint.base_url())?;
-    save_auth_file(options, port, token)
-}
-
-fn pair_status_json(status: &PairStatusResponse, saved_path: Option<&std::path::PathBuf>) -> Value {
-    let mut value = match status {
-        PairStatusResponse::Pending => serde_json::json!({ "status": "pending" }),
-        PairStatusResponse::Expired => serde_json::json!({ "status": "expired" }),
-        PairStatusResponse::Verified { token } => {
-            serde_json::json!({ "status": "verified", "token": token })
-        }
-    };
-    if let Some(path) = saved_path {
-        value["saved_auth_file"] = serde_json::json!(path.display().to_string());
-    }
-    value
-}
-
-fn run_auth_status(options: &Options) -> Result<(), CliError> {
-    let runtime_env = RuntimeEnv::current();
-    let path = auth_file_path(options);
-    let resolved = resolve_endpoint_env(options, AuthRequirement::BearerToken, &runtime_env);
-
-    if options.json {
-        match resolved {
-            Ok(endpoint) => {
-                print_json(serde_json::json!({
-                    "configured": true,
-                    "endpoint": endpoint.endpoint.base_url(),
-                    "base_url_source": endpoint.base_url_source,
-                    "auth_source": endpoint.auth_source,
-                    "auth_file": endpoint.auth_file.as_ref().map(|path| path.display().to_string()),
-                    "resolved_auth_file": path.display().to_string()
-                }))?;
-            }
-            Err(CliError::MissingAuth(_)) | Err(CliError::MissingToken) => {
-                print_json(serde_json::json!({
-                    "configured": false,
-                    "auth_file": path.display().to_string()
-                }))?;
-            }
-            Err(error) => return Err(error),
-        }
-        return Ok(());
-    }
-
-    println!("auth file: {}", path.display());
-    match resolved {
-        Ok(endpoint) => {
-            println!("configured: yes");
-            println!("endpoint: {}", endpoint.endpoint.base_url());
-            println!("base url source: {}", endpoint.base_url_source);
-            println!("auth source: {}", endpoint.auth_source);
-        }
-        Err(CliError::MissingAuth(_)) | Err(CliError::MissingToken) => {
-            println!("configured: no");
-        }
-        Err(error) => return Err(error),
-    }
-    Ok(())
-}
-
-fn run_auth_clear(options: &Options) -> Result<(), CliError> {
-    let path = auth_file_path(options);
-    let removed = remove_auth_file(options)?;
-    if options.json {
-        print_json(serde_json::json!({
-            "removed": removed.is_some(),
-            "auth_file": path.display().to_string()
-        }))?;
-        return Ok(());
-    }
-    match removed {
-        Some(path) => println!("removed: {}", path.display()),
-        None => println!("not found: {}", path.display()),
-    }
-    Ok(())
-}
-
-fn print_json(value: Value) -> Result<(), CliError> {
+pub(crate) fn print_json(value: Value) -> Result<(), CliError> {
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
