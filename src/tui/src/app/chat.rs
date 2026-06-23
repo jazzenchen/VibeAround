@@ -50,8 +50,11 @@ impl TuiApp {
                 self.chat_messages.clear();
                 self.follow_chat_tail();
             }
+            "/new" => self.prepare_new_chat_session(),
             "/back" => self.go_back(),
-            "/stop" => self.send_chat_command(ChatClientMessage::stop(), chat_tx),
+            "/stop" => {
+                self.send_chat_command(ChatClientMessage::stop(), chat_tx);
+            }
             "/allow" => {
                 if let Some(option_id) = parts.next() {
                     if let Some(request_id) = self.chat_state.pending_permission_request_id.clone()
@@ -79,7 +82,9 @@ impl TuiApp {
             }
             unknown => self.chat_messages.push(ChatMessage {
                 role: ChatRole::Notice,
-                text: format!("Unknown command {unknown}. Try /status, /agent, /help, /clear."),
+                text: format!(
+                    "Unknown command {unknown}. Try /new, /status, /agent, /help, /clear."
+                ),
             }),
         }
     }
@@ -87,7 +92,7 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "/status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat".into(),
+            text: "/new next message starts a new session  /status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat".into(),
         });
     }
 
@@ -103,28 +108,56 @@ impl TuiApp {
         text: String,
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
     ) {
+        let force_new_session = self.force_new_session;
         let message = ChatClientMessage::Message {
             text,
             message_id: None,
             agent: self.effective_agent().map(str::to_string),
             profile_id: self.effective_profile().map(str::to_string),
-            session_action: self.effective_session().map(|_| ChatSessionAction::Resume),
-            session_id: self.effective_session().map(str::to_string),
+            session_action: if force_new_session {
+                Some(ChatSessionAction::New)
+            } else {
+                self.effective_session().map(|_| ChatSessionAction::Resume)
+            },
+            session_id: if force_new_session {
+                None
+            } else {
+                self.effective_session().map(str::to_string)
+            },
             session_workspace: self.effective_workspace().map(str::to_string),
             permission_mode: None,
             attachments: Vec::new(),
         };
-        self.send_chat_command(message, chat_tx);
+        if self.send_chat_command(message, chat_tx) && force_new_session {
+            self.force_new_session = false;
+        }
     }
 
     fn send_chat_command(
         &mut self,
         message: ChatClientMessage,
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
-    ) {
+    ) -> bool {
         if chat_tx.send(message).is_err() {
             self.last_error = Some("chat websocket task is not running".into());
+            return false;
         }
+        true
+    }
+
+    fn prepare_new_chat_session(&mut self) {
+        if self.chat_state.turn_active {
+            self.push_notice("Stop or wait for the current turn before starting a new session.");
+            return;
+        }
+        self.force_new_session = true;
+        self.selected_session = None;
+        self.chat_state.session_id = None;
+        self.work_status = None;
+        self.last_error = None;
+        self.last_action = Some("next message starts a new session".into());
+        self.push_notice("Next message will start a new session.");
+        self.follow_chat_tail();
     }
 
     pub(crate) fn apply_chat_socket_event(&mut self, event: ChatSocketEvent) {

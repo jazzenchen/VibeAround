@@ -204,6 +204,8 @@ pub(crate) fn view_hint(app: &TuiApp) -> String {
                     "scrollback {} lines; Down/PageDown returns to latest",
                     app.chat_scroll
                 )
+            } else if app.force_new_session {
+                "next message starts a new session".to_string()
             } else {
                 "type a message or slash command".to_string()
             }
@@ -225,6 +227,8 @@ fn view_command_spans(view: AppView) -> Vec<Span<'static>> {
         AppView::Chat => vec![
             key_span("Enter"),
             Span::raw(" send  "),
+            key_span("/new"),
+            Span::raw("  "),
             key_span("/status"),
             Span::raw("  "),
             key_span("/agent"),

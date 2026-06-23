@@ -414,6 +414,63 @@ fn chat_message_send_uses_effective_launcher_context() {
     );
 }
 
+#[tokio::test]
+async fn slash_new_prepares_next_message_for_new_session() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("default-profile".into());
+    app.selected_workspace = Some("/tmp/work".into());
+    app.selected_session = Some("session-1".into());
+    app.chat_state.session_id = Some("session-1".into());
+    app.chat_input = "/new".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert!(rx.try_recv().is_err());
+    assert_eq!(app.selected_session, None);
+    assert_eq!(app.chat_state.session_id, None);
+    assert!(app.force_new_session);
+    assert_eq!(render::view_hint(&app), "next message starts a new session");
+
+    app.send_chat_message("hello".into(), &tx);
+
+    assert_eq!(
+        rx.try_recv().expect("message"),
+        ChatClientMessage::Message {
+            text: "hello".into(),
+            message_id: None,
+            agent: Some("codex".into()),
+            profile_id: Some("default-profile".into()),
+            session_action: Some(ChatSessionAction::New),
+            session_id: None,
+            session_workspace: Some("/tmp/work".into()),
+            permission_mode: None,
+            attachments: Vec::new(),
+        }
+    );
+    assert!(!app.force_new_session);
+}
+
+#[test]
+fn new_session_intent_survives_failed_send() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.force_new_session = true;
+    let (tx, rx) = mpsc::unbounded_channel();
+    drop(rx);
+
+    app.send_chat_message("hello".into(), &tx);
+
+    assert!(app.force_new_session);
+    assert_eq!(
+        app.last_error.as_deref(),
+        Some("chat websocket task is not running")
+    );
+}
+
 #[test]
 fn agent_picker_context_changes_clear_stale_session_context() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
