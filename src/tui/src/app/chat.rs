@@ -327,7 +327,7 @@ impl TuiApp {
         let force_new_session = self.force_new_session;
         let message = ChatClientMessage::Message {
             text,
-            message_id: None,
+            message_id: Some(uuid::Uuid::new_v4().to_string()),
             agent: self.effective_agent().map(str::to_string),
             profile_id: self.effective_profile().map(str::to_string),
             session_action: if force_new_session {

@@ -149,6 +149,22 @@ fn launcher_preferences(
     }
 }
 
+fn expect_message_id(message: &ChatClientMessage) -> String {
+    match message {
+        ChatClientMessage::Message {
+            message_id: Some(message_id),
+            ..
+        } => {
+            assert!(!message_id.is_empty());
+            message_id.clone()
+        }
+        ChatClientMessage::Message {
+            message_id: None, ..
+        } => panic!("expected outgoing chat message id"),
+        _ => panic!("expected outgoing chat message"),
+    }
+}
+
 #[test]
 fn selects_active_panel_items_with_wrapping_and_clamping() {
     let mut selection = StatusSelection::default();
@@ -641,11 +657,13 @@ fn chat_message_send_uses_selected_context() {
 
     app.send_chat_message("hello".into(), &tx);
 
+    let message = rx.try_recv().expect("message");
+    let message_id = expect_message_id(&message);
     assert_eq!(
-        rx.try_recv().expect("message"),
+        message,
         ChatClientMessage::Message {
             text: "hello".into(),
-            message_id: None,
+            message_id: Some(message_id),
             agent: Some("codex".into()),
             profile_id: Some("default-profile".into()),
             session_action: Some(ChatSessionAction::Resume),
@@ -655,6 +673,20 @@ fn chat_message_send_uses_selected_context() {
             attachments: Vec::new(),
         }
     );
+}
+
+#[test]
+fn chat_message_send_assigns_unique_message_ids() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.send_chat_message("first".into(), &tx);
+    app.send_chat_message("second".into(), &tx);
+
+    let first_id = expect_message_id(&rx.try_recv().expect("first message"));
+    let second_id = expect_message_id(&rx.try_recv().expect("second message"));
+    assert_ne!(first_id, second_id);
 }
 
 #[test]
@@ -670,11 +702,13 @@ fn chat_message_send_uses_effective_launcher_context() {
 
     app.send_chat_message("hello".into(), &tx);
 
+    let message = rx.try_recv().expect("message");
+    let message_id = expect_message_id(&message);
     assert_eq!(
-        rx.try_recv().expect("message"),
+        message,
         ChatClientMessage::Message {
             text: "hello".into(),
-            message_id: None,
+            message_id: Some(message_id),
             agent: Some("codex".into()),
             profile_id: Some("codex-profile".into()),
             session_action: None,
@@ -709,11 +743,13 @@ async fn slash_new_prepares_next_message_for_new_session() {
 
     app.send_chat_message("hello".into(), &tx);
 
+    let message = rx.try_recv().expect("message");
+    let message_id = expect_message_id(&message);
     assert_eq!(
-        rx.try_recv().expect("message"),
+        message,
         ChatClientMessage::Message {
             text: "hello".into(),
-            message_id: None,
+            message_id: Some(message_id),
             agent: Some("codex".into()),
             profile_id: Some("default-profile".into()),
             session_action: Some(ChatSessionAction::New),
@@ -737,11 +773,13 @@ async fn unknown_slash_command_is_forwarded_to_agent() {
 
     app.submit_chat_input(&transport, &tx).await;
 
+    let message = rx.try_recv().expect("forwarded slash command");
+    let message_id = expect_message_id(&message);
     assert_eq!(
-        rx.try_recv().expect("forwarded slash command"),
+        message,
         ChatClientMessage::Message {
             text: "/review current changes".into(),
-            message_id: None,
+            message_id: Some(message_id),
             agent: Some("codex".into()),
             profile_id: None,
             session_action: None,
@@ -768,11 +806,13 @@ async fn submit_chat_input_sends_multiline_prompt() {
 
     app.submit_chat_input(&transport, &tx).await;
 
+    let message = rx.try_recv().expect("message");
+    let message_id = expect_message_id(&message);
     assert_eq!(
-        rx.try_recv().expect("message"),
+        message,
         ChatClientMessage::Message {
             text: " first line\nsecond line\n".into(),
-            message_id: None,
+            message_id: Some(message_id),
             agent: None,
             profile_id: None,
             session_action: None,
@@ -1217,11 +1257,13 @@ fn session_ready_updates_chat_context_for_followup_messages() {
 
     app.send_chat_message("continue".into(), &tx);
 
+    let message = rx.try_recv().expect("message");
+    let message_id = expect_message_id(&message);
     assert_eq!(
-        rx.try_recv().expect("message"),
+        message,
         ChatClientMessage::Message {
             text: "continue".into(),
-            message_id: None,
+            message_id: Some(message_id),
             agent: Some("codex".into()),
             profile_id: None,
             session_action: Some(ChatSessionAction::Resume),
