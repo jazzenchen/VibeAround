@@ -431,6 +431,10 @@ fn chat_arrows_scroll_transcript() {
     app.select_up();
     app.select_up();
     assert_eq!(app.chat_scroll, 2);
+    assert_eq!(
+        render::view_hint(&app),
+        "scrollback 2 lines; Down/PageDown moves toward latest"
+    );
     app.select_down();
     assert_eq!(app.chat_scroll, 1);
     app.follow_chat_tail();

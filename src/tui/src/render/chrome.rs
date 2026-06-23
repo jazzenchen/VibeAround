@@ -210,7 +210,7 @@ pub(crate) fn view_hint(app: &TuiApp) -> String {
                     .unwrap_or_else(|| "agent is working; /stop to interrupt".to_string())
             } else if app.chat_scroll > 0 {
                 format!(
-                    "scrollback {} lines; Down/PageDown returns to latest",
+                    "scrollback {} lines; Down/PageDown moves toward latest",
                     app.chat_scroll
                 )
             } else if app.force_new_session {
