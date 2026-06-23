@@ -9,7 +9,7 @@ use va_client::sessions::SessionListItem;
 use crate::app::{AppView, TuiApp};
 use crate::chat::{chat_message_lines_for_messages, input_box_height, visible_chat_lines};
 use crate::selection::{AgentPanel, RuntimePanel};
-use crate::theme::{muted_style, BRAND, WARN};
+use crate::theme::{muted_style, BRAND};
 
 mod brand;
 mod chrome;
@@ -332,7 +332,10 @@ fn selectable_list(
     selected: Option<usize>,
     active: bool,
 ) -> List<'static> {
-    let mut items = Vec::new();
+    let mut items = vec![
+        ListItem::new(section_heading(title, active)),
+        ListItem::new(Line::raw("")),
+    ];
     if rows.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled(
             "  no runtime entries",
@@ -342,7 +345,7 @@ fn selectable_list(
         items.extend(rows.into_iter().enumerate().map(|(index, row)| {
             let marker = if Some(index) == selected { "> " } else { "  " };
             let marker_style = if active {
-                Style::default().fg(WARN)
+                Style::default().fg(BRAND)
             } else {
                 muted_style()
             };
@@ -356,12 +359,7 @@ fn selectable_list(
             }
         }))
     };
-    let block = if active {
-        focus_block(title)
-    } else {
-        quiet_block(title)
-    };
-    List::new(items).block(block)
+    List::new(items).block(panel_block(active))
 }
 
 fn section_heading(title: &str, active: bool) -> Line<'static> {
@@ -385,12 +383,14 @@ fn focus_block(title: &str) -> Block<'static> {
         .title(format!(" {title} "))
 }
 
-fn quiet_block(title: &str) -> Block<'static> {
-    Block::default()
-        .borders(Borders::TOP)
-        .border_style(muted_style())
-        .title_style(muted_style().add_modifier(Modifier::BOLD))
-        .title(format!(" {title} "))
+fn panel_block(active: bool) -> Block<'static> {
+    if active {
+        Block::default()
+            .borders(Borders::LEFT)
+            .border_style(Style::default().fg(BRAND))
+    } else {
+        Block::default()
+    }
 }
 
 fn input_block() -> Block<'static> {

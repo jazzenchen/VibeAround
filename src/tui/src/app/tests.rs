@@ -5,6 +5,8 @@ use crate::config::DEFAULT_BASE_URL;
 use crate::render;
 use crate::runtime_socket::RuntimeSocketEvent;
 use crate::selection::{AgentPanel, RuntimePanel};
+use ratatui::backend::TestBackend;
+use ratatui::Terminal;
 use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
@@ -245,6 +247,37 @@ fn enter_status_item_opens_detail_and_escape_returns() {
 
     app.go_back();
     assert_eq!(app.view, AppView::Status);
+}
+
+#[test]
+fn status_render_uses_light_panel_boundaries() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.view = AppView::Status;
+    app.snapshot.channels = vec![channel("feishu")];
+    app.snapshot.tunnels = vec![tunnel("cloudflare")];
+    app.snapshot.agents = vec![runtime_agent("tui:chat-1")];
+    app.snapshot.sessions = vec![session("session-1", "/tmp/session", "profile-1")];
+    app.status_selection.clamp(&app.snapshot);
+
+    let backend = TestBackend::new(100, 32);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| render::render(frame, &app))
+        .expect("draw");
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(screen.contains("channels"));
+    assert!(screen.contains("feishu"));
+    assert!(screen.contains('│'));
+    assert!(!screen.contains('─'));
 }
 
 #[test]

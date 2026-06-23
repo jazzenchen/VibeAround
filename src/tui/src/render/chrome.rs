@@ -1,5 +1,5 @@
 use ratatui::layout::Alignment;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -89,17 +89,13 @@ fn status_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
 
     let mut spans = service_spans;
     spans.push(separator());
-    spans.extend(metric_spans("channels", app.snapshot.channels.len(), BRAND));
+    spans.extend(metric_spans("channels", app.snapshot.channels.len()));
     spans.push(Span::raw("  "));
-    spans.extend(metric_spans(
-        "tunnels",
-        app.snapshot.tunnels.len(),
-        Color::Magenta,
-    ));
+    spans.extend(metric_spans("tunnels", app.snapshot.tunnels.len()));
     spans.push(Span::raw("  "));
-    spans.extend(metric_spans("agents", app.snapshot.agents.len(), OK));
+    spans.extend(metric_spans("agents", app.snapshot.agents.len()));
     spans.push(Span::raw("  "));
-    spans.extend(metric_spans("sessions", app.snapshot.sessions.len(), WARN));
+    spans.extend(metric_spans("sessions", app.snapshot.sessions.len()));
     spans
 }
 
@@ -145,13 +141,13 @@ fn separator() -> Span<'static> {
     Span::styled("   |   ", muted_style())
 }
 
-fn metric_spans(label: &'static str, value: usize, color: Color) -> Vec<Span<'static>> {
+fn metric_spans(label: &'static str, value: usize) -> Vec<Span<'static>> {
     vec![
         Span::styled(label, muted_style()),
         Span::raw(" "),
         Span::styled(
             value.to_string(),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
+            Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
         ),
     ]
 }
@@ -258,6 +254,6 @@ fn view_command_spans(view: AppView) -> Vec<Span<'static>> {
 fn key_span(value: &'static str) -> Span<'static> {
     Span::styled(
         value,
-        Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
     )
 }
