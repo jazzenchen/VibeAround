@@ -1089,6 +1089,28 @@ fn chat_event_appends_raw_agent_chunks() {
 }
 
 #[test]
+fn system_text_starts_a_separate_response_message() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.apply_chat_event(ChatEvent::SystemText {
+        text: "first answer".into(),
+    });
+    app.apply_chat_event(ChatEvent::SystemText {
+        text: "second answer".into(),
+    });
+
+    let responses = app
+        .chat_messages
+        .iter()
+        .filter(|message| message.role == ChatRole::Response)
+        .map(|message| message.text.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(responses, vec!["first answer", "second answer"]);
+}
+
+#[test]
 fn tool_updates_change_work_status_without_polluting_transcript() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);

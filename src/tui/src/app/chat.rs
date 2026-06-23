@@ -349,7 +349,7 @@ impl TuiApp {
                 self.force_new_session = false;
             }
             ChatEvent::SystemText { text } => {
-                self.append_response_text(text);
+                self.push_response_text(text);
             }
             ChatEvent::PermissionRequest {
                 request_id,
@@ -391,7 +391,7 @@ impl TuiApp {
         match update.get("sessionUpdate").and_then(Value::as_str) {
             Some("agent_message_chunk") => {
                 if let Some(text) = content_text(update.get("content")) {
-                    self.append_response_text(text);
+                    self.append_stream_response_text(text);
                 }
             }
             Some("user_message_chunk") => {
@@ -414,7 +414,7 @@ impl TuiApp {
         }
     }
 
-    fn append_response_text(&mut self, text: &str) {
+    fn append_stream_response_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
@@ -423,6 +423,16 @@ impl TuiApp {
                 message.text.push_str(text);
                 return;
             }
+        }
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::Response,
+            text: text.to_string(),
+        });
+    }
+
+    fn push_response_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
         }
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Response,
