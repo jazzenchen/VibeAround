@@ -6,15 +6,17 @@ use tokio_tungstenite::tungstenite::Message;
 use va_client::endpoint::ServerEndpoint;
 use va_client::events::{
     agents_runtime_ws, channels_ws, decode_agents_runtime_event, decode_channels_event,
-    decode_tunnels_event, tunnels_ws, WebSocketSpec,
+    decode_sessions_event, decode_tunnels_event, sessions_ws, tunnels_ws, WebSocketSpec,
 };
 use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
+use va_client::sessions::SessionListItem;
 
 #[derive(Debug)]
 pub(crate) enum RuntimeSocketEvent {
     Channels(Vec<ChannelRuntime>),
     Tunnels(Vec<TunnelRuntime>),
     Agents(Vec<AgentRuntime>),
+    Sessions(Vec<SessionListItem>),
     Error(String),
 }
 
@@ -25,7 +27,8 @@ pub(crate) async fn run_runtime_sockets(
     let tasks = [
         tokio::spawn(run_channels_socket(endpoint.clone(), incoming.clone())),
         tokio::spawn(run_tunnels_socket(endpoint.clone(), incoming.clone())),
-        tokio::spawn(run_agents_socket(endpoint, incoming)),
+        tokio::spawn(run_agents_socket(endpoint.clone(), incoming.clone())),
+        tokio::spawn(run_sessions_socket(endpoint, incoming)),
     ];
     for task in tasks {
         let _ = task.await;
@@ -58,6 +61,16 @@ async fn run_agents_socket(
 ) {
     run_snapshot_socket(endpoint, agents_runtime_ws(), incoming, |value| {
         decode_agents_runtime_event(value).map(RuntimeSocketEvent::Agents)
+    })
+    .await;
+}
+
+async fn run_sessions_socket(
+    endpoint: ServerEndpoint,
+    incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
+) {
+    run_snapshot_socket(endpoint, sessions_ws(), incoming, |value| {
+        decode_sessions_event(value).map(RuntimeSocketEvent::Sessions)
     })
     .await;
 }

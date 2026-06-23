@@ -19,6 +19,7 @@ use super::session::{
 
 pub struct PtySessionManager {
     registry: Registry,
+    changes_tx: broadcast::Sender<()>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,17 +56,31 @@ pub struct PtyAttachHandles {
 
 impl PtySessionManager {
     pub fn new() -> Self {
+        let (changes_tx, _) = broadcast::channel(128);
         Self {
             registry: Arc::new(dashmap::DashMap::new()),
+            changes_tx,
         }
     }
 
     pub fn from_registry(registry: Registry) -> Self {
-        Self { registry }
+        let (changes_tx, _) = broadcast::channel(128);
+        Self {
+            registry,
+            changes_tx,
+        }
     }
 
     pub fn registry(&self) -> Registry {
         Arc::clone(&self.registry)
+    }
+
+    pub fn subscribe_changes(&self) -> broadcast::Receiver<()> {
+        self.changes_tx.subscribe()
+    }
+
+    fn notify_changed(&self) {
+        let _ = self.changes_tx.send(());
     }
 
     pub fn list_sessions(&self) -> Vec<PtySessionSummary> {
@@ -130,6 +145,7 @@ impl PtySessionManager {
             live_tx: live_tx.clone(),
         };
         self.registry.insert(session_id, ctx);
+        self.notify_changed();
 
         let buf_clone = Arc::clone(&buffer);
         let tx_clone = live_tx.clone();
@@ -141,11 +157,13 @@ impl PtySessionManager {
         });
 
         let rs = Arc::clone(&run_state);
+        let changes_tx = self.changes_tx.clone();
         tokio::spawn(async move {
             while let Some(new_state) = state_rx.recv().await {
                 if let Ok(mut g) = rs.write() {
                     *g = new_state;
                 }
+                let _ = changes_tx.send(());
             }
         });
 
@@ -236,6 +254,7 @@ impl PtySessionManager {
     pub fn delete_session(&self, session_id: SessionId) -> bool {
         if let Some((_, ctx)) = self.registry.remove(&session_id) {
             let _ = ctx.bridge.kill();
+            self.notify_changed();
             true
         } else {
             false

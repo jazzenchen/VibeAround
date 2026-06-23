@@ -24,6 +24,12 @@ impl TuiApp {
                 self.last_error = None;
                 self.last_refresh = Some(Instant::now());
             }
+            RuntimeSocketEvent::Sessions(sessions) => {
+                self.snapshot.sessions = sessions;
+                self.status_selection.clamp(&self.snapshot);
+                self.last_error = None;
+                self.last_refresh = Some(Instant::now());
+            }
             RuntimeSocketEvent::Error(error) => {
                 self.last_error = Some(error);
             }

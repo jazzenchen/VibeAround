@@ -219,6 +219,13 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
     )]));
     assert_eq!(app.snapshot.agents[0].route_key, "tui:chat-2");
 
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Sessions(vec![session(
+        "session-1",
+        "/tmp/session",
+        "session-profile",
+    )]));
+    assert_eq!(app.snapshot.sessions[0].session_id, "session-1");
+
     app.apply_runtime_socket_event(RuntimeSocketEvent::Error("runtime socket closed".into()));
     assert_eq!(app.last_error.as_deref(), Some("runtime socket closed"));
 }
