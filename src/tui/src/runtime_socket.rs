@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use futures_util::StreamExt;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -10,6 +12,8 @@ use va_client::events::{
 };
 use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
 use va_client::sessions::SessionListItem;
+
+const RUNTIME_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub(crate) enum RuntimeSocketEvent {
@@ -83,43 +87,97 @@ async fn run_snapshot_socket(
 ) {
     let label = socket.path.clone();
     let url = endpoint.websocket_url(&socket);
-    let (mut ws, _) = match connect_async(&url).await {
-        Ok(connection) => connection,
-        Err(error) => {
-            let _ = incoming.send(RuntimeSocketEvent::Error(format!(
-                "failed to connect {label}: {error}"
-            )));
-            return;
-        }
-    };
+    let mut failed_attempts = 0;
 
-    while let Some(frame) = ws.next().await {
-        match frame {
-            Ok(Message::Text(text)) => match serde_json::from_str::<Value>(&text) {
-                Ok(value) => match decode(value) {
-                    Ok(event) => {
-                        let _ = incoming.send(event);
-                    }
+    loop {
+        let (mut ws, _) = match connect_async(&url).await {
+            Ok(connection) => {
+                failed_attempts = 0;
+                connection
+            }
+            Err(error) => {
+                failed_attempts += 1;
+                if incoming
+                    .send(RuntimeSocketEvent::Error(format!(
+                        "failed to connect {label}: {error}"
+                    )))
+                    .is_err()
+                {
+                    return;
+                }
+                tokio::time::sleep(runtime_reconnect_delay(failed_attempts)).await;
+                continue;
+            }
+        };
+
+        while let Some(frame) = ws.next().await {
+            match frame {
+                Ok(Message::Text(text)) => match serde_json::from_str::<Value>(&text) {
+                    Ok(value) => match decode(value) {
+                        Ok(event) => {
+                            if incoming.send(event).is_err() {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            if incoming
+                                .send(RuntimeSocketEvent::Error(format!(
+                                    "failed to decode {label}: {error}"
+                                )))
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    },
                     Err(error) => {
-                        let _ = incoming.send(RuntimeSocketEvent::Error(format!(
-                            "failed to decode {label}: {error}"
-                        )));
+                        if incoming
+                            .send(RuntimeSocketEvent::Error(format!(
+                                "failed to parse {label}: {error}"
+                            )))
+                            .is_err()
+                        {
+                            return;
+                        }
                     }
                 },
+                Ok(Message::Close(_)) => break,
+                Ok(_) => {}
                 Err(error) => {
-                    let _ = incoming.send(RuntimeSocketEvent::Error(format!(
-                        "failed to parse {label}: {error}"
-                    )));
+                    if incoming
+                        .send(RuntimeSocketEvent::Error(format!(
+                            "{label} websocket read failed: {error}"
+                        )))
+                        .is_err()
+                    {
+                        return;
+                    }
+                    break;
                 }
-            },
-            Ok(Message::Close(_)) => break,
-            Ok(_) => {}
-            Err(error) => {
-                let _ = incoming.send(RuntimeSocketEvent::Error(format!(
-                    "{label} websocket read failed: {error}"
-                )));
-                break;
             }
         }
+
+        failed_attempts += 1;
+        tokio::time::sleep(runtime_reconnect_delay(failed_attempts)).await;
+    }
+}
+
+fn runtime_reconnect_delay(failed_attempts: u32) -> Duration {
+    let multiplier = 1_u64 << failed_attempts.saturating_sub(1).min(3);
+    Duration::from_secs(multiplier).min(RUNTIME_RECONNECT_MAX_DELAY)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_reconnect_delay_backs_off_and_caps() {
+        assert_eq!(runtime_reconnect_delay(0), Duration::from_secs(1));
+        assert_eq!(runtime_reconnect_delay(1), Duration::from_secs(1));
+        assert_eq!(runtime_reconnect_delay(2), Duration::from_secs(2));
+        assert_eq!(runtime_reconnect_delay(3), Duration::from_secs(4));
+        assert_eq!(runtime_reconnect_delay(4), RUNTIME_RECONNECT_MAX_DELAY);
+        assert_eq!(runtime_reconnect_delay(20), RUNTIME_RECONNECT_MAX_DELAY);
     }
 }
