@@ -490,6 +490,7 @@ async fn run_session_create(options: &Options, create: &SessionCreateArgs) -> Re
         tool: create.tool,
         profile_id: create.profile_id.as_deref(),
         launch_target: create.launch_target.as_deref(),
+        resume_session_id: create.resume_session_id.as_deref(),
         project_path: create.project_path.as_deref(),
         tmux_session: create.tmux_session.as_deref(),
         theme: create.theme.as_deref(),

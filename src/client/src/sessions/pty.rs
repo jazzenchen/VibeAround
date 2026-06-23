@@ -54,6 +54,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::sessions::PtyTool;
 
     #[test]
     fn create_profile_session_body_matches_server_shape() {
@@ -73,11 +74,38 @@ mod tests {
                 "tool": null,
                 "profile_id": "p1",
                 "launch_target": "claude",
+                "resume_session_id": null,
                 "project_path": null,
                 "tmux_session": null,
                 "theme": null,
                 "cols": 120,
                 "rows": 40
+            }))
+        );
+    }
+
+    #[test]
+    fn create_resume_session_body_matches_server_shape() {
+        let request = create(CreateSessionBody {
+            tool: Some(PtyTool::Codex),
+            resume_session_id: Some("resume-1"),
+            project_path: Some("/tmp/project"),
+            ..Default::default()
+        })
+        .expect("request");
+
+        assert_eq!(
+            request.body,
+            Some(json!({
+                "tool": "codex",
+                "profile_id": null,
+                "launch_target": null,
+                "resume_session_id": "resume-1",
+                "project_path": "/tmp/project",
+                "tmux_session": null,
+                "theme": null,
+                "cols": null,
+                "rows": null
             }))
         );
     }

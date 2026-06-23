@@ -190,18 +190,43 @@ impl PtySessionManager {
         theme: Option<String>,
         initial_size: Option<(u16, u16)>,
     ) -> anyhow::Result<PtySessionCreated> {
+        self.create_command_session(
+            tool,
+            command,
+            env,
+            Some(profile_id),
+            Some(profile_label),
+            Some(launch_target),
+            project_path,
+            theme,
+            initial_size,
+        )
+    }
+
+    pub fn create_command_session(
+        &self,
+        tool: PtyTool,
+        command: String,
+        env: Vec<(String, String)>,
+        profile_id: Option<String>,
+        profile_label: Option<String>,
+        launch_target: Option<String>,
+        project_path: Option<String>,
+        theme: Option<String>,
+        initial_size: Option<(u16, u16)>,
+    ) -> anyhow::Result<PtySessionCreated> {
         let cwd = project_path.as_ref().map(std::path::PathBuf::from);
         let (bridge, pty_rx, resize_tx, state_rx) =
             spawn_pty_with_command(tool, cwd, None, theme, initial_size, Some(command), env)
-                .context("Failed to spawn profile PTY")?;
+                .context("Failed to spawn command PTY")?;
 
         let metadata = SessionMetadata {
             created_at: unix_now_secs(),
             project_path: project_path.clone(),
             tool,
-            profile_id: Some(profile_id),
-            profile_label: Some(profile_label),
-            launch_target: Some(launch_target),
+            profile_id,
+            profile_label,
+            launch_target,
             tmux_session: None,
         };
 

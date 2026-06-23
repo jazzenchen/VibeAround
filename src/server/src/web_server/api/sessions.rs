@@ -29,6 +29,7 @@ pub(crate) struct CreateSessionBody {
     tool: Option<PtyTool>,
     profile_id: Option<String>,
     launch_target: Option<String>,
+    resume_session_id: Option<String>,
     project_path: Option<String>,
     tmux_session: Option<String>,
     theme: Option<String>,
@@ -247,6 +248,10 @@ pub async fn create_session_handler(
         _ => None,
     };
 
+    if body.resume_session_id.is_some() {
+        return create_resume_session(state, body, initial_size).map(Json);
+    }
+
     let created = match (body.profile_id.as_deref(), body.launch_target.as_deref()) {
         (Some(profile_id), Some(launch_target)) => {
             if body.tool.is_some() {
@@ -374,6 +379,101 @@ pub async fn create_session_handler(
         profile_label: created.profile_label,
         launch_target: created.launch_target,
     }))
+}
+
+fn create_resume_session(
+    state: AppState,
+    body: CreateSessionBody,
+    initial_size: Option<(u16, u16)>,
+) -> Result<crate::api_types::CreateSessionResponse, (StatusCode, String)> {
+    if body.tmux_session.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "resume sessions cannot attach tmux".to_string(),
+        ));
+    }
+    let resume_session_id = body.resume_session_id.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "resume_session_id is required".to_string(),
+        )
+    })?;
+    let agent_id = match (body.profile_id.as_deref(), body.launch_target.as_deref()) {
+        (Some(_), Some(_)) => {
+            if body.tool.is_some() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "profile resume sessions cannot also specify tool".to_string(),
+                ));
+            }
+            None
+        }
+        (None, None) => {
+            let tool = body.tool.ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "missing tool for direct resume session".to_string(),
+                )
+            })?;
+            let agent_id = tool.agent_id().ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "resume sessions require a coding-agent tool".to_string(),
+                )
+            })?;
+            Some(agent_id.to_string())
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "profile_id and launch_target must be provided together".to_string(),
+            ));
+        }
+    };
+
+    let plan = super::launcher::build_launch_plan(super::launcher::LaunchPlanBody {
+        agent_id,
+        profile_id: body.profile_id.clone(),
+        launch_target: body.launch_target.clone(),
+        session_id: Some(resume_session_id),
+    })?;
+    let pty_tool = PtyTool::from_agent_id(&plan.agent_id).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("agent '{}' cannot be launched in a PTY", plan.agent_id),
+        )
+    })?;
+    let command = command_with_args(&plan.command, &plan.args);
+    let env = plan
+        .env
+        .into_iter()
+        .map(|item| (item.key, item.value))
+        .collect::<Vec<_>>();
+    let project_path = body.project_path.clone().or(Some(plan.cwd));
+    let created = state
+        .pty_manager
+        .create_command_session(
+            pty_tool,
+            command,
+            env,
+            plan.profile_id.clone(),
+            Some(plan.display.title),
+            Some(plan.launch_target.clone()),
+            project_path,
+            body.theme.clone(),
+            initial_size,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(crate::api_types::CreateSessionResponse {
+        session_id: created.session_id,
+        tool: created.tool,
+        created_at: created.created_at,
+        project_path: created.project_path,
+        profile_id: created.profile_id,
+        profile_label: created.profile_label,
+        launch_target: created.launch_target,
+    })
 }
 
 /// DELETE /api/sessions/:session_id -- kill and remove a session.

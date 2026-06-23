@@ -70,6 +70,7 @@ pub struct CreateSessionBody<'a> {
     pub tool: Option<PtyTool>,
     pub profile_id: Option<&'a str>,
     pub launch_target: Option<&'a str>,
+    pub resume_session_id: Option<&'a str>,
     pub project_path: Option<&'a str>,
     pub tmux_session: Option<&'a str>,
     pub theme: Option<&'a str>,

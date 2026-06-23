@@ -59,7 +59,9 @@ va launch archive --agent codex SESSION_ID
 va launch unarchive --agent codex SESSION_ID
 va session create --tool codex --project /path/to/project
 va session create --tool codex --project /path/to/project --attach
+va session create --tool codex --resume SESSION_ID --attach
 va session create --profile my-profile --target claude --project /path/to/project
+va session create --profile my-profile --target claude --resume SESSION_ID --attach
 va session create --tmux existing-tmux-session
 va session attach SESSION_ID
 va tmux sessions

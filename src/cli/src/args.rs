@@ -61,6 +61,7 @@ pub(crate) struct SessionCreateArgs {
     pub(crate) tool: Option<PtyTool>,
     pub(crate) profile_id: Option<String>,
     pub(crate) launch_target: Option<String>,
+    pub(crate) resume_session_id: Option<String>,
     pub(crate) project_path: Option<String>,
     pub(crate) tmux_session: Option<String>,
     pub(crate) theme: Option<String>,
@@ -372,6 +373,9 @@ fn parse_session_create_args(args: &[String]) -> Result<SessionCreateArgs, CliEr
             "--target" | "--launch-target" => {
                 create.launch_target = Some(next_ref(&mut args, arg)?.to_string());
             }
+            "--resume" | "--resume-session" | "--resume-session-id" => {
+                create.resume_session_id = Some(next_ref(&mut args, arg)?.to_string());
+            }
             "--project" | "--project-path" | "--cwd" => {
                 create.project_path = Some(next_ref(&mut args, arg)?.to_string());
             }
@@ -397,6 +401,17 @@ fn parse_session_create_args(args: &[String]) -> Result<SessionCreateArgs, CliEr
             value if value.starts_with("--launch-target=") => {
                 create.launch_target =
                     Some(value.trim_start_matches("--launch-target=").to_string());
+            }
+            value if value.starts_with("--resume=") => {
+                create.resume_session_id = Some(value.trim_start_matches("--resume=").to_string());
+            }
+            value if value.starts_with("--resume-session=") => {
+                create.resume_session_id =
+                    Some(value.trim_start_matches("--resume-session=").to_string());
+            }
+            value if value.starts_with("--resume-session-id=") => {
+                create.resume_session_id =
+                    Some(value.trim_start_matches("--resume-session-id=").to_string());
             }
             value if value.starts_with("--project=") => {
                 create.project_path = Some(value.trim_start_matches("--project=").to_string());
@@ -452,6 +467,16 @@ fn parse_session_create_args(args: &[String]) -> Result<SessionCreateArgs, CliEr
     if create.profile_id.is_some() && create.tmux_session.is_some() {
         return Err(CliError::Usage(
             "session create cannot combine --tmux with --profile/--target".into(),
+        ));
+    }
+    if create.resume_session_id.is_some() && create.tmux_session.is_some() {
+        return Err(CliError::Usage(
+            "session create cannot combine --resume with --tmux".into(),
+        ));
+    }
+    if matches!(create.tool, Some(PtyTool::Generic)) && create.resume_session_id.is_some() {
+        return Err(CliError::Usage(
+            "session create --resume requires a coding-agent tool".into(),
         ));
     }
     if create.tmux_session.is_some() {
@@ -590,7 +615,7 @@ fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  launch sessions              List resumable agent launch sessions\n  launch archive --agent A ID  Archive a launch session\n  launch unarchive --agent A ID Unarchive a launch session\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  launch sessions              List resumable agent launch sessions\n  launch archive --agent A ID  Archive a launch session\n  launch unarchive --agent A ID Unarchive a launch session\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create/resume a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -792,6 +817,41 @@ mod tests {
                 ..Default::default()
             }))
         );
+    }
+
+    #[test]
+    fn parses_session_create_with_resume() {
+        let options = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--tool=codex".to_string(),
+            "--resume".to_string(),
+            "resume-1".to_string(),
+            "--attach".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::SessionCreate(SessionCreateArgs {
+                tool: Some(PtyTool::Codex),
+                resume_session_id: Some("resume-1".into()),
+                attach: true,
+                ..Default::default()
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_session_create_resume_with_tmux() {
+        let error = parse_args([
+            "session".to_string(),
+            "create".to_string(),
+            "--resume=resume-1".to_string(),
+            "--tmux=work".to_string(),
+        ])
+        .expect_err("error");
+        assert!(matches!(error, CliError::Usage(_)));
     }
 
     #[test]

@@ -38,6 +38,7 @@ export interface CreateSessionBody {
   tool?: PtyTool;
   profile_id?: string;
   launch_target?: string;
+  resume_session_id?: string;
   project_path?: string;
   tmux_session?: string;
   /** "dark" | "light" — sets COLORFGBG in PTY env as fallback for non-OSC programs. */

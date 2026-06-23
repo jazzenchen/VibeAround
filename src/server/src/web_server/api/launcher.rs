@@ -257,7 +257,7 @@ fn sanitize_agent_launch_args(
     })
 }
 
-fn build_launch_plan(
+pub(crate) fn build_launch_plan(
     body: LaunchPlanBody,
 ) -> Result<crate::api_types::LaunchPlanResponse, (StatusCode, String)> {
     let launch_id = uuid::Uuid::new_v4().to_string();
