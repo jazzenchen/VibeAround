@@ -248,6 +248,41 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
 }
 
 #[test]
+fn status_detail_tracks_runtime_socket_updates() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.view = AppView::Status;
+    app.snapshot.channels = vec![channel("feishu")];
+    app.status_selection.clamp(&app.snapshot);
+
+    app.enter_current_view();
+    assert_eq!(app.view, AppView::StatusDetail);
+    assert!(app
+        .detail
+        .as_ref()
+        .unwrap()
+        .lines
+        .contains(&"version: 0.1.0".to_string()));
+
+    let mut updated = channel("feishu");
+    updated.version = Some("0.2.0".into());
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(vec![updated]));
+
+    assert_eq!(app.view, AppView::StatusDetail);
+    assert!(app
+        .detail
+        .as_ref()
+        .unwrap()
+        .lines
+        .contains(&"version: 0.2.0".to_string()));
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(Vec::new()));
+
+    assert_eq!(app.view, AppView::Status);
+    assert!(app.detail.is_none());
+}
+
+#[test]
 fn pty_session_socket_does_not_mutate_agent_picker_sessions() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
