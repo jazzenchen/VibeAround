@@ -460,6 +460,10 @@ async fn run_launch_session_mutation(
 }
 
 fn print_launch_session(session: LaunchSessionInfo) {
+    println!("{}", launch_session_line(&session));
+}
+
+fn launch_session_line(session: &LaunchSessionInfo) -> String {
     let state = if session.active {
         "active"
     } else if session.archived {
@@ -467,15 +471,17 @@ fn print_launch_session(session: LaunchSessionInfo) {
     } else {
         "available"
     };
-    println!(
-        "{}\t{}\t{}\t{}\t{}\t{}",
+
+    format!(
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
         session.agent_id,
         session.short_id,
+        session.session_id,
         state,
         session.updated_at,
         session.workspace,
         session.title
-    );
+    )
 }
 
 async fn run_session_create(options: &Options, create: &SessionCreateArgs) -> Result<(), CliError> {
@@ -626,5 +632,29 @@ fn pty_tool_name(tool: PtyTool) -> &'static str {
         PtyTool::Cursor => "cursor",
         PtyTool::Kiro => "kiro",
         PtyTool::QwenCode => "qwen-code",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_session_line_includes_full_session_id() {
+        let line = launch_session_line(&LaunchSessionInfo {
+            agent_id: "codex".to_string(),
+            session_id: "full-session-id".to_string(),
+            title: "Fix bug".to_string(),
+            workspace: "/tmp/project".to_string(),
+            updated_at: 42,
+            short_id: "abc123".to_string(),
+            archived: false,
+            active: false,
+        });
+
+        assert_eq!(
+            line,
+            "codex\tabc123\tfull-session-id\tavailable\t42\t/tmp/project\tFix bug"
+        );
     }
 }
