@@ -221,7 +221,12 @@ pub(crate) fn view_hint(app: &TuiApp) -> String {
         }
         AppView::Status => app
             .last_refresh
-            .map(|instant| format!("status loaded {}s ago", instant.elapsed().as_secs()))
+            .map(|instant| {
+                format!(
+                    "runtime stream updated {}s ago",
+                    instant.elapsed().as_secs()
+                )
+            })
             .unwrap_or_else(|| "status view".to_string()),
         AppView::StatusDetail => "detail view".to_string(),
         AppView::Agent => app

@@ -51,19 +51,10 @@ async fn run() -> Result<(), TuiError> {
         print_once(&endpoint, &snapshot);
         return Ok(());
     }
-    run_dashboard(
-        endpoint,
-        transport,
-        Duration::from_millis(args.refresh_ms.max(250)),
-    )
-    .await
+    run_dashboard(endpoint, transport).await
 }
 
-async fn run_dashboard(
-    endpoint: ServerEndpoint,
-    transport: HttpTransport,
-    _refresh: Duration,
-) -> Result<(), TuiError> {
+async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Result<(), TuiError> {
     let (mut terminal, _guard) = enter_terminal()?;
     let mut app = TuiApp::new(&endpoint);
     let (chat_tx, chat_rx) = mpsc::unbounded_channel::<ChatClientMessage>();

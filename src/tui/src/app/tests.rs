@@ -226,6 +226,7 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
     assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(0));
     assert_eq!(app.last_error, None);
     assert!(app.last_refresh.is_some());
+    assert!(render::view_hint(&app).starts_with("runtime stream updated "));
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Tunnels(vec![tunnel("ngrok")]));
     assert_eq!(app.snapshot.tunnels[0].provider, "ngrok");

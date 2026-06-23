@@ -18,8 +18,6 @@ pub(crate) struct Args {
     pub(crate) base_url: Option<String>,
     #[arg(long)]
     pub(crate) token: Option<String>,
-    #[arg(long, default_value_t = 2000)]
-    pub(crate) refresh_ms: u64,
     #[arg(long)]
     pub(crate) once: bool,
 }
@@ -132,7 +130,6 @@ mod tests {
             auth_file: Some(path.clone()),
             base_url: Some("http://localhost:9000/va".into()),
             token: None,
-            refresh_ms: 2000,
             once: false,
         };
 
