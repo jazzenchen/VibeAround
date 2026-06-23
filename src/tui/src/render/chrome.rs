@@ -1,7 +1,7 @@
 use ratatui::layout::Alignment;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{AppView, TuiApp};
 use crate::chat::session_mode_display_label;
@@ -13,7 +13,9 @@ pub(super) fn context_strip(app: &TuiApp) -> Paragraph<'static> {
         AppView::Status | AppView::StatusDetail => status_context_spans(app),
         AppView::Agent => agent_context_spans(app),
     };
-    Paragraph::new(Line::from(spans)).alignment(Alignment::Center)
+    Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Center)
+        .block(chrome_separator())
 }
 
 fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
@@ -192,7 +194,9 @@ pub(super) fn command_bar(app: &TuiApp) -> Paragraph<'static> {
         key_span("Ctrl+C"),
         Span::raw(" quit"),
     ]);
-    Paragraph::new(Line::from(spans)).alignment(Alignment::Center)
+    Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Center)
+        .block(chrome_separator())
 }
 
 pub(crate) fn view_hint(app: &TuiApp) -> String {
@@ -265,4 +269,10 @@ fn key_span(value: &'static str) -> Span<'static> {
         value,
         Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
     )
+}
+
+fn chrome_separator() -> Block<'static> {
+    Block::default()
+        .borders(Borders::TOP)
+        .border_style(muted_style())
 }

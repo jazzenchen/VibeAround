@@ -314,6 +314,7 @@ fn status_render_uses_minimal_semantic_boundaries() {
     assert!(screen.contains("channels"));
     assert!(screen.contains("feishu"));
     assert!(screen.contains('│'));
+    assert!(screen.contains('─'));
     assert!(!screen.contains('┌'));
     assert!(!screen.contains('┐'));
     assert!(!screen.contains('└'));
@@ -362,6 +363,7 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
     assert!(screen.contains("› hello"));
     assert!(screen.contains("• hi there"));
     assert_eq!(screen.matches("chat").count(), 1);
+    assert!(screen.contains('─'));
     assert!(!screen.contains('┌'));
     assert!(!screen.contains('┐'));
     assert!(!screen.contains('└'));
@@ -712,6 +714,34 @@ async fn slash_mode_uses_config_option_source_when_present() {
     assert_eq!(
         app.last_action.as_deref(),
         Some("requested mode acceptEdits")
+    );
+}
+
+#[tokio::test]
+async fn slash_mode_accepts_dynamic_multi_word_option_name() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_state.session_mode = Some(serde_json::json!({
+        "source": "config_option",
+        "configId": "permissions",
+        "currentValue": "default",
+        "options": [
+            { "value": "default", "name": "Default" },
+            { "value": "acceptEdits", "name": "Accept edits" }
+        ]
+    }));
+    app.chat_input = "/mode Accept edits".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("config option"),
+        ChatClientMessage::SetConfigOption {
+            config_id: "permissions".into(),
+            value: "acceptEdits".into(),
+        }
     );
 }
 

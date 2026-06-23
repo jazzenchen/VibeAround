@@ -78,8 +78,7 @@ impl TuiApp {
         transport: &HttpTransport,
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
     ) -> bool {
-        let mut parts = command.split_whitespace();
-        let name = parts.next().unwrap_or(command);
+        let (name, args) = split_slash_command(command);
         match name {
             "/status" => {
                 self.open_status(transport).await;
@@ -103,7 +102,7 @@ impl TuiApp {
                 true
             }
             "/resume" | "/session" => {
-                if let Some(session_id) = parts.next() {
+                if let Some(session_id) = args {
                     self.resume_chat_session(session_id, chat_tx);
                 } else {
                     self.push_notice("Usage: /resume <session-id>");
@@ -111,7 +110,7 @@ impl TuiApp {
                 true
             }
             "/mode" => {
-                if let Some(mode_id) = parts.next() {
+                if let Some(mode_id) = args {
                     self.set_chat_mode(mode_id, chat_tx);
                 } else {
                     self.push_notice(
@@ -132,7 +131,7 @@ impl TuiApp {
                 true
             }
             "/allow" => {
-                let selector = parts.next();
+                let selector = args;
                 if let Some(permission) = self.chat_state.pending_permission.clone() {
                     if let Some(option_id) =
                         resolve_permission_option(&permission.request, selector)
@@ -176,7 +175,7 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "/new next message starts a new session  /resume session-id resume a session  /mode set permission mode  /status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat  Shift+Enter newline  Ctrl+U clear input  Ctrl+W delete word".into(),
+            text: "/new next message starts a new session  /resume session-id resume a session  /mode list or set permission mode  /status runtime status  /agent agent context  /stop stop turn  /allow [number|option-id]  /deny  /clear clear chat  Shift+Enter newline  Ctrl+U clear input  Ctrl+W delete word".into(),
         });
     }
 
@@ -471,4 +470,16 @@ fn canonical_chat_mode(mode_id: &str) -> Option<&'static str> {
 
 fn normalize_input_text(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn split_slash_command(command: &str) -> (&str, Option<&str>) {
+    let command = command.trim();
+    match command.find(char::is_whitespace) {
+        Some(index) => {
+            let name = &command[..index];
+            let args = command[index..].trim();
+            (name, (!args.is_empty()).then_some(args))
+        }
+        None => (command, None),
+    }
 }
