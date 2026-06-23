@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use super::{AppView, TuiApp};
+use super::{AppView, ErrorScope, TuiApp};
 use crate::runtime_socket::RuntimeSocketEvent;
 
 impl TuiApp {
@@ -10,32 +10,32 @@ impl TuiApp {
                 self.snapshot.channels = channels;
                 self.status_selection.clamp(&self.snapshot);
                 self.sync_status_detail();
-                self.last_error = None;
+                self.clear_error(ErrorScope::Runtime);
                 self.last_refresh = Some(Instant::now());
             }
             RuntimeSocketEvent::Tunnels(tunnels) => {
                 self.snapshot.tunnels = tunnels;
                 self.status_selection.clamp(&self.snapshot);
                 self.sync_status_detail();
-                self.last_error = None;
+                self.clear_error(ErrorScope::Runtime);
                 self.last_refresh = Some(Instant::now());
             }
             RuntimeSocketEvent::Agents(agents) => {
                 self.snapshot.agents = agents;
                 self.status_selection.clamp(&self.snapshot);
                 self.sync_status_detail();
-                self.last_error = None;
+                self.clear_error(ErrorScope::Runtime);
                 self.last_refresh = Some(Instant::now());
             }
             RuntimeSocketEvent::Sessions(sessions) => {
                 self.snapshot.sessions = sessions;
                 self.status_selection.clamp(&self.snapshot);
                 self.sync_status_detail();
-                self.last_error = None;
+                self.clear_error(ErrorScope::Runtime);
                 self.last_refresh = Some(Instant::now());
             }
             RuntimeSocketEvent::Error(error) => {
-                self.last_error = Some(error);
+                self.set_error(ErrorScope::Runtime, error);
             }
         }
     }

@@ -3,7 +3,7 @@ use std::time::Instant;
 use va_client::launcher::LauncherPreferencesResponse;
 use va_client::{ops, Operation};
 
-use super::TuiApp;
+use super::{ErrorScope, TuiApp};
 use crate::selection::AgentPanel;
 use crate::transport::HttpTransport;
 
@@ -13,7 +13,7 @@ impl TuiApp {
             Ok(Some(operation)) => operation,
             Ok(None) => return,
             Err(error) => {
-                self.last_error = Some(error);
+                self.set_error(ErrorScope::Agent, error);
                 return;
             }
         };
@@ -21,11 +21,11 @@ impl TuiApp {
         match transport.execute(operation).await {
             Ok(preferences) => {
                 self.agent_picker.preferences = Some(preferences);
-                self.last_error = None;
+                self.clear_error(ErrorScope::Agent);
                 self.last_refresh = Some(Instant::now());
             }
             Err(error) => {
-                self.last_error = Some(error.to_string());
+                self.set_error(ErrorScope::Agent, error.to_string());
             }
         }
     }

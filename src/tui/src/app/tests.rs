@@ -234,7 +234,7 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
     app.status_selection.clamp(&app.snapshot);
     app.status_selection.select_next(&app.snapshot);
     assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(1));
-    app.last_error = Some("old runtime error".into());
+    app.set_error(ErrorScope::Runtime, "old runtime error");
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(vec![channel("feishu")]));
 
@@ -262,6 +262,30 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Error("runtime socket closed".into()));
     assert_eq!(app.last_error.as_deref(), Some("runtime socket closed"));
+}
+
+#[test]
+fn chat_socket_connect_does_not_clear_runtime_error() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.set_error(ErrorScope::Runtime, "runtime stream failed");
+
+    app.apply_chat_socket_event(ChatSocketEvent::Connected);
+
+    assert!(app.chat_connected);
+    assert_eq!(app.last_error.as_deref(), Some("runtime stream failed"));
+}
+
+#[test]
+fn runtime_socket_update_does_not_clear_chat_error() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.set_error(ErrorScope::Chat, "chat websocket failed");
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(vec![channel("feishu")]));
+
+    assert_eq!(app.snapshot.channels[0].kind, "feishu");
+    assert_eq!(app.last_error.as_deref(), Some("chat websocket failed"));
 }
 
 #[test]

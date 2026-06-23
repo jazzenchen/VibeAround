@@ -37,6 +37,7 @@ pub(crate) struct TuiApp {
     pub(crate) detail: Option<DetailContent>,
     pub(crate) work_status: Option<String>,
     pub(crate) last_error: Option<String>,
+    last_error_scope: Option<ErrorScope>,
     pub(crate) last_action: Option<String>,
     pub(crate) last_refresh: Option<Instant>,
     exit_confirmation_started: Option<Instant>,
@@ -68,6 +69,7 @@ impl TuiApp {
             detail: None,
             work_status: None,
             last_error: None,
+            last_error_scope: None,
             last_action: None,
             last_refresh: None,
             exit_confirmation_started: None,
@@ -79,11 +81,11 @@ impl TuiApp {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
                 self.status_selection.clamp(&self.snapshot);
-                self.last_error = None;
+                self.clear_error(ErrorScope::Status);
                 self.last_refresh = Some(Instant::now());
             }
             Err(error) => {
-                self.last_error = Some(error.to_string());
+                self.set_error(ErrorScope::Status, error.to_string());
                 self.last_refresh = Some(Instant::now());
             }
         }
@@ -94,11 +96,11 @@ impl TuiApp {
             Ok(snapshot) => {
                 self.agent_picker = snapshot;
                 self.agent_selection.clamp(&self.agent_picker);
-                self.last_error = None;
+                self.clear_error(ErrorScope::Agent);
                 self.last_refresh = Some(Instant::now());
             }
             Err(error) => {
-                self.last_error = Some(error.to_string());
+                self.set_error(ErrorScope::Agent, error.to_string());
                 self.last_refresh = Some(Instant::now());
             }
         }
@@ -238,9 +240,28 @@ impl TuiApp {
         }
 
         self.exit_confirmation_started = Some(now);
-        self.last_error = None;
+        self.clear_error(ErrorScope::Any);
         self.last_action = None;
         false
+    }
+
+    pub(crate) fn set_error(&mut self, scope: ErrorScope, error: impl Into<String>) {
+        self.last_error = Some(error.into());
+        self.last_error_scope = Some(scope);
+    }
+
+    pub(crate) fn clear_error(&mut self, scope: ErrorScope) {
+        if scope == ErrorScope::Any
+            || self.last_error_scope.is_none()
+            || self.last_error_scope == Some(scope)
+        {
+            self.last_error = None;
+            self.last_error_scope = None;
+        }
+    }
+
+    pub(crate) fn error_is(&self, scope: ErrorScope, error: &str) -> bool {
+        self.last_error_scope == Some(scope) && self.last_error.as_deref() == Some(error)
     }
 
     pub(crate) fn clear_expired_exit_confirmation(&mut self) {
@@ -270,6 +291,15 @@ pub(crate) enum AppView {
     Status,
     StatusDetail,
     Agent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ErrorScope {
+    Any,
+    Agent,
+    Chat,
+    Runtime,
+    Status,
 }
 
 #[cfg(test)]

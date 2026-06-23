@@ -2,7 +2,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 
-use crate::app::TuiApp;
+use crate::app::{ErrorScope, TuiApp};
 use crate::chat::{
     content_text, one_line, permission_prompt_text, resolve_permission_option,
     resolve_session_mode_value, session_mode_options_text, tool_activity_text, ChatMessage,
@@ -357,7 +357,7 @@ impl TuiApp {
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
     ) -> bool {
         if chat_tx.send(message).is_err() {
-            self.last_error = Some("chat websocket task is not running".into());
+            self.set_error(ErrorScope::Chat, "chat websocket task is not running");
             return false;
         }
         true
@@ -374,7 +374,7 @@ impl TuiApp {
         self.selected_session = None;
         self.chat_state.session_id = None;
         self.work_status = None;
-        self.last_error = None;
+        self.clear_error(ErrorScope::Chat);
         self.last_action = Some("next message starts a new session".into());
         self.push_notice("Next message will start a new session.");
         self.follow_chat_tail();
@@ -445,7 +445,7 @@ impl TuiApp {
         match event {
             ChatSocketEvent::Connected => {
                 self.chat_connected = true;
-                self.last_error = None;
+                self.clear_error(ErrorScope::Chat);
             }
             ChatSocketEvent::Closed => {
                 let duplicate_closed = self.last_notice_is("Chat websocket closed.");
@@ -455,9 +455,9 @@ impl TuiApp {
                 }
             }
             ChatSocketEvent::Error(error) => {
-                let duplicate_error = self.last_error.as_deref() == Some(error.as_str());
+                let duplicate_error = self.error_is(ErrorScope::Chat, &error);
                 self.chat_connected = false;
-                self.last_error = Some(error.clone());
+                self.set_error(ErrorScope::Chat, error.clone());
                 if !duplicate_error {
                     self.push_notice(format!("Chat websocket error: {error}"));
                 }
@@ -505,7 +505,7 @@ impl TuiApp {
                 self.apply_acp_notification(payload);
             }
             ChatEvent::Error { error } => {
-                self.last_error = Some(error.clone());
+                self.set_error(ErrorScope::Chat, error.clone());
                 self.work_status = None;
                 self.push_notice(format!("Error: {error}"));
             }
