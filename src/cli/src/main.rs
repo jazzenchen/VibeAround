@@ -9,10 +9,13 @@ use std::env;
 use serde_json::Value;
 use va_client::auth::PairStatusResponse;
 use va_client::http::AuthRequirement;
-use va_client::sessions::{CreateSessionBody, PtyTool};
+use va_client::sessions::{CreateSessionBody, LaunchSessionInfo, PtyTool};
 use va_client::{ops, Operation};
 
-use args::{parse_args, usage, Command, Options, SessionCreateArgs};
+use args::{
+    parse_args, usage, Command, LaunchSessionMutationArgs, LaunchSessionsArgs, Options,
+    SessionCreateArgs,
+};
 use config::{endpoint_for, resolve_endpoint_env, RuntimeEnv};
 use error::CliError;
 use transport::HttpTransport;
@@ -203,6 +206,15 @@ async fn run() -> Result<(), CliError> {
                 println!("{session}");
             }
         }
+        Command::LaunchSessions(args) => {
+            run_launch_sessions(&options, &args).await?;
+        }
+        Command::LaunchSessionArchive(args) => {
+            run_launch_session_mutation(&options, &args, true).await?;
+        }
+        Command::LaunchSessionUnarchive(args) => {
+            run_launch_session_mutation(&options, &args, false).await?;
+        }
         Command::SettingsReload => {
             run_unit(
                 &options,
@@ -378,6 +390,92 @@ async fn run_doctor(options: &Options) -> Result<(), CliError> {
 fn print_json(value: Value) -> Result<(), CliError> {
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
+}
+
+async fn run_launch_sessions(options: &Options, args: &LaunchSessionsArgs) -> Result<(), CliError> {
+    let transport = transport_for(options, AuthRequirement::BearerToken)?;
+    let agent_ids = if args.agent_ids.is_empty() {
+        transport
+            .execute(ops::runtime_agents())
+            .await?
+            .agents
+            .into_iter()
+            .map(|agent| agent.id)
+            .collect::<Vec<_>>()
+    } else {
+        args.agent_ids.clone()
+    };
+    let agent_refs = agent_ids.iter().map(String::as_str).collect::<Vec<_>>();
+    let workspace_refs = args
+        .workspace_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let operation = ops::launch_sessions_batch(
+        &agent_refs,
+        &workspace_refs,
+        Some(args.include_archived),
+        args.limit,
+    )?;
+
+    if options.json {
+        print_json(transport.execute_json(operation).await?)?;
+        return Ok(());
+    }
+
+    for session in transport.execute(operation).await? {
+        print_launch_session(session);
+    }
+    Ok(())
+}
+
+async fn run_launch_session_mutation(
+    options: &Options,
+    args: &LaunchSessionMutationArgs,
+    archived: bool,
+) -> Result<(), CliError> {
+    let operation = if archived {
+        ops::launch_session_archive(
+            &args.agent_id,
+            &args.session_id,
+            args.workspace_path.as_deref(),
+        )?
+    } else {
+        ops::launch_session_unarchive(
+            &args.agent_id,
+            &args.session_id,
+            args.workspace_path.as_deref(),
+        )?
+    };
+    run_unit(
+        options,
+        operation,
+        if archived {
+            "launch session archived"
+        } else {
+            "launch session unarchived"
+        },
+    )
+    .await
+}
+
+fn print_launch_session(session: LaunchSessionInfo) {
+    let state = if session.active {
+        "active"
+    } else if session.archived {
+        "archived"
+    } else {
+        "available"
+    };
+    println!(
+        "{}\t{}\t{}\t{}\t{}\t{}",
+        session.agent_id,
+        session.short_id,
+        state,
+        session.updated_at,
+        session.workspace,
+        session.title
+    );
 }
 
 async fn run_session_create(options: &Options, create: &SessionCreateArgs) -> Result<(), CliError> {

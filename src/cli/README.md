@@ -53,6 +53,10 @@ va pair start
 va pair status SID
 va channels
 va channel restart feishu
+va launch sessions
+va launch sessions --agent codex --workspace /path/to/project --archived
+va launch archive --agent codex SESSION_ID
+va launch unarchive --agent codex SESSION_ID
 va session create --tool codex --project /path/to/project
 va session create --tool codex --project /path/to/project --attach
 va session create --profile my-profile --target claude --project /path/to/project

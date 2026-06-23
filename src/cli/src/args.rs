@@ -21,6 +21,9 @@ pub(crate) enum Command {
     PairStatus { sid: String },
     SettingsReload,
     TmuxSessions,
+    LaunchSessions(LaunchSessionsArgs),
+    LaunchSessionArchive(LaunchSessionMutationArgs),
+    LaunchSessionUnarchive(LaunchSessionMutationArgs),
     SessionCreate(SessionCreateArgs),
     SessionAttach { session_id: String },
     ChannelSync,
@@ -36,6 +39,21 @@ pub(crate) enum Command {
     WorkspaceRemove { path: String },
     WorkspaceDefault { path: String },
     WorkspaceCreate { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct LaunchSessionsArgs {
+    pub(crate) agent_ids: Vec<String>,
+    pub(crate) workspace_paths: Vec<String>,
+    pub(crate) include_archived: bool,
+    pub(crate) limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LaunchSessionMutationArgs {
+    pub(crate) agent_id: String,
+    pub(crate) session_id: String,
+    pub(crate) workspace_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -141,6 +159,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         "previews" => no_args(rest, "previews").map(|()| Command::Previews),
         "profiles" => no_args(rest, "profiles").map(|()| Command::Profiles),
         "pair" => parse_pair_command(rest),
+        "launch" => parse_launch_command(rest),
         "tmux" => parse_tmux_command(rest),
         "settings" => match rest {
             [action] if action == "reload" => Ok(Command::SettingsReload),
@@ -175,6 +194,146 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         "workspace" => parse_workspace_command(rest),
         other => Err(CliError::Usage(format!("unknown command: {other}"))),
     }
+}
+
+fn parse_launch_command(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [action, rest @ ..] if action == "sessions" => {
+            parse_launch_sessions_args(rest).map(Command::LaunchSessions)
+        }
+        [action, rest @ ..] if action == "archive" => {
+            parse_launch_session_mutation_args("archive", rest).map(Command::LaunchSessionArchive)
+        }
+        [action, rest @ ..] if action == "unarchive" => parse_launch_session_mutation_args(
+            "unarchive",
+            rest,
+        )
+        .map(Command::LaunchSessionUnarchive),
+        _ => Err(CliError::Usage(
+            "usage: va launch sessions [--agent AGENT] [--workspace PATH]; va launch archive|unarchive --agent AGENT SESSION_ID".into(),
+        )),
+    }
+}
+
+fn parse_launch_sessions_args(args: &[String]) -> Result<LaunchSessionsArgs, CliError> {
+    let mut parsed = LaunchSessionsArgs::default();
+    let mut args = args.iter().peekable();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--agent" | "-a" => parsed.agent_ids.push(next_ref(&mut args, arg)?.to_string()),
+            "--workspace" | "--workspace-path" | "--cwd" => {
+                parsed
+                    .workspace_paths
+                    .push(next_ref(&mut args, arg)?.to_string());
+            }
+            "--archived" | "--include-archived" => parsed.include_archived = true,
+            "--limit" => {
+                parsed.limit = Some(parse_usize(next_ref(&mut args, "--limit")?, "--limit")?)
+            }
+            value if value.starts_with("--agent=") => {
+                parsed
+                    .agent_ids
+                    .push(value.trim_start_matches("--agent=").to_string());
+            }
+            value if value.starts_with("--workspace=") => {
+                parsed
+                    .workspace_paths
+                    .push(value.trim_start_matches("--workspace=").to_string());
+            }
+            value if value.starts_with("--workspace-path=") => {
+                parsed
+                    .workspace_paths
+                    .push(value.trim_start_matches("--workspace-path=").to_string());
+            }
+            value if value.starts_with("--cwd=") => {
+                parsed
+                    .workspace_paths
+                    .push(value.trim_start_matches("--cwd=").to_string());
+            }
+            value if value.starts_with("--archived=") => {
+                parsed.include_archived =
+                    parse_bool(value.trim_start_matches("--archived="), "--archived")?;
+            }
+            value if value.starts_with("--include-archived=") => {
+                parsed.include_archived = parse_bool(
+                    value.trim_start_matches("--include-archived="),
+                    "--include-archived",
+                )?;
+            }
+            value if value.starts_with("--limit=") => {
+                parsed.limit = Some(parse_usize(
+                    value.trim_start_matches("--limit="),
+                    "--limit",
+                )?);
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!(
+                    "unknown launch sessions option: {value}"
+                )));
+            }
+            value => parsed.agent_ids.push(value.to_string()),
+        }
+    }
+    Ok(parsed)
+}
+
+fn parse_launch_session_mutation_args(
+    action: &str,
+    args: &[String],
+) -> Result<LaunchSessionMutationArgs, CliError> {
+    let mut agent_id = None;
+    let mut workspace_path = None;
+    let mut positionals = Vec::new();
+    let mut args = args.iter().peekable();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--agent" | "-a" => agent_id = Some(next_ref(&mut args, arg)?.to_string()),
+            "--workspace" | "--workspace-path" | "--cwd" => {
+                workspace_path = Some(next_ref(&mut args, arg)?.to_string());
+            }
+            value if value.starts_with("--agent=") => {
+                agent_id = Some(value.trim_start_matches("--agent=").to_string());
+            }
+            value if value.starts_with("--workspace=") => {
+                workspace_path = Some(value.trim_start_matches("--workspace=").to_string());
+            }
+            value if value.starts_with("--workspace-path=") => {
+                workspace_path = Some(value.trim_start_matches("--workspace-path=").to_string());
+            }
+            value if value.starts_with("--cwd=") => {
+                workspace_path = Some(value.trim_start_matches("--cwd=").to_string());
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!(
+                    "unknown launch {action} option: {value}"
+                )));
+            }
+            value => positionals.push(value.to_string()),
+        }
+    }
+
+    let agent_id = match agent_id {
+        Some(agent_id) => agent_id,
+        None => {
+            if positionals.is_empty() {
+                return Err(CliError::Usage(format!(
+                    "usage: va launch {action} --agent AGENT SESSION_ID"
+                )));
+            }
+            positionals.remove(0)
+        }
+    };
+    if positionals.len() != 1 {
+        return Err(CliError::Usage(format!(
+            "usage: va launch {action} --agent AGENT SESSION_ID"
+        )));
+    }
+
+    Ok(LaunchSessionMutationArgs {
+        agent_id,
+        session_id: positionals.remove(0),
+        workspace_path,
+    })
 }
 
 fn parse_session_command(args: &[String]) -> Result<Command, CliError> {
@@ -337,6 +496,18 @@ fn parse_u16(value: &str, flag: &str) -> Result<u16, CliError> {
     Ok(value)
 }
 
+fn parse_usize(value: &str, flag: &str) -> Result<usize, CliError> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| CliError::Usage(format!("{flag} must be a positive integer")))?;
+    if value == 0 {
+        return Err(CliError::Usage(format!(
+            "{flag} must be a positive integer"
+        )));
+    }
+    Ok(value)
+}
+
 fn parse_bool(value: &str, flag: &str) -> Result<bool, CliError> {
     match value {
         "true" | "1" | "yes" | "on" => Ok(true),
@@ -419,7 +590,7 @@ fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  launch sessions              List resumable agent launch sessions\n  launch archive --agent A ID  Archive a launch session\n  launch unarchive --agent A ID Unarchive a launch session\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -506,6 +677,73 @@ mod tests {
             Some(Command::PairStatus {
                 sid: "sid-1".into()
             })
+        );
+    }
+
+    #[test]
+    fn parses_launch_sessions_command() {
+        let options = parse_args([
+            "launch".to_string(),
+            "sessions".to_string(),
+            "--agent".to_string(),
+            "codex".to_string(),
+            "--workspace=/tmp/project".to_string(),
+            "--archived".to_string(),
+            "--limit".to_string(),
+            "10".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::LaunchSessions(LaunchSessionsArgs {
+                agent_ids: vec!["codex".into()],
+                workspace_paths: vec!["/tmp/project".into()],
+                include_archived: true,
+                limit: Some(10),
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_launch_archive_command_with_agent_flag() {
+        let options = parse_args([
+            "launch".to_string(),
+            "archive".to_string(),
+            "--agent=codex".to_string(),
+            "session-1".to_string(),
+            "--workspace".to_string(),
+            "/tmp/project".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::LaunchSessionArchive(LaunchSessionMutationArgs {
+                agent_id: "codex".into(),
+                session_id: "session-1".into(),
+                workspace_path: Some("/tmp/project".into()),
+            }))
+        );
+    }
+
+    #[test]
+    fn parses_launch_unarchive_command_with_positional_agent() {
+        let options = parse_args([
+            "launch".to_string(),
+            "unarchive".to_string(),
+            "codex".to_string(),
+            "session-1".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::LaunchSessionUnarchive(LaunchSessionMutationArgs {
+                agent_id: "codex".into(),
+                session_id: "session-1".into(),
+                workspace_path: None,
+            }))
         );
     }
 
