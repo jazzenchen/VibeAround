@@ -7,7 +7,10 @@ use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
 use va_client::sessions::SessionListItem;
 
 use crate::app::{AppView, TuiApp};
-use crate::chat::{chat_message_lines_for_messages, input_box_height, visible_chat_lines};
+use crate::chat::{
+    chat_message_lines_for_messages, input_box_height, input_cursor_offset, input_visible_lines,
+    visible_chat_lines,
+};
 use crate::selection::{AgentPanel, RuntimePanel};
 use crate::theme::{muted_style, BRAND};
 
@@ -54,7 +57,8 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
 
 fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
     let input_content_width = usize::from(area.width.saturating_sub(2)).max(1);
-    let input_height = input_box_height(&app.chat_input, input_content_width, 4);
+    const MAX_INPUT_ROWS: u16 = 4;
+    let input_height = input_box_height(&app.chat_input, input_content_width, MAX_INPUT_ROWS);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .spacing(1)
@@ -84,11 +88,21 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new(chat_input_lines(&app.chat_input))
-            .wrap(Wrap { trim: false })
-            .block(input_block()),
+        Paragraph::new(chat_input_lines(
+            &app.chat_input,
+            input_content_width,
+            MAX_INPUT_ROWS,
+        ))
+        .wrap(Wrap { trim: false })
+        .block(input_block()),
         chunks[1],
     );
+    let (cursor_x, cursor_y) =
+        input_cursor_offset(&app.chat_input, input_content_width, MAX_INPUT_ROWS);
+    frame.set_cursor_position((
+        chunks[1].x.saturating_add(cursor_x),
+        chunks[1].y.saturating_add(1).saturating_add(cursor_y),
+    ));
 }
 
 fn render_status_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
@@ -395,15 +409,15 @@ fn input_block() -> Block<'static> {
         .border_style(Style::default().fg(BRAND))
 }
 
-fn chat_input_lines(input: &str) -> Vec<Line<'static>> {
-    input
-        .split('\n')
+fn chat_input_lines(input: &str, content_width: usize, max_body_rows: u16) -> Vec<Line<'static>> {
+    input_visible_lines(input, content_width, max_body_rows)
+        .into_iter()
         .enumerate()
         .map(|(index, line)| {
             let marker = if index == 0 { "› " } else { "  " };
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(BRAND)),
-                Span::raw(line.to_string()),
+                Span::raw(line),
             ])
         })
         .collect()

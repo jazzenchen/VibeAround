@@ -111,16 +111,39 @@ pub(crate) fn visible_chat_lines(
 }
 
 pub(crate) fn input_box_height(input: &str, content_width: usize, max_body_rows: u16) -> u16 {
-    let body_width = marker_body_width(content_width);
-    let rows = input
-        .split('\n')
-        .flat_map(|line| wrap_chat_text_line(line, body_width))
-        .count()
-        .max(1)
-        .min(usize::from(max_body_rows.max(1)));
+    let rows = input_visible_lines(input, content_width, max_body_rows).len();
     u16::try_from(rows)
         .unwrap_or(max_body_rows)
         .saturating_add(2)
+}
+
+pub(crate) fn input_visible_lines(
+    input: &str,
+    content_width: usize,
+    max_body_rows: u16,
+) -> Vec<String> {
+    let max_body_rows = usize::from(max_body_rows.max(1));
+    let lines = input_wrapped_lines(input, content_width);
+    let start = lines.len().saturating_sub(max_body_rows);
+    lines.into_iter().skip(start).collect()
+}
+
+pub(crate) fn input_cursor_offset(
+    input: &str,
+    content_width: usize,
+    max_body_rows: u16,
+) -> (u16, u16) {
+    let lines = input_visible_lines(input, content_width, max_body_rows);
+    let last_line = lines.last().map(String::as_str).unwrap_or("");
+    let max_x = content_width.saturating_sub(1);
+    let cursor_x = CHAT_MARKER_WIDTH
+        .saturating_add(display_width(last_line))
+        .min(max_x);
+    let cursor_y = lines.len().saturating_sub(1);
+    (
+        u16::try_from(cursor_x).unwrap_or(u16::MAX),
+        u16::try_from(cursor_y).unwrap_or(u16::MAX),
+    )
 }
 
 #[cfg(test)]
@@ -165,6 +188,14 @@ fn marker_body_width(content_width: usize) -> usize {
         return content_width;
     }
     content_width.saturating_sub(CHAT_MARKER_WIDTH).max(1)
+}
+
+fn input_wrapped_lines(input: &str, content_width: usize) -> Vec<String> {
+    let body_width = marker_body_width(content_width);
+    input
+        .split('\n')
+        .flat_map(|line| wrap_chat_text_line(line, body_width))
+        .collect::<Vec<_>>()
 }
 
 fn permission_title(request: &Value) -> String {
@@ -331,6 +362,31 @@ mod tests {
         assert_eq!(input_box_height("", 10, 4), 3);
         assert_eq!(input_box_height("abcdefghijkl", 8, 4), 4);
         assert_eq!(input_box_height("abcdefghijklmnop", 4, 4), 6);
+    }
+
+    #[test]
+    fn input_visible_lines_wrap_and_follow_tail() {
+        assert_eq!(
+            input_visible_lines("abcdef", 5, 4),
+            vec!["abc".to_string(), "def".to_string()]
+        );
+        assert_eq!(
+            input_visible_lines("a\nb\nc\nd\ne", 10, 4),
+            vec![
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+                "e".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn input_cursor_offset_tracks_visible_input_end() {
+        assert_eq!(input_cursor_offset("", 10, 4), (2, 0));
+        assert_eq!(input_cursor_offset("abc", 10, 4), (5, 0));
+        assert_eq!(input_cursor_offset("abc\ndef", 10, 4), (5, 1));
+        assert_eq!(input_cursor_offset("abcdef", 5, 4), (4, 1));
     }
 
     #[test]

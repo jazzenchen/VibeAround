@@ -6,6 +6,7 @@ use crate::render;
 use crate::runtime_socket::RuntimeSocketEvent;
 use crate::selection::{AgentPanel, RuntimePanel};
 use ratatui::backend::TestBackend;
+use ratatui::layout::Position;
 use ratatui::Terminal;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -389,6 +390,9 @@ fn chat_render_shows_multiline_input_with_continuation_indent() {
 
     assert!(screen.contains("› first line"));
     assert!(screen.contains("  second line"));
+    terminal
+        .backend_mut()
+        .assert_cursor_position(Position::new(13, 19));
 }
 
 #[test]
