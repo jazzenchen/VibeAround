@@ -215,6 +215,42 @@ impl TuiApp {
         }
     }
 
+    pub(crate) fn effective_agent(&self) -> Option<&str> {
+        self.selected_agent.as_deref().or_else(|| {
+            self.agent_picker
+                .preferences
+                .as_ref()
+                .map(|preferences| preferences.selected_agent.as_str())
+        })
+    }
+
+    pub(crate) fn effective_profile(&self) -> Option<&str> {
+        self.selected_profile.as_deref().or_else(|| {
+            let preferences = self.agent_picker.preferences.as_ref()?;
+            let agent_id = self.effective_agent()?;
+            preferences
+                .agent_preferences
+                .get(agent_id)
+                .and_then(|preference| preference.profile_id.as_deref())
+                .or(preferences.default_profile_id.as_deref())
+        })
+    }
+
+    pub(crate) fn effective_workspace(&self) -> Option<&str> {
+        self.selected_workspace.as_deref().or_else(|| {
+            let preferences = self.agent_picker.preferences.as_ref()?;
+            let agent_id = self.effective_agent()?;
+            preferences
+                .agent_preferences
+                .get(agent_id)
+                .and_then(|preference| preference.workspace.as_deref())
+        })
+    }
+
+    pub(crate) fn effective_session(&self) -> Option<&str> {
+        self.selected_session.as_deref()
+    }
+
     pub(crate) fn confirm_exit_request(&mut self) -> bool {
         self.confirm_exit_request_at(Instant::now())
     }

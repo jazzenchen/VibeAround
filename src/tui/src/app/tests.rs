@@ -1,9 +1,13 @@
 use super::*;
+use std::collections::BTreeMap;
+
 use crate::config::DEFAULT_BASE_URL;
 use crate::render;
 use crate::selection::RuntimePanel;
+use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
+use va_client::launcher::{LauncherAgentPreferenceSummary, LauncherPreferencesResponse};
 use va_client::runtime::{AgentInfo, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus};
 
 fn channel(kind: &str) -> ChannelRuntime {
@@ -22,6 +26,32 @@ fn tunnel(provider: &str) -> TunnelRuntime {
         url: Some(format!("https://{provider}.example.test")),
         status: TunnelStatus::Running,
         uptime_secs: 10,
+    }
+}
+
+fn launcher_preferences(
+    selected_agent: &str,
+    profile_id: Option<&str>,
+    workspace: Option<&str>,
+) -> LauncherPreferencesResponse {
+    let mut agent_preferences = BTreeMap::new();
+    agent_preferences.insert(
+        selected_agent.to_string(),
+        LauncherAgentPreferenceSummary {
+            profile_id: profile_id.map(str::to_string),
+            workspace: workspace.map(str::to_string),
+            executable_path: None,
+            launch_args: Value::Null,
+        },
+    );
+    LauncherPreferencesResponse {
+        selected_agent: selected_agent.into(),
+        default_agent: selected_agent.into(),
+        default_profile_id: Some("default-profile".into()),
+        enabled_agents: vec![selected_agent.into()],
+        agent_preferences,
+        local_agent_api_enabled: true,
+        profile_connections: Value::Null,
     }
 }
 
@@ -107,6 +137,32 @@ fn default_view_is_chat() {
 
     assert_eq!(app.view, AppView::Chat);
     assert!(app.chat_messages[0].text.contains("/status"));
+}
+
+#[test]
+fn effective_chat_context_prefers_local_selection_over_launcher_preferences() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.preferences = Some(launcher_preferences(
+        "codex",
+        Some("codex-profile"),
+        Some("/tmp/codex"),
+    ));
+
+    assert_eq!(app.effective_agent(), Some("codex"));
+    assert_eq!(app.effective_profile(), Some("codex-profile"));
+    assert_eq!(app.effective_workspace(), Some("/tmp/codex"));
+    assert_eq!(app.effective_session(), None);
+
+    app.selected_agent = Some("claude".into());
+    app.selected_profile = Some("claude-profile".into());
+    app.selected_workspace = Some("/tmp/claude".into());
+    app.selected_session = Some("session-1".into());
+
+    assert_eq!(app.effective_agent(), Some("claude"));
+    assert_eq!(app.effective_profile(), Some("claude-profile"));
+    assert_eq!(app.effective_workspace(), Some("/tmp/claude"));
+    assert_eq!(app.effective_session(), Some("session-1"));
 }
 
 #[test]

@@ -177,7 +177,12 @@ fn render_agent_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout:
             app.agent_picker
                 .agents
                 .iter()
-                .map(agent_info_row)
+                .map(|agent| {
+                    selected_context_row(
+                        agent_info_row(agent),
+                        app.effective_agent() == Some(agent.id.as_str()),
+                    )
+                })
                 .collect::<Vec<_>>(),
             app.agent_selection.index(AgentPanel::Agents),
             app.agent_selection.panel == AgentPanel::Agents,
@@ -190,7 +195,12 @@ fn render_agent_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout:
             app.agent_picker
                 .workspaces
                 .iter()
-                .map(workspace_row)
+                .map(|workspace| {
+                    selected_context_row(
+                        workspace_row(workspace),
+                        app.effective_workspace() == Some(workspace.path.as_str()),
+                    )
+                })
                 .collect::<Vec<_>>(),
             app.agent_selection.index(AgentPanel::Workspaces),
             app.agent_selection.panel == AgentPanel::Workspaces,
@@ -203,7 +213,12 @@ fn render_agent_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout:
             app.agent_picker
                 .profiles
                 .iter()
-                .map(profile_row)
+                .map(|profile| {
+                    selected_context_row(
+                        profile_row(profile),
+                        app.effective_profile() == Some(profile.id.as_str()),
+                    )
+                })
                 .collect::<Vec<_>>(),
             app.agent_selection.index(AgentPanel::Profiles),
             app.agent_selection.panel == AgentPanel::Profiles,
@@ -216,7 +231,12 @@ fn render_agent_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout:
             app.agent_picker
                 .sessions
                 .iter()
-                .map(session_row)
+                .map(|session| {
+                    selected_context_row(
+                        session_row(session),
+                        app.effective_session() == Some(session.session_id.as_str()),
+                    )
+                })
                 .collect::<Vec<_>>(),
             app.agent_selection.index(AgentPanel::Sessions),
             app.agent_selection.panel == AgentPanel::Sessions,
@@ -280,6 +300,21 @@ fn session_list(
         selected,
         active,
     )
+}
+
+fn selected_context_row(mut row: Vec<Span<'static>>, selected: bool) -> Vec<Span<'static>> {
+    let marker_style = if selected {
+        Style::default().fg(BRAND).add_modifier(Modifier::BOLD)
+    } else {
+        muted_style()
+    };
+    let mut spans = Vec::with_capacity(row.len() + 1);
+    spans.push(Span::styled(
+        if selected { "* " } else { "  " },
+        marker_style,
+    ));
+    spans.append(&mut row);
+    spans
 }
 
 fn selectable_list(

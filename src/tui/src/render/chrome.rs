@@ -17,14 +17,12 @@ pub(super) fn context_strip(app: &TuiApp) -> Paragraph<'static> {
 
 fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
     let session_label = app
-        .selected_session
-        .as_deref()
+        .effective_session()
         .or(app.chat_state.session_id.as_deref())
         .map(short_id)
         .unwrap_or_else(|| "new".to_string());
     let agent_label = app
-        .selected_agent
-        .as_deref()
+        .effective_agent()
         .or(app.chat_state.default_agent.as_deref())
         .unwrap_or("global");
     let mut spans = vec![Span::styled(
@@ -49,12 +47,12 @@ fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
     spans.push(Span::raw("  "));
     spans.extend(label_value_spans(
         "profile",
-        app.selected_profile.as_deref().unwrap_or("global"),
+        app.effective_profile().unwrap_or("global"),
     ));
     spans.push(Span::raw("  "));
     spans.extend(label_value_spans(
         "workspace",
-        app.selected_workspace.as_deref().unwrap_or("global"),
+        app.effective_workspace().unwrap_or("global"),
     ));
     spans.push(Span::raw("  "));
     spans.extend(label_value_spans("session", &session_label));
@@ -106,31 +104,31 @@ fn status_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
 }
 
 fn agent_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
-    let selected = app
-        .agent_picker
-        .preferences
-        .as_ref()
-        .map(|preferences| preferences.selected_agent.as_str())
-        .unwrap_or("unknown");
     let mut spans = vec![Span::styled(
         "agent context",
         Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
     )];
     spans.push(separator());
-    spans.extend(label_value_spans("default", selected));
-    spans.push(Span::raw("  "));
-    spans.extend(metric_spans("agents", app.agent_picker.agents.len(), BRAND));
-    spans.push(Span::raw("  "));
-    spans.extend(metric_spans(
-        "profiles",
-        app.agent_picker.profiles.len(),
-        WARN,
+    spans.extend(label_value_spans(
+        "agent",
+        app.effective_agent().unwrap_or("global"),
     ));
     spans.push(Span::raw("  "));
-    spans.extend(metric_spans(
-        "workspaces",
-        app.agent_picker.workspaces.len(),
-        OK,
+    spans.extend(label_value_spans(
+        "profile",
+        app.effective_profile().unwrap_or("global"),
+    ));
+    spans.push(Span::raw("  "));
+    spans.extend(label_value_spans(
+        "workspace",
+        app.effective_workspace().unwrap_or("global"),
+    ));
+    spans.push(Span::raw("  "));
+    spans.extend(label_value_spans(
+        "session",
+        &app.effective_session()
+            .map(short_id)
+            .unwrap_or_else(|| "new".into()),
     ));
     spans
 }
