@@ -175,7 +175,7 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "/new next message starts a new session  /resume session-id resume a session  /mode list or set permission mode  /status runtime status  /agent agent context  /stop stop turn  /allow [number|option-id]  /deny  /clear clear chat  Shift+Enter newline  Ctrl+U clear input  Ctrl+W delete word".into(),
+            text: "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Ctrl+U clear input, Ctrl+W delete word".into(),
         });
     }
 

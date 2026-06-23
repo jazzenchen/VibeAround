@@ -660,6 +660,23 @@ async fn slash_mode_sends_set_mode_command() {
 }
 
 #[tokio::test]
+async fn slash_help_renders_multiline_command_reference() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_input = "/help".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert!(rx.try_recv().is_err());
+    let help = &app.chat_messages.last().unwrap().text;
+    assert!(help.contains("Commands\n/status runtime status"));
+    assert!(help.contains("/agent agent, profile, workspace, session"));
+    assert!(help.contains("Shift+Enter newline"));
+}
+
+#[tokio::test]
 async fn slash_mode_lists_dynamic_session_mode_options_without_sending() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
@@ -680,9 +697,9 @@ async fn slash_mode_lists_dynamic_session_mode_options_without_sending() {
 
     assert!(rx.try_recv().is_err());
     let notice = &app.chat_messages.last().unwrap().text;
-    assert!(notice.contains("Permission mode"));
-    assert!(notice.contains("1 Default (default) *"));
+    assert!(notice.contains("Permission mode\n1 Default (default) *"));
     assert!(notice.contains("2 Accept edits (acceptEdits)"));
+    assert!(notice.contains("Use /mode <number|value>."));
 }
 
 #[tokio::test]

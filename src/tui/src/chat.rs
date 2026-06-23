@@ -106,8 +106,8 @@ pub(crate) fn session_mode_options_text(value: Option<&Value>) -> Option<String>
             format!("{} {} ({}){current}", index + 1, option.name, option.value)
         })
         .collect::<Vec<_>>()
-        .join(", ");
-    Some(format!("{label}: {options}. Use /mode <number|value>."))
+        .join("\n");
+    Some(format!("{label}\n{options}\nUse /mode <number|value>."))
 }
 
 pub(crate) fn resolve_session_mode_value(value: Option<&Value>, selector: &str) -> Option<String> {
@@ -145,10 +145,10 @@ pub(crate) fn permission_prompt_text(request_id: &str, request: &Value) -> Strin
                 _ => format!("{} {}", index + 1, option.option_id),
             })
             .collect::<Vec<_>>()
-            .join(", ")
+            .join("\n")
     };
     format!(
-        "Permission required: {} [{request_id}]. Options: {option_text}. Use /allow [number|option-id] or /deny.",
+        "Permission required: {} [{request_id}]\n{option_text}\nUse /allow [number|option-id] or /deny.",
         permission_title(request)
     )
 }
@@ -586,9 +586,9 @@ mod tests {
         );
 
         assert!(text.contains("Permission required: Read"));
-        assert!(text.contains("1 Allow (allow-once)"));
+        assert!(text.contains("Permission required: Read [req-1]\n1 Allow (allow-once)"));
         assert!(text.contains("Allow (allow-once)"));
-        assert!(text.contains("/allow [number|option-id]"));
+        assert!(text.contains("2 Reject (reject)\nUse /allow [number|option-id]"));
     }
 
     #[test]
@@ -653,8 +653,10 @@ mod tests {
             resolve_session_mode_value(Some(&value), "Bypass permissions").as_deref(),
             Some("bypassPermissions")
         );
-        assert!(session_mode_options_text(Some(&value))
-            .unwrap()
-            .contains("2 Accept edits (acceptEdits) *"));
+        let options_text = session_mode_options_text(Some(&value)).unwrap();
+        assert!(options_text.contains("Permission mode\n1 Default (default)"));
+        assert!(options_text.contains("2 Accept edits (acceptEdits) *"));
+        assert!(options_text.contains("3 Bypass permissions (bypassPermissions)"));
+        assert!(options_text.ends_with("Use /mode <number|value>."));
     }
 }
