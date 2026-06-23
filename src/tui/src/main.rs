@@ -10,7 +10,6 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use futures_util::{SinkExt, StreamExt};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -19,13 +18,8 @@ use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 use ratatui::{Frame, Terminal};
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::Message;
 use va_client::endpoint::ServerEndpoint;
-use va_client::events::{
-    chat_ws, decode_chat_event, encode_chat_client_message, ChatClientMessage, ChatEvent,
-    ChatSessionAction,
-};
+use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 use va_client::http::{HttpMethod, RequestSpec, ResponseSpec};
 use va_client::launcher::LauncherPreferencesResponse;
 use va_client::ops;
@@ -40,6 +34,17 @@ use va_client::state::ChatState;
 use va_client::workspaces::WorkspaceItem;
 use va_client::Operation;
 
+mod chat;
+mod chat_socket;
+mod theme;
+
+use chat::{
+    chat_message_lines_for_messages, content_text, one_line, permission_prompt_text,
+    tool_activity_text, visible_chat_lines, ChatMessage, ChatRole,
+};
+use chat_socket::{run_chat_socket, ChatSocketEvent};
+use theme::{muted_style, BRAND, ERROR, NEUTRAL, OK, WARN};
+
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:12358/va";
 const BRAND_LOGO: &str = r#" ██╗   ██╗ ██╗ ██████╗  ███████╗  █████╗  ██████╗   ██████╗  ██╗   ██╗ ███╗   ██╗ ██████╗
  ██║   ██║ ██║ ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔══██╗ ██╔═══██╗ ██║   ██║ ████╗  ██║ ██╔══██╗
@@ -49,11 +54,6 @@ const BRAND_LOGO: &str = r#" ██╗   ██╗ ██╗ ██████�
    ╚═══╝   ╚═╝ ╚═════╝  ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝   ╚═════╝  ╚═╝  ╚═══╝ ╚═════╝"#;
 const TAGLINE: &str = "unified runtime for ai coding agents";
 const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
-const BRAND: Color = Color::Cyan;
-const OK: Color = Color::Green;
-const WARN: Color = Color::Yellow;
-const ERROR: Color = Color::Red;
-const NEUTRAL: Color = Color::Reset;
 
 #[derive(Debug, Parser)]
 #[command(name = "va-tui", version, about = "VibeAround terminal dashboard")]
@@ -169,27 +169,6 @@ struct AgentPickerSnapshot {
     preferences: Option<LauncherPreferencesResponse>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ChatMessage {
-    role: ChatRole,
-    text: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChatRole {
-    Notice,
-    Request,
-    Response,
-}
-
-#[derive(Debug)]
-enum ChatSocketEvent {
-    Connected,
-    Closed,
-    Error(String),
-    Event(ChatEvent),
-}
-
 #[derive(Debug)]
 struct TuiApp {
     endpoint: String,
@@ -202,11 +181,13 @@ struct TuiApp {
     agent_selection: AgentSelection,
     chat_messages: Vec<ChatMessage>,
     chat_input: String,
+    chat_scroll: usize,
     selected_agent: Option<String>,
     selected_profile: Option<String>,
     selected_workspace: Option<String>,
     selected_session: Option<String>,
     detail: Option<DetailContent>,
+    work_status: Option<String>,
     last_error: Option<String>,
     last_action: Option<String>,
     last_refresh: Option<Instant>,
@@ -229,11 +210,13 @@ impl TuiApp {
                 text: "Type /status for runtime status, /agent for agent settings, /help for commands.".into(),
             }],
             chat_input: String::new(),
+            chat_scroll: 0,
             selected_agent: None,
             selected_profile: None,
             selected_workspace: None,
             selected_session: None,
             detail: None,
+            work_status: None,
             last_error: None,
             last_action: None,
             last_refresh: None,
@@ -319,7 +302,8 @@ impl TuiApp {
         match self.view {
             AppView::Status => self.status_selection.move_up(&self.snapshot),
             AppView::Agent => self.agent_selection.move_up(&self.agent_picker),
-            AppView::Chat | AppView::StatusDetail => {}
+            AppView::Chat => self.scroll_chat_up(1),
+            AppView::StatusDetail => {}
         }
     }
 
@@ -327,8 +311,21 @@ impl TuiApp {
         match self.view {
             AppView::Status => self.status_selection.move_down(&self.snapshot),
             AppView::Agent => self.agent_selection.move_down(&self.agent_picker),
-            AppView::Chat | AppView::StatusDetail => {}
+            AppView::Chat => self.scroll_chat_down(1),
+            AppView::StatusDetail => {}
         }
+    }
+
+    fn scroll_chat_up(&mut self, lines: usize) {
+        self.chat_scroll = self.chat_scroll.saturating_add(lines);
+    }
+
+    fn scroll_chat_down(&mut self, lines: usize) {
+        self.chat_scroll = self.chat_scroll.saturating_sub(lines);
+    }
+
+    fn follow_chat_tail(&mut self) {
+        self.chat_scroll = 0;
     }
 
     fn enter_current_view(&mut self) {
@@ -393,6 +390,7 @@ impl TuiApp {
             role: ChatRole::Request,
             text: input.clone(),
         });
+        self.follow_chat_tail();
         self.send_chat_message(input, chat_tx);
     }
 
@@ -408,7 +406,10 @@ impl TuiApp {
             "/status" => self.open_status(transport).await,
             "/agent" => self.open_agent_picker(transport).await,
             "/help" => self.push_help_message(),
-            "/clear" => self.chat_messages.clear(),
+            "/clear" => {
+                self.chat_messages.clear();
+                self.follow_chat_tail();
+            }
             "/back" => self.go_back(),
             "/stop" => self.send_chat_command(ChatClientMessage::stop(), chat_tx),
             "/allow" => {
@@ -538,11 +539,18 @@ impl TuiApp {
             }
             ChatEvent::Error { error } => {
                 self.last_error = Some(error.clone());
+                self.work_status = None;
                 self.push_notice(format!("Error: {error}"));
             }
-            ChatEvent::PromptDone { .. }
-            | ChatEvent::TurnStatus { .. }
-            | ChatEvent::SessionMode { .. }
+            ChatEvent::PromptDone { .. } => {
+                self.work_status = None;
+            }
+            ChatEvent::TurnStatus { active } => {
+                if !active {
+                    self.work_status = None;
+                }
+            }
+            ChatEvent::SessionMode { .. }
             | ChatEvent::CommandMenu { .. }
             | ChatEvent::MultiAgentTurn { .. }
             | ChatEvent::SubagentStatus { .. }
@@ -568,11 +576,11 @@ impl TuiApp {
             }
             Some("agent_thought_chunk") => {
                 if let Some(text) = content_text(update.get("content")) {
-                    self.last_action = Some(format!("thinking: {}", one_line(text)));
+                    self.work_status = Some(format!("Thought: {}", one_line(text)));
                 }
             }
             Some("tool_call") | Some("tool_call_update") => {
-                self.push_notice(tool_activity_text(update));
+                self.work_status = Some(tool_activity_text(update));
             }
             Some("plan") => {
                 self.push_notice("Plan updated.");
@@ -1130,6 +1138,8 @@ async fn run_dashboard(
                     KeyCode::Right => app.select_right(),
                     KeyCode::Up => app.select_up(),
                     KeyCode::Down => app.select_down(),
+                    KeyCode::PageUp if app.view == AppView::Chat => app.scroll_chat_up(10),
+                    KeyCode::PageDown if app.view == AppView::Chat => app.scroll_chat_down(10),
                     KeyCode::Enter => match app.view {
                         AppView::Chat => app.submit_chat_input(&transport, &chat_tx).await,
                         AppView::Status | AppView::Agent => app.enter_current_view(),
@@ -1157,74 +1167,6 @@ async fn run_dashboard(
 fn is_ctrl_c(key: &KeyEvent) -> bool {
     matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
         && key.modifiers.contains(KeyModifiers::CONTROL)
-}
-
-async fn run_chat_socket(
-    endpoint: ServerEndpoint,
-    mut outgoing: mpsc::UnboundedReceiver<ChatClientMessage>,
-    incoming: mpsc::UnboundedSender<ChatSocketEvent>,
-) {
-    let url = endpoint.websocket_url(&chat_ws());
-    let (ws, _) = match connect_async(&url).await {
-        Ok(connection) => connection,
-        Err(error) => {
-            let _ = incoming.send(ChatSocketEvent::Error(format!(
-                "failed to connect chat websocket: {error}"
-            )));
-            return;
-        }
-    };
-    let _ = incoming.send(ChatSocketEvent::Connected);
-    let (mut ws_tx, mut ws_rx) = ws.split();
-
-    loop {
-        tokio::select! {
-            Some(message) = outgoing.recv() => {
-                let body = match encode_chat_client_message(&message) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        let _ = incoming.send(ChatSocketEvent::Error(format!("failed to encode chat message: {error}")));
-                        continue;
-                    }
-                };
-                if let Err(error) = ws_tx.send(Message::Text(body.into())).await {
-                    let _ = incoming.send(ChatSocketEvent::Error(format!("failed to send chat message: {error}")));
-                    break;
-                }
-            }
-            frame = ws_rx.next() => {
-                match frame {
-                    Some(Ok(Message::Text(text))) => {
-                        match serde_json::from_str::<Value>(&text) {
-                            Ok(value) => match decode_chat_event(value) {
-                                Ok(event) => {
-                                    let _ = incoming.send(ChatSocketEvent::Event(event));
-                                }
-                                Err(error) => {
-                                    let _ = incoming.send(ChatSocketEvent::Error(format!("failed to decode chat event: {error}")));
-                                }
-                            },
-                            Err(error) => {
-                                let _ = incoming.send(ChatSocketEvent::Error(format!("failed to parse chat event: {error}")));
-                            }
-                        }
-                    }
-                    Some(Ok(Message::Close(_))) | None => {
-                        let _ = incoming.send(ChatSocketEvent::Closed);
-                        break;
-                    }
-                    Some(Ok(_)) => {}
-                    Some(Err(error)) => {
-                        let _ = incoming.send(ChatSocketEvent::Error(format!("chat websocket read failed: {error}")));
-                        break;
-                    }
-                }
-            }
-            else => break,
-        }
-    }
-
-    let _ = ws_tx.close().await;
 }
 
 fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalGuard), TuiError> {
@@ -1282,111 +1224,6 @@ async fn fetch_agent_picker(transport: &HttpTransport) -> Result<AgentPickerSnap
         sessions: transport.execute(ops::sessions()).await?,
         preferences: Some(preferences),
     })
-}
-
-fn content_text(content: Option<&Value>) -> Option<&str> {
-    let content = content?;
-    content
-        .as_str()
-        .or_else(|| content.get("text").and_then(Value::as_str))
-}
-
-fn permission_prompt_text(request_id: &str, request: &Value) -> String {
-    let options = permission_options(request);
-    let option_text = if options.is_empty() {
-        "no selectable options".to_string()
-    } else {
-        options
-            .iter()
-            .map(|option| match option.name.as_deref() {
-                Some(name) if name != option.option_id => format!("{name} ({})", option.option_id),
-                _ => option.option_id.clone(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    format!(
-        "Permission required: {} [{request_id}]. Options: {option_text}. Use /allow <option-id> or /deny.",
-        permission_title(request)
-    )
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PermissionOption {
-    option_id: String,
-    name: Option<String>,
-}
-
-fn permission_title(request: &Value) -> String {
-    request
-        .get("toolCall")
-        .and_then(|tool_call| {
-            value_string_field(tool_call, "title")
-                .or_else(|| value_string_field(tool_call, "kind"))
-                .or_else(|| value_string_field(tool_call, "name"))
-        })
-        .or_else(|| value_string_field(request, "title"))
-        .unwrap_or_else(|| "Permission requested".into())
-}
-
-fn permission_options(request: &Value) -> Vec<PermissionOption> {
-    request
-        .get("options")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    let option_id = value_string_field(item, "optionId")
-                        .or_else(|| value_string_field(item, "option_id"))?;
-                    Some(PermissionOption {
-                        option_id,
-                        name: value_string_field(item, "name"),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn tool_activity_text(update: &Value) -> String {
-    let tool = update
-        .get("toolCall")
-        .and_then(|tool_call| {
-            value_string_field(tool_call, "title")
-                .or_else(|| value_string_field(tool_call, "kind"))
-                .or_else(|| value_string_field(tool_call, "name"))
-        })
-        .or_else(|| value_string_field(update, "title"))
-        .or_else(|| value_string_field(update, "toolName"))
-        .unwrap_or_else(|| "tool".into());
-    let status = value_string_field(update, "status")
-        .or_else(|| value_string_field(update, "state"))
-        .or_else(|| value_string_field(update, "outcome"));
-    match status {
-        Some(status) => format!("Tool: {} ({status})", one_line(&tool)),
-        None => format!("Tool: {}", one_line(&tool)),
-    }
-}
-
-fn value_string_field(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn one_line(value: &str) -> String {
-    let text = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    const LIMIT: usize = 120;
-    if text.chars().count() <= LIMIT {
-        return text;
-    }
-    let mut truncated = text.chars().take(LIMIT).collect::<String>();
-    truncated.push('…');
-    truncated
 }
 
 fn render(frame: &mut Frame<'_>, app: &TuiApp) {
@@ -1528,10 +1365,6 @@ fn centered_line(content_width: usize, spans: Vec<Span<'static>>) -> Line<'stati
     }
     padded_spans.extend(spans);
     Line::from(padded_spans)
-}
-
-fn muted_style() -> Style {
-    Style::default().add_modifier(Modifier::DIM)
 }
 
 fn context_strip(app: &TuiApp) -> Paragraph<'static> {
@@ -1697,16 +1530,22 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(6), Constraint::Length(3)])
         .split(area);
+    let visible_rows = usize::from(chunks[0].height.saturating_sub(2));
+    let content_width = usize::from(chunks[0].width.saturating_sub(4)).max(1);
     let messages = if app.chat_messages.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
             "Type /help for commands.",
             muted_style(),
         )))]
     } else {
-        app.chat_messages
-            .iter()
-            .map(chat_message_item)
-            .collect::<Vec<_>>()
+        visible_chat_lines(
+            chat_message_lines_for_messages(&app.chat_messages, content_width),
+            visible_rows,
+            app.chat_scroll,
+        )
+        .into_iter()
+        .map(ListItem::new)
+        .collect()
     };
     frame.render_widget(
         List::new(messages).block(
@@ -1731,25 +1570,6 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         ),
         chunks[1],
     );
-}
-
-fn chat_message_item(message: &ChatMessage) -> ListItem<'static> {
-    ListItem::new(chat_message_line(message))
-}
-
-fn chat_message_line(message: &ChatMessage) -> Line<'static> {
-    let (marker, style) = match message.role {
-        ChatRole::Notice => ("* ", muted_style()),
-        ChatRole::Request => (
-            "› ",
-            Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
-        ),
-        ChatRole::Response => ("• ", Style::default()),
-    };
-    Line::from(vec![
-        Span::styled(marker, style),
-        Span::raw(message.text.clone()),
-    ])
 }
 
 fn render_status_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
@@ -2008,6 +1828,12 @@ fn command_bar(app: &TuiApp) -> Paragraph<'static> {
         )
     } else if let Some(error) = &app.last_error {
         (format!("error: {error}"), Style::default().fg(ERROR))
+    } else if matches!(app.view, AppView::Chat)
+        && (app.chat_state.pending_permission_request_id.is_some()
+            || app.chat_state.turn_active
+            || app.chat_scroll > 0)
+    {
+        (view_hint(app), muted_style())
     } else if let Some(action) = &app.last_action {
         (format!("last: {action}"), muted_style())
     } else {
@@ -2040,7 +1866,14 @@ fn view_hint(app: &TuiApp) -> String {
             if app.chat_state.pending_permission_request_id.is_some() {
                 "permission pending: /allow <option-id> or /deny".to_string()
             } else if app.chat_state.turn_active {
-                "agent is working; /stop to interrupt".to_string()
+                app.work_status
+                    .clone()
+                    .unwrap_or_else(|| "agent is working; /stop to interrupt".to_string())
+            } else if app.chat_scroll > 0 {
+                format!(
+                    "scrollback {} lines; Down/PageDown returns to latest",
+                    app.chat_scroll
+                )
             } else {
                 "type a message or slash command".to_string()
             }
@@ -2600,34 +2433,17 @@ mod tests {
     }
 
     #[test]
-    fn chat_items_use_terminal_markers_without_role_labels() {
-        let request = row_text(
-            chat_message_line(&ChatMessage {
-                role: ChatRole::Request,
-                text: "hello".into(),
-            })
-            .spans,
-        );
-        let response = row_text(
-            chat_message_line(&ChatMessage {
-                role: ChatRole::Response,
-                text: "hi".into(),
-            })
-            .spans,
-        );
-        let notice = row_text(
-            chat_message_line(&ChatMessage {
-                role: ChatRole::Notice,
-                text: "ready".into(),
-            })
-            .spans,
-        );
+    fn chat_arrows_scroll_transcript() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
 
-        assert_eq!(request, "› hello");
-        assert_eq!(response, "• hi");
-        assert_eq!(notice, "* ready");
-        assert!(!request.contains("you"));
-        assert!(!notice.contains("system"));
+        app.select_up();
+        app.select_up();
+        assert_eq!(app.chat_scroll, 2);
+        app.select_down();
+        assert_eq!(app.chat_scroll, 1);
+        app.follow_chat_tail();
+        assert_eq!(app.chat_scroll, 0);
     }
 
     #[test]
@@ -2688,21 +2504,28 @@ mod tests {
     }
 
     #[test]
-    fn permission_prompt_lists_allow_command_options() {
-        let text = permission_prompt_text(
-            "req-1",
-            &serde_json::json!({
-                "toolCall": { "title": "Read" },
-                "options": [
-                    { "optionId": "allow-once", "name": "Allow" },
-                    { "optionId": "reject", "name": "Reject" }
-                ]
-            }),
-        );
+    fn tool_updates_change_work_status_without_polluting_transcript() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
+        let initial_count = app.chat_messages.len();
 
-        assert!(text.contains("Permission required: Read"));
-        assert!(text.contains("Allow (allow-once)"));
-        assert!(text.contains("/allow <option-id>"));
+        app.apply_chat_event(ChatEvent::TurnStatus { active: true });
+        app.apply_chat_event(ChatEvent::AcpNotification {
+            payload: serde_json::json!({
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCall": { "title": "Web Search" },
+                    "status": "running"
+                }
+            }),
+        });
+
+        assert_eq!(app.chat_messages.len(), initial_count);
+        assert_eq!(
+            app.work_status.as_deref(),
+            Some("Tool: Web Search (running)")
+        );
+        assert_eq!(view_hint(&app), "Tool: Web Search (running)");
     }
 
     #[test]
