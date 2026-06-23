@@ -520,6 +520,56 @@ async fn slash_mode_rejects_unknown_mode_without_sending() {
         .contains("Unknown mode"));
 }
 
+#[tokio::test]
+async fn slash_resume_sends_direct_resume_with_context() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("profile-1".into());
+    app.selected_workspace = Some("/tmp/project".into());
+    app.force_new_session = true;
+    app.chat_input = "/resume session-123456789".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("resume command"),
+        ChatClientMessage::ResumeSession {
+            agent: Some("codex".into()),
+            profile_id: Some("profile-1".into()),
+            session_id: "session-123456789".into(),
+            session_workspace: Some("/tmp/project".into()),
+        }
+    );
+    assert_eq!(app.selected_session.as_deref(), Some("session-123456789"));
+    assert!(!app.force_new_session);
+    assert_eq!(
+        app.last_action.as_deref(),
+        Some("resuming session session-1234")
+    );
+}
+
+#[tokio::test]
+async fn slash_resume_failed_send_keeps_existing_session() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_session = Some("old-session".into());
+    app.chat_input = "/resume new-session".into();
+    let (tx, rx) = mpsc::unbounded_channel();
+    drop(rx);
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(app.selected_session.as_deref(), Some("old-session"));
+    assert_eq!(
+        app.last_error.as_deref(),
+        Some("chat websocket task is not running")
+    );
+}
+
 #[test]
 fn session_ready_updates_chat_context_for_followup_messages() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);

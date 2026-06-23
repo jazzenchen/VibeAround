@@ -51,6 +51,13 @@ impl TuiApp {
                 self.follow_chat_tail();
             }
             "/new" => self.prepare_new_chat_session(),
+            "/resume" | "/session" => {
+                if let Some(session_id) = parts.next() {
+                    self.resume_chat_session(session_id, chat_tx);
+                } else {
+                    self.push_notice("Usage: /resume <session-id>");
+                }
+            }
             "/mode" => {
                 if let Some(mode_id) = parts.next() {
                     self.set_chat_mode(mode_id, chat_tx);
@@ -90,7 +97,7 @@ impl TuiApp {
             unknown => self.chat_messages.push(ChatMessage {
                 role: ChatRole::Notice,
                 text: format!(
-                    "Unknown command {unknown}. Try /new, /mode, /status, /agent, /help, /clear."
+                    "Unknown command {unknown}. Try /new, /resume, /mode, /status, /agent, /help, /clear."
                 ),
             }),
         }
@@ -99,7 +106,7 @@ impl TuiApp {
     fn push_help_message(&mut self) {
         self.chat_messages.push(ChatMessage {
             role: ChatRole::Notice,
-            text: "/new next message starts a new session  /mode set permission mode  /status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat".into(),
+            text: "/new next message starts a new session  /resume session-id resume a session  /mode set permission mode  /status runtime status  /agent agent context  /stop stop turn  /allow option-id  /deny  /clear clear chat".into(),
         });
     }
 
@@ -174,6 +181,29 @@ impl TuiApp {
         };
         if self.send_chat_command(ChatClientMessage::set_mode(canonical), chat_tx) {
             self.last_action = Some(format!("requested mode {canonical}"));
+        }
+    }
+
+    fn resume_chat_session(
+        &mut self,
+        session_id: &str,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            self.push_notice("Usage: /resume <session-id>");
+            return;
+        }
+        let message = ChatClientMessage::resume_session_with_options(
+            session_id,
+            self.effective_agent().map(str::to_string),
+            self.effective_profile().map(str::to_string),
+            self.effective_workspace().map(str::to_string),
+        );
+        if self.send_chat_command(message, chat_tx) {
+            self.selected_session = Some(session_id.to_string());
+            self.force_new_session = false;
+            self.last_action = Some(format!("resuming session {}", short_id(session_id)));
         }
     }
 
@@ -313,6 +343,10 @@ impl TuiApp {
             text: text.to_string(),
         });
     }
+}
+
+fn short_id(value: &str) -> String {
+    value.chars().take(12).collect()
 }
 
 fn canonical_chat_mode(mode_id: &str) -> Option<&'static str> {

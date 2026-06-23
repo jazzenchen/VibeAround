@@ -168,11 +168,20 @@ impl ChatClientMessage {
     }
 
     pub fn resume_session(session_id: impl Into<String>) -> Self {
+        Self::resume_session_with_options(session_id, None, None, None)
+    }
+
+    pub fn resume_session_with_options(
+        session_id: impl Into<String>,
+        agent: Option<String>,
+        profile_id: Option<String>,
+        session_workspace: Option<String>,
+    ) -> Self {
         Self::ResumeSession {
-            agent: None,
-            profile_id: None,
+            agent,
+            profile_id,
             session_id: session_id.into(),
-            session_workspace: None,
+            session_workspace,
         }
     }
 
@@ -386,6 +395,22 @@ mod tests {
             json!({
                 "type": "resume_session",
                 "sessionId": "sid-1"
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ChatClientMessage::resume_session_with_options(
+                "sid-1",
+                Some("codex".into()),
+                Some("deepseek".into()),
+                Some("/tmp/project".into()),
+            ))
+            .expect("json"),
+            json!({
+                "type": "resume_session",
+                "agent": "codex",
+                "profileId": "deepseek",
+                "sessionId": "sid-1",
+                "sessionWorkspace": "/tmp/project"
             })
         );
         assert_eq!(
