@@ -11,6 +11,7 @@ use crate::transport::HttpTransport;
 
 mod agent;
 mod chat;
+mod runtime;
 
 const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
 

@@ -3,13 +3,16 @@ use std::collections::BTreeMap;
 
 use crate::config::DEFAULT_BASE_URL;
 use crate::render;
+use crate::runtime_socket::RuntimeSocketEvent;
 use crate::selection::{AgentPanel, RuntimePanel};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 use va_client::launcher::{LauncherAgentPreferenceSummary, LauncherPreferencesResponse};
 use va_client::profiles::{AuthMode, ModelProfileSummary};
-use va_client::runtime::{AgentInfo, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus};
+use va_client::runtime::{
+    AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
+};
 use va_client::sessions::{PtyRunState, PtyTool, SessionListItem};
 use va_client::workspaces::WorkspaceItem;
 
@@ -37,6 +40,28 @@ fn agent(id: &str) -> AgentInfo {
         id: id.into(),
         name: id.into(),
         description: format!("{id} agent"),
+    }
+}
+
+fn runtime_agent(route_key: &str) -> AgentRuntime {
+    AgentRuntime {
+        route_key: route_key.into(),
+        channel_kind: "tui".into(),
+        chat_id: route_key.into(),
+        attached_routes: Vec::new(),
+        cli_kind: Some("codex".into()),
+        profile: None,
+        profile_label: None,
+        session_id: None,
+        workspace: Some("/tmp/project".into()),
+        busy: false,
+        failed: None,
+        started_at: 0,
+        agent_name: Some("Codex".into()),
+        agent_title: None,
+        agent_version: Some("1.0.0".into()),
+        multi_agent_turns: Vec::new(),
+        subagents: Vec::new(),
     }
 }
 
@@ -163,6 +188,39 @@ fn status_navigation_follows_panel_geometry() {
     assert_eq!(app.status_selection.panel, RuntimePanel::Sessions);
     app.select_left();
     assert_eq!(app.status_selection.panel, RuntimePanel::Tunnels);
+}
+
+#[test]
+fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.view = AppView::Status;
+    app.snapshot.channels = vec![channel("feishu"), channel("discord")];
+    app.snapshot.tunnels = vec![tunnel("cloudflare")];
+    app.snapshot.agents = vec![runtime_agent("tui:chat-1")];
+    app.status_selection.clamp(&app.snapshot);
+    app.status_selection.select_next(&app.snapshot);
+    assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(1));
+    app.last_error = Some("old runtime error".into());
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(vec![channel("feishu")]));
+
+    assert_eq!(app.snapshot.channels.len(), 1);
+    assert_eq!(app.snapshot.channels[0].kind, "feishu");
+    assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(0));
+    assert_eq!(app.last_error, None);
+    assert!(app.last_refresh.is_some());
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Tunnels(vec![tunnel("ngrok")]));
+    assert_eq!(app.snapshot.tunnels[0].provider, "ngrok");
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Agents(vec![runtime_agent(
+        "tui:chat-2",
+    )]));
+    assert_eq!(app.snapshot.agents[0].route_key, "tui:chat-2");
+
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Error("runtime socket closed".into()));
+    assert_eq!(app.last_error.as_deref(), Some("runtime socket closed"));
 }
 
 #[test]

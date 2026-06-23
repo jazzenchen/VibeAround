@@ -20,6 +20,7 @@ mod config;
 mod data;
 mod detail;
 mod render;
+mod runtime_socket;
 mod selection;
 mod theme;
 mod transport;
@@ -28,6 +29,7 @@ use app::{AppView, TuiApp};
 use chat_socket::{run_chat_socket, ChatSocketEvent};
 use config::{resolve_endpoint, Args, RuntimeEnv};
 use data::{fetch_snapshot, DashboardSnapshot};
+use runtime_socket::{run_runtime_sockets, RuntimeSocketEvent};
 use transport::{HttpTransport, TuiError};
 
 #[tokio::main]
@@ -65,10 +67,15 @@ async fn run_dashboard(
     let (chat_tx, chat_rx) = mpsc::unbounded_channel::<ChatClientMessage>();
     let (socket_event_tx, mut socket_event_rx) = mpsc::unbounded_channel::<ChatSocketEvent>();
     let chat_task = tokio::spawn(run_chat_socket(endpoint.clone(), chat_rx, socket_event_tx));
+    let (runtime_event_tx, mut runtime_event_rx) = mpsc::unbounded_channel::<RuntimeSocketEvent>();
+    let runtime_task = tokio::spawn(run_runtime_sockets(endpoint.clone(), runtime_event_tx));
 
     loop {
         while let Ok(event) = socket_event_rx.try_recv() {
             app.apply_chat_socket_event(event);
+        }
+        while let Ok(event) = runtime_event_rx.try_recv() {
+            app.apply_runtime_socket_event(event);
         }
         app.clear_expired_exit_confirmation();
         terminal
@@ -126,6 +133,7 @@ async fn run_dashboard(
     }
 
     chat_task.abort();
+    runtime_task.abort();
     Ok(())
 }
 
