@@ -1,7 +1,4 @@
-use std::env;
-use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -20,32 +17,33 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::endpoint::ServerEndpoint;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
-use va_client::http::{HttpMethod, RequestSpec, ResponseSpec};
-use va_client::launcher::LauncherPreferencesResponse;
-use va_client::ops;
 use va_client::profiles::ModelProfileSummary;
 use va_client::runtime::{
-    AgentInfo, AgentRuntime, AgentsConfig, ChannelRuntime, ChannelStatus, TunnelRuntime,
-    TunnelStatus,
+    AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
 };
-use va_client::service::ServiceInfoResponse;
 use va_client::sessions::{PtyRunState, SessionListItem};
 use va_client::state::ChatState;
 use va_client::workspaces::WorkspaceItem;
-use va_client::Operation;
 
 mod chat;
 mod chat_socket;
+mod config;
+mod data;
 mod theme;
+mod transport;
 
 use chat::{
     chat_message_lines_for_messages, content_text, input_box_height, one_line,
     permission_prompt_text, tool_activity_text, visible_chat_lines, ChatMessage, ChatRole,
 };
 use chat_socket::{run_chat_socket, ChatSocketEvent};
+#[cfg(test)]
+use config::DEFAULT_BASE_URL;
+use config::{resolve_endpoint, Args, RuntimeEnv};
+use data::{fetch_agent_picker, fetch_snapshot, AgentPickerSnapshot, DashboardSnapshot};
 use theme::{muted_style, BRAND, ERROR, NEUTRAL, OK, WARN};
+use transport::{HttpTransport, TuiError};
 
-const DEFAULT_BASE_URL: &str = "http://127.0.0.1:12358/va";
 const BRAND_LOGO: &str = r#" ██╗   ██╗ ██╗ ██████╗  ███████╗  █████╗  ██████╗   ██████╗  ██╗   ██╗ ███╗   ██╗ ██████╗
  ██║   ██║ ██║ ██╔══██╗ ██╔════╝ ██╔══██╗ ██╔══██╗ ██╔═══██╗ ██║   ██║ ████╗  ██║ ██╔══██╗
  ██║   ██║ ██║ ██████╔╝ █████╗   ███████║ ██████╔╝ ██║   ██║ ██║   ██║ ██╔██╗ ██║ ██║  ██║
@@ -54,120 +52,6 @@ const BRAND_LOGO: &str = r#" ██╗   ██╗ ██╗ ██████�
    ╚═══╝   ╚═╝ ╚═════╝  ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝   ╚═════╝  ╚═╝  ╚═══╝ ╚═════╝"#;
 const TAGLINE: &str = "unified runtime for ai coding agents";
 const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
-
-#[derive(Debug, Parser)]
-#[command(name = "va-tui", version, about = "VibeAround terminal dashboard")]
-struct Args {
-    #[arg(long)]
-    auth_file: Option<PathBuf>,
-    #[arg(long)]
-    base_url: Option<String>,
-    #[arg(long)]
-    token: Option<String>,
-    #[arg(long, default_value_t = 2000)]
-    refresh_ms: u64,
-    #[arg(long)]
-    once: bool,
-}
-
-#[derive(Debug, thiserror::Error)]
-enum TuiError {
-    #[error("auth is required; pass --token or start VibeAround so auth.json exists at {0}")]
-    MissingAuth(String),
-    #[error("failed to read auth file {path}: {source}")]
-    ReadAuth {
-        path: String,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to reach {url}: {source}")]
-    Http {
-        url: String,
-        #[source]
-        source: reqwest::Error,
-    },
-    #[error("I/O error while {action}: {source}")]
-    Io {
-        action: &'static str,
-        #[source]
-        source: io::Error,
-    },
-    #[error("client error: {0}")]
-    Client(#[from] va_client::ClientError),
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
-}
-
-struct HttpTransport {
-    endpoint: ServerEndpoint,
-    client: reqwest::Client,
-}
-
-impl HttpTransport {
-    fn new(endpoint: ServerEndpoint) -> Self {
-        Self {
-            endpoint,
-            client: reqwest::Client::new(),
-        }
-    }
-
-    async fn execute<T>(&self, operation: Operation<T>) -> Result<T, TuiError> {
-        let request = operation.request().clone();
-        let response = self.send(request).await?;
-        Ok(operation.decode(response)?)
-    }
-
-    async fn send(&self, request: RequestSpec) -> Result<ResponseSpec, TuiError> {
-        let method = match request.method {
-            HttpMethod::Get => reqwest::Method::GET,
-            HttpMethod::Post => reqwest::Method::POST,
-            HttpMethod::Put => reqwest::Method::PUT,
-            HttpMethod::Delete => reqwest::Method::DELETE,
-        };
-        let url = self.endpoint.http_url(&request);
-        let mut builder = self.client.request(method, &url);
-        if let Some(auth) = self.endpoint.authorization_header(&request) {
-            builder = builder.header(reqwest::header::AUTHORIZATION, auth);
-        }
-        if let Some(body) = request.body {
-            builder = builder.json(&body);
-        }
-
-        let response = builder.send().await.map_err(|source| TuiError::Http {
-            url: url.clone(),
-            source,
-        })?;
-        let status = response.status().as_u16();
-        let body = response.text().await.map_err(|source| TuiError::Http {
-            url: url.clone(),
-            source,
-        })?;
-        let body = if body.trim().is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_str(&body).unwrap_or(Value::String(body))
-        };
-        Ok(ResponseSpec::json(status, body))
-    }
-}
-
-#[derive(Debug, Default)]
-struct DashboardSnapshot {
-    service: Option<ServiceInfoResponse>,
-    channels: Vec<ChannelRuntime>,
-    tunnels: Vec<TunnelRuntime>,
-    agents: Vec<AgentRuntime>,
-    sessions: Vec<SessionListItem>,
-}
-
-#[derive(Debug, Default)]
-struct AgentPickerSnapshot {
-    agents: Vec<AgentInfo>,
-    profiles: Vec<ModelProfileSummary>,
-    workspaces: Vec<WorkspaceItem>,
-    sessions: Vec<SessionListItem>,
-    preferences: Option<LauncherPreferencesResponse>,
-}
 
 #[derive(Debug)]
 struct TuiApp {
@@ -1207,28 +1091,6 @@ impl Drop for TerminalGuard {
     }
 }
 
-async fn fetch_snapshot(transport: &HttpTransport) -> Result<DashboardSnapshot, TuiError> {
-    Ok(DashboardSnapshot {
-        service: Some(transport.execute(ops::service_info()).await?),
-        channels: transport.execute(ops::runtime_channels()).await?,
-        tunnels: transport.execute(ops::runtime_tunnels()).await?,
-        agents: transport.execute(ops::runtime_agent_hosts()).await?,
-        sessions: transport.execute(ops::sessions()).await?,
-    })
-}
-
-async fn fetch_agent_picker(transport: &HttpTransport) -> Result<AgentPickerSnapshot, TuiError> {
-    let preferences = transport.execute(ops::launcher_preferences()).await?;
-    let agents: AgentsConfig = transport.execute(ops::runtime_agents()).await?;
-    Ok(AgentPickerSnapshot {
-        agents: agents.agents,
-        profiles: transport.execute(ops::model_profiles()).await?,
-        workspaces: transport.execute(ops::workspaces()).await?.workspaces,
-        sessions: transport.execute(ops::sessions()).await?,
-        preferences: Some(preferences),
-    })
-}
-
 fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
     let brand_mode = brand_mode(area.width, area.height);
@@ -2207,94 +2069,6 @@ fn print_once(endpoint: &ServerEndpoint, snapshot: &DashboardSnapshot) {
     );
 }
 
-#[derive(Debug, Default)]
-struct RuntimeEnv {
-    base_url: Option<String>,
-    token: Option<String>,
-    auth_file: Option<String>,
-    data_dir: Option<String>,
-    home_dir: Option<PathBuf>,
-}
-
-impl RuntimeEnv {
-    fn current() -> Self {
-        Self {
-            base_url: env_value("VIBEAROUND_BASE_URL"),
-            token: env_value("VIBEAROUND_TOKEN").or_else(|| env_value("VIBEAROUND_AUTH_TOKEN")),
-            auth_file: env_value("VIBEAROUND_AUTH_FILE"),
-            data_dir: env_value("VIBEAROUND_DATA_DIR"),
-            home_dir: env::var_os("HOME")
-                .or_else(|| env::var_os("USERPROFILE"))
-                .map(PathBuf::from),
-        }
-    }
-}
-
-fn resolve_endpoint(args: &Args, runtime_env: &RuntimeEnv) -> Result<ServerEndpoint, TuiError> {
-    let base_url = args.base_url.as_deref().or(runtime_env.base_url.as_deref());
-    let token = args.token.as_deref().or(runtime_env.token.as_deref());
-    let auth_path = auth_file_path(args, runtime_env);
-
-    if let Some(base_url) = base_url {
-        let endpoint = ServerEndpoint::new(base_url);
-        if let Some(token) = token {
-            return Ok(endpoint.with_token(token));
-        }
-        if auth_path.exists() {
-            let auth = read_auth_file(&auth_path)?;
-            return Ok(endpoint.with_token(auth.token));
-        }
-        return Err(TuiError::MissingAuth(auth_path.display().to_string()));
-    }
-
-    if let Some(token) = token {
-        return Ok(ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token));
-    }
-
-    if auth_path.exists() {
-        let auth = read_auth_file(&auth_path)?;
-        return Ok(ServerEndpoint::from_auth_file(&auth));
-    }
-
-    Err(TuiError::MissingAuth(auth_path.display().to_string()))
-}
-
-fn read_auth_file(path: &Path) -> Result<va_client::auth::AuthFile, TuiError> {
-    let body = fs::read_to_string(path).map_err(|source| TuiError::ReadAuth {
-        path: path.display().to_string(),
-        source,
-    })?;
-    va_client::auth::parse_auth_file(&body).map_err(TuiError::from)
-}
-
-fn auth_file_path(args: &Args, runtime_env: &RuntimeEnv) -> PathBuf {
-    args.auth_file
-        .clone()
-        .unwrap_or_else(|| default_auth_path(runtime_env))
-}
-
-fn default_auth_path(runtime_env: &RuntimeEnv) -> PathBuf {
-    if let Some(path) = &runtime_env.auth_file {
-        return PathBuf::from(path);
-    }
-    if let Some(path) = &runtime_env.data_dir {
-        return PathBuf::from(path).join("auth.json");
-    }
-    runtime_env
-        .home_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".vibearound")
-        .join("auth.json")
-}
-
-fn env_value(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2316,42 +2090,6 @@ mod tests {
             status: TunnelStatus::Running,
             uptime_secs: 10,
         }
-    }
-
-    #[test]
-    fn resolves_base_url_with_auth_file_token() {
-        let path = std::env::temp_dir().join(format!(
-            "va-tui-auth-test-{}-{}.json",
-            std::process::id(),
-            line!()
-        ));
-        let _ = fs::remove_file(&path);
-        fs::write(&path, r#"{ "port": 12358, "token": "secret" }"#).expect("write auth");
-        let args = Args {
-            auth_file: Some(path.clone()),
-            base_url: Some("http://localhost:9000/va".into()),
-            token: None,
-            refresh_ms: 2000,
-            once: false,
-        };
-
-        let endpoint = resolve_endpoint(&args, &RuntimeEnv::default()).expect("endpoint");
-
-        assert_eq!(endpoint.base_url(), "http://localhost:9000/va");
-        assert_eq!(endpoint.token(), Some("secret"));
-
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn default_auth_path_uses_env_shape() {
-        let env = RuntimeEnv {
-            data_dir: Some("/tmp/va".into()),
-            home_dir: Some(PathBuf::from("/home/test")),
-            ..Default::default()
-        };
-
-        assert_eq!(default_auth_path(&env), PathBuf::from("/tmp/va/auth.json"));
     }
 
     #[test]
