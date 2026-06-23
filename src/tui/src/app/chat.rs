@@ -158,13 +158,14 @@ impl TuiApp {
         transport: &HttpTransport,
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
     ) {
-        let input = self.chat_input.trim().to_string();
+        let input = self.chat_input.clone();
         self.chat_input.clear();
         self.chat_cursor = 0;
-        if input.is_empty() {
+        let command = input.trim();
+        if command.is_empty() {
             return;
         }
-        if input.starts_with('/') && self.run_slash_command(&input, transport, chat_tx).await {
+        if command.starts_with('/') && self.run_slash_command(command, transport, chat_tx).await {
             return;
         }
 

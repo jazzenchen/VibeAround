@@ -708,7 +708,7 @@ async fn submit_chat_input_sends_multiline_prompt() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
     let mut app = TuiApp::new(&endpoint);
-    app.chat_input = "first line\nsecond line".into();
+    app.set_chat_input_for_test(" first line\nsecond line\n");
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     app.submit_chat_input(&transport, &tx).await;
@@ -716,7 +716,7 @@ async fn submit_chat_input_sends_multiline_prompt() {
     assert_eq!(
         rx.try_recv().expect("message"),
         ChatClientMessage::Message {
-            text: "first line\nsecond line".into(),
+            text: " first line\nsecond line\n".into(),
             message_id: None,
             agent: None,
             profile_id: None,
@@ -728,9 +728,28 @@ async fn submit_chat_input_sends_multiline_prompt() {
         }
     );
     assert!(app.chat_input.is_empty());
+    assert_eq!(app.chat_cursor, 0);
     assert_eq!(
         app.chat_messages.last().unwrap().text,
-        "first line\nsecond line"
+        " first line\nsecond line\n"
+    );
+}
+
+#[tokio::test]
+async fn slash_command_submission_trims_command_boundary_whitespace() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.set_chat_input_for_test("  /mode accept  ");
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("mode command"),
+        ChatClientMessage::SetMode {
+            mode_id: "acceptEdits".into(),
+        }
     );
 }
 
