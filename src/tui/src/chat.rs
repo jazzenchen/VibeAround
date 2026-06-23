@@ -20,9 +20,10 @@ pub(crate) enum ChatRole {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PermissionOption {
-    option_id: String,
-    name: Option<String>,
+pub(crate) struct PermissionOption {
+    pub(crate) option_id: String,
+    pub(crate) name: Option<String>,
+    pub(crate) kind: Option<String>,
 }
 
 pub(crate) fn content_text(content: Option<&Value>) -> Option<&str> {
@@ -39,17 +40,36 @@ pub(crate) fn permission_prompt_text(request_id: &str, request: &Value) -> Strin
     } else {
         options
             .iter()
-            .map(|option| match option.name.as_deref() {
-                Some(name) if name != option.option_id => format!("{name} ({})", option.option_id),
-                _ => option.option_id.clone(),
+            .enumerate()
+            .map(|(index, option)| match option.name.as_deref() {
+                Some(name) if name != option.option_id => {
+                    format!("{} {name} ({})", index + 1, option.option_id)
+                }
+                _ => format!("{} {}", index + 1, option.option_id),
             })
             .collect::<Vec<_>>()
             .join(", ")
     };
     format!(
-        "Permission required: {} [{request_id}]. Options: {option_text}. Use /allow <option-id> or /deny.",
+        "Permission required: {} [{request_id}]. Options: {option_text}. Use /allow [number|option-id] or /deny.",
         permission_title(request)
     )
+}
+
+pub(crate) fn resolve_permission_option(request: &Value, selector: Option<&str>) -> Option<String> {
+    let options = permission_options(request);
+    if options.is_empty() {
+        return None;
+    }
+    let selector = selector.map(str::trim).filter(|value| !value.is_empty());
+    let Some(selector) = selector else {
+        return default_permission_option(&options).map(|option| option.option_id.clone());
+    };
+    if let Some(option) = options.iter().find(|option| option.option_id == selector) {
+        return Some(option.option_id.clone());
+    }
+    let index = selector.parse::<usize>().ok()?.checked_sub(1)?;
+    options.get(index).map(|option| option.option_id.clone())
 }
 
 pub(crate) fn tool_activity_text(update: &Value) -> String {
@@ -210,7 +230,7 @@ fn permission_title(request: &Value) -> String {
         .unwrap_or_else(|| "Permission requested".into())
 }
 
-fn permission_options(request: &Value) -> Vec<PermissionOption> {
+pub(crate) fn permission_options(request: &Value) -> Vec<PermissionOption> {
     request
         .get("options")
         .and_then(Value::as_array)
@@ -223,11 +243,25 @@ fn permission_options(request: &Value) -> Vec<PermissionOption> {
                     Some(PermissionOption {
                         option_id,
                         name: value_string_field(item, "name"),
+                        kind: value_string_field(item, "kind"),
                     })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn default_permission_option(options: &[PermissionOption]) -> Option<&PermissionOption> {
+    options
+        .iter()
+        .find(|option| {
+            !option
+                .kind
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("reject")
+        })
+        .or_else(|| options.first())
 }
 
 fn value_string_field(value: &Value, key: &str) -> Option<String> {
@@ -422,7 +456,34 @@ mod tests {
         );
 
         assert!(text.contains("Permission required: Read"));
+        assert!(text.contains("1 Allow (allow-once)"));
         assert!(text.contains("Allow (allow-once)"));
-        assert!(text.contains("/allow <option-id>"));
+        assert!(text.contains("/allow [number|option-id]"));
+    }
+
+    #[test]
+    fn permission_options_can_be_selected_by_default_number_or_id() {
+        let request = serde_json::json!({
+            "toolCall": { "title": "Read" },
+            "options": [
+                { "optionId": "reject", "name": "Reject", "kind": "reject" },
+                { "optionId": "allow-once", "name": "Allow" },
+                { "optionId": "allow-always", "name": "Always allow" }
+            ]
+        });
+
+        assert_eq!(
+            resolve_permission_option(&request, None).as_deref(),
+            Some("allow-once")
+        );
+        assert_eq!(
+            resolve_permission_option(&request, Some("3")).as_deref(),
+            Some("allow-always")
+        );
+        assert_eq!(
+            resolve_permission_option(&request, Some("reject")).as_deref(),
+            Some("reject")
+        );
+        assert_eq!(resolve_permission_option(&request, Some("9")), None);
     }
 }

@@ -4,7 +4,8 @@ use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 
 use crate::app::TuiApp;
 use crate::chat::{
-    content_text, one_line, permission_prompt_text, tool_activity_text, ChatMessage, ChatRole,
+    content_text, one_line, permission_prompt_text, resolve_permission_option, tool_activity_text,
+    ChatMessage, ChatRole,
 };
 use crate::chat_socket::ChatSocketEvent;
 use crate::transport::HttpTransport;
@@ -125,27 +126,38 @@ impl TuiApp {
                 true
             }
             "/allow" => {
-                if let Some(option_id) = parts.next() {
-                    if let Some(request_id) = self.chat_state.pending_permission_request_id.clone()
+                let selector = parts.next();
+                if let Some(permission) = self.chat_state.pending_permission.clone() {
+                    if let Some(option_id) =
+                        resolve_permission_option(&permission.request, selector)
                     {
-                        self.send_chat_command(
-                            ChatClientMessage::permission_selected(request_id, option_id),
+                        if self.send_chat_command(
+                            ChatClientMessage::permission_selected(
+                                permission.request_id.clone(),
+                                option_id,
+                            ),
                             chat_tx,
-                        );
+                        ) {
+                            self.clear_pending_permission_after_response();
+                        }
                     } else {
-                        self.push_notice("No pending permission request.");
+                        self.push_notice(
+                            "Unknown permission option. Use /allow [number|option-id] or /deny.",
+                        );
                     }
                 } else {
-                    self.push_notice("Usage: /allow <option-id>");
+                    self.push_notice("No pending permission request.");
                 }
                 true
             }
             "/deny" | "/cancel" => {
                 if let Some(request_id) = self.chat_state.pending_permission_request_id.clone() {
-                    self.send_chat_command(
+                    if self.send_chat_command(
                         ChatClientMessage::permission_cancelled(request_id),
                         chat_tx,
-                    );
+                    ) {
+                        self.clear_pending_permission_after_response();
+                    }
                 } else {
                     self.push_notice("No pending permission request.");
                 }
@@ -167,6 +179,12 @@ impl TuiApp {
             role: ChatRole::Notice,
             text: text.into(),
         });
+    }
+
+    fn clear_pending_permission_after_response(&mut self) {
+        self.chat_state.pending_permission_request_id = None;
+        self.chat_state.pending_permission = None;
+        self.last_action = Some("permission response sent".into());
     }
 
     pub(crate) fn send_chat_message(

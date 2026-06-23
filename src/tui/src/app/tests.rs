@@ -677,6 +677,118 @@ async fn slash_mode_rejects_unknown_mode_without_sending() {
 }
 
 #[tokio::test]
+async fn slash_allow_defaults_to_first_non_reject_permission_option() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.apply_chat_event(ChatEvent::PermissionRequest {
+        request_id: "req-1".into(),
+        request: serde_json::json!({
+            "toolCall": { "title": "Read" },
+            "options": [
+                { "optionId": "reject", "name": "Reject", "kind": "reject" },
+                { "optionId": "allow-once", "name": "Allow" }
+            ]
+        }),
+    });
+    app.chat_input = "/allow".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("permission response"),
+        ChatClientMessage::permission_selected("req-1", "allow-once")
+    );
+    assert_eq!(app.chat_state.pending_permission_request_id, None);
+    assert_eq!(app.chat_state.pending_permission, None);
+    assert_eq!(app.last_action.as_deref(), Some("permission response sent"));
+}
+
+#[tokio::test]
+async fn slash_allow_accepts_numbered_permission_option() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.apply_chat_event(ChatEvent::PermissionRequest {
+        request_id: "req-2".into(),
+        request: serde_json::json!({
+            "toolCall": { "title": "Write" },
+            "options": [
+                { "optionId": "allow-once", "name": "Allow" },
+                { "optionId": "allow-always", "name": "Always allow" },
+                { "optionId": "reject", "name": "Reject", "kind": "reject" }
+            ]
+        }),
+    });
+    app.chat_input = "/allow 2".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("permission response"),
+        ChatClientMessage::permission_selected("req-2", "allow-always")
+    );
+    assert_eq!(app.chat_state.pending_permission_request_id, None);
+}
+
+#[tokio::test]
+async fn slash_allow_unknown_permission_option_keeps_pending_request() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.apply_chat_event(ChatEvent::PermissionRequest {
+        request_id: "req-3".into(),
+        request: serde_json::json!({
+            "toolCall": { "title": "Read" },
+            "options": [{ "optionId": "allow-once", "name": "Allow" }]
+        }),
+    });
+    app.chat_input = "/allow 9".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert!(rx.try_recv().is_err());
+    assert_eq!(
+        app.chat_state.pending_permission_request_id.as_deref(),
+        Some("req-3")
+    );
+    assert!(app
+        .chat_messages
+        .last()
+        .unwrap()
+        .text
+        .contains("Unknown permission option"));
+}
+
+#[tokio::test]
+async fn slash_deny_clears_pending_permission_after_send() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.apply_chat_event(ChatEvent::PermissionRequest {
+        request_id: "req-4".into(),
+        request: serde_json::json!({
+            "toolCall": { "title": "Read" },
+            "options": [{ "optionId": "allow-once", "name": "Allow" }]
+        }),
+    });
+    app.chat_input = "/deny".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(
+        rx.try_recv().expect("permission response"),
+        ChatClientMessage::permission_cancelled("req-4")
+    );
+    assert_eq!(app.chat_state.pending_permission_request_id, None);
+    assert_eq!(app.chat_state.pending_permission, None);
+}
+
+#[tokio::test]
 async fn slash_resume_sends_direct_resume_with_context() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
