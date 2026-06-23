@@ -423,12 +423,14 @@ impl NodeTarget {
                 suffix: "tar.gz",
                 format: ArchiveFormat::TarGz,
             }),
+            #[cfg(target_os = "linux")]
             ("linux", "aarch64") => Some(Self {
                 file_key: "linux-arm64",
                 archive_platform: "linux-arm64",
                 suffix: "tar.xz",
                 format: ArchiveFormat::TarXz,
             }),
+            #[cfg(target_os = "linux")]
             ("linux", "x86_64") => Some(Self {
                 file_key: "linux-x64",
                 archive_platform: "linux-x64",
@@ -655,6 +657,7 @@ mod tests {
         assert!(!version_at_least("v20.19.0", "22.0.0"));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn node_archive_name_uses_platform_fragment() {
         let target = NodeTarget {

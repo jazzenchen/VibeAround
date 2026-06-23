@@ -40,5 +40,7 @@ shell-escape = "0.1"
 libc = "0.2"
 flate2 = "1.1"
 tar = "0.4"
-xz2 = "0.1"
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+xz2 = { version = "0.1", features = ["static"] }

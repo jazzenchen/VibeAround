@@ -16,6 +16,7 @@ const USER_AGENT: &str = concat!("VibeAround/", env!("CARGO_PKG_VERSION"));
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveFormat {
     TarGz,
+    #[cfg(target_os = "linux")]
     TarXz,
     Zip,
 }
@@ -89,6 +90,7 @@ fn extract_bytes_strip_root_blocking(
         ArchiveFormat::TarGz => {
             extract_tar_strip_root(flate2::read::GzDecoder::new(Cursor::new(bytes)), target_dir)
         }
+        #[cfg(target_os = "linux")]
         ArchiveFormat::TarXz => {
             extract_tar_strip_root(xz2::read::XzDecoder::new(Cursor::new(bytes)), target_dir)
         }
