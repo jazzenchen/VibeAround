@@ -2,6 +2,7 @@ use std::env;
 use std::path::PathBuf;
 
 use serde_json::Value;
+use va_client::auth::PairStatusResponse;
 use va_client::endpoint::ServerEndpoint;
 use va_client::http::{AuthRequirement, HttpMethod, RequestSpec, ResponseSpec};
 use va_client::{ops, Operation};
@@ -43,6 +44,8 @@ enum Command {
     Workspaces,
     Previews,
     Profiles,
+    PairStart,
+    PairStatus { sid: String },
     SettingsReload,
     ChannelSync,
     ChannelStart { kind: String },
@@ -65,6 +68,7 @@ struct Options {
     auth_file: Option<PathBuf>,
     base_url: Option<String>,
     token: Option<String>,
+    json: bool,
 }
 
 struct HttpTransport {
@@ -84,6 +88,12 @@ impl HttpTransport {
         let request = operation.request().clone();
         let response = self.send(request).await?;
         Ok(operation.decode(response)?)
+    }
+
+    async fn execute_json<T>(&self, operation: Operation<T>) -> Result<Value, CliError> {
+        let response = self.send(operation.into_request()).await?;
+        response.ensure_success()?;
+        Ok(response.body)
     }
 
     async fn send(&self, request: RequestSpec) -> Result<ResponseSpec, CliError> {
@@ -140,11 +150,19 @@ async fn run() -> Result<(), CliError> {
         }
         Command::Health => {
             let transport = transport_for(&options, AuthRequirement::None)?;
+            if options.json {
+                print_json(transport.execute_json(ops::service_health()).await?)?;
+                return Ok(());
+            }
             let health = transport.execute(ops::service_health()).await?;
             println!("{} {} ok={}", health.service, health.version, health.ok);
         }
         Command::Info => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::service_info()).await?)?;
+                return Ok(());
+            }
             let info = transport.execute(ops::service_info()).await?;
             println!("{} {}", info.service, info.version);
             println!("mode: {}", info.mode);
@@ -155,6 +173,10 @@ async fn run() -> Result<(), CliError> {
         Command::Status => run_status(&options).await?,
         Command::Channels => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::runtime_channels()).await?)?;
+                return Ok(());
+            }
             for channel in transport.execute(ops::runtime_channels()).await? {
                 let reason = channel
                     .reason
@@ -167,6 +189,10 @@ async fn run() -> Result<(), CliError> {
         }
         Command::Tunnels => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::runtime_tunnels()).await?)?;
+                return Ok(());
+            }
             for tunnel in transport.execute(ops::runtime_tunnels()).await? {
                 println!(
                     "{}\t{:?}\t{}",
@@ -178,6 +204,10 @@ async fn run() -> Result<(), CliError> {
         }
         Command::Agents => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::runtime_agents()).await?)?;
+                return Ok(());
+            }
             let agents = transport.execute(ops::runtime_agents()).await?;
             println!("default: {}", agents.default_agent);
             for agent in agents.agents {
@@ -186,6 +216,10 @@ async fn run() -> Result<(), CliError> {
         }
         Command::Sessions => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::sessions()).await?)?;
+                return Ok(());
+            }
             for session in transport.execute(ops::sessions()).await? {
                 println!(
                     "{}\t{:?}\t{}",
@@ -197,6 +231,10 @@ async fn run() -> Result<(), CliError> {
         }
         Command::Workspaces => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::workspaces()).await?)?;
+                return Ok(());
+            }
             let workspaces = transport.execute(ops::workspaces()).await?;
             println!("default: {}", workspaces.default_workspace);
             for workspace in workspaces.workspaces {
@@ -212,6 +250,10 @@ async fn run() -> Result<(), CliError> {
         }
         Command::Previews => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::previews()).await?)?;
+                return Ok(());
+            }
             let previews = transport.execute(ops::previews()).await?;
             println!("tunnel: {}", previews.tunnel_url.as_deref().unwrap_or("-"));
             for preview in previews.previews {
@@ -220,11 +262,40 @@ async fn run() -> Result<(), CliError> {
         }
         Command::Profiles => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(transport.execute_json(ops::model_profiles()).await?)?;
+                return Ok(());
+            }
             for profile in transport.execute(ops::model_profiles()).await? {
                 println!(
                     "{}\t{}\t{}\t{}",
                     profile.id, profile.label, profile.provider, profile.provider_label
                 );
+            }
+        }
+        Command::PairStart => {
+            let transport = transport_for(&options, AuthRequirement::None)?;
+            if options.json {
+                print_json(transport.execute_json(ops::pair_start()).await?)?;
+                return Ok(());
+            }
+            let pair = transport.execute(ops::pair_start()).await?;
+            println!("code: {}", pair.code);
+            println!("sid: {}", pair.sid);
+        }
+        Command::PairStatus { sid } => {
+            let transport = transport_for(&options, AuthRequirement::None)?;
+            if options.json {
+                print_json(transport.execute_json(ops::pair_status(&sid)).await?)?;
+                return Ok(());
+            }
+            match transport.execute(ops::pair_status(&sid)).await? {
+                PairStatusResponse::Pending => println!("pending"),
+                PairStatusResponse::Expired => println!("expired"),
+                PairStatusResponse::Verified { token } => {
+                    println!("verified");
+                    println!("token: {token}");
+                }
             }
         }
         Command::SettingsReload => {
@@ -295,6 +366,14 @@ async fn run() -> Result<(), CliError> {
         }
         Command::WorkspaceDefault { path } => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(
+                    transport
+                        .execute_json(ops::workspace_set_default(&path)?)
+                        .await?,
+                )?;
+                return Ok(());
+            }
             let workspaces = transport
                 .execute(ops::workspace_set_default(&path)?)
                 .await?;
@@ -303,6 +382,14 @@ async fn run() -> Result<(), CliError> {
         }
         Command::WorkspaceCreate { name } => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
+            if options.json {
+                print_json(
+                    transport
+                        .execute_json(ops::workspace_create(&name)?)
+                        .await?,
+                )?;
+                return Ok(());
+            }
             let response = transport.execute(ops::workspace_create(&name)?).await?;
             println!("created: {}", response.workspace.path);
             println!("default: {}", response.default_workspace);
@@ -313,20 +400,54 @@ async fn run() -> Result<(), CliError> {
     Ok(())
 }
 
+fn print_json(value: Value) -> Result<(), CliError> {
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
 async fn run_unit(
     options: &Options,
     operation: Operation<()>,
     message: &'static str,
 ) -> Result<(), CliError> {
     let transport = transport_for(options, AuthRequirement::BearerToken)?;
-    transport.execute(operation).await?;
-    println!("{message}");
+    if options.json {
+        let response = transport.execute_json(operation).await?;
+        print_json(serde_json::json!({
+            "ok": true,
+            "message": message,
+            "response": response
+        }))?;
+    } else {
+        transport.execute(operation).await?;
+        println!("{message}");
+    }
     Ok(())
 }
 
 async fn run_status(options: &Options) -> Result<(), CliError> {
     let transport = transport_for(options, AuthRequirement::BearerToken)?;
     let mut snapshot = va_client::state::RuntimeSnapshot::new();
+    if options.json {
+        let service = transport.execute_json(ops::service_info()).await?;
+        let channels = transport.execute_json(ops::runtime_channels()).await?;
+        let tunnels = transport.execute_json(ops::runtime_tunnels()).await?;
+        let agent_runtimes = transport.execute_json(ops::runtime_agent_hosts()).await?;
+        let sessions = transport.execute_json(ops::sessions()).await?;
+        let workspaces = transport.execute_json(ops::workspaces()).await?;
+        let previews = transport.execute_json(ops::previews()).await?;
+        print_json(serde_json::json!({
+            "service": service,
+            "channels": channels,
+            "tunnels": tunnels,
+            "agent_runtimes": agent_runtimes,
+            "sessions": sessions,
+            "workspaces": workspaces,
+            "previews": previews
+        }))?;
+        return Ok(());
+    }
+
     snapshot.apply_service_info(transport.execute(ops::service_info()).await?);
     snapshot.apply_channels(transport.execute(ops::runtime_channels()).await?);
     snapshot.apply_tunnels(transport.execute(ops::runtime_tunnels()).await?);
@@ -391,6 +512,9 @@ where
             "--token" => {
                 options.token = Some(next_value(&mut args, "--token")?);
             }
+            "--json" => {
+                options.json = true;
+            }
             value if value.starts_with("--auth-file=") => {
                 options.auth_file = Some(PathBuf::from(value.trim_start_matches("--auth-file=")));
             }
@@ -444,6 +568,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         "workspaces" => no_args(rest, "workspaces").map(|()| Command::Workspaces),
         "previews" => no_args(rest, "previews").map(|()| Command::Previews),
         "profiles" => no_args(rest, "profiles").map(|()| Command::Profiles),
+        "pair" => parse_pair_command(rest),
         "settings" => match rest {
             [action] if action == "reload" => Ok(Command::SettingsReload),
             _ => Err(CliError::Usage("usage: va settings reload".to_string())),
@@ -481,6 +606,18 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         },
         "workspace" => parse_workspace_command(rest),
         other => Err(CliError::Usage(format!("unknown command: {other}"))),
+    }
+}
+
+fn parse_pair_command(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [action] if action == "start" => Ok(Command::PairStart),
+        [action, sid] if action == "status" => Ok(Command::PairStatus {
+            sid: sid.to_string(),
+        }),
+        _ => Err(CliError::Usage(
+            "usage: va pair start; va pair status SID".into(),
+        )),
     }
 }
 
@@ -591,7 +728,7 @@ fn home_dir() -> PathBuf {
 }
 
 fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -660,6 +797,32 @@ mod tests {
                 path: "/tmp/project".into()
             })
         );
+    }
+
+    #[test]
+    fn parses_pair_commands() {
+        let start = parse_args(["pair".to_string(), "start".to_string()]).expect("start");
+        assert_eq!(start.command, Some(Command::PairStart));
+
+        let status = parse_args([
+            "pair".to_string(),
+            "status".to_string(),
+            "sid-1".to_string(),
+        ])
+        .expect("status");
+        assert_eq!(
+            status.command,
+            Some(Command::PairStatus {
+                sid: "sid-1".into()
+            })
+        );
+    }
+
+    #[test]
+    fn parses_json_flag() {
+        let options = parse_args(["--json".to_string(), "channels".to_string()]).expect("options");
+        assert!(options.json);
+        assert_eq!(options.command, Some(Command::Channels));
     }
 
     #[test]
