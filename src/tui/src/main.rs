@@ -19,12 +19,16 @@ use ratatui::{Frame, Terminal};
 use serde_json::Value;
 use va_client::endpoint::ServerEndpoint;
 use va_client::http::{HttpMethod, RequestSpec, ResponseSpec};
+use va_client::launcher::LauncherPreferencesResponse;
 use va_client::ops;
+use va_client::profiles::ModelProfileSummary;
 use va_client::runtime::{
-    AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
+    AgentInfo, AgentRuntime, AgentsConfig, ChannelRuntime, ChannelStatus, TunnelRuntime,
+    TunnelStatus,
 };
 use va_client::service::ServiceInfoResponse;
 use va_client::sessions::{PtyRunState, SessionListItem};
+use va_client::workspaces::WorkspaceItem;
 use va_client::Operation;
 
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:12358/va";
@@ -36,6 +40,11 @@ const BRAND_LOGO: &str = r#" ██╗   ██╗ ██╗ ██████�
    ╚═══╝   ╚═╝ ╚═════╝  ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝  ╚═════╝   ╚═════╝  ╚═╝  ╚═══╝ ╚═════╝"#;
 const TAGLINE: &str = "unified runtime for ai coding agents";
 const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
+const BRAND: Color = Color::Cyan;
+const OK: Color = Color::Green;
+const WARN: Color = Color::Yellow;
+const ERROR: Color = Color::Red;
+const NEUTRAL: Color = Color::Reset;
 
 #[derive(Debug, Parser)]
 #[command(name = "va-tui", version, about = "VibeAround terminal dashboard")]
@@ -142,11 +151,42 @@ struct DashboardSnapshot {
     sessions: Vec<SessionListItem>,
 }
 
+#[derive(Debug, Default)]
+struct AgentPickerSnapshot {
+    agents: Vec<AgentInfo>,
+    profiles: Vec<ModelProfileSummary>,
+    workspaces: Vec<WorkspaceItem>,
+    sessions: Vec<SessionListItem>,
+    preferences: Option<LauncherPreferencesResponse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChatMessage {
+    role: ChatRole,
+    text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChatRole {
+    System,
+    User,
+}
+
 #[derive(Debug)]
 struct TuiApp {
     endpoint: String,
+    view: AppView,
     snapshot: DashboardSnapshot,
-    selection: SelectionState,
+    agent_picker: AgentPickerSnapshot,
+    status_selection: StatusSelection,
+    agent_selection: AgentSelection,
+    chat_messages: Vec<ChatMessage>,
+    chat_input: String,
+    selected_agent: Option<String>,
+    selected_profile: Option<String>,
+    selected_workspace: Option<String>,
+    selected_session: Option<String>,
+    detail: Option<DetailContent>,
     last_error: Option<String>,
     last_action: Option<String>,
     last_refresh: Option<Instant>,
@@ -157,8 +197,21 @@ impl TuiApp {
     fn new(endpoint: &ServerEndpoint) -> Self {
         Self {
             endpoint: endpoint.base_url().to_string(),
+            view: AppView::Chat,
             snapshot: DashboardSnapshot::default(),
-            selection: SelectionState::default(),
+            agent_picker: AgentPickerSnapshot::default(),
+            status_selection: StatusSelection::default(),
+            agent_selection: AgentSelection::default(),
+            chat_messages: vec![ChatMessage {
+                role: ChatRole::System,
+                text: "Type /status for runtime status, /agent for agent settings, /help for commands.".into(),
+            }],
+            chat_input: String::new(),
+            selected_agent: None,
+            selected_profile: None,
+            selected_workspace: None,
+            selected_session: None,
+            detail: None,
             last_error: None,
             last_action: None,
             last_refresh: None,
@@ -166,11 +219,11 @@ impl TuiApp {
         }
     }
 
-    async fn refresh(&mut self, transport: &HttpTransport) {
+    async fn refresh_status(&mut self, transport: &HttpTransport) {
         match fetch_snapshot(transport).await {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
-                self.clamp_selection();
+                self.status_selection.clamp(&self.snapshot);
                 self.last_error = None;
                 self.last_refresh = Some(Instant::now());
             }
@@ -181,145 +234,164 @@ impl TuiApp {
         }
     }
 
-    fn select_next_panel(&mut self) {
-        self.selection.active_panel = self.selection.active_panel.next();
+    async fn refresh_agent_picker(&mut self, transport: &HttpTransport) {
+        match fetch_agent_picker(transport).await {
+            Ok(snapshot) => {
+                self.agent_picker = snapshot;
+                self.agent_selection.clamp(&self.agent_picker);
+                self.last_error = None;
+                self.last_refresh = Some(Instant::now());
+            }
+            Err(error) => {
+                self.last_error = Some(error.to_string());
+                self.last_refresh = Some(Instant::now());
+            }
+        }
     }
 
-    fn select_previous_panel(&mut self) {
-        self.selection.active_panel = self.selection.active_panel.previous();
+    async fn open_status(&mut self, transport: &HttpTransport) {
+        self.view = AppView::Status;
+        self.detail = None;
+        self.refresh_status(transport).await;
     }
 
-    fn select_next_item(&mut self) {
-        self.selection
-            .select_next(self.selection.active_panel, self.active_item_count());
+    async fn open_agent_picker(&mut self, transport: &HttpTransport) {
+        self.view = AppView::Agent;
+        self.detail = None;
+        self.refresh_agent_picker(transport).await;
     }
 
-    fn select_previous_item(&mut self) {
-        self.selection
-            .select_previous(self.selection.active_panel, self.active_item_count());
+    fn go_back(&mut self) {
+        match self.view {
+            AppView::StatusDetail => {
+                self.view = AppView::Status;
+                self.detail = None;
+            }
+            AppView::Status | AppView::Agent => {
+                self.view = AppView::Chat;
+                self.detail = None;
+            }
+            AppView::Chat => {
+                self.chat_input.clear();
+            }
+        }
     }
 
-    fn selected_channel_kind(&self) -> Option<String> {
-        self.selection
-            .index(RuntimePanel::Channels)
-            .and_then(|index| self.snapshot.channels.get(index))
-            .map(|channel| channel.kind.clone())
+    fn select_left(&mut self) {
+        match self.view {
+            AppView::Status => self.status_selection.move_left(),
+            AppView::Agent => self.agent_selection.move_left(),
+            AppView::Chat | AppView::StatusDetail => {}
+        }
     }
 
-    fn selected_tunnel_provider(&self) -> Option<String> {
-        self.selection
-            .index(RuntimePanel::Tunnels)
-            .and_then(|index| self.snapshot.tunnels.get(index))
-            .map(|tunnel| tunnel.provider.clone())
+    fn select_right(&mut self) {
+        match self.view {
+            AppView::Status => self.status_selection.move_right(),
+            AppView::Agent => self.agent_selection.move_right(),
+            AppView::Chat | AppView::StatusDetail => {}
+        }
     }
 
-    fn selected_agent_route_key(&self) -> Option<String> {
-        self.selection
-            .index(RuntimePanel::Agents)
-            .and_then(|index| self.snapshot.agents.get(index))
-            .map(|agent| agent.route_key.clone())
+    fn select_up(&mut self) {
+        match self.view {
+            AppView::Status => self.status_selection.move_up(&self.snapshot),
+            AppView::Agent => self.agent_selection.move_up(&self.agent_picker),
+            AppView::Chat | AppView::StatusDetail => {}
+        }
     }
 
-    fn selected_session_id(&self) -> Option<String> {
-        self.selection
-            .index(RuntimePanel::Sessions)
-            .and_then(|index| self.snapshot.sessions.get(index))
-            .map(|session| session.session_id.clone())
+    fn select_down(&mut self) {
+        match self.view {
+            AppView::Status => self.status_selection.move_down(&self.snapshot),
+            AppView::Agent => self.agent_selection.move_down(&self.agent_picker),
+            AppView::Chat | AppView::StatusDetail => {}
+        }
     }
 
-    async fn run_channel_action(&mut self, transport: &HttpTransport, action: ChannelAction) {
-        let Some(kind) = self.selected_channel_kind() else {
-            self.last_error = Some("no channel selected".to_string());
+    fn enter_current_view(&mut self) {
+        match self.view {
+            AppView::Status => {
+                self.detail = self.status_selection.detail(&self.snapshot);
+                if self.detail.is_some() {
+                    self.view = AppView::StatusDetail;
+                }
+            }
+            AppView::Agent => self.select_agent_picker_item(),
+            AppView::Chat | AppView::StatusDetail => {}
+        }
+    }
+
+    fn select_agent_picker_item(&mut self) {
+        match self.agent_selection.panel {
+            AgentPanel::Agents => {
+                if let Some(agent) = self.agent_selection.selected_agent(&self.agent_picker) {
+                    self.selected_agent = Some(agent.id.clone());
+                    self.last_action = Some(format!("selected agent {}", agent.id));
+                }
+            }
+            AgentPanel::Profiles => {
+                if let Some(profile) = self.agent_selection.selected_profile(&self.agent_picker) {
+                    self.selected_profile = Some(profile.id.clone());
+                    self.last_action = Some(format!("selected profile {}", profile.label));
+                }
+            }
+            AgentPanel::Workspaces => {
+                if let Some(workspace) = self.agent_selection.selected_workspace(&self.agent_picker)
+                {
+                    self.selected_workspace = Some(workspace.path.clone());
+                    self.last_action = Some(format!("selected workspace {}", workspace.path));
+                }
+            }
+            AgentPanel::Sessions => {
+                if let Some(session) = self.agent_selection.selected_session(&self.agent_picker) {
+                    self.selected_session = Some(session.session_id.clone());
+                    self.last_action = Some(format!("selected session {}", session.session_id));
+                }
+            }
+        }
+    }
+
+    async fn submit_chat_input(&mut self, transport: &HttpTransport) {
+        let input = self.chat_input.trim().to_string();
+        self.chat_input.clear();
+        if input.is_empty() {
             return;
-        };
+        }
+        if input.starts_with('/') {
+            self.run_slash_command(&input, transport).await;
+            return;
+        }
 
-        let result = match action {
-            ChannelAction::Start => transport.execute(ops::runtime_start_channel(&kind)).await,
-            ChannelAction::Stop => transport.execute(ops::runtime_stop_channel(&kind)).await,
-            ChannelAction::Restart => transport.execute(ops::runtime_restart_channel(&kind)).await,
-        };
-
-        self.finish_runtime_action(
-            result,
-            format!("{} channel {kind}", action.label()),
-            transport,
-        )
-        .await;
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::User,
+            text: input,
+        });
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::System,
+            text: "Chat transport is not connected yet. The next slice will attach /ws/chat and show raw agent events here.".into(),
+        });
     }
 
-    async fn run_stop_or_kill_action(&mut self, transport: &HttpTransport) {
-        match self.selection.active_panel {
-            RuntimePanel::Channels => {
-                self.run_channel_action(transport, ChannelAction::Stop)
-                    .await;
-            }
-            RuntimePanel::Tunnels => {
-                let Some(provider) = self.selected_tunnel_provider() else {
-                    self.last_error = Some("no tunnel selected".to_string());
-                    return;
-                };
-                let result = transport.execute(ops::runtime_kill_tunnel(&provider)).await;
-                self.finish_runtime_action(result, format!("killed tunnel {provider}"), transport)
-                    .await;
-            }
-            RuntimePanel::Agents => {
-                let Some(route_key) = self.selected_agent_route_key() else {
-                    self.last_error = Some("no agent selected".to_string());
-                    return;
-                };
-                let result = transport.execute(ops::runtime_kill_agent(&route_key)).await;
-                self.finish_runtime_action(result, format!("killed agent {route_key}"), transport)
-                    .await;
-            }
-            RuntimePanel::Sessions => {
-                let Some(session_id) = self.selected_session_id() else {
-                    self.last_error = Some("no session selected".to_string());
-                    return;
-                };
-                let result = transport.execute(ops::runtime_kill_pty(&session_id)).await;
-                self.finish_runtime_action(result, format!("killed pty {session_id}"), transport)
-                    .await;
-            }
+    async fn run_slash_command(&mut self, command: &str, transport: &HttpTransport) {
+        match command {
+            "/status" => self.open_status(transport).await,
+            "/agent" => self.open_agent_picker(transport).await,
+            "/help" => self.push_help_message(),
+            "/clear" => self.chat_messages.clear(),
+            "/back" => self.go_back(),
+            unknown => self.chat_messages.push(ChatMessage {
+                role: ChatRole::System,
+                text: format!("Unknown command {unknown}. Try /status, /agent, /help, /clear."),
+            }),
         }
     }
 
-    async fn finish_runtime_action(
-        &mut self,
-        result: Result<(), TuiError>,
-        action: String,
-        transport: &HttpTransport,
-    ) {
-        match result {
-            Ok(()) => {
-                self.last_error = None;
-                self.last_action = Some(action);
-                self.refresh(transport).await;
-            }
-            Err(error) => {
-                self.last_error = Some(error.to_string());
-                self.last_action = None;
-            }
-        }
-    }
-
-    fn clamp_selection(&mut self) {
-        self.selection
-            .clamp(RuntimePanel::Channels, self.snapshot.channels.len());
-        self.selection
-            .clamp(RuntimePanel::Tunnels, self.snapshot.tunnels.len());
-        self.selection
-            .clamp(RuntimePanel::Agents, self.snapshot.agents.len());
-        self.selection
-            .clamp(RuntimePanel::Sessions, self.snapshot.sessions.len());
-    }
-
-    fn active_item_count(&self) -> usize {
-        match self.selection.active_panel {
-            RuntimePanel::Channels => self.snapshot.channels.len(),
-            RuntimePanel::Tunnels => self.snapshot.tunnels.len(),
-            RuntimePanel::Agents => self.snapshot.agents.len(),
-            RuntimePanel::Sessions => self.snapshot.sessions.len(),
-        }
+    fn push_help_message(&mut self) {
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::System,
+            text: "/status runtime status  /agent agent context  /clear clear chat  Esc back  Ctrl+C Ctrl+C quit".into(),
+        });
     }
 
     fn confirm_exit_request(&mut self) -> bool {
@@ -360,6 +432,20 @@ impl TuiApp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppView {
+    Chat,
+    Status,
+    StatusDetail,
+    Agent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DetailContent {
+    title: String,
+    lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimePanel {
     Channels,
     Tunnels,
@@ -368,38 +454,52 @@ enum RuntimePanel {
 }
 
 impl RuntimePanel {
-    fn next(self) -> Self {
+    fn left(self) -> Self {
         match self {
-            Self::Channels => Self::Tunnels,
-            Self::Tunnels => Self::Agents,
-            Self::Agents => Self::Sessions,
-            Self::Sessions => Self::Channels,
+            Self::Agents => Self::Channels,
+            Self::Sessions => Self::Tunnels,
+            Self::Channels | Self::Tunnels => self,
         }
     }
 
-    fn previous(self) -> Self {
+    fn right(self) -> Self {
         match self {
-            Self::Channels => Self::Sessions,
+            Self::Channels => Self::Agents,
+            Self::Tunnels => Self::Sessions,
+            Self::Agents | Self::Sessions => self,
+        }
+    }
+
+    fn up(self) -> Self {
+        match self {
             Self::Tunnels => Self::Channels,
-            Self::Agents => Self::Tunnels,
             Self::Sessions => Self::Agents,
+            Self::Channels | Self::Agents => self,
+        }
+    }
+
+    fn down(self) -> Self {
+        match self {
+            Self::Channels => Self::Tunnels,
+            Self::Agents => Self::Sessions,
+            Self::Tunnels | Self::Sessions => self,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SelectionState {
-    active_panel: RuntimePanel,
+struct StatusSelection {
+    panel: RuntimePanel,
     channel_index: Option<usize>,
     tunnel_index: Option<usize>,
     agent_index: Option<usize>,
     session_index: Option<usize>,
 }
 
-impl Default for SelectionState {
+impl Default for StatusSelection {
     fn default() -> Self {
         Self {
-            active_panel: RuntimePanel::Channels,
+            panel: RuntimePanel::Channels,
             channel_index: None,
             tunnel_index: None,
             agent_index: None,
@@ -408,7 +508,7 @@ impl Default for SelectionState {
     }
 }
 
-impl SelectionState {
+impl StatusSelection {
     fn index(&self, panel: RuntimePanel) -> Option<usize> {
         match panel {
             RuntimePanel::Channels => self.channel_index,
@@ -416,6 +516,10 @@ impl SelectionState {
             RuntimePanel::Agents => self.agent_index,
             RuntimePanel::Sessions => self.session_index,
         }
+    }
+
+    fn active_index(&self) -> Option<usize> {
+        self.index(self.panel)
     }
 
     fn set_index(&mut self, panel: RuntimePanel, index: Option<usize>) {
@@ -427,7 +531,41 @@ impl SelectionState {
         }
     }
 
-    fn select_next(&mut self, panel: RuntimePanel, item_count: usize) {
+    fn move_left(&mut self) {
+        self.panel = self.panel.left();
+    }
+
+    fn move_right(&mut self) {
+        self.panel = self.panel.right();
+    }
+
+    fn move_up(&mut self, snapshot: &DashboardSnapshot) {
+        if self.panel.up() == self.panel {
+            self.select_previous(snapshot);
+        } else {
+            self.panel = self.panel.up();
+        }
+    }
+
+    fn move_down(&mut self, snapshot: &DashboardSnapshot) {
+        if self.panel.down() == self.panel {
+            self.select_next(snapshot);
+        } else {
+            self.panel = self.panel.down();
+        }
+    }
+
+    fn select_next(&mut self, snapshot: &DashboardSnapshot) {
+        let panel = self.panel;
+        self.select_next_in_panel(panel, self.item_count(snapshot, panel));
+    }
+
+    fn select_previous(&mut self, snapshot: &DashboardSnapshot) {
+        let panel = self.panel;
+        self.select_previous_in_panel(panel, self.item_count(snapshot, panel));
+    }
+
+    fn select_next_in_panel(&mut self, panel: RuntimePanel, item_count: usize) {
         if item_count == 0 {
             self.set_index(panel, None);
             return;
@@ -439,7 +577,7 @@ impl SelectionState {
         self.set_index(panel, Some(next));
     }
 
-    fn select_previous(&mut self, panel: RuntimePanel, item_count: usize) {
+    fn select_previous_in_panel(&mut self, panel: RuntimePanel, item_count: usize) {
         if item_count == 0 {
             self.set_index(panel, None);
             return;
@@ -452,7 +590,18 @@ impl SelectionState {
         self.set_index(panel, Some(previous));
     }
 
-    fn clamp(&mut self, panel: RuntimePanel, item_count: usize) {
+    fn clamp(&mut self, snapshot: &DashboardSnapshot) {
+        for panel in [
+            RuntimePanel::Channels,
+            RuntimePanel::Tunnels,
+            RuntimePanel::Agents,
+            RuntimePanel::Sessions,
+        ] {
+            self.clamp_panel(panel, self.item_count(snapshot, panel));
+        }
+    }
+
+    fn clamp_panel(&mut self, panel: RuntimePanel, item_count: usize) {
         if item_count == 0 {
             self.set_index(panel, None);
             return;
@@ -460,22 +609,235 @@ impl SelectionState {
         let index = self.index(panel).unwrap_or(0).min(item_count - 1);
         self.set_index(panel, Some(index));
     }
+
+    fn item_count(&self, snapshot: &DashboardSnapshot, panel: RuntimePanel) -> usize {
+        match panel {
+            RuntimePanel::Channels => snapshot.channels.len(),
+            RuntimePanel::Tunnels => snapshot.tunnels.len(),
+            RuntimePanel::Agents => snapshot.agents.len(),
+            RuntimePanel::Sessions => snapshot.sessions.len(),
+        }
+    }
+
+    fn detail(&self, snapshot: &DashboardSnapshot) -> Option<DetailContent> {
+        match self.panel {
+            RuntimePanel::Channels => self
+                .active_index()
+                .and_then(|index| snapshot.channels.get(index))
+                .map(channel_detail),
+            RuntimePanel::Tunnels => self
+                .active_index()
+                .and_then(|index| snapshot.tunnels.get(index))
+                .map(tunnel_detail),
+            RuntimePanel::Agents => self
+                .active_index()
+                .and_then(|index| snapshot.agents.get(index))
+                .map(agent_detail),
+            RuntimePanel::Sessions => self
+                .active_index()
+                .and_then(|index| snapshot.sessions.get(index))
+                .map(session_detail),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChannelAction {
-    Start,
-    Stop,
-    Restart,
+enum AgentPanel {
+    Agents,
+    Profiles,
+    Workspaces,
+    Sessions,
 }
 
-impl ChannelAction {
-    fn label(self) -> &'static str {
+impl AgentPanel {
+    fn left(self) -> Self {
         match self {
-            Self::Start => "started",
-            Self::Stop => "stopped",
-            Self::Restart => "restarted",
+            Self::Profiles => Self::Agents,
+            Self::Sessions => Self::Workspaces,
+            Self::Agents | Self::Workspaces => self,
         }
+    }
+
+    fn right(self) -> Self {
+        match self {
+            Self::Agents => Self::Profiles,
+            Self::Workspaces => Self::Sessions,
+            Self::Profiles | Self::Sessions => self,
+        }
+    }
+
+    fn up(self) -> Self {
+        match self {
+            Self::Workspaces => Self::Agents,
+            Self::Sessions => Self::Profiles,
+            Self::Agents | Self::Profiles => self,
+        }
+    }
+
+    fn down(self) -> Self {
+        match self {
+            Self::Agents => Self::Workspaces,
+            Self::Profiles => Self::Sessions,
+            Self::Workspaces | Self::Sessions => self,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentSelection {
+    panel: AgentPanel,
+    agent_index: Option<usize>,
+    profile_index: Option<usize>,
+    workspace_index: Option<usize>,
+    session_index: Option<usize>,
+}
+
+impl Default for AgentSelection {
+    fn default() -> Self {
+        Self {
+            panel: AgentPanel::Agents,
+            agent_index: None,
+            profile_index: None,
+            workspace_index: None,
+            session_index: None,
+        }
+    }
+}
+
+impl AgentSelection {
+    fn index(&self, panel: AgentPanel) -> Option<usize> {
+        match panel {
+            AgentPanel::Agents => self.agent_index,
+            AgentPanel::Profiles => self.profile_index,
+            AgentPanel::Workspaces => self.workspace_index,
+            AgentPanel::Sessions => self.session_index,
+        }
+    }
+
+    fn set_index(&mut self, panel: AgentPanel, index: Option<usize>) {
+        match panel {
+            AgentPanel::Agents => self.agent_index = index,
+            AgentPanel::Profiles => self.profile_index = index,
+            AgentPanel::Workspaces => self.workspace_index = index,
+            AgentPanel::Sessions => self.session_index = index,
+        }
+    }
+
+    fn move_left(&mut self) {
+        self.panel = self.panel.left();
+    }
+
+    fn move_right(&mut self) {
+        self.panel = self.panel.right();
+    }
+
+    fn move_up(&mut self, snapshot: &AgentPickerSnapshot) {
+        if self.panel.up() == self.panel {
+            self.select_previous(snapshot);
+        } else {
+            self.panel = self.panel.up();
+        }
+    }
+
+    fn move_down(&mut self, snapshot: &AgentPickerSnapshot) {
+        if self.panel.down() == self.panel {
+            self.select_next(snapshot);
+        } else {
+            self.panel = self.panel.down();
+        }
+    }
+
+    fn select_next(&mut self, snapshot: &AgentPickerSnapshot) {
+        let panel = self.panel;
+        self.select_next_in_panel(panel, self.item_count(snapshot, panel));
+    }
+
+    fn select_previous(&mut self, snapshot: &AgentPickerSnapshot) {
+        let panel = self.panel;
+        self.select_previous_in_panel(panel, self.item_count(snapshot, panel));
+    }
+
+    fn select_next_in_panel(&mut self, panel: AgentPanel, item_count: usize) {
+        if item_count == 0 {
+            self.set_index(panel, None);
+            return;
+        }
+        let next = self
+            .index(panel)
+            .map(|index| (index + 1) % item_count)
+            .unwrap_or(0);
+        self.set_index(panel, Some(next));
+    }
+
+    fn select_previous_in_panel(&mut self, panel: AgentPanel, item_count: usize) {
+        if item_count == 0 {
+            self.set_index(panel, None);
+            return;
+        }
+        let last = item_count - 1;
+        let previous = self
+            .index(panel)
+            .map(|index| if index == 0 { last } else { index - 1 })
+            .unwrap_or(0);
+        self.set_index(panel, Some(previous));
+    }
+
+    fn clamp(&mut self, snapshot: &AgentPickerSnapshot) {
+        for panel in [
+            AgentPanel::Agents,
+            AgentPanel::Profiles,
+            AgentPanel::Workspaces,
+            AgentPanel::Sessions,
+        ] {
+            self.clamp_panel(panel, self.item_count(snapshot, panel));
+        }
+    }
+
+    fn clamp_panel(&mut self, panel: AgentPanel, item_count: usize) {
+        if item_count == 0 {
+            self.set_index(panel, None);
+            return;
+        }
+        let index = self.index(panel).unwrap_or(0).min(item_count - 1);
+        self.set_index(panel, Some(index));
+    }
+
+    fn item_count(&self, snapshot: &AgentPickerSnapshot, panel: AgentPanel) -> usize {
+        match panel {
+            AgentPanel::Agents => snapshot.agents.len(),
+            AgentPanel::Profiles => snapshot.profiles.len(),
+            AgentPanel::Workspaces => snapshot.workspaces.len(),
+            AgentPanel::Sessions => snapshot.sessions.len(),
+        }
+    }
+
+    fn selected_agent<'a>(&self, snapshot: &'a AgentPickerSnapshot) -> Option<&'a AgentInfo> {
+        self.agent_index
+            .and_then(|index| snapshot.agents.get(index))
+    }
+
+    fn selected_profile<'a>(
+        &self,
+        snapshot: &'a AgentPickerSnapshot,
+    ) -> Option<&'a ModelProfileSummary> {
+        self.profile_index
+            .and_then(|index| snapshot.profiles.get(index))
+    }
+
+    fn selected_workspace<'a>(
+        &self,
+        snapshot: &'a AgentPickerSnapshot,
+    ) -> Option<&'a WorkspaceItem> {
+        self.workspace_index
+            .and_then(|index| snapshot.workspaces.get(index))
+    }
+
+    fn selected_session<'a>(
+        &self,
+        snapshot: &'a AgentPickerSnapshot,
+    ) -> Option<&'a SessionListItem> {
+        self.session_index
+            .and_then(|index| snapshot.sessions.get(index))
     }
 }
 
@@ -507,12 +869,10 @@ async fn run() -> Result<(), TuiError> {
 async fn run_dashboard(
     endpoint: ServerEndpoint,
     transport: HttpTransport,
-    refresh: Duration,
+    _refresh: Duration,
 ) -> Result<(), TuiError> {
     let (mut terminal, _guard) = enter_terminal()?;
     let mut app = TuiApp::new(&endpoint);
-    app.refresh(&transport).await;
-    let mut last_tick = Instant::now();
 
     loop {
         app.clear_expired_exit_confirmation();
@@ -539,36 +899,28 @@ async fn run_dashboard(
                 }
 
                 match key.code {
-                    KeyCode::Tab | KeyCode::Right => app.select_next_panel(),
-                    KeyCode::BackTab | KeyCode::Left => app.select_previous_panel(),
-                    KeyCode::Char('j') | KeyCode::Down => app.select_next_item(),
-                    KeyCode::Char('k') | KeyCode::Up => app.select_previous_item(),
-                    KeyCode::Char('f') => {
-                        app.refresh(&transport).await;
-                        last_tick = Instant::now();
+                    KeyCode::Esc => app.go_back(),
+                    KeyCode::Left => app.select_left(),
+                    KeyCode::Right => app.select_right(),
+                    KeyCode::Up => app.select_up(),
+                    KeyCode::Down => app.select_down(),
+                    KeyCode::Enter => match app.view {
+                        AppView::Chat => app.submit_chat_input(&transport).await,
+                        AppView::Status | AppView::Agent => app.enter_current_view(),
+                        AppView::StatusDetail => {}
+                    },
+                    KeyCode::Backspace if app.view == AppView::Chat => {
+                        app.chat_input.pop();
                     }
-                    KeyCode::Char('s') => {
-                        app.run_channel_action(&transport, ChannelAction::Start)
-                            .await;
-                        last_tick = Instant::now();
-                    }
-                    KeyCode::Char('x') => {
-                        app.run_stop_or_kill_action(&transport).await;
-                        last_tick = Instant::now();
-                    }
-                    KeyCode::Char('r') => {
-                        app.run_channel_action(&transport, ChannelAction::Restart)
-                            .await;
-                        last_tick = Instant::now();
+                    KeyCode::Char(ch)
+                        if app.view == AppView::Chat
+                            && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        app.chat_input.push(ch);
                     }
                     _ => {}
                 }
             }
-        }
-
-        if last_tick.elapsed() >= refresh {
-            app.refresh(&transport).await;
-            last_tick = Instant::now();
         }
     }
 
@@ -625,6 +977,18 @@ async fn fetch_snapshot(transport: &HttpTransport) -> Result<DashboardSnapshot, 
     })
 }
 
+async fn fetch_agent_picker(transport: &HttpTransport) -> Result<AgentPickerSnapshot, TuiError> {
+    let preferences = transport.execute(ops::launcher_preferences()).await?;
+    let agents: AgentsConfig = transport.execute(ops::runtime_agents()).await?;
+    Ok(AgentPickerSnapshot {
+        agents: agents.agents,
+        profiles: transport.execute(ops::model_profiles()).await?,
+        workspaces: transport.execute(ops::workspaces()).await?.workspaces,
+        sessions: transport.execute(ops::sessions()).await?,
+        preferences: Some(preferences),
+    })
+}
+
 fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
     let brand_mode = brand_mode(area.width, area.height);
@@ -642,53 +1006,13 @@ fn render(frame: &mut Frame<'_>, app: &TuiApp) {
         brand_header(app, brand_mode, chunks[0].width.saturating_sub(2)),
         chunks[0],
     );
-    frame.render_widget(status_strip(app), chunks[1]);
-
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
-    let left = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(columns[0]);
-    let right = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(columns[1]);
-
-    frame.render_widget(
-        channel_list(
-            &app.snapshot.channels,
-            app.selection.index(RuntimePanel::Channels),
-            app.selection.active_panel == RuntimePanel::Channels,
-        ),
-        left[0],
-    );
-    frame.render_widget(
-        tunnel_list(
-            &app.snapshot.tunnels,
-            app.selection.index(RuntimePanel::Tunnels),
-            app.selection.active_panel == RuntimePanel::Tunnels,
-        ),
-        left[1],
-    );
-    frame.render_widget(
-        agent_list(
-            &app.snapshot.agents,
-            app.selection.index(RuntimePanel::Agents),
-            app.selection.active_panel == RuntimePanel::Agents,
-        ),
-        right[0],
-    );
-    frame.render_widget(
-        session_list(
-            &app.snapshot.sessions,
-            app.selection.index(RuntimePanel::Sessions),
-            app.selection.active_panel == RuntimePanel::Sessions,
-        ),
-        right[1],
-    );
+    frame.render_widget(context_strip(app), chunks[1]);
+    match app.view {
+        AppView::Chat => render_chat_view(frame, app, chunks[2]),
+        AppView::Status => render_status_view(frame, app, chunks[2]),
+        AppView::StatusDetail => render_status_detail_view(frame, app, chunks[2]),
+        AppView::Agent => render_agent_view(frame, app, chunks[2]),
+    }
     frame.render_widget(command_bar(app), chunks[3]);
 }
 
@@ -728,14 +1052,9 @@ fn brand_header(app: &TuiApp, mode: BrandMode, content_width: u16) -> Paragraph<
             lines.push(centered_line(
                 content_width,
                 vec![
-                    Span::styled(
-                        TAGLINE,
-                        Style::default()
-                            .fg(Color::Gray)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled("   /   ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(app.endpoint.clone(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(TAGLINE, muted_style().add_modifier(Modifier::BOLD)),
+                    Span::styled("   /   ", muted_style()),
+                    Span::raw(app.endpoint.clone()),
                 ],
             ));
         }
@@ -745,22 +1064,14 @@ fn brand_header(app: &TuiApp, mode: BrandMode, content_width: u16) -> Paragraph<
                 vec![
                     Span::styled(
                         "VibeAround",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        "  terminal runtime console",
-                        Style::default().fg(Color::Gray),
-                    ),
+                    Span::styled("  terminal runtime console", muted_style()),
                 ],
             ));
             lines.push(centered_line(
                 content_width,
-                vec![Span::styled(
-                    app.endpoint.clone(),
-                    Style::default().fg(Color::DarkGray),
-                )],
+                vec![Span::raw(app.endpoint.clone())],
             ));
         }
         BrandMode::Narrow => {
@@ -768,9 +1079,7 @@ fn brand_header(app: &TuiApp, mode: BrandMode, content_width: u16) -> Paragraph<
                 content_width,
                 vec![Span::styled(
                     "VA",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
                 )],
             ));
         }
@@ -780,7 +1089,7 @@ fn brand_header(app: &TuiApp, mode: BrandMode, content_width: u16) -> Paragraph<
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(Style::default().fg(BRAND)),
     )
 }
 
@@ -804,9 +1113,7 @@ fn centered_brand_logo_lines(content_width: usize) -> Vec<Line<'static>> {
                     line,
                     " ".repeat(block_width.saturating_sub(width))
                 ),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
             ))
         })
         .collect()
@@ -823,7 +1130,56 @@ fn centered_line(content_width: usize, spans: Vec<Span<'static>>) -> Line<'stati
     Line::from(padded_spans)
 }
 
-fn status_strip(app: &TuiApp) -> Paragraph<'static> {
+fn muted_style() -> Style {
+    Style::default().add_modifier(Modifier::DIM)
+}
+
+fn context_strip(app: &TuiApp) -> Paragraph<'static> {
+    let spans = match app.view {
+        AppView::Chat => chat_context_spans(app),
+        AppView::Status | AppView::StatusDetail => status_context_spans(app),
+        AppView::Agent => agent_context_spans(app),
+    };
+    Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
+}
+
+fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
+    let session_label = app
+        .selected_session
+        .as_deref()
+        .map(short_id)
+        .unwrap_or_else(|| "new".to_string());
+    let mut spans = vec![Span::styled(
+        "chat",
+        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+    )];
+    spans.push(separator());
+    spans.extend(label_value_spans(
+        "agent",
+        app.selected_agent.as_deref().unwrap_or("global"),
+    ));
+    spans.push(Span::raw("  "));
+    spans.extend(label_value_spans(
+        "profile",
+        app.selected_profile.as_deref().unwrap_or("global"),
+    ));
+    spans.push(Span::raw("  "));
+    spans.extend(label_value_spans(
+        "workspace",
+        app.selected_workspace.as_deref().unwrap_or("global"),
+    ));
+    spans.push(Span::raw("  "));
+    spans.extend(label_value_spans("session", &session_label));
+    spans
+}
+
+fn status_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
     let service_spans = app
         .snapshot
         .service
@@ -832,37 +1188,28 @@ fn status_strip(app: &TuiApp) -> Paragraph<'static> {
             vec![
                 Span::styled(
                     service.service.clone(),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
-                Span::styled(service.version.clone(), Style::default().fg(Color::Gray)),
+                Span::styled(service.version.clone(), muted_style()),
                 Span::raw("  "),
-                Span::styled("mode ", Style::default().fg(Color::DarkGray)),
-                Span::styled(service.mode.clone(), Style::default().fg(Color::Cyan)),
+                Span::styled("mode ", muted_style()),
+                Span::styled(service.mode.clone(), Style::default().fg(BRAND)),
                 Span::raw("  "),
-                Span::styled("port ", Style::default().fg(Color::DarkGray)),
-                Span::styled(service.port.to_string(), Style::default().fg(Color::Yellow)),
+                Span::styled("port ", muted_style()),
+                Span::styled(service.port.to_string(), Style::default().fg(WARN)),
             ]
         })
         .unwrap_or_else(|| {
             vec![Span::styled(
                 "service unavailable",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                Style::default().fg(ERROR).add_modifier(Modifier::BOLD),
             )]
         });
 
     let mut spans = service_spans;
-    spans.push(Span::styled(
-        "   |   ",
-        Style::default().fg(Color::DarkGray),
-    ));
-    spans.extend(metric_spans(
-        "channels",
-        app.snapshot.channels.len(),
-        Color::Cyan,
-    ));
+    spans.push(separator());
+    spans.extend(metric_spans("channels", app.snapshot.channels.len(), BRAND));
     spans.push(Span::raw("  "));
     spans.extend(metric_spans(
         "tunnels",
@@ -870,37 +1217,257 @@ fn status_strip(app: &TuiApp) -> Paragraph<'static> {
         Color::Magenta,
     ));
     spans.push(Span::raw("  "));
+    spans.extend(metric_spans("agents", app.snapshot.agents.len(), OK));
+    spans.push(Span::raw("  "));
+    spans.extend(metric_spans("sessions", app.snapshot.sessions.len(), WARN));
+    spans
+}
+
+fn agent_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
+    let selected = app
+        .agent_picker
+        .preferences
+        .as_ref()
+        .map(|preferences| preferences.selected_agent.as_str())
+        .unwrap_or("unknown");
+    let mut spans = vec![Span::styled(
+        "agent context",
+        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+    )];
+    spans.push(separator());
+    spans.extend(label_value_spans("default", selected));
+    spans.push(Span::raw("  "));
+    spans.extend(metric_spans("agents", app.agent_picker.agents.len(), BRAND));
+    spans.push(Span::raw("  "));
     spans.extend(metric_spans(
-        "agents",
-        app.snapshot.agents.len(),
-        Color::Green,
+        "profiles",
+        app.agent_picker.profiles.len(),
+        WARN,
     ));
     spans.push(Span::raw("  "));
     spans.extend(metric_spans(
-        "sessions",
-        app.snapshot.sessions.len(),
-        Color::Yellow,
+        "workspaces",
+        app.agent_picker.workspaces.len(),
+        OK,
     ));
+    spans
+}
 
-    Paragraph::new(Line::from(spans))
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        )
+fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(label, muted_style()),
+        Span::raw(" "),
+        Span::styled(value.to_string(), Style::default()),
+    ]
+}
+
+fn separator() -> Span<'static> {
+    Span::styled("   |   ", muted_style())
 }
 
 fn metric_spans(label: &'static str, value: usize, color: Color) -> Vec<Span<'static>> {
     vec![
-        Span::styled(label, Style::default().fg(Color::DarkGray)),
+        Span::styled(label, muted_style()),
         Span::raw(" "),
         Span::styled(
             value.to_string(),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
     ]
+}
+
+fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(6), Constraint::Length(3)])
+        .split(area);
+    let messages = if app.chat_messages.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "Type /help for commands.",
+            muted_style(),
+        )))]
+    } else {
+        app.chat_messages
+            .iter()
+            .map(chat_message_item)
+            .collect::<Vec<_>>()
+    };
+    frame.render_widget(
+        List::new(messages).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(" chat "),
+        ),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("> ", Style::default().fg(BRAND)),
+            Span::raw(app.chat_input.clone()),
+        ]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(BRAND))
+                .title(" message "),
+        ),
+        chunks[1],
+    );
+}
+
+fn chat_message_item(message: &ChatMessage) -> ListItem<'static> {
+    let (label, style) = match message.role {
+        ChatRole::System => ("system", muted_style()),
+        ChatRole::User => ("you", Style::default().fg(BRAND)),
+    };
+    ListItem::new(Line::from(vec![
+        Span::styled(format!("{label:<7}"), style.add_modifier(Modifier::BOLD)),
+        Span::raw(message.text.clone()),
+    ]))
+}
+
+fn render_status_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(columns[0]);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(columns[1]);
+
+    frame.render_widget(
+        channel_list(
+            &app.snapshot.channels,
+            app.status_selection.index(RuntimePanel::Channels),
+            app.status_selection.panel == RuntimePanel::Channels,
+        ),
+        left[0],
+    );
+    frame.render_widget(
+        tunnel_list(
+            &app.snapshot.tunnels,
+            app.status_selection.index(RuntimePanel::Tunnels),
+            app.status_selection.panel == RuntimePanel::Tunnels,
+        ),
+        left[1],
+    );
+    frame.render_widget(
+        runtime_agent_list(
+            &app.snapshot.agents,
+            app.status_selection.index(RuntimePanel::Agents),
+            app.status_selection.panel == RuntimePanel::Agents,
+        ),
+        right[0],
+    );
+    frame.render_widget(
+        session_list(
+            &app.snapshot.sessions,
+            app.status_selection.index(RuntimePanel::Sessions),
+            app.status_selection.panel == RuntimePanel::Sessions,
+        ),
+        right[1],
+    );
+}
+
+fn render_status_detail_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    let detail = app.detail.as_ref();
+    let title = detail
+        .map(|detail| format!(" {} ", detail.title))
+        .unwrap_or_else(|| " detail ".to_string());
+    let lines = detail
+        .map(|detail| {
+            detail
+                .lines
+                .iter()
+                .map(|line| Line::from(line.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![Line::from("No item selected.")]);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(BRAND))
+                .title(title),
+        ),
+        area,
+    );
+}
+
+fn render_agent_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(columns[0]);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(columns[1]);
+
+    frame.render_widget(
+        picker_list(
+            "agents",
+            app.agent_picker
+                .agents
+                .iter()
+                .map(agent_info_row)
+                .collect::<Vec<_>>(),
+            app.agent_selection.index(AgentPanel::Agents),
+            app.agent_selection.panel == AgentPanel::Agents,
+        ),
+        left[0],
+    );
+    frame.render_widget(
+        picker_list(
+            "workspaces",
+            app.agent_picker
+                .workspaces
+                .iter()
+                .map(workspace_row)
+                .collect::<Vec<_>>(),
+            app.agent_selection.index(AgentPanel::Workspaces),
+            app.agent_selection.panel == AgentPanel::Workspaces,
+        ),
+        left[1],
+    );
+    frame.render_widget(
+        picker_list(
+            "profiles",
+            app.agent_picker
+                .profiles
+                .iter()
+                .map(profile_row)
+                .collect::<Vec<_>>(),
+            app.agent_selection.index(AgentPanel::Profiles),
+            app.agent_selection.panel == AgentPanel::Profiles,
+        ),
+        right[0],
+    );
+    frame.render_widget(
+        picker_list(
+            "sessions",
+            app.agent_picker
+                .sessions
+                .iter()
+                .map(session_row)
+                .collect::<Vec<_>>(),
+            app.agent_selection.index(AgentPanel::Sessions),
+            app.agent_selection.panel == AgentPanel::Sessions,
+        ),
+        right[1],
+    );
 }
 
 fn channel_list(
@@ -925,13 +1492,26 @@ fn tunnel_list(tunnels: &[TunnelRuntime], selected: Option<usize>, active: bool)
     )
 }
 
-fn agent_list(agents: &[AgentRuntime], selected: Option<usize>, active: bool) -> List<'static> {
+fn runtime_agent_list(
+    agents: &[AgentRuntime],
+    selected: Option<usize>,
+    active: bool,
+) -> List<'static> {
     selectable_list(
         "agents",
         agents.iter().map(agent_row).collect::<Vec<_>>(),
         selected,
         active,
     )
+}
+
+fn picker_list(
+    title: &'static str,
+    rows: Vec<Vec<Span<'static>>>,
+    selected: Option<usize>,
+    active: bool,
+) -> List<'static> {
+    selectable_list(title, rows, selected, active)
 }
 
 fn session_list(
@@ -956,21 +1536,19 @@ fn selectable_list(
     let items = if rows.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
             "  no runtime entries",
-            Style::default().fg(Color::DarkGray),
+            muted_style(),
         )))]
     } else {
         rows.into_iter()
             .enumerate()
             .map(|(index, row)| {
                 let marker = if Some(index) == selected { "> " } else { "  " };
-                let mut spans = vec![Span::styled(
-                    marker,
-                    Style::default().fg(if active {
-                        Color::Yellow
-                    } else {
-                        Color::DarkGray
-                    }),
-                )];
+                let marker_style = if active {
+                    Style::default().fg(WARN)
+                } else {
+                    muted_style()
+                };
+                let mut spans = vec![Span::styled(marker, marker_style)];
                 spans.extend(row);
                 let item = ListItem::new(Line::from(spans));
                 if Some(index) == selected {
@@ -991,70 +1569,97 @@ fn list_block(title: &'static str, active: bool) -> Block<'static> {
         .title(format!(" {title} "));
     if active {
         block
-            .border_style(Style::default().fg(Color::Cyan))
-            .title_style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .border_style(Style::default().fg(BRAND))
+            .title_style(Style::default().fg(BRAND).add_modifier(Modifier::BOLD))
     } else {
-        block.border_style(Style::default().fg(Color::DarkGray))
+        block
     }
 }
 
 fn command_bar(app: &TuiApp) -> Paragraph<'static> {
-    let refreshed = app
-        .last_refresh
-        .map(|instant| format!("refreshed {}s ago", instant.elapsed().as_secs()))
-        .unwrap_or_else(|| "not refreshed yet".to_string());
-    let (status, status_color) = if app.exit_confirmation_pending() {
-        ("press Ctrl+C again to quit".to_string(), Color::Yellow)
+    let (status, status_style) = if app.exit_confirmation_pending() {
+        (
+            "press Ctrl+C again to quit".to_string(),
+            Style::default().fg(WARN),
+        )
     } else if let Some(error) = &app.last_error {
-        (format!("error: {error}"), Color::Red)
+        (format!("error: {error}"), Style::default().fg(ERROR))
     } else if let Some(action) = &app.last_action {
-        (format!("last: {action}"), Color::Gray)
+        (format!("last: {action}"), muted_style())
     } else {
-        (refreshed, Color::Gray)
+        (view_hint(app), muted_style())
     };
-    Paragraph::new(Line::from(vec![
-        Span::styled(status, Style::default().fg(status_color)),
-        Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
-        key_span("Tab"),
-        Span::raw("/"),
-        key_span("Left"),
-        Span::raw("/"),
-        key_span("Right"),
-        Span::raw(" panel  "),
-        key_span("j/k"),
-        Span::raw(" select  "),
-        key_span("s"),
-        Span::raw(" start  "),
-        key_span("x"),
-        Span::raw(" stop/kill  "),
-        key_span("r"),
-        Span::raw(" restart  "),
-        key_span("f"),
-        Span::raw(" refresh  "),
+    let mut spans = vec![
+        Span::styled(status, status_style),
+        Span::styled("  |  ", muted_style()),
+    ];
+    spans.extend(view_command_spans(app.view));
+    spans.extend([
+        Span::styled("  |  ", muted_style()),
         key_span("Ctrl+C"),
         Span::raw(" "),
         key_span("Ctrl+C"),
         Span::raw(" quit"),
-    ]))
-    .alignment(Alignment::Center)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    )
+    ]);
+    Paragraph::new(Line::from(spans))
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        )
+}
+
+fn view_hint(app: &TuiApp) -> String {
+    match app.view {
+        AppView::Chat => "type a message or slash command".to_string(),
+        AppView::Status => app
+            .last_refresh
+            .map(|instant| format!("status loaded {}s ago", instant.elapsed().as_secs()))
+            .unwrap_or_else(|| "status view".to_string()),
+        AppView::StatusDetail => "detail view".to_string(),
+        AppView::Agent => app
+            .last_refresh
+            .map(|instant| format!("agent context loaded {}s ago", instant.elapsed().as_secs()))
+            .unwrap_or_else(|| "agent context".to_string()),
+    }
+}
+
+fn view_command_spans(view: AppView) -> Vec<Span<'static>> {
+    match view {
+        AppView::Chat => vec![
+            key_span("Enter"),
+            Span::raw(" send  "),
+            key_span("/status"),
+            Span::raw("  "),
+            key_span("/agent"),
+            Span::raw("  "),
+            key_span("/help"),
+        ],
+        AppView::Status => vec![
+            key_span("Arrows"),
+            Span::raw(" move  "),
+            key_span("Enter"),
+            Span::raw(" detail  "),
+            key_span("Esc"),
+            Span::raw(" back"),
+        ],
+        AppView::StatusDetail => vec![key_span("Esc"), Span::raw(" back")],
+        AppView::Agent => vec![
+            key_span("Arrows"),
+            Span::raw(" move  "),
+            key_span("Enter"),
+            Span::raw(" select  "),
+            key_span("Esc"),
+            Span::raw(" back"),
+        ],
+    }
 }
 
 fn key_span(value: &'static str) -> Span<'static> {
     Span::styled(
         value,
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(WARN).add_modifier(Modifier::BOLD),
     )
 }
 
@@ -1062,9 +1667,7 @@ fn channel_row(channel: &ChannelRuntime) -> Vec<Span<'static>> {
     let mut spans = vec![
         Span::styled(
             fixed(&channel.kind, 14),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ),
         status_span(
             channel_status_label(channel.status),
@@ -1073,15 +1676,12 @@ fn channel_row(channel: &ChannelRuntime) -> Vec<Span<'static>> {
         ),
         Span::styled(
             channel.version.as_deref().unwrap_or("-").to_string(),
-            Style::default().fg(Color::DarkGray),
+            muted_style(),
         ),
     ];
     if let Some(reason) = channel.reason.as_ref().filter(|reason| !reason.is_empty()) {
-        spans.push(Span::styled("  ", Style::default().fg(Color::DarkGray)));
-        spans.push(Span::styled(
-            reason.clone(),
-            Style::default().fg(Color::Red),
-        ));
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(reason.clone(), Style::default().fg(ERROR)));
     }
     spans
 }
@@ -1090,9 +1690,7 @@ fn tunnel_row(tunnel: &TunnelRuntime) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             fixed(&tunnel.provider, 14),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ),
         status_span(
             tunnel_status_label(&tunnel.status),
@@ -1101,7 +1699,7 @@ fn tunnel_row(tunnel: &TunnelRuntime) -> Vec<Span<'static>> {
         ),
         Span::styled(
             tunnel.url.as_deref().unwrap_or("-").to_string(),
-            Style::default().fg(Color::Gray),
+            muted_style(),
         ),
     ]
 }
@@ -1116,20 +1714,14 @@ fn agent_row(agent: &AgentRuntime) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             fixed(&agent.route_key, 18),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ),
         status_span(
             if agent.busy { "busy" } else { "idle" },
-            if agent.busy {
-                Color::Yellow
-            } else {
-                Color::Green
-            },
+            if agent.busy { WARN } else { OK },
             8,
         ),
-        Span::styled(name.to_string(), Style::default().fg(Color::Gray)),
+        Span::styled(name.to_string(), muted_style()),
     ]
 }
 
@@ -1139,16 +1731,42 @@ fn session_row(session: &SessionListItem) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             fixed(&short_id(&session.session_id), 14),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ),
         status_span(status, session_status_color(&session.status), 10),
-        Span::styled(fixed(&tool, 12), Style::default().fg(Color::DarkGray)),
+        Span::styled(fixed(&tool, 12), muted_style()),
         Span::styled(
             session.project_path.as_deref().unwrap_or("-").to_string(),
-            Style::default().fg(Color::Gray),
+            muted_style(),
         ),
+    ]
+}
+
+fn agent_info_row(agent: &AgentInfo) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            fixed(&agent.id, 14),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(agent.name.clone(), muted_style()),
+    ]
+}
+
+fn profile_row(profile: &ModelProfileSummary) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            fixed(&profile.label, 18),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(profile.provider_label.clone(), muted_style()),
+    ]
+}
+
+fn workspace_row(workspace: &WorkspaceItem) -> Vec<Span<'static>> {
+    let marker = if workspace.is_default { "* " } else { "  " };
+    vec![
+        Span::styled(marker, Style::default().fg(BRAND)),
+        Span::styled(workspace.path.clone(), Style::default()),
     ]
 }
 
@@ -1179,10 +1797,10 @@ fn channel_status_label(status: ChannelStatus) -> &'static str {
 
 fn channel_status_color(status: ChannelStatus) -> Color {
     match status {
-        ChannelStatus::Running => Color::Green,
-        ChannelStatus::Spawning => Color::Yellow,
-        ChannelStatus::Crashed => Color::Red,
-        ChannelStatus::Stopped | ChannelStatus::NotStarted => Color::DarkGray,
+        ChannelStatus::Running => OK,
+        ChannelStatus::Spawning => WARN,
+        ChannelStatus::Crashed => ERROR,
+        ChannelStatus::Stopped | ChannelStatus::NotStarted => NEUTRAL,
     }
 }
 
@@ -1196,9 +1814,9 @@ fn tunnel_status_label(status: &TunnelStatus) -> &'static str {
 
 fn tunnel_status_color(status: &TunnelStatus) -> Color {
     match status {
-        TunnelStatus::Running => Color::Green,
-        TunnelStatus::Stopped { .. } => Color::DarkGray,
-        TunnelStatus::Failed { .. } => Color::Red,
+        TunnelStatus::Running => OK,
+        TunnelStatus::Stopped { .. } => NEUTRAL,
+        TunnelStatus::Failed { .. } => ERROR,
     }
 }
 
@@ -1211,8 +1829,84 @@ fn session_status_label(status: &PtyRunState) -> &'static str {
 
 fn session_status_color(status: &PtyRunState) -> Color {
     match status {
-        PtyRunState::Running { .. } => Color::Green,
-        PtyRunState::Exited { .. } => Color::DarkGray,
+        PtyRunState::Running { .. } => OK,
+        PtyRunState::Exited { .. } => NEUTRAL,
+    }
+}
+
+fn channel_detail(channel: &ChannelRuntime) -> DetailContent {
+    DetailContent {
+        title: format!("channel {}", channel.kind),
+        lines: vec![
+            format!("kind: {}", channel.kind),
+            format!("status: {}", channel_status_label(channel.status)),
+            format!("version: {}", channel.version.as_deref().unwrap_or("-")),
+            format!(
+                "plugin_dir: {}",
+                channel.plugin_dir.as_deref().unwrap_or("-")
+            ),
+            format!("reason: {}", channel.reason.as_deref().unwrap_or("-")),
+        ],
+    }
+}
+
+fn tunnel_detail(tunnel: &TunnelRuntime) -> DetailContent {
+    DetailContent {
+        title: format!("tunnel {}", tunnel.provider),
+        lines: vec![
+            format!("provider: {}", tunnel.provider),
+            format!("status: {}", tunnel_status_label(&tunnel.status)),
+            format!("url: {}", tunnel.url.as_deref().unwrap_or("-")),
+            format!("uptime_secs: {}", tunnel.uptime_secs),
+        ],
+    }
+}
+
+fn agent_detail(agent: &AgentRuntime) -> DetailContent {
+    DetailContent {
+        title: format!("agent {}", agent.route_key),
+        lines: vec![
+            format!("route_key: {}", agent.route_key),
+            format!("channel_kind: {}", agent.channel_kind),
+            format!("chat_id: {}", agent.chat_id),
+            format!("cli_kind: {}", agent.cli_kind.as_deref().unwrap_or("-")),
+            format!("profile: {}", agent.profile.as_deref().unwrap_or("-")),
+            format!("session_id: {}", agent.session_id.as_deref().unwrap_or("-")),
+            format!("workspace: {}", agent.workspace.as_deref().unwrap_or("-")),
+            format!("busy: {}", agent.busy),
+            format!("failed: {}", agent.failed.as_deref().unwrap_or("-")),
+        ],
+    }
+}
+
+fn session_detail(session: &SessionListItem) -> DetailContent {
+    DetailContent {
+        title: format!("session {}", short_id(&session.session_id)),
+        lines: vec![
+            format!("session_id: {}", session.session_id),
+            format!("tool: {:?}", session.tool),
+            format!("status: {}", session_status_label(&session.status)),
+            format!(
+                "project_path: {}",
+                session.project_path.as_deref().unwrap_or("-")
+            ),
+            format!(
+                "profile_id: {}",
+                session.profile_id.as_deref().unwrap_or("-")
+            ),
+            format!(
+                "profile_label: {}",
+                session.profile_label.as_deref().unwrap_or("-")
+            ),
+            format!(
+                "launch_target: {}",
+                session.launch_target.as_deref().unwrap_or("-")
+            ),
+            format!(
+                "tmux_session: {}",
+                session.tmux_session.as_deref().unwrap_or("-")
+            ),
+        ],
     }
 }
 
@@ -1391,70 +2085,104 @@ mod tests {
 
     #[test]
     fn selects_active_panel_items_with_wrapping_and_clamping() {
-        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-        let mut app = TuiApp::new(&endpoint);
+        let mut selection = StatusSelection::default();
+        let mut snapshot = DashboardSnapshot::default();
 
-        app.select_next_item();
-        assert_eq!(app.selection.index(RuntimePanel::Channels), None);
+        selection.select_next(&snapshot);
+        assert_eq!(selection.index(RuntimePanel::Channels), None);
 
-        app.snapshot.channels = vec![channel("feishu"), channel("discord")];
-        app.clamp_selection();
-        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(0));
-        assert_eq!(app.selected_channel_kind().as_deref(), Some("feishu"));
+        snapshot.channels = vec![channel("feishu"), channel("discord")];
+        selection.clamp(&snapshot);
+        assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
 
-        app.select_next_item();
-        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(1));
-        assert_eq!(app.selected_channel_kind().as_deref(), Some("discord"));
+        selection.select_next(&snapshot);
+        assert_eq!(selection.index(RuntimePanel::Channels), Some(1));
 
-        app.select_next_item();
-        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(0));
+        selection.select_next(&snapshot);
+        assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
 
-        app.select_previous_item();
-        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(1));
+        selection.select_previous(&snapshot);
+        assert_eq!(selection.index(RuntimePanel::Channels), Some(1));
 
-        app.snapshot.channels.pop();
-        app.clamp_selection();
-        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(0));
+        snapshot.channels.pop();
+        selection.clamp(&snapshot);
+        assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
 
-        app.snapshot.channels.clear();
-        app.clamp_selection();
-        assert_eq!(app.selection.index(RuntimePanel::Channels), None);
+        snapshot.channels.clear();
+        selection.clamp(&snapshot);
+        assert_eq!(selection.index(RuntimePanel::Channels), None);
     }
 
     #[test]
-    fn cycles_panels_and_selects_each_panel_independently() {
+    fn status_navigation_follows_panel_geometry() {
         let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
         let mut app = TuiApp::new(&endpoint);
+        app.view = AppView::Status;
         app.snapshot.channels = vec![channel("feishu")];
         app.snapshot.tunnels = vec![tunnel("cloudflare"), tunnel("ngrok")];
-        app.clamp_selection();
+        app.status_selection.clamp(&app.snapshot);
 
-        assert_eq!(app.selection.active_panel, RuntimePanel::Channels);
-        assert_eq!(app.selection.index(RuntimePanel::Channels), Some(0));
+        assert_eq!(app.status_selection.panel, RuntimePanel::Channels);
+        assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(0));
 
-        app.select_next_panel();
-        assert_eq!(app.selection.active_panel, RuntimePanel::Tunnels);
-        assert_eq!(app.selection.index(RuntimePanel::Tunnels), Some(0));
-        app.select_next_item();
-        assert_eq!(app.selection.index(RuntimePanel::Tunnels), Some(1));
-        assert_eq!(app.selected_tunnel_provider().as_deref(), Some("ngrok"));
+        app.select_down();
+        assert_eq!(app.status_selection.panel, RuntimePanel::Tunnels);
+        assert_eq!(app.status_selection.index(RuntimePanel::Tunnels), Some(0));
+        app.select_down();
+        assert_eq!(app.status_selection.index(RuntimePanel::Tunnels), Some(1));
 
-        app.select_next_panel();
-        assert_eq!(app.selection.active_panel, RuntimePanel::Agents);
-        app.select_next_panel();
-        assert_eq!(app.selection.active_panel, RuntimePanel::Sessions);
-        app.select_next_panel();
-        assert_eq!(app.selection.active_panel, RuntimePanel::Channels);
-
-        app.select_previous_panel();
-        assert_eq!(app.selection.active_panel, RuntimePanel::Sessions);
+        app.select_up();
+        assert_eq!(app.status_selection.panel, RuntimePanel::Channels);
+        app.select_right();
+        assert_eq!(app.status_selection.panel, RuntimePanel::Agents);
+        app.select_down();
+        assert_eq!(app.status_selection.panel, RuntimePanel::Sessions);
+        app.select_left();
+        assert_eq!(app.status_selection.panel, RuntimePanel::Tunnels);
     }
 
     #[test]
-    fn channel_action_labels_match_runtime_actions() {
-        assert_eq!(ChannelAction::Start.label(), "started");
-        assert_eq!(ChannelAction::Stop.label(), "stopped");
-        assert_eq!(ChannelAction::Restart.label(), "restarted");
+    fn enter_status_item_opens_detail_and_escape_returns() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
+        app.view = AppView::Status;
+        app.snapshot.channels = vec![channel("feishu")];
+        app.status_selection.clamp(&app.snapshot);
+
+        app.enter_current_view();
+
+        assert_eq!(app.view, AppView::StatusDetail);
+        assert_eq!(app.detail.as_ref().unwrap().title, "channel feishu");
+
+        app.go_back();
+        assert_eq!(app.view, AppView::Status);
+    }
+
+    #[test]
+    fn default_view_is_chat() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let app = TuiApp::new(&endpoint);
+
+        assert_eq!(app.view, AppView::Chat);
+        assert!(app.chat_messages[0].text.contains("/status"));
+    }
+
+    #[test]
+    fn agent_picker_selection_updates_chat_context() {
+        let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+        let mut app = TuiApp::new(&endpoint);
+        app.view = AppView::Agent;
+        app.agent_picker.agents = vec![AgentInfo {
+            id: "codex".into(),
+            name: "Codex".into(),
+            description: "Coding agent".into(),
+        }];
+        app.agent_selection.clamp(&app.agent_picker);
+
+        app.enter_current_view();
+
+        assert_eq!(app.selected_agent.as_deref(), Some("codex"));
+        assert_eq!(app.last_action.as_deref(), Some("selected agent codex"));
     }
 
     #[test]
