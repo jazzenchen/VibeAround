@@ -13,32 +13,98 @@ use crate::transport::HttpTransport;
 
 impl TuiApp {
     pub(crate) fn insert_chat_text(&mut self, text: &str) {
-        self.chat_input.push_str(&normalize_input_text(text));
+        let text = normalize_input_text(text);
+        self.clamp_chat_cursor();
+        self.chat_input.insert_str(self.chat_cursor, &text);
+        self.chat_cursor += text.len();
     }
 
     pub(crate) fn insert_chat_newline(&mut self) {
-        self.chat_input.push('\n');
+        self.insert_chat_text("\n");
     }
 
     pub(crate) fn delete_chat_char(&mut self) {
-        self.chat_input.pop();
+        self.clamp_chat_cursor();
+        if self.chat_cursor == 0 {
+            return;
+        }
+        let previous = previous_boundary(&self.chat_input, self.chat_cursor);
+        self.chat_input
+            .replace_range(previous..self.chat_cursor, "");
+        self.chat_cursor = previous;
     }
 
     pub(crate) fn clear_chat_input(&mut self) {
         self.chat_input.clear();
+        self.chat_cursor = 0;
     }
 
     pub(crate) fn delete_chat_word(&mut self) {
-        let trimmed_len = self.chat_input.trim_end_matches(char::is_whitespace).len();
-        self.chat_input.truncate(trimmed_len);
-        let word_start = self
-            .chat_input
+        self.clamp_chat_cursor();
+        let before_cursor = &self.chat_input[..self.chat_cursor];
+        let trimmed_len = before_cursor.trim_end_matches(char::is_whitespace).len();
+        let word_start = self.chat_input[..trimmed_len]
             .char_indices()
             .rev()
             .find(|(_, ch)| ch.is_whitespace())
             .map(|(index, ch)| index + ch.len_utf8())
             .unwrap_or(0);
-        self.chat_input.truncate(word_start);
+        let delete_end = if self.chat_input[..word_start]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace)
+            && self.chat_input[self.chat_cursor..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+        {
+            next_boundary(&self.chat_input, self.chat_cursor)
+        } else {
+            self.chat_cursor
+        };
+        self.chat_input.replace_range(word_start..delete_end, "");
+        self.chat_cursor = word_start;
+    }
+
+    pub(crate) fn move_chat_cursor_left(&mut self) {
+        self.clamp_chat_cursor();
+        self.chat_cursor = previous_boundary(&self.chat_input, self.chat_cursor);
+    }
+
+    pub(crate) fn move_chat_cursor_right(&mut self) {
+        self.clamp_chat_cursor();
+        if self.chat_cursor >= self.chat_input.len() {
+            return;
+        }
+        self.chat_cursor = next_boundary(&self.chat_input, self.chat_cursor);
+    }
+
+    pub(crate) fn move_chat_cursor_start(&mut self) {
+        self.chat_cursor = 0;
+    }
+
+    pub(crate) fn move_chat_cursor_end(&mut self) {
+        self.chat_cursor = self.chat_input.len();
+    }
+
+    fn clamp_chat_cursor(&mut self) {
+        self.chat_cursor = clamp_boundary(&self.chat_input, self.chat_cursor);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_chat_cursor_to_input_end(&mut self) {
+        self.chat_cursor = self.chat_input.len();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_chat_input_for_test(&mut self, input: impl Into<String>) {
+        self.chat_input = input.into();
+        self.sync_chat_cursor_to_input_end();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_chat_cursor_for_test(&mut self, cursor: usize) {
+        self.chat_cursor = clamp_boundary(&self.chat_input, cursor);
     }
 
     pub(crate) async fn submit_chat_input(
@@ -48,6 +114,7 @@ impl TuiApp {
     ) {
         let input = self.chat_input.trim().to_string();
         self.chat_input.clear();
+        self.chat_cursor = 0;
         if input.is_empty() {
             return;
         }
@@ -494,4 +561,37 @@ fn split_slash_command(command: &str) -> (&str, Option<&str>) {
         }
         None => (command, None),
     }
+}
+
+fn clamp_boundary(input: &str, cursor: usize) -> usize {
+    let mut cursor = cursor.min(input.len());
+    while cursor > 0 && !input.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    cursor
+}
+
+fn previous_boundary(input: &str, cursor: usize) -> usize {
+    let cursor = clamp_boundary(input, cursor);
+    if cursor == 0 {
+        return 0;
+    }
+    input[..cursor]
+        .char_indices()
+        .next_back()
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+fn next_boundary(input: &str, cursor: usize) -> usize {
+    let cursor = clamp_boundary(input, cursor);
+    if cursor >= input.len() {
+        return input.len();
+    }
+    let mut indices = input[cursor..].char_indices();
+    let _ = indices.next();
+    indices
+        .next()
+        .map(|(index, _)| cursor + index)
+        .unwrap_or(input.len())
 }

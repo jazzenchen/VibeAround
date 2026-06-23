@@ -27,6 +27,7 @@ pub(crate) struct TuiApp {
     pub(crate) agent_selection: AgentSelection,
     pub(crate) chat_messages: Vec<ChatMessage>,
     pub(crate) chat_input: String,
+    pub(crate) chat_cursor: usize,
     pub(crate) chat_scroll: usize,
     pub(crate) selected_agent: Option<String>,
     pub(crate) selected_profile: Option<String>,
@@ -57,6 +58,7 @@ impl TuiApp {
                 text: "Type /status for runtime status, /agent for agent settings, /help for commands.".into(),
             }],
             chat_input: String::new(),
+            chat_cursor: 0,
             chat_scroll: 0,
             selected_agent: None,
             selected_profile: None,
@@ -125,7 +127,7 @@ impl TuiApp {
                 self.detail = None;
             }
             AppView::Chat => {
-                self.chat_input.clear();
+                self.clear_chat_input();
             }
         }
     }

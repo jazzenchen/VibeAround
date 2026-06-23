@@ -90,6 +90,7 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
     frame.render_widget(
         Paragraph::new(chat_input_lines(
             &app.chat_input,
+            app.chat_cursor,
             input_content_width,
             MAX_INPUT_ROWS,
         ))
@@ -97,8 +98,12 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         .block(input_block()),
         chunks[1],
     );
-    let (cursor_x, cursor_y) =
-        input_cursor_offset(&app.chat_input, input_content_width, MAX_INPUT_ROWS);
+    let (cursor_x, cursor_y) = input_cursor_offset(
+        &app.chat_input,
+        app.chat_cursor,
+        input_content_width,
+        MAX_INPUT_ROWS,
+    );
     frame.set_cursor_position((
         chunks[1].x.saturating_add(cursor_x),
         chunks[1].y.saturating_add(1).saturating_add(cursor_y),
@@ -409,8 +414,13 @@ fn input_block() -> Block<'static> {
         .border_style(Style::default().fg(BRAND))
 }
 
-fn chat_input_lines(input: &str, content_width: usize, max_body_rows: u16) -> Vec<Line<'static>> {
-    input_visible_lines(input, content_width, max_body_rows)
+fn chat_input_lines(
+    input: &str,
+    cursor: usize,
+    content_width: usize,
+    max_body_rows: u16,
+) -> Vec<Line<'static>> {
+    input_visible_lines(input, cursor, content_width, max_body_rows)
         .into_iter()
         .enumerate()
         .map(|(index, line)| {

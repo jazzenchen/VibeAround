@@ -108,6 +108,16 @@ async fn run_dashboard(
 
                     match key.code {
                         KeyCode::Esc => app.go_back(),
+                        KeyCode::Left if app.view == AppView::Chat => app.move_chat_cursor_left(),
+                        KeyCode::Right if app.view == AppView::Chat => {
+                            app.move_chat_cursor_right();
+                        }
+                        KeyCode::Home if app.view == AppView::Chat => {
+                            app.move_chat_cursor_start();
+                        }
+                        KeyCode::End if app.view == AppView::Chat => {
+                            app.move_chat_cursor_end();
+                        }
                         KeyCode::Left => app.select_left(),
                         KeyCode::Right => app.select_right(),
                         KeyCode::Up => app.select_up(),

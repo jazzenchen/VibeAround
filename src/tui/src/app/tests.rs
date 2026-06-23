@@ -374,7 +374,7 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
 fn chat_render_shows_multiline_input_with_continuation_indent() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.chat_input = "first line\nsecond line".into();
+    app.set_chat_input_for_test("first line\nsecond line");
 
     let backend = TestBackend::new(100, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
@@ -444,9 +444,11 @@ fn chat_input_editing_supports_paste_multiline_and_word_delete() {
 
     app.insert_chat_text("hello\r\nworld  ");
     assert_eq!(app.chat_input, "hello\nworld  ");
+    assert_eq!(app.chat_cursor, app.chat_input.len());
 
     app.delete_chat_word();
     assert_eq!(app.chat_input, "hello\n");
+    assert_eq!(app.chat_cursor, app.chat_input.len());
 
     app.insert_chat_text("again");
     app.insert_chat_newline();
@@ -458,6 +460,45 @@ fn chat_input_editing_supports_paste_multiline_and_word_delete() {
 
     app.clear_chat_input();
     assert!(app.chat_input.is_empty());
+    assert_eq!(app.chat_cursor, 0);
+}
+
+#[test]
+fn chat_input_cursor_edits_inside_text() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.insert_chat_text("hello");
+    app.move_chat_cursor_left();
+    app.move_chat_cursor_left();
+    app.insert_chat_text("X");
+
+    assert_eq!(app.chat_input, "helXlo");
+    assert_eq!(app.chat_cursor, 4);
+
+    app.delete_chat_char();
+    assert_eq!(app.chat_input, "hello");
+    assert_eq!(app.chat_cursor, 3);
+
+    app.move_chat_cursor_start();
+    app.insert_chat_text("> ");
+    app.move_chat_cursor_end();
+    app.insert_chat_text(" <");
+    assert_eq!(app.chat_input, "> hello <");
+    assert_eq!(app.chat_cursor, app.chat_input.len());
+}
+
+#[test]
+fn chat_input_delete_word_preserves_text_after_cursor() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.set_chat_input_for_test("hello brave world");
+    app.set_chat_cursor_for_test("hello brave".len());
+    app.delete_chat_word();
+
+    assert_eq!(app.chat_input, "hello world");
+    assert_eq!(app.chat_cursor, "hello ".len());
 }
 
 #[test]

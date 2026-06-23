@@ -7,6 +7,13 @@ use crate::theme::{muted_style, BRAND};
 const CHAT_MARKER_WIDTH: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct InputLineSegment {
+    text: String,
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ChatMessage {
     pub(crate) role: ChatRole,
     pub(crate) text: String,
@@ -228,7 +235,7 @@ pub(crate) fn visible_chat_lines(
 }
 
 pub(crate) fn input_box_height(input: &str, content_width: usize, max_body_rows: u16) -> u16 {
-    let rows = input_visible_lines(input, content_width, max_body_rows).len();
+    let rows = input_visible_lines(input, input.len(), content_width, max_body_rows).len();
     u16::try_from(rows)
         .unwrap_or(max_body_rows)
         .saturating_add(2)
@@ -236,27 +243,38 @@ pub(crate) fn input_box_height(input: &str, content_width: usize, max_body_rows:
 
 pub(crate) fn input_visible_lines(
     input: &str,
+    cursor: usize,
     content_width: usize,
     max_body_rows: u16,
 ) -> Vec<String> {
+    let (segments, start, _) = input_visible_segments(input, cursor, content_width, max_body_rows);
     let max_body_rows = usize::from(max_body_rows.max(1));
-    let lines = input_wrapped_lines(input, content_width);
-    let start = lines.len().saturating_sub(max_body_rows);
-    lines.into_iter().skip(start).collect()
+    segments
+        .into_iter()
+        .skip(start)
+        .take(max_body_rows)
+        .map(|segment| segment.text)
+        .collect()
 }
 
 pub(crate) fn input_cursor_offset(
     input: &str,
+    cursor: usize,
     content_width: usize,
     max_body_rows: u16,
 ) -> (u16, u16) {
-    let lines = input_visible_lines(input, content_width, max_body_rows);
-    let last_line = lines.last().map(String::as_str).unwrap_or("");
+    let cursor = clamp_input_cursor(input, cursor);
+    let (segments, start, cursor_line) =
+        input_visible_segments(input, cursor, content_width, max_body_rows);
+    let segment = segments.get(cursor_line);
     let max_x = content_width.saturating_sub(1);
+    let cursor_text = segment
+        .and_then(|segment| input.get(segment.start..cursor))
+        .unwrap_or("");
     let cursor_x = CHAT_MARKER_WIDTH
-        .saturating_add(display_width(last_line))
+        .saturating_add(display_width(cursor_text))
         .min(max_x);
-    let cursor_y = lines.len().saturating_sub(1);
+    let cursor_y = cursor_line.saturating_sub(start);
     (
         u16::try_from(cursor_x).unwrap_or(u16::MAX),
         u16::try_from(cursor_y).unwrap_or(u16::MAX),
@@ -307,12 +325,36 @@ fn marker_body_width(content_width: usize) -> usize {
     content_width.saturating_sub(CHAT_MARKER_WIDTH).max(1)
 }
 
-fn input_wrapped_lines(input: &str, content_width: usize) -> Vec<String> {
+fn input_visible_segments(
+    input: &str,
+    cursor: usize,
+    content_width: usize,
+    max_body_rows: u16,
+) -> (Vec<InputLineSegment>, usize, usize) {
+    let segments = input_wrapped_segments(input, content_width);
+    let cursor = clamp_input_cursor(input, cursor);
+    let cursor_line = cursor_segment_index(&segments, cursor);
+    let max_body_rows = usize::from(max_body_rows.max(1));
+    let start = cursor_line.saturating_sub(max_body_rows.saturating_sub(1));
+    (segments, start, cursor_line)
+}
+
+fn input_wrapped_segments(input: &str, content_width: usize) -> Vec<InputLineSegment> {
     let body_width = marker_body_width(content_width);
-    input
-        .split('\n')
-        .flat_map(|line| wrap_chat_text_line(line, body_width))
-        .collect::<Vec<_>>()
+    let mut segments = Vec::new();
+    let mut line_start = 0;
+    for line in input.split('\n') {
+        segments.extend(wrap_input_text_line(line, line_start, body_width));
+        line_start += line.len() + 1;
+    }
+    if segments.is_empty() {
+        segments.push(InputLineSegment {
+            text: String::new(),
+            start: 0,
+            end: 0,
+        });
+    }
+    segments
 }
 
 fn permission_title(request: &Value) -> String {
@@ -424,6 +466,69 @@ fn wrap_chat_text_line(text: &str, content_width: usize) -> Vec<String> {
     lines
 }
 
+fn wrap_input_text_line(
+    text: &str,
+    line_start: usize,
+    content_width: usize,
+) -> Vec<InputLineSegment> {
+    if text.is_empty() || content_width == 0 || content_width == usize::MAX {
+        return vec![InputLineSegment {
+            text: text.to_string(),
+            start: line_start,
+            end: line_start + text.len(),
+        }];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_start = line_start;
+    let mut current_end = line_start;
+    for (relative_index, ch) in text.char_indices() {
+        let absolute_index = line_start + relative_index;
+        let mut candidate = current.clone();
+        candidate.push(ch);
+        if !current.is_empty() && display_width(&candidate) > content_width {
+            lines.push(InputLineSegment {
+                text: current,
+                start: current_start,
+                end: current_end,
+            });
+            current = ch.to_string();
+            current_start = absolute_index;
+        } else {
+            current = candidate;
+        }
+        current_end = absolute_index + ch.len_utf8();
+    }
+    lines.push(InputLineSegment {
+        text: current,
+        start: current_start,
+        end: current_end,
+    });
+    lines
+}
+
+fn cursor_segment_index(segments: &[InputLineSegment], cursor: usize) -> usize {
+    segments
+        .iter()
+        .position(|segment| cursor >= segment.start && cursor < segment.end)
+        .or_else(|| {
+            segments
+                .iter()
+                .position(|segment| cursor == segment.start && segment.start == segment.end)
+        })
+        .or_else(|| segments.iter().rposition(|segment| cursor == segment.end))
+        .unwrap_or_else(|| segments.len().saturating_sub(1))
+}
+
+fn clamp_input_cursor(input: &str, cursor: usize) -> usize {
+    let mut cursor = cursor.min(input.len());
+    while cursor > 0 && !input.is_char_boundary(cursor) {
+        cursor -= 1;
+    }
+    cursor
+}
+
 fn display_width(text: &str) -> usize {
     Line::from(text.to_string()).width()
 }
@@ -531,11 +636,11 @@ mod tests {
     #[test]
     fn input_visible_lines_wrap_and_follow_tail() {
         assert_eq!(
-            input_visible_lines("abcdef", 5, 4),
+            input_visible_lines("abcdef", "abcdef".len(), 5, 4),
             vec!["abc".to_string(), "def".to_string()]
         );
         assert_eq!(
-            input_visible_lines("a\nb\nc\nd\ne", 10, 4),
+            input_visible_lines("a\nb\nc\nd\ne", "a\nb\nc\nd\ne".len(), 10, 4),
             vec![
                 "b".to_string(),
                 "c".to_string(),
@@ -547,10 +652,27 @@ mod tests {
 
     #[test]
     fn input_cursor_offset_tracks_visible_input_end() {
-        assert_eq!(input_cursor_offset("", 10, 4), (2, 0));
-        assert_eq!(input_cursor_offset("abc", 10, 4), (5, 0));
-        assert_eq!(input_cursor_offset("abc\ndef", 10, 4), (5, 1));
-        assert_eq!(input_cursor_offset("abcdef", 5, 4), (4, 1));
+        assert_eq!(input_cursor_offset("", 0, 10, 4), (2, 0));
+        assert_eq!(input_cursor_offset("abc", "abc".len(), 10, 4), (5, 0));
+        assert_eq!(
+            input_cursor_offset("abc\ndef", "abc\ndef".len(), 10, 4),
+            (5, 1)
+        );
+        assert_eq!(input_cursor_offset("abcdef", "abcdef".len(), 5, 4), (4, 1));
+    }
+
+    #[test]
+    fn input_visible_lines_follow_cursor_window() {
+        assert_eq!(
+            input_visible_lines("a\nb\nc\nd\ne", 0, 10, 4),
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string()
+            ]
+        );
+        assert_eq!(input_cursor_offset("abcdef", 3, 5, 4), (2, 1));
     }
 
     #[test]
