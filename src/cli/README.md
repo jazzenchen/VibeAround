@@ -44,6 +44,8 @@ Protected commands read auth from, in order:
 
 ```bash
 va health
+va doctor
+va --json doctor
 va status
 va --json status
 VIBEAROUND_BASE_URL=http://127.0.0.1:12358/va VIBEAROUND_TOKEN=... va status

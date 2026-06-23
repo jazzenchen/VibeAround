@@ -41,6 +41,7 @@ enum Command {
     Health,
     Info,
     Status,
+    Doctor,
     Channels,
     Tunnels,
     Agents,
@@ -82,6 +83,13 @@ struct RuntimeEnv {
     auth_file: Option<String>,
     data_dir: Option<String>,
     home_dir: Option<PathBuf>,
+}
+
+struct ResolvedEndpoint {
+    endpoint: ServerEndpoint,
+    base_url_source: &'static str,
+    auth_source: &'static str,
+    auth_file: Option<PathBuf>,
 }
 
 impl RuntimeEnv {
@@ -203,6 +211,7 @@ async fn run() -> Result<(), CliError> {
             println!("settings: {}", info.settings_path);
         }
         Command::Status => run_status(&options).await?,
+        Command::Doctor => run_doctor(&options).await?,
         Command::Channels => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
             if options.json {
@@ -432,6 +441,70 @@ async fn run() -> Result<(), CliError> {
     Ok(())
 }
 
+async fn run_doctor(options: &Options) -> Result<(), CliError> {
+    let runtime_env = RuntimeEnv::current();
+    let public_endpoint = resolve_endpoint_env(options, AuthRequirement::None, &runtime_env)?;
+    let health_result = HttpTransport::new(public_endpoint.endpoint.clone())
+        .execute_json(ops::service_health())
+        .await;
+    let protected_endpoint =
+        resolve_endpoint_env(options, AuthRequirement::BearerToken, &runtime_env);
+
+    if options.json {
+        let health = match &health_result {
+            Ok(response) => serde_json::json!({
+                "ok": true,
+                "response": response
+            }),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.to_string()
+            }),
+        };
+        let auth = match &protected_endpoint {
+            Ok(endpoint) => serde_json::json!({
+                "ok": true,
+                "source": endpoint.auth_source,
+                "auth_file": endpoint.auth_file.as_ref().map(|path| path.display().to_string())
+            }),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.to_string()
+            }),
+        };
+        print_json(serde_json::json!({
+            "endpoint": {
+                "base_url": public_endpoint.endpoint.base_url(),
+                "base_url_source": public_endpoint.base_url_source,
+                "auth_source": public_endpoint.auth_source,
+                "auth_file": public_endpoint.auth_file.as_ref().map(|path| path.display().to_string())
+            },
+            "health": health,
+            "auth": auth
+        }))?;
+        return Ok(());
+    }
+
+    println!("endpoint: {}", public_endpoint.endpoint.base_url());
+    println!("endpoint source: {}", public_endpoint.base_url_source);
+    println!("auth source: {}", public_endpoint.auth_source);
+    if let Some(path) = &public_endpoint.auth_file {
+        println!("auth file: {}", path.display());
+    }
+
+    match health_result {
+        Ok(response) => println!("health: ok {}", response),
+        Err(error) => println!("health: failed ({error})"),
+    }
+
+    match protected_endpoint {
+        Ok(endpoint) => println!("protected auth: configured ({})", endpoint.auth_source),
+        Err(error) => println!("protected auth: not ready ({error})"),
+    }
+
+    Ok(())
+}
+
 fn print_json(value: Value) -> Result<(), CliError> {
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
@@ -593,6 +666,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         "health" => no_args(rest, "health").map(|()| Command::Health),
         "info" => no_args(rest, "info").map(|()| Command::Info),
         "status" => no_args(rest, "status").map(|()| Command::Status),
+        "doctor" => no_args(rest, "doctor").map(|()| Command::Doctor),
         "channels" => no_args(rest, "channels").map(|()| Command::Channels),
         "tunnels" => no_args(rest, "tunnels").map(|()| Command::Tunnels),
         "agents" => no_args(rest, "agents").map(|()| Command::Agents),
@@ -704,33 +778,64 @@ fn transport_for(options: &Options, auth: AuthRequirement) -> Result<HttpTranspo
 }
 
 fn endpoint_for(options: &Options, auth: AuthRequirement) -> Result<ServerEndpoint, CliError> {
-    endpoint_for_env(options, auth, &RuntimeEnv::current())
+    Ok(resolve_endpoint_env(options, auth, &RuntimeEnv::current())?.endpoint)
 }
 
-fn endpoint_for_env(
+fn resolve_endpoint_env(
     options: &Options,
     auth: AuthRequirement,
     runtime_env: &RuntimeEnv,
-) -> Result<ServerEndpoint, CliError> {
+) -> Result<ResolvedEndpoint, CliError> {
     let base_url = options
         .base_url
         .as_deref()
         .or(runtime_env.base_url.as_deref());
-    let token = options.token.as_deref().or(runtime_env.token.as_deref());
+    let base_url_source = if options.base_url.is_some() {
+        "cli"
+    } else if runtime_env.base_url.is_some() {
+        "env"
+    } else {
+        "default"
+    };
+    let token = options
+        .token
+        .as_deref()
+        .map(|token| ("cli-token", token))
+        .or_else(|| {
+            runtime_env
+                .token
+                .as_deref()
+                .map(|token| ("env-token", token))
+        });
 
     if let Some(base_url) = base_url {
         let endpoint = ServerEndpoint::new(base_url);
-        if let Some(token) = token {
-            return Ok(endpoint.with_token(token));
+        if let Some((auth_source, token)) = token {
+            return Ok(ResolvedEndpoint {
+                endpoint: endpoint.with_token(token),
+                base_url_source,
+                auth_source,
+                auth_file: None,
+            });
         }
         if matches!(auth, AuthRequirement::BearerToken) {
             return Err(CliError::MissingToken);
         }
-        return Ok(endpoint);
+        return Ok(ResolvedEndpoint {
+            endpoint,
+            base_url_source,
+            auth_source: "none",
+            auth_file: None,
+        });
     }
 
-    if let Some(token) = token {
-        return Ok(ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token));
+    if let Some((auth_source, token)) = token {
+        return Ok(ResolvedEndpoint {
+            endpoint: ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token),
+            base_url_source: "default",
+            auth_source,
+            auth_file: None,
+        });
     }
 
     let auth_path = options
@@ -743,11 +848,21 @@ fn endpoint_for_env(
             source,
         })?;
         let auth = va_client::auth::parse_auth_file(&body)?;
-        return Ok(ServerEndpoint::from_auth_file(&auth));
+        return Ok(ResolvedEndpoint {
+            endpoint: ServerEndpoint::from_auth_file(&auth),
+            base_url_source: "auth-file",
+            auth_source: "auth-file",
+            auth_file: Some(auth_path),
+        });
     }
 
     if matches!(auth, AuthRequirement::None) {
-        return Ok(ServerEndpoint::new(DEFAULT_BASE_URL));
+        return Ok(ResolvedEndpoint {
+            endpoint: ServerEndpoint::new(DEFAULT_BASE_URL),
+            base_url_source: "default",
+            auth_source: "none",
+            auth_file: Some(auth_path),
+        });
     }
 
     Err(CliError::MissingAuth(auth_path.display().to_string()))
@@ -780,7 +895,7 @@ fn env_value(key: &str) -> Option<String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  sessions                     List PTY sessions\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -878,6 +993,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_doctor_command() {
+        let options = parse_args(["doctor".to_string()]).expect("options");
+        assert_eq!(options.command, Some(Command::Doctor));
+    }
+
+    #[test]
     fn rejects_unexpected_subcommand_args() {
         let error = parse_args(["status".to_string(), "extra".to_string()]).expect_err("error");
         assert!(matches!(error, CliError::Usage(_)));
@@ -914,10 +1035,12 @@ mod tests {
             ..Default::default()
         };
 
-        let endpoint =
-            endpoint_for_env(&options, AuthRequirement::BearerToken, &runtime_env).expect("url");
-        assert_eq!(endpoint.base_url(), "http://localhost:9000/va");
-        assert_eq!(endpoint.token(), Some("env-token"));
+        let endpoint = resolve_endpoint_env(&options, AuthRequirement::BearerToken, &runtime_env)
+            .expect("url");
+        assert_eq!(endpoint.endpoint.base_url(), "http://localhost:9000/va");
+        assert_eq!(endpoint.endpoint.token(), Some("env-token"));
+        assert_eq!(endpoint.base_url_source, "env");
+        assert_eq!(endpoint.auth_source, "env-token");
     }
 
     #[test]
@@ -930,9 +1053,10 @@ mod tests {
             ..Default::default()
         };
 
-        let endpoint =
-            endpoint_for_env(&options, AuthRequirement::BearerToken, &runtime_env).expect("url");
-        assert_eq!(endpoint.token(), Some("cli-token"));
+        let endpoint = resolve_endpoint_env(&options, AuthRequirement::BearerToken, &runtime_env)
+            .expect("url");
+        assert_eq!(endpoint.endpoint.token(), Some("cli-token"));
+        assert_eq!(endpoint.auth_source, "cli-token");
     }
 
     #[test]
