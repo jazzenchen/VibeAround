@@ -318,13 +318,13 @@ Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki
 
 ## Download
 
-Latest release: [VibeAround v0.7.8](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.8).
+Latest release: [VibeAround v0.7.9](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.9).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.8.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.8/VibeAround-macOS-arm64-0.7.8.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.8/VibeAround-Windows-x64-Setup-0.7.8.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.8/VibeAround-Windows-x64-MSI-0.7.8.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.8/VibeAround-Windows-x64-Portable-0.7.8.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.8/VibeAround-Linux-x64-AppImage-0.7.8.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.8/VibeAround-Linux-x64-DEB-0.7.8.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.9.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-macOS-arm64-0.7.9.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-Setup-0.7.9.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-MSI-0.7.9.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-Portable-0.7.9.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Linux-x64-AppImage-0.7.9.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Linux-x64-DEB-0.7.9.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
 
