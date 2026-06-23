@@ -52,8 +52,10 @@ VIBEAROUND_BASE_URL=http://127.0.0.1:12358/va VIBEAROUND_TOKEN=... va status
 va auth status
 va auth clear
 va pair start
+va pair start --wait --save
 va pair status SID
 va pair status SID --save
+va pair wait SID --save
 va channels
 va channel restart feishu
 va launch sessions

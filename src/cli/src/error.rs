@@ -6,6 +6,10 @@ pub(crate) enum CliError {
     MissingAuth(String),
     #[error("auth is required for this command; pass --token or set VIBEAROUND_TOKEN when using --base-url")]
     MissingToken,
+    #[error("pairing session expired")]
+    PairExpired,
+    #[error("pairing was not verified within {0} seconds")]
+    PairTimeout(u64),
     #[error("failed to read auth file {path}: {source}")]
     ReadAuth {
         path: String,

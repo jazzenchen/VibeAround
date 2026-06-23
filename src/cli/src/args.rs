@@ -17,8 +17,9 @@ pub(crate) enum Command {
     Workspaces,
     Previews,
     Profiles,
-    PairStart,
+    PairStart(PairStartArgs),
     PairStatus { sid: String, save: bool },
+    PairWait(PairWaitArgs),
     AuthStatus,
     AuthClear,
     SettingsReload,
@@ -70,6 +71,44 @@ pub(crate) struct SessionCreateArgs {
     pub(crate) cols: Option<u16>,
     pub(crate) rows: Option<u16>,
     pub(crate) attach: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PairStartArgs {
+    pub(crate) wait: bool,
+    pub(crate) save: bool,
+    pub(crate) timeout_secs: u64,
+    pub(crate) interval_ms: u64,
+}
+
+impl Default for PairStartArgs {
+    fn default() -> Self {
+        Self {
+            wait: false,
+            save: false,
+            timeout_secs: 60,
+            interval_ms: 2_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PairWaitArgs {
+    pub(crate) sid: String,
+    pub(crate) save: bool,
+    pub(crate) timeout_secs: u64,
+    pub(crate) interval_ms: u64,
+}
+
+impl Default for PairWaitArgs {
+    fn default() -> Self {
+        Self {
+            sid: String::new(),
+            save: false,
+            timeout_secs: 60,
+            interval_ms: 2_000,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -536,6 +575,18 @@ fn parse_usize(value: &str, flag: &str) -> Result<usize, CliError> {
     Ok(value)
 }
 
+fn parse_u64(value: &str, flag: &str) -> Result<u64, CliError> {
+    let value = value
+        .parse::<u64>()
+        .map_err(|_| CliError::Usage(format!("{flag} must be a positive integer")))?;
+    if value == 0 {
+        return Err(CliError::Usage(format!(
+            "{flag} must be a positive integer"
+        )));
+    }
+    Ok(value)
+}
+
 fn parse_bool(value: &str, flag: &str) -> Result<bool, CliError> {
     match value {
         "true" | "1" | "yes" | "on" => Ok(true),
@@ -561,12 +612,67 @@ fn parse_tool(value: &str) -> Result<PtyTool, CliError> {
 
 fn parse_pair_command(args: &[String]) -> Result<Command, CliError> {
     match args {
-        [action] if action == "start" => Ok(Command::PairStart),
+        [action, rest @ ..] if action == "start" => {
+            parse_pair_start_args(rest).map(Command::PairStart)
+        }
         [action, rest @ ..] if action == "status" => parse_pair_status_args(rest),
+        [action, rest @ ..] if action == "wait" => {
+            parse_pair_wait_args(rest).map(Command::PairWait)
+        }
         _ => Err(CliError::Usage(
-            "usage: va pair start; va pair status SID [--save]".into(),
+            "usage: va pair start [--wait] [--save]; va pair status SID [--save]; va pair wait SID [--save]".into(),
         )),
     }
+}
+
+fn parse_pair_start_args(args: &[String]) -> Result<PairStartArgs, CliError> {
+    let mut parsed = PairStartArgs::default();
+    let mut args = args.iter().peekable();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--wait" => parsed.wait = true,
+            "--save" => {
+                parsed.save = true;
+                parsed.wait = true;
+            }
+            "--timeout" | "--timeout-secs" => {
+                parsed.timeout_secs = parse_u64(next_ref(&mut args, arg)?, arg)?;
+            }
+            "--interval-ms" => {
+                parsed.interval_ms = parse_u64(next_ref(&mut args, arg)?, arg)?;
+            }
+            value if value.starts_with("--wait=") => {
+                parsed.wait = parse_bool(value.trim_start_matches("--wait="), "--wait")?;
+            }
+            value if value.starts_with("--save=") => {
+                parsed.save = parse_bool(value.trim_start_matches("--save="), "--save")?;
+                if parsed.save {
+                    parsed.wait = true;
+                }
+            }
+            value if value.starts_with("--timeout=") => {
+                parsed.timeout_secs =
+                    parse_u64(value.trim_start_matches("--timeout="), "--timeout")?;
+            }
+            value if value.starts_with("--timeout-secs=") => {
+                parsed.timeout_secs = parse_u64(
+                    value.trim_start_matches("--timeout-secs="),
+                    "--timeout-secs",
+                )?;
+            }
+            value if value.starts_with("--interval-ms=") => {
+                parsed.interval_ms =
+                    parse_u64(value.trim_start_matches("--interval-ms="), "--interval-ms")?;
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!(
+                    "unknown pair start option: {value}"
+                )));
+            }
+            value => return Err(CliError::Usage(format!("unexpected argument: {value}"))),
+        }
+    }
+    Ok(parsed)
 }
 
 fn parse_pair_status_args(args: &[String]) -> Result<Command, CliError> {
@@ -595,6 +701,54 @@ fn parse_pair_status_args(args: &[String]) -> Result<Command, CliError> {
         sid: sid.ok_or_else(|| CliError::Usage("usage: va pair status SID [--save]".into()))?,
         save,
     })
+}
+
+fn parse_pair_wait_args(args: &[String]) -> Result<PairWaitArgs, CliError> {
+    let mut parsed = PairWaitArgs::default();
+    let mut args = args.iter().peekable();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--save" => parsed.save = true,
+            "--timeout" | "--timeout-secs" => {
+                parsed.timeout_secs = parse_u64(next_ref(&mut args, arg)?, arg)?;
+            }
+            "--interval-ms" => {
+                parsed.interval_ms = parse_u64(next_ref(&mut args, arg)?, arg)?;
+            }
+            value if value.starts_with("--save=") => {
+                parsed.save = parse_bool(value.trim_start_matches("--save="), "--save")?;
+            }
+            value if value.starts_with("--timeout=") => {
+                parsed.timeout_secs =
+                    parse_u64(value.trim_start_matches("--timeout="), "--timeout")?;
+            }
+            value if value.starts_with("--timeout-secs=") => {
+                parsed.timeout_secs = parse_u64(
+                    value.trim_start_matches("--timeout-secs="),
+                    "--timeout-secs",
+                )?;
+            }
+            value if value.starts_with("--interval-ms=") => {
+                parsed.interval_ms =
+                    parse_u64(value.trim_start_matches("--interval-ms="), "--interval-ms")?;
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!(
+                    "unknown pair wait option: {value}"
+                )));
+            }
+            value => {
+                if !parsed.sid.is_empty() {
+                    return Err(CliError::Usage("usage: va pair wait SID [--save]".into()));
+                }
+                parsed.sid = value.to_string();
+            }
+        }
+    }
+    if parsed.sid.is_empty() {
+        return Err(CliError::Usage("usage: va pair wait SID [--save]".into()));
+    }
+    Ok(parsed)
 }
 
 fn parse_auth_command(args: &[String]) -> Result<Command, CliError> {
@@ -652,7 +806,7 @@ fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  auth status                  Show resolved auth configuration\n  auth clear                   Remove the saved auth file\n  pair start                   Start browser/IM pairing\n  pair status SID [--save]     Poll pairing; save verified local auth with --save\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  launch sessions              List resumable agent launch sessions\n  launch archive --agent A ID  Archive a launch session\n  launch unarchive --agent A ID Unarchive a launch session\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create/resume a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  auth status                  Show resolved auth configuration\n  auth clear                   Remove the saved auth file\n  pair start                   Start browser/IM pairing\n  pair start --wait --save     Start pairing, wait for verification, then save auth\n  pair status SID [--save]     Poll pairing; save verified local auth with --save\n  pair wait SID [--save]       Wait for pairing verification\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  launch sessions              List resumable agent launch sessions\n  launch archive --agent A ID  Archive a launch session\n  launch unarchive --agent A ID Unarchive a launch session\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create/resume a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -726,7 +880,10 @@ mod tests {
     #[test]
     fn parses_pair_commands() {
         let start = parse_args(["pair".to_string(), "start".to_string()]).expect("start");
-        assert_eq!(start.command, Some(Command::PairStart));
+        assert_eq!(
+            start.command,
+            Some(Command::PairStart(PairStartArgs::default()))
+        );
 
         let status = parse_args([
             "pair".to_string(),
@@ -740,6 +897,29 @@ mod tests {
                 sid: "sid-1".into(),
                 save: false
             })
+        );
+    }
+
+    #[test]
+    fn parses_pair_start_wait_save() {
+        let options = parse_args([
+            "pair".to_string(),
+            "start".to_string(),
+            "--save".to_string(),
+            "--timeout".to_string(),
+            "45".to_string(),
+            "--interval-ms=500".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::PairStart(PairStartArgs {
+                wait: true,
+                save: true,
+                timeout_secs: 45,
+                interval_ms: 500,
+            }))
         );
     }
 
@@ -759,6 +939,28 @@ mod tests {
                 sid: "sid-1".into(),
                 save: true
             })
+        );
+    }
+
+    #[test]
+    fn parses_pair_wait_save() {
+        let options = parse_args([
+            "pair".to_string(),
+            "wait".to_string(),
+            "sid-1".to_string(),
+            "--save".to_string(),
+            "--timeout-secs=30".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::PairWait(PairWaitArgs {
+                sid: "sid-1".into(),
+                save: true,
+                timeout_secs: 30,
+                interval_ms: 2_000,
+            }))
         );
     }
 
