@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 
 use va_client::endpoint::ServerEndpoint;
@@ -103,10 +104,7 @@ pub(crate) fn resolve_endpoint_env(
         });
     }
 
-    let auth_path = options
-        .auth_file
-        .clone()
-        .unwrap_or_else(|| default_auth_path_with_env(runtime_env));
+    let auth_path = auth_file_path_with_env(options, runtime_env);
     if auth_path.exists() {
         let body = std::fs::read_to_string(&auth_path).map_err(|source| CliError::ReadAuth {
             path: auth_path.display().to_string(),
@@ -133,6 +131,82 @@ pub(crate) fn resolve_endpoint_env(
     Err(CliError::MissingAuth(auth_path.display().to_string()))
 }
 
+pub(crate) fn auth_file_path(options: &Options) -> PathBuf {
+    auth_file_path_with_env(options, &RuntimeEnv::current())
+}
+
+pub(crate) fn save_auth_file(
+    options: &Options,
+    port: u16,
+    token: &str,
+) -> Result<PathBuf, CliError> {
+    save_auth_file_with_env(options, &RuntimeEnv::current(), port, token)
+}
+
+pub(crate) fn local_auth_port(base_url: &str) -> Result<u16, CliError> {
+    let url = reqwest::Url::parse(base_url)
+        .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?;
+    let host = url.host_str().unwrap_or_default();
+    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+        return Err(CliError::Usage(
+            "saving auth files is only supported for local VibeAround servers".into(),
+        ));
+    }
+    url.port_or_known_default()
+        .ok_or_else(|| CliError::Usage(format!("base url has no port: {base_url}")))
+}
+
+pub(crate) fn remove_auth_file(options: &Options) -> Result<Option<PathBuf>, CliError> {
+    let path = auth_file_path(options);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(Some(path)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(CliError::Io {
+            action: "removing auth file",
+            source,
+        }),
+    }
+}
+
+pub(crate) fn auth_file_path_with_env(options: &Options, runtime_env: &RuntimeEnv) -> PathBuf {
+    options
+        .auth_file
+        .clone()
+        .unwrap_or_else(|| default_auth_path_with_env(runtime_env))
+}
+
+fn save_auth_file_with_env(
+    options: &Options,
+    runtime_env: &RuntimeEnv,
+    port: u16,
+    token: &str,
+) -> Result<PathBuf, CliError> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(CliError::Usage("auth token cannot be empty".into()));
+    }
+    let path = auth_file_path_with_env(options, runtime_env);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| CliError::Io {
+            action: "creating auth file directory",
+            source,
+        })?;
+    }
+    let body = serde_json::to_string_pretty(&serde_json::json!({
+        "port": port,
+        "token": token
+    }))?;
+    fs::write(&path, body).map_err(|source| CliError::Io {
+        action: "writing auth file",
+        source,
+    })?;
+    set_owner_only(&path).map_err(|source| CliError::Io {
+        action: "securing auth file",
+        source,
+    })?;
+    Ok(path)
+}
+
 fn default_auth_path_with_env(runtime_env: &RuntimeEnv) -> PathBuf {
     if let Some(path) = &runtime_env.auth_file {
         return PathBuf::from(path);
@@ -157,6 +231,19 @@ fn env_value(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn set_owner_only(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -254,5 +341,45 @@ mod tests {
             default_auth_path_with_env(&data_dir_env),
             PathBuf::from("/tmp/va/auth.json")
         );
+    }
+
+    #[test]
+    fn local_auth_port_accepts_local_urls_only() {
+        assert_eq!(
+            local_auth_port("http://127.0.0.1:12358/va").expect("port"),
+            12358
+        );
+        assert_eq!(
+            local_auth_port("http://localhost:3000/va").expect("port"),
+            3000
+        );
+        assert!(matches!(
+            local_auth_port("https://example.test/va"),
+            Err(CliError::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn save_auth_file_writes_server_auth_shape() {
+        let path = std::env::temp_dir().join(format!(
+            "va-cli-auth-test-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_file(&path);
+        let options = Options {
+            auth_file: Some(path.clone()),
+            ..Default::default()
+        };
+        let saved = save_auth_file_with_env(&options, &RuntimeEnv::default(), 12358, " secret ")
+            .expect("save auth");
+
+        assert_eq!(saved, path);
+        let body = fs::read_to_string(&saved).expect("body");
+        let auth = va_client::auth::parse_auth_file(&body).expect("auth");
+        assert_eq!(auth.port, 12358);
+        assert_eq!(auth.token, "secret");
+
+        let _ = fs::remove_file(&saved);
     }
 }

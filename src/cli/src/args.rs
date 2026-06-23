@@ -18,7 +18,9 @@ pub(crate) enum Command {
     Previews,
     Profiles,
     PairStart,
-    PairStatus { sid: String },
+    PairStatus { sid: String, save: bool },
+    AuthStatus,
+    AuthClear,
     SettingsReload,
     TmuxSessions,
     LaunchSessions(LaunchSessionsArgs),
@@ -160,6 +162,7 @@ fn parse_command(args: &[String]) -> Result<Command, CliError> {
         "previews" => no_args(rest, "previews").map(|()| Command::Previews),
         "profiles" => no_args(rest, "profiles").map(|()| Command::Profiles),
         "pair" => parse_pair_command(rest),
+        "auth" => parse_auth_command(rest),
         "launch" => parse_launch_command(rest),
         "tmux" => parse_tmux_command(rest),
         "settings" => match rest {
@@ -559,12 +562,46 @@ fn parse_tool(value: &str) -> Result<PtyTool, CliError> {
 fn parse_pair_command(args: &[String]) -> Result<Command, CliError> {
     match args {
         [action] if action == "start" => Ok(Command::PairStart),
-        [action, sid] if action == "status" => Ok(Command::PairStatus {
-            sid: sid.to_string(),
-        }),
+        [action, rest @ ..] if action == "status" => parse_pair_status_args(rest),
         _ => Err(CliError::Usage(
-            "usage: va pair start; va pair status SID".into(),
+            "usage: va pair start; va pair status SID [--save]".into(),
         )),
+    }
+}
+
+fn parse_pair_status_args(args: &[String]) -> Result<Command, CliError> {
+    let mut sid = None;
+    let mut save = false;
+    for arg in args {
+        match arg.as_str() {
+            "--save" => save = true,
+            value if value.starts_with("--save=") => {
+                save = parse_bool(value.trim_start_matches("--save="), "--save")?;
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!(
+                    "unknown pair status option: {value}"
+                )));
+            }
+            value => {
+                if sid.is_some() {
+                    return Err(CliError::Usage("usage: va pair status SID [--save]".into()));
+                }
+                sid = Some(value.to_string());
+            }
+        }
+    }
+    Ok(Command::PairStatus {
+        sid: sid.ok_or_else(|| CliError::Usage("usage: va pair status SID [--save]".into()))?,
+        save,
+    })
+}
+
+fn parse_auth_command(args: &[String]) -> Result<Command, CliError> {
+    match args {
+        [action] if action == "status" => Ok(Command::AuthStatus),
+        [action] if action == "clear" => Ok(Command::AuthClear),
+        _ => Err(CliError::Usage("usage: va auth status|clear".into())),
     }
 }
 
@@ -615,7 +652,7 @@ fn no_args(args: &[String], command: &str) -> Result<(), CliError> {
 }
 
 pub(crate) fn usage() -> &'static str {
-    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  pair start                   Start browser/IM pairing\n  pair status SID              Poll a pairing session\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  launch sessions              List resumable agent launch sessions\n  launch archive --agent A ID  Archive a launch session\n  launch unarchive --agent A ID Unarchive a launch session\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create/resume a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
+    "Usage: va [--auth-file PATH] [--base-url URL] [--token TOKEN] [--json] <command>\n\nCommands:\n  help                         Show this help\n  health                       Check public server liveness\n  info                         Show server metadata\n  status                       Show a compact runtime summary\n  doctor                       Diagnose endpoint, auth, and server health\n  auth status                  Show resolved auth configuration\n  auth clear                   Remove the saved auth file\n  pair start                   Start browser/IM pairing\n  pair status SID [--save]     Poll pairing; save verified local auth with --save\n  channels                     List channel plugin runtimes\n  channel sync                 Reconcile channel plugins with settings\n  channel start KIND           Start a stopped channel plugin\n  channel stop KIND            Stop a channel plugin\n  channel restart KIND         Restart a channel plugin\n  tunnels                      List tunnel runtimes\n  tunnel kill PROVIDER         Stop a tunnel runtime\n  agents                       List enabled agents\n  agent kill ROUTE_KEY         Kill an attached agent runtime\n  launch sessions              List resumable agent launch sessions\n  launch archive --agent A ID  Archive a launch session\n  launch unarchive --agent A ID Unarchive a launch session\n  sessions                     List PTY sessions\n  session create --tool TOOL   Create/resume a PTY session; add --attach to enter it\n  session attach SESSION_ID    Attach to a PTY session\n  session kill SESSION_ID      Kill and remove a PTY session\n  pty kill SESSION_ID          Kill a PTY process by session id\n  tmux sessions                List attachable tmux sessions\n  workspaces                   List registered workspaces\n  workspace add PATH           Register a workspace path\n  workspace remove PATH        Remove a workspace path\n  workspace default PATH       Set the default workspace\n  workspace create NAME        Create a workspace under the default root\n  previews                     List live previews\n  preview delete SLUG          Close a live preview\n  profiles                     List model profiles\n  settings reload              Reload server settings"
 }
 
 #[cfg(test)]
@@ -700,9 +737,38 @@ mod tests {
         assert_eq!(
             status.command,
             Some(Command::PairStatus {
-                sid: "sid-1".into()
+                sid: "sid-1".into(),
+                save: false
             })
         );
+    }
+
+    #[test]
+    fn parses_pair_status_save() {
+        let options = parse_args([
+            "pair".to_string(),
+            "status".to_string(),
+            "--save".to_string(),
+            "sid-1".to_string(),
+        ])
+        .expect("options");
+
+        assert_eq!(
+            options.command,
+            Some(Command::PairStatus {
+                sid: "sid-1".into(),
+                save: true
+            })
+        );
+    }
+
+    #[test]
+    fn parses_auth_commands() {
+        let status = parse_args(["auth".to_string(), "status".to_string()]).expect("status");
+        assert_eq!(status.command, Some(Command::AuthStatus));
+
+        let clear = parse_args(["auth".to_string(), "clear".to_string()]).expect("clear");
+        assert_eq!(clear.command, Some(Command::AuthClear));
     }
 
     #[test]

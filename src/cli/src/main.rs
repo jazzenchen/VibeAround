@@ -16,7 +16,10 @@ use args::{
     parse_args, usage, Command, LaunchSessionMutationArgs, LaunchSessionsArgs, Options,
     SessionCreateArgs,
 };
-use config::{endpoint_for, resolve_endpoint_env, RuntimeEnv};
+use config::{
+    auth_file_path, endpoint_for, local_auth_port, remove_auth_file, resolve_endpoint_env,
+    save_auth_file, RuntimeEnv,
+};
 use error::CliError;
 use transport::HttpTransport;
 
@@ -179,20 +182,14 @@ async fn run() -> Result<(), CliError> {
             println!("code: {}", pair.code);
             println!("sid: {}", pair.sid);
         }
-        Command::PairStatus { sid } => {
-            let transport = transport_for(&options, AuthRequirement::None)?;
-            if options.json {
-                print_json(transport.execute_json(ops::pair_status(&sid)).await?)?;
-                return Ok(());
-            }
-            match transport.execute(ops::pair_status(&sid)).await? {
-                PairStatusResponse::Pending => println!("pending"),
-                PairStatusResponse::Expired => println!("expired"),
-                PairStatusResponse::Verified { token } => {
-                    println!("verified");
-                    println!("token: {token}");
-                }
-            }
+        Command::PairStatus { sid, save } => {
+            run_pair_status(&options, &sid, save).await?;
+        }
+        Command::AuthStatus => {
+            run_auth_status(&options)?;
+        }
+        Command::AuthClear => {
+            run_auth_clear(&options)?;
         }
         Command::TmuxSessions => {
             let transport = transport_for(&options, AuthRequirement::BearerToken)?;
@@ -384,6 +381,125 @@ async fn run_doctor(options: &Options) -> Result<(), CliError> {
         Err(error) => println!("protected auth: not ready ({error})"),
     }
 
+    Ok(())
+}
+
+async fn run_pair_status(options: &Options, sid: &str, save: bool) -> Result<(), CliError> {
+    let transport = transport_for(options, AuthRequirement::None)?;
+    let status = transport.execute(ops::pair_status(sid)).await?;
+    let saved_path = if save {
+        match &status {
+            PairStatusResponse::Verified { token } => {
+                Some(save_verified_pair_token(options, token)?)
+            }
+            PairStatusResponse::Pending | PairStatusResponse::Expired => None,
+        }
+    } else {
+        None
+    };
+
+    if options.json {
+        print_json(pair_status_json(&status, saved_path.as_ref()))?;
+        return Ok(());
+    }
+
+    match status {
+        PairStatusResponse::Pending => println!("pending"),
+        PairStatusResponse::Expired => println!("expired"),
+        PairStatusResponse::Verified { token } => {
+            println!("verified");
+            if let Some(path) = saved_path {
+                println!("saved: {}", path.display());
+            } else {
+                println!("token: {token}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn save_verified_pair_token(
+    options: &Options,
+    token: &str,
+) -> Result<std::path::PathBuf, CliError> {
+    let public_endpoint =
+        resolve_endpoint_env(options, AuthRequirement::None, &RuntimeEnv::current())?;
+    let port = local_auth_port(public_endpoint.endpoint.base_url())?;
+    save_auth_file(options, port, token)
+}
+
+fn pair_status_json(status: &PairStatusResponse, saved_path: Option<&std::path::PathBuf>) -> Value {
+    let mut value = match status {
+        PairStatusResponse::Pending => serde_json::json!({ "status": "pending" }),
+        PairStatusResponse::Expired => serde_json::json!({ "status": "expired" }),
+        PairStatusResponse::Verified { token } => {
+            serde_json::json!({ "status": "verified", "token": token })
+        }
+    };
+    if let Some(path) = saved_path {
+        value["saved_auth_file"] = serde_json::json!(path.display().to_string());
+    }
+    value
+}
+
+fn run_auth_status(options: &Options) -> Result<(), CliError> {
+    let runtime_env = RuntimeEnv::current();
+    let path = auth_file_path(options);
+    let resolved = resolve_endpoint_env(options, AuthRequirement::BearerToken, &runtime_env);
+
+    if options.json {
+        match resolved {
+            Ok(endpoint) => {
+                print_json(serde_json::json!({
+                    "configured": true,
+                    "endpoint": endpoint.endpoint.base_url(),
+                    "base_url_source": endpoint.base_url_source,
+                    "auth_source": endpoint.auth_source,
+                    "auth_file": endpoint.auth_file.as_ref().map(|path| path.display().to_string()),
+                    "resolved_auth_file": path.display().to_string()
+                }))?;
+            }
+            Err(CliError::MissingAuth(_)) | Err(CliError::MissingToken) => {
+                print_json(serde_json::json!({
+                    "configured": false,
+                    "auth_file": path.display().to_string()
+                }))?;
+            }
+            Err(error) => return Err(error),
+        }
+        return Ok(());
+    }
+
+    println!("auth file: {}", path.display());
+    match resolved {
+        Ok(endpoint) => {
+            println!("configured: yes");
+            println!("endpoint: {}", endpoint.endpoint.base_url());
+            println!("base url source: {}", endpoint.base_url_source);
+            println!("auth source: {}", endpoint.auth_source);
+        }
+        Err(CliError::MissingAuth(_)) | Err(CliError::MissingToken) => {
+            println!("configured: no");
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
+fn run_auth_clear(options: &Options) -> Result<(), CliError> {
+    let path = auth_file_path(options);
+    let removed = remove_auth_file(options)?;
+    if options.json {
+        print_json(serde_json::json!({
+            "removed": removed.is_some(),
+            "auth_file": path.display().to_string()
+        }))?;
+        return Ok(());
+    }
+    match removed {
+        Some(path) => println!("removed: {}", path.display()),
+        None => println!("not found: {}", path.display()),
+    }
     Ok(())
 }
 
