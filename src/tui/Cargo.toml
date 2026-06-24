@@ -1,0 +1,23 @@
+[package]
+name = "va-tui"
+version = "0.7.8"
+description = "VibeAround terminal dashboard"
+edition = "2021"
+rust-version = "1.82"
+
+[[bin]]
+name = "va-tui"
+path = "src/main.rs"
+
+[dependencies]
+va-client = { path = "../client" }
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.28"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+ratatui = "0.29"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1.0"
+thiserror = "1"
+tokio = { version = "1.49", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+uuid = { version = "1", features = ["v4"] }

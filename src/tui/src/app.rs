@@ -1,0 +1,307 @@
+use std::time::{Duration, Instant};
+
+use va_client::endpoint::ServerEndpoint;
+use va_client::state::ChatState;
+
+use crate::chat::{ChatMessage, ChatRole};
+use crate::data::{fetch_agent_picker, fetch_snapshot, AgentPickerSnapshot, DashboardSnapshot};
+use crate::detail::DetailContent;
+use crate::runtime_socket::RuntimeStream;
+use crate::selection::{AgentSelection, StatusSelection};
+use crate::transport::HttpTransport;
+
+mod agent;
+mod chat;
+mod runtime;
+
+const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
+
+#[derive(Debug)]
+pub(crate) struct TuiApp {
+    pub(crate) endpoint: String,
+    pub(crate) view: AppView,
+    pub(crate) chat_state: ChatState,
+    pub(crate) chat_connected: bool,
+    pub(crate) snapshot: DashboardSnapshot,
+    pub(crate) agent_picker: AgentPickerSnapshot,
+    pub(crate) status_selection: StatusSelection,
+    pub(crate) agent_selection: AgentSelection,
+    pub(crate) chat_messages: Vec<ChatMessage>,
+    pub(crate) chat_input: String,
+    pub(crate) chat_cursor: usize,
+    pub(crate) chat_scroll: usize,
+    pub(crate) selected_agent: Option<String>,
+    pub(crate) selected_profile: Option<String>,
+    pub(crate) selected_workspace: Option<String>,
+    pub(crate) selected_session: Option<String>,
+    pub(crate) force_new_session: bool,
+    pub(crate) detail: Option<DetailContent>,
+    pub(crate) work_status: Option<String>,
+    pub(crate) last_error: Option<String>,
+    last_error_scope: Option<ErrorScope>,
+    pub(crate) last_action: Option<String>,
+    pub(crate) last_refresh: Option<Instant>,
+    exit_confirmation_started: Option<Instant>,
+}
+
+impl TuiApp {
+    pub(crate) fn new(endpoint: &ServerEndpoint) -> Self {
+        Self {
+            endpoint: endpoint.base_url().to_string(),
+            view: AppView::Chat,
+            chat_state: ChatState::new(),
+            chat_connected: false,
+            snapshot: DashboardSnapshot::default(),
+            agent_picker: AgentPickerSnapshot::default(),
+            status_selection: StatusSelection::default(),
+            agent_selection: AgentSelection::default(),
+            chat_messages: vec![ChatMessage {
+                role: ChatRole::Notice,
+                text: "Type /status for runtime status, /agent for agent settings, /help for commands.".into(),
+            }],
+            chat_input: String::new(),
+            chat_cursor: 0,
+            chat_scroll: 0,
+            selected_agent: None,
+            selected_profile: None,
+            selected_workspace: None,
+            selected_session: None,
+            force_new_session: false,
+            detail: None,
+            work_status: None,
+            last_error: None,
+            last_error_scope: None,
+            last_action: None,
+            last_refresh: None,
+            exit_confirmation_started: None,
+        }
+    }
+
+    pub(crate) async fn refresh_status(&mut self, transport: &HttpTransport) {
+        match fetch_snapshot(transport).await {
+            Ok(snapshot) => {
+                self.snapshot = snapshot;
+                self.status_selection.clamp(&self.snapshot);
+                self.clear_error(ErrorScope::Status);
+                self.last_refresh = Some(Instant::now());
+            }
+            Err(error) => {
+                self.set_error(ErrorScope::Status, error.to_string());
+                self.last_refresh = Some(Instant::now());
+            }
+        }
+    }
+
+    pub(crate) async fn refresh_agent_picker(&mut self, transport: &HttpTransport) {
+        match fetch_agent_picker(transport).await {
+            Ok(snapshot) => {
+                self.agent_picker = snapshot;
+                self.agent_selection.clamp(&self.agent_picker);
+                self.clear_error(ErrorScope::Agent);
+                self.last_refresh = Some(Instant::now());
+            }
+            Err(error) => {
+                self.set_error(ErrorScope::Agent, error.to_string());
+                self.last_refresh = Some(Instant::now());
+            }
+        }
+    }
+
+    pub(crate) async fn open_status(&mut self, transport: &HttpTransport) {
+        self.view = AppView::Status;
+        self.detail = None;
+        self.refresh_status(transport).await;
+    }
+
+    pub(crate) async fn open_agent_picker(&mut self, transport: &HttpTransport) {
+        self.view = AppView::Agent;
+        self.detail = None;
+        self.refresh_agent_picker(transport).await;
+    }
+
+    pub(crate) fn go_back(&mut self) {
+        match self.view {
+            AppView::StatusDetail => {
+                self.view = AppView::Status;
+                self.detail = None;
+            }
+            AppView::Status | AppView::Agent => {
+                self.view = AppView::Chat;
+                self.detail = None;
+            }
+            AppView::Chat => {
+                self.clear_chat_input();
+            }
+        }
+    }
+
+    pub(crate) fn select_left(&mut self) {
+        match self.view {
+            AppView::Status => self.status_selection.move_left(),
+            AppView::Agent => self.agent_selection.move_left(),
+            AppView::Chat | AppView::StatusDetail => {}
+        }
+    }
+
+    pub(crate) fn select_right(&mut self) {
+        match self.view {
+            AppView::Status => self.status_selection.move_right(),
+            AppView::Agent => self.agent_selection.move_right(),
+            AppView::Chat | AppView::StatusDetail => {}
+        }
+    }
+
+    pub(crate) fn select_up(&mut self) {
+        match self.view {
+            AppView::Status => self.status_selection.move_up(&self.snapshot),
+            AppView::Agent => self.agent_selection.move_up(&self.agent_picker),
+            AppView::Chat => self.scroll_chat_up(1),
+            AppView::StatusDetail => {}
+        }
+    }
+
+    pub(crate) fn select_down(&mut self) {
+        match self.view {
+            AppView::Status => self.status_selection.move_down(&self.snapshot),
+            AppView::Agent => self.agent_selection.move_down(&self.agent_picker),
+            AppView::Chat => self.scroll_chat_down(1),
+            AppView::StatusDetail => {}
+        }
+    }
+
+    pub(crate) fn scroll_chat_up(&mut self, lines: usize) {
+        self.chat_scroll = self.chat_scroll.saturating_add(lines);
+    }
+
+    pub(crate) fn scroll_chat_down(&mut self, lines: usize) {
+        self.chat_scroll = self.chat_scroll.saturating_sub(lines);
+    }
+
+    pub(crate) fn follow_chat_tail(&mut self) {
+        self.chat_scroll = 0;
+    }
+
+    pub(crate) fn enter_current_view(&mut self) {
+        match self.view {
+            AppView::Status => {
+                self.detail = self.status_selection.detail(&self.snapshot);
+                if self.detail.is_some() {
+                    self.view = AppView::StatusDetail;
+                }
+            }
+            AppView::Agent => self.select_agent_picker_item(),
+            AppView::Chat | AppView::StatusDetail => {}
+        }
+    }
+
+    pub(crate) fn effective_agent(&self) -> Option<&str> {
+        self.selected_agent.as_deref().or_else(|| {
+            self.agent_picker
+                .preferences
+                .as_ref()
+                .map(|preferences| preferences.selected_agent.as_str())
+        })
+    }
+
+    pub(crate) fn effective_profile(&self) -> Option<&str> {
+        self.selected_profile.as_deref().or_else(|| {
+            let preferences = self.agent_picker.preferences.as_ref()?;
+            let agent_id = self.effective_agent()?;
+            preferences
+                .agent_preferences
+                .get(agent_id)
+                .and_then(|preference| preference.profile_id.as_deref())
+                .or(preferences.default_profile_id.as_deref())
+        })
+    }
+
+    pub(crate) fn effective_workspace(&self) -> Option<&str> {
+        self.selected_workspace.as_deref().or_else(|| {
+            let preferences = self.agent_picker.preferences.as_ref()?;
+            let agent_id = self.effective_agent()?;
+            preferences
+                .agent_preferences
+                .get(agent_id)
+                .and_then(|preference| preference.workspace.as_deref())
+        })
+    }
+
+    pub(crate) fn effective_session(&self) -> Option<&str> {
+        self.selected_session.as_deref()
+    }
+
+    pub(crate) fn confirm_exit_request(&mut self) -> bool {
+        self.confirm_exit_request_at(Instant::now())
+    }
+
+    fn confirm_exit_request_at(&mut self, now: Instant) -> bool {
+        if self.exit_confirmation_active_at(now) {
+            self.exit_confirmation_started = None;
+            return true;
+        }
+
+        self.exit_confirmation_started = Some(now);
+        self.clear_error(ErrorScope::Any);
+        self.last_action = None;
+        false
+    }
+
+    pub(crate) fn set_error(&mut self, scope: ErrorScope, error: impl Into<String>) {
+        self.last_error = Some(error.into());
+        self.last_error_scope = Some(scope);
+    }
+
+    pub(crate) fn clear_error(&mut self, scope: ErrorScope) {
+        if scope == ErrorScope::Any
+            || self.last_error_scope.is_none()
+            || self.last_error_scope == Some(scope)
+        {
+            self.last_error = None;
+            self.last_error_scope = None;
+        }
+    }
+
+    pub(crate) fn error_is(&self, scope: ErrorScope, error: &str) -> bool {
+        self.last_error_scope == Some(scope) && self.last_error.as_deref() == Some(error)
+    }
+
+    pub(crate) fn clear_expired_exit_confirmation(&mut self) {
+        self.clear_expired_exit_confirmation_at(Instant::now());
+    }
+
+    fn clear_expired_exit_confirmation_at(&mut self, now: Instant) {
+        if self.exit_confirmation_started.is_some() && !self.exit_confirmation_active_at(now) {
+            self.exit_confirmation_started = None;
+        }
+    }
+
+    fn exit_confirmation_active_at(&self, now: Instant) -> bool {
+        self.exit_confirmation_started
+            .and_then(|started| now.checked_duration_since(started))
+            .is_some_and(|elapsed| elapsed <= EXIT_CONFIRM_WINDOW)
+    }
+
+    pub(crate) fn exit_confirmation_pending(&self) -> bool {
+        self.exit_confirmation_started.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AppView {
+    Chat,
+    Status,
+    StatusDetail,
+    Agent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ErrorScope {
+    Any,
+    Agent,
+    Chat,
+    Runtime(RuntimeStream),
+    Status,
+}
+
+#[cfg(test)]
+mod tests;

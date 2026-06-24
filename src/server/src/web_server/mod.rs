@@ -301,6 +301,10 @@ pub async fn run_web_server(
             put(api::set_agent_profile_handler),
         )
         .route(
+            "/api/launcher/agent-workspace",
+            put(api::set_agent_workspace_handler),
+        )
+        .route(
             "/api/launcher/agent-launch-args",
             put(api::set_agent_launch_args_handler),
         )
@@ -321,6 +325,7 @@ pub async fn run_web_server(
         .route("/ws/chat", get(ws_chat::ws_chat_handler))
         .route("/ws/channels", get(ws_domains::ws_channels_handler))
         .route("/ws/tunnels", get(ws_domains::ws_tunnels_handler))
+        .route("/ws/sessions", get(ws_domains::ws_sessions_handler))
         .route(
             "/ws/agents/runtime",
             get(ws_domains::ws_agents_runtime_handler),
