@@ -183,6 +183,7 @@ pub(super) fn command_bar(app: &TuiApp) -> Paragraph<'static> {
         (view_hint(app), muted_style())
     };
     let mut spans = vec![
+        Span::raw("  "),
         Span::styled(status, status_style),
         Span::styled("  |  ", muted_style()),
     ];
@@ -194,9 +195,7 @@ pub(super) fn command_bar(app: &TuiApp) -> Paragraph<'static> {
         key_span("Ctrl+C"),
         Span::raw(" quit"),
     ]);
-    Paragraph::new(Line::from(spans))
-        .alignment(Alignment::Center)
-        .block(chrome_separator())
+    Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
 }
 
 pub(crate) fn view_hint(app: &TuiApp) -> String {

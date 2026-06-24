@@ -5,12 +5,16 @@ use ratatui::widgets::Paragraph;
 use crate::app::TuiApp;
 use crate::theme::{muted_style, BRAND};
 
-const BRAND_WORDMARK: &str = r#"╦  ╦ ╦ ╔╗  ╔═╗ ╔═╗ ╦═╗ ╔═╗ ╦ ╦ ╔╗╔ ╔╦╗
-╚╗╔╝ ║ ╠╩╗ ║╣  ╠═╣ ╠╦╝ ║ ║ ║ ║ ║║║  ║║
- ╚╝  ╩ ╚═╝ ╚═╝ ╩ ╩ ╩╚═ ╚═╝ ╚═╝ ╝╚╝ ═╩╝"#;
-const BRAND_MARK: &str = r#"╦  ╦ ╔═╗
-╚╗╔╝ ╠═╣
- ╚╝  ╩ ╩"#;
+const BRAND_WORDMARK: &str = r#"██    ██ ██ ██████  ███████  █████  ██████   ██████  ██    ██ ███    ██ ██████
+██    ██ ██ ██   ██ ██      ██   ██ ██   ██ ██    ██ ██    ██ ████   ██ ██   ██
+██    ██ ██ ██████  █████   ███████ ██████  ██    ██ ██    ██ ██ ██  ██ ██   ██
+ ██  ██  ██ ██   ██ ██      ██   ██ ██   ██ ██    ██ ██    ██ ██  ██ ██ ██   ██
+  ████   ██ ██████  ███████ ██   ██ ██   ██  ██████   ██████  ██   ████ ██████"#;
+const BRAND_MARK: &str = r#"██    ██  █████
+██    ██ ██   ██
+██    ██ ███████
+ ██  ██  ██   ██
+  ████   ██   ██"#;
 const TAGLINE: &str = "unified runtime for ai coding agents";
 const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
@@ -24,8 +28,8 @@ pub(super) enum BrandMode {
 impl BrandMode {
     pub(super) fn height(self) -> u16 {
         match self {
-            Self::Mark | Self::Wordmark => 3,
-            Self::WordmarkWithMeta => 5,
+            Self::Mark | Self::Wordmark => 5,
+            Self::WordmarkWithMeta => 6,
         }
     }
 }
@@ -33,7 +37,7 @@ impl BrandMode {
 pub(super) fn brand_mode(width: u16, height: u16) -> BrandMode {
     if width >= 88 && height >= 18 {
         BrandMode::WordmarkWithMeta
-    } else if width >= 44 && height >= 12 {
+    } else if width >= 84 && height >= 12 {
         BrandMode::Wordmark
     } else {
         BrandMode::Mark
@@ -140,12 +144,12 @@ mod tests {
     #[test]
     fn brand_mode_scales_with_terminal_size() {
         assert_eq!(brand_mode(40, 24), BrandMode::Mark);
-        assert_eq!(brand_mode(80, 18), BrandMode::Wordmark);
-        assert_eq!(brand_mode(88, 17), BrandMode::Wordmark);
+        assert_eq!(brand_mode(80, 18), BrandMode::Mark);
+        assert_eq!(brand_mode(84, 17), BrandMode::Wordmark);
         assert_eq!(brand_mode(88, 18), BrandMode::WordmarkWithMeta);
-        assert_eq!(BrandMode::Mark.height(), 3);
-        assert_eq!(BrandMode::Wordmark.height(), 3);
-        assert_eq!(BrandMode::WordmarkWithMeta.height(), 5);
+        assert_eq!(BrandMode::Mark.height(), 5);
+        assert_eq!(BrandMode::Wordmark.height(), 5);
+        assert_eq!(BrandMode::WordmarkWithMeta.height(), 6);
     }
 
     #[test]
@@ -174,6 +178,6 @@ mod tests {
 
         assert!(!rendered.contains("VA"));
         assert!(!rendered.contains("VibeAround"));
-        assert!(rendered.contains('╦'));
+        assert!(rendered.contains('█'));
     }
 }

@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
 use va_client::sessions::SessionListItem;
@@ -12,7 +12,7 @@ use crate::chat::{
     visible_chat_lines,
 };
 use crate::selection::{AgentPanel, RuntimePanel};
-use crate::theme::{muted_style, BRAND, SEMANTIC_BORDER};
+use crate::theme::{muted_style, BRAND, INPUT_BG, SEMANTIC_BORDER};
 
 mod brand;
 mod chrome;
@@ -24,6 +24,9 @@ use rows::{
     agent_info_row, agent_row, channel_row, launch_session_row, profile_row, session_row,
     tunnel_row, workspace_row,
 };
+
+const INPUT_HORIZONTAL_PADDING: u16 = 2;
+const MAX_INPUT_ROWS: u16 = 4;
 
 #[cfg(test)]
 pub(crate) use chrome::view_hint;
@@ -37,7 +40,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
             Constraint::Length(brand_mode.height()),
             Constraint::Length(3),
             Constraint::Min(8),
-            Constraint::Length(3),
+            Constraint::Length(1),
         ])
         .split(area);
 
@@ -56,8 +59,9 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
 }
 
 fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
-    let input_content_width = usize::from(area.width.saturating_sub(2)).max(1);
-    const MAX_INPUT_ROWS: u16 = 4;
+    let input_padding = input_horizontal_padding(area.width);
+    let input_content_width =
+        usize::from(area.width.saturating_sub(input_padding.saturating_mul(2))).max(1);
     let input_height = input_box_height(&app.chat_input, input_content_width, MAX_INPUT_ROWS);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -95,7 +99,8 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
             MAX_INPUT_ROWS,
         ))
         .wrap(Wrap { trim: false })
-        .block(input_block()),
+        .block(input_block(input_padding))
+        .style(Style::default().bg(INPUT_BG)),
         chunks[1],
     );
     let (cursor_x, cursor_y) = input_cursor_offset(
@@ -105,7 +110,10 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         MAX_INPUT_ROWS,
     );
     frame.set_cursor_position((
-        chunks[1].x.saturating_add(cursor_x),
+        chunks[1]
+            .x
+            .saturating_add(input_padding)
+            .saturating_add(cursor_x),
         chunks[1].y.saturating_add(1).saturating_add(cursor_y),
     ));
 }
@@ -413,11 +421,18 @@ fn panel_block(active: bool) -> Block<'static> {
     }
 }
 
-fn input_block() -> Block<'static> {
+fn input_block(horizontal_padding: u16) -> Block<'static> {
     Block::default()
-        .borders(Borders::TOP)
-        .border_set(SEMANTIC_BORDER)
-        .border_style(Style::default().fg(BRAND))
+        .padding(Padding::new(horizontal_padding, horizontal_padding, 1, 1))
+        .style(Style::default().bg(INPUT_BG))
+}
+
+fn input_horizontal_padding(width: u16) -> u16 {
+    if width >= INPUT_HORIZONTAL_PADDING.saturating_mul(2) + 1 {
+        INPUT_HORIZONTAL_PADDING
+    } else {
+        0
+    }
 }
 
 fn chat_input_lines(
@@ -426,6 +441,16 @@ fn chat_input_lines(
     content_width: usize,
     max_body_rows: u16,
 ) -> Vec<Line<'static>> {
+    if input.is_empty() {
+        return vec![Line::from(vec![
+            Span::styled(
+                "› ",
+                Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("type a message, or /command", muted_style()),
+        ])];
+    }
+
     input_visible_lines(input, cursor, content_width, max_body_rows)
         .into_iter()
         .enumerate()
