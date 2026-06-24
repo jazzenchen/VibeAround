@@ -1,4 +1,4 @@
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap};
@@ -12,7 +12,7 @@ use crate::chat::{
     visible_chat_lines,
 };
 use crate::selection::{AgentPanel, RuntimePanel};
-use crate::theme::{muted_style, BRAND, INPUT_BG, SEMANTIC_BORDER};
+use crate::theme::{muted_style, ACTION, INPUT_BG, SEMANTIC_BORDER};
 
 mod brand;
 mod chrome;
@@ -27,6 +27,7 @@ use rows::{
 
 const INPUT_HORIZONTAL_PADDING: u16 = 2;
 const MAX_INPUT_ROWS: u16 = 4;
+const CONTENT_INSET: u16 = 2;
 
 #[cfg(test)]
 pub(crate) use chrome::view_hint;
@@ -40,22 +41,37 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
             Constraint::Length(brand_mode.height()),
             Constraint::Length(3),
             Constraint::Min(8),
-            Constraint::Length(1),
+            Constraint::Length(2),
         ])
         .split(area);
+    let brand_area = content_rect(chunks[0]);
+    let context_area = content_rect(chunks[1]);
+    let body_area = content_rect(chunks[2]);
+    let footer_area = content_rect(chunks[3]);
 
-    frame.render_widget(
-        brand_header(app, brand_mode, chunks[0].width.saturating_sub(2)),
-        chunks[0],
-    );
-    frame.render_widget(context_strip(app), chunks[1]);
+    frame.render_widget(brand_header(app, brand_mode, brand_area.width), brand_area);
+    frame.render_widget(context_strip(app, context_area.width), context_area);
     match app.view {
-        AppView::Chat => render_chat_view(frame, app, chunks[2]),
-        AppView::Status => render_status_view(frame, app, chunks[2]),
-        AppView::StatusDetail => render_status_detail_view(frame, app, chunks[2]),
-        AppView::Agent => render_agent_view(frame, app, chunks[2]),
+        AppView::Chat => render_chat_view(frame, app, body_area),
+        AppView::Status => render_status_view(frame, app, body_area),
+        AppView::StatusDetail => render_status_detail_view(frame, app, body_area),
+        AppView::Agent => render_agent_view(frame, app, body_area),
     }
-    frame.render_widget(command_bar(app), chunks[3]);
+    frame.render_widget(command_bar(app, footer_area.width), footer_area);
+}
+
+fn content_rect(area: Rect) -> Rect {
+    let inset = if area.width > CONTENT_INSET.saturating_mul(2) {
+        CONTENT_INSET
+    } else {
+        0
+    };
+    Rect {
+        x: area.x.saturating_add(inset),
+        y: area.y,
+        width: area.width.saturating_sub(inset.saturating_mul(2)),
+        height: area.height,
+    }
 }
 
 fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
@@ -336,7 +352,7 @@ fn session_list(
 
 fn selected_context_row(mut row: Vec<Span<'static>>, selected: bool) -> Vec<Span<'static>> {
     let marker_style = if selected {
-        Style::default().fg(BRAND).add_modifier(Modifier::BOLD)
+        Style::default().fg(ACTION).add_modifier(Modifier::BOLD)
     } else {
         muted_style()
     };
@@ -368,7 +384,7 @@ fn selectable_list(
         items.extend(rows.into_iter().enumerate().map(|(index, row)| {
             let marker = if Some(index) == selected { "> " } else { "  " };
             let marker_style = if active {
-                Style::default().fg(BRAND)
+                Style::default().fg(ACTION)
             } else {
                 muted_style()
             };
@@ -388,7 +404,7 @@ fn selectable_list(
 fn section_heading(title: &str, active: bool) -> Line<'static> {
     let marker = if active { "› " } else { "  " };
     let style = if active {
-        Style::default().fg(BRAND).add_modifier(Modifier::BOLD)
+        Style::default().fg(ACTION).add_modifier(Modifier::BOLD)
     } else {
         muted_style().add_modifier(Modifier::BOLD)
     };
@@ -402,8 +418,8 @@ fn focus_block(title: &str) -> Block<'static> {
     Block::default()
         .borders(Borders::LEFT | Borders::TOP)
         .border_set(SEMANTIC_BORDER)
-        .border_style(Style::default().fg(BRAND))
-        .title_style(Style::default().fg(BRAND).add_modifier(Modifier::BOLD))
+        .border_style(Style::default().fg(ACTION))
+        .title_style(Style::default().fg(ACTION).add_modifier(Modifier::BOLD))
         .title(format!(" {title} "))
 }
 
@@ -412,7 +428,7 @@ fn panel_block(active: bool) -> Block<'static> {
         Block::default()
             .borders(Borders::LEFT | Borders::TOP)
             .border_set(SEMANTIC_BORDER)
-            .border_style(Style::default().fg(BRAND))
+            .border_style(Style::default().fg(ACTION))
     } else {
         Block::default()
             .borders(Borders::TOP)
@@ -445,7 +461,7 @@ fn chat_input_lines(
         return vec![Line::from(vec![
             Span::styled(
                 "› ",
-                Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+                Style::default().fg(ACTION).add_modifier(Modifier::BOLD),
             ),
             Span::styled("type a message, or /command", muted_style()),
         ])];
@@ -457,7 +473,10 @@ fn chat_input_lines(
         .map(|(index, line)| {
             let marker = if index == 0 { "› " } else { "  " };
             Line::from(vec![
-                Span::styled(marker, Style::default().fg(BRAND)),
+                Span::styled(
+                    marker,
+                    Style::default().fg(ACTION).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(line),
             ])
         })

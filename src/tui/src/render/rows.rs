@@ -8,7 +8,7 @@ use va_client::sessions::{LaunchSessionInfo, PtyRunState, SessionListItem};
 use va_client::workspaces::WorkspaceItem;
 
 use crate::detail::{channel_status_label, session_status_label, tunnel_status_label};
-use crate::theme::{muted_style, BRAND, ERROR, NEUTRAL, OK, WARN};
+use crate::theme::{muted_style, ACTION, ERROR, NEUTRAL, OK, WARN};
 
 pub(super) fn channel_row(channel: &ChannelRuntime) -> Vec<Span<'static>> {
     let mut spans = vec![
@@ -103,7 +103,7 @@ pub(super) fn launch_session_row(session: &LaunchSessionInfo) -> Vec<Span<'stati
             } else {
                 "saved"
             },
-            if session.active { BRAND } else { NEUTRAL },
+            if session.active { ACTION } else { NEUTRAL },
             10,
         ),
         Span::styled(fixed(&session.agent_id, 12), muted_style()),
@@ -135,7 +135,7 @@ pub(super) fn profile_row(profile: &ModelProfileSummary) -> Vec<Span<'static>> {
 pub(super) fn workspace_row(workspace: &WorkspaceItem) -> Vec<Span<'static>> {
     let marker = if workspace.is_default { "* " } else { "  " };
     vec![
-        Span::styled(marker, Style::default().fg(BRAND)),
+        Span::styled(marker, Style::default().fg(ACTION)),
         Span::styled(workspace.path.clone(), Style::default()),
     ]
 }

@@ -468,7 +468,8 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
 
     assert!(screen.contains("› hello"));
     assert!(screen.contains("• hi there"));
-    assert_eq!(screen.matches("chat").count(), 1);
+    assert!(screen.contains("● connected"));
+    assert_eq!(screen.matches("chat").count(), 0);
     assert!(screen.contains('─'));
     assert!(!screen.contains('┌'));
     assert!(!screen.contains('┐'));
@@ -500,7 +501,7 @@ fn chat_render_shows_multiline_input_with_continuation_indent() {
     assert!(screen.contains("  second line"));
     terminal
         .backend_mut()
-        .assert_cursor_position(Position::new(15, 21));
+        .assert_cursor_position(Position::new(17, 20));
 }
 
 #[test]

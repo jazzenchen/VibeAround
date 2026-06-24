@@ -3,7 +3,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::TuiApp;
-use crate::theme::{muted_style, BRAND};
+use crate::theme::{muted_style, ACTION, BRAND};
 
 const BRAND_WORDMARK: &str = r#"██    ██ ██ ██████  ███████  █████  ██████   ██████  ██    ██ ███    ██ ██████
 ██    ██ ██ ██   ██ ██      ██   ██ ██   ██ ██    ██ ██    ██ ████   ██ ██   ██
@@ -21,24 +21,21 @@ const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BrandMode {
     Mark,
-    Wordmark,
-    WordmarkWithMeta,
+    Full,
 }
 
 impl BrandMode {
     pub(super) fn height(self) -> u16 {
         match self {
-            Self::Mark | Self::Wordmark => 5,
-            Self::WordmarkWithMeta => 6,
+            Self::Mark => 7,
+            Self::Full => 8,
         }
     }
 }
 
 pub(super) fn brand_mode(width: u16, height: u16) -> BrandMode {
-    if width >= 88 && height >= 18 {
-        BrandMode::WordmarkWithMeta
-    } else if width >= 84 && height >= 12 {
-        BrandMode::Wordmark
+    if width >= 92 && height >= 16 {
+        BrandMode::Full
     } else {
         BrandMode::Mark
     }
@@ -52,29 +49,30 @@ pub(super) fn brand_header(
     let content_width = usize::from(content_width);
     let mut lines = Vec::new();
     match mode {
-        BrandMode::WordmarkWithMeta => {
+        BrandMode::Full => {
+            lines.push(Line::raw(""));
             lines.extend(padded_art_lines(BRAND_WORDMARK, content_width));
-            lines.push(metadata_line(content_width, &app.endpoint));
-        }
-        BrandMode::Wordmark => {
-            lines.extend(padded_art_lines(BRAND_WORDMARK, content_width));
+            lines.push(Line::raw(""));
+            lines.push(metadata_line(&app.endpoint));
         }
         BrandMode::Mark => {
+            lines.push(Line::raw(""));
             lines.extend(padded_art_lines(BRAND_MARK, content_width));
+            lines.push(Line::raw(""));
         }
     }
 
     Paragraph::new(lines)
 }
 
-fn padded_art_lines(art: &'static str, content_width: usize) -> Vec<Line<'static>> {
+fn padded_art_lines(art: &'static str, _content_width: usize) -> Vec<Line<'static>> {
     let art_lines = art.lines().collect::<Vec<_>>();
     let widths = art_lines
         .iter()
         .map(|line| Line::from((*line).to_string()).width())
         .collect::<Vec<_>>();
     let block_width = widths.iter().copied().max().unwrap_or(0);
-    let left_pad = art_left_pad(content_width, block_width);
+    let left_pad = 0;
 
     art_lines
         .into_iter()
@@ -93,48 +91,14 @@ fn padded_art_lines(art: &'static str, content_width: usize) -> Vec<Line<'static
         .collect()
 }
 
-fn metadata_line(content_width: usize, endpoint: &str) -> Line<'static> {
-    padded_line(
-        content_width,
-        vec![
-            Span::styled(TAGLINE, muted_style().add_modifier(Modifier::BOLD)),
-            Span::styled("   /   ", muted_style()),
-            Span::styled(endpoint.to_string(), Style::default().fg(BRAND)),
-            Span::styled("   /   ", muted_style()),
-            Span::styled(VERSION, muted_style()),
-        ],
-    )
-}
-
-fn padded_line(content_width: usize, spans: Vec<Span<'static>>) -> Line<'static> {
-    let line_width = Line::from(spans.clone()).width();
-    let left_pad = text_left_pad(content_width, line_width);
-    let mut padded_spans = Vec::with_capacity(spans.len() + 1);
-    if left_pad > 0 {
-        padded_spans.push(Span::raw(" ".repeat(left_pad)));
-    }
-    padded_spans.extend(spans);
-    Line::from(padded_spans)
-}
-
-fn art_left_pad(content_width: usize, block_width: usize) -> usize {
-    if content_width <= block_width {
-        0
-    } else if content_width >= 96 {
-        4
-    } else {
-        2
-    }
-}
-
-fn text_left_pad(content_width: usize, line_width: usize) -> usize {
-    if content_width <= line_width {
-        0
-    } else if content_width >= 96 {
-        4
-    } else {
-        2
-    }
+fn metadata_line(endpoint: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(TAGLINE, muted_style().add_modifier(Modifier::BOLD)),
+        Span::styled("   /   ", muted_style()),
+        Span::styled(endpoint.to_string(), Style::default().fg(ACTION)),
+        Span::styled("   /   ", muted_style()),
+        Span::styled(VERSION, muted_style()),
+    ])
 }
 
 #[cfg(test)]
@@ -143,13 +107,12 @@ mod tests {
 
     #[test]
     fn brand_mode_scales_with_terminal_size() {
-        assert_eq!(brand_mode(40, 24), BrandMode::Mark);
-        assert_eq!(brand_mode(80, 18), BrandMode::Mark);
-        assert_eq!(brand_mode(84, 17), BrandMode::Wordmark);
-        assert_eq!(brand_mode(88, 18), BrandMode::WordmarkWithMeta);
-        assert_eq!(BrandMode::Mark.height(), 5);
-        assert_eq!(BrandMode::Wordmark.height(), 5);
-        assert_eq!(BrandMode::WordmarkWithMeta.height(), 6);
+        assert_eq!(brand_mode(80, 24), BrandMode::Mark);
+        assert_eq!(brand_mode(92, 15), BrandMode::Mark);
+        assert_eq!(brand_mode(92, 16), BrandMode::Full);
+        assert_eq!(brand_mode(120, 24), BrandMode::Full);
+        assert_eq!(BrandMode::Mark.height(), 7);
+        assert_eq!(BrandMode::Full.height(), 8);
     }
 
     #[test]

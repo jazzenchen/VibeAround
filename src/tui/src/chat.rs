@@ -2,7 +2,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 
-use crate::theme::{muted_style, BRAND};
+use crate::theme::{muted_style, ACTION, REQUEST_BG};
 
 const CHAT_MARKER_WIDTH: usize = 2;
 
@@ -293,29 +293,57 @@ fn chat_message_wrapped_lines(message: &ChatMessage, content_width: usize) -> Ve
         .split('\n')
         .flat_map(|text| wrap_chat_text_line(text, body_width))
         .enumerate()
-        .map(|(index, text)| chat_message_line_at(message.role, &text, index == 0))
+        .map(|(index, text)| chat_message_line_at(message.role, &text, index == 0, content_width))
         .collect()
 }
 
 #[cfg(test)]
 fn chat_message_line(message: &ChatMessage) -> Line<'static> {
-    chat_message_line_at(message.role, &message.text, true)
+    chat_message_line_at(message.role, &message.text, true, usize::MAX)
 }
 
-fn chat_message_line_at(role: ChatRole, text: &str, first_line: bool) -> Line<'static> {
-    let (marker, style) = match role {
-        ChatRole::Notice => ("* ", muted_style()),
-        ChatRole::Request => (
-            "› ",
-            Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
-        ),
-        ChatRole::Response => ("• ", Style::default()),
+fn chat_message_line_at(
+    role: ChatRole,
+    text: &str,
+    first_line: bool,
+    content_width: usize,
+) -> Line<'static> {
+    let marker = match role {
+        ChatRole::Notice => "* ",
+        ChatRole::Request => "› ",
+        ChatRole::Response => "• ",
     };
     let marker = if first_line { marker } else { "  " };
-    Line::from(vec![
-        Span::styled(marker, style),
-        Span::raw(text.to_string()),
-    ])
+    match role {
+        ChatRole::Notice => Line::from(vec![
+            Span::styled(marker, muted_style()),
+            Span::raw(text.to_string()),
+        ]),
+        ChatRole::Request => request_line(marker, text, content_width),
+        ChatRole::Response => Line::from(vec![
+            Span::styled(marker, Style::default()),
+            Span::raw(text.to_string()),
+        ]),
+    }
+}
+
+fn request_line(marker: &str, text: &str, content_width: usize) -> Line<'static> {
+    let body_style = Style::default().bg(REQUEST_BG);
+    let marker_style = body_style.fg(ACTION).add_modifier(Modifier::BOLD);
+    let mut spans = vec![
+        Span::styled(marker.to_string(), marker_style),
+        Span::styled(text.to_string(), body_style),
+    ];
+    if content_width != usize::MAX {
+        let line_width = CHAT_MARKER_WIDTH.saturating_add(display_width(text));
+        if content_width > line_width {
+            spans.push(Span::styled(
+                " ".repeat(content_width - line_width),
+                body_style,
+            ));
+        }
+    }
+    Line::from(spans).style(body_style)
 }
 
 fn marker_body_width(content_width: usize) -> usize {

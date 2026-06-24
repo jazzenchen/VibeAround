@@ -1,21 +1,19 @@
 use ratatui::layout::Alignment;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::app::{AppView, TuiApp};
 use crate::chat::session_mode_display_label;
-use crate::theme::{muted_style, BRAND, ERROR, OK, SEMANTIC_BORDER, WARN};
+use crate::theme::{muted_style, ACTION, ERROR, OK, WARN};
 
-pub(super) fn context_strip(app: &TuiApp) -> Paragraph<'static> {
+pub(super) fn context_strip(app: &TuiApp, content_width: u16) -> Paragraph<'static> {
     let spans = match app.view {
         AppView::Chat => chat_context_spans(app),
         AppView::Status | AppView::StatusDetail => status_context_spans(app),
         AppView::Agent => agent_context_spans(app),
     };
-    Paragraph::new(Line::from(spans))
-        .alignment(Alignment::Center)
-        .block(chrome_separator())
+    Paragraph::new(vec![Line::from(spans), divider_line(content_width)]).alignment(Alignment::Left)
 }
 
 fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
@@ -29,38 +27,33 @@ fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
         .or(app.chat_state.default_agent.as_deref())
         .unwrap_or("global");
     let mut spans = vec![Span::styled(
-        "chat",
-        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
-    )];
-    spans.push(separator());
-    spans.push(Span::styled(
         if app.chat_connected {
-            "connected"
+            "● connected"
         } else {
-            "offline"
+            "● offline"
         },
         if app.chat_connected {
             Style::default().fg(OK).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
         },
-    ));
+    )];
     spans.push(separator());
     spans.extend(label_value_spans("agent", agent_label));
-    spans.push(Span::raw("  "));
+    spans.push(group_gap());
     spans.extend(label_value_spans(
         "profile",
         app.effective_profile().unwrap_or("global"),
     ));
-    spans.push(Span::raw("  "));
+    spans.push(group_gap());
     spans.extend(label_value_spans(
         "workspace",
         app.effective_workspace().unwrap_or("global"),
     ));
-    spans.push(Span::raw("  "));
+    spans.push(group_gap());
     spans.extend(label_value_spans("session", &session_label));
     if let Some(mode) = session_mode_display_label(app.chat_state.session_mode.as_ref()) {
-        spans.push(Span::raw("  "));
+        spans.push(group_gap());
         spans.extend(label_value_spans("mode", &mode));
     }
     spans
@@ -81,10 +74,16 @@ fn status_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
                 Span::styled(service.version.clone(), muted_style()),
                 Span::raw("  "),
                 Span::styled("mode ", muted_style()),
-                Span::styled(service.mode.clone(), Style::default().fg(BRAND)),
+                Span::styled(
+                    service.mode.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  "),
                 Span::styled("port ", muted_style()),
-                Span::styled(service.port.to_string(), Style::default().fg(WARN)),
+                Span::styled(
+                    service.port.to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
             ]
         })
         .unwrap_or_else(|| {
@@ -109,24 +108,24 @@ fn status_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
 fn agent_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
     let mut spans = vec![Span::styled(
         "agent context",
-        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+        Style::default().add_modifier(Modifier::BOLD),
     )];
     spans.push(separator());
     spans.extend(label_value_spans(
         "agent",
         app.effective_agent().unwrap_or("global"),
     ));
-    spans.push(Span::raw("  "));
+    spans.push(group_gap());
     spans.extend(label_value_spans(
         "profile",
         app.effective_profile().unwrap_or("global"),
     ));
-    spans.push(Span::raw("  "));
+    spans.push(group_gap());
     spans.extend(label_value_spans(
         "workspace",
         app.effective_workspace().unwrap_or("global"),
     ));
-    spans.push(Span::raw("  "));
+    spans.push(group_gap());
     spans.extend(label_value_spans(
         "session",
         &app.effective_session()
@@ -140,12 +139,19 @@ fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(label, muted_style()),
         Span::raw(" "),
-        Span::styled(value.to_string(), Style::default()),
+        Span::styled(
+            value.to_string(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
     ]
 }
 
 fn separator() -> Span<'static> {
     Span::styled("   |   ", muted_style())
+}
+
+fn group_gap() -> Span<'static> {
+    Span::raw("    ")
 }
 
 fn metric_spans(label: &'static str, value: usize) -> Vec<Span<'static>> {
@@ -154,7 +160,7 @@ fn metric_spans(label: &'static str, value: usize) -> Vec<Span<'static>> {
         Span::raw(" "),
         Span::styled(
             value.to_string(),
-            Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+            Style::default().add_modifier(Modifier::BOLD),
         ),
     ]
 }
@@ -163,7 +169,7 @@ fn short_id(value: &str) -> String {
     value.chars().take(12).collect()
 }
 
-pub(super) fn command_bar(app: &TuiApp) -> Paragraph<'static> {
+pub(super) fn command_bar(app: &TuiApp, content_width: u16) -> Paragraph<'static> {
     let (status, status_style) = if app.exit_confirmation_pending() {
         (
             "press Ctrl+C again to quit".to_string(),
@@ -183,7 +189,6 @@ pub(super) fn command_bar(app: &TuiApp) -> Paragraph<'static> {
         (view_hint(app), muted_style())
     };
     let mut spans = vec![
-        Span::raw("  "),
         Span::styled(status, status_style),
         Span::styled("  |  ", muted_style()),
     ];
@@ -195,7 +200,7 @@ pub(super) fn command_bar(app: &TuiApp) -> Paragraph<'static> {
         key_span("Ctrl+C"),
         Span::raw(" quit"),
     ]);
-    Paragraph::new(Line::from(spans)).alignment(Alignment::Left)
+    Paragraph::new(vec![divider_line(content_width), Line::from(spans)]).alignment(Alignment::Left)
 }
 
 pub(crate) fn view_hint(app: &TuiApp) -> String {
@@ -271,13 +276,10 @@ fn view_command_spans(view: AppView) -> Vec<Span<'static>> {
 fn key_span(value: &'static str) -> Span<'static> {
     Span::styled(
         value,
-        Style::default().fg(BRAND).add_modifier(Modifier::BOLD),
+        Style::default().fg(ACTION).add_modifier(Modifier::BOLD),
     )
 }
 
-fn chrome_separator() -> Block<'static> {
-    Block::default()
-        .borders(Borders::TOP)
-        .border_set(SEMANTIC_BORDER)
-        .border_style(muted_style())
+fn divider_line(width: u16) -> Line<'static> {
+    Line::from(Span::styled("─".repeat(usize::from(width)), muted_style()))
 }
