@@ -514,13 +514,18 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
 fn render_messages(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let visible_rows = usize::from(area.height);
     let content_width = usize::from(area.width.saturating_sub(1)).max(1);
+    let mut lines = chat_message_lines_for_messages(&app.chat_messages, content_width);
+    // A live indicator at the tail so the agent never looks stuck while it
+    // thinks or runs tools before any text streams back.
+    if let Some(indicator) = working_indicator_line(app) {
+        if !lines.is_empty() {
+            lines.push(Line::raw(""));
+        }
+        lines.push(indicator);
+    }
     // Conversation flows from the top; once it overflows, the latest lines stay
     // pinned to the bottom via the scroll offset.
-    let message_lines = visible_chat_lines(
-        chat_message_lines_for_messages(&app.chat_messages, content_width),
-        visible_rows,
-        app.chat_scroll,
-    );
+    let message_lines = visible_chat_lines(lines, visible_rows, app.chat_scroll);
     frame.render_widget(
         List::new(
             message_lines
@@ -530,6 +535,22 @@ fn render_messages(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ),
         area,
     );
+}
+
+/// Spinner + current activity + elapsed seconds while a turn is in progress.
+fn working_indicator_line(app: &TuiApp) -> Option<Line<'static>> {
+    let elapsed = app.turn_started_at?.elapsed();
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let frame = (elapsed.as_millis() / 80) as usize % FRAMES.len();
+    let activity = app
+        .work_status
+        .clone()
+        .unwrap_or_else(|| "working".to_string());
+    Some(Line::from(vec![
+        Span::styled(format!("{} ", FRAMES[frame]), accent_style()),
+        Span::styled(activity, muted_style()),
+        Span::styled(format!("  ·  {}s", elapsed.as_secs()), muted_style()),
+    ]))
 }
 
 /// A subtly tinted strip with a brand accent rail down the left — a Claude

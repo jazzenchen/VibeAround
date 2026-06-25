@@ -320,17 +320,37 @@ impl TuiApp {
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
     ) {
         let input_cursor = input.len();
-        self.work_status = None;
         if self.send_chat_message(input.clone(), chat_tx) {
             self.chat_messages.push(ChatMessage {
                 role: ChatRole::Request,
                 text: input,
             });
             self.follow_chat_tail();
+            self.begin_turn();
         } else {
             self.chat_input = input;
             self.chat_cursor = input_cursor;
         }
+    }
+
+    /// Start the live working indicator for a new turn.
+    fn begin_turn(&mut self) {
+        self.turn_started_at = Some(Instant::now());
+        self.work_status = None;
+    }
+
+    /// Start the timer for a turn that began without a local submit (e.g. a
+    /// resumed session), without resetting an already-running one.
+    fn resume_turn(&mut self) {
+        if self.turn_started_at.is_none() {
+            self.turn_started_at = Some(Instant::now());
+        }
+    }
+
+    /// The turn finished (or can no longer progress): clear the indicator.
+    fn end_turn(&mut self) {
+        self.turn_started_at = None;
+        self.work_status = None;
     }
 
     async fn run_slash_command(
@@ -515,7 +535,7 @@ impl TuiApp {
         self.force_new_session = true;
         self.selected_session = None;
         self.chat_state.session_id = None;
-        self.work_status = None;
+        self.end_turn();
         self.clear_error(ErrorScope::Chat);
         self.last_action = Some("next message starts a new session".into());
         self.push_notice("Next message will start a new session.");
@@ -592,6 +612,7 @@ impl TuiApp {
             ChatSocketEvent::Closed => {
                 let duplicate_closed = self.last_notice_is("Chat websocket closed.");
                 self.chat_connected = false;
+                self.end_turn();
                 if !duplicate_closed {
                     self.push_notice("Chat websocket closed.");
                 }
@@ -599,6 +620,7 @@ impl TuiApp {
             ChatSocketEvent::Error(error) => {
                 let duplicate_error = self.error_is(ErrorScope::Chat, &error);
                 self.chat_connected = false;
+                self.end_turn();
                 self.set_error(ErrorScope::Chat, error.clone());
                 if !duplicate_error {
                     self.push_notice(format!("Chat websocket error: {error}"));
@@ -648,16 +670,18 @@ impl TuiApp {
             }
             ChatEvent::Error { error } => {
                 self.set_error(ErrorScope::Chat, error.clone());
-                self.work_status = None;
+                self.end_turn();
                 self.push_notice(format!("Error: {error}"));
             }
             ChatEvent::PromptDone { .. } => {
-                self.work_status = None;
+                self.end_turn();
             }
             ChatEvent::TurnStatus { active } => {
-                self.work_status = None;
                 if *active {
                     self.last_action = None;
+                    self.resume_turn();
+                } else {
+                    self.end_turn();
                 }
             }
             ChatEvent::SessionMode { .. }

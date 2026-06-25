@@ -49,6 +49,9 @@ pub(crate) struct TuiApp {
     pub(crate) selected_session: Option<String>,
     pub(crate) force_new_session: bool,
     pub(crate) work_status: Option<String>,
+    /// When the current agent turn started, used to drive the live working
+    /// indicator (spinner + elapsed) in the transcript.
+    pub(crate) turn_started_at: Option<Instant>,
     pub(crate) last_error: Option<String>,
     last_error_scope: Option<ErrorScope>,
     pub(crate) last_action: Option<String>,
@@ -82,6 +85,7 @@ impl TuiApp {
             selected_session: None,
             force_new_session: false,
             work_status: None,
+            turn_started_at: None,
             last_error: None,
             last_error_scope: None,
             last_action: None,

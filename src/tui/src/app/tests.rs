@@ -1534,3 +1534,17 @@ fn immediate_duplicate_submission_is_dropped() {
 }
 
 
+
+
+#[test]
+fn turn_status_drives_the_working_timer() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    assert!(app.turn_started_at.is_none());
+
+    app.apply_chat_event(ChatEvent::TurnStatus { active: true });
+    assert!(app.turn_started_at.is_some(), "turn start arms the timer");
+
+    app.apply_chat_event(ChatEvent::PromptDone { message_id: None });
+    assert!(app.turn_started_at.is_none(), "completion clears the timer");
+}
