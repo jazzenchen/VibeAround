@@ -203,6 +203,9 @@ pub(super) fn command_bar(app: &TuiApp, content_width: u16) -> Paragraph<'static
 }
 
 pub(crate) fn view_hint(app: &TuiApp) -> String {
+    if app.popup_is_open() {
+        return "↑↓ move · Enter open/select · Esc back".to_string();
+    }
     match app.view {
         AppView::Chat => {
             if app.slash_popup_open() {

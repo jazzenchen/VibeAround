@@ -1711,3 +1711,4 @@ fn immediate_duplicate_submission_is_dropped() {
     assert!(app.is_immediate_duplicate("今天有啥新闻?"), "instant repeat is dropped");
     assert!(!app.is_immediate_duplicate("a different message"));
 }
+

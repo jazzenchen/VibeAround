@@ -11,6 +11,8 @@ use crate::chat::{
     chat_message_lines_for_messages, input_box_height, input_cursor_offset, input_visible_lines,
     visible_chat_lines, SlashCommand,
 };
+use crate::detail::{agent_detail, channel_detail, session_detail, tunnel_detail};
+use crate::popup::{Popup, PopupLevel};
 use crate::selection::{AgentPanel, RuntimePanel};
 use crate::theme::{
     accent_style, muted_style, ACTION, BRAND, INPUT_ACCENT, INPUT_BG, SEMANTIC_BORDER,
@@ -41,6 +43,12 @@ pub(crate) use chrome::view_hint;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
+    // A command popup always overlays the working chat, even from the welcome
+    // screen, so it has a stable place to anchor above the input.
+    if app.popup.is_some() {
+        render_working_chat(frame, app, area);
+        return;
+    }
     if app.is_welcome() {
         render_welcome(frame, app, area);
         return;
@@ -287,20 +295,11 @@ fn render_input_bar(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 }
 
 const SLASH_POPUP_MAX_ROWS: usize = 8;
+const COMMAND_POPUP_MAX_ROWS: usize = 10;
 
-/// Autocomplete menu for slash commands, anchored just above `input_area` and
-/// growing upward — a bottom-up popup over the conversation.
-fn render_slash_popup(frame: &mut Frame<'_>, app: &TuiApp, input_area: Rect) {
-    let Some(matches) = app.slash_matches() else {
-        return;
-    };
-    let selected = app.slash_selection.min(matches.len().saturating_sub(1));
-
-    let mut lines = vec![Line::from(Span::styled("commands", muted_style()))];
-    for (index, command) in matches.iter().take(SLASH_POPUP_MAX_ROWS).enumerate() {
-        lines.push(slash_popup_row(command, index == selected));
-    }
-
+/// Draw a bottom-up popup whose bottom edge sits just above `input_area`,
+/// growing upward, sized to `lines`, and framed by the brand accent rail.
+fn render_bottom_popup(frame: &mut Frame<'_>, input_area: Rect, lines: Vec<Line<'static>>) {
     let height = u16::try_from(lines.len()).unwrap_or(0);
     let top = input_area.y.saturating_sub(height);
     let rect = Rect {
@@ -312,7 +311,6 @@ fn render_slash_popup(frame: &mut Frame<'_>, app: &TuiApp, input_area: Rect) {
     if rect.height == 0 {
         return;
     }
-
     let block = Block::default()
         .borders(Borders::LEFT)
         .border_set(INPUT_ACCENT)
@@ -321,6 +319,19 @@ fn render_slash_popup(frame: &mut Frame<'_>, app: &TuiApp, input_area: Rect) {
         .style(Style::default().bg(INPUT_BG));
     frame.render_widget(Clear, rect);
     frame.render_widget(Paragraph::new(lines).block(block), rect);
+}
+
+/// Autocomplete menu for slash commands.
+fn render_slash_popup(frame: &mut Frame<'_>, app: &TuiApp, input_area: Rect) {
+    let Some(matches) = app.slash_matches() else {
+        return;
+    };
+    let selected = app.slash_selection.min(matches.len().saturating_sub(1));
+    let mut lines = vec![Line::from(Span::styled("commands", muted_style()))];
+    for (index, command) in matches.iter().take(SLASH_POPUP_MAX_ROWS).enumerate() {
+        lines.push(slash_popup_row(command, index == selected));
+    }
+    render_bottom_popup(frame, input_area, lines);
 }
 
 fn slash_popup_row(command: &SlashCommand, selected: bool) -> Line<'static> {
@@ -334,6 +345,134 @@ fn slash_popup_row(command: &SlashCommand, selected: bool) -> Line<'static> {
         Span::styled(format!("{:<9}", command.name), name_style),
         Span::styled(format!(" {}", command.summary), muted_style()),
     ])
+}
+
+/// The `/status` and `/agent` drill-down popup.
+fn render_command_popup(frame: &mut Frame<'_>, app: &TuiApp, input_area: Rect) {
+    let Some(popup) = &app.popup else {
+        return;
+    };
+    let mut lines = vec![popup_breadcrumb(popup)];
+    match popup.level {
+        PopupLevel::Categories => {
+            for (index, label) in popup.kind.categories().iter().enumerate() {
+                let count = app.popup_item_count(popup.kind, index);
+                lines.push(popup_category_row(label, count, index == popup.cursor));
+            }
+        }
+        PopupLevel::Items { category } => {
+            let rows = popup_item_rows(app, popup, category);
+            if rows.is_empty() {
+                lines.push(Line::from(Span::styled("  no entries", muted_style())));
+            } else {
+                for index in popup_window(rows.len(), popup.cursor, COMMAND_POPUP_MAX_ROWS) {
+                    lines.push(popup_item_line(rows[index].clone(), index == popup.cursor));
+                }
+            }
+        }
+        PopupLevel::Detail { category, item } => {
+            lines.extend(popup_detail_lines(app, popup, category, item));
+        }
+    }
+    render_bottom_popup(frame, input_area, lines);
+}
+
+fn popup_breadcrumb(popup: &Popup) -> Line<'static> {
+    let mut text = popup.kind.title().to_string();
+    if let Some(category) = popup.category() {
+        if let Some(label) = popup.kind.categories().get(category) {
+            text.push_str(" / ");
+            text.push_str(label);
+        }
+    }
+    Line::from(Span::styled(text, muted_style()))
+}
+
+fn popup_category_row(label: &str, count: usize, selected: bool) -> Line<'static> {
+    let label_style = if selected {
+        accent_style()
+    } else {
+        Style::default().add_modifier(Modifier::BOLD)
+    };
+    Line::from(vec![
+        Span::styled(if selected { "› " } else { "  " }, accent_style()),
+        Span::styled(label.to_string(), label_style),
+        Span::styled(format!("  {count}"), muted_style()),
+    ])
+}
+
+fn popup_item_line(row: Vec<Span<'static>>, selected: bool) -> Line<'static> {
+    let mut spans = vec![Span::styled(if selected { "› " } else { "  " }, accent_style())];
+    spans.extend(row);
+    let line = Line::from(spans);
+    if selected {
+        line.style(Style::default().add_modifier(Modifier::BOLD))
+    } else {
+        line
+    }
+}
+
+fn popup_item_rows(app: &TuiApp, popup: &Popup, category: usize) -> Vec<Vec<Span<'static>>> {
+    use crate::popup::PopupKind;
+    match popup.kind {
+        PopupKind::Status => match category {
+            0 => app.snapshot.channels.iter().map(channel_row).collect(),
+            1 => app.snapshot.tunnels.iter().map(tunnel_row).collect(),
+            2 => app.snapshot.agents.iter().map(agent_row).collect(),
+            3 => app.snapshot.sessions.iter().map(session_row).collect(),
+            _ => Vec::new(),
+        },
+        PopupKind::Agent => match category {
+            0 => app.agent_picker.agents.iter().map(agent_info_row).collect(),
+            1 => app.agent_picker.profiles.iter().map(profile_row).collect(),
+            2 => app.agent_picker.workspaces.iter().map(workspace_row).collect(),
+            3 => app
+                .agent_picker
+                .sessions
+                .iter()
+                .map(launch_session_row)
+                .collect(),
+            _ => Vec::new(),
+        },
+    }
+}
+
+fn popup_detail_lines(
+    app: &TuiApp,
+    popup: &Popup,
+    category: usize,
+    item: usize,
+) -> Vec<Line<'static>> {
+    use crate::popup::PopupKind;
+    let detail = match (popup.kind, category) {
+        (PopupKind::Status, 0) => app.snapshot.channels.get(item).map(channel_detail),
+        (PopupKind::Status, 1) => app.snapshot.tunnels.get(item).map(tunnel_detail),
+        (PopupKind::Status, 2) => app.snapshot.agents.get(item).map(agent_detail),
+        (PopupKind::Status, 3) => app.snapshot.sessions.get(item).map(session_detail),
+        _ => None,
+    };
+    match detail {
+        Some(detail) => {
+            let mut lines = vec![Line::from(Span::styled(detail.title, accent_style()))];
+            lines.extend(
+                detail
+                    .lines
+                    .into_iter()
+                    .map(|text| Line::from(Span::styled(text, muted_style()))),
+            );
+            lines
+        }
+        None => vec![Line::from(Span::styled("  no detail", muted_style()))],
+    }
+}
+
+/// A window of indices that keeps `cursor` visible within `max` rows.
+fn popup_window(len: usize, cursor: usize, max: usize) -> std::ops::Range<usize> {
+    if len <= max {
+        return 0..len;
+    }
+    let start = cursor.saturating_sub(max / 2).min(len - max);
+    start..start + max
 }
 
 fn content_rect(area: Rect) -> Rect {
@@ -378,6 +517,7 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
     );
     render_input_bar(frame, app, chunks[1]);
     render_slash_popup(frame, app, chunks[1]);
+    render_command_popup(frame, app, chunks[1]);
 }
 
 fn render_status_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {

@@ -342,11 +342,11 @@ impl TuiApp {
         let (name, args) = split_slash_command(command);
         match name {
             "/status" => {
-                self.open_status(transport).await;
+                self.open_status_popup(transport).await;
                 true
             }
             "/agent" => {
-                self.open_agent_picker(transport).await;
+                self.open_agent_popup(transport).await;
                 true
             }
             "/help" => {

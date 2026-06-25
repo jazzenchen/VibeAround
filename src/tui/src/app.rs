@@ -6,12 +6,14 @@ use va_client::state::ChatState;
 use crate::chat::{ChatMessage, ChatRole};
 use crate::data::{fetch_agent_picker, fetch_snapshot, AgentPickerSnapshot, DashboardSnapshot};
 use crate::detail::DetailContent;
+use crate::popup::Popup;
 use crate::runtime_socket::RuntimeStream;
 use crate::selection::{AgentSelection, StatusSelection};
 use crate::transport::HttpTransport;
 
 mod agent;
 mod chat;
+mod popup;
 mod runtime;
 
 const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
@@ -41,6 +43,8 @@ pub(crate) struct TuiApp {
     /// The last submitted input and when, used to drop an immediate duplicate
     /// (e.g. an IME that fires the commit Enter twice).
     last_submit: Option<(Instant, String)>,
+    /// Active bottom-up command popup (`/status`, `/agent`), if any.
+    pub(crate) popup: Option<Popup>,
     pub(crate) selected_agent: Option<String>,
     pub(crate) selected_profile: Option<String>,
     pub(crate) selected_workspace: Option<String>,
@@ -76,6 +80,7 @@ impl TuiApp {
             history_draft: String::new(),
             slash_selection: 0,
             last_submit: None,
+            popup: None,
             selected_agent: None,
             selected_profile: None,
             selected_workspace: None,
@@ -121,12 +126,17 @@ impl TuiApp {
         }
     }
 
+    // TODO(popup-migration): the full-screen status/agent views are superseded
+    // by the bottom-up popup; these openers stay only until the old grid path
+    // is removed in the follow-up.
+    #[allow(dead_code)]
     pub(crate) async fn open_status(&mut self, transport: &HttpTransport) {
         self.view = AppView::Status;
         self.detail = None;
         self.refresh_status(transport).await;
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn open_agent_picker(&mut self, transport: &HttpTransport) {
         self.view = AppView::Agent;
         self.detail = None;
@@ -315,6 +325,9 @@ pub(crate) enum AppView {
     Chat,
     Status,
     StatusDetail,
+    // TODO(popup-migration): unreachable now that `/agent` opens the popup;
+    // removed with the rest of the old grid path.
+    #[allow(dead_code)]
     Agent,
 }
 

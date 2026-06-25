@@ -22,6 +22,7 @@ mod chat_socket;
 mod config;
 mod data;
 mod detail;
+mod popup;
 mod render;
 mod runtime_socket;
 mod selection;
@@ -91,9 +92,12 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                     app.insert_chat_text(&text);
                 }
                 Event::Mouse(mouse) => match mouse.kind {
-                    // Scroll moves the conversation, never the input history —
-                    // some terminals deliver wheel scroll as arrow keys, so we
-                    // capture the mouse to keep the two separate.
+                    // Scroll moves the popup selection when one is open, else
+                    // the conversation. Some terminals deliver wheel scroll as
+                    // arrow keys, so we capture the mouse to keep scroll and
+                    // input history separate.
+                    MouseEventKind::ScrollUp if app.popup_is_open() => app.popup_move_up(),
+                    MouseEventKind::ScrollDown if app.popup_is_open() => app.popup_move_down(),
                     MouseEventKind::ScrollUp if app.view == AppView::Chat => {
                         app.scroll_chat_up(3);
                     }
@@ -111,6 +115,18 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                     if is_ctrl_c(&key) {
                         if app.confirm_exit_request() {
                             break;
+                        }
+                        continue;
+                    }
+
+                    // The bottom-up popup captures navigation while open.
+                    if app.popup_is_open() {
+                        match key.code {
+                            KeyCode::Esc => app.popup_back(),
+                            KeyCode::Up => app.popup_move_up(),
+                            KeyCode::Down => app.popup_move_down(),
+                            KeyCode::Enter => app.popup_enter(&transport).await,
+                            _ => {}
                         }
                         continue;
                     }
