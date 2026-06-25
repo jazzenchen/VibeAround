@@ -1,7 +1,7 @@
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::TuiApp;
@@ -264,26 +264,28 @@ fn render_input_bar(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 const SLASH_POPUP_MAX_ROWS: usize = 8;
 const COMMAND_POPUP_MAX_ROWS: usize = 10;
 
-/// Draw a bottom-up popup whose bottom edge sits just above `input_area`,
-/// growing upward, sized to `lines`, and framed by the brand accent rail.
+/// Draw a floating menu that rises from just above `input_area` and covers the
+/// conversation. A one-row gap and a rounded brand border set it apart from the
+/// input bar — it reads as an overlay, not an extension of the input.
 fn render_bottom_popup(frame: &mut Frame<'_>, input_area: Rect, lines: Vec<Line<'static>>) {
-    let height = u16::try_from(lines.len()).unwrap_or(0);
-    let top = input_area.y.saturating_sub(height);
+    const GAP: u16 = 1;
+    // content rows + top and bottom border
+    let height = u16::try_from(lines.len()).unwrap_or(0).saturating_add(2);
+    let bottom = input_area.y.saturating_sub(GAP);
+    let top = bottom.saturating_sub(height);
     let rect = Rect {
         x: input_area.x,
         y: top,
         width: input_area.width,
-        height: input_area.y.saturating_sub(top),
+        height: bottom.saturating_sub(top),
     };
-    if rect.height == 0 {
+    if rect.height < 2 {
         return;
     }
-    let block = Block::default()
-        .borders(Borders::LEFT)
-        .border_set(INPUT_ACCENT)
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(BRAND))
-        .padding(Padding::new(1, 1, 0, 0))
-        .style(Style::default().bg(INPUT_BG));
+        .padding(Padding::horizontal(1));
     frame.render_widget(Clear, rect);
     frame.render_widget(Paragraph::new(lines).block(block), rect);
 }
