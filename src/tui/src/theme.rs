@@ -29,19 +29,6 @@ pub(crate) const INPUT_BG: Color = Color::Indexed(254);
 /// User messages stay on the terminal's own background — no fixed RGB.
 pub(crate) const REQUEST_BG: Color = Color::Reset;
 
-/// A light hairline used only to underline the brand bar. No corners or
-/// boxes — focus is communicated with the brand accent, not chrome.
-pub(crate) const SEMANTIC_BORDER: border::Set = border::Set {
-    top_left: " ",
-    top_right: " ",
-    bottom_left: " ",
-    bottom_right: " ",
-    vertical_left: "▏",
-    vertical_right: " ",
-    horizontal_top: "─",
-    horizontal_bottom: "─",
-};
-
 /// A thick brand-colored bar drawn down the left edge of the input — the
 /// accent that frames the prompt as a deliberate input zone.
 pub(crate) const INPUT_ACCENT: border::Set = border::Set {

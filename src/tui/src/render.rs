@@ -3,20 +3,15 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
 use ratatui::Frame;
-use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
-use va_client::sessions::SessionListItem;
 
-use crate::app::{AppView, TuiApp};
+use crate::app::TuiApp;
 use crate::chat::{
     chat_message_lines_for_messages, input_box_height, input_cursor_offset, input_visible_lines,
     visible_chat_lines, SlashCommand,
 };
 use crate::detail::{agent_detail, channel_detail, session_detail, tunnel_detail};
 use crate::popup::{Popup, PopupLevel};
-use crate::selection::{AgentPanel, RuntimePanel};
-use crate::theme::{
-    accent_style, muted_style, ACTION, BRAND, INPUT_ACCENT, INPUT_BG, SEMANTIC_BORDER,
-};
+use crate::theme::{accent_style, muted_style, ACTION, BRAND, INPUT_ACCENT, INPUT_BG};
 
 mod brand;
 mod chrome;
@@ -24,7 +19,7 @@ mod rows;
 
 use brand::{mark_lines, wordmark_lines, MARK_WIDTH, VERSION};
 use chrome::{
-    chat_context_spans, command_bar, context_pairs, context_strip, divider_line, label_value_spans,
+    chat_context_spans, command_bar, context_pairs, divider_line, label_value_spans,
 };
 use rows::{
     agent_info_row, agent_row, channel_row, launch_session_row, profile_row, session_row,
@@ -43,41 +38,13 @@ pub(crate) use chrome::view_hint;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp) {
     let area = frame.area();
-    // A command popup always overlays the working chat, even from the welcome
-    // screen, so it has a stable place to anchor above the input.
-    if app.popup.is_some() {
-        render_working_chat(frame, app, area);
-        return;
-    }
-    if app.is_welcome() {
+    // The welcome screen only shows before a conversation starts and while no
+    // popup is open; otherwise the working chat (and any overlay) is rendered.
+    if app.popup.is_none() && app.is_welcome() {
         render_welcome(frame, app, area);
-        return;
-    }
-    if app.view == AppView::Chat {
+    } else {
         render_working_chat(frame, app, area);
-        return;
     }
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Min(4),
-            Constraint::Length(2),
-        ])
-        .split(area);
-    let context_area = content_rect(chunks[0]);
-    let body_area = content_rect(chunks[1]);
-    let footer_area = content_rect(chunks[2]);
-
-    frame.render_widget(context_strip(app, context_area.width), context_area);
-    match app.view {
-        AppView::Status => render_status_view(frame, app, body_area),
-        AppView::StatusDetail => render_status_detail_view(frame, app, body_area),
-        AppView::Agent => render_agent_view(frame, app, body_area),
-        AppView::Chat => {}
-    }
-    frame.render_widget(command_bar(app, footer_area.width), footer_area);
 }
 
 /// The working chat: a Claude-style header (brand mark + key info), the
@@ -518,312 +485,6 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
     render_input_bar(frame, app, chunks[1]);
     render_slash_popup(frame, app, chunks[1]);
     render_command_popup(frame, app, chunks[1]);
-}
-
-fn render_status_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .spacing(3)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-    let top_rows = app.snapshot.channels.len().max(app.snapshot.agents.len());
-    let bottom_rows = app.snapshot.tunnels.len().max(app.snapshot.sessions.len());
-    let left = panel_column(columns[0], top_rows, bottom_rows);
-    let right = panel_column(columns[1], top_rows, bottom_rows);
-
-    frame.render_widget(
-        channel_list(
-            &app.snapshot.channels,
-            app.status_selection.index(RuntimePanel::Channels),
-            app.status_selection.panel == RuntimePanel::Channels,
-        ),
-        left[0],
-    );
-    frame.render_widget(
-        tunnel_list(
-            &app.snapshot.tunnels,
-            app.status_selection.index(RuntimePanel::Tunnels),
-            app.status_selection.panel == RuntimePanel::Tunnels,
-        ),
-        left[1],
-    );
-    frame.render_widget(
-        runtime_agent_list(
-            &app.snapshot.agents,
-            app.status_selection.index(RuntimePanel::Agents),
-            app.status_selection.panel == RuntimePanel::Agents,
-        ),
-        right[0],
-    );
-    frame.render_widget(
-        session_list(
-            &app.snapshot.sessions,
-            app.status_selection.index(RuntimePanel::Sessions),
-            app.status_selection.panel == RuntimePanel::Sessions,
-        ),
-        right[1],
-    );
-}
-
-fn render_status_detail_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
-    let detail = app.detail.as_ref();
-    let title = detail
-        .map(|detail| format!(" {} ", detail.title))
-        .unwrap_or_else(|| " detail ".to_string());
-    let lines = detail
-        .map(|detail| {
-            detail
-                .lines
-                .iter()
-                .map(|line| Line::from(line.clone()))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| vec![Line::from("No item selected.")]);
-    frame.render_widget(Paragraph::new(lines).block(focus_block(title.trim())), area);
-}
-
-fn render_agent_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .spacing(3)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-    let top_rows = app.agent_picker.agents.len().max(app.agent_picker.profiles.len());
-    let bottom_rows = app
-        .agent_picker
-        .workspaces
-        .len()
-        .max(app.agent_picker.sessions.len());
-    let left = panel_column(columns[0], top_rows, bottom_rows);
-    let right = panel_column(columns[1], top_rows, bottom_rows);
-
-    frame.render_widget(
-        picker_list(
-            "agents",
-            app.agent_picker
-                .agents
-                .iter()
-                .map(|agent| {
-                    selected_context_row(
-                        agent_info_row(agent),
-                        app.effective_agent() == Some(agent.id.as_str()),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            app.agent_selection.index(AgentPanel::Agents),
-            app.agent_selection.panel == AgentPanel::Agents,
-        ),
-        left[0],
-    );
-    frame.render_widget(
-        picker_list(
-            "workspaces",
-            app.agent_picker
-                .workspaces
-                .iter()
-                .map(|workspace| {
-                    selected_context_row(
-                        workspace_row(workspace),
-                        app.effective_workspace() == Some(workspace.path.as_str()),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            app.agent_selection.index(AgentPanel::Workspaces),
-            app.agent_selection.panel == AgentPanel::Workspaces,
-        ),
-        left[1],
-    );
-    frame.render_widget(
-        picker_list(
-            "profiles",
-            app.agent_picker
-                .profiles
-                .iter()
-                .map(|profile| {
-                    selected_context_row(
-                        profile_row(profile),
-                        app.effective_profile() == Some(profile.id.as_str()),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            app.agent_selection.index(AgentPanel::Profiles),
-            app.agent_selection.panel == AgentPanel::Profiles,
-        ),
-        right[0],
-    );
-    frame.render_widget(
-        picker_list(
-            "sessions",
-            app.agent_picker
-                .sessions
-                .iter()
-                .map(|session| {
-                    selected_context_row(
-                        launch_session_row(session),
-                        app.effective_session() == Some(session.session_id.as_str()),
-                    )
-                })
-                .collect::<Vec<_>>(),
-            app.agent_selection.index(AgentPanel::Sessions),
-            app.agent_selection.panel == AgentPanel::Sessions,
-        ),
-        right[1],
-    );
-}
-
-fn channel_list(
-    channels: &[ChannelRuntime],
-    selected: Option<usize>,
-    active: bool,
-) -> List<'static> {
-    selectable_list(
-        "channels",
-        channels.iter().map(channel_row).collect::<Vec<_>>(),
-        selected,
-        active,
-    )
-}
-
-fn tunnel_list(tunnels: &[TunnelRuntime], selected: Option<usize>, active: bool) -> List<'static> {
-    selectable_list(
-        "tunnels",
-        tunnels.iter().map(tunnel_row).collect::<Vec<_>>(),
-        selected,
-        active,
-    )
-}
-
-fn runtime_agent_list(
-    agents: &[AgentRuntime],
-    selected: Option<usize>,
-    active: bool,
-) -> List<'static> {
-    selectable_list(
-        "agents",
-        agents.iter().map(agent_row).collect::<Vec<_>>(),
-        selected,
-        active,
-    )
-}
-
-fn picker_list(
-    title: &'static str,
-    rows: Vec<Vec<Span<'static>>>,
-    selected: Option<usize>,
-    active: bool,
-) -> List<'static> {
-    selectable_list(title, rows, selected, active)
-}
-
-fn session_list(
-    sessions: &[SessionListItem],
-    selected: Option<usize>,
-    active: bool,
-) -> List<'static> {
-    selectable_list(
-        "pty sessions",
-        sessions.iter().map(session_row).collect::<Vec<_>>(),
-        selected,
-        active,
-    )
-}
-
-/// Split a column into a top panel and a bottom panel sized to their
-/// content, pooling any leftover height at the bottom instead of stretching
-/// every panel to fill half the column.
-fn panel_column(area: Rect, top_rows: usize, bottom_rows: usize) -> std::rc::Rc<[Rect]> {
-    Layout::default()
-        .direction(Direction::Vertical)
-        .spacing(1)
-        .constraints([
-            Constraint::Length(panel_height(top_rows)),
-            Constraint::Length(panel_height(bottom_rows)),
-            Constraint::Min(0),
-        ])
-        .split(area)
-}
-
-/// Heading + blank spacer + at least one body row.
-fn panel_height(rows: usize) -> u16 {
-    u16::try_from(2 + rows.max(1)).unwrap_or(u16::MAX)
-}
-
-fn selected_context_row(mut row: Vec<Span<'static>>, selected: bool) -> Vec<Span<'static>> {
-    let mut spans = Vec::with_capacity(row.len() + 1);
-    spans.push(Span::styled(
-        if selected { "● " } else { "  " },
-        if selected { accent_style() } else { muted_style() },
-    ));
-    spans.append(&mut row);
-    spans
-}
-
-fn selectable_list(
-    title: &'static str,
-    rows: Vec<Vec<Span<'static>>>,
-    selected: Option<usize>,
-    active: bool,
-) -> List<'static> {
-    let mut items = vec![
-        ListItem::new(section_heading(title, rows.len(), active)),
-        ListItem::new(Line::raw("")),
-    ];
-    if rows.is_empty() {
-        items.push(ListItem::new(Line::from(Span::styled(
-            "no entries",
-            muted_style(),
-        ))));
-    } else {
-        items.extend(rows.into_iter().enumerate().map(|(index, row)| {
-            let is_cursor = active && Some(index) == selected;
-            let marker = if is_cursor { "› " } else { "  " };
-            let mut spans = vec![Span::styled(marker, accent_style())];
-            spans.extend(row);
-            let item = ListItem::new(Line::from(spans));
-            if is_cursor {
-                item.style(Style::default().add_modifier(Modifier::BOLD))
-            } else {
-                item
-            }
-        }))
-    };
-    List::new(items).block(panel_block(active))
-}
-
-fn section_heading(title: &str, count: usize, active: bool) -> Line<'static> {
-    let title_style = if active {
-        accent_style()
-    } else {
-        muted_style().add_modifier(Modifier::BOLD)
-    };
-    Line::from(vec![
-        Span::styled(title.trim().to_string(), title_style),
-        Span::styled(format!("  {count}"), muted_style()),
-    ])
-}
-
-/// The active panel is marked by a brand-colored left rail; everything else
-/// is indented to match so the columns stay aligned without boxes.
-fn panel_block(active: bool) -> Block<'static> {
-    if active {
-        Block::default()
-            .borders(Borders::LEFT)
-            .border_set(SEMANTIC_BORDER)
-            .border_style(Style::default().fg(ACTION))
-            .padding(Padding::new(1, 0, 0, 0))
-    } else {
-        Block::default().padding(Padding::new(2, 0, 0, 0))
-    }
-}
-
-fn focus_block(title: &str) -> Block<'static> {
-    Block::default()
-        .borders(Borders::LEFT)
-        .border_set(SEMANTIC_BORDER)
-        .border_style(Style::default().fg(ACTION))
-        .title_style(accent_style())
-        .title(format!(" {title} "))
-        .padding(Padding::new(1, 0, 0, 0))
 }
 
 /// A subtly tinted strip with a brand accent rail down the left — a Claude

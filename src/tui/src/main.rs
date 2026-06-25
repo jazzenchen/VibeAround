@@ -25,7 +25,6 @@ mod detail;
 mod popup;
 mod render;
 mod runtime_socket;
-mod selection;
 mod theme;
 mod transport;
 
@@ -98,14 +97,8 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                     // input history separate.
                     MouseEventKind::ScrollUp if app.popup_is_open() => app.popup_move_up(),
                     MouseEventKind::ScrollDown if app.popup_is_open() => app.popup_move_down(),
-                    MouseEventKind::ScrollUp if app.view == AppView::Chat => {
-                        app.scroll_chat_up(3);
-                    }
-                    MouseEventKind::ScrollDown if app.view == AppView::Chat => {
-                        app.scroll_chat_down(3);
-                    }
-                    MouseEventKind::ScrollUp => app.select_up(),
-                    MouseEventKind::ScrollDown => app.select_down(),
+                    MouseEventKind::ScrollUp => app.scroll_chat_up(3),
+                    MouseEventKind::ScrollDown => app.scroll_chat_down(3),
                     _ => {}
                 },
                 // Some IMEs synthesize key release/repeat events for the commit
@@ -158,8 +151,6 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                         KeyCode::Delete if app.view == AppView::Chat => {
                             app.delete_chat_forward_char();
                         }
-                        KeyCode::Left => app.select_left(),
-                        KeyCode::Right => app.select_right(),
                         KeyCode::Tab if app.view == AppView::Chat && app.slash_popup_open() => {
                             app.accept_slash_selection(true);
                         }
@@ -171,27 +162,17 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                         }
                         KeyCode::Up if app.view == AppView::Chat => app.history_prev(),
                         KeyCode::Down if app.view == AppView::Chat => app.history_next(),
-                        KeyCode::Up => app.select_up(),
-                        KeyCode::Down => app.select_down(),
                         KeyCode::PageUp if app.view == AppView::Chat => app.scroll_chat_up(10),
                         KeyCode::PageDown if app.view == AppView::Chat => app.scroll_chat_down(10),
                         KeyCode::Enter if app.view == AppView::Chat && is_multiline_enter(&key) => {
                             app.insert_chat_newline();
                         }
-                        KeyCode::Enter => match app.view {
-                            AppView::Chat => {
-                                if app.slash_popup_open() {
-                                    app.accept_slash_selection(false);
-                                }
-                                app.submit_chat_input(&transport, &chat_tx).await
+                        KeyCode::Enter => {
+                            if app.slash_popup_open() {
+                                app.accept_slash_selection(false);
                             }
-                            AppView::Status => app.enter_current_view(),
-                            AppView::Agent => {
-                                app.enter_current_view();
-                                app.sync_agent_picker_selection(&transport).await;
-                            }
-                            AppView::StatusDetail => {}
-                        },
+                            app.submit_chat_input(&transport, &chat_tx).await
+                        }
                         KeyCode::Char('u' | 'U')
                             if app.view == AppView::Chat
                                 && key.modifiers.contains(KeyModifiers::CONTROL) =>

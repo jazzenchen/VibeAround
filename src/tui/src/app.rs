@@ -5,13 +5,10 @@ use va_client::state::ChatState;
 
 use crate::chat::{ChatMessage, ChatRole};
 use crate::data::{fetch_agent_picker, fetch_snapshot, AgentPickerSnapshot, DashboardSnapshot};
-use crate::detail::DetailContent;
 use crate::popup::Popup;
 use crate::runtime_socket::RuntimeStream;
-use crate::selection::{AgentSelection, StatusSelection};
 use crate::transport::HttpTransport;
 
-mod agent;
 mod chat;
 mod popup;
 mod runtime;
@@ -25,8 +22,6 @@ pub(crate) struct TuiApp {
     pub(crate) chat_connected: bool,
     pub(crate) snapshot: DashboardSnapshot,
     pub(crate) agent_picker: AgentPickerSnapshot,
-    pub(crate) status_selection: StatusSelection,
-    pub(crate) agent_selection: AgentSelection,
     pub(crate) chat_messages: Vec<ChatMessage>,
     pub(crate) chat_input: String,
     pub(crate) chat_cursor: usize,
@@ -50,7 +45,6 @@ pub(crate) struct TuiApp {
     pub(crate) selected_workspace: Option<String>,
     pub(crate) selected_session: Option<String>,
     pub(crate) force_new_session: bool,
-    pub(crate) detail: Option<DetailContent>,
     pub(crate) work_status: Option<String>,
     pub(crate) last_error: Option<String>,
     last_error_scope: Option<ErrorScope>,
@@ -67,8 +61,6 @@ impl TuiApp {
             chat_connected: false,
             snapshot: DashboardSnapshot::default(),
             agent_picker: AgentPickerSnapshot::default(),
-            status_selection: StatusSelection::default(),
-            agent_selection: AgentSelection::default(),
             // Start clean — the welcome screen's tip and the footer cover
             // command discovery, so no seed notice in the transcript.
             chat_messages: Vec::new(),
@@ -86,7 +78,6 @@ impl TuiApp {
             selected_workspace: None,
             selected_session: None,
             force_new_session: false,
-            detail: None,
             work_status: None,
             last_error: None,
             last_error_scope: None,
@@ -100,7 +91,6 @@ impl TuiApp {
         match fetch_snapshot(transport).await {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
-                self.status_selection.clamp(&self.snapshot);
                 self.clear_error(ErrorScope::Status);
                 self.last_refresh = Some(Instant::now());
             }
@@ -115,7 +105,6 @@ impl TuiApp {
         match fetch_agent_picker(transport).await {
             Ok(snapshot) => {
                 self.agent_picker = snapshot;
-                self.agent_selection.clamp(&self.agent_picker);
                 self.clear_error(ErrorScope::Agent);
                 self.last_refresh = Some(Instant::now());
             }
@@ -126,71 +115,9 @@ impl TuiApp {
         }
     }
 
-    // TODO(popup-migration): the full-screen status/agent views are superseded
-    // by the bottom-up popup; these openers stay only until the old grid path
-    // is removed in the follow-up.
-    #[allow(dead_code)]
-    pub(crate) async fn open_status(&mut self, transport: &HttpTransport) {
-        self.view = AppView::Status;
-        self.detail = None;
-        self.refresh_status(transport).await;
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn open_agent_picker(&mut self, transport: &HttpTransport) {
-        self.view = AppView::Agent;
-        self.detail = None;
-        self.refresh_agent_picker(transport).await;
-    }
-
+    /// Esc with no popup open clears the input draft.
     pub(crate) fn go_back(&mut self) {
-        match self.view {
-            AppView::StatusDetail => {
-                self.view = AppView::Status;
-                self.detail = None;
-            }
-            AppView::Status | AppView::Agent => {
-                self.view = AppView::Chat;
-                self.detail = None;
-            }
-            AppView::Chat => {
-                self.clear_chat_input();
-            }
-        }
-    }
-
-    pub(crate) fn select_left(&mut self) {
-        match self.view {
-            AppView::Status => self.status_selection.move_left(),
-            AppView::Agent => self.agent_selection.move_left(),
-            AppView::Chat | AppView::StatusDetail => {}
-        }
-    }
-
-    pub(crate) fn select_right(&mut self) {
-        match self.view {
-            AppView::Status => self.status_selection.move_right(),
-            AppView::Agent => self.agent_selection.move_right(),
-            AppView::Chat | AppView::StatusDetail => {}
-        }
-    }
-
-    pub(crate) fn select_up(&mut self) {
-        match self.view {
-            AppView::Status => self.status_selection.move_up(&self.snapshot),
-            AppView::Agent => self.agent_selection.move_up(&self.agent_picker),
-            AppView::Chat => self.scroll_chat_up(1),
-            AppView::StatusDetail => {}
-        }
-    }
-
-    pub(crate) fn select_down(&mut self) {
-        match self.view {
-            AppView::Status => self.status_selection.move_down(&self.snapshot),
-            AppView::Agent => self.agent_selection.move_down(&self.agent_picker),
-            AppView::Chat => self.scroll_chat_down(1),
-            AppView::StatusDetail => {}
-        }
+        self.clear_chat_input();
     }
 
     pub(crate) fn scroll_chat_up(&mut self, lines: usize) {
@@ -203,19 +130,6 @@ impl TuiApp {
 
     pub(crate) fn follow_chat_tail(&mut self) {
         self.chat_scroll = 0;
-    }
-
-    pub(crate) fn enter_current_view(&mut self) {
-        match self.view {
-            AppView::Status => {
-                self.detail = self.status_selection.detail(&self.snapshot);
-                if self.detail.is_some() {
-                    self.view = AppView::StatusDetail;
-                }
-            }
-            AppView::Agent => self.select_agent_picker_item(),
-            AppView::Chat | AppView::StatusDetail => {}
-        }
     }
 
     /// The chat has not started a real exchange yet (only system notices, no
@@ -323,12 +237,6 @@ impl TuiApp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AppView {
     Chat,
-    Status,
-    StatusDetail,
-    // TODO(popup-migration): unreachable now that `/agent` opens the popup;
-    // removed with the rest of the old grid path.
-    #[allow(dead_code)]
-    Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

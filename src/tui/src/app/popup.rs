@@ -111,14 +111,14 @@ impl TuiApp {
         }
     }
 
-    fn clamp_popup_cursor(&mut self) {
+    pub(crate) fn clamp_popup_cursor(&mut self) {
         let len = self.popup_list_len();
         if let Some(popup) = &mut self.popup {
             popup.clamp(len);
         }
     }
 
-    fn apply_agent_popup_selection(&mut self, category: usize, item: usize) {
+    pub(crate) fn apply_agent_popup_selection(&mut self, category: usize, item: usize) {
         match category {
             0 => {
                 if let Some(agent) = self.agent_picker.agents.get(item) {
@@ -177,7 +177,7 @@ impl TuiApp {
         }
     }
 
-    fn agent_popup_pref_operation(
+    pub(crate) fn agent_popup_pref_operation(
         &self,
         category: usize,
     ) -> Result<Option<Operation<LauncherPreferencesResponse>>, String> {

@@ -5,7 +5,6 @@ use crate::chat_socket::ChatSocketEvent;
 use crate::config::DEFAULT_BASE_URL;
 use crate::render;
 use crate::runtime_socket::{RuntimeSocketEvent, RuntimeStream};
-use crate::selection::{AgentPanel, RuntimePanel};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Position;
 use ratatui::Terminal;
@@ -166,74 +165,20 @@ fn expect_message_id(message: &ChatClientMessage) -> String {
 }
 
 #[test]
-fn selects_active_panel_items_with_wrapping_and_clamping() {
-    let mut selection = StatusSelection::default();
-    let mut snapshot = DashboardSnapshot::default();
+fn runtime_socket_events_update_snapshot_and_clamp_popup() {
+    use crate::popup::{Popup, PopupKind, PopupLevel};
 
-    selection.select_next(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), None);
-
-    snapshot.channels = vec![channel("feishu"), channel("discord")];
-    selection.clamp(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
-
-    selection.select_next(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(1));
-
-    selection.select_next(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
-
-    selection.select_previous(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(1));
-
-    snapshot.channels.pop();
-    selection.clamp(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
-
-    snapshot.channels.clear();
-    selection.clamp(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), None);
-}
-
-#[test]
-fn status_navigation_follows_panel_geometry() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
-    app.snapshot.channels = vec![channel("feishu")];
-    app.snapshot.tunnels = vec![tunnel("cloudflare"), tunnel("ngrok")];
-    app.status_selection.clamp(&app.snapshot);
-
-    assert_eq!(app.status_selection.panel, RuntimePanel::Channels);
-    assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(0));
-
-    app.select_down();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Tunnels);
-    assert_eq!(app.status_selection.index(RuntimePanel::Tunnels), Some(0));
-    app.select_down();
-    assert_eq!(app.status_selection.index(RuntimePanel::Tunnels), Some(1));
-
-    app.select_up();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Channels);
-    app.select_right();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Agents);
-    app.select_down();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Sessions);
-    app.select_left();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Tunnels);
-}
-
-#[test]
-fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
     app.snapshot.channels = vec![channel("feishu"), channel("discord")];
     app.snapshot.tunnels = vec![tunnel("cloudflare")];
     app.snapshot.agents = vec![runtime_agent("tui:chat-1")];
-    app.status_selection.clamp(&app.snapshot);
-    app.status_selection.select_next(&app.snapshot);
-    assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(1));
+    // A status popup browsing channels with the cursor on the second row.
+    app.popup = Some(Popup {
+        kind: PopupKind::Status,
+        level: PopupLevel::Items { category: 0 },
+        cursor: 1,
+    });
     app.set_error(
         ErrorScope::Runtime(RuntimeStream::Channels),
         "old runtime error",
@@ -243,10 +188,13 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
 
     assert_eq!(app.snapshot.channels.len(), 1);
     assert_eq!(app.snapshot.channels[0].kind, "feishu");
-    assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(0));
+    assert_eq!(
+        app.popup.as_ref().unwrap().cursor,
+        0,
+        "cursor clamps to the shrunk list"
+    );
     assert_eq!(app.last_error, None);
     assert!(app.last_refresh.is_some());
-    assert!(render::view_hint(&app).starts_with("runtime stream updated "));
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Tunnels(vec![tunnel("ngrok")]));
     assert_eq!(app.snapshot.tunnels[0].provider, "ngrok");
@@ -318,41 +266,6 @@ fn runtime_socket_update_only_clears_matching_stream_error() {
 }
 
 #[test]
-fn status_detail_tracks_runtime_socket_updates() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
-    app.snapshot.channels = vec![channel("feishu")];
-    app.status_selection.clamp(&app.snapshot);
-
-    app.enter_current_view();
-    assert_eq!(app.view, AppView::StatusDetail);
-    assert!(app
-        .detail
-        .as_ref()
-        .unwrap()
-        .lines
-        .contains(&"version: 0.1.0".to_string()));
-
-    let mut updated = channel("feishu");
-    updated.version = Some("0.2.0".into());
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(vec![updated]));
-
-    assert_eq!(app.view, AppView::StatusDetail);
-    assert!(app
-        .detail
-        .as_ref()
-        .unwrap()
-        .lines
-        .contains(&"version: 0.2.0".to_string()));
-
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(Vec::new()));
-
-    assert_eq!(app.view, AppView::Status);
-    assert!(app.detail.is_none());
-}
-
-#[test]
 fn pty_session_socket_does_not_mutate_agent_picker_sessions() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
@@ -390,45 +303,6 @@ fn enter_status_item_opens_detail_and_escape_returns() {
 
     app.go_back();
     assert_eq!(app.view, AppView::Status);
-}
-
-#[test]
-fn status_render_uses_minimal_semantic_boundaries() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
-    app.snapshot.channels = vec![channel("feishu")];
-    app.snapshot.tunnels = vec![tunnel("cloudflare")];
-    app.snapshot.agents = vec![runtime_agent("tui:chat-1")];
-    app.snapshot.sessions = vec![session("session-1", "/tmp/session", "profile-1")];
-    app.status_selection.clamp(&app.snapshot);
-
-    let backend = TestBackend::new(100, 32);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| render::render(frame, &app))
-        .expect("draw");
-    let screen = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<Vec<_>>()
-        .join("");
-
-    assert!(screen.contains("channels"));
-    assert!(screen.contains("feishu"));
-    // The focused panel is marked by a brand-colored left rail, and the
-    // header/footer are framed by horizontal rules — but panels are never
-    // drawn as boxes (no verticals or corners around them).
-    assert!(screen.contains('▏'));
-    assert!(screen.contains('─'));
-    assert!(!screen.contains('│'));
-    assert!(!screen.contains('┌'));
-    assert!(!screen.contains('┐'));
-    assert!(!screen.contains('└'));
-    assert!(!screen.contains('┘'));
 }
 
 #[test]
@@ -1389,44 +1263,36 @@ fn chat_context_renders_session_mode() {
 }
 
 #[test]
-fn agent_picker_context_changes_clear_stale_session_context() {
+fn agent_popup_selection_sets_context_and_clears_stale_fields() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Agent;
     app.agent_picker.agents = vec![agent("claude")];
     app.agent_picker.profiles = vec![profile("claude-profile")];
     app.agent_picker.workspaces = vec![workspace("/tmp/claude")];
     app.agent_picker.sessions = vec![launch_session("session-1", "claude", "/tmp/session")];
-    app.agent_selection.clamp(&app.agent_picker);
     app.selected_agent = Some("codex".into());
     app.selected_profile = Some("codex-profile".into());
     app.selected_workspace = Some("/tmp/codex".into());
     app.selected_session = Some("old-session".into());
 
-    app.enter_current_view();
-
+    // Category indices: 0 agents, 1 profiles, 2 workspaces, 3 sessions.
+    app.apply_agent_popup_selection(0, 0);
     assert_eq!(app.selected_agent.as_deref(), Some("claude"));
     assert_eq!(app.selected_profile, None);
     assert_eq!(app.selected_workspace, None);
     assert_eq!(app.selected_session, None);
 
-    app.select_right();
-    app.enter_current_view();
-
+    app.apply_agent_popup_selection(1, 0);
     assert_eq!(app.selected_profile.as_deref(), Some("claude-profile"));
     assert_eq!(app.selected_session, None);
 
-    app.select_down();
-    app.enter_current_view();
-
+    app.apply_agent_popup_selection(3, 0);
     assert_eq!(app.selected_agent.as_deref(), Some("claude"));
     assert_eq!(app.selected_session.as_deref(), Some("session-1"));
     assert_eq!(app.selected_profile, None);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/session"));
 
-    app.select_left();
-    app.enter_current_view();
-
+    app.apply_agent_popup_selection(2, 0);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/claude"));
     assert_eq!(app.selected_session, None);
 }
