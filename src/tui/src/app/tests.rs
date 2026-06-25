@@ -432,12 +432,13 @@ fn status_render_uses_minimal_semantic_boundaries() {
 }
 
 #[test]
-fn default_view_is_chat() {
+fn default_view_is_welcome_chat_with_empty_transcript() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let app = TuiApp::new(&endpoint);
 
     assert_eq!(app.view, AppView::Chat);
-    assert!(app.chat_messages[0].text.contains("/status"));
+    assert!(app.chat_messages.is_empty());
+    assert!(app.is_welcome());
 }
 
 #[test]
@@ -1700,4 +1701,13 @@ fn accept_slash_selection_fills_input() {
     app.set_chat_input_for_test("/ag");
     app.accept_slash_selection(false);
     assert_eq!(app.chat_input, "/agent");
+}
+
+#[test]
+fn immediate_duplicate_submission_is_dropped() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    assert!(!app.is_immediate_duplicate("今天有啥新闻?"), "first send goes through");
+    assert!(app.is_immediate_duplicate("今天有啥新闻?"), "instant repeat is dropped");
+    assert!(!app.is_immediate_duplicate("a different message"));
 }

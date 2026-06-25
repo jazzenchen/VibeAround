@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
@@ -57,6 +59,21 @@ impl TuiApp {
         self.history_cursor = Some(index);
         self.chat_input = self.input_history[index].clone();
         self.chat_cursor = self.chat_input.len();
+    }
+
+    /// True when `command` matches the previous submission within a short
+    /// window — a guard against a doubled commit Enter from some IMEs.
+    pub(crate) fn is_immediate_duplicate(&mut self, command: &str) -> bool {
+        const WINDOW: Duration = Duration::from_millis(800);
+        let duplicate = self
+            .last_submit
+            .as_ref()
+            .is_some_and(|(at, last)| last == command && at.elapsed() < WINDOW);
+        if duplicate {
+            return true;
+        }
+        self.last_submit = Some((Instant::now(), command.to_string()));
+        false
     }
 
     /// Record a submitted input and leave history-browsing mode.
@@ -284,6 +301,9 @@ impl TuiApp {
         self.chat_cursor = 0;
         let command = input.trim();
         if command.is_empty() {
+            return;
+        }
+        if self.is_immediate_duplicate(command) {
             return;
         }
         self.record_input_history(command);

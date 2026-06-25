@@ -38,6 +38,9 @@ pub(crate) struct TuiApp {
     history_draft: String,
     /// Highlighted entry in the slash-command autocomplete popup.
     pub(crate) slash_selection: usize,
+    /// The last submitted input and when, used to drop an immediate duplicate
+    /// (e.g. an IME that fires the commit Enter twice).
+    last_submit: Option<(Instant, String)>,
     pub(crate) selected_agent: Option<String>,
     pub(crate) selected_profile: Option<String>,
     pub(crate) selected_workspace: Option<String>,
@@ -62,10 +65,9 @@ impl TuiApp {
             agent_picker: AgentPickerSnapshot::default(),
             status_selection: StatusSelection::default(),
             agent_selection: AgentSelection::default(),
-            chat_messages: vec![ChatMessage {
-                role: ChatRole::Notice,
-                text: "Type /status for runtime status, /agent for agent settings, /help for commands.".into(),
-            }],
+            // Start clean — the welcome screen's tip and the footer cover
+            // command discovery, so no seed notice in the transcript.
+            chat_messages: Vec::new(),
             chat_input: String::new(),
             chat_cursor: 0,
             chat_scroll: 0,
@@ -73,6 +75,7 @@ impl TuiApp {
             history_cursor: None,
             history_draft: String::new(),
             slash_selection: 0,
+            last_submit: None,
             selected_agent: None,
             selected_profile: None,
             selected_workspace: None,

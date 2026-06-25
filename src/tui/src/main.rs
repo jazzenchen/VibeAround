@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use clap::Parser;
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -89,6 +90,23 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                 Event::Paste(text) if app.view == AppView::Chat => {
                     app.insert_chat_text(&text);
                 }
+                Event::Mouse(mouse) => match mouse.kind {
+                    // Scroll moves the conversation, never the input history —
+                    // some terminals deliver wheel scroll as arrow keys, so we
+                    // capture the mouse to keep the two separate.
+                    MouseEventKind::ScrollUp if app.view == AppView::Chat => {
+                        app.scroll_chat_up(3);
+                    }
+                    MouseEventKind::ScrollDown if app.view == AppView::Chat => {
+                        app.scroll_chat_down(3);
+                    }
+                    MouseEventKind::ScrollUp => app.select_up(),
+                    MouseEventKind::ScrollDown => app.select_down(),
+                    _ => {}
+                },
+                // Some IMEs synthesize key release/repeat events for the commit
+                // Enter; only act on presses so a single keystroke sends once.
+                Event::Key(key) if key.kind != KeyEventKind::Press => {}
                 Event::Key(key) => {
                     if is_ctrl_c(&key) {
                         if app.confirm_exit_request() {
@@ -226,7 +244,12 @@ fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalG
         source,
     })?;
     let mut stdout = io::stdout();
-    if let Err(source) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste) {
+    if let Err(source) = execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture
+    ) {
         let _ = disable_raw_mode();
         return Err(TuiError::Io {
             action: "entering alternate screen",
@@ -237,7 +260,12 @@ fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalG
         Ok(terminal) => Ok((terminal, TerminalGuard)),
         Err(source) => {
             let _ = disable_raw_mode();
-            let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+            let _ = execute!(
+                io::stdout(),
+                DisableMouseCapture,
+                DisableBracketedPaste,
+                LeaveAlternateScreen
+            );
             Err(TuiError::Io {
                 action: "creating terminal",
                 source,
@@ -251,7 +279,12 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            LeaveAlternateScreen
+        );
     }
 }
 
