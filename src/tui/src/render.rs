@@ -19,7 +19,7 @@ mod rows;
 
 use brand::{mark_lines, wordmark_lines, MARK_WIDTH, VERSION};
 use chrome::{
-    chat_context_spans, command_bar, context_pairs, divider_line, label_value_spans,
+    command_bar, context_pairs, divider_line, label_value_spans,
 };
 use rows::{
     agent_info_row, agent_row, channel_row, launch_session_row, profile_row, session_row,
@@ -94,26 +94,11 @@ fn render_working_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
     // Four info lines, aligned row-for-row with the four-row mark:
     //   brand + version / agent · profile / workspace / session (· mode).
-    let pairs = context_pairs(app);
-    let joined = |slice: &[(&'static str, String)]| {
-        let mut spans = Vec::new();
-        for (index, (label, value)) in slice.iter().enumerate() {
-            if index > 0 {
-                spans.push(Span::styled("   ·   ", muted_style()));
-            }
-            spans.extend(label_value_spans(label, value));
-        }
-        Line::from(spans)
-    };
-    let info = vec![
-        Line::from(vec![
-            Span::styled("VibeAround", accent_style()),
-            Span::styled(format!("  {VERSION}"), muted_style()),
-        ]),
-        joined(&pairs[0..2.min(pairs.len())]),
-        joined(&pairs[2..3.min(pairs.len())]),
-        joined(&pairs[3..]),
-    ];
+    let mut info = vec![Line::from(vec![
+        Span::styled("VibeAround", accent_style()),
+        Span::styled(format!("  {VERSION}"), muted_style()),
+    ])];
+    info.extend(context_grouped_lines(app));
 
     // Center the info lines against the mark.
     let info_height = u16::try_from(info.len()).unwrap_or(0);
@@ -127,6 +112,28 @@ fn render_working_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             height: info_height,
         },
     );
+}
+
+/// Active context grouped into lines — `agent · profile`, then `workspace`
+/// and `session` (with mode) each on their own so long paths and ids aren't
+/// crowded. Shared by the working header and the welcome screen.
+fn context_grouped_lines(app: &TuiApp) -> Vec<Line<'static>> {
+    let pairs = context_pairs(app);
+    let joined = |slice: &[(&'static str, String)]| {
+        let mut spans = Vec::new();
+        for (index, (label, value)) in slice.iter().enumerate() {
+            if index > 0 {
+                spans.push(Span::styled("   ·   ", muted_style()));
+            }
+            spans.extend(label_value_spans(label, value));
+        }
+        Line::from(spans)
+    };
+    vec![
+        joined(&pairs[0..2.min(pairs.len())]),
+        joined(&pairs[2..3.min(pairs.len())]),
+        joined(&pairs[3..]),
+    ]
 }
 
 /// The centered launch screen shown before a conversation begins: the brand
@@ -144,10 +151,14 @@ fn render_welcome(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         usize::from(box_width.saturating_sub(input_padding.saturating_mul(2))).max(1);
     let input_height = input_box_height(&app.chat_input, input_content_width, MAX_INPUT_ROWS);
 
-    // wordmark + gap + input + gap + context + gap + hints
+    let context = context_grouped_lines(app);
+    let context_height = u16::try_from(context.len()).unwrap_or(0);
+
+    // wordmark + gap + input + gap + context + gap + tip
     let block_height = wordmark_height
         .saturating_add(input_height)
-        .saturating_add(5);
+        .saturating_add(context_height)
+        .saturating_add(4);
     let mut y = area.y + area.height.saturating_sub(block_height) / 2;
     let input_x = area.x + area.width.saturating_sub(box_width) / 2;
 
@@ -173,15 +184,15 @@ fn render_welcome(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     y = y.saturating_add(input_height).saturating_add(1);
 
     frame.render_widget(
-        Paragraph::new(Line::from(chat_context_spans(app))).alignment(Alignment::Center),
+        Paragraph::new(context).alignment(Alignment::Center),
         Rect {
             x: area.x,
             y,
             width: area.width,
-            height: 1,
+            height: context_height,
         },
     );
-    y = y.saturating_add(2);
+    y = y.saturating_add(context_height).saturating_add(1);
 
     frame.render_widget(
         Paragraph::new(welcome_tip_line()).alignment(Alignment::Center),

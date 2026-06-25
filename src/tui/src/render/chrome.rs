@@ -36,17 +36,6 @@ pub(super) fn context_pairs(app: &TuiApp) -> Vec<(&'static str, String)> {
     pairs
 }
 
-pub(super) fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
-    let mut spans = Vec::new();
-    for (index, (label, value)) in context_pairs(app).into_iter().enumerate() {
-        if index > 0 {
-            spans.push(dot_separator());
-        }
-        spans.extend(label_value_spans(label, &value));
-    }
-    spans
-}
-
 pub(super) fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(label, muted_style()),
@@ -56,10 +45,6 @@ pub(super) fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'s
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ]
-}
-
-fn dot_separator() -> Span<'static> {
-    Span::styled("   ·   ", muted_style())
 }
 
 fn short_id(value: &str) -> String {
