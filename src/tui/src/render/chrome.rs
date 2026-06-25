@@ -14,7 +14,7 @@ pub(super) fn context_pairs(app: &TuiApp) -> Vec<(&'static str, String)> {
     let session_label = app
         .effective_session()
         .or(app.chat_state.session_id.as_deref())
-        .map(short_id)
+        .map(str::to_string)
         .unwrap_or_else(|| "new".to_string());
     let agent_label = app
         .effective_agent()
@@ -45,10 +45,6 @@ pub(super) fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'s
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ]
-}
-
-fn short_id(value: &str) -> String {
-    value.chars().take(12).collect()
 }
 
 pub(super) fn command_bar(app: &TuiApp, content_width: u16) -> Paragraph<'static> {
