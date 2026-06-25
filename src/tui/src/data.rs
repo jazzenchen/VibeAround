@@ -38,6 +38,14 @@ pub(crate) async fn fetch_snapshot(
     })
 }
 
+/// Fetch only the launcher preferences (selected agent/profile/workspace),
+/// the lightweight call used to seed the chat context on startup.
+pub(crate) async fn fetch_launcher_preferences(
+    transport: &HttpTransport,
+) -> Result<LauncherPreferencesResponse, TuiError> {
+    transport.execute(ops::launcher_preferences()).await
+}
+
 pub(crate) async fn fetch_agent_picker(
     transport: &HttpTransport,
 ) -> Result<AgentPickerSnapshot, TuiError> {

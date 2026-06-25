@@ -58,6 +58,8 @@ async fn run() -> Result<(), TuiError> {
 async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Result<(), TuiError> {
     let (mut terminal, _guard) = enter_terminal()?;
     let mut app = TuiApp::new(&endpoint);
+    // Seed the header with the launcher's current agent/profile/workspace.
+    app.sync_launcher_context(&transport).await;
     let (chat_tx, chat_rx) = mpsc::unbounded_channel::<ChatClientMessage>();
     let (socket_event_tx, mut socket_event_rx) = mpsc::unbounded_channel::<ChatSocketEvent>();
     let chat_task = tokio::spawn(run_chat_socket(endpoint.clone(), chat_rx, socket_event_tx));

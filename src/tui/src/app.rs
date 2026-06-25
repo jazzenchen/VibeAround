@@ -4,7 +4,10 @@ use va_client::endpoint::ServerEndpoint;
 use va_client::state::ChatState;
 
 use crate::chat::{ChatMessage, ChatRole};
-use crate::data::{fetch_agent_picker, fetch_snapshot, AgentPickerSnapshot, DashboardSnapshot};
+use crate::data::{
+    fetch_agent_picker, fetch_launcher_preferences, fetch_snapshot, AgentPickerSnapshot,
+    DashboardSnapshot,
+};
 use crate::popup::Popup;
 use crate::runtime_socket::RuntimeStream;
 use crate::transport::HttpTransport;
@@ -98,6 +101,15 @@ impl TuiApp {
                 self.set_error(ErrorScope::Status, error.to_string());
                 self.last_refresh = Some(Instant::now());
             }
+        }
+    }
+
+    /// Seed the chat context from the launcher's current selection so the
+    /// header shows the real agent/profile/workspace at startup, not `global`.
+    pub(crate) async fn sync_launcher_context(&mut self, transport: &HttpTransport) {
+        if let Ok(preferences) = fetch_launcher_preferences(transport).await {
+            self.agent_picker.preferences = Some(preferences);
+            self.clear_error(ErrorScope::Agent);
         }
     }
 
