@@ -316,10 +316,10 @@ fn slash_popup_row(command: &SlashCommand, selected: bool) -> Line<'static> {
     ])
 }
 
-/// The `/status` and `/agent` drill-down popup.
-fn render_command_popup(frame: &mut Frame<'_>, app: &TuiApp, input_area: Rect) {
+/// Content lines for the `/status` and `/agent` drill-down popup.
+fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
     let Some(popup) = &app.popup else {
-        return;
+        return Vec::new();
     };
     let mut lines = vec![popup_breadcrumb(popup)];
     match popup.level {
@@ -343,7 +343,18 @@ fn render_command_popup(frame: &mut Frame<'_>, app: &TuiApp, input_area: Rect) {
             lines.extend(popup_detail_lines(app, popup, category, item));
         }
     }
-    render_bottom_popup(frame, input_area, lines);
+    lines
+}
+
+/// Render the command popup as a panel that fills `area`, covering the lower
+/// part of the screen — a modal, not a hint above a still-editable input.
+fn render_command_panel(frame: &mut Frame<'_>, area: Rect, lines: Vec<Line<'static>>) {
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(BRAND))
+        .padding(Padding::horizontal(1));
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn popup_breadcrumb(popup: &Popup) -> Line<'static> {
@@ -459,6 +470,24 @@ fn content_rect(area: Rect) -> Rect {
 }
 
 fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::Rect) {
+    // A command popup takes over the lower half of the view: the conversation
+    // stays up top, the menu covers the bottom, and the input (and cursor) are
+    // hidden so it reads as a modal rather than a still-editable prompt.
+    if app.popup.is_some() {
+        let lines = command_popup_lines(app);
+        let content = u16::try_from(lines.len()).unwrap_or(0).saturating_add(2);
+        let panel_height = content
+            .max(area.height / 2)
+            .min(area.height.saturating_sub(1));
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(panel_height)])
+            .split(area);
+        render_messages(frame, app, chunks[0]);
+        render_command_panel(frame, chunks[1], lines);
+        return;
+    }
+
     let input_height =
         input_box_height(&app.chat_input, input_inner_width(area.width), MAX_INPUT_ROWS);
     let chunks = Layout::default()
@@ -466,8 +495,14 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         .spacing(1)
         .constraints([Constraint::Min(4), Constraint::Length(input_height)])
         .split(area);
-    let visible_rows = usize::from(chunks[0].height);
-    let content_width = usize::from(chunks[0].width.saturating_sub(1)).max(1);
+    render_messages(frame, app, chunks[0]);
+    render_input_bar(frame, app, chunks[1]);
+    render_slash_popup(frame, app, chunks[1]);
+}
+
+fn render_messages(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let visible_rows = usize::from(area.height);
+    let content_width = usize::from(area.width.saturating_sub(1)).max(1);
     // Conversation flows from the top; once it overflows, the latest lines stay
     // pinned to the bottom via the scroll offset.
     let message_lines = visible_chat_lines(
@@ -482,11 +517,8 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
                 .map(ListItem::new)
                 .collect::<Vec<_>>(),
         ),
-        chunks[0],
+        area,
     );
-    render_input_bar(frame, app, chunks[1]);
-    render_slash_popup(frame, app, chunks[1]);
-    render_command_popup(frame, app, chunks[1]);
 }
 
 /// A subtly tinted strip with a brand accent rail down the left — a Claude
