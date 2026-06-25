@@ -5,18 +5,134 @@ use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 use crate::app::{ErrorScope, TuiApp};
 use crate::chat::{
     content_text, one_line, permission_prompt_text, resolve_permission_option,
-    resolve_session_mode_value, session_mode_options_text, tool_activity_text, ChatMessage,
-    ChatRole, SessionModeSource,
+    resolve_session_mode_value, session_mode_options_text, slash_command_matches, tool_activity_text,
+    ChatMessage, ChatRole, SessionModeSource, SlashCommand,
 };
 use crate::chat_socket::ChatSocketEvent;
 use crate::transport::HttpTransport;
 
 impl TuiApp {
     pub(crate) fn insert_chat_text(&mut self, text: &str) {
+        self.note_input_edited();
         let text = normalize_input_text(text);
         self.clamp_chat_cursor();
         self.chat_input.insert_str(self.chat_cursor, &text);
         self.chat_cursor += text.len();
+    }
+
+    /// Step back to an earlier submitted input. The first step parks the live
+    /// draft so [`Self::history_next`] can restore it.
+    pub(crate) fn history_prev(&mut self) {
+        if self.input_history.is_empty() {
+            return;
+        }
+        let index = match self.history_cursor {
+            None => {
+                self.history_draft = self.chat_input.clone();
+                self.input_history.len() - 1
+            }
+            Some(0) => return,
+            Some(current) => current - 1,
+        };
+        self.set_input_from_history(index);
+    }
+
+    /// Step forward toward newer inputs; past the newest entry, restore the
+    /// parked draft.
+    pub(crate) fn history_next(&mut self) {
+        match self.history_cursor {
+            None => {}
+            Some(current) if current + 1 < self.input_history.len() => {
+                self.set_input_from_history(current + 1);
+            }
+            Some(_) => {
+                self.history_cursor = None;
+                self.chat_input = std::mem::take(&mut self.history_draft);
+                self.chat_cursor = self.chat_input.len();
+            }
+        }
+    }
+
+    fn set_input_from_history(&mut self, index: usize) {
+        self.history_cursor = Some(index);
+        self.chat_input = self.input_history[index].clone();
+        self.chat_cursor = self.chat_input.len();
+    }
+
+    /// Record a submitted input and leave history-browsing mode.
+    fn record_input_history(&mut self, entry: &str) {
+        const MAX_HISTORY: usize = 200;
+        self.history_cursor = None;
+        self.history_draft.clear();
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return;
+        }
+        if self.input_history.last().map(String::as_str) == Some(entry) {
+            return;
+        }
+        self.input_history.push(entry.to_string());
+        if self.input_history.len() > MAX_HISTORY {
+            let excess = self.input_history.len() - MAX_HISTORY;
+            self.input_history.drain(0..excess);
+        }
+    }
+
+    /// Editing the input exits history-browsing and re-anchors the
+    /// autocomplete popup to its first entry.
+    fn note_input_edited(&mut self) {
+        self.history_cursor = None;
+        self.slash_selection = 0;
+    }
+
+    /// The slash commands matching the input being typed, or `None` when the
+    /// autocomplete popup should be hidden.
+    pub(crate) fn slash_matches(&self) -> Option<Vec<&'static SlashCommand>> {
+        slash_command_matches(&self.chat_input)
+    }
+
+    pub(crate) fn slash_popup_open(&self) -> bool {
+        self.slash_matches().is_some()
+    }
+
+    /// Selected entry, clamped to the current match list.
+    pub(crate) fn slash_selected(&self) -> Option<&'static SlashCommand> {
+        let matches = self.slash_matches()?;
+        matches
+            .get(self.slash_selection.min(matches.len().saturating_sub(1)))
+            .copied()
+    }
+
+    pub(crate) fn slash_select_prev(&mut self) {
+        if let Some(matches) = self.slash_matches() {
+            let last = matches.len().saturating_sub(1);
+            let current = self.slash_selection.min(last);
+            self.slash_selection = if current == 0 { last } else { current - 1 };
+        }
+    }
+
+    pub(crate) fn slash_select_next(&mut self) {
+        if let Some(matches) = self.slash_matches() {
+            let last = matches.len().saturating_sub(1);
+            let current = self.slash_selection.min(last);
+            self.slash_selection = if current == last { 0 } else { current + 1 };
+        }
+    }
+
+    /// Replace the input with the highlighted command. With `trailing_space`
+    /// the cursor is parked after a space, ready for arguments (Tab); without
+    /// it the bare command is left for immediate submission (Enter).
+    pub(crate) fn accept_slash_selection(&mut self, trailing_space: bool) {
+        if let Some(command) = self.slash_selected() {
+            self.chat_input = if trailing_space {
+                format!("{} ", command.name)
+            } else {
+                command.name.to_string()
+            };
+            self.chat_cursor = self.chat_input.len();
+            self.history_cursor = None;
+            self.slash_selection = 0;
+        }
     }
 
     pub(crate) fn insert_chat_newline(&mut self) {
@@ -24,6 +140,7 @@ impl TuiApp {
     }
 
     pub(crate) fn delete_chat_char(&mut self) {
+        self.note_input_edited();
         self.clamp_chat_cursor();
         if self.chat_cursor == 0 {
             return;
@@ -35,6 +152,7 @@ impl TuiApp {
     }
 
     pub(crate) fn delete_chat_forward_char(&mut self) {
+        self.note_input_edited();
         self.clamp_chat_cursor();
         if self.chat_cursor >= self.chat_input.len() {
             return;
@@ -44,16 +162,19 @@ impl TuiApp {
     }
 
     pub(crate) fn delete_chat_to_end(&mut self) {
+        self.note_input_edited();
         self.clamp_chat_cursor();
         self.chat_input.truncate(self.chat_cursor);
     }
 
     pub(crate) fn clear_chat_input(&mut self) {
+        self.note_input_edited();
         self.chat_input.clear();
         self.chat_cursor = 0;
     }
 
     pub(crate) fn delete_chat_word(&mut self) {
+        self.note_input_edited();
         self.clamp_chat_cursor();
         let before_cursor = &self.chat_input[..self.chat_cursor];
         let trimmed_len = before_cursor.trim_end_matches(char::is_whitespace).len();
@@ -165,6 +286,7 @@ impl TuiApp {
         if command.is_empty() {
             return;
         }
+        self.record_input_history(command);
         if command.starts_with('/') && self.run_slash_command(command, transport, chat_tx).await {
             return;
         }

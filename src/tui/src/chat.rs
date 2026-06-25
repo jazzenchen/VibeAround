@@ -26,6 +26,67 @@ pub(crate) enum ChatRole {
     Response,
 }
 
+/// A slash command surfaced in the input autocomplete popup.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SlashCommand {
+    pub(crate) name: &'static str,
+    pub(crate) summary: &'static str,
+}
+
+pub(crate) const SLASH_COMMANDS: &[SlashCommand] = &[
+    SlashCommand {
+        name: "/new",
+        summary: "start the next message in a new session",
+    },
+    SlashCommand {
+        name: "/resume",
+        summary: "resume a session by id",
+    },
+    SlashCommand {
+        name: "/status",
+        summary: "runtime status",
+    },
+    SlashCommand {
+        name: "/agent",
+        summary: "agent, profile, workspace, session",
+    },
+    SlashCommand {
+        name: "/mode",
+        summary: "list or set the permission mode",
+    },
+    SlashCommand {
+        name: "/clear",
+        summary: "clear the conversation",
+    },
+    SlashCommand {
+        name: "/stop",
+        summary: "stop the current turn",
+    },
+    SlashCommand {
+        name: "/help",
+        summary: "list all commands",
+    },
+];
+
+/// When the input is a bare command being typed (`/`, `/st`, …) returns the
+/// commands whose names share that prefix — the autocomplete popup contents.
+/// Returns `None` once the input gains an argument (a space) or isn't a
+/// command at all.
+pub(crate) fn slash_command_matches(input: &str) -> Option<Vec<&'static SlashCommand>> {
+    if !input.starts_with('/') || input.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let matches: Vec<&'static SlashCommand> = SLASH_COMMANDS
+        .iter()
+        .filter(|command| command.name.starts_with(input))
+        .collect();
+    if matches.is_empty() {
+        None
+    } else {
+        Some(matches)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PermissionOption {
     pub(crate) option_id: String,
@@ -238,6 +299,7 @@ pub(crate) fn input_box_height(input: &str, content_width: usize, max_body_rows:
     let rows = input_visible_lines(input, input.len(), content_width, max_body_rows).len();
     u16::try_from(rows)
         .unwrap_or(max_body_rows)
+        .max(1)
         .saturating_add(2)
 }
 
@@ -309,7 +371,7 @@ fn chat_message_line_at(
     content_width: usize,
 ) -> Line<'static> {
     let marker = match role {
-        ChatRole::Notice => "* ",
+        ChatRole::Notice => "· ",
         ChatRole::Request => "› ",
         ChatRole::Response => "• ",
     };
@@ -599,7 +661,7 @@ mod tests {
 
         assert_eq!(request, "› hello");
         assert_eq!(response, "• hi");
-        assert_eq!(notice, "* ready");
+        assert_eq!(notice, "· ready");
         assert!(!request.contains("you"));
         assert!(!notice.contains("system"));
     }

@@ -18,7 +18,6 @@ const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(crate) struct TuiApp {
-    pub(crate) endpoint: String,
     pub(crate) view: AppView,
     pub(crate) chat_state: ChatState,
     pub(crate) chat_connected: bool,
@@ -30,6 +29,15 @@ pub(crate) struct TuiApp {
     pub(crate) chat_input: String,
     pub(crate) chat_cursor: usize,
     pub(crate) chat_scroll: usize,
+    /// Previously submitted inputs (messages and commands), oldest first.
+    input_history: Vec<String>,
+    /// Position within [`Self::input_history`] while recalling, or `None`
+    /// when editing the live draft.
+    history_cursor: Option<usize>,
+    /// The live draft, parked while the user browses history.
+    history_draft: String,
+    /// Highlighted entry in the slash-command autocomplete popup.
+    pub(crate) slash_selection: usize,
     pub(crate) selected_agent: Option<String>,
     pub(crate) selected_profile: Option<String>,
     pub(crate) selected_workspace: Option<String>,
@@ -45,9 +53,8 @@ pub(crate) struct TuiApp {
 }
 
 impl TuiApp {
-    pub(crate) fn new(endpoint: &ServerEndpoint) -> Self {
+    pub(crate) fn new(_endpoint: &ServerEndpoint) -> Self {
         Self {
-            endpoint: endpoint.base_url().to_string(),
             view: AppView::Chat,
             chat_state: ChatState::new(),
             chat_connected: false,
@@ -62,6 +69,10 @@ impl TuiApp {
             chat_input: String::new(),
             chat_cursor: 0,
             chat_scroll: 0,
+            input_history: Vec::new(),
+            history_cursor: None,
+            history_draft: String::new(),
+            slash_selection: 0,
             selected_agent: None,
             selected_profile: None,
             selected_workspace: None,
@@ -192,6 +203,16 @@ impl TuiApp {
             AppView::Agent => self.select_agent_picker_item(),
             AppView::Chat | AppView::StatusDetail => {}
         }
+    }
+
+    /// The chat has not started a real exchange yet (only system notices, no
+    /// request/response). Drives the centered welcome/splash screen.
+    pub(crate) fn is_welcome(&self) -> bool {
+        self.view == AppView::Chat
+            && !self
+                .chat_messages
+                .iter()
+                .any(|message| matches!(message.role, ChatRole::Request | ChatRole::Response))
     }
 
     pub(crate) fn effective_agent(&self) -> Option<&str> {

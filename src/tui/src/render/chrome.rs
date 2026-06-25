@@ -5,7 +5,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::{AppView, TuiApp};
 use crate::chat::session_mode_display_label;
-use crate::theme::{muted_style, ACTION, ERROR, OK, WARN};
+use crate::theme::{muted_style, ACTION, ERROR, WARN};
 
 pub(super) fn context_strip(app: &TuiApp, content_width: u16) -> Paragraph<'static> {
     let spans = match app.view {
@@ -16,7 +16,10 @@ pub(super) fn context_strip(app: &TuiApp, content_width: u16) -> Paragraph<'stat
     Paragraph::new(vec![Line::from(spans), divider_line(content_width)]).alignment(Alignment::Left)
 }
 
-fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
+/// The active chat context as label/value pairs (agent, profile, workspace,
+/// session, and mode when set). Rendered as one line on the welcome screen
+/// and split across the working header.
+pub(super) fn context_pairs(app: &TuiApp) -> Vec<(&'static str, String)> {
     let session_label = app
         .effective_session()
         .or(app.chat_state.session_id.as_deref())
@@ -25,36 +28,30 @@ fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
     let agent_label = app
         .effective_agent()
         .or(app.chat_state.default_agent.as_deref())
-        .unwrap_or("global");
-    let mut spans = vec![Span::styled(
-        if app.chat_connected {
-            "● connected"
-        } else {
-            "● offline"
-        },
-        if app.chat_connected {
-            Style::default().fg(OK).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
-        },
-    )];
-    spans.push(separator());
-    spans.extend(label_value_spans("agent", agent_label));
-    spans.push(group_gap());
-    spans.extend(label_value_spans(
-        "profile",
-        app.effective_profile().unwrap_or("global"),
-    ));
-    spans.push(group_gap());
-    spans.extend(label_value_spans(
-        "workspace",
-        app.effective_workspace().unwrap_or("global"),
-    ));
-    spans.push(group_gap());
-    spans.extend(label_value_spans("session", &session_label));
+        .unwrap_or("global")
+        .to_string();
+    let mut pairs = vec![
+        ("agent", agent_label),
+        ("profile", app.effective_profile().unwrap_or("global").to_string()),
+        (
+            "workspace",
+            app.effective_workspace().unwrap_or("global").to_string(),
+        ),
+        ("session", session_label),
+    ];
     if let Some(mode) = session_mode_display_label(app.chat_state.session_mode.as_ref()) {
-        spans.push(group_gap());
-        spans.extend(label_value_spans("mode", &mode));
+        pairs.push(("mode", mode));
+    }
+    pairs
+}
+
+pub(super) fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (index, (label, value)) in context_pairs(app).into_iter().enumerate() {
+        if index > 0 {
+            spans.push(dot_separator());
+        }
+        spans.extend(label_value_spans(label, &value));
     }
     spans
 }
@@ -135,7 +132,7 @@ fn agent_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
     spans
 }
 
-fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
+pub(super) fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(label, muted_style()),
         Span::raw(" "),
@@ -148,6 +145,10 @@ fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
 
 fn separator() -> Span<'static> {
     Span::styled("   |   ", muted_style())
+}
+
+fn dot_separator() -> Span<'static> {
+    Span::styled("   ·   ", muted_style())
 }
 
 fn group_gap() -> Span<'static> {
@@ -196,9 +197,7 @@ pub(super) fn command_bar(app: &TuiApp, content_width: u16) -> Paragraph<'static
     spans.extend([
         Span::styled("  |  ", muted_style()),
         key_span("Ctrl+C"),
-        Span::raw(" "),
-        key_span("Ctrl+C"),
-        Span::raw(" quit"),
+        Span::styled(" ×2 quit", muted_style()),
     ]);
     Paragraph::new(vec![divider_line(content_width), Line::from(spans)]).alignment(Alignment::Left)
 }
@@ -206,7 +205,9 @@ pub(super) fn command_bar(app: &TuiApp, content_width: u16) -> Paragraph<'static
 pub(crate) fn view_hint(app: &TuiApp) -> String {
     match app.view {
         AppView::Chat => {
-            if app.chat_state.pending_permission_request_id.is_some() {
+            if app.slash_popup_open() {
+                "↑↓ select · Tab complete · Enter run".to_string()
+            } else if app.chat_state.pending_permission_request_id.is_some() {
                 "permission pending: /allow [number|option-id] or /deny".to_string()
             } else if app.chat_state.turn_active {
                 app.work_status
@@ -280,6 +281,6 @@ fn key_span(value: &'static str) -> Span<'static> {
     )
 }
 
-fn divider_line(width: u16) -> Line<'static> {
+pub(super) fn divider_line(width: u16) -> Line<'static> {
     Line::from(Span::styled("─".repeat(usize::from(width)), muted_style()))
 }

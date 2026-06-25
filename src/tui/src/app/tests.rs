@@ -419,8 +419,12 @@ fn status_render_uses_minimal_semantic_boundaries() {
 
     assert!(screen.contains("channels"));
     assert!(screen.contains("feishu"));
-    assert!(screen.contains('│'));
+    // The focused panel is marked by a brand-colored left rail, and the
+    // header/footer are framed by horizontal rules — but panels are never
+    // drawn as boxes (no verticals or corners around them).
+    assert!(screen.contains('▏'));
     assert!(screen.contains('─'));
+    assert!(!screen.contains('│'));
     assert!(!screen.contains('┌'));
     assert!(!screen.contains('┐'));
     assert!(!screen.contains('└'));
@@ -468,7 +472,6 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
 
     assert!(screen.contains("› hello"));
     assert!(screen.contains("• hi there"));
-    assert!(screen.contains("● connected"));
     assert_eq!(screen.matches("chat").count(), 0);
     assert!(screen.contains('─'));
     assert!(!screen.contains('┌'));
@@ -481,6 +484,12 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
 fn chat_render_shows_multiline_input_with_continuation_indent() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    // A real exchange moves past the welcome screen into the working layout,
+    // where the input is pinned to the bottom.
+    app.chat_messages.push(ChatMessage {
+        role: ChatRole::Response,
+        text: "ok".into(),
+    });
     app.set_chat_input_for_test("first line\nsecond line");
 
     let backend = TestBackend::new(100, 24);
@@ -501,7 +510,7 @@ fn chat_render_shows_multiline_input_with_continuation_indent() {
     assert!(screen.contains("  second line"));
     terminal
         .backend_mut()
-        .assert_cursor_position(Position::new(17, 20));
+        .assert_cursor_position(Position::new(18, 20));
 }
 
 #[test]
@@ -1602,4 +1611,93 @@ fn exit_requires_second_ctrl_c_within_window() {
     app.clear_expired_exit_confirmation_at(start + Duration::from_secs(7));
     assert!(!app.exit_confirmation_pending());
     assert!(!app.confirm_exit_request_at(start + Duration::from_secs(8)));
+}
+
+
+
+
+
+#[test]
+fn input_history_recalls_previous_submissions_and_restores_draft() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.input_history = vec!["first message".into(), "/status".into()];
+    app.set_chat_input_for_test("draft in progress");
+
+    // Up walks backward from newest to oldest, parking the draft.
+    app.history_prev();
+    assert_eq!(app.chat_input, "/status");
+    app.history_prev();
+    assert_eq!(app.chat_input, "first message");
+    app.history_prev();
+    assert_eq!(app.chat_input, "first message", "stays at oldest");
+
+    // Down walks forward and finally restores the parked draft.
+    app.history_next();
+    assert_eq!(app.chat_input, "/status");
+    app.history_next();
+    assert_eq!(app.chat_input, "draft in progress");
+    app.history_next();
+    assert_eq!(app.chat_input, "draft in progress", "no-op past the draft");
+}
+
+#[test]
+fn editing_recalled_history_exits_browsing_mode() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.input_history = vec!["alpha".into(), "beta".into()];
+
+    app.history_prev();
+    assert_eq!(app.chat_input, "beta");
+    app.insert_chat_text("!");
+    assert_eq!(app.chat_input, "beta!");
+
+    // After editing, Up re-parks the edited text as the new draft.
+    app.history_prev();
+    assert_eq!(app.chat_input, "beta");
+    app.history_next();
+    assert_eq!(app.chat_input, "beta!");
+}
+
+
+
+#[test]
+fn slash_popup_filters_and_navigates() {
+    use crate::chat::slash_command_matches;
+    assert_eq!(slash_command_matches("/").map(|m| m.len()), Some(8));
+    let st = slash_command_matches("/st").expect("matches");
+    assert_eq!(
+        st.iter().map(|c| c.name).collect::<Vec<_>>(),
+        vec!["/status", "/stop"]
+    );
+    assert_eq!(slash_command_matches("/status").map(|m| m.len()), Some(1));
+    assert!(slash_command_matches("/nope").is_none());
+    assert!(slash_command_matches("/status arg").is_none(), "space closes it");
+    assert!(slash_command_matches("hello").is_none());
+
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.set_chat_input_for_test("/st");
+    assert!(app.slash_popup_open());
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/status"));
+    app.slash_select_next();
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/stop"));
+    app.slash_select_next();
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/status"), "wraps");
+    app.slash_select_prev();
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/stop"), "wraps back");
+}
+
+#[test]
+fn accept_slash_selection_fills_input() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.set_chat_input_for_test("/ag");
+    app.accept_slash_selection(true);
+    assert_eq!(app.chat_input, "/agent ");
+    assert!(!app.slash_popup_open(), "space hides the popup");
+
+    app.set_chat_input_for_test("/ag");
+    app.accept_slash_selection(false);
+    assert_eq!(app.chat_input, "/agent");
 }

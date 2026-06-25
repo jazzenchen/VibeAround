@@ -126,6 +126,17 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                         }
                         KeyCode::Left => app.select_left(),
                         KeyCode::Right => app.select_right(),
+                        KeyCode::Tab if app.view == AppView::Chat && app.slash_popup_open() => {
+                            app.accept_slash_selection(true);
+                        }
+                        KeyCode::Up if app.view == AppView::Chat && app.slash_popup_open() => {
+                            app.slash_select_prev();
+                        }
+                        KeyCode::Down if app.view == AppView::Chat && app.slash_popup_open() => {
+                            app.slash_select_next();
+                        }
+                        KeyCode::Up if app.view == AppView::Chat => app.history_prev(),
+                        KeyCode::Down if app.view == AppView::Chat => app.history_next(),
                         KeyCode::Up => app.select_up(),
                         KeyCode::Down => app.select_down(),
                         KeyCode::PageUp if app.view == AppView::Chat => app.scroll_chat_up(10),
@@ -134,7 +145,12 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                             app.insert_chat_newline();
                         }
                         KeyCode::Enter => match app.view {
-                            AppView::Chat => app.submit_chat_input(&transport, &chat_tx).await,
+                            AppView::Chat => {
+                                if app.slash_popup_open() {
+                                    app.accept_slash_selection(false);
+                                }
+                                app.submit_chat_input(&transport, &chat_tx).await
+                            }
                             AppView::Status => app.enter_current_view(),
                             AppView::Agent => {
                                 app.enter_current_view();
