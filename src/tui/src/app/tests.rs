@@ -269,12 +269,8 @@ fn runtime_socket_update_only_clears_matching_stream_error() {
 fn pty_session_socket_does_not_mutate_agent_picker_sessions() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Agent;
     app.agent_picker.sessions = vec![launch_session("launch-1", "codex", "/tmp/launch")];
     app.selected_session = Some("launch-1".into());
-    app.agent_selection.panel = AgentPanel::Sessions;
-    app.agent_selection.clamp(&app.agent_picker);
-    assert_eq!(app.agent_selection.index(AgentPanel::Sessions), Some(0));
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Sessions(vec![session(
         "new-session",
@@ -284,25 +280,7 @@ fn pty_session_socket_does_not_mutate_agent_picker_sessions() {
 
     assert_eq!(app.agent_picker.sessions[0].session_id, "launch-1");
     assert_eq!(app.snapshot.sessions[0].session_id, "new-session");
-    assert_eq!(app.agent_selection.index(AgentPanel::Sessions), Some(0));
     assert_eq!(app.selected_session.as_deref(), Some("launch-1"));
-}
-
-#[test]
-fn enter_status_item_opens_detail_and_escape_returns() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
-    app.snapshot.channels = vec![channel("feishu")];
-    app.status_selection.clamp(&app.snapshot);
-
-    app.enter_current_view();
-
-    assert_eq!(app.view, AppView::StatusDetail);
-    assert_eq!(app.detail.as_ref().unwrap().title, "channel feishu");
-
-    app.go_back();
-    assert_eq!(app.view, AppView::Status);
 }
 
 #[test]
@@ -415,18 +393,18 @@ fn effective_chat_context_prefers_local_selection_over_launcher_preferences() {
 }
 
 #[test]
-fn chat_arrows_scroll_transcript() {
+fn chat_scroll_offset_tracks_scrollback() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
 
-    app.select_up();
-    app.select_up();
+    app.scroll_chat_up(1);
+    app.scroll_chat_up(1);
     assert_eq!(app.chat_scroll, 2);
     assert_eq!(
         render::view_hint(&app),
         "scrollback 2 lines; Down/PageDown moves toward latest"
     );
-    app.select_down();
+    app.scroll_chat_down(1);
     assert_eq!(app.chat_scroll, 1);
     app.follow_chat_tail();
     assert_eq!(app.chat_scroll, 0);
@@ -1374,32 +1352,14 @@ fn tool_updates_change_work_status_without_polluting_transcript() {
 }
 
 #[test]
-fn agent_picker_selection_updates_chat_context() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Agent;
-    app.agent_picker.agents = vec![AgentInfo {
-        id: "codex".into(),
-        name: "Codex".into(),
-        description: "Coding agent".into(),
-    }];
-    app.agent_selection.clamp(&app.agent_picker);
-
-    app.enter_current_view();
-
-    assert_eq!(app.selected_agent.as_deref(), Some("codex"));
-    assert_eq!(app.last_action.as_deref(), Some("selected agent codex"));
-}
-
-#[test]
-fn agent_picker_sync_builds_launcher_preference_operations() {
+fn agent_popup_pref_operations_build_launcher_requests() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
     app.selected_agent = Some("codex".into());
 
-    app.agent_selection.panel = AgentPanel::Agents;
+    // Category indices: 0 agents, 1 profiles, 2 workspaces, 3 sessions.
     let operation = app
-        .launcher_preference_operation_for_selection()
+        .agent_popup_pref_operation(0)
         .expect("agent operation")
         .expect("agent writes preference");
     assert_eq!(operation.request().path, "/api/launcher/selected-agent");
@@ -1408,10 +1368,9 @@ fn agent_picker_sync_builds_launcher_preference_operations() {
         Some(serde_json::json!({ "agentId": "codex" }))
     );
 
-    app.agent_selection.panel = AgentPanel::Profiles;
     app.selected_profile = Some("profile-1".into());
     let operation = app
-        .launcher_preference_operation_for_selection()
+        .agent_popup_pref_operation(1)
         .expect("profile operation")
         .expect("profile writes preference");
     assert_eq!(operation.request().path, "/api/launcher/agent-profile");
@@ -1420,10 +1379,9 @@ fn agent_picker_sync_builds_launcher_preference_operations() {
         Some(serde_json::json!({ "agentId": "codex", "profileId": "profile-1" }))
     );
 
-    app.agent_selection.panel = AgentPanel::Workspaces;
     app.selected_workspace = Some("/tmp/project".into());
     let operation = app
-        .launcher_preference_operation_for_selection()
+        .agent_popup_pref_operation(2)
         .expect("workspace operation")
         .expect("workspace writes preference");
     assert_eq!(operation.request().path, "/api/launcher/agent-workspace");
@@ -1432,30 +1390,27 @@ fn agent_picker_sync_builds_launcher_preference_operations() {
         Some(serde_json::json!({ "agentId": "codex", "workspace": "/tmp/project" }))
     );
 
-    app.agent_selection.panel = AgentPanel::Sessions;
     assert!(app
-        .launcher_preference_operation_for_selection()
+        .agent_popup_pref_operation(3)
         .expect("session sync decision")
         .is_none());
 }
 
 #[test]
-fn agent_picker_sync_requires_agent_for_profile_or_workspace_preferences() {
+fn agent_popup_pref_requires_agent_for_profile_or_workspace() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.agent_selection.panel = AgentPanel::Profiles;
     app.selected_profile = Some("profile-1".into());
 
-    let error = match app.launcher_preference_operation_for_selection() {
+    let error = match app.agent_popup_pref_operation(1) {
         Err(error) => error,
         Ok(_) => panic!("expected missing agent error"),
     };
     assert_eq!(error, "select an agent before choosing a profile");
 
-    app.agent_selection.panel = AgentPanel::Workspaces;
     app.selected_profile = None;
     app.selected_workspace = Some("/tmp/project".into());
-    let error = match app.launcher_preference_operation_for_selection() {
+    let error = match app.agent_popup_pref_operation(2) {
         Err(error) => error,
         Ok(_) => panic!("expected missing agent error"),
     };
@@ -1577,4 +1532,5 @@ fn immediate_duplicate_submission_is_dropped() {
     assert!(app.is_immediate_duplicate("今天有啥新闻?"), "instant repeat is dropped");
     assert!(!app.is_immediate_duplicate("a different message"));
 }
+
 
