@@ -23,8 +23,12 @@ impl PopupKind {
     pub(crate) fn categories(self) -> &'static [&'static str] {
         match self {
             Self::Status => &["channels", "tunnels", "agents", "sessions"],
-            Self::Agent => &["agents", "profiles", "workspaces", "sessions"],
+            Self::Agent => &["agents", "profiles", "workspaces", "sessions", "close"],
         }
+    }
+
+    pub(crate) fn is_close_category(self, index: usize) -> bool {
+        matches!(self, Self::Agent) && self.categories().get(index) == Some(&"close")
     }
 }
 
@@ -139,7 +143,13 @@ mod tests {
 
         popup.move_down(3); // item 1
         popup.open_detail();
-        assert_eq!(popup.level, PopupLevel::Detail { category: 1, item: 1 });
+        assert_eq!(
+            popup.level,
+            PopupLevel::Detail {
+                category: 1,
+                item: 1
+            }
+        );
 
         assert!(!popup.back());
         assert_eq!(popup.level, PopupLevel::Items { category: 1 });

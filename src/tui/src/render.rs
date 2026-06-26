@@ -1,7 +1,9 @@
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, List, ListItem, Padding, Paragraph, Wrap,
+};
 use ratatui::Frame;
 
 use crate::app::TuiApp;
@@ -20,9 +22,7 @@ mod chrome;
 mod rows;
 
 use brand::{mark_lines, wordmark_lines, MARK_WIDTH, VERSION};
-use chrome::{
-    command_bar, context_pairs, divider_line, label_value_spans,
-};
+use chrome::{command_bar, context_pairs, divider_line, label_value_spans};
 use rows::{
     agent_info_row, agent_row, channel_row, launch_session_row, profile_row, session_row,
     tunnel_row, workspace_row,
@@ -67,10 +67,7 @@ fn render_working_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let footer_area = content_rect(chunks[3]);
 
     render_working_header(frame, app, header_area);
-    frame.render_widget(
-        Paragraph::new(divider_line(rule_area.width)),
-        rule_area,
-    );
+    frame.render_widget(Paragraph::new(divider_line(rule_area.width)), rule_area);
     render_chat_view(frame, app, body_area);
     frame.render_widget(command_bar(app, footer_area.width), footer_area);
 }
@@ -215,7 +212,8 @@ fn render_welcome(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(VERSION, muted_style()))).alignment(Alignment::Right),
+        Paragraph::new(Line::from(Span::styled(VERSION, muted_style())))
+            .alignment(Alignment::Right),
         Rect {
             x: area.x,
             y: area.y + area.height.saturating_sub(1),
@@ -355,15 +353,28 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
     match popup.level {
         PopupLevel::Categories => {
             for (index, label) in popup.kind.categories().iter().enumerate() {
+                let is_close = popup.kind.is_close_category(index);
                 // The agent menu doubles as a config summary (each category
                 // shows its selection); status shows a count plus health.
-                let trailing = match popup.kind {
-                    PopupKind::Agent => {
-                        vec![Span::styled(app.agent_category_value(index), accent_style())]
+                let trailing = if is_close {
+                    Vec::new()
+                } else {
+                    match popup.kind {
+                        PopupKind::Agent => {
+                            vec![Span::styled(
+                                app.agent_category_value(index),
+                                accent_style(),
+                            )]
+                        }
+                        PopupKind::Status => status_category_trailing(app, index),
                     }
-                    PopupKind::Status => status_category_trailing(app, index),
                 };
-                lines.push(popup_category_row(label, trailing, index == popup.cursor));
+                lines.push(popup_category_row(
+                    label,
+                    trailing,
+                    index == popup.cursor,
+                    is_close,
+                ));
             }
         }
         PopupLevel::Items { category } => {
@@ -419,8 +430,17 @@ fn popup_breadcrumb(popup: &Popup) -> Line<'static> {
     Line::from(Span::styled(text, muted_style()))
 }
 
-fn popup_category_row(label: &str, trailing: Vec<Span<'static>>, selected: bool) -> Line<'static> {
-    let label_style = if selected {
+fn popup_category_row(
+    label: &str,
+    trailing: Vec<Span<'static>>,
+    selected: bool,
+    is_close: bool,
+) -> Line<'static> {
+    let label_style = if is_close && selected {
+        Style::default().fg(ACTION)
+    } else if is_close {
+        muted_style()
+    } else if selected {
         accent_style()
     } else {
         Style::default().add_modifier(Modifier::BOLD)
@@ -475,7 +495,12 @@ fn status_category_trailing(app: &TuiApp, category: usize) -> Vec<Span<'static>>
             health_note(running, failed, "running", "failed")
         }
         2 => {
-            let failed = app.snapshot.agents.iter().filter(|a| a.failed.is_some()).count();
+            let failed = app
+                .snapshot
+                .agents
+                .iter()
+                .filter(|a| a.failed.is_some())
+                .count();
             let busy = app.snapshot.agents.iter().filter(|a| a.busy).count();
             if failed > 0 {
                 Some((format!("{failed} failed"), Style::default().fg(ERROR)))
@@ -528,17 +553,18 @@ fn health_note(
 /// spans. `marker` is `None` for read-only lists (status), which keep no marker
 /// column at all.
 fn popup_item_line(row: Vec<Span<'static>>, selected: bool, marker: Option<bool>) -> Line<'static> {
-    let mut spans = vec![Span::styled(if selected { "› " } else { "  " }, accent_style())];
+    let mut spans = vec![Span::styled(
+        if selected { "› " } else { "  " },
+        accent_style(),
+    )];
     if let Some(effective) = marker {
-        spans.push(Span::styled(if effective { "● " } else { "  " }, accent_style()));
+        spans.push(Span::styled(
+            if effective { "● " } else { "  " },
+            accent_style(),
+        ));
     }
     spans.extend(row);
-    let line = Line::from(spans);
-    if selected {
-        line.style(Style::default().add_modifier(Modifier::BOLD))
-    } else {
-        line
-    }
+    Line::from(spans)
 }
 
 fn agent_session_new_row() -> Vec<Span<'static>> {
@@ -575,7 +601,12 @@ fn popup_item_rows(app: &TuiApp, popup: &Popup, category: usize) -> Vec<Vec<Span
                 }
                 rows
             }
-            2 => app.agent_picker.workspaces.iter().map(workspace_row).collect(),
+            2 => app
+                .agent_picker
+                .workspaces
+                .iter()
+                .map(workspace_row)
+                .collect(),
             // "new" first, then the sessions for the agent in context.
             3 => {
                 let mut rows = vec![agent_session_new_row()];
@@ -660,8 +691,11 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
         return;
     }
 
-    let input_height =
-        input_box_height(&app.chat_input, input_inner_width(area.width), MAX_INPUT_ROWS);
+    let input_height = input_box_height(
+        &app.chat_input,
+        input_inner_width(area.width),
+        MAX_INPUT_ROWS,
+    );
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .spacing(1)

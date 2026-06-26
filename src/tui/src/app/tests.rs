@@ -1270,7 +1270,10 @@ fn agent_popup_selection_sets_context_and_clears_stale_fields() {
     assert_eq!(app.selected_session, None);
 
     app.apply_agent_popup_selection(1, 0);
-    assert_eq!(app.selected_profile, None, "\"direct\" clears the managed profile");
+    assert_eq!(
+        app.selected_profile, None,
+        "\"direct\" clears the managed profile"
+    );
 
     // Sessions: index 0 is the "new" entry; real sessions start at index 1.
     app.apply_agent_popup_selection(3, 1);
@@ -1280,7 +1283,10 @@ fn agent_popup_selection_sets_context_and_clears_stale_fields() {
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/session"));
 
     app.apply_agent_popup_selection(3, 0);
-    assert_eq!(app.selected_session, None, "\"new\" clears the bound session");
+    assert_eq!(
+        app.selected_session, None,
+        "\"new\" clears the bound session"
+    );
     assert!(app.force_new_session);
 
     app.apply_agent_popup_selection(2, 0);
@@ -1304,7 +1310,11 @@ fn agent_sessions_filter_by_agent_and_expose_the_effective_item() {
         .iter()
         .map(|s| s.session_id.clone())
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec!["codex-1", "codex-2"], "filtered to the codex agent");
+    assert_eq!(
+        ids,
+        vec!["codex-1", "codex-2"],
+        "filtered to the codex agent"
+    );
     // Sessions list = 1 ("new") + 2 filtered.
     assert_eq!(app.popup_item_count(crate::popup::PopupKind::Agent, 3), 3);
 
@@ -1312,7 +1322,10 @@ fn agent_sessions_filter_by_agent_and_expose_the_effective_item() {
     assert!(app.agent_item_is_effective(3, 0));
     app.selected_session = Some("codex-2".into());
     assert!(!app.agent_item_is_effective(3, 0));
-    assert!(app.agent_item_is_effective(3, 2), "codex-2 is the second filtered row");
+    assert!(
+        app.agent_item_is_effective(3, 2),
+        "codex-2 is the second filtered row"
+    );
 }
 
 #[test]
@@ -1384,11 +1397,8 @@ fn tool_updates_change_work_status_without_polluting_transcript() {
     });
 
     assert_eq!(app.chat_messages.len(), initial_count);
-    assert_eq!(
-        app.work_status.as_deref(),
-        Some("Tool: Web Search (running)")
-    );
-    assert_eq!(render::view_hint(&app), "Tool: Web Search (running)");
+    assert_eq!(app.work_status.as_deref(), Some("searching"));
+    assert_eq!(render::view_hint(&app), "searching");
 }
 
 #[test]
@@ -1475,10 +1485,6 @@ fn exit_requires_second_ctrl_c_within_window() {
     assert!(!app.confirm_exit_request_at(start + Duration::from_secs(8)));
 }
 
-
-
-
-
 #[test]
 fn input_history_recalls_previous_submissions_and_restores_draft() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
@@ -1521,8 +1527,6 @@ fn editing_recalled_history_exits_browsing_mode() {
     assert_eq!(app.chat_input, "beta!");
 }
 
-
-
 #[test]
 fn slash_popup_filters_and_navigates() {
     use crate::chat::slash_command_matches;
@@ -1534,7 +1538,10 @@ fn slash_popup_filters_and_navigates() {
     );
     assert_eq!(slash_command_matches("/status").map(|m| m.len()), Some(1));
     assert!(slash_command_matches("/nope").is_none());
-    assert!(slash_command_matches("/status arg").is_none(), "space closes it");
+    assert!(
+        slash_command_matches("/status arg").is_none(),
+        "space closes it"
+    );
     assert!(slash_command_matches("hello").is_none());
 
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
@@ -1545,9 +1552,17 @@ fn slash_popup_filters_and_navigates() {
     app.slash_select_next();
     assert_eq!(app.slash_selected().map(|c| c.name), Some("/stop"));
     app.slash_select_next();
-    assert_eq!(app.slash_selected().map(|c| c.name), Some("/status"), "wraps");
+    assert_eq!(
+        app.slash_selected().map(|c| c.name),
+        Some("/status"),
+        "wraps"
+    );
     app.slash_select_prev();
-    assert_eq!(app.slash_selected().map(|c| c.name), Some("/stop"), "wraps back");
+    assert_eq!(
+        app.slash_selected().map(|c| c.name),
+        Some("/stop"),
+        "wraps back"
+    );
 }
 
 #[test]
@@ -1568,13 +1583,16 @@ fn accept_slash_selection_fills_input() {
 fn immediate_duplicate_submission_is_dropped() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    assert!(!app.is_immediate_duplicate("今天有啥新闻?"), "first send goes through");
-    assert!(app.is_immediate_duplicate("今天有啥新闻?"), "instant repeat is dropped");
+    assert!(
+        !app.is_immediate_duplicate("今天有啥新闻?"),
+        "first send goes through"
+    );
+    assert!(
+        app.is_immediate_duplicate("今天有啥新闻?"),
+        "instant repeat is dropped"
+    );
     assert!(!app.is_immediate_duplicate("a different message"));
 }
-
-
-
 
 #[test]
 fn turn_status_drives_the_working_timer() {
@@ -1589,7 +1607,6 @@ fn turn_status_drives_the_working_timer() {
     assert!(app.turn_started_at.is_none(), "completion clears the timer");
 }
 
-
 #[test]
 fn status_marks_the_runtime_agent_of_the_current_chat() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
@@ -1602,6 +1619,9 @@ fn status_marks_the_runtime_agent_of_the_current_chat() {
     assert!(!app.status_agent_is_current(1));
 
     app.selected_session = Some("sess-current".into());
-    assert!(!app.status_agent_is_current(0), "other agent is not current");
+    assert!(
+        !app.status_agent_is_current(0),
+        "other agent is not current"
+    );
     assert!(app.status_agent_is_current(1), "matched by session id");
 }

@@ -7,8 +7,8 @@ use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 use crate::app::{ErrorScope, TuiApp};
 use crate::chat::{
     content_text, one_line, permission_prompt_text, resolve_permission_option,
-    resolve_session_mode_value, session_mode_options_text, slash_command_matches, tool_activity_text,
-    ChatMessage, ChatRole, SessionModeSource, SlashCommand,
+    resolve_session_mode_value, session_mode_options_text, slash_command_matches,
+    tool_activity_text, ChatMessage, ChatRole, SessionModeSource, SlashCommand,
 };
 use crate::chat_socket::ChatSocketEvent;
 use crate::transport::HttpTransport;

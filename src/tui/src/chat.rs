@@ -238,23 +238,352 @@ pub(crate) fn resolve_permission_option(request: &Value, selector: Option<&str>)
 }
 
 pub(crate) fn tool_activity_text(update: &Value) -> String {
-    let tool = update
-        .get("toolCall")
-        .and_then(|tool_call| {
-            value_string_field(tool_call, "title")
-                .or_else(|| value_string_field(tool_call, "kind"))
-                .or_else(|| value_string_field(tool_call, "name"))
-        })
-        .or_else(|| value_string_field(update, "title"))
+    let label = tool_activity_label(update).unwrap_or_else(|| "tool".into());
+    let kind = tool_activity_kind(update, &label);
+    let status = tool_activity_status(update);
+    let detail = tool_activity_detail(update, kind);
+    let text = match kind {
+        ToolActivityKind::Command => match status {
+            ToolActivityStatus::Failed => "command failed".to_string(),
+            ToolActivityStatus::Completed => "ran command".to_string(),
+            ToolActivityStatus::Active => "running command".to_string(),
+        },
+        ToolActivityKind::Search => detail
+            .map(|detail| format!("search: {detail}"))
+            .unwrap_or_else(|| match status {
+                ToolActivityStatus::Failed => "search failed".into(),
+                ToolActivityStatus::Completed => "searched".into(),
+                ToolActivityStatus::Active => "searching".into(),
+            }),
+        ToolActivityKind::Edit => detail
+            .map(|detail| match status {
+                ToolActivityStatus::Active => format!("editing: {detail}"),
+                ToolActivityStatus::Failed => format!("edit failed: {detail}"),
+                ToolActivityStatus::Completed => format!("edited: {detail}"),
+            })
+            .unwrap_or_else(|| match status {
+                ToolActivityStatus::Failed => "edit failed".into(),
+                ToolActivityStatus::Completed => "edited file".into(),
+                ToolActivityStatus::Active => "editing file".into(),
+            }),
+        ToolActivityKind::List => detail
+            .map(|detail| format!("list: {detail}"))
+            .unwrap_or_else(|| match status {
+                ToolActivityStatus::Failed => "list failed".into(),
+                ToolActivityStatus::Completed => "listed files".into(),
+                ToolActivityStatus::Active => "listing files".into(),
+            }),
+        ToolActivityKind::File => detail
+            .map(|detail| match status {
+                ToolActivityStatus::Active => format!("reading: {detail}"),
+                ToolActivityStatus::Failed => format!("read failed: {detail}"),
+                ToolActivityStatus::Completed => format!("read: {detail}"),
+            })
+            .unwrap_or_else(|| match status {
+                ToolActivityStatus::Failed => "read failed".into(),
+                ToolActivityStatus::Completed => "read file".into(),
+                ToolActivityStatus::Active => "reading file".into(),
+            }),
+        ToolActivityKind::Tool => {
+            let label = one_line(&label);
+            match status {
+                ToolActivityStatus::Failed => format!("{label} failed"),
+                ToolActivityStatus::Completed => format!("used {label}"),
+                ToolActivityStatus::Active => format!("using {label}"),
+            }
+        }
+    };
+    one_line(&text)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolActivityKind {
+    Command,
+    Search,
+    Edit,
+    List,
+    File,
+    Tool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolActivityStatus {
+    Active,
+    Completed,
+    Failed,
+}
+
+fn tool_activity_label(update: &Value) -> Option<String> {
+    let tool_call = update.get("toolCall");
+    value_string_field(update, "title")
+        .or_else(|| tool_call.and_then(|tool_call| value_string_field(tool_call, "title")))
+        .or_else(|| value_string_field(update, "kind"))
+        .or_else(|| tool_call.and_then(|tool_call| value_string_field(tool_call, "kind")))
+        .or_else(|| value_string_field(update, "name"))
         .or_else(|| value_string_field(update, "toolName"))
-        .unwrap_or_else(|| "tool".into());
-    let status = value_string_field(update, "status")
-        .or_else(|| value_string_field(update, "state"))
-        .or_else(|| value_string_field(update, "outcome"));
-    match status {
-        Some(status) => format!("Tool: {} ({status})", one_line(&tool)),
-        None => format!("Tool: {}", one_line(&tool)),
+        .or_else(|| tool_call.and_then(|tool_call| value_string_field(tool_call, "name")))
+        .or_else(|| tool_activity_id(update).map(|id| format!("tool {}", short_id(&id))))
+}
+
+fn tool_activity_kind(update: &Value, label: &str) -> ToolActivityKind {
+    let tool_call = update.get("toolCall");
+    let text = [
+        Some(label.to_string()),
+        value_string_field(update, "kind"),
+        tool_call.and_then(|tool_call| value_string_field(tool_call, "kind")),
+        value_string_field(update, "name"),
+        value_string_field(update, "toolName"),
+        tool_call.and_then(|tool_call| value_string_field(tool_call, "name")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ")
+    .to_lowercase();
+    if text.contains("exec")
+        || text.contains("command")
+        || text.contains("shell")
+        || text.contains("stdin")
+        || text.contains("terminal")
+        || text.contains("bash")
+        || tool_activity_field(update, &["command", "cmd", "shell"]).is_some()
+    {
+        return ToolActivityKind::Command;
     }
+    if text.contains("search")
+        || text.contains("grep")
+        || text.contains("rg")
+        || text.contains("find")
+        || tool_activity_field(
+            update,
+            &["query", "q", "pattern", "regex", "search", "keywords"],
+        )
+        .is_some()
+    {
+        return ToolActivityKind::Search;
+    }
+    if text.contains("edit") || text.contains("write") || text.contains("patch") {
+        return ToolActivityKind::Edit;
+    }
+    if text.contains("list")
+        || text.contains("ls")
+        || text.contains("glob")
+        || tool_activity_field(update, &["glob"]).is_some()
+    {
+        return ToolActivityKind::List;
+    }
+    if text.contains("read")
+        || text.contains("file")
+        || text.contains("open")
+        || text.contains("view")
+        || tool_activity_field(update, &["path", "filePath", "file", "uri"]).is_some()
+    {
+        return ToolActivityKind::File;
+    }
+    ToolActivityKind::Tool
+}
+
+fn tool_activity_status(update: &Value) -> ToolActivityStatus {
+    let tool_call = update.get("toolCall");
+    let status = value_string_field(update, "status")
+        .or_else(|| tool_call.and_then(|tool_call| value_string_field(tool_call, "status")))
+        .or_else(|| value_string_field(update, "state"))
+        .or_else(|| value_string_field(update, "outcome"))
+        .unwrap_or_default()
+        .to_lowercase();
+    if status.contains("fail")
+        || status.contains("error")
+        || status.contains("denied")
+        || status.contains("cancel")
+    {
+        return ToolActivityStatus::Failed;
+    }
+    if status.contains("complete")
+        || status.contains("success")
+        || status.contains("succeed")
+        || status.contains("done")
+    {
+        return ToolActivityStatus::Completed;
+    }
+    ToolActivityStatus::Active
+}
+
+fn tool_activity_detail(update: &Value, kind: ToolActivityKind) -> Option<String> {
+    match kind {
+        ToolActivityKind::Command => None,
+        ToolActivityKind::Search => tool_activity_search_detail(update),
+        ToolActivityKind::Edit => tool_activity_field(
+            update,
+            &["path", "filePath", "file", "uri", "target", "name"],
+        )
+        .or_else(|| tool_activity_location(update)),
+        ToolActivityKind::List => tool_activity_field(
+            update,
+            &[
+                "path",
+                "glob",
+                "pattern",
+                "directory",
+                "dir",
+                "folder",
+                "target",
+            ],
+        )
+        .or_else(|| tool_activity_location(update)),
+        ToolActivityKind::File => tool_activity_field(
+            update,
+            &["path", "filePath", "file", "uri", "target", "name"],
+        )
+        .or_else(|| tool_activity_location(update)),
+        ToolActivityKind::Tool => tool_activity_field(update, &["query", "path", "file", "name"])
+            .or_else(|| tool_activity_location(update)),
+    }
+}
+
+fn tool_activity_search_detail(update: &Value) -> Option<String> {
+    let query = tool_activity_field(
+        update,
+        &[
+            "query", "q", "pattern", "regex", "search", "keywords", "text",
+        ],
+    );
+    let site = tool_activity_field(update, &["site", "domain", "domains", "source", "url"]);
+    match (query, site) {
+        (Some(query), Some(site)) if !query.contains(&site) => Some(format!("{query} ({site})")),
+        (Some(query), _) => Some(query),
+        (_, Some(site)) => Some(site),
+        _ => tool_activity_input_text(update),
+    }
+}
+
+fn tool_activity_field(update: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(text) = detail_field(update, key) {
+            return Some(text);
+        }
+        if let Some(text) = update
+            .get("toolCall")
+            .and_then(|tool_call| detail_field(tool_call, key))
+        {
+            return Some(text);
+        }
+    }
+    for container_key in ["rawInput", "raw_input", "input", "arguments", "params"] {
+        if let Some(text) = update
+            .get(container_key)
+            .and_then(|container| detail_field_any(container, keys))
+        {
+            return Some(text);
+        }
+        if let Some(text) = update
+            .get("toolCall")
+            .and_then(|tool_call| tool_call.get(container_key))
+            .and_then(|container| detail_field_any(container, keys))
+        {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn detail_field_any(value: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(text) = detail_field(value, key) {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn detail_field(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(detail_value_text)
+}
+
+fn detail_value_text(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(one_line(text)).filter(|text| !text.is_empty());
+    }
+    if value.is_number() || value.is_boolean() {
+        return Some(value.to_string());
+    }
+    if let Some(items) = value.as_array() {
+        let text = items
+            .iter()
+            .filter_map(detail_value_text)
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return (!text.is_empty()).then_some(text);
+    }
+    if value.is_object() {
+        return detail_field_any(
+            value,
+            &[
+                "query", "q", "pattern", "regex", "path", "filePath", "file", "uri", "url", "site",
+                "domain", "name", "text",
+            ],
+        );
+    }
+    None
+}
+
+fn tool_activity_input_text(update: &Value) -> Option<String> {
+    for container_key in ["rawInput", "raw_input", "input", "arguments", "params"] {
+        if let Some(text) = update.get(container_key).and_then(detail_value_text) {
+            return Some(text);
+        }
+        if let Some(text) = update
+            .get("toolCall")
+            .and_then(|tool_call| tool_call.get(container_key))
+            .and_then(detail_value_text)
+        {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn tool_activity_location(update: &Value) -> Option<String> {
+    location_from_value(update).or_else(|| update.get("toolCall").and_then(location_from_value))
+}
+
+fn location_from_value(value: &Value) -> Option<String> {
+    value
+        .get("locations")
+        .and_then(Value::as_array)
+        .and_then(|locations| locations.first())
+        .and_then(|location| {
+            let path = value_string_field(location, "path")
+                .or_else(|| value_string_field(location, "uri"))?;
+            let line = location
+                .get("line")
+                .and_then(Value::as_u64)
+                .map(|line| format!(":{line}"))
+                .unwrap_or_default();
+            Some(format!("{path}{line}"))
+        })
+        .or_else(|| {
+            value.get("location").and_then(|location| {
+                let path = value_string_field(location, "path")
+                    .or_else(|| value_string_field(location, "uri"))?;
+                let line = location
+                    .get("line")
+                    .and_then(Value::as_u64)
+                    .map(|line| format!(":{line}"))
+                    .unwrap_or_default();
+                Some(format!("{path}{line}"))
+            })
+        })
+}
+
+fn tool_activity_id(update: &Value) -> Option<String> {
+    value_string_field(update, "toolCallId")
+        .or_else(|| value_string_field(update, "tool_call_id"))
+        .or_else(|| value_string_field(update, "id"))
+}
+
+fn short_id(value: &str) -> String {
+    value.chars().take(8).collect()
 }
 
 pub(crate) fn one_line(value: &str) -> String {
@@ -827,6 +1156,84 @@ mod tests {
             Some("reject")
         );
         assert_eq!(resolve_permission_option(&request, Some("9")), None);
+    }
+
+    #[test]
+    fn tool_activity_summarizes_search_query() {
+        let update = serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-123",
+            "kind": "search",
+            "status": "completed",
+            "rawInput": {
+                "query": "rust ratatui render line"
+            }
+        });
+
+        assert_eq!(
+            tool_activity_text(&update),
+            "search: rust ratatui render line"
+        );
+    }
+
+    #[test]
+    fn tool_activity_hides_command_details() {
+        let update = serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-cmd",
+            "kind": "exec_command",
+            "status": "completed",
+            "rawInput": {
+                "command": "cat /very/private/file"
+            }
+        });
+
+        let text = tool_activity_text(&update);
+        assert_eq!(text, "ran command");
+        assert!(!text.contains("private"));
+    }
+
+    #[test]
+    fn tool_activity_detects_generic_command_input() {
+        let update = serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-cmd",
+            "title": "tool",
+            "status": "running",
+            "rawInput": {
+                "command": "cat /very/private/file"
+            }
+        });
+
+        let text = tool_activity_text(&update);
+        assert_eq!(text, "running command");
+        assert!(!text.contains("private"));
+    }
+
+    #[test]
+    fn tool_activity_summarizes_read_path() {
+        let update = serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-read",
+            "kind": "read",
+            "status": "completed",
+            "rawInput": {
+                "path": "src/tui/src/chat.rs"
+            }
+        });
+
+        assert_eq!(tool_activity_text(&update), "read: src/tui/src/chat.rs");
+    }
+
+    #[test]
+    fn tool_activity_uses_tool_call_id_as_last_resort() {
+        let update = serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-abcdef123456",
+            "status": "running"
+        });
+
+        assert_eq!(tool_activity_text(&update), "using tool call-abc");
     }
 
     #[test]

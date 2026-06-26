@@ -116,16 +116,21 @@ impl TuiApp {
                 if index == 0 {
                     self.effective_profile().is_none()
                 } else {
-                    self.agent_picker.profiles.get(index - 1).is_some_and(|profile| {
-                        self.effective_profile() == Some(profile.id.as_str())
-                    })
+                    self.agent_picker
+                        .profiles
+                        .get(index - 1)
+                        .is_some_and(|profile| {
+                            self.effective_profile() == Some(profile.id.as_str())
+                        })
                 }
             }
             2 => self
                 .agent_picker
                 .workspaces
                 .get(index)
-                .is_some_and(|workspace| self.effective_workspace() == Some(workspace.path.as_str())),
+                .is_some_and(|workspace| {
+                    self.effective_workspace() == Some(workspace.path.as_str())
+                }),
             3 => {
                 if index == 0 {
                     self.effective_session().is_none()
@@ -168,13 +173,16 @@ impl TuiApp {
     /// Enter drills one level deeper; on an agent item it sets the chat context
     /// and closes, on a status item it opens the read-only detail.
     pub(crate) async fn popup_enter(&mut self, transport: &HttpTransport) {
-        let Some((kind, level, cursor)) =
-            self.popup.as_ref().map(|p| (p.kind, p.level, p.cursor))
+        let Some((kind, level, cursor)) = self.popup.as_ref().map(|p| (p.kind, p.level, p.cursor))
         else {
             return;
         };
         match (kind, level) {
             (_, PopupLevel::Categories) => {
+                if kind.is_close_category(cursor) {
+                    self.popup = None;
+                    return;
+                }
                 if let Some(popup) = &mut self.popup {
                     popup.open_category();
                 }
@@ -190,7 +198,11 @@ impl TuiApp {
             (PopupKind::Agent, PopupLevel::Items { category }) => {
                 self.apply_agent_popup_selection(category, cursor);
                 self.sync_agent_popup_selection(category, transport).await;
-                self.popup = None;
+                if let Some(popup) = &mut self.popup {
+                    popup.level = PopupLevel::Categories;
+                    popup.cursor = category;
+                }
+                self.clamp_popup_cursor();
             }
             (_, PopupLevel::Detail { .. }) => {}
         }
@@ -242,10 +254,8 @@ impl TuiApp {
                     self.selected_session = None;
                     self.force_new_session = true;
                     self.last_action = Some("new session".to_string());
-                } else if let Some(session) = self
-                    .agent_session_items()
-                    .get(item - 1)
-                    .map(|session| {
+                } else if let Some(session) =
+                    self.agent_session_items().get(item - 1).map(|session| {
                         (
                             session.agent_id.clone(),
                             session.session_id.clone(),
