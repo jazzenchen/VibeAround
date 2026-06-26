@@ -1216,6 +1216,10 @@ fn session_ready_updates_chat_context_for_followup_messages() {
 fn chat_context_renders_session_mode() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    app.chat_messages.push(ChatMessage {
+        role: ChatRole::Response,
+        text: "ok".into(),
+    });
     app.chat_state.session_mode = Some(serde_json::json!({
         "source": "session_mode",
         "currentValue": "acceptEdits",

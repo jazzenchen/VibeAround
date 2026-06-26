@@ -118,24 +118,32 @@ fn render_working_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 
 /// Active context grouped into lines — `agent · profile`, then `workspace`
 /// and `session` (with mode) each on their own so long paths and ids aren't
-/// crowded. Shared by the working header and the welcome screen.
+/// crowded. Used by the working header.
 fn context_grouped_lines(app: &TuiApp) -> Vec<Line<'static>> {
     let pairs = context_pairs(app);
-    let joined = |slice: &[(&'static str, String)]| {
-        let mut spans = Vec::new();
-        for (index, (label, value)) in slice.iter().enumerate() {
-            if index > 0 {
-                spans.push(Span::styled("   ·   ", muted_style()));
-            }
-            spans.extend(label_value_spans(label, value));
-        }
-        Line::from(spans)
-    };
     vec![
-        joined(&pairs[0..2.min(pairs.len())]),
-        joined(&pairs[2..3.min(pairs.len())]),
-        joined(&pairs[3..]),
+        context_line(&pairs[0..2.min(pairs.len())]),
+        context_line(&pairs[2..3.min(pairs.len())]),
+        context_line(&pairs[3..]),
     ]
+}
+
+fn context_line(slice: &[(&'static str, String)]) -> Line<'static> {
+    context_line_with_separator(slice, "   ·   ")
+}
+
+fn context_line_with_separator(
+    slice: &[(&'static str, String)],
+    separator: &'static str,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, (label, value)) in slice.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(separator, muted_style()));
+        }
+        spans.extend(label_value_spans(label, value));
+    }
+    Line::from(spans)
 }
 
 /// The centered launch screen shown before a conversation begins: the brand
@@ -153,7 +161,7 @@ fn render_welcome(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         usize::from(box_width.saturating_sub(input_padding.saturating_mul(2))).max(1);
     let input_height = input_box_height(&app.chat_input, input_content_width, MAX_INPUT_ROWS);
 
-    let context = context_grouped_lines(app);
+    let context = welcome_context_lines(app);
     let context_height = u16::try_from(context.len()).unwrap_or(0);
 
     // wordmark + gap + input + gap + context + gap + tip
@@ -215,6 +223,14 @@ fn render_welcome(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
             height: 1,
         },
     );
+}
+
+fn welcome_context_lines(app: &TuiApp) -> Vec<Line<'static>> {
+    let pairs = context_pairs(app);
+    vec![context_line_with_separator(
+        &pairs[0..3.min(pairs.len())],
+        "  ·  ",
+    )]
 }
 
 /// A single descriptive hint, styled like a tip rather than a key legend.
