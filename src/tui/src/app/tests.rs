@@ -1585,3 +1585,19 @@ fn turn_status_drives_the_working_timer() {
     assert!(app.turn_started_at.is_none(), "completion clears the timer");
 }
 
+
+#[test]
+fn status_marks_the_runtime_agent_of_the_current_chat() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let mut mine = runtime_agent("tui:chat-1");
+    mine.session_id = Some("sess-current".into());
+    app.snapshot.agents = vec![runtime_agent("feishu:oc_42"), mine];
+
+    // No current session → nothing is the current host.
+    assert!(!app.status_agent_is_current(1));
+
+    app.selected_session = Some("sess-current".into());
+    assert!(!app.status_agent_is_current(0), "other agent is not current");
+    assert!(app.status_agent_is_current(1), "matched by session id");
+}

@@ -87,6 +87,22 @@ impl TuiApp {
         }
     }
 
+    /// Whether the runtime agent at `index` is the host running the current
+    /// chat (matched by session id), so the status list flags "you are here".
+    pub(crate) fn status_agent_is_current(&self, index: usize) -> bool {
+        let Some(current) = self
+            .effective_session()
+            .or(self.chat_state.session_id.as_deref())
+        else {
+            return false;
+        };
+        self.snapshot
+            .agents
+            .get(index)
+            .and_then(|agent| agent.session_id.as_deref())
+            == Some(current)
+    }
+
     /// Whether the item at `index` in an agent category is the one currently in
     /// context (gets the `●` marker). Index 0 of sessions is the "new" entry.
     pub(crate) fn agent_item_is_effective(&self, category: usize, index: usize) -> bool {

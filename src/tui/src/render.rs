@@ -11,7 +11,9 @@ use crate::chat::{
 };
 use crate::detail::{agent_detail, channel_detail, session_detail, tunnel_detail};
 use crate::popup::{Popup, PopupLevel};
-use crate::theme::{accent_style, muted_style, ACTION, BRAND, INPUT_ACCENT, INPUT_BG};
+use crate::theme::{
+    accent_style, muted_style, ACTION, BRAND, ERROR, INPUT_ACCENT, INPUT_BG, OK, WARN,
+};
 
 mod brand;
 mod chrome;
@@ -337,16 +339,13 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
     match popup.level {
         PopupLevel::Categories => {
             for (index, label) in popup.kind.categories().iter().enumerate() {
-                // The agent menu doubles as a config summary: each category
-                // shows its current selection; status shows a count.
+                // The agent menu doubles as a config summary (each category
+                // shows its selection); status shows a count plus health.
                 let trailing = match popup.kind {
                     PopupKind::Agent => {
-                        Span::styled(app.agent_category_value(index), accent_style())
+                        vec![Span::styled(app.agent_category_value(index), accent_style())]
                     }
-                    PopupKind::Status => Span::styled(
-                        app.popup_item_count(popup.kind, index).to_string(),
-                        muted_style(),
-                    ),
+                    PopupKind::Status => status_category_trailing(app, index),
                 };
                 lines.push(popup_category_row(label, trailing, index == popup.cursor));
             }
@@ -357,10 +356,16 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                 lines.push(Line::from(Span::styled("  no entries", muted_style())));
             } else {
                 for index in popup_window(rows.len(), popup.cursor, COMMAND_POPUP_MAX_ROWS) {
-                    // The "● in context" marker is a config concept — only the
-                    // agent menu reserves the column; status stays flush.
-                    let marker = matches!(popup.kind, PopupKind::Agent)
-                        .then(|| app.agent_item_is_effective(category, index));
+                    // The `●` marker means "currently in context": the selected
+                    // item in the agent menu, or the running host of the current
+                    // chat in the status agents list. Other lists stay flush.
+                    let marker = match popup.kind {
+                        PopupKind::Agent => Some(app.agent_item_is_effective(category, index)),
+                        PopupKind::Status if category == 2 => {
+                            Some(app.status_agent_is_current(index))
+                        }
+                        PopupKind::Status => None,
+                    };
                     lines.push(popup_item_line(
                         rows[index].clone(),
                         index == popup.cursor,
@@ -398,18 +403,109 @@ fn popup_breadcrumb(popup: &Popup) -> Line<'static> {
     Line::from(Span::styled(text, muted_style()))
 }
 
-fn popup_category_row(label: &str, trailing: Span<'static>, selected: bool) -> Line<'static> {
+fn popup_category_row(label: &str, trailing: Vec<Span<'static>>, selected: bool) -> Line<'static> {
     let label_style = if selected {
         accent_style()
     } else {
         Style::default().add_modifier(Modifier::BOLD)
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(if selected { "› " } else { "  " }, accent_style()),
         Span::styled(label.to_string(), label_style),
         Span::raw("  "),
-        trailing,
-    ])
+    ];
+    spans.extend(trailing);
+    Line::from(spans)
+}
+
+/// Count + a colored health note for a status category, so the categories
+/// list surfaces problems at a glance.
+fn status_category_trailing(app: &TuiApp, category: usize) -> Vec<Span<'static>> {
+    use crate::popup::PopupKind;
+    use va_client::runtime::{ChannelStatus, TunnelStatus};
+    use va_client::sessions::PtyRunState;
+
+    let count = app.popup_item_count(PopupKind::Status, category);
+    let mut spans = vec![Span::styled(count.to_string(), muted_style())];
+    let note: Option<(String, Style)> = match category {
+        0 => {
+            let crashed = app
+                .snapshot
+                .channels
+                .iter()
+                .filter(|channel| matches!(channel.status, ChannelStatus::Crashed))
+                .count();
+            let running = app
+                .snapshot
+                .channels
+                .iter()
+                .filter(|channel| matches!(channel.status, ChannelStatus::Running))
+                .count();
+            health_note(running, crashed, "running", "crashed")
+        }
+        1 => {
+            let failed = app
+                .snapshot
+                .tunnels
+                .iter()
+                .filter(|tunnel| matches!(tunnel.status, TunnelStatus::Failed { .. }))
+                .count();
+            let running = app
+                .snapshot
+                .tunnels
+                .iter()
+                .filter(|tunnel| matches!(tunnel.status, TunnelStatus::Running))
+                .count();
+            health_note(running, failed, "running", "failed")
+        }
+        2 => {
+            let failed = app.snapshot.agents.iter().filter(|a| a.failed.is_some()).count();
+            let busy = app.snapshot.agents.iter().filter(|a| a.busy).count();
+            if failed > 0 {
+                Some((format!("{failed} failed"), Style::default().fg(ERROR)))
+            } else if busy > 0 {
+                Some((format!("{busy} busy"), Style::default().fg(WARN)))
+            } else {
+                None
+            }
+        }
+        3 => {
+            let running = app
+                .snapshot
+                .sessions
+                .iter()
+                .filter(|session| matches!(session.status, PtyRunState::Running { .. }))
+                .count();
+            (running > 0).then(|| (format!("{running} running"), Style::default().fg(OK)))
+        }
+        _ => None,
+    };
+    if let Some((text, style)) = note {
+        spans.push(Span::styled(format!("  ·  {text}"), style));
+    }
+    spans
+}
+
+/// Prefer surfacing a problem; otherwise note how many are healthy.
+fn health_note(
+    healthy: usize,
+    problem: usize,
+    healthy_label: &str,
+    problem_label: &str,
+) -> Option<(String, Style)> {
+    if problem > 0 {
+        Some((
+            format!("{problem} {problem_label}"),
+            Style::default().fg(ERROR),
+        ))
+    } else if healthy > 0 {
+        Some((
+            format!("{healthy} {healthy_label}"),
+            Style::default().fg(OK),
+        ))
+    } else {
+        None
+    }
 }
 
 /// `›` cursor + an optional `●` "currently in context" marker + the item's own

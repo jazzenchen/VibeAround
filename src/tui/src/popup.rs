@@ -14,7 +14,7 @@ pub(crate) enum PopupKind {
 impl PopupKind {
     pub(crate) fn title(self) -> &'static str {
         match self {
-            Self::Status => "status",
+            Self::Status => "runtime status",
             Self::Agent => "agent config",
         }
     }
