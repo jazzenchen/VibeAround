@@ -91,8 +91,8 @@ fn render_working_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     }
 
-    // Four info lines, aligned row-for-row with the four-row mark:
-    //   brand + version / agent · profile / workspace / session (· mode).
+    // Header info is aligned against the four-row mark; agent/profile lives in
+    // the footer so the working area keeps the stable context anchored low.
     let mut info = vec![Line::from(vec![
         Span::styled("VibeAround", accent_style()),
         Span::styled(format!("  {VERSION}"), muted_style()),
@@ -113,13 +113,12 @@ fn render_working_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     );
 }
 
-/// Active context grouped into lines — `agent · profile`, then `workspace`
-/// and `session` (with mode) each on their own so long paths and ids aren't
-/// crowded. Used by the working header.
+/// Active context grouped into header lines. Agent/profile are rendered in the
+/// footer; workspace and session (with mode) stay up top so long paths and ids
+/// aren't crowded.
 fn context_grouped_lines(app: &TuiApp) -> Vec<Line<'static>> {
     let pairs = context_pairs(app);
     vec![
-        context_line(&pairs[0..2.min(pairs.len())]),
         context_line(&pairs[2..3.min(pairs.len())]),
         context_line(&pairs[3..]),
     ]

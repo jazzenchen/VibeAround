@@ -5,7 +5,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::TuiApp;
 use crate::chat::session_mode_display_label;
-use crate::theme::{muted_style, ACTION, ERROR, WARN};
+use crate::theme::muted_style;
 
 /// The active chat context as label/value pairs (agent, profile, workspace,
 /// session, and mode when set). Rendered as one line on the welcome screen
@@ -51,33 +51,21 @@ pub(super) fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'s
 }
 
 pub(super) fn command_bar(app: &TuiApp, content_width: u16) -> Paragraph<'static> {
-    let (status, status_style) = if app.exit_confirmation_pending() {
-        (
-            "press Ctrl+C again to quit".to_string(),
-            Style::default().fg(WARN),
-        )
-    } else if let Some(error) = &app.last_error {
-        (format!("error: {error}"), Style::default().fg(ERROR))
-    } else if !app.popup_is_open()
-        && (app.chat_state.pending_permission_request_id.is_some() || app.chat_state.turn_active)
-    {
-        (view_hint(app), muted_style())
-    } else if let Some(action) = &app.last_action {
-        (format!("last: {action}"), muted_style())
-    } else {
-        (view_hint(app), muted_style())
-    };
-    let mut spans = vec![
-        Span::styled(status, status_style),
-        Span::styled("  |  ", muted_style()),
-    ];
-    spans.extend(view_command_spans());
-    spans.extend([
-        Span::styled("  |  ", muted_style()),
-        key_span("Ctrl+C"),
-        Span::styled(" ×2 quit", muted_style()),
-    ]);
-    Paragraph::new(vec![divider_line(content_width), Line::from(spans)]).alignment(Alignment::Left)
+    Paragraph::new(vec![divider_line(content_width), footer_context_line(app)])
+        .alignment(Alignment::Left)
+}
+
+fn footer_context_line(app: &TuiApp) -> Line<'static> {
+    let pairs = context_pairs(app);
+    let end = 2.min(pairs.len());
+    let mut spans = Vec::new();
+    for (index, (label, value)) in pairs[..end].iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("   ·   ", muted_style()));
+        }
+        spans.extend(label_value_spans(label, value));
+    }
+    Line::from(spans)
 }
 
 pub(crate) fn view_hint(app: &TuiApp) -> String {
@@ -94,27 +82,6 @@ pub(crate) fn view_hint(app: &TuiApp) -> String {
     } else {
         "type a message or slash command".to_string()
     }
-}
-
-fn view_command_spans() -> Vec<Span<'static>> {
-    vec![
-        key_span("Enter"),
-        Span::raw(" send  "),
-        key_span("/new"),
-        Span::raw("  "),
-        key_span("/status"),
-        Span::raw("  "),
-        key_span("/agent"),
-        Span::raw("  "),
-        key_span("/help"),
-    ]
-}
-
-fn key_span(value: &'static str) -> Span<'static> {
-    Span::styled(
-        value,
-        Style::default().fg(ACTION).add_modifier(Modifier::BOLD),
-    )
 }
 
 pub(super) fn divider_line(width: u16) -> Line<'static> {

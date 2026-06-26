@@ -328,6 +328,36 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
 }
 
 #[test]
+fn footer_renders_agent_profile_context_instead_of_status_bar() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("deepseek-8uaepyrmp4b6".into());
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Response, "ok"));
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| render::render(frame, &app))
+        .expect("draw");
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(screen.contains("agent codex"));
+    assert!(screen.contains("profile deepseek-8uaepyrmp4b6"));
+    assert_eq!(screen.matches("agent codex").count(), 1);
+    assert!(!screen.contains("Enter send"));
+    assert!(!screen.contains("/new"));
+}
+
+#[test]
 fn chat_render_shows_multiline_input_with_continuation_indent() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
