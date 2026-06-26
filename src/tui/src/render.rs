@@ -348,6 +348,7 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
         return Vec::new();
     };
     use crate::popup::PopupKind;
+    let agent_read_only = popup.kind == PopupKind::Agent && !app.agent_config_editable();
     let mut lines = vec![popup_breadcrumb(popup)];
     if let Some(hint) = popup_hint_line(app, popup) {
         lines.push(hint);
@@ -362,12 +363,14 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                     Vec::new()
                 } else {
                     match popup.kind {
-                        PopupKind::Agent => {
-                            vec![Span::styled(
-                                app.agent_category_value(index),
-                                accent_style(),
-                            )]
-                        }
+                        PopupKind::Agent => vec![Span::styled(
+                            app.agent_category_value(index),
+                            if agent_read_only {
+                                readonly_option_style()
+                            } else {
+                                accent_style()
+                            },
+                        )],
                         PopupKind::Status => status_category_trailing(app, index),
                     }
                 };
@@ -376,11 +379,18 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                     trailing,
                     index == popup.cursor,
                     is_done,
+                    agent_read_only,
                 ));
             }
         }
         PopupLevel::Items { category } => {
-            let rows = popup_item_rows(app, popup, category);
+            let mut rows = popup_item_rows(app, popup, category);
+            if agent_read_only {
+                rows = rows
+                    .into_iter()
+                    .map(readonly_option_row)
+                    .collect::<Vec<_>>();
+            }
             if rows.is_empty() {
                 lines.push(Line::from(Span::styled("  no entries", muted_style())));
             } else {
@@ -400,6 +410,7 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                         rows[index].clone(),
                         index == popup.cursor,
                         marker,
+                        agent_read_only,
                     ));
                 }
             }
@@ -457,18 +468,26 @@ fn popup_category_row(
     trailing: Vec<Span<'static>>,
     selected: bool,
     is_close: bool,
+    read_only: bool,
 ) -> Line<'static> {
     let label_style = if is_close && selected {
         Style::default().fg(ACTION)
     } else if is_close {
         muted_style()
+    } else if read_only {
+        readonly_option_style()
     } else if selected {
         accent_style()
     } else {
         Style::default().add_modifier(Modifier::BOLD)
     };
+    let cursor_style = if read_only && !is_close {
+        muted_style()
+    } else {
+        accent_style()
+    };
     let mut spans = vec![
-        Span::styled(if selected { "› " } else { "  " }, accent_style()),
+        Span::styled(if selected { "› " } else { "  " }, cursor_style),
         Span::styled(label.to_string(), label_style),
         Span::raw("  "),
     ];
@@ -574,19 +593,39 @@ fn health_note(
 /// `›` cursor + an optional `●` "currently in context" marker + the item's own
 /// spans. `marker` is `None` for read-only lists (status), which keep no marker
 /// column at all.
-fn popup_item_line(row: Vec<Span<'static>>, selected: bool, marker: Option<bool>) -> Line<'static> {
+fn popup_item_line(
+    row: Vec<Span<'static>>,
+    selected: bool,
+    marker: Option<bool>,
+    read_only: bool,
+) -> Line<'static> {
+    let marker_style = if read_only {
+        muted_style()
+    } else {
+        accent_style()
+    };
     let mut spans = vec![Span::styled(
         if selected { "› " } else { "  " },
-        accent_style(),
+        marker_style,
     )];
     if let Some(effective) = marker {
         spans.push(Span::styled(
             if effective { "● " } else { "  " },
-            accent_style(),
+            marker_style,
         ));
     }
     spans.extend(row);
     Line::from(spans)
+}
+
+fn readonly_option_row(row: Vec<Span<'static>>) -> Vec<Span<'static>> {
+    row.into_iter()
+        .map(|span| Span::styled(span.content.into_owned(), readonly_option_style()))
+        .collect()
+}
+
+fn readonly_option_style() -> Style {
+    muted_style().add_modifier(Modifier::BOLD)
 }
 
 fn agent_session_new_row() -> Vec<Span<'static>> {
