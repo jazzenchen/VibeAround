@@ -15,7 +15,7 @@ impl PopupKind {
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::Status => "status",
-            Self::Agent => "agent",
+            Self::Agent => "agent config",
         }
     }
 

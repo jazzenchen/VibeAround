@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use va_client::launcher::LauncherPreferencesResponse;
+use va_client::sessions::LaunchSessionInfo;
 use va_client::{ops, Operation};
 
 use super::{ErrorScope, TuiApp};
@@ -50,9 +51,71 @@ impl TuiApp {
                 0 => self.agent_picker.agents.len(),
                 1 => self.agent_picker.profiles.len(),
                 2 => self.agent_picker.workspaces.len(),
-                3 => self.agent_picker.sessions.len(),
+                // +1 for the synthetic "new session" entry at the top.
+                3 => self.agent_session_items().len() + 1,
                 _ => 0,
             },
+        }
+    }
+
+    /// Sessions for the agent popup, filtered to the agent currently in
+    /// context so the list isn't polluted by other agents' sessions.
+    pub(crate) fn agent_session_items(&self) -> Vec<&LaunchSessionInfo> {
+        let agent = self.effective_agent();
+        self.agent_picker
+            .sessions
+            .iter()
+            .filter(|session| agent.is_none_or(|id| session.agent_id == id))
+            .collect()
+    }
+
+    /// The current selection shown next to each agent category, so the
+    /// categories list doubles as a config summary.
+    pub(crate) fn agent_category_value(&self, category: usize) -> String {
+        let short = |id: &str| id.chars().take(8).collect::<String>();
+        match category {
+            0 => self.effective_agent().unwrap_or("—").to_string(),
+            1 => self.effective_profile().unwrap_or("—").to_string(),
+            2 => self.effective_workspace().unwrap_or("—").to_string(),
+            3 => self
+                .effective_session()
+                .map(short)
+                .unwrap_or_else(|| "new".to_string()),
+            _ => String::new(),
+        }
+    }
+
+    /// Whether the item at `index` in an agent category is the one currently in
+    /// context (gets the `●` marker). Index 0 of sessions is the "new" entry.
+    pub(crate) fn agent_item_is_effective(&self, category: usize, index: usize) -> bool {
+        match category {
+            0 => self
+                .agent_picker
+                .agents
+                .get(index)
+                .is_some_and(|agent| self.effective_agent() == Some(agent.id.as_str())),
+            1 => self
+                .agent_picker
+                .profiles
+                .get(index)
+                .is_some_and(|profile| self.effective_profile() == Some(profile.id.as_str())),
+            2 => self
+                .agent_picker
+                .workspaces
+                .get(index)
+                .is_some_and(|workspace| self.effective_workspace() == Some(workspace.path.as_str())),
+            3 => {
+                if index == 0 {
+                    self.effective_session().is_none()
+                } else {
+                    self.agent_session_items()
+                        .get(index - 1)
+                        .is_some_and(|session| {
+                            self.effective_session() == Some(session.session_id.as_str())
+                        })
+                }
+            }
+            _ => false,
         }
     }
 
@@ -146,12 +209,31 @@ impl TuiApp {
                 }
             }
             3 => {
-                if let Some(session) = self.agent_picker.sessions.get(item) {
-                    self.selected_agent = Some(session.agent_id.clone());
+                if item == 0 {
+                    // "new": keep the current agent/profile/workspace, drop the
+                    // bound session so the next message starts fresh.
+                    self.selected_session = None;
+                    self.force_new_session = true;
+                    self.last_action = Some("new session".to_string());
+                } else if let Some(session) = self
+                    .agent_session_items()
+                    .get(item - 1)
+                    .map(|session| {
+                        (
+                            session.agent_id.clone(),
+                            session.session_id.clone(),
+                            session.workspace.clone(),
+                            session.short_id.clone(),
+                        )
+                    })
+                {
+                    let (agent_id, session_id, workspace, short_id) = session;
+                    self.selected_agent = Some(agent_id);
                     self.selected_profile = None;
-                    self.selected_workspace = Some(session.workspace.clone());
-                    self.selected_session = Some(session.session_id.clone());
-                    self.last_action = Some(format!("selected session {}", session.short_id));
+                    self.selected_workspace = Some(workspace);
+                    self.selected_session = Some(session_id);
+                    self.force_new_session = false;
+                    self.last_action = Some(format!("selected session {short_id}"));
                 }
             }
             _ => {}

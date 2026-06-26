@@ -1264,15 +1264,47 @@ fn agent_popup_selection_sets_context_and_clears_stale_fields() {
     assert_eq!(app.selected_profile.as_deref(), Some("claude-profile"));
     assert_eq!(app.selected_session, None);
 
-    app.apply_agent_popup_selection(3, 0);
+    // Sessions: index 0 is the "new" entry; real sessions start at index 1.
+    app.apply_agent_popup_selection(3, 1);
     assert_eq!(app.selected_agent.as_deref(), Some("claude"));
     assert_eq!(app.selected_session.as_deref(), Some("session-1"));
     assert_eq!(app.selected_profile, None);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/session"));
 
+    app.apply_agent_popup_selection(3, 0);
+    assert_eq!(app.selected_session, None, "\"new\" clears the bound session");
+    assert!(app.force_new_session);
+
     app.apply_agent_popup_selection(2, 0);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/claude"));
     assert_eq!(app.selected_session, None);
+}
+
+#[test]
+fn agent_sessions_filter_by_agent_and_expose_the_effective_item() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.sessions = vec![
+        launch_session("codex-1", "codex", "/tmp/a"),
+        launch_session("claude-1", "claude", "/tmp/b"),
+        launch_session("codex-2", "codex", "/tmp/c"),
+    ];
+    app.selected_agent = Some("codex".into());
+
+    let ids = app
+        .agent_session_items()
+        .iter()
+        .map(|s| s.session_id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["codex-1", "codex-2"], "filtered to the codex agent");
+    // Sessions list = 1 ("new") + 2 filtered.
+    assert_eq!(app.popup_item_count(crate::popup::PopupKind::Agent, 3), 3);
+
+    // No session selected → "new" (index 0) is the effective row.
+    assert!(app.agent_item_is_effective(3, 0));
+    app.selected_session = Some("codex-2".into());
+    assert!(!app.agent_item_is_effective(3, 0));
+    assert!(app.agent_item_is_effective(3, 2), "codex-2 is the second filtered row");
 }
 
 #[test]
@@ -1548,3 +1580,4 @@ fn turn_status_drives_the_working_timer() {
     app.apply_chat_event(ChatEvent::PromptDone { message_id: None });
     assert!(app.turn_started_at.is_none(), "completion clears the timer");
 }
+

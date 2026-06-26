@@ -332,12 +332,23 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
     let Some(popup) = &app.popup else {
         return Vec::new();
     };
+    use crate::popup::PopupKind;
     let mut lines = vec![popup_breadcrumb(popup)];
     match popup.level {
         PopupLevel::Categories => {
             for (index, label) in popup.kind.categories().iter().enumerate() {
-                let count = app.popup_item_count(popup.kind, index);
-                lines.push(popup_category_row(label, count, index == popup.cursor));
+                // The agent menu doubles as a config summary: each category
+                // shows its current selection; status shows a count.
+                let trailing = match popup.kind {
+                    PopupKind::Agent => {
+                        Span::styled(app.agent_category_value(index), accent_style())
+                    }
+                    PopupKind::Status => Span::styled(
+                        app.popup_item_count(popup.kind, index).to_string(),
+                        muted_style(),
+                    ),
+                };
+                lines.push(popup_category_row(label, trailing, index == popup.cursor));
             }
         }
         PopupLevel::Items { category } => {
@@ -346,7 +357,13 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                 lines.push(Line::from(Span::styled("  no entries", muted_style())));
             } else {
                 for index in popup_window(rows.len(), popup.cursor, COMMAND_POPUP_MAX_ROWS) {
-                    lines.push(popup_item_line(rows[index].clone(), index == popup.cursor));
+                    let effective = matches!(popup.kind, PopupKind::Agent)
+                        && app.agent_item_is_effective(category, index);
+                    lines.push(popup_item_line(
+                        rows[index].clone(),
+                        index == popup.cursor,
+                        effective,
+                    ));
                 }
             }
         }
@@ -379,7 +396,7 @@ fn popup_breadcrumb(popup: &Popup) -> Line<'static> {
     Line::from(Span::styled(text, muted_style()))
 }
 
-fn popup_category_row(label: &str, count: usize, selected: bool) -> Line<'static> {
+fn popup_category_row(label: &str, trailing: Span<'static>, selected: bool) -> Line<'static> {
     let label_style = if selected {
         accent_style()
     } else {
@@ -388,12 +405,17 @@ fn popup_category_row(label: &str, count: usize, selected: bool) -> Line<'static
     Line::from(vec![
         Span::styled(if selected { "› " } else { "  " }, accent_style()),
         Span::styled(label.to_string(), label_style),
-        Span::styled(format!("  {count}"), muted_style()),
+        Span::raw("  "),
+        trailing,
     ])
 }
 
-fn popup_item_line(row: Vec<Span<'static>>, selected: bool) -> Line<'static> {
-    let mut spans = vec![Span::styled(if selected { "› " } else { "  " }, accent_style())];
+/// `›` cursor + `●` "currently in context" marker + the item's own spans.
+fn popup_item_line(row: Vec<Span<'static>>, selected: bool, effective: bool) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(if selected { "› " } else { "  " }, accent_style()),
+        Span::styled(if effective { "● " } else { "  " }, accent_style()),
+    ];
     spans.extend(row);
     let line = Line::from(spans);
     if selected {
@@ -401,6 +423,16 @@ fn popup_item_line(row: Vec<Span<'static>>, selected: bool) -> Line<'static> {
     } else {
         line
     }
+}
+
+fn agent_session_new_row() -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            format!("{:<10}", "new"),
+            accent_style(),
+        ),
+        Span::styled("start a new session", muted_style()),
+    ]
 }
 
 fn popup_item_rows(app: &TuiApp, popup: &Popup, category: usize) -> Vec<Vec<Span<'static>>> {
@@ -417,12 +449,14 @@ fn popup_item_rows(app: &TuiApp, popup: &Popup, category: usize) -> Vec<Vec<Span
             0 => app.agent_picker.agents.iter().map(agent_info_row).collect(),
             1 => app.agent_picker.profiles.iter().map(profile_row).collect(),
             2 => app.agent_picker.workspaces.iter().map(workspace_row).collect(),
-            3 => app
-                .agent_picker
-                .sessions
-                .iter()
-                .map(launch_session_row)
-                .collect(),
+            // "new" first, then the sessions for the agent in context.
+            3 => {
+                let mut rows = vec![agent_session_new_row()];
+                for session in app.agent_session_items() {
+                    rows.push(launch_session_row(session));
+                }
+                rows
+            }
             _ => Vec::new(),
         },
     }
