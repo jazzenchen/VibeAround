@@ -1,4 +1,4 @@
-//! Bottom-up command popup shared by `/status` and `/agent`: a drill-down menu
+//! Bottom-up command popup shared by `/status` and `/settings`: a drill-down menu
 //! anchored above the input that grows upward and sizes to its content.
 //!
 //! Navigation is a small stack — categories → items → (status) detail — so the
@@ -15,7 +15,7 @@ impl PopupKind {
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::Status => "runtime status",
-            Self::Agent => "agent config",
+            Self::Agent => "settings",
         }
     }
 
@@ -23,12 +23,12 @@ impl PopupKind {
     pub(crate) fn categories(self) -> &'static [&'static str] {
         match self {
             Self::Status => &["channels", "tunnels", "agents", "sessions"],
-            Self::Agent => &["agents", "profiles", "workspaces", "sessions", "close"],
+            Self::Agent => &["agents", "profiles", "workspaces", "sessions", "done"],
         }
     }
 
-    pub(crate) fn is_close_category(self, index: usize) -> bool {
-        matches!(self, Self::Agent) && self.categories().get(index) == Some(&"close")
+    pub(crate) fn is_done_category(self, index: usize) -> bool {
+        matches!(self, Self::Agent) && self.categories().get(index) == Some(&"done")
     }
 }
 
@@ -44,6 +44,10 @@ pub(crate) struct Popup {
     pub(crate) kind: PopupKind,
     pub(crate) level: PopupLevel,
     pub(crate) cursor: usize,
+    /// Direct slash-command entry such as `/profile`, which starts inside one
+    /// agent setting category and closes on Esc/selection instead of returning
+    /// to the top-level settings summary.
+    pub(crate) direct_category: Option<usize>,
 }
 
 impl Popup {
@@ -52,6 +56,16 @@ impl Popup {
             kind,
             level: PopupLevel::Categories,
             cursor: 0,
+            direct_category: None,
+        }
+    }
+
+    pub(crate) fn agent_category(category: usize) -> Self {
+        Self {
+            kind: PopupKind::Agent,
+            level: PopupLevel::Items { category },
+            cursor: 0,
+            direct_category: Some(category),
         }
     }
 
@@ -106,6 +120,7 @@ impl Popup {
     pub(crate) fn back(&mut self) -> bool {
         match self.level {
             PopupLevel::Categories => true,
+            PopupLevel::Items { .. } if self.direct_category.is_some() => true,
             PopupLevel::Items { category } => {
                 self.level = PopupLevel::Categories;
                 self.cursor = category;
@@ -172,5 +187,13 @@ mod tests {
         assert_eq!(popup.cursor, 2);
         popup.clamp(0);
         assert_eq!(popup.cursor, 0);
+    }
+
+    #[test]
+    fn direct_agent_category_back_closes_instead_of_returning_to_settings() {
+        let mut popup = Popup::agent_category(1);
+
+        assert_eq!(popup.level, PopupLevel::Items { category: 1 });
+        assert!(popup.back());
     }
 }

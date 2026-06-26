@@ -67,8 +67,24 @@ pub(crate) const SLASH_COMMANDS: &[SlashCommand] = &[
         summary: "runtime status",
     },
     SlashCommand {
+        name: "/settings",
+        summary: "agent context settings",
+    },
+    SlashCommand {
         name: "/agent",
-        summary: "agent, profile, workspace, session",
+        summary: "choose agent",
+    },
+    SlashCommand {
+        name: "/profile",
+        summary: "choose profile",
+    },
+    SlashCommand {
+        name: "/workspaces",
+        summary: "choose workspace",
+    },
+    SlashCommand {
+        name: "/sessions",
+        summary: "choose or resume session",
     },
     SlashCommand {
         name: "/mode",

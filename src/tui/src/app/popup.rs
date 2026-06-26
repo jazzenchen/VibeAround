@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use tokio::sync::mpsc;
+use va_client::events::ChatClientMessage;
 use va_client::launcher::LauncherPreferencesResponse;
 use va_client::sessions::LaunchSessionInfo;
 use va_client::{ops, Operation};
@@ -15,8 +17,18 @@ impl TuiApp {
         self.clamp_popup_cursor();
     }
 
-    pub(crate) async fn open_agent_popup(&mut self, transport: &HttpTransport) {
+    pub(crate) async fn open_settings_popup(&mut self, transport: &HttpTransport) {
         self.popup = Some(Popup::new(PopupKind::Agent));
+        self.refresh_agent_picker(transport).await;
+        self.clamp_popup_cursor();
+    }
+
+    pub(crate) async fn open_agent_category_popup(
+        &mut self,
+        category: usize,
+        transport: &HttpTransport,
+    ) {
+        self.popup = Some(Popup::agent_category(category));
         self.refresh_agent_picker(transport).await;
         self.clamp_popup_cursor();
     }
@@ -172,14 +184,18 @@ impl TuiApp {
 
     /// Enter drills one level deeper; on an agent item it sets the chat context
     /// and closes, on a status item it opens the read-only detail.
-    pub(crate) async fn popup_enter(&mut self, transport: &HttpTransport) {
+    pub(crate) async fn popup_enter(
+        &mut self,
+        transport: &HttpTransport,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
         let Some((kind, level, cursor)) = self.popup.as_ref().map(|p| (p.kind, p.level, p.cursor))
         else {
             return;
         };
         match (kind, level) {
             (_, PopupLevel::Categories) => {
-                if kind.is_close_category(cursor) {
+                if kind.is_done_category(cursor) {
                     self.popup = None;
                     return;
                 }
@@ -196,13 +212,25 @@ impl TuiApp {
                 }
             }
             (PopupKind::Agent, PopupLevel::Items { category }) => {
+                if !self.agent_config_editable() {
+                    self.last_action = Some("settings are read-only".into());
+                    return;
+                }
                 self.apply_agent_popup_selection(category, cursor);
+                if category == 3 {
+                    self.apply_session_popup_selection(cursor, chat_tx);
+                    self.popup = None;
+                    return;
+                }
                 self.sync_agent_popup_selection(category, transport).await;
-                if let Some(popup) = &mut self.popup {
+                let direct_category = self.popup.as_ref().and_then(|popup| popup.direct_category);
+                if direct_category.is_some() {
+                    self.popup = None;
+                } else if let Some(popup) = &mut self.popup {
                     popup.level = PopupLevel::Categories;
                     popup.cursor = category;
+                    self.clamp_popup_cursor();
                 }
-                self.clamp_popup_cursor();
             }
             (_, PopupLevel::Detail { .. }) => {}
         }
@@ -274,6 +302,20 @@ impl TuiApp {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn apply_session_popup_selection(
+        &mut self,
+        item: usize,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
+        if item == 0 {
+            self.prepare_new_chat_session();
+            return;
+        }
+        if let Some(session_id) = self.selected_session.clone() {
+            self.resume_chat_session(&session_id, chat_tx);
         }
     }
 

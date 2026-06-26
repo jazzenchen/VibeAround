@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use crate::chat_socket::ChatSocketEvent;
 use crate::config::DEFAULT_BASE_URL;
+use crate::popup::Popup;
 use crate::render;
 use crate::runtime_socket::{RuntimeSocketEvent, RuntimeStream};
 use ratatui::backend::TestBackend;
@@ -178,6 +179,7 @@ fn runtime_socket_events_update_snapshot_and_clamp_popup() {
         kind: PopupKind::Status,
         level: PopupLevel::Items { category: 0 },
         cursor: 1,
+        direct_category: None,
     });
     app.set_error(
         ErrorScope::Runtime(RuntimeStream::Channels),
@@ -879,7 +881,11 @@ async fn slash_help_renders_multiline_command_reference() {
     assert_eq!(app.chat_scroll, 0);
     let help = &app.chat_messages.last().unwrap().text;
     assert!(help.contains("Commands\n/status runtime status"));
-    assert!(help.contains("/agent agent, profile, workspace, session"));
+    assert!(help.contains("/settings agent context settings"));
+    assert!(help.contains("/agent choose agent"));
+    assert!(help.contains("/profile choose profile"));
+    assert!(help.contains("/workspaces choose workspace"));
+    assert!(help.contains("/sessions choose or resume session"));
     assert!(help.contains("Shift+Enter newline"));
     assert!(help.contains("Alt+Left/Right word"));
     assert!(help.contains("Ctrl+A/E start/end"));
@@ -1346,6 +1352,62 @@ fn agent_sessions_filter_by_agent_and_expose_the_effective_item() {
 }
 
 #[test]
+fn agent_config_is_editable_only_before_chat_context_locks() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    assert!(app.agent_config_editable());
+
+    app.apply_chat_event(ChatEvent::TurnStatus { active: true });
+
+    assert!(!app.agent_config_editable());
+    assert!(app.context_locked);
+}
+
+#[tokio::test]
+async fn direct_session_popup_selection_resumes_and_closes() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.sessions = vec![launch_session("session-123456", "codex", "/tmp/project")];
+    app.selected_agent = Some("codex".into());
+    app.popup = Some(Popup::agent_category(3));
+    if let Some(popup) = &mut app.popup {
+        popup.cursor = 1;
+    }
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.popup_enter(&transport, &tx).await;
+
+    assert!(app.popup.is_none());
+    assert_eq!(app.selected_session.as_deref(), Some("session-123456"));
+    assert!(app.context_locked);
+    let message = rx.try_recv().expect("resume message");
+    assert!(matches!(
+        message,
+        ChatClientMessage::ResumeSession { session_id, .. } if session_id == "session-123456"
+    ));
+}
+
+#[tokio::test]
+async fn read_only_agent_popup_does_not_apply_selection() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.context_locked = true;
+    app.agent_picker.agents = vec![agent("codex")];
+    app.selected_agent = Some("claude".into());
+    app.popup = Some(Popup::agent_category(0));
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.popup_enter(&transport, &tx).await;
+
+    assert_eq!(app.selected_agent.as_deref(), Some("claude"));
+    assert!(app.popup.is_some());
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
 fn chat_event_appends_raw_agent_chunks() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
@@ -1571,13 +1633,20 @@ fn editing_recalled_history_exits_browsing_mode() {
 #[test]
 fn slash_popup_filters_and_navigates() {
     use crate::chat::slash_command_matches;
-    assert_eq!(slash_command_matches("/").map(|m| m.len()), Some(8));
+    assert_eq!(slash_command_matches("/").map(|m| m.len()), Some(12));
     let st = slash_command_matches("/st").expect("matches");
     assert_eq!(
         st.iter().map(|c| c.name).collect::<Vec<_>>(),
         vec!["/status", "/stop"]
     );
     assert_eq!(slash_command_matches("/status").map(|m| m.len()), Some(1));
+    assert_eq!(slash_command_matches("/settings").map(|m| m.len()), Some(1));
+    assert_eq!(slash_command_matches("/profile").map(|m| m.len()), Some(1));
+    assert_eq!(
+        slash_command_matches("/workspaces").map(|m| m.len()),
+        Some(1)
+    );
+    assert_eq!(slash_command_matches("/sessions").map(|m| m.len()), Some(1));
     assert!(slash_command_matches("/nope").is_none());
     assert!(
         slash_command_matches("/status arg").is_none(),

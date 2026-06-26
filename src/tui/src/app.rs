@@ -48,6 +48,10 @@ pub(crate) struct TuiApp {
     pub(crate) selected_workspace: Option<String>,
     pub(crate) selected_session: Option<String>,
     pub(crate) force_new_session: bool,
+    /// Agent/profile/workspace/session can only be edited before the first
+    /// chat context is bound. Once a message or resume starts, settings become
+    /// read-only for the lifetime of this TUI process.
+    pub(crate) context_locked: bool,
     pub(crate) work_status: Option<String>,
     /// When the current agent turn started, used to drive the live working
     /// indicator (spinner + elapsed) in the transcript.
@@ -84,6 +88,7 @@ impl TuiApp {
             selected_workspace: None,
             selected_session: None,
             force_new_session: false,
+            context_locked: false,
             work_status: None,
             turn_started_at: None,
             last_error: None,
@@ -196,6 +201,14 @@ impl TuiApp {
         self.selected_session.as_deref()
     }
 
+    pub(crate) fn agent_config_editable(&self) -> bool {
+        !self.context_locked
+            && self.is_welcome()
+            && !self.chat_state.turn_active
+            && self.chat_state.session_id.is_none()
+            && self.selected_session.is_none()
+    }
+
     pub(crate) fn confirm_exit_request(&mut self) -> bool {
         self.confirm_exit_request_at(Instant::now())
     }
@@ -247,6 +260,7 @@ impl TuiApp {
             .is_some_and(|elapsed| elapsed <= EXIT_CONFIRM_WINDOW)
     }
 
+    #[cfg(test)]
     pub(crate) fn exit_confirmation_pending(&self) -> bool {
         self.exit_confirmation_started.is_some()
     }

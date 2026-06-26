@@ -333,6 +333,7 @@ impl TuiApp {
 
     /// Start the live working indicator for a new turn.
     fn begin_turn(&mut self) {
+        self.context_locked = true;
         self.turn_started_at = Some(Instant::now());
         self.work_status = None;
     }
@@ -340,6 +341,7 @@ impl TuiApp {
     /// Start the timer for a turn that began without a local submit (e.g. a
     /// resumed session), without resetting an already-running one.
     fn resume_turn(&mut self) {
+        self.context_locked = true;
         if self.turn_started_at.is_none() {
             self.turn_started_at = Some(Instant::now());
         }
@@ -363,8 +365,24 @@ impl TuiApp {
                 self.open_status_popup(transport).await;
                 true
             }
+            "/settings" => {
+                self.open_settings_popup(transport).await;
+                true
+            }
             "/agent" => {
-                self.open_agent_popup(transport).await;
+                self.open_agent_category_popup(0, transport).await;
+                true
+            }
+            "/profile" => {
+                self.open_agent_category_popup(1, transport).await;
+                true
+            }
+            "/workspaces" => {
+                self.open_agent_category_popup(2, transport).await;
+                true
+            }
+            "/sessions" => {
+                self.open_agent_category_popup(3, transport).await;
                 true
             }
             "/help" => {
@@ -454,7 +472,7 @@ impl TuiApp {
     }
 
     fn push_help_message(&mut self) {
-        self.chat_messages.push(ChatMessage::new(ChatRole::Notice, "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail"));
+        self.chat_messages.push(ChatMessage::new(ChatRole::Notice, "Commands\n/status runtime status\n/settings agent context settings\n/agent choose agent\n/profile choose profile\n/workspaces choose workspace\n/sessions choose or resume session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail"));
         self.follow_chat_tail();
     }
 
@@ -518,7 +536,7 @@ impl TuiApp {
         true
     }
 
-    fn prepare_new_chat_session(&mut self) {
+    pub(crate) fn prepare_new_chat_session(&mut self) {
         if self.chat_state.turn_active {
             self.push_local_notice(
                 "Stop or wait for the current turn before starting a new session.",
@@ -573,7 +591,7 @@ impl TuiApp {
         }
     }
 
-    fn resume_chat_session(
+    pub(crate) fn resume_chat_session(
         &mut self,
         session_id: &str,
         chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
@@ -590,6 +608,7 @@ impl TuiApp {
             self.effective_workspace().map(str::to_string),
         );
         if self.send_chat_command(message, chat_tx) {
+            self.context_locked = true;
             self.selected_session = Some(session_id.to_string());
             self.force_new_session = false;
             self.last_action = Some(format!("resuming session {}", short_id(session_id)));
@@ -645,6 +664,7 @@ impl TuiApp {
                 self.last_action = Some(format!("agent {agent} {version} ready"));
             }
             ChatEvent::SessionReady { session_id } => {
+                self.context_locked = true;
                 self.selected_session = Some(session_id.clone());
                 self.force_new_session = false;
             }

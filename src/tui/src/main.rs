@@ -116,7 +116,7 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                             KeyCode::Esc => app.popup_back(),
                             KeyCode::Up => app.popup_move_up(),
                             KeyCode::Down => app.popup_move_down(),
-                            KeyCode::Enter => app.popup_enter(&transport).await,
+                            KeyCode::Enter => app.popup_enter(&transport, &chat_tx).await,
                             _ => {}
                         }
                         continue;

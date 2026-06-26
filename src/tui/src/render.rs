@@ -342,20 +342,23 @@ fn slash_popup_row(command: &SlashCommand, selected: bool) -> Line<'static> {
     ])
 }
 
-/// Content lines for the `/status` and `/agent` drill-down popup.
+/// Content lines for the `/status` and `/settings` drill-down popup.
 fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
     let Some(popup) = &app.popup else {
         return Vec::new();
     };
     use crate::popup::PopupKind;
     let mut lines = vec![popup_breadcrumb(popup)];
+    if let Some(hint) = popup_hint_line(app, popup) {
+        lines.push(hint);
+    }
     match popup.level {
         PopupLevel::Categories => {
             for (index, label) in popup.kind.categories().iter().enumerate() {
-                let is_close = popup.kind.is_close_category(index);
+                let is_done = popup.kind.is_done_category(index);
                 // The agent menu doubles as a config summary (each category
                 // shows its selection); status shows a count plus health.
-                let trailing = if is_close {
+                let trailing = if is_done {
                     Vec::new()
                 } else {
                     match popup.kind {
@@ -372,7 +375,7 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                     label,
                     trailing,
                     index == popup.cursor,
-                    is_close,
+                    is_done,
                 ));
             }
         }
@@ -386,7 +389,8 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                     // item in the agent menu, or the running host of the current
                     // chat in the status agents list. Other lists stay flush.
                     let marker = match popup.kind {
-                        PopupKind::Agent => Some(app.agent_item_is_effective(category, index)),
+                        PopupKind::Agent => (!popup.kind.is_done_category(category))
+                            .then(|| app.agent_item_is_effective(category, index)),
                         PopupKind::Status if category == 2 => {
                             Some(app.status_agent_is_current(index))
                         }
@@ -405,6 +409,25 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
         }
     }
     lines
+}
+
+fn popup_hint_line(app: &TuiApp, popup: &Popup) -> Option<Line<'static>> {
+    use crate::popup::PopupKind;
+    if popup.kind != PopupKind::Agent {
+        return None;
+    }
+    let text = if app.agent_config_editable() {
+        if popup.direct_category.is_some() {
+            "editable before first message · select applies · Esc returns"
+        } else {
+            "editable before first message · Enter open/select · done returns"
+        }
+    } else if popup.direct_category.is_some() {
+        "read-only after chat starts or session is active · Esc returns"
+    } else {
+        "read-only after chat starts or session is active · done returns"
+    };
+    Some(Line::from(Span::styled(text, muted_style())))
 }
 
 /// Render the command popup as a panel that fills `area`, covering the lower

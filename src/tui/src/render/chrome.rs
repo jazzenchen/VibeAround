@@ -68,6 +68,7 @@ fn footer_context_line(app: &TuiApp) -> Line<'static> {
     Line::from(spans)
 }
 
+#[cfg(test)]
 pub(crate) fn view_hint(app: &TuiApp) -> String {
     if app.popup_is_open() {
         "↑↓ move · Enter open/select · Esc back".to_string()
