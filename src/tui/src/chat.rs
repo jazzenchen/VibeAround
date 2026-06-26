@@ -286,10 +286,17 @@ pub(crate) fn tool_activity_text(update: &Value) -> String {
             }),
         ToolActivityKind::Tool => {
             let label = one_line(&label);
-            match status {
-                ToolActivityStatus::Failed => format!("{label} failed"),
-                ToolActivityStatus::Completed => format!("used {label}"),
-                ToolActivityStatus::Active => format!("using {label}"),
+            if is_generic_tool_label(&label) {
+                match status {
+                    ToolActivityStatus::Failed => "tool failed".into(),
+                    ToolActivityStatus::Completed | ToolActivityStatus::Active => "working".into(),
+                }
+            } else {
+                match status {
+                    ToolActivityStatus::Failed => format!("{label} failed"),
+                    ToolActivityStatus::Completed => format!("used {label}"),
+                    ToolActivityStatus::Active => format!("using {label}"),
+                }
             }
         }
     };
@@ -322,7 +329,11 @@ fn tool_activity_label(update: &Value) -> Option<String> {
         .or_else(|| value_string_field(update, "name"))
         .or_else(|| value_string_field(update, "toolName"))
         .or_else(|| tool_call.and_then(|tool_call| value_string_field(tool_call, "name")))
-        .or_else(|| tool_activity_id(update).map(|id| format!("tool {}", short_id(&id))))
+}
+
+fn is_generic_tool_label(label: &str) -> bool {
+    let normalized = label.trim().to_lowercase();
+    normalized.is_empty() || normalized == "tool"
 }
 
 fn tool_activity_kind(update: &Value, label: &str) -> ToolActivityKind {
@@ -574,16 +585,6 @@ fn location_from_value(value: &Value) -> Option<String> {
                 Some(format!("{path}{line}"))
             })
         })
-}
-
-fn tool_activity_id(update: &Value) -> Option<String> {
-    value_string_field(update, "toolCallId")
-        .or_else(|| value_string_field(update, "tool_call_id"))
-        .or_else(|| value_string_field(update, "id"))
-}
-
-fn short_id(value: &str) -> String {
-    value.chars().take(8).collect()
 }
 
 pub(crate) fn one_line(value: &str) -> String {
@@ -1226,14 +1227,14 @@ mod tests {
     }
 
     #[test]
-    fn tool_activity_uses_tool_call_id_as_last_resort() {
+    fn tool_activity_hides_bare_tool_call_id() {
         let update = serde_json::json!({
             "sessionUpdate": "tool_call_update",
             "toolCallId": "call-abcdef123456",
             "status": "running"
         });
 
-        assert_eq!(tool_activity_text(&update), "using tool call-abc");
+        assert_eq!(tool_activity_text(&update), "working");
     }
 
     #[test]
