@@ -357,12 +357,14 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                 lines.push(Line::from(Span::styled("  no entries", muted_style())));
             } else {
                 for index in popup_window(rows.len(), popup.cursor, COMMAND_POPUP_MAX_ROWS) {
-                    let effective = matches!(popup.kind, PopupKind::Agent)
-                        && app.agent_item_is_effective(category, index);
+                    // The "● in context" marker is a config concept — only the
+                    // agent menu reserves the column; status stays flush.
+                    let marker = matches!(popup.kind, PopupKind::Agent)
+                        .then(|| app.agent_item_is_effective(category, index));
                     lines.push(popup_item_line(
                         rows[index].clone(),
                         index == popup.cursor,
-                        effective,
+                        marker,
                     ));
                 }
             }
@@ -410,12 +412,14 @@ fn popup_category_row(label: &str, trailing: Span<'static>, selected: bool) -> L
     ])
 }
 
-/// `›` cursor + `●` "currently in context" marker + the item's own spans.
-fn popup_item_line(row: Vec<Span<'static>>, selected: bool, effective: bool) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled(if selected { "› " } else { "  " }, accent_style()),
-        Span::styled(if effective { "● " } else { "  " }, accent_style()),
-    ];
+/// `›` cursor + an optional `●` "currently in context" marker + the item's own
+/// spans. `marker` is `None` for read-only lists (status), which keep no marker
+/// column at all.
+fn popup_item_line(row: Vec<Span<'static>>, selected: bool, marker: Option<bool>) -> Line<'static> {
+    let mut spans = vec![Span::styled(if selected { "› " } else { "  " }, accent_style())];
+    if let Some(effective) = marker {
+        spans.push(Span::styled(if effective { "● " } else { "  " }, accent_style()));
+    }
     spans.extend(row);
     let line = Line::from(spans);
     if selected {
