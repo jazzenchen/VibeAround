@@ -212,16 +212,16 @@ impl TuiApp {
                 }
             }
             (PopupKind::Agent, PopupLevel::Items { category }) => {
-                if !self.agent_config_editable() {
+                if category != 3 && !self.agent_config_editable() {
                     self.last_action = Some("settings are read-only".into());
                     return;
                 }
-                self.apply_agent_popup_selection(category, cursor);
                 if category == 3 {
                     self.apply_session_popup_selection(cursor, chat_tx);
                     self.popup = None;
                     return;
                 }
+                self.apply_agent_popup_selection(category, cursor);
                 self.sync_agent_popup_selection(category, transport).await;
                 let direct_category = self.popup.as_ref().and_then(|popup| popup.direct_category);
                 if direct_category.is_some() {
@@ -286,17 +286,16 @@ impl TuiApp {
                     self.agent_session_items().get(item - 1).map(|session| {
                         (
                             session.agent_id.clone(),
-                            session.session_id.clone(),
                             session.workspace.clone(),
                             session.short_id.clone(),
                         )
                     })
                 {
-                    let (agent_id, session_id, workspace, short_id) = session;
+                    let (agent_id, workspace, short_id) = session;
                     self.selected_agent = Some(agent_id);
                     self.selected_profile = None;
                     self.selected_workspace = Some(workspace);
-                    self.selected_session = Some(session_id);
+                    self.selected_session = None;
                     self.force_new_session = false;
                     self.last_action = Some(format!("selected session {short_id}"));
                 }
@@ -314,7 +313,22 @@ impl TuiApp {
             self.prepare_new_chat_session();
             return;
         }
-        if let Some(session_id) = self.selected_session.clone() {
+        if let Some((agent_id, session_id, workspace, short_id)) =
+            self.agent_session_items().get(item - 1).map(|session| {
+                (
+                    session.agent_id.clone(),
+                    session.session_id.clone(),
+                    session.workspace.clone(),
+                    session.short_id.clone(),
+                )
+            })
+        {
+            self.selected_agent = Some(agent_id);
+            self.selected_profile = None;
+            self.selected_workspace = Some(workspace);
+            self.selected_session = None;
+            self.force_new_session = false;
+            self.last_action = Some(format!("selected session {short_id}"));
             self.resume_chat_session(&session_id, chat_tx);
         }
     }

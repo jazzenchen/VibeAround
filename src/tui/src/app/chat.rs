@@ -55,6 +55,24 @@ impl TuiApp {
         }
     }
 
+    pub(crate) fn chat_up(&mut self) {
+        self.clamp_chat_cursor();
+        if self.chat_cursor == self.chat_input.len() && !self.chat_input.contains('\n') {
+            self.history_prev();
+        } else {
+            self.move_chat_cursor_line_up();
+        }
+    }
+
+    pub(crate) fn chat_down(&mut self) {
+        self.clamp_chat_cursor();
+        if self.chat_cursor == self.chat_input.len() && !self.chat_input.contains('\n') {
+            self.history_next();
+        } else {
+            self.move_chat_cursor_line_down();
+        }
+    }
+
     fn set_input_from_history(&mut self, index: usize) {
         self.history_cursor = Some(index);
         self.chat_input = self.input_history[index].clone();
@@ -263,6 +281,55 @@ impl TuiApp {
         self.chat_cursor = self.chat_input.len();
     }
 
+    pub(crate) fn move_chat_cursor_line_up(&mut self) {
+        self.clamp_chat_cursor();
+        let Some(current_start) = self.chat_input[..self.chat_cursor]
+            .rfind('\n')
+            .map(|index| index + 1)
+        else {
+            return;
+        };
+        let current_column = self.chat_input[current_start..self.chat_cursor]
+            .chars()
+            .count();
+        let previous_end = current_start.saturating_sub(1);
+        let previous_start = self.chat_input[..previous_end]
+            .rfind('\n')
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        self.chat_cursor = byte_index_for_char_column(
+            &self.chat_input,
+            previous_start,
+            previous_end,
+            current_column,
+        );
+    }
+
+    pub(crate) fn move_chat_cursor_line_down(&mut self) {
+        self.clamp_chat_cursor();
+        let current_start = self.chat_input[..self.chat_cursor]
+            .rfind('\n')
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let current_column = self.chat_input[current_start..self.chat_cursor]
+            .chars()
+            .count();
+        let current_end = self.chat_input[self.chat_cursor..]
+            .find('\n')
+            .map(|offset| self.chat_cursor + offset)
+            .unwrap_or(self.chat_input.len());
+        let next_start = current_end.saturating_add(1);
+        if next_start > self.chat_input.len() {
+            return;
+        }
+        let next_end = self.chat_input[next_start..]
+            .find('\n')
+            .map(|offset| next_start + offset)
+            .unwrap_or(self.chat_input.len());
+        self.chat_cursor =
+            byte_index_for_char_column(&self.chat_input, next_start, next_end, current_column);
+    }
+
     pub(crate) fn move_chat_cursor_start(&mut self) {
         self.chat_cursor = 0;
     }
@@ -306,9 +373,11 @@ impl TuiApp {
         if self.is_immediate_duplicate(command) {
             return;
         }
-        self.record_input_history(command);
         if command.starts_with('/') && self.run_slash_command(command, transport, chat_tx).await {
             return;
+        }
+        if !command.starts_with('/') {
+            self.record_input_history(command);
         }
 
         self.submit_user_message(input, chat_tx);
@@ -609,7 +678,6 @@ impl TuiApp {
         );
         if self.send_chat_command(message, chat_tx) {
             self.context_locked = true;
-            self.selected_session = Some(session_id.to_string());
             self.force_new_session = false;
             self.last_action = Some(format!("resuming session {}", short_id(session_id)));
         }
@@ -713,17 +781,17 @@ impl TuiApp {
         match update.get("sessionUpdate").and_then(Value::as_str) {
             Some("agent_message_chunk") => {
                 if let Some(text) = content_text(update.get("content")) {
-                    self.append_stream_response_text(text);
+                    self.append_stream_response_text(&text);
                 }
             }
             Some("user_message_chunk") => {
                 if let Some(text) = content_text(update.get("content")) {
-                    self.append_request_echo(text);
+                    self.append_request_echo(&text);
                 }
             }
             Some("agent_thought_chunk") => {
                 if let Some(text) = content_text(update.get("content")) {
-                    self.work_status = Some(format!("Thought: {}", one_line(text)));
+                    self.work_status = Some(format!("Thought: {}", one_line(&text)));
                 }
             }
             Some("tool_call") | Some("tool_call_update") => {
@@ -788,10 +856,12 @@ impl TuiApp {
             .last()
             .is_some_and(|message| message.role == ChatRole::Request && message.text == text)
         {
+            self.record_input_history(text);
             return;
         }
         self.chat_messages
             .push(ChatMessage::new(ChatRole::Request, text));
+        self.record_input_history(text);
     }
 }
 
@@ -862,4 +932,12 @@ fn next_boundary(input: &str, cursor: usize) -> usize {
         .next()
         .map(|(index, _)| cursor + index)
         .unwrap_or(input.len())
+}
+
+fn byte_index_for_char_column(input: &str, start: usize, end: usize, column: usize) -> usize {
+    input[start..end]
+        .char_indices()
+        .map(|(offset, _)| start + offset)
+        .nth(column)
+        .unwrap_or(end)
 }

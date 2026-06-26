@@ -8,17 +8,16 @@ const BRAND_WORDMARK: &str = r#"██    ██ ██ ██████  █�
 ██    ██ ██ ██████  █████   ███████ ██████  ██    ██ ██    ██ ██ ██  ██ ██   ██
  ██  ██  ██ ██   ██ ██      ██   ██ ██   ██ ██    ██ ██    ██ ██  ██ ██ ██   ██
   ████   ██ ██████  ███████ ██   ██ ██   ██  ██████   ██████  ██   ████ ██████"#;
-const BRAND_MARK: &str = r#"██   ██   ████
-██   ██  ██  ██
- ██ ██   ██████
-  ███    ██  ██"#;
+const BRAND_MARK: &str = r#"██  ██ ▄████▄
+██▄▄██ ██▄▄██
+ ▀██▀  ██  ██"#;
 
 /// Minimum width at which the full wordmark fits; below this the compact "VA"
 /// mark is used instead.
 const FULL_WORDMARK_MIN_WIDTH: u16 = 80;
 
 /// Block width of the compact "VA" mark, for laying out the working header.
-pub(super) const MARK_WIDTH: u16 = 15;
+pub(super) const MARK_WIDTH: u16 = 13;
 
 pub(super) const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 

@@ -153,11 +153,37 @@ pub(crate) struct SessionModeOption {
     pub(crate) group: Option<String>,
 }
 
-pub(crate) fn content_text(content: Option<&Value>) -> Option<&str> {
-    let content = content?;
-    content
-        .as_str()
-        .or_else(|| content.get("text").and_then(Value::as_str))
+pub(crate) fn content_text(content: Option<&Value>) -> Option<String> {
+    let mut text = String::new();
+    collect_content_text(content?, &mut text);
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn collect_content_text(content: &Value, output: &mut String) {
+    match content {
+        Value::String(text) => output.push_str(text),
+        Value::Array(items) => {
+            for item in items {
+                collect_content_text(item, output);
+            }
+        }
+        Value::Object(object) => {
+            if let Some(text) = object.get("text").and_then(Value::as_str) {
+                output.push_str(text);
+                return;
+            }
+            for key in ["content", "contents", "blocks"] {
+                if let Some(value) = object.get(key) {
+                    collect_content_text(value, output);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(crate) fn parse_session_mode_state(value: Option<&Value>) -> Option<SessionModeState> {
@@ -568,206 +594,58 @@ fn tool_activity_detail(update: &Value, kind: ToolActivityKind) -> Option<String
 }
 
 fn tool_activity_command_detail(update: &Value) -> Option<String> {
-    let command = tool_activity_field(update, &["command", "cmd", "shell"])
-        .or_else(|| tool_activity_input_text(update))?;
-    summarize_command(&command)
+    command_activity_field(update)
+        .or_else(|| tool_activity_input_text(update))
+        .map(|command| command.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|command| !command.is_empty())
 }
 
-fn summarize_command(command: &str) -> Option<String> {
-    for segment in shell_command_segments(command) {
-        let tokens = shell_tokens(&segment);
-        if let Some(summary) = summarize_command_tokens(&tokens) {
-            return Some(summary);
+fn command_activity_field(update: &Value) -> Option<String> {
+    for key in ["command", "cmd", "shell"] {
+        if let Some(text) = command_detail_field(update, key) {
+            return Some(text);
+        }
+        if let Some(text) = update
+            .get("toolCall")
+            .and_then(|tool_call| command_detail_field(tool_call, key))
+        {
+            return Some(text);
+        }
+    }
+    for container_key in ["rawInput", "raw_input", "input", "arguments", "params"] {
+        if let Some(text) = update
+            .get(container_key)
+            .and_then(|container| command_detail_field_any(container))
+        {
+            return Some(text);
+        }
+        if let Some(text) = update
+            .get("toolCall")
+            .and_then(|tool_call| tool_call.get(container_key))
+            .and_then(command_detail_field_any)
+        {
+            return Some(text);
         }
     }
     None
 }
 
-fn summarize_command_tokens(tokens: &[String]) -> Option<String> {
-    let mut index = 0;
-    while let Some(token) = tokens.get(index).map(String::as_str) {
-        if is_command_prefix_token(token) || is_env_assignment(token) {
-            index += 1;
-            continue;
+fn command_detail_field_any(value: &Value) -> Option<String> {
+    for key in ["command", "cmd", "shell"] {
+        if let Some(text) = command_detail_field(value, key) {
+            return Some(text);
         }
-        if is_shell_program(token) {
-            if let Some(script_index) = tokens[index + 1..]
-                .iter()
-                .position(|arg| matches!(arg.as_str(), "-c" | "-lc" | "-ic" | "-lic"))
-                .and_then(|offset| index.checked_add(offset + 2))
-            {
-                if let Some(script) = tokens.get(script_index) {
-                    return summarize_command(script);
-                }
-            }
-        }
-        if token == "cd" || token == "export" || token == "source" || token == "." {
-            return None;
-        }
-        let program = command_program_name(token)?;
-        let mut parts = vec![program.clone()];
-        if let Some(action) = command_action_hint(&program, &tokens[index + 1..]) {
-            parts.push(action);
-        }
-        return Some(parts.join(" "));
     }
     None
 }
 
-fn shell_command_segments(command: &str) -> Vec<String> {
-    let mut segments = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    let mut escaped = false;
-    for ch in command.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            current.push(ch);
-            continue;
-        }
-        if let Some(active_quote) = quote {
-            current.push(ch);
-            if ch == active_quote {
-                quote = None;
-            }
-            continue;
-        }
-        if matches!(ch, '"' | '\'') {
-            quote = Some(ch);
-            current.push(ch);
-            continue;
-        }
-        if matches!(ch, ';' | '|' | '&') {
-            let segment = current.trim();
-            if !segment.is_empty() {
-                segments.push(segment.to_string());
-            }
-            current.clear();
-            continue;
-        }
-        current.push(ch);
-    }
-    let segment = current.trim();
-    if !segment.is_empty() {
-        segments.push(segment.to_string());
-    }
-    segments
-}
-
-fn shell_tokens(command: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    let mut escaped = false;
-    for ch in command.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if let Some(active_quote) = quote {
-            if ch == active_quote {
-                quote = None;
-            } else {
-                current.push(ch);
-            }
-            continue;
-        }
-        if matches!(ch, '"' | '\'') {
-            quote = Some(ch);
-            continue;
-        }
-        if ch.is_whitespace() {
-            if !current.is_empty() {
-                tokens.push(std::mem::take(&mut current));
-            }
-            continue;
-        }
-        current.push(ch);
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
-}
-
-fn is_command_prefix_token(token: &str) -> bool {
-    matches!(
-        token,
-        "sudo" | "command" | "exec" | "noglob" | "time" | "env"
-    )
-}
-
-fn is_shell_program(token: &str) -> bool {
-    matches!(
-        command_program_name(token).as_deref(),
-        Some("sh" | "bash" | "zsh" | "fish")
-    )
-}
-
-fn is_env_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
-        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-}
-
-fn command_program_name(token: &str) -> Option<String> {
-    let program = token.rsplit('/').next().unwrap_or(token).trim();
-    let program = program.strip_suffix(".exe").unwrap_or(program);
-    (!program.is_empty() && !program.starts_with('-')).then(|| one_line(program))
-}
-
-fn command_action_hint(program: &str, args: &[String]) -> Option<String> {
-    let arg = args
-        .iter()
-        .find(|arg| !arg.starts_with('-') && !is_env_assignment(arg))?
-        .as_str();
-    if arg.contains('/') || arg.contains('\\') || arg.contains('.') {
-        return None;
-    }
-    let allow = match program {
-        "cargo" => matches!(
-            arg,
-            "test" | "fmt" | "check" | "clippy" | "build" | "run" | "doc"
-        ),
-        "git" => matches!(
-            arg,
-            "status"
-                | "diff"
-                | "log"
-                | "show"
-                | "add"
-                | "commit"
-                | "push"
-                | "pull"
-                | "fetch"
-                | "checkout"
-                | "merge"
-                | "rebase"
-                | "branch"
-        ),
-        "npm" | "pnpm" | "yarn" | "bun" => matches!(
-            arg,
-            "run" | "test" | "build" | "dev" | "start" | "install" | "lint"
-        ),
-        "deno" => matches!(arg, "task" | "test" | "run" | "fmt" | "lint" | "check"),
-        _ => false,
-    };
-    allow.then(|| arg.to_string())
+fn command_detail_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn tool_activity_search_detail(update: &Value) -> Option<String> {
@@ -1064,7 +942,7 @@ fn chat_message_line_at(
 ) -> Line<'static> {
     let marker = match role {
         ChatRole::Notice => "· ",
-        ChatRole::Request => "› ",
+        ChatRole::Request => "  ",
         ChatRole::Response => "• ",
         ChatRole::Work => "• ",
     };
@@ -1128,9 +1006,8 @@ fn is_command_work_action(action: &str) -> bool {
 
 fn request_line(marker: &str, text: &str, content_width: usize) -> Line<'static> {
     let body_style = Style::default().bg(REQUEST_BG);
-    let marker_style = body_style.fg(ACTION).add_modifier(Modifier::BOLD);
     let mut spans = vec![
-        Span::styled(marker.to_string(), marker_style),
+        Span::styled(marker.to_string(), body_style),
         Span::styled(text.to_string(), body_style),
     ];
     if content_width != usize::MAX {
@@ -1381,7 +1258,7 @@ mod tests {
         let notice =
             row_text(chat_message_line(&ChatMessage::new(ChatRole::Notice, "ready")).spans);
 
-        assert_eq!(request, "› hello");
+        assert_eq!(request, "  hello");
         assert_eq!(response, "• hi");
         assert_eq!(notice, "· ready");
         assert!(!request.contains("you"));
@@ -1438,7 +1315,7 @@ mod tests {
 
         assert_eq!(
             lines,
-            vec![("› abc".to_string(), 5), ("  def".to_string(), 5)]
+            vec![("  abc".to_string(), 5), ("  def".to_string(), 5)]
         );
     }
 
@@ -1585,7 +1462,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_activity_summarizes_command_without_private_args() {
+    fn tool_activity_shows_full_command() {
         let update = serde_json::json!({
             "sessionUpdate": "tool_call_update",
             "toolCallId": "call-cmd",
@@ -1597,12 +1474,11 @@ mod tests {
         });
 
         let text = tool_activity_text(&update);
-        assert_eq!(text, "ran cat");
-        assert!(!text.contains("private"));
+        assert_eq!(text, "ran cat /very/private/file");
     }
 
     #[test]
-    fn tool_activity_summarizes_common_command_subcommand() {
+    fn tool_activity_keeps_compound_command() {
         let update = serde_json::json!({
             "sessionUpdate": "tool_call_update",
             "toolCallId": "call-cmd",
@@ -1613,7 +1489,10 @@ mod tests {
             }
         });
 
-        assert_eq!(tool_activity_text(&update), "ran cargo test");
+        assert_eq!(
+            tool_activity_text(&update),
+            "ran cd src && cargo test -p va-tui"
+        );
     }
 
     #[test]
@@ -1639,7 +1518,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_work_message_hides_command_body() {
+    fn tool_work_message_shows_command_body() {
         let update = serde_json::json!({
             "sessionUpdate": "tool_call_update",
             "toolCallId": "call-cmd",
@@ -1651,8 +1530,7 @@ mod tests {
         });
 
         let (_, text) = tool_work_message(&update).expect("work message");
-        assert_eq!(text, "Ran\ncat");
-        assert!(!text.contains("private"));
+        assert_eq!(text, "Ran\ncat /very/private/file");
     }
 
     #[test]
@@ -1668,8 +1546,7 @@ mod tests {
         });
 
         let text = tool_activity_text(&update);
-        assert_eq!(text, "running cat");
-        assert!(!text.contains("private"));
+        assert_eq!(text, "running cat /very/private/file");
     }
 
     #[test]

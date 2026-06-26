@@ -319,7 +319,7 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
         .collect::<Vec<_>>()
         .join("");
 
-    assert!(screen.contains("› hello"));
+    assert!(screen.contains("  hello"));
     assert!(screen.contains("• hi there"));
     assert_eq!(screen.matches("chat").count(), 0);
     assert!(screen.contains('─'));
@@ -1172,12 +1172,19 @@ async fn slash_resume_sends_direct_resume_with_context() {
             session_workspace: Some("/tmp/project".into()),
         }
     );
-    assert_eq!(app.selected_session.as_deref(), Some("session-123456789"));
+    assert_eq!(app.selected_session, None);
     assert!(!app.force_new_session);
+    assert!(!app.is_welcome());
     assert_eq!(
         app.last_action.as_deref(),
         Some("resuming session session-1234")
     );
+
+    app.apply_chat_event(ChatEvent::SessionReady {
+        session_id: "session-123456789".into(),
+    });
+
+    assert_eq!(app.selected_session.as_deref(), Some("session-123456789"));
 }
 
 #[tokio::test]
@@ -1301,7 +1308,7 @@ fn agent_popup_selection_sets_context_and_clears_stale_fields() {
     // Sessions: index 0 is the "new" entry; real sessions start at index 1.
     app.apply_agent_popup_selection(3, 1);
     assert_eq!(app.selected_agent.as_deref(), Some("claude"));
-    assert_eq!(app.selected_session.as_deref(), Some("session-1"));
+    assert_eq!(app.selected_session, None);
     assert_eq!(app.selected_profile, None);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/session"));
 
@@ -1370,6 +1377,7 @@ async fn direct_session_popup_selection_resumes_and_closes() {
     let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
     let mut app = TuiApp::new(&endpoint);
     app.agent_picker.sessions = vec![launch_session("session-123456", "codex", "/tmp/project")];
+    app.context_locked = true;
     app.selected_agent = Some("codex".into());
     app.popup = Some(Popup::agent_category(3));
     if let Some(popup) = &mut app.popup {
@@ -1380,7 +1388,7 @@ async fn direct_session_popup_selection_resumes_and_closes() {
     app.popup_enter(&transport, &tx).await;
 
     assert!(app.popup.is_none());
-    assert_eq!(app.selected_session.as_deref(), Some("session-123456"));
+    assert_eq!(app.selected_session, None);
     assert!(app.context_locked);
     let message = rx.try_recv().expect("resume message");
     assert!(matches!(
@@ -1433,6 +1441,55 @@ fn chat_event_appends_raw_agent_chunks() {
     assert_eq!(
         app.chat_messages.last().unwrap().text,
         "hello **raw**\nworld"
+    );
+}
+
+#[test]
+fn chat_event_extracts_text_from_content_arrays() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.apply_chat_event(ChatEvent::AcpNotification {
+        payload: serde_json::json!({
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": [
+                    { "type": "text", "text": "hello" },
+                    { "type": "text", "text": " world" }
+                ]
+            }
+        }),
+    });
+
+    assert_eq!(app.chat_messages.last().unwrap().role, ChatRole::Response);
+    assert_eq!(app.chat_messages.last().unwrap().text, "hello world");
+}
+
+#[test]
+fn user_message_chunks_are_recorded_in_input_history() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.apply_chat_event(ChatEvent::AcpNotification {
+        payload: serde_json::json!({
+            "update": {
+                "sessionUpdate": "user_message_chunk",
+                "content": { "text": "first instruction" }
+            }
+        }),
+    });
+    app.apply_chat_event(ChatEvent::AcpNotification {
+        payload: serde_json::json!({
+            "update": {
+                "sessionUpdate": "user_message_chunk",
+                "content": { "text": "second instruction" }
+            }
+        }),
+    });
+
+    assert_eq!(
+        app.input_history,
+        vec!["first instruction", "second instruction"]
     );
 }
 
@@ -1592,12 +1649,12 @@ fn exit_requires_second_ctrl_c_within_window() {
 fn input_history_recalls_previous_submissions_and_restores_draft() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.input_history = vec!["first message".into(), "/status".into()];
+    app.input_history = vec!["first message".into(), "second message".into()];
     app.set_chat_input_for_test("draft in progress");
 
     // Up walks backward from newest to oldest, parking the draft.
     app.history_prev();
-    assert_eq!(app.chat_input, "/status");
+    assert_eq!(app.chat_input, "second message");
     app.history_prev();
     assert_eq!(app.chat_input, "first message");
     app.history_prev();
@@ -1605,11 +1662,53 @@ fn input_history_recalls_previous_submissions_and_restores_draft() {
 
     // Down walks forward and finally restores the parked draft.
     app.history_next();
-    assert_eq!(app.chat_input, "/status");
+    assert_eq!(app.chat_input, "second message");
     app.history_next();
     assert_eq!(app.chat_input, "draft in progress");
     app.history_next();
     assert_eq!(app.chat_input, "draft in progress", "no-op past the draft");
+}
+
+#[test]
+fn chat_up_down_history_only_at_single_line_tail() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.input_history = vec!["first message".into(), "second message".into()];
+    app.set_chat_input_for_test("draft in progress");
+
+    app.chat_up();
+    assert_eq!(app.chat_input, "second message");
+    app.chat_down();
+    assert_eq!(app.chat_input, "draft in progress");
+
+    app.set_chat_input_for_test("alpha\nbeta");
+    app.chat_up();
+    assert_eq!(app.chat_cursor, "alph".len());
+    app.chat_down();
+    assert_eq!(app.chat_cursor, "alpha\nbeta".len());
+
+    app.set_chat_input_for_test("single line");
+    app.set_chat_cursor_for_test(3);
+    app.chat_up();
+    assert_eq!(app.chat_cursor, 3);
+}
+
+#[tokio::test]
+async fn slash_commands_are_not_recorded_in_input_history() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.set_chat_input_for_test("/clear");
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert!(app.input_history.is_empty());
+
+    app.set_chat_input_for_test("hello");
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(app.input_history, vec!["hello"]);
 }
 
 #[test]

@@ -81,16 +81,20 @@ pub async fn list_launch_sessions_handler(
         .map(common::workspace::normalize_workspace_cwd)
         .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
     let limit = query.limit.unwrap_or(25).clamp(1, 100);
-    let sessions = common::launch_sessions::list_for_agent_workspace_with_archived_async(
-        &agent_id,
-        &workspace,
-        limit,
-        query.include_archived.unwrap_or(false),
-    )
-    .await
-    .into_iter()
-    .map(|session| launch_session_info(&state, session))
-    .collect();
+    let sessions = state
+        .channel_hub
+        .workspace_thread_manager()
+        .list_resumable_agent_sessions(
+            &agent_id,
+            &workspace,
+            limit,
+            query.include_archived.unwrap_or(false),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .into_iter()
+        .map(|session| launch_session_info(&state, session))
+        .collect();
 
     Ok(Json(sessions))
 }
@@ -141,18 +145,18 @@ pub async fn list_launch_sessions_batch_handler(
     let limit = body.limit.unwrap_or(25).clamp(1, 100);
     let include_archived = body.include_archived.unwrap_or(false);
     let mut sessions = Vec::new();
+    let workspace_threads = state.channel_hub.workspace_thread_manager();
     for agent_id in &agent_ids {
-        sessions.extend(
-            common::launch_sessions::list_for_agent_workspaces_with_archived_async(
-                agent_id,
-                &workspaces,
-                limit,
-                include_archived,
-            )
-            .await
-            .into_iter()
-            .map(|session| launch_session_info(&state, session)),
-        );
+        for workspace in &workspaces {
+            sessions.extend(
+                workspace_threads
+                    .list_resumable_agent_sessions(agent_id, workspace, limit, include_archived)
+                    .await
+                    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+                    .into_iter()
+                    .map(|session| launch_session_info(&state, session)),
+            );
+        }
     }
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 

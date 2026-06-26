@@ -157,6 +157,9 @@ impl TuiApp {
     /// Drives the centered welcome/splash screen.
     pub(crate) fn is_welcome(&self) -> bool {
         self.view == AppView::Chat
+            && !self.context_locked
+            && self.selected_session.is_none()
+            && self.chat_state.session_id.is_none()
             && !self.chat_messages.iter().any(|message| {
                 matches!(
                     message.role,

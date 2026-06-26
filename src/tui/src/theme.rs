@@ -26,8 +26,8 @@ pub(crate) const NEUTRAL: Color = Color::Gray;
 /// brand color; index 254 is a near-white gray that reads as a subtle
 /// highlight on light terminals.
 pub(crate) const INPUT_BG: Color = Color::Indexed(254);
-/// User messages stay on the terminal's own background — no fixed RGB.
-pub(crate) const REQUEST_BG: Color = Color::Reset;
+/// User messages reuse the input surface without the prompt accent.
+pub(crate) const REQUEST_BG: Color = INPUT_BG;
 
 /// A thick brand-colored bar drawn down the left edge of the input — the
 /// accent that frames the prompt as a deliberate input zone.

@@ -32,8 +32,9 @@ const INPUT_HORIZONTAL_PADDING: u16 = 2;
 const MAX_INPUT_ROWS: u16 = 4;
 const CONTENT_INSET: u16 = 2;
 const INPUT_BORDER: u16 = 1;
-/// Rows in the VA mark; the header info is sized to align with it.
+/// One spacer row plus the compact three-row VA mark.
 const WORKING_HEADER_HEIGHT: u16 = 4;
+const WORKING_HEADER_TOP_PADDING: u16 = 1;
 
 #[cfg(test)]
 pub(crate) use chrome::view_hint;
@@ -75,13 +76,16 @@ fn render_working_chat(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 /// Brand mark on the left, a few lines of key info on the right — keeps the
 /// identity present without a full-height wordmark.
 fn render_working_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    let mark = mark_lines();
+    let mark_height = u16::try_from(mark.len()).unwrap_or(0);
+    let mark_y = area.y.saturating_add(WORKING_HEADER_TOP_PADDING);
     frame.render_widget(
-        Paragraph::new(mark_lines()),
+        Paragraph::new(mark),
         Rect {
             x: area.x,
-            y: area.y,
+            y: mark_y,
             width: MARK_WIDTH.min(area.width),
-            height: area.height,
+            height: mark_height,
         },
     );
 
@@ -91,7 +95,7 @@ fn render_working_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     }
 
-    // Header info is aligned against the four-row mark; agent/profile lives in
+    // Header info is aligned against the three-row mark; agent/profile lives in
     // the footer so the working area keeps the stable context anchored low.
     let mut info = vec![Line::from(vec![
         Span::styled("VibeAround", accent_style()),
@@ -99,9 +103,9 @@ fn render_working_header(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     ])];
     info.extend(context_grouped_lines(app));
 
-    // Center the info lines against the mark.
+    // Center the info lines against the mark, below the spacer row.
     let info_height = u16::try_from(info.len()).unwrap_or(0);
-    let info_y = area.y + area.height.saturating_sub(info_height) / 2;
+    let info_y = mark_y + mark_height.saturating_sub(info_height) / 2;
     frame.render_widget(
         Paragraph::new(info),
         Rect {
@@ -288,7 +292,6 @@ fn render_input_bar(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
 }
 
 const SLASH_POPUP_MAX_ROWS: usize = 8;
-const COMMAND_POPUP_MAX_ROWS: usize = 10;
 
 /// Draw a floating menu that rises from just above `input_area` and covers the
 /// conversation. A one-row gap and a rounded brand border set it apart from the
@@ -343,12 +346,11 @@ fn slash_popup_row(command: &SlashCommand, selected: bool) -> Line<'static> {
 }
 
 /// Content lines for the `/status` and `/settings` drill-down popup.
-fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
+fn command_popup_lines(app: &TuiApp, max_rows: usize) -> Vec<Line<'static>> {
     let Some(popup) = &app.popup else {
         return Vec::new();
     };
     use crate::popup::PopupKind;
-    let agent_read_only = popup.kind == PopupKind::Agent && !app.agent_config_editable();
     let mut lines = vec![popup_breadcrumb(popup)];
     if let Some(hint) = popup_hint_line(app, popup) {
         lines.push(hint);
@@ -357,6 +359,7 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
         PopupLevel::Categories => {
             for (index, label) in popup.kind.categories().iter().enumerate() {
                 let is_done = popup.kind.is_done_category(index);
+                let read_only = agent_category_read_only(app, popup, index);
                 // The agent menu doubles as a config summary (each category
                 // shows its selection); status shows a count plus health.
                 let trailing = if is_done {
@@ -365,7 +368,7 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                     match popup.kind {
                         PopupKind::Agent => vec![Span::styled(
                             app.agent_category_value(index),
-                            if agent_read_only {
+                            if read_only {
                                 readonly_option_style()
                             } else {
                                 accent_style()
@@ -379,13 +382,14 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                     trailing,
                     index == popup.cursor,
                     is_done,
-                    agent_read_only,
+                    read_only,
                 ));
             }
         }
         PopupLevel::Items { category } => {
             let mut rows = popup_item_rows(app, popup, category);
-            if agent_read_only {
+            let read_only = agent_category_read_only(app, popup, category);
+            if read_only {
                 rows = rows
                     .into_iter()
                     .map(readonly_option_row)
@@ -394,7 +398,7 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
             if rows.is_empty() {
                 lines.push(Line::from(Span::styled("  no entries", muted_style())));
             } else {
-                for index in popup_window(rows.len(), popup.cursor, COMMAND_POPUP_MAX_ROWS) {
+                for index in popup_window(rows.len(), popup.cursor, max_rows) {
                     // The `●` marker means "currently in context": the selected
                     // item in the agent menu, or the running host of the current
                     // chat in the status agents list. Other lists stay flush.
@@ -410,7 +414,7 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
                         rows[index].clone(),
                         index == popup.cursor,
                         marker,
-                        agent_read_only,
+                        read_only,
                     ));
                 }
             }
@@ -422,12 +426,19 @@ fn command_popup_lines(app: &TuiApp) -> Vec<Line<'static>> {
     lines
 }
 
+fn agent_category_read_only(app: &TuiApp, popup: &Popup, category: usize) -> bool {
+    use crate::popup::PopupKind;
+    popup.kind == PopupKind::Agent && category != 3 && !app.agent_config_editable()
+}
+
 fn popup_hint_line(app: &TuiApp, popup: &Popup) -> Option<Line<'static>> {
     use crate::popup::PopupKind;
     if popup.kind != PopupKind::Agent {
         return None;
     }
-    let text = if app.agent_config_editable() {
+    let text = if popup.direct_category == Some(3) {
+        "sessions can be loaded anytime · select resumes · Esc returns"
+    } else if app.agent_config_editable() {
         if popup.direct_category.is_some() {
             "editable before first message · select applies · Esc returns"
         } else {
@@ -436,7 +447,7 @@ fn popup_hint_line(app: &TuiApp, popup: &Popup) -> Option<Line<'static>> {
     } else if popup.direct_category.is_some() {
         "read-only after chat starts or session is active · Esc returns"
     } else {
-        "read-only after chat starts or session is active · done returns"
+        "read-only after chat starts; sessions stay loadable · done returns"
     };
     Some(Line::from(Span::styled(text, muted_style())))
 }
@@ -492,7 +503,7 @@ fn popup_category_row(
         Span::raw("  "),
     ];
     spans.extend(trailing);
-    Line::from(spans)
+    popup_selection_line(spans, selected)
 }
 
 /// Count + a colored health note for a status category, so the categories
@@ -615,7 +626,25 @@ fn popup_item_line(
         ));
     }
     spans.extend(row);
-    Line::from(spans)
+    popup_selection_line(spans, selected)
+}
+
+fn popup_selection_line(spans: Vec<Span<'static>>, selected: bool) -> Line<'static> {
+    if !selected {
+        return Line::from(spans);
+    }
+    let style = Style::default().bg(INPUT_BG);
+    Line::from(
+        spans
+            .into_iter()
+            .map(|span| {
+                let mut span = span;
+                span.style = span.style.bg(INPUT_BG);
+                span
+            })
+            .collect::<Vec<_>>(),
+    )
+    .style(style)
 }
 
 fn readonly_option_row(row: Vec<Span<'static>>) -> Vec<Span<'static>> {
@@ -738,10 +767,12 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
     // stays up top, the menu covers the bottom, and the input (and cursor) are
     // hidden so it reads as a modal rather than a still-editable prompt.
     if app.popup.is_some() {
-        let lines = command_popup_lines(app);
+        let base_panel_height = (area.height / 2).max(6).min(area.height.saturating_sub(1));
+        let max_rows = command_popup_max_rows(app, base_panel_height);
+        let lines = command_popup_lines(app, max_rows);
         let content = u16::try_from(lines.len()).unwrap_or(0).saturating_add(2);
         let panel_height = content
-            .max(area.height / 2)
+            .max(base_panel_height)
             .min(area.height.saturating_sub(1));
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -765,6 +796,18 @@ fn render_chat_view(frame: &mut Frame<'_>, app: &TuiApp, area: ratatui::layout::
     render_messages(frame, app, chunks[0]);
     render_input_bar(frame, app, chunks[1]);
     render_slash_popup(frame, app, chunks[1]);
+}
+
+fn command_popup_max_rows(app: &TuiApp, panel_height: u16) -> usize {
+    use crate::popup::PopupKind;
+    let static_lines = app
+        .popup
+        .as_ref()
+        .map(|popup| 1 + usize::from(popup.kind == PopupKind::Agent))
+        .unwrap_or(1);
+    usize::from(panel_height.saturating_sub(2))
+        .saturating_sub(static_lines)
+        .max(1)
 }
 
 fn render_messages(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {

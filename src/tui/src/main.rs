@@ -3,10 +3,11 @@ use std::time::Duration;
 
 use clap::Parser;
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, MouseEventKind,
 };
 use crossterm::execute;
+use crossterm::style::Print;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -34,6 +35,9 @@ use config::{resolve_endpoint, Args, RuntimeEnv};
 use data::{fetch_snapshot, DashboardSnapshot};
 use runtime_socket::{run_runtime_sockets, RuntimeSocketEvent};
 use transport::{HttpTransport, TuiError};
+
+const ENABLE_SCROLL_MOUSE_CAPTURE: &str = "\x1b[?1000h\x1b[?1006h";
+const DISABLE_SCROLL_MOUSE_CAPTURE: &str = "\x1b[?1006l\x1b[?1000l";
 
 #[tokio::main]
 async fn main() {
@@ -92,13 +96,13 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                 Event::Paste(text) if app.view == AppView::Chat => {
                     app.insert_chat_text(&text);
                 }
-                Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollUp if app.popup_is_open() => app.popup_move_up(),
-                    MouseEventKind::ScrollDown if app.popup_is_open() => app.popup_move_down(),
-                    MouseEventKind::ScrollUp => app.scroll_chat_up(3),
-                    MouseEventKind::ScrollDown => app.scroll_chat_down(3),
-                    _ => {}
-                },
+                Event::Mouse(mouse) if app.view == AppView::Chat && !app.popup_is_open() => {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => app.scroll_chat_up(4),
+                        MouseEventKind::ScrollDown => app.scroll_chat_down(4),
+                        _ => {}
+                    }
+                }
                 // Some IMEs synthesize key release/repeat events for the commit
                 // Enter; only act on presses so a single keystroke sends once.
                 Event::Key(key) if key.kind != KeyEventKind::Press => {}
@@ -158,8 +162,8 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                         KeyCode::Down if app.view == AppView::Chat && app.slash_popup_open() => {
                             app.slash_select_next();
                         }
-                        KeyCode::Up if app.view == AppView::Chat => app.history_prev(),
-                        KeyCode::Down if app.view == AppView::Chat => app.history_next(),
+                        KeyCode::Up if app.view == AppView::Chat => app.chat_up(),
+                        KeyCode::Down if app.view == AppView::Chat => app.chat_down(),
                         KeyCode::PageUp if app.view == AppView::Chat => app.scroll_chat_up(10),
                         KeyCode::PageDown if app.view == AppView::Chat => app.scroll_chat_down(10),
                         KeyCode::Enter if app.view == AppView::Chat && is_multiline_enter(&key) => {
@@ -243,7 +247,10 @@ fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalG
         stdout,
         EnterAlternateScreen,
         EnableBracketedPaste,
-        EnableMouseCapture
+        // Use normal mouse tracking plus SGR encoding so wheel events reach the
+        // app without translating into Up/Down history navigation. Avoid button
+        // motion modes (1002/1003), which make text selection much more hostile.
+        Print(ENABLE_SCROLL_MOUSE_CAPTURE)
     ) {
         let _ = disable_raw_mode();
         return Err(TuiError::Io {
@@ -257,7 +264,7 @@ fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalG
             let _ = disable_raw_mode();
             let _ = execute!(
                 io::stdout(),
-                DisableMouseCapture,
+                Print(DISABLE_SCROLL_MOUSE_CAPTURE),
                 DisableBracketedPaste,
                 LeaveAlternateScreen
             );
@@ -276,7 +283,7 @@ impl Drop for TerminalGuard {
         let _ = disable_raw_mode();
         let _ = execute!(
             io::stdout(),
-            DisableMouseCapture,
+            Print(DISABLE_SCROLL_MOUSE_CAPTURE),
             DisableBracketedPaste,
             LeaveAlternateScreen
         );

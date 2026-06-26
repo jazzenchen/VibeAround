@@ -693,6 +693,7 @@ async fn apply_web_session_resume_now(
     state
         .web_channel
         .set_route_agent(&route.chat_id, resume.agent.clone());
+    let requested_session_id = resume.session_id.clone();
     let runtime = match state
         .channel_hub
         .workspace_thread_manager()
@@ -712,6 +713,11 @@ async fn apply_web_session_resume_now(
             return;
         }
     };
+    let expected_session_id = runtime
+        .state()
+        .await
+        .session_id
+        .unwrap_or_else(|| requested_session_id.clone());
     let workspace_threads = state.channel_hub.workspace_thread_manager();
     if let Err(error) = common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
@@ -723,6 +729,19 @@ async fn apply_web_session_resume_now(
     .await
     {
         send_web_system_text(state, route, &format!("❌ {}", error)).await;
+        return;
+    }
+    let actual_session_id = runtime.state().await.session_id;
+    if actual_session_id.as_deref() != Some(expected_session_id.as_str()) {
+        let actual = actual_session_id.unwrap_or_else(|| "a new session".to_string());
+        send_web_system_text(
+            state,
+            route,
+            &format!(
+                "Could not resume session {requested_session_id}; agent started {actual} instead."
+            ),
+        )
+        .await;
     }
 }
 
@@ -768,6 +787,13 @@ async fn resolve_web_session_resume(
             return None;
         }
     };
+    let profile = profile.or_else(|| {
+        current_state.as_ref().and_then(|state| {
+            (state.host_binding.agent_id == canonical_agent)
+                .then(|| state.host_binding.profile_id.clone())
+                .flatten()
+        })
+    });
 
     if current_state.as_ref().is_some_and(|state| {
         let profile_matches = profile

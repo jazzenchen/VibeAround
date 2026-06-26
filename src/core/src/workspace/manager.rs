@@ -1,6 +1,6 @@
 //! Workspace/thread orchestration.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -291,6 +291,15 @@ impl WorkspaceThreadManager {
         let workspace = self.ensure_workspace_for_cwd(cwd).await?;
         let host_binding = HostBinding::new(agent_id.clone(), profile_id.clone());
         let projection = self.thread_projection().await?;
+        let session_id = self
+            .resolve_external_session_id(
+                &projection,
+                &workspace.id,
+                &workspace.cwd,
+                &host_binding,
+                &session_id,
+            )
+            .await?;
         let session_seen_in_thread_store =
             projection.for_workspace(&workspace.id, true).any(|thread| {
                 thread
@@ -316,7 +325,7 @@ impl WorkspaceThreadManager {
             thread
         } else {
             let session_exists = session_seen_in_thread_store
-                || crate::launch_sessions::list_for_agent_workspace_with_archived_async(
+                || crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
                     &agent_id,
                     &workspace.cwd,
                     usize::MAX,
@@ -393,6 +402,90 @@ impl WorkspaceThreadManager {
             .active()
             .cloned()
             .collect())
+    }
+
+    pub async fn list_resumable_agent_sessions(
+        &self,
+        agent_id: &str,
+        workspace: &Path,
+        limit: usize,
+        include_archived: bool,
+    ) -> anyhow::Result<Vec<crate::launch_sessions::LaunchSession>> {
+        let workspace = normalize_workspace_cwd(workspace);
+        let excluded = self
+            .subagent_session_ids_for_agent_workspace(agent_id, &workspace)
+            .await?;
+        let sessions = crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
+            agent_id,
+            &workspace,
+            usize::MAX,
+            include_archived,
+        )
+        .await
+        .into_iter()
+        .filter(|session| !excluded.contains(&session.session_id))
+        .take(limit)
+        .collect();
+        Ok(sessions)
+    }
+
+    pub async fn subagent_session_ids_for_agent_workspace(
+        &self,
+        agent_id: &str,
+        cwd: &Path,
+    ) -> anyhow::Result<HashSet<String>> {
+        let cwd = normalize_workspace_cwd(cwd);
+        let workspace_projection = self.workspace_projection().await?;
+        let Some(workspace) = workspace_by_cwd(&workspace_projection, &cwd) else {
+            return Ok(HashSet::new());
+        };
+        let thread_projection = self.thread_projection().await?;
+        Ok(thread_projection
+            .for_workspace(&workspace.id, true)
+            .flat_map(|thread| thread.agents.values())
+            .filter(|agent| agent.agent_id == agent_id)
+            .filter_map(|agent| agent.session_id.clone())
+            .collect())
+    }
+
+    async fn resolve_external_session_id(
+        &self,
+        projection: &ThreadProjection,
+        workspace_id: &WorkspaceId,
+        workspace: &Path,
+        host_binding: &HostBinding,
+        requested_session_id: &str,
+    ) -> anyhow::Result<String> {
+        let requested_session_id = requested_session_id.trim();
+        if requested_session_id.is_empty() {
+            return Ok(String::new());
+        }
+
+        if let Some(session_id) = resolve_thread_session_alias(
+            projection,
+            workspace_id,
+            host_binding,
+            requested_session_id,
+        )? {
+            return Ok(session_id);
+        }
+
+        let matches = crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
+            &host_binding.agent_id,
+            workspace,
+            usize::MAX,
+            false,
+        )
+        .await
+        .into_iter()
+        .filter(|session| session_id_matches(&session.session_id, requested_session_id))
+        .map(|session| session.session_id)
+        .collect::<Vec<_>>();
+
+        match unique_session_match(matches, requested_session_id)? {
+            Some(session_id) => Ok(session_id),
+            None => Ok(requested_session_id.to_string()),
+        }
     }
 
     pub async fn switch_workspace_id(
@@ -995,6 +1088,116 @@ fn workspace_by_cwd<'a>(
     })
 }
 
+fn resolve_thread_session_alias(
+    projection: &ThreadProjection,
+    workspace_id: &WorkspaceId,
+    host_binding: &HostBinding,
+    requested_session_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let exact_binding_matches = projection
+        .for_workspace(workspace_id, true)
+        .filter_map(|thread| thread.agent_sessions.get(host_binding))
+        .flatten()
+        .filter(|session| session_id_matches(&session.session_id, requested_session_id))
+        .map(|session| session.session_id.clone())
+        .collect::<Vec<_>>();
+    if let Some(session_id) = unique_session_match(exact_binding_matches, requested_session_id)? {
+        return Ok(Some(session_id));
+    }
+
+    let agent_matches = projection
+        .for_workspace(workspace_id, true)
+        .flat_map(|thread| thread.agent_sessions.values().flatten())
+        .filter(|session| session.agent_id == host_binding.agent_id)
+        .filter(|session| session_id_matches(&session.session_id, requested_session_id))
+        .map(|session| session.session_id.clone())
+        .collect::<Vec<_>>();
+    if let Some(session_id) = unique_session_match(agent_matches, requested_session_id)? {
+        return Ok(Some(session_id));
+    }
+
+    let thread_matches = projection
+        .for_workspace(workspace_id, true)
+        .filter(|thread| thread_id_matches(&thread.id, requested_session_id))
+        .collect::<Vec<_>>();
+    let Some(thread) = unique_thread_match(thread_matches, requested_session_id)? else {
+        return Ok(None);
+    };
+    latest_host_session_for_thread(thread, host_binding)
+        .map(Some)
+        .ok_or_else(|| {
+            anyhow!(
+                "thread '{}' has no host session for agent '{}'",
+                requested_session_id,
+                host_binding.agent_id
+            )
+        })
+}
+
+fn latest_host_session_for_thread(
+    thread: &WorkspaceThread,
+    host_binding: &HostBinding,
+) -> Option<String> {
+    thread
+        .agent_sessions
+        .get(host_binding)
+        .and_then(|sessions| sessions.last())
+        .map(|session| session.session_id.clone())
+        .or_else(|| {
+            thread
+                .agent_sessions
+                .values()
+                .flatten()
+                .filter(|session| session.agent_id == host_binding.agent_id)
+                .max_by(|a, b| a.observed_at.cmp(&b.observed_at))
+                .map(|session| session.session_id.clone())
+        })
+}
+
+fn unique_session_match(
+    matches: Vec<String>,
+    requested_session_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let mut unique = Vec::new();
+    for session_id in matches {
+        if !unique.contains(&session_id) {
+            unique.push(session_id);
+        }
+    }
+    match unique.as_slice() {
+        [] => Ok(None),
+        [session_id] => Ok(Some(session_id.clone())),
+        _ => Err(anyhow!(
+            "session '{}' is ambiguous; use the full session id",
+            requested_session_id
+        )),
+    }
+}
+
+fn unique_thread_match<'a>(
+    matches: Vec<&'a WorkspaceThread>,
+    requested_session_id: &str,
+) -> anyhow::Result<Option<&'a WorkspaceThread>> {
+    match matches.as_slice() {
+        [] => Ok(None),
+        [thread] => Ok(Some(*thread)),
+        _ => Err(anyhow!(
+            "thread '{}' is ambiguous; use the full thread id",
+            requested_session_id
+        )),
+    }
+}
+
+fn session_id_matches(session_id: &str, requested_session_id: &str) -> bool {
+    session_id == requested_session_id
+        || crate::launch_sessions::short_id(session_id) == requested_session_id
+}
+
+fn thread_id_matches(thread_id: &WorkspaceThreadId, requested_session_id: &str) -> bool {
+    thread_id.as_str() == requested_session_id
+        || thread_id.as_str().chars().take(8).collect::<String>() == requested_session_id
+}
+
 fn runtime_has_started_host(state: &ThreadRuntimeState) -> bool {
     state.initialize.is_some() || state.busy || state.failed.is_some()
 }
@@ -1015,6 +1218,10 @@ fn workspace_name_from_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
+
+    use crate::workspace::threads::{
+        MultiAgentTurnId, MultiAgentTurnMode, ThreadAgentId, ThreadAgentStatus,
+    };
 
     use super::*;
 
@@ -1436,6 +1643,101 @@ mod tests {
             .unwrap();
         routes.sort_by_key(|route| route.as_key());
         assert_eq!(routes, vec![im_route, web_route]);
+    }
+
+    #[tokio::test]
+    async fn attach_external_session_resolves_workspace_thread_id_to_host_session() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let route = RouteKey::new("web", "chat-a");
+        let thread_id = seed_session_thread(
+            &manager,
+            root.clone(),
+            "codex",
+            Some("direct"),
+            "native-session",
+            false,
+        )
+        .await;
+
+        let runtime = manager
+            .attach_external_session(
+                &route,
+                "codex".to_string(),
+                Some("direct".to_string()),
+                thread_id.to_string(),
+                root,
+                ExternalSessionAttachMode::ReuseOpenThread,
+            )
+            .await
+            .unwrap();
+
+        let state = runtime.state().await;
+        assert_eq!(state.thread_id, thread_id);
+        assert_eq!(state.session_id.as_deref(), Some("native-session"));
+    }
+
+    #[tokio::test]
+    async fn subagent_session_ids_for_agent_workspace_reads_thread_agents() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let workspace = manager
+            .ensure_workspace_for_cwd(root.clone())
+            .await
+            .unwrap();
+        let host_binding = HostBinding::new("codex", Some("direct".to_string()));
+        let thread = manager.new_thread_record_with_host(workspace.id.clone(), host_binding);
+        manager.ensure_thread_persisted(&thread).await.unwrap();
+
+        let turn_id = MultiAgentTurnId::from("mat_a");
+        let agent_id = ThreadAgentId::from("agent_a");
+        let turn = MultiAgentTurn::new(
+            turn_id.clone(),
+            MultiAgentTurnMode::Parallel,
+            vec![agent_id.clone()],
+        );
+        let agent = ThreadAgent::ready(
+            agent_id.clone(),
+            turn_id,
+            "Builder",
+            "codex",
+            Some("direct".to_string()),
+            "va/subagents/mat_a/builder",
+            root.join("builder").to_string_lossy().to_string(),
+            Some("build".to_string()),
+        );
+        manager
+            .thread_store
+            .append(&ThreadEvent::multi_agent_turn_initialized(
+                thread.id.clone(),
+                turn,
+                vec![agent],
+            ))
+            .await
+            .unwrap();
+        manager
+            .thread_store
+            .append(&ThreadEvent::thread_agent_status_changed_with_session(
+                thread.id,
+                agent_id,
+                ThreadAgentStatus::Running,
+                Some("subagent-native-session".to_string()),
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let session_ids = manager
+            .subagent_session_ids_for_agent_workspace("codex", &root)
+            .await
+            .unwrap();
+
+        assert!(session_ids.contains("subagent-native-session"));
     }
 
     #[tokio::test]
