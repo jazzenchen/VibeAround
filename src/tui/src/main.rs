@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use clap::Parser;
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -92,6 +92,13 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
                 Event::Paste(text) if app.view == AppView::Chat => {
                     app.insert_chat_text(&text);
                 }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp if app.popup_is_open() => app.popup_move_up(),
+                    MouseEventKind::ScrollDown if app.popup_is_open() => app.popup_move_down(),
+                    MouseEventKind::ScrollUp => app.scroll_chat_up(3),
+                    MouseEventKind::ScrollDown => app.scroll_chat_down(3),
+                    _ => {}
+                },
                 // Some IMEs synthesize key release/repeat events for the commit
                 // Enter; only act on presses so a single keystroke sends once.
                 Event::Key(key) if key.kind != KeyEventKind::Press => {}
@@ -232,7 +239,12 @@ fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalG
         source,
     })?;
     let mut stdout = io::stdout();
-    if let Err(source) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste) {
+    if let Err(source) = execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture
+    ) {
         let _ = disable_raw_mode();
         return Err(TuiError::Io {
             action: "entering alternate screen",
@@ -243,7 +255,12 @@ fn enter_terminal() -> Result<(Terminal<CrosstermBackend<io::Stdout>>, TerminalG
         Ok(terminal) => Ok((terminal, TerminalGuard)),
         Err(source) => {
             let _ = disable_raw_mode();
-            let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+            let _ = execute!(
+                io::stdout(),
+                DisableMouseCapture,
+                DisableBracketedPaste,
+                LeaveAlternateScreen
+            );
             Err(TuiError::Io {
                 action: "creating terminal",
                 source,
@@ -257,7 +274,12 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            LeaveAlternateScreen
+        );
     }
 }
 
