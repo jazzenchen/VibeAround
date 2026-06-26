@@ -2,7 +2,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 
-use crate::theme::{muted_style, ACTION, REQUEST_BG};
+use crate::theme::{accent_style, muted_style, ACTION, REQUEST_BG};
 
 const CHAT_MARKER_WIDTH: usize = 2;
 
@@ -17,6 +17,25 @@ struct InputLineSegment {
 pub(crate) struct ChatMessage {
     pub(crate) role: ChatRole,
     pub(crate) text: String,
+    pub(crate) work_id: Option<String>,
+}
+
+impl ChatMessage {
+    pub(crate) fn new(role: ChatRole, text: impl Into<String>) -> Self {
+        Self {
+            role,
+            text: text.into(),
+            work_id: None,
+        }
+    }
+
+    pub(crate) fn work(work_id: Option<String>, text: impl Into<String>) -> Self {
+        Self {
+            role: ChatRole::Work,
+            text: text.into(),
+            work_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +43,7 @@ pub(crate) enum ChatRole {
     Notice,
     Request,
     Response,
+    Work,
 }
 
 /// A slash command surfaced in the input autocomplete popup.
@@ -303,6 +323,83 @@ pub(crate) fn tool_activity_text(update: &Value) -> String {
     one_line(&text)
 }
 
+pub(crate) fn tool_work_message(update: &Value) -> Option<(Option<String>, String)> {
+    let label = tool_activity_label(update).unwrap_or_else(|| "tool".into());
+    let kind = tool_activity_kind(update, &label);
+    let status = tool_activity_status(update);
+    let detail = tool_activity_detail(update, kind);
+    let (heading, action) = match kind {
+        ToolActivityKind::Command => (
+            if status == ToolActivityStatus::Failed {
+                "Failed"
+            } else {
+                "Ran"
+            },
+            detail.unwrap_or_else(|| "command".into()),
+        ),
+        ToolActivityKind::Search => (
+            if status == ToolActivityStatus::Failed {
+                "Failed"
+            } else {
+                "Explored"
+            },
+            work_action("Search", detail),
+        ),
+        ToolActivityKind::List => (
+            if status == ToolActivityStatus::Failed {
+                "Failed"
+            } else {
+                "Explored"
+            },
+            work_action("List", detail),
+        ),
+        ToolActivityKind::File => (
+            if status == ToolActivityStatus::Failed {
+                "Failed"
+            } else {
+                "Explored"
+            },
+            work_action("Read", detail),
+        ),
+        ToolActivityKind::Edit => (
+            if status == ToolActivityStatus::Failed {
+                "Failed"
+            } else {
+                "Edited"
+            },
+            work_action("Edit", detail),
+        ),
+        ToolActivityKind::Tool => {
+            let label = one_line(&label);
+            if is_generic_tool_label(&label) {
+                return None;
+            }
+            (
+                if status == ToolActivityStatus::Failed {
+                    "Failed"
+                } else {
+                    "Used"
+                },
+                label,
+            )
+        }
+    };
+    let mut text = format!("{heading}\n{action}");
+    if let Some(output) = tool_activity_output(update) {
+        text.push('\n');
+        text.push_str("Output ");
+        text.push_str(&output);
+    }
+    Some((tool_activity_id(update), text))
+}
+
+fn work_action(verb: &str, detail: Option<String>) -> String {
+    match detail {
+        Some(detail) => format!("{verb} {detail}"),
+        None => verb.to_string(),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ToolActivityKind {
     Command,
@@ -554,6 +651,31 @@ fn tool_activity_input_text(update: &Value) -> Option<String> {
     None
 }
 
+fn tool_activity_output(update: &Value) -> Option<String> {
+    for key in ["output", "rawOutput", "raw_output", "result"] {
+        if let Some(text) = update.get(key).and_then(short_output_text) {
+            return Some(text);
+        }
+        if let Some(text) = update
+            .get("toolCall")
+            .and_then(|tool_call| tool_call.get(key))
+            .and_then(short_output_text)
+        {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn short_output_text(value: &Value) -> Option<String> {
+    let text = value.as_str()?;
+    let text = one_line(text);
+    if text.is_empty() || text.chars().count() > 100 {
+        return None;
+    }
+    Some(text)
+}
+
 fn tool_activity_location(update: &Value) -> Option<String> {
     location_from_value(update).or_else(|| update.get("toolCall").and_then(location_from_value))
 }
@@ -585,6 +707,12 @@ fn location_from_value(value: &Value) -> Option<String> {
                 Some(format!("{path}{line}"))
             })
         })
+}
+
+fn tool_activity_id(update: &Value) -> Option<String> {
+    value_string_field(update, "toolCallId")
+        .or_else(|| value_string_field(update, "tool_call_id"))
+        .or_else(|| value_string_field(update, "id"))
 }
 
 pub(crate) fn one_line(value: &str) -> String {
@@ -704,6 +832,7 @@ fn chat_message_line_at(
         ChatRole::Notice => "· ",
         ChatRole::Request => "› ",
         ChatRole::Response => "• ",
+        ChatRole::Work => "• ",
     };
     let marker = if first_line { marker } else { "  " };
     match role {
@@ -716,7 +845,29 @@ fn chat_message_line_at(
             Span::styled(marker, Style::default()),
             Span::raw(text.to_string()),
         ]),
+        ChatRole::Work => work_line(marker, text, first_line),
     }
+}
+
+fn work_line(marker: &str, text: &str, first_line: bool) -> Line<'static> {
+    if first_line {
+        return Line::from(vec![
+            Span::styled(marker.to_string(), Style::default().fg(ACTION)),
+            Span::styled(
+                text.to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]);
+    }
+    let (verb, rest) = text.split_once(' ').unwrap_or((text, ""));
+    let mut spans = vec![
+        Span::styled("  └ ", muted_style()),
+        Span::styled(verb.to_string(), accent_style()),
+    ];
+    if !rest.is_empty() {
+        spans.push(Span::raw(format!(" {rest}")));
+    }
+    Line::from(spans)
 }
 
 fn request_line(marker: &str, text: &str, content_width: usize) -> Line<'static> {
@@ -967,27 +1118,12 @@ mod tests {
 
     #[test]
     fn chat_items_use_terminal_markers_without_role_labels() {
-        let request = row_text(
-            chat_message_line(&ChatMessage {
-                role: ChatRole::Request,
-                text: "hello".into(),
-            })
-            .spans,
-        );
-        let response = row_text(
-            chat_message_line(&ChatMessage {
-                role: ChatRole::Response,
-                text: "hi".into(),
-            })
-            .spans,
-        );
-        let notice = row_text(
-            chat_message_line(&ChatMessage {
-                role: ChatRole::Notice,
-                text: "ready".into(),
-            })
-            .spans,
-        );
+        let request =
+            row_text(chat_message_line(&ChatMessage::new(ChatRole::Request, "hello")).spans);
+        let response =
+            row_text(chat_message_line(&ChatMessage::new(ChatRole::Response, "hi")).spans);
+        let notice =
+            row_text(chat_message_line(&ChatMessage::new(ChatRole::Notice, "ready")).spans);
 
         assert_eq!(request, "› hello");
         assert_eq!(response, "• hi");
@@ -997,11 +1133,24 @@ mod tests {
     }
 
     #[test]
+    fn work_items_render_codex_style_rows() {
+        let lines = chat_message_lines(&ChatMessage::work(
+            Some("call-read".into()),
+            "Explored\nRead session_index.jsonl",
+        ))
+        .into_iter()
+        .map(|line| row_text(line.spans))
+        .collect::<Vec<_>>();
+
+        assert_eq!(lines, vec!["• Explored", "  └ Read session_index.jsonl"]);
+    }
+
+    #[test]
     fn chat_multiline_messages_keep_raw_lines_with_continuation_indent() {
-        let lines = chat_message_lines(&ChatMessage {
-            role: ChatRole::Response,
-            text: "hello **raw**\n\nworld".into(),
-        })
+        let lines = chat_message_lines(&ChatMessage::new(
+            ChatRole::Response,
+            "hello **raw**\n\nworld",
+        ))
         .into_iter()
         .map(|line| row_text(line.spans))
         .collect::<Vec<_>>();
@@ -1011,20 +1160,14 @@ mod tests {
 
     #[test]
     fn chat_lines_soft_wrap_to_available_width() {
-        let lines = chat_message_wrapped_lines(
-            &ChatMessage {
-                role: ChatRole::Request,
-                text: "abcdef".into(),
-            },
-            5,
-        )
-        .into_iter()
-        .map(|line| {
-            let width = line.width();
-            let text = row_text(line.spans);
-            (text, width)
-        })
-        .collect::<Vec<_>>();
+        let lines = chat_message_wrapped_lines(&ChatMessage::new(ChatRole::Request, "abcdef"), 5)
+            .into_iter()
+            .map(|line| {
+                let width = line.width();
+                let text = row_text(line.spans);
+                (text, width)
+            })
+            .collect::<Vec<_>>();
 
         assert_eq!(
             lines,
@@ -1036,10 +1179,7 @@ mod tests {
     fn chat_lines_never_exceed_available_width() {
         let max_width = 8;
         let lines = chat_message_wrapped_lines(
-            &ChatMessage {
-                role: ChatRole::Response,
-                text: "abcdefghijkl".into(),
-            },
+            &ChatMessage::new(ChatRole::Response, "abcdefghijkl"),
             max_width,
         );
 
@@ -1191,6 +1331,45 @@ mod tests {
 
         let text = tool_activity_text(&update);
         assert_eq!(text, "ran command");
+        assert!(!text.contains("private"));
+    }
+
+    #[test]
+    fn tool_work_message_summarizes_without_raw_payloads() {
+        let update = serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-search",
+            "kind": "search",
+            "status": "completed",
+            "rawInput": {
+                "query": "rust ratatui render line"
+            },
+            "rawOutput": "3 matches"
+        });
+
+        assert_eq!(
+            tool_work_message(&update),
+            Some((
+                Some("call-search".into()),
+                "Explored\nSearch rust ratatui render line\nOutput 3 matches".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn tool_work_message_hides_command_body() {
+        let update = serde_json::json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-cmd",
+            "kind": "exec_command",
+            "status": "completed",
+            "rawInput": {
+                "command": "cat /very/private/file"
+            }
+        });
+
+        let (_, text) = tool_work_message(&update).expect("work message");
+        assert_eq!(text, "Ran\ncommand");
         assert!(!text.contains("private"));
     }
 

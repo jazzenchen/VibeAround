@@ -88,9 +88,7 @@ pub(crate) fn view_hint(app: &TuiApp) -> String {
     } else if app.chat_state.pending_permission_request_id.is_some() {
         "permission pending: /allow [number|option-id] or /deny".to_string()
     } else if app.chat_state.turn_active {
-        app.work_status
-            .clone()
-            .unwrap_or_else(|| "agent is working; /stop to interrupt".to_string())
+        "agent is working; /stop to interrupt".to_string()
     } else if app.force_new_session {
         "next message starts a new session".to_string()
     } else {

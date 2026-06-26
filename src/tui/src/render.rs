@@ -737,14 +737,22 @@ fn working_indicator_line(app: &TuiApp) -> Option<Line<'static>> {
     let elapsed = app.turn_started_at?.elapsed();
     const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let frame = (elapsed.as_millis() / 80) as usize % FRAMES.len();
-    let activity = app
+    let activity = if app
         .work_status
-        .clone()
-        .unwrap_or_else(|| "working".to_string());
+        .as_deref()
+        .is_some_and(|status| status.starts_with("Thought:"))
+    {
+        "Thinking"
+    } else {
+        "Working"
+    };
     Some(Line::from(vec![
         Span::styled(format!("{} ", FRAMES[frame]), accent_style()),
-        Span::styled(activity, muted_style()),
-        Span::styled(format!("  ·  {}s", elapsed.as_secs()), muted_style()),
+        Span::styled(activity, Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" ({}s · esc to interrupt)", elapsed.as_secs()),
+            muted_style(),
+        ),
     ]))
 }
 

@@ -8,7 +8,7 @@ use crate::app::{ErrorScope, TuiApp};
 use crate::chat::{
     content_text, one_line, permission_prompt_text, resolve_permission_option,
     resolve_session_mode_value, session_mode_options_text, slash_command_matches,
-    tool_activity_text, ChatMessage, ChatRole, SessionModeSource, SlashCommand,
+    tool_activity_text, tool_work_message, ChatMessage, ChatRole, SessionModeSource, SlashCommand,
 };
 use crate::chat_socket::ChatSocketEvent;
 use crate::transport::HttpTransport;
@@ -321,10 +321,8 @@ impl TuiApp {
     ) {
         let input_cursor = input.len();
         if self.send_chat_message(input.clone(), chat_tx) {
-            self.chat_messages.push(ChatMessage {
-                role: ChatRole::Request,
-                text: input,
-            });
+            self.chat_messages
+                .push(ChatMessage::new(ChatRole::Request, input));
             self.follow_chat_tail();
             self.begin_turn();
         } else {
@@ -456,18 +454,13 @@ impl TuiApp {
     }
 
     fn push_help_message(&mut self) {
-        self.chat_messages.push(ChatMessage {
-            role: ChatRole::Notice,
-            text: "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail".into(),
-        });
+        self.chat_messages.push(ChatMessage::new(ChatRole::Notice, "Commands\n/status runtime status\n/agent agent, profile, workspace, session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail"));
         self.follow_chat_tail();
     }
 
     fn push_notice(&mut self, text: impl Into<String>) {
-        self.chat_messages.push(ChatMessage {
-            role: ChatRole::Notice,
-            text: text.into(),
-        });
+        self.chat_messages
+            .push(ChatMessage::new(ChatRole::Notice, text));
     }
 
     fn push_local_notice(&mut self, text: impl Into<String>) {
@@ -714,6 +707,9 @@ impl TuiApp {
                 }
             }
             Some("tool_call") | Some("tool_call_update") => {
+                if let Some((work_id, text)) = tool_work_message(update) {
+                    self.upsert_work_message(work_id, text);
+                }
                 self.work_status = Some(tool_activity_text(update));
             }
             Some("plan") => {
@@ -733,20 +729,34 @@ impl TuiApp {
                 return;
             }
         }
-        self.chat_messages.push(ChatMessage {
-            role: ChatRole::Response,
-            text: text.to_string(),
-        });
+        self.chat_messages
+            .push(ChatMessage::new(ChatRole::Response, text));
     }
 
     fn push_response_text(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        self.chat_messages.push(ChatMessage {
-            role: ChatRole::Response,
-            text: text.to_string(),
-        });
+        self.chat_messages
+            .push(ChatMessage::new(ChatRole::Response, text));
+    }
+
+    fn upsert_work_message(&mut self, work_id: Option<String>, text: String) {
+        if let Some(work_id) = work_id {
+            if let Some(index) = self.chat_messages.iter().position(|message| {
+                message.role == ChatRole::Work
+                    && message.work_id.as_deref() == Some(work_id.as_str())
+            }) {
+                self.chat_messages[index].text = text;
+                self.follow_chat_tail();
+                return;
+            }
+            self.chat_messages
+                .push(ChatMessage::work(Some(work_id), text));
+        } else {
+            self.chat_messages.push(ChatMessage::work(None, text));
+        }
+        self.follow_chat_tail();
     }
 
     fn append_request_echo(&mut self, text: &str) {
@@ -760,10 +770,8 @@ impl TuiApp {
         {
             return;
         }
-        self.chat_messages.push(ChatMessage {
-            role: ChatRole::Request,
-            text: text.to_string(),
-        });
+        self.chat_messages
+            .push(ChatMessage::new(ChatRole::Request, text));
     }
 }
 

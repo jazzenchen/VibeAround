@@ -148,14 +148,16 @@ impl TuiApp {
         self.chat_scroll = 0;
     }
 
-    /// The chat has not started a real exchange yet (only system notices, no
-    /// request/response). Drives the centered welcome/splash screen.
+    /// The chat has not started a real exchange yet (only passive notices).
+    /// Drives the centered welcome/splash screen.
     pub(crate) fn is_welcome(&self) -> bool {
         self.view == AppView::Chat
-            && !self
-                .chat_messages
-                .iter()
-                .any(|message| matches!(message.role, ChatRole::Request | ChatRole::Response))
+            && !self.chat_messages.iter().any(|message| {
+                matches!(
+                    message.role,
+                    ChatRole::Request | ChatRole::Response | ChatRole::Work
+                )
+            })
     }
 
     pub(crate) fn effective_agent(&self) -> Option<&str> {

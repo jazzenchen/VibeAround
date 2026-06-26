@@ -299,14 +299,8 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
     let mut app = TuiApp::new(&endpoint);
     app.chat_connected = true;
     app.chat_messages = vec![
-        ChatMessage {
-            role: ChatRole::Request,
-            text: "hello".into(),
-        },
-        ChatMessage {
-            role: ChatRole::Response,
-            text: "hi there".into(),
-        },
+        ChatMessage::new(ChatRole::Request, "hello"),
+        ChatMessage::new(ChatRole::Response, "hi there"),
     ];
 
     let backend = TestBackend::new(100, 24);
@@ -339,10 +333,8 @@ fn chat_render_shows_multiline_input_with_continuation_indent() {
     let mut app = TuiApp::new(&endpoint);
     // A real exchange moves past the welcome screen into the working layout,
     // where the input is pinned to the bottom.
-    app.chat_messages.push(ChatMessage {
-        role: ChatRole::Response,
-        text: "ok".into(),
-    });
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Response, "ok"));
     app.set_chat_input_for_test("first line\nsecond line");
 
     let backend = TestBackend::new(100, 24);
@@ -1213,10 +1205,8 @@ fn session_ready_updates_chat_context_for_followup_messages() {
 fn chat_context_renders_session_mode() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.chat_messages.push(ChatMessage {
-        role: ChatRole::Response,
-        text: "ok".into(),
-    });
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Response, "ok"));
     app.chat_state.session_mode = Some(serde_json::json!({
         "source": "session_mode",
         "currentValue": "acceptEdits",
@@ -1377,25 +1367,49 @@ fn system_text_starts_a_separate_response_message() {
 }
 
 #[test]
-fn tool_updates_change_work_status_without_polluting_transcript() {
+fn tool_updates_render_work_rows_without_assistant_response() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    let initial_count = app.chat_messages.len();
 
     app.apply_chat_event(ChatEvent::TurnStatus { active: true });
     app.apply_chat_event(ChatEvent::AcpNotification {
         payload: serde_json::json!({
             "update": {
                 "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-search",
                 "toolCall": { "title": "Web Search" },
-                "status": "running"
+                "status": "running",
+                "rawInput": { "query": "ratatui list widget" }
+            }
+        }),
+    });
+    app.apply_chat_event(ChatEvent::AcpNotification {
+        payload: serde_json::json!({
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-search",
+                "toolCall": { "title": "Web Search" },
+                "status": "completed",
+                "rawInput": { "query": "ratatui list widget" }
             }
         }),
     });
 
-    assert_eq!(app.chat_messages.len(), initial_count);
-    assert_eq!(app.work_status.as_deref(), Some("searching"));
-    assert_eq!(render::view_hint(&app), "searching");
+    assert_eq!(app.chat_messages.len(), 1);
+    assert_eq!(app.chat_messages[0].role, ChatRole::Work);
+    assert_eq!(app.chat_messages[0].work_id.as_deref(), Some("call-search"));
+    assert_eq!(
+        app.chat_messages[0].text,
+        "Explored\nSearch ratatui list widget"
+    );
+    assert_eq!(
+        app.work_status.as_deref(),
+        Some("search: ratatui list widget")
+    );
+    assert_eq!(
+        render::view_hint(&app),
+        "agent is working; /stop to interrupt"
+    );
 }
 
 #[test]
