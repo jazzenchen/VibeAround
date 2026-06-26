@@ -23,7 +23,7 @@ pub(super) fn context_pairs(app: &TuiApp) -> Vec<(&'static str, String)> {
         .to_string();
     let mut pairs = vec![
         ("agent", agent_label),
-        ("profile", app.effective_profile().unwrap_or("global").to_string()),
+        ("profile", app.effective_profile().unwrap_or("direct").to_string()),
         (
             "workspace",
             app.effective_workspace().unwrap_or("global").to_string(),

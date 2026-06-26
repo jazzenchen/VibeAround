@@ -427,11 +427,15 @@ fn popup_item_line(row: Vec<Span<'static>>, selected: bool, effective: bool) -> 
 
 fn agent_session_new_row() -> Vec<Span<'static>> {
     vec![
-        Span::styled(
-            format!("{:<10}", "new"),
-            accent_style(),
-        ),
+        Span::styled(format!("{:<10}", "new"), accent_style()),
         Span::styled("start a new session", muted_style()),
+    ]
+}
+
+fn profile_direct_row() -> Vec<Span<'static>> {
+    vec![
+        Span::styled(format!("{:<18}", "direct"), accent_style()),
+        Span::styled("no managed profile", muted_style()),
     ]
 }
 
@@ -447,7 +451,14 @@ fn popup_item_rows(app: &TuiApp, popup: &Popup, category: usize) -> Vec<Vec<Span
         },
         PopupKind::Agent => match category {
             0 => app.agent_picker.agents.iter().map(agent_info_row).collect(),
-            1 => app.agent_picker.profiles.iter().map(profile_row).collect(),
+            // "direct" first, then the managed profiles.
+            1 => {
+                let mut rows = vec![profile_direct_row()];
+                for profile in &app.agent_picker.profiles {
+                    rows.push(profile_row(profile));
+                }
+                rows
+            }
             2 => app.agent_picker.workspaces.iter().map(workspace_row).collect(),
             // "new" first, then the sessions for the agent in context.
             3 => {

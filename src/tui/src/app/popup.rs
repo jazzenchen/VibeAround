@@ -49,7 +49,8 @@ impl TuiApp {
             },
             PopupKind::Agent => match category {
                 0 => self.agent_picker.agents.len(),
-                1 => self.agent_picker.profiles.len(),
+                // +1 for the synthetic "direct" (no managed profile) entry.
+                1 => self.agent_picker.profiles.len() + 1,
                 2 => self.agent_picker.workspaces.len(),
                 // +1 for the synthetic "new session" entry at the top.
                 3 => self.agent_session_items().len() + 1,
@@ -75,7 +76,8 @@ impl TuiApp {
         let short = |id: &str| id.chars().take(8).collect::<String>();
         match category {
             0 => self.effective_agent().unwrap_or("—").to_string(),
-            1 => self.effective_profile().unwrap_or("—").to_string(),
+            // No managed profile reads as "direct", not unset.
+            1 => self.effective_profile().unwrap_or("direct").to_string(),
             2 => self.effective_workspace().unwrap_or("—").to_string(),
             3 => self
                 .effective_session()
@@ -94,11 +96,15 @@ impl TuiApp {
                 .agents
                 .get(index)
                 .is_some_and(|agent| self.effective_agent() == Some(agent.id.as_str())),
-            1 => self
-                .agent_picker
-                .profiles
-                .get(index)
-                .is_some_and(|profile| self.effective_profile() == Some(profile.id.as_str())),
+            1 => {
+                if index == 0 {
+                    self.effective_profile().is_none()
+                } else {
+                    self.agent_picker.profiles.get(index - 1).is_some_and(|profile| {
+                        self.effective_profile() == Some(profile.id.as_str())
+                    })
+                }
+            }
             2 => self
                 .agent_picker
                 .workspaces
@@ -195,7 +201,12 @@ impl TuiApp {
                 }
             }
             1 => {
-                if let Some(profile) = self.agent_picker.profiles.get(item) {
+                if item == 0 {
+                    // "direct": no managed profile.
+                    self.selected_profile = None;
+                    self.selected_session = None;
+                    self.last_action = Some("direct profile".to_string());
+                } else if let Some(profile) = self.agent_picker.profiles.get(item - 1) {
                     self.selected_profile = Some(profile.id.clone());
                     self.selected_session = None;
                     self.last_action = Some(format!("selected profile {}", profile.label));
@@ -273,13 +284,11 @@ impl TuiApp {
                     .map_err(|error| error.to_string())
             }
             1 => {
-                let Some(profile_id) = self.selected_profile.as_deref() else {
-                    return Ok(None);
-                };
                 let Some(agent_id) = self.effective_agent() else {
                     return Err("select an agent before choosing a profile".into());
                 };
-                ops::launcher_set_agent_profile(agent_id, Some(profile_id))
+                // `None` persists "direct" — clearing the managed profile.
+                ops::launcher_set_agent_profile(agent_id, self.selected_profile.as_deref())
                     .map(Some)
                     .map_err(|error| error.to_string())
             }

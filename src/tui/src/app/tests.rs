@@ -1260,9 +1260,13 @@ fn agent_popup_selection_sets_context_and_clears_stale_fields() {
     assert_eq!(app.selected_workspace, None);
     assert_eq!(app.selected_session, None);
 
-    app.apply_agent_popup_selection(1, 0);
+    // Profiles: index 0 is "direct"; managed profiles start at index 1.
+    app.apply_agent_popup_selection(1, 1);
     assert_eq!(app.selected_profile.as_deref(), Some("claude-profile"));
     assert_eq!(app.selected_session, None);
+
+    app.apply_agent_popup_selection(1, 0);
+    assert_eq!(app.selected_profile, None, "\"direct\" clears the managed profile");
 
     // Sessions: index 0 is the "new" entry; real sessions start at index 1.
     app.apply_agent_popup_selection(3, 1);
