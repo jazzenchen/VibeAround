@@ -400,10 +400,7 @@ fn chat_scroll_offset_tracks_scrollback() {
     app.scroll_chat_up(1);
     app.scroll_chat_up(1);
     assert_eq!(app.chat_scroll, 2);
-    assert_eq!(
-        render::view_hint(&app),
-        "scrollback 2 lines; Down/PageDown moves toward latest"
-    );
+    assert_eq!(render::view_hint(&app), "type a message or slash command");
     app.scroll_chat_down(1);
     assert_eq!(app.chat_scroll, 1);
     app.follow_chat_tail();

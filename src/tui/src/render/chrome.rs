@@ -59,9 +59,7 @@ pub(super) fn command_bar(app: &TuiApp, content_width: u16) -> Paragraph<'static
     } else if let Some(error) = &app.last_error {
         (format!("error: {error}"), Style::default().fg(ERROR))
     } else if !app.popup_is_open()
-        && (app.chat_state.pending_permission_request_id.is_some()
-            || app.chat_state.turn_active
-            || app.chat_scroll > 0)
+        && (app.chat_state.pending_permission_request_id.is_some() || app.chat_state.turn_active)
     {
         (view_hint(app), muted_style())
     } else if let Some(action) = &app.last_action {
@@ -93,11 +91,6 @@ pub(crate) fn view_hint(app: &TuiApp) -> String {
         app.work_status
             .clone()
             .unwrap_or_else(|| "agent is working; /stop to interrupt".to_string())
-    } else if app.chat_scroll > 0 {
-        format!(
-            "scrollback {} lines; Down/PageDown moves toward latest",
-            app.chat_scroll
-        )
     } else if app.force_new_session {
         "next message starts a new session".to_string()
     } else {
