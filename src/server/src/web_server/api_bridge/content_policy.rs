@@ -387,6 +387,7 @@ mod tests {
             .collect(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         }
     }
 

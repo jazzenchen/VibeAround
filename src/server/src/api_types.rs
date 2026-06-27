@@ -64,7 +64,7 @@ pub struct SettingsWriteResponse {
 /// { "id": "claude", "name": "Claude Code", "description": "Claude Code CLI" }
 /// ```
 ///
-/// - `id`: an agent ID from `resources/agents.json` (e.g. `"claude"`,
+/// - `id`: an agent ID from the built-in agent registry (e.g. `"claude"`,
 ///   `"codex"`, `"pi"`, `"gemini"`, `"qwen-code"`).
 /// - `name` / `description`: copied from that file's `display_name` and
 ///   `description` fields.
@@ -89,7 +89,7 @@ pub struct AgentInfo {
 /// ```
 ///
 /// - `agents`: the enabled subset from settings.json (not all agents in
-///   `agents.json`), ordered as configured.
+///   agent registry), ordered as configured.
 /// - `default_agent`: raw string from settings.json. The server does not
 ///   cross-validate against `agents` — consumers should treat an
 ///   unrecognized value as "no default".
@@ -200,7 +200,7 @@ pub struct LaunchPlanDisplay {
 
 impl AgentInfo {
     /// Build an `AgentInfo` for each of the given agent IDs by looking up
-    /// the corresponding entry in `agents.json`. IDs with no matching
+    /// the corresponding entry in the built-in agent registry. IDs with no matching
     /// entry are silently dropped.
     pub fn for_ids(ids: &[String]) -> Vec<Self> {
         ids.iter()

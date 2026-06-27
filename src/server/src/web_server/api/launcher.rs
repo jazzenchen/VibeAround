@@ -159,13 +159,13 @@ pub async fn set_profile_connection_handler(
     Json(body): Json<ProfileConnectionBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
     let agent_id = canonical_agent_id(&body.agent_id)?;
-    let profile = load_profile(&body.profile_id)?;
+    let mut profile = load_profile(&body.profile_id)?;
     let preference =
         connections::sanitize_profile_connection_preference(&profile, &agent_id, body.preference)
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    agent_state::write_profile_connection_preference(&profile.id, &agent_id, preference)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    schema::set_connection(&mut profile, &agent_id, preference);
+    schema::save(&profile).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(launcher_preferences()))
 }
 
@@ -191,7 +191,7 @@ fn launcher_preferences() -> crate::api_types::LauncherPreferencesResponse {
         enabled_agents: cfg.enabled_agents.clone(),
         agent_preferences,
         local_agent_api_enabled: cfg.local_agent_api.enabled,
-        profile_connections: connections::merged_profile_connections(&prefs),
+        profile_connections: connections::merged_profile_connections(),
     }
 }
 

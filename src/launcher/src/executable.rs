@@ -235,16 +235,18 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let configured = write_command(&dir, "codex-configured");
         std::fs::write(
-            dir.join("agents.json"),
+            dir.join("settings.json"),
             format!(
                 r#"{{
-  "agents": {{
-    "codex": {{
-      "executable": {{
-        "path": "{}",
-        "source": "manual_path",
-        "sourceLabel": "Manual path",
-        "rank": 0
+  "launcher": {{
+    "agents": {{
+      "codex": {{
+        "executable": {{
+          "path": "{}",
+          "source": "manual_path",
+          "source_label": "Manual path",
+          "rank": 0
+        }}
       }}
     }}
   }}
@@ -252,7 +254,7 @@ mod tests {
                 configured.to_string_lossy()
             ),
         )
-        .expect("write agents config");
+        .expect("write settings config");
         let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
         let previous_path = std::env::var_os("PATH");
         std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
@@ -287,8 +289,10 @@ mod tests {
 
         let command =
             resolve_agent_launch_command("codex", "codex").expect("resolve scanned command");
-        let body = std::fs::read_to_string(dir.join("agents.json")).expect("read agents config");
-        let value: serde_json::Value = serde_json::from_str(&body).expect("parse agents config");
+        let body =
+            std::fs::read_to_string(dir.join("settings.json")).expect("read settings config");
+        let value: serde_json::Value = serde_json::from_str(&body).expect("parse settings config");
+        let agents_json_exists = dir.join("agents.json").exists();
 
         restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
         restore_env("PATH", previous_path);
@@ -296,9 +300,10 @@ mod tests {
 
         assert_eq!(command, scanned.to_string_lossy());
         assert_eq!(
-            value["agents"]["codex"]["executable"]["path"].as_str(),
+            value["launcher"]["agents"]["codex"]["executable"]["path"].as_str(),
             Some(scanned.to_string_lossy().as_ref())
         );
+        assert!(!agents_json_exists);
     }
 
     #[test]
@@ -342,10 +347,12 @@ mod tests {
         restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
         restore_env("PATH", previous_path);
         let agents_json_exists = dir.join("agents.json").exists();
+        let settings_json_exists = dir.join("settings.json").exists();
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(command, "open -a Codex");
         assert!(!agents_json_exists);
+        assert!(!settings_json_exists);
     }
 
     #[test]

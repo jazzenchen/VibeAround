@@ -1,8 +1,7 @@
 //! Terminal-app preferences.
 //!
-//! v1 supports native terminal choices per platform. The preference lives in a tiny
-//! dedicated file at `~/.vibearound/launcher.json` so adding it doesn't
-//! couple the Launch tab to the daemon's settings.json write path.
+//! v1 supports native terminal choices per platform. The preference lives
+//! under `settings.json.launcher` with the rest of the Launch tab state.
 //!
 //! Adding more terminals (Ghostty, WezTerm, Warp, …) is a matter of:
 //!   1. adding a variant to `TerminalChoice`,
@@ -10,13 +9,13 @@
 //!   3. adding an OS/terminal executor under `launcher/`.
 //! No catalog changes; no schema migration.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
-use common::{auth, config};
+use common::config;
 
 // ---------------------------------------------------------------------------
 // Choice enum
@@ -44,18 +43,6 @@ pub enum CompatibilityBridgeMode {
     On,
     Off,
 }
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProfileConnectionPreference {
-    #[serde(default, alias = "proxyEnabled")]
-    pub bridge_enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_api_type: Option<String>,
-}
-
-pub type ProfileConnectionPreferences =
-    BTreeMap<String, BTreeMap<String, ProfileConnectionPreference>>;
 
 impl CompatibilityBridgeMode {
     #[cfg(test)]
@@ -241,19 +228,14 @@ fn is_executable_file(path: &Path) -> bool {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 struct LauncherPrefsFile {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     terminal: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     workspace: Option<PathBuf>,
-    #[serde(default, alias = "compatibilityProxy")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     compatibility_bridge: Option<CompatibilityBridgeMode>,
-    #[serde(default)]
-    profile_connections: ProfileConnectionPreferences,
-}
-
-fn prefs_path() -> PathBuf {
-    config::data_dir().join("launcher.json")
 }
 
 /// Read the user's preferred terminal. Falls back to Terminal.app whenever
@@ -294,12 +276,6 @@ pub fn read_compatibility_bridge_preference() -> CompatibilityBridgeMode {
 pub fn write_compatibility_bridge_preference(mode: CompatibilityBridgeMode) -> anyhow::Result<()> {
     let mut prefs = read_prefs_file();
     prefs.compatibility_bridge = Some(mode);
-    write_prefs_file(&prefs)
-}
-
-pub fn remove_profile_connections(profile_id: &str) -> anyhow::Result<()> {
-    let mut prefs = read_prefs_file();
-    prefs.profile_connections.remove(profile_id);
     write_prefs_file(&prefs)
 }
 
@@ -366,33 +342,59 @@ pub fn launch_home_dir() -> anyhow::Result<PathBuf> {
 }
 
 fn read_prefs_file() -> LauncherPrefsFile {
-    let body = match std::fs::read_to_string(prefs_path()) {
-        Ok(b) => b,
-        Err(_) => return LauncherPrefsFile::default(),
-    };
-    match serde_json::from_str(&body) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(
-                "[launcher] launcher.json parse error: {} — using default",
-                e
-            );
-            LauncherPrefsFile::default()
-        }
-    }
+    config::read_settings_json()
+        .ok()
+        .and_then(|root| root.get("launcher").cloned())
+        .and_then(
+            |launcher| match serde_json::from_value::<LauncherPrefsFile>(launcher) {
+                Ok(prefs) => Some(prefs),
+                Err(error) => {
+                    tracing::warn!(
+                        "[launcher] settings.json launcher prefs parse error: {} - using default",
+                        error
+                    );
+                    None
+                }
+            },
+        )
+        .unwrap_or_default()
 }
 
 fn write_prefs_file(prefs: &LauncherPrefsFile) -> anyhow::Result<()> {
-    let path = prefs_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {:?}", parent))?;
+    let value = serde_json::to_value(prefs).context("serialize launcher prefs")?;
+    let prefs_obj = value.as_object().cloned().unwrap_or_default();
+    config::update_settings_json(|root| {
+        if !root.is_object() {
+            *root = Value::Object(Map::new());
+        }
+        let Some(root_obj) = root.as_object_mut() else {
+            return;
+        };
+        let launcher = root_obj
+            .entry("launcher".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !launcher.is_object() {
+            *launcher = Value::Object(Map::new());
+        }
+        let Some(launcher_obj) = launcher.as_object_mut() else {
+            return;
+        };
+        merge_pref_field(launcher_obj, &prefs_obj, "terminal");
+        merge_pref_field(launcher_obj, &prefs_obj, "workspace");
+        merge_pref_field(launcher_obj, &prefs_obj, "compatibility_bridge");
+        if launcher_obj.is_empty() {
+            root_obj.remove("launcher");
+        }
+    })
+    .map_err(anyhow::Error::msg)
+}
+
+fn merge_pref_field(launcher: &mut Map<String, Value>, prefs: &Map<String, Value>, key: &str) {
+    if let Some(value) = prefs.get(key) {
+        launcher.insert(key.to_string(), value.clone());
+    } else {
+        launcher.remove(key);
     }
-    let body = serde_json::to_string_pretty(prefs).context("serialize launcher prefs")?;
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, body).with_context(|| format!("write {:?}", tmp))?;
-    auth::set_owner_only(&tmp).ok();
-    std::fs::rename(&tmp, &path).with_context(|| format!("rename to {:?}", path))?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use ::common::profiles::{self, connections};
+use ::common::profiles::{self, connections, normalize_legacy_profile_and_persist, schema};
 use ::common::{agent_state, auth, config};
 use anyhow::{anyhow, Context};
 use profiles::ProfileDef;
@@ -101,8 +101,7 @@ fn ensure_claude_bridge_agent_model(
             profile.id
         );
     }
-    let agent_prefs = agent_state::read_prefs();
-    let merged_connections = connections::merged_profile_connections(&agent_prefs);
+    let merged_connections = connections::merged_profile_connections();
     let mut preference = merged_connections
         .get(&profile.id)
         .and_then(|items| items.get("claude-desktop"))
@@ -116,7 +115,11 @@ fn ensure_claude_bridge_agent_model(
     ) {
         return Ok(());
     }
-    agent_state::write_profile_connection_preference(&profile.id, "claude-desktop", preference)
+    let mut profile = schema::load(&profile.id)
+        .map(normalize_legacy_profile_and_persist)
+        .unwrap_or_else(|| profile.clone());
+    schema::set_connection(&mut profile, "claude-desktop", preference);
+    schema::save(&profile)
 }
 
 fn claude_bridge_model_routes(
@@ -651,6 +654,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         }
     }
 

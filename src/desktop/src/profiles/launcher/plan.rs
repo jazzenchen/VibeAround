@@ -104,7 +104,7 @@ impl<'a> LaunchPlanBuilder<'a> {
 
     fn build_direct_plan(&self, agent_id: &str) -> anyhow::Result<LaunchPlan> {
         let agent = resources::agent_by_id(agent_id)
-            .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
+            .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
 
         let Some(session_id) = self.session_id else {
@@ -156,7 +156,7 @@ impl<'a> LaunchPlanBuilder<'a> {
     ) -> anyhow::Result<LaunchPlan> {
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let agent = resources::agent_by_id(agent_id)
-            .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
+            .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
         if agent_id == "codex-desktop" {
             let mut env = Vec::new();
@@ -577,6 +577,7 @@ mod tests {
             .collect::<BTreeMap<_, _>>(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         }
     }
 

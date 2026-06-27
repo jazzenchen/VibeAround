@@ -21,8 +21,8 @@ pub fn launch_profile_path(name: &str) -> anyhow::Result<PathBuf> {
         .join(format!("{name}.json")))
 }
 
-pub fn launcher_config_path() -> anyhow::Result<PathBuf> {
-    Ok(data_dir()?.join("launcher.json"))
+pub fn settings_path() -> anyhow::Result<PathBuf> {
+    Ok(data_dir()?.join("settings.json"))
 }
 
 pub fn validate_launch_name(name: &str, label: &str) -> anyhow::Result<()> {

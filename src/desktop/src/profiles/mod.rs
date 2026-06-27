@@ -131,7 +131,7 @@ pub fn profiles_launch(id: String, launch_target: String) -> Result<(), String> 
 
 /// Launch a CLI directly with no env injection — uses whatever global
 /// OAuth / login session the user already has. `agent_id` is the
-/// agents.json id (e.g. "claude", "codex", "gemini", "cursor", "kiro",
+/// agent registry id (e.g. "claude", "codex", "gemini", "cursor", "kiro",
 /// "qwen-code", "opencode").
 #[tauri::command]
 pub fn profiles_launch_direct(agent_id: String) -> Result<(), String> {
@@ -677,13 +677,13 @@ pub fn launcher_set_profile_connection(
     preference: agent_state::ProfileConnectionPreference,
 ) -> Result<(), String> {
     let agent_id = validate_connection_agent_id(agent_id)?;
-    let profile = schema::load(&profile_id)
+    let mut profile = schema::load(&profile_id)
         .map(normalize_legacy_profile_and_persist)
         .ok_or_else(|| format!("profile '{profile_id}' not found"))?;
     let preference = sanitize_profile_connection_preference(&profile, &agent_id, preference)?;
 
-    agent_state::write_profile_connection_preference(&profile.id, &agent_id, preference)
-        .map_err(|e| e.to_string())?;
+    schema::set_connection(&mut profile, &agent_id, preference);
+    schema::save(&profile).map_err(|e| e.to_string())?;
     emit_launch_config_changed(&app);
     Ok(())
 }

@@ -1,14 +1,10 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{bail, Context};
 use serde_json::{Map, Value};
 
 use crate::{paths, TerminalChoice};
-
-pub fn launcher_config_path() -> anyhow::Result<PathBuf> {
-    paths::launcher_config_path()
-}
 
 pub fn resolve_terminal_choice(explicit: Option<TerminalChoice>) -> anyhow::Result<TerminalChoice> {
     if let Some(choice) = explicit {
@@ -27,36 +23,39 @@ pub fn detect_default_terminal() -> TerminalChoice {
 }
 
 fn read_or_initialize_terminal() -> anyhow::Result<TerminalChoice> {
-    let path = paths::launcher_config_path()?;
-    let mut config = read_launcher_config(&path)?;
-    if let Some(value) = config.get("terminal") {
+    let path = paths::settings_path()?;
+    let mut config = read_settings_config(&path)?;
+    if let Some(value) = config
+        .get("launcher")
+        .and_then(|launcher| launcher.get("terminal"))
+    {
         return terminal_from_config_value(value, &path);
     }
 
     let choice = detect_default_terminal();
-    config.insert(
+    launcher_config_mut(&mut config).insert(
         "terminal".to_string(),
         Value::String(choice.id().to_string()),
     );
-    write_launcher_config(&path, &config)?;
+    write_settings_config(&path, &config)?;
     Ok(choice)
 }
 
 fn terminal_from_config_value(value: &Value, path: &Path) -> anyhow::Result<TerminalChoice> {
     let raw = value.as_str().with_context(|| {
         format!(
-            "launcher config {} terminal must be a string",
+            "settings config {} launcher.terminal must be a string",
             path.display()
         )
     })?;
     let choice = TerminalChoice::from_id(raw).with_context(|| {
         format!(
-            "launcher config {} has unknown terminal '{}'",
+            "settings config {} has unknown launcher.terminal '{}'",
             path.display(),
             raw
         )
     })?;
-    ensure_terminal_supported(choice, &format!("launcher config {}", path.display()))?;
+    ensure_terminal_supported(choice, &format!("settings config {}", path.display()))?;
     Ok(choice)
 }
 
@@ -71,7 +70,7 @@ fn ensure_terminal_supported(choice: TerminalChoice, source: &str) -> anyhow::Re
     Ok(())
 }
 
-fn read_launcher_config(path: &Path) -> anyhow::Result<Map<String, Value>> {
+fn read_settings_config(path: &Path) -> anyhow::Result<Map<String, Value>> {
     let body = match fs::read_to_string(path) {
         Ok(body) => body,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
@@ -81,21 +80,31 @@ fn read_launcher_config(path: &Path) -> anyhow::Result<Map<String, Value>> {
         serde_json::from_str(&body).with_context(|| format!("parse {}", path.display()))?;
     match value {
         Value::Object(object) => Ok(object),
-        _ => bail!("launcher config {} must be a JSON object", path.display()),
+        _ => bail!("settings config {} must be a JSON object", path.display()),
     }
 }
 
-fn write_launcher_config(path: &Path, config: &Map<String, Value>) -> anyhow::Result<()> {
+fn write_settings_config(path: &Path, config: &Map<String, Value>) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    let body = serde_json::to_string_pretty(config).context("serialize launcher config")?;
+    let body = serde_json::to_string_pretty(config).context("serialize settings config")?;
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
     set_owner_only(&tmp).ok();
     fs::rename(&tmp, path)
         .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
     Ok(())
+}
+
+fn launcher_config_mut(config: &mut Map<String, Value>) -> &mut Map<String, Value> {
+    let launcher = config
+        .entry("launcher".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !launcher.is_object() {
+        *launcher = Value::Object(Map::new());
+    }
+    launcher.as_object_mut().expect("launcher object")
 }
 
 fn platform_choices() -> &'static [TerminalChoice] {
@@ -191,6 +200,7 @@ fn set_owner_only(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn explicit_terminal_skips_config() {
@@ -215,46 +225,48 @@ mod tests {
     }
 
     #[test]
-    fn initializes_terminal_in_shared_launcher_config() {
+    fn initializes_terminal_in_shared_settings_config() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
         let previous = std::env::var_os("VIBEAROUND_DATA_DIR");
         std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
 
         let choice = resolve_terminal_choice(None).expect("resolve terminal");
-        let body = fs::read_to_string(dir.join("launcher.json")).expect("read launcher config");
-        let value: Value = serde_json::from_str(&body).expect("parse launcher config");
+        let body = fs::read_to_string(dir.join("settings.json")).expect("read settings config");
+        let value: Value = serde_json::from_str(&body).expect("parse settings config");
+        let launcher_json_exists = dir.join("launcher.json").exists();
 
         restore_env("VIBEAROUND_DATA_DIR", previous);
         let _ = fs::remove_dir_all(&dir);
 
-        assert_eq!(value["terminal"], choice.id());
+        assert_eq!(value["launcher"]["terminal"], choice.id());
+        assert!(!launcher_json_exists);
     }
 
     #[test]
-    fn preserves_existing_launcher_config_fields() {
+    fn preserves_existing_settings_config_fields() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
         fs::create_dir_all(&dir).expect("create temp dir");
         fs::write(
-            dir.join("launcher.json"),
+            dir.join("settings.json"),
             r#"{
-  "workspace": "/tmp/work"
+  "workspaces": ["/tmp/work"]
 }"#,
         )
-        .expect("write launcher config");
+        .expect("write settings config");
         let previous = std::env::var_os("VIBEAROUND_DATA_DIR");
         std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
 
         let choice = resolve_terminal_choice(None).expect("resolve terminal");
-        let body = fs::read_to_string(dir.join("launcher.json")).expect("read launcher config");
-        let value: Value = serde_json::from_str(&body).expect("parse launcher config");
+        let body = fs::read_to_string(dir.join("settings.json")).expect("read settings config");
+        let value: Value = serde_json::from_str(&body).expect("parse settings config");
 
         restore_env("VIBEAROUND_DATA_DIR", previous);
         let _ = fs::remove_dir_all(&dir);
 
-        assert_eq!(value["terminal"], choice.id());
-        assert_eq!(value["workspace"], "/tmp/work");
+        assert_eq!(value["launcher"]["terminal"], choice.id());
+        assert_eq!(value["workspaces"][0], "/tmp/work");
     }
 
     #[test]
@@ -262,8 +274,11 @@ mod tests {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
         fs::create_dir_all(&dir).expect("create temp dir");
-        fs::write(dir.join("launcher.json"), r#"{ "terminal": "warp" }"#)
-            .expect("write launcher config");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{ "launcher": { "terminal": "warp" } }"#,
+        )
+        .expect("write settings config");
         let previous = std::env::var_os("VIBEAROUND_DATA_DIR");
         std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
 
@@ -272,7 +287,7 @@ mod tests {
         restore_env("VIBEAROUND_DATA_DIR", previous);
         let _ = fs::remove_dir_all(&dir);
 
-        assert!(error.contains("unknown terminal"));
+        assert!(error.contains("unknown launcher.terminal"));
     }
 
     fn temp_dir() -> PathBuf {

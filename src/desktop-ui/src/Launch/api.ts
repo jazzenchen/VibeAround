@@ -109,7 +109,7 @@ export interface AgentSummary {
   acp_bin_name?: string | null;
 }
 
-/** Reuses the onboarding command that returns all CLIs in agents.json. */
+/** Reuses the onboarding command that returns all registered CLIs. */
 export function listAgents(): Promise<AgentSummary[]> {
   return invoke<AgentSummary[]>("list_agents");
 }

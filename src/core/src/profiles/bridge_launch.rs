@@ -1219,6 +1219,7 @@ mod tests {
             overrides,
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         }
     }
 
@@ -1248,6 +1249,7 @@ mod tests {
             overrides,
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         }
     }
 
@@ -1277,6 +1279,7 @@ mod tests {
             overrides,
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         }
     }
 
@@ -1306,6 +1309,7 @@ mod tests {
             overrides,
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         }
     }
 }

@@ -117,6 +117,7 @@ export interface ProfileDef {
   overrides: Record<string, ApiTypeOverrides>;
   use_settings_proxy?: boolean;
   provider_settings?: ProviderSettings;
+  connections?: Partial<Record<ConnectionAgentId, ProfileConnectionPreference>>;
 }
 
 export type ProfileDraft = Omit<ProfileDef, "id">;

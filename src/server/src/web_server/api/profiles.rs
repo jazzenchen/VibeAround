@@ -9,9 +9,7 @@ use serde::Deserialize;
 
 /// GET /api/profiles -- list saved profiles and the CLI targets each can launch.
 pub async fn list_profiles_handler() -> Json<Vec<crate::api_types::ProfileLaunchOption>> {
-    let agent_prefs = common::agent_state::read_prefs();
-    let profile_connections =
-        common::profiles::connections::merged_profile_connections(&agent_prefs);
+    let profile_connections = common::profiles::connections::merged_profile_connections();
     let profiles = common::profiles::ordered_profiles()
         .into_iter()
         .map(|profile| {
@@ -53,6 +51,8 @@ pub struct ModelProfileDraft {
     pub use_settings_proxy: bool,
     #[serde(default)]
     pub provider_settings: schema::ProviderSettings,
+    #[serde(default)]
+    pub connections: BTreeMap<String, agent_state::ProfileConnectionPreference>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +142,7 @@ impl ModelProfileDraft {
             overrides: self.overrides,
             use_settings_proxy: self.use_settings_proxy,
             provider_settings: self.provider_settings,
+            connections: self.connections,
         }
     }
 }
@@ -261,17 +262,6 @@ fn clear_profile_references(profile_id: &str) -> Result<(), (StatusCode, String)
         let Some(obj) = root.as_object_mut() else {
             return;
         };
-        let mut remove_default_profiles = false;
-        if let Some(map) = obj
-            .get_mut("default_profiles")
-            .and_then(|value| value.as_object_mut())
-        {
-            map.retain(|_, value| value.as_str() != Some(profile_id));
-            remove_default_profiles = map.is_empty();
-        }
-        if remove_default_profiles {
-            obj.remove("default_profiles");
-        }
         if let Some(order) = obj
             .get_mut("profile_order")
             .and_then(|value| value.as_array_mut())

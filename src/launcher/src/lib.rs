@@ -29,7 +29,7 @@ pub use paths::{data_dir, launch_profile_path, validate_launch_name};
 pub use plan::{build_execution_plan, redacted_execution_plan, ExecutionPlan, PublicExecutionPlan};
 pub use platform::LaunchHandle;
 pub use profile::{load_launch_profile, load_launch_profile_path, LaunchProfile};
-pub use terminal_config::{detect_default_terminal, launcher_config_path, resolve_terminal_choice};
+pub use terminal_config::{detect_default_terminal, resolve_terminal_choice};
 pub use workspace::{canonical_workspace_path, resolve_workspace_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

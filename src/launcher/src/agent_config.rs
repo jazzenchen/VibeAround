@@ -7,29 +7,27 @@ use serde_json::{Map, Value};
 use crate::paths;
 
 pub fn resolve_configured_agent_executable(agent_id: &str) -> anyhow::Result<Option<PathBuf>> {
-    let path = agents_config_path()?;
-    let config = read_agents_config(&path)?;
+    let path = paths::settings_path()?;
+    let config = read_settings_config(&path)?;
     Ok(agent_entry(&config, agent_id).and_then(executable_path_from_entry))
 }
 
 pub fn write_scanned_agent_executable(agent_id: &str, path: &Path) -> anyhow::Result<()> {
-    let config_path = agents_config_path()?;
-    let mut config = read_agents_config(&config_path)?;
+    let config_path = paths::settings_path()?;
+    let mut config = read_settings_config(&config_path)?;
     let root = ensure_object(&mut config);
-    let agents = ensure_child_object(root, "agents");
+    let launcher = ensure_child_object(root, "launcher");
+    let agents = ensure_child_object(launcher, "agents");
     let agent = ensure_child_object(agents, agent_id);
     let executable = executable_object(path);
     agent.insert("executable".to_string(), Value::Object(executable));
-    agent.remove("executablePath");
-    write_agents_config(&config_path, &config)
-}
-
-fn agents_config_path() -> anyhow::Result<PathBuf> {
-    Ok(paths::data_dir()?.join("agents.json"))
+    write_settings_config(&config_path, &config)
 }
 
 fn agent_entry<'a>(config: &'a Value, agent_id: &str) -> Option<&'a Map<String, Value>> {
     config
+        .get("launcher")?
+        .as_object()?
         .get("agents")?
         .as_object()?
         .get(agent_id)?
@@ -44,16 +42,9 @@ fn executable_path_from_entry(entry: &Map<String, Value>) -> Option<PathBuf> {
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            entry
-                .get("executablePath")
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.trim().is_empty())
-                .map(PathBuf::from)
-        })
 }
 
-fn read_agents_config(path: &Path) -> anyhow::Result<Value> {
+fn read_settings_config(path: &Path) -> anyhow::Result<Value> {
     let body = match fs::read_to_string(path) {
         Ok(body) => body,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -64,11 +55,11 @@ fn read_agents_config(path: &Path) -> anyhow::Result<Value> {
     serde_json::from_str(&body).with_context(|| format!("parse {}", path.display()))
 }
 
-fn write_agents_config(path: &Path, config: &Value) -> anyhow::Result<()> {
+fn write_settings_config(path: &Path, config: &Value) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    let body = serde_json::to_string_pretty(config).context("serialize agents config")?;
+    let body = serde_json::to_string_pretty(config).context("serialize settings config")?;
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
     set_owner_only(&tmp).ok();
@@ -111,7 +102,7 @@ fn executable_object(path: &Path) -> Map<String, Value> {
     }
     object.insert("source".to_string(), Value::String("path_scan".to_string()));
     object.insert(
-        "sourceLabel".to_string(),
+        "source_label".to_string(),
         Value::String("PATH scan".to_string()),
     );
     object.insert("rank".to_string(), Value::Number(4000.into()));
@@ -136,26 +127,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_configured_executable_from_agents_json() {
+    fn reads_configured_executable_from_settings() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
         fs::create_dir_all(&dir).expect("create temp dir");
         fs::write(
-            dir.join("agents.json"),
+            dir.join("settings.json"),
             r#"{
-  "agents": {
-    "codex": {
-      "executable": {
-        "path": "/opt/homebrew/bin/codex",
-        "source": "npm_global",
-        "sourceLabel": "npm global",
-        "rank": 2000
+  "launcher": {
+    "agents": {
+      "codex": {
+        "executable": {
+          "path": "/opt/homebrew/bin/codex",
+          "source": "npm_global",
+          "source_label": "npm global",
+          "rank": 2000
+        }
       }
     }
   }
 }"#,
         )
-        .expect("write agents config");
+        .expect("write settings config");
         let previous = std::env::var_os("VIBEAROUND_DATA_DIR");
         std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
 
@@ -168,44 +161,50 @@ mod tests {
     }
 
     #[test]
-    fn writes_scanned_executable_without_dropping_other_fields() {
+    fn writes_scanned_executable_without_dropping_other_settings() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
         fs::create_dir_all(&dir).expect("create temp dir");
         fs::write(
-            dir.join("agents.json"),
+            dir.join("settings.json"),
             r#"{
-  "selectedAgent": "codex",
-  "agents": {
-    "codex": {
-      "profileId": "openai"
+  "enabled_agents": ["codex"],
+  "launcher": {
+    "selected_agent": "codex",
+    "agents": {
+      "codex": {
+        "profile_id": "openai"
+      }
     }
   }
 }"#,
         )
-        .expect("write agents config");
+        .expect("write settings config");
         let bin = dir.join("codex");
         fs::write(&bin, "#!/bin/sh\n").expect("write fake bin");
         let previous = std::env::var_os("VIBEAROUND_DATA_DIR");
         std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
 
         write_scanned_agent_executable("codex", &bin).expect("write scanned executable");
-        let body = fs::read_to_string(dir.join("agents.json")).expect("read agents config");
-        let value: Value = serde_json::from_str(&body).expect("parse agents config");
+        let body = fs::read_to_string(dir.join("settings.json")).expect("read settings config");
+        let value: Value = serde_json::from_str(&body).expect("parse settings config");
+        let agents_json_exists = dir.join("agents.json").exists();
 
         restore_env("VIBEAROUND_DATA_DIR", previous);
         let _ = fs::remove_dir_all(&dir);
 
-        assert_eq!(value["selectedAgent"], "codex");
-        assert_eq!(value["agents"]["codex"]["profileId"], "openai");
+        assert_eq!(value["enabled_agents"][0], "codex");
+        assert_eq!(value["launcher"]["selected_agent"], "codex");
+        assert_eq!(value["launcher"]["agents"]["codex"]["profile_id"], "openai");
         assert_eq!(
-            value["agents"]["codex"]["executable"]["path"].as_str(),
+            value["launcher"]["agents"]["codex"]["executable"]["path"].as_str(),
             Some(bin.to_string_lossy().as_ref())
         );
         assert_eq!(
-            value["agents"]["codex"]["executable"]["source"],
+            value["launcher"]["agents"]["codex"]["executable"]["source"],
             "path_scan"
         );
+        assert!(!agents_json_exists);
     }
 
     fn temp_dir() -> PathBuf {
