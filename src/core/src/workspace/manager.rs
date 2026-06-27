@@ -309,6 +309,10 @@ impl WorkspaceThreadManager {
                     .any(|session| session.agent_id == agent_id && session.session_id == session_id)
             });
         let thread = if mode == ExternalSessionAttachMode::ReuseOpenThread {
+            // TODO: Revisit persisted thread lifecycle states here. "Closed" can
+            // mean user-ended, while Web idle only unloads the runtime; session
+            // resume should not accidentally split one native session across
+            // multiple workspace thread ids.
             projection
                 .for_workspace(&workspace.id, false)
                 .find(|thread| {
@@ -736,6 +740,9 @@ impl WorkspaceThreadManager {
             .get(&attached.thread_id)
             .map(|entry| Arc::clone(entry.value()))
         else {
+            if route.channel_kind == "web" {
+                return self.runtime_from_thread(thread).await.map(Some);
+            }
             self.detach_route(route).await?;
             return Ok(None);
         };
@@ -1356,6 +1363,32 @@ mod tests {
                 .thread_id,
             second.state().await.thread_id
         );
+    }
+
+    #[tokio::test]
+    async fn web_route_attachment_rehydrates_runtime_after_host_shutdown() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let route = RouteKey::new("web", "chat-a");
+        let first = manager.resolve_route_runtime(&route).await.unwrap();
+        let first_thread_id = first.state().await.thread_id;
+
+        manager.shutdown_route_host(&route).await.unwrap();
+        assert!(!manager.runtimes.contains_key(&first_thread_id));
+        assert_eq!(
+            manager
+                .current_attachment(&route)
+                .await
+                .unwrap()
+                .unwrap()
+                .thread_id,
+            first_thread_id
+        );
+
+        let second = manager.resolve_route_runtime(&route).await.unwrap();
+
+        assert_eq!(second.state().await.thread_id, first_thread_id);
+        assert!(manager.runtimes.contains_key(&first_thread_id));
     }
 
     #[tokio::test]
