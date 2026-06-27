@@ -5,28 +5,65 @@ use std::process::Command;
 use super::common::LaunchPlan;
 use crate::profiles::terminal;
 use anyhow::{bail, Context};
+use common::profiles::ProfileDef;
 
-pub(super) fn spawn_if_enabled(plan: &LaunchPlan) -> Option<anyhow::Result<()>> {
-    if std::env::var("VIBEAROUND_USE_VA_LAUNCH_PROCESS")
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LaunchContext {
+    agent_id: String,
+    profile_id: Option<String>,
+    launch_target: Option<String>,
+    session_id: Option<String>,
+}
+
+impl LaunchContext {
+    pub(super) fn profile(
+        profile: &ProfileDef,
+        launch_target: &str,
+        session_id: Option<&str>,
+    ) -> Self {
+        Self {
+            agent_id: launch_target.to_string(),
+            profile_id: Some(profile.id.clone()),
+            launch_target: Some(launch_target.to_string()),
+            session_id: session_id.map(ToString::to_string),
+        }
+    }
+
+    pub(super) fn direct(agent_id: &str, session_id: Option<&str>) -> Self {
+        Self {
+            agent_id: agent_id.to_string(),
+            profile_id: None,
+            launch_target: None,
+            session_id: session_id.map(ToString::to_string),
+        }
+    }
+}
+
+pub(super) fn spawn_if_enabled(
+    plan: &LaunchPlan,
+    context: &LaunchContext,
+) -> Option<anyhow::Result<()>> {
+    if std::env::var("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER")
         .ok()
         .as_deref()
         == Some("1")
     {
-        return Some(spawn_process(plan));
+        return None;
     }
     if std::env::var("VIBEAROUND_USE_VA_LAUNCHER_LIB")
         .ok()
         .as_deref()
-        != Some("1")
+        == Some("1")
     {
-        return None;
+        let result = va_launcher::launch(input_from_plan(plan, context)).map(|_| ());
+        return Some(result);
     }
-    let result = va_launcher::launch(input_from_plan(plan)).map(|_| ());
-    Some(result)
+
+    Some(spawn_process(plan, context))
 }
 
-fn spawn_process(plan: &LaunchPlan) -> anyhow::Result<()> {
-    let input = input_from_plan(plan);
+fn spawn_process(plan: &LaunchPlan, context: &LaunchContext) -> anyhow::Result<()> {
+    let input = input_from_plan(plan, context);
     let input_path = write_input_file(&input)?;
     let launcher = resolve_va_launch_binary()?;
     let status = Command::new(&launcher)
@@ -77,26 +114,27 @@ fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
         }
     }
 
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let target_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("target")
-        .join("debug")
-        .join(binary);
-    if dev_path.is_file() {
-        return Ok(dev_path);
+        .join("target");
+    for profile in ["debug", "release"] {
+        let path = target_dir.join(profile).join(binary);
+        if path.is_file() {
+            return Ok(path);
+        }
     }
 
     bail!("va-launch binary not found; build va-launcher or set VIBEAROUND_VA_LAUNCH_BIN")
 }
 
-fn input_from_plan(plan: &LaunchPlan) -> va_launcher::NativeLaunchInput {
+fn input_from_plan(plan: &LaunchPlan, context: &LaunchContext) -> va_launcher::NativeLaunchInput {
     va_launcher::NativeLaunchInput {
         schema_version: 1,
-        agent: String::new(),
-        profile_id: None,
-        launch_target: None,
+        agent: context.agent_id.clone(),
+        profile_id: context.profile_id.clone(),
+        launch_target: context.launch_target.clone(),
         workspace: Some(plan.workspace.clone()),
-        session_id: None,
+        session_id: context.session_id.clone(),
         terminal: Some(terminal_choice_for_va_launch(terminal::read_preference())),
         command: Some(plan.command.clone()),
         executable_path: plan.windows_executable_path.clone(),
@@ -132,6 +170,21 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use common::profiles::schema::{AuthMode, ProfileDef, ProviderSettings};
+
+    fn profile(id: &str) -> ProfileDef {
+        ProfileDef {
+            id: id.to_string(),
+            label: "Test profile".to_string(),
+            provider: "openai".to_string(),
+            auth_mode: AuthMode::ApiKey,
+            api_types: vec!["openai_responses".to_string()],
+            credentials: Default::default(),
+            overrides: Default::default(),
+            use_settings_proxy: false,
+            provider_settings: ProviderSettings::default(),
+        }
+    }
 
     #[test]
     fn maps_desktop_launch_plan_to_va_launch_input() {
@@ -147,9 +200,14 @@ mod tests {
             windows_executable_path: Some(PathBuf::from("C:/Codex/Codex.exe")),
         };
 
-        let input = input_from_plan(&plan);
+        let context = LaunchContext::profile(&profile("openai"), "codex", Some("session-123"));
+        let input = input_from_plan(&plan, &context);
 
         assert_eq!(input.schema_version, 1);
+        assert_eq!(input.agent, "codex");
+        assert_eq!(input.profile_id.as_deref(), Some("openai"));
+        assert_eq!(input.launch_target.as_deref(), Some("codex"));
+        assert_eq!(input.session_id.as_deref(), Some("session-123"));
         assert_eq!(input.workspace, Some(PathBuf::from("/tmp/work")));
         assert_eq!(input.command.as_deref(), Some("codex"));
         assert_eq!(
@@ -173,16 +231,111 @@ mod tests {
     }
 
     #[test]
+    fn legacy_env_disables_va_launch_path() {
+        let _guard = env_test_lock().lock().expect("env test lock");
+        let previous = std::env::var_os("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER");
+        std::env::set_var("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER", "1");
+        let plan = LaunchPlan {
+            env: Vec::new(),
+            command: "codex".to_string(),
+            args: Vec::new(),
+            cleanup_paths: Vec::new(),
+            window_label: "Codex".to_string(),
+            workspace: PathBuf::from("/tmp/work"),
+            macos_app_probe: None,
+            windows_process_probe: None,
+            windows_executable_path: None,
+        };
+
+        let result = spawn_if_enabled(&plan, &LaunchContext::direct("codex", None));
+
+        restore_env("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER", previous);
+        assert!(result.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_launch_pushes_profile_input_file_to_va_launch() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_test_lock().lock().expect("env test lock");
+        let dir = std::env::temp_dir().join(format!(
+            "vibearound-va-launch-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp test dir");
+        let fake_bin = dir.join("va-launch");
+        let capture = dir.join("capture.json");
+        std::fs::write(
+            &fake_bin,
+            "#!/bin/sh\nif [ \"$1\" = \"--input-file\" ]; then cp \"$2\" \"$VA_LAUNCH_CAPTURE\"; exit 0; fi\nexit 2\n",
+        )
+        .expect("write fake va-launch");
+        std::fs::set_permissions(&fake_bin, std::fs::Permissions::from_mode(0o700))
+            .expect("chmod fake va-launch");
+
+        let previous_bin = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN");
+        let previous_capture = std::env::var_os("VA_LAUNCH_CAPTURE");
+        let previous_legacy = std::env::var_os("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER");
+        std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", &fake_bin);
+        std::env::set_var("VA_LAUNCH_CAPTURE", &capture);
+        std::env::remove_var("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER");
+
+        let plan = LaunchPlan {
+            env: vec![("OPENAI_API_KEY".to_string(), "secret".to_string())],
+            command: "codex".to_string(),
+            args: vec!["--model".to_string(), "gpt-5".to_string()],
+            cleanup_paths: Vec::new(),
+            window_label: "OpenAI".to_string(),
+            workspace: PathBuf::from("/tmp/work"),
+            macos_app_probe: None,
+            windows_process_probe: None,
+            windows_executable_path: None,
+        };
+        let context = LaunchContext::profile(&profile("openai"), "codex", None);
+
+        spawn_process(&plan, &context).expect("spawn fake va-launch");
+
+        let captured = std::fs::read_to_string(&capture).expect("read captured input");
+        let value: serde_json::Value =
+            serde_json::from_str(&captured).expect("parse captured JSON");
+        restore_env("VIBEAROUND_VA_LAUNCH_BIN", previous_bin);
+        restore_env("VA_LAUNCH_CAPTURE", previous_capture);
+        restore_env("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER", previous_legacy);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(value["agent"], "codex");
+        assert_eq!(value["profileId"], "openai");
+        assert_eq!(value["launchTarget"], "codex");
+        assert_eq!(value["command"], "codex");
+        assert_eq!(value["env"]["OPENAI_API_KEY"], "secret");
+        assert_eq!(
+            value["args"]["native"],
+            serde_json::json!(["--model", "gpt-5"])
+        );
+    }
+
+    #[test]
     fn explicit_va_launch_binary_must_exist() {
+        let _guard = env_test_lock().lock().expect("env test lock");
         let previous = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN");
         std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", "/definitely/not/va-launch");
 
         let error = resolve_va_launch_binary().unwrap_err().to_string();
 
-        match previous {
-            Some(value) => std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", value),
-            None => std::env::remove_var("VIBEAROUND_VA_LAUNCH_BIN"),
-        }
+        restore_env("VIBEAROUND_VA_LAUNCH_BIN", previous);
         assert!(error.contains("VIBEAROUND_VA_LAUNCH_BIN is not a file"));
+    }
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    fn env_test_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 }
