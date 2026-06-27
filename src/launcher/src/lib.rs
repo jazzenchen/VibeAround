@@ -10,6 +10,7 @@ mod paths;
 mod plan;
 mod platform;
 mod profile;
+mod project_integration;
 mod terminal_config;
 mod workspace;
 
@@ -182,6 +183,7 @@ pub fn dry_run(input: NativeLaunchInput) -> anyhow::Result<LaunchOutput> {
 
 pub fn launch(input: NativeLaunchInput) -> anyhow::Result<LaunchOutput> {
     let plan = build_execution_plan(input)?;
+    project_integration::install_for_launch(&plan.agent, &plan.workspace)?;
     let handle = platform::spawn(&plan)?;
     Ok(LaunchOutput {
         status: LaunchStatus::Launched,

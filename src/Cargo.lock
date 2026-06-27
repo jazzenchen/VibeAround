@@ -6110,6 +6110,7 @@ version = "0.7.9"
 dependencies = [
  "anyhow",
  "clap",
+ "common",
  "serde",
  "serde_json",
  "shell-escape",

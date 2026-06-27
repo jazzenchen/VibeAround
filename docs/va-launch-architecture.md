@@ -12,6 +12,7 @@ concerns:
 - workspace resolution and validation
 - agent executable resolution and validation
 - terminal preference detection and validation
+- project integration auto-install
 - native launch plan construction
 - terminal/app process spawning
 
@@ -98,16 +99,30 @@ App launch wrappers such as `open -a ...` on macOS and `Start-Process ...` on
 Windows are treated as native app commands, not agent CLI executables, and are
 not written into `agents.json`.
 
+## Project Integrations
+
+On real launch, `va-launch` installs project-scoped integrations for the
+resolved workspace using the shared VibeAround settings policy:
+
+- MCP config follows `settings.json` `integrations.mcp_auto_install`.
+- Skill files follow `settings.json` `integrations.skill_auto_install`.
+- `codex-desktop` installs the companion `codex` project integrations.
+- `claude-desktop` installs the companion `claude` project integrations.
+
+`--dry-run` only builds and reports the native launch plan; it must not install
+or mutate project files.
+
 ## Current Flow
 
 Desktop currently does this:
 
 1. UI chooses a provider profile and launch target.
 2. Desktop/core prepares provider runtime details: bridge, env, desktop overlay,
-   profile materialization, workspace, and project integrations.
+   profile materialization, and workspace.
 3. Desktop builds a materialized launch profile JSON.
 4. Desktop invokes `va-launch --profile-path <launch-profile-json>`.
-5. `va-launch` validates native launch details and spawns the terminal/app.
+5. `va-launch` validates native launch details, installs project integrations,
+   and spawns the terminal/app.
 
 This means Desktop launches currently go through `va-launch`, but the provider
 runtime work still happens before `va-launch`.

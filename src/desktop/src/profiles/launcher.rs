@@ -84,9 +84,13 @@ pub fn launch_direct_resume(agent_id: &str, session_id: &str) -> anyhow::Result<
     )
 }
 
-fn spawn_plan(plan: common::LaunchPlan, context: va_launch::LaunchContext) -> anyhow::Result<()> {
-    if let Some(result) = va_launch::spawn_if_enabled(&plan, &context) {
+fn spawn_plan(
+    launch_plan: common::LaunchPlan,
+    context: va_launch::LaunchContext,
+) -> anyhow::Result<()> {
+    if let Some(result) = va_launch::spawn_if_enabled(&launch_plan, &context) {
         return result;
     }
-    platform::spawn(plan)
+    plan::install_project_integrations_for_launch(context.agent_id(), &launch_plan.workspace)?;
+    platform::spawn(launch_plan)
 }

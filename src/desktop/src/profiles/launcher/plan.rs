@@ -106,7 +106,6 @@ impl<'a> LaunchPlanBuilder<'a> {
         let agent = resources::agent_by_id(agent_id)
             .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
 
         let Some(session_id) = self.session_id else {
             if agent_id == "codex-desktop" {
@@ -159,7 +158,6 @@ impl<'a> LaunchPlanBuilder<'a> {
         let agent = resources::agent_by_id(agent_id)
             .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
         if agent_id == "codex-desktop" {
             let mut env = Vec::new();
             let mut args = Vec::new();
@@ -237,7 +235,6 @@ impl<'a> LaunchPlanBuilder<'a> {
 
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
         let (command, resume_args) = resume_command_for_agent(agent_id, session_id)?;
         let mut args = rendered.command_args.clone();
         args.extend(terminal_launch_args_for_agent(agent_id));
@@ -406,7 +403,7 @@ fn append_vibearound_launch_context_env(
     ));
 }
 
-fn install_project_integrations_for_launch(
+pub(super) fn install_project_integrations_for_launch(
     agent_id: &str,
     workspace: &std::path::Path,
 ) -> anyhow::Result<()> {

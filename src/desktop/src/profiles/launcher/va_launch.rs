@@ -37,6 +37,10 @@ impl LaunchContext {
             session_id: session_id.map(ToString::to_string),
         }
     }
+
+    pub(super) fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
 }
 
 pub(super) fn spawn_if_enabled(
