@@ -741,7 +741,7 @@ async fn apply_web_session_resume_now(
         .session_id
         .unwrap_or_else(|| requested_session_id.clone());
     let workspace_threads = state.channel_hub.workspace_thread_manager();
-    if let Err(error) = common::channels::prompt::start_runtime_and_notify(
+    let started = match common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
         &runtime,
         &state.channel_hub.plugin_host(),
@@ -750,7 +750,13 @@ async fn apply_web_session_resume_now(
     )
     .await
     {
-        send_web_system_text(state, route, &format!("❌ {}", error)).await;
+        Ok(started) => started,
+        Err(error) => {
+            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            return;
+        }
+    };
+    if !started {
         return;
     }
     let actual_session_id = runtime.state().await.session_id;

@@ -48,7 +48,9 @@ pub(crate) async fn handle_prompt(
         .resolve_route_runtime(&route)
         .await
         .map_err(internal_error)?;
-    start_runtime_and_notify(workspace_threads, &runtime, plugin_host, &route, false).await?;
+    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, &route, false).await? {
+        return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+    }
     let state = runtime.state().await;
     let handler = bridge_handler(workspace_threads, plugin_host, &state);
     runtime
@@ -68,7 +70,11 @@ async fn handle_command(
                 .close_route_and_create_thread(route, Some("user started a new thread".to_string()))
                 .await
                 .map_err(internal_error)?;
-            start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await?;
+            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true)
+                .await?
+            {
+                return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+            }
             send_system_text(
                 plugin_host,
                 route,
@@ -124,7 +130,11 @@ async fn handle_command(
                     return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
                 }
             };
-            start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await?;
+            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true)
+                .await?
+            {
+                return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+            }
             send_system_text(
                 plugin_host,
                 route,
@@ -253,7 +263,9 @@ async fn switch_workspace(
     }
     .map_err(internal_error)?;
 
-    start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await?;
+    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await? {
+        return Ok(());
+    }
     send_system_text(
         plugin_host,
         route,
@@ -283,7 +295,11 @@ async fn switch_host(
             runtime
                 .switch_profile_preserving_session(target.clone())
                 .await?;
-            start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await?;
+            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true)
+                .await?
+            {
+                return Ok(());
+            }
             send_system_text(
                 plugin_host,
                 route,
@@ -301,7 +317,9 @@ async fn switch_host(
         .create_thread_in_current_workspace_with_host(route, target.clone())
         .await
         .map_err(internal_error)?;
-    start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await?;
+    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await? {
+        return Ok(());
+    }
     send_system_text(
         plugin_host,
         route,
@@ -325,7 +343,9 @@ async fn send_agent_command(
         .resolve_route_runtime(route)
         .await
         .map_err(internal_error)?;
-    start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, false).await?;
+    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, false).await? {
+        return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+    }
     let state = runtime.state().await;
     let handler = bridge_handler(workspace_threads, plugin_host, &state);
     runtime
@@ -403,7 +423,9 @@ async fn switch_session(
             return Ok(());
         }
     };
-    start_runtime_and_notify(workspace_threads, &resumed, plugin_host, route, true).await?;
+    if !start_runtime_and_notify(workspace_threads, &resumed, plugin_host, route, true).await? {
+        return Ok(());
+    }
     send_system_text(
         plugin_host,
         route,
@@ -423,8 +445,19 @@ pub async fn start_runtime_and_notify(
     plugin_host: &Arc<PluginHost>,
     route: &RouteKey,
     force_session_ready: bool,
-) -> acp::Result<()> {
+) -> acp::Result<bool> {
     let before = runtime.state().await;
+    if let Err(message) =
+        crate::resources::validate_acp_runtime_agent(&before.host_binding.agent_id)
+    {
+        tracing::info!(
+            agent_id = %before.host_binding.agent_id,
+            route = %route,
+            "rejected non-ACP runtime agent for channel route"
+        );
+        send_system_text(plugin_host, route, &message).await;
+        return Ok(false);
+    }
     if before.initialize.is_none() {
         workspace_threads
             .reset_thread_attachments_for_host_start(&before.thread_id, Some(route))
@@ -494,7 +527,7 @@ pub async fn start_runtime_and_notify(
             .await;
     }
     workspace_threads.schedule_host_idle_shutdown(after.thread_id);
-    Ok(())
+    Ok(true)
 }
 
 pub async fn send_runtime_multi_agent_state_and_replay(

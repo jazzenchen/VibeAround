@@ -84,6 +84,10 @@ impl AgentDef {
                 .any(|platform| platform == current_platform())
     }
 
+    pub fn supports_acp_runtime(&self) -> bool {
+        !self.direct_only && !self.acp.program.trim().is_empty()
+    }
+
     pub fn pty_command_for_current_platform(&self) -> &str {
         self.pty
             .platform_commands
@@ -260,6 +264,23 @@ pub fn resolve_agent_id(alias: &str) -> Result<String, String> {
         .ok_or_else(|| format!("Unknown agent '{}'", trimmed))
 }
 
+pub fn validate_acp_runtime_agent(agent_id: &str) -> Result<&'static AgentDef, String> {
+    let agent =
+        agent_by_id(agent_id).ok_or_else(|| format!("Unknown agent '{}'", agent_id.trim()))?;
+    if agent.supports_acp_runtime() {
+        Ok(agent)
+    } else {
+        Err(acp_runtime_agent_error(agent))
+    }
+}
+
+pub fn acp_runtime_agent_error(agent: &AgentDef) -> String {
+    format!(
+        "{} can only be opened directly from the local desktop app. It cannot run as an IM/channel agent because it does not expose an ACP runtime. Please choose an ACP-compatible agent such as Codex CLI.",
+        agent.display_name
+    )
+}
+
 /// Get all agent IDs.
 pub fn agent_ids() -> Vec<&'static str> {
     AGENTS.iter().map(|a| a.id.as_str()).collect()
@@ -393,6 +414,16 @@ mod tests {
         assert!(agent_by_alias("claude-code").is_some());
         assert!(agent_by_alias("pi-coding-agent").is_some());
         assert!(agent_by_alias("nonexistent").is_none());
+    }
+
+    #[test]
+    fn direct_only_agents_are_not_acp_runtime_agents() {
+        assert!(agent_by_id("codex").unwrap().supports_acp_runtime());
+        assert!(!agent_by_id("codex-desktop").unwrap().supports_acp_runtime());
+
+        let error = validate_acp_runtime_agent("codex-desktop").unwrap_err();
+        assert!(error.contains("Codex Desktop can only be opened directly"));
+        assert!(error.contains("IM/channel agent"));
     }
 
     #[test]

@@ -133,6 +133,8 @@ impl Agent {
         extra_args: Vec<String>,
         extra_env: Vec<(String, String)>,
     ) -> anyhow::Result<AgentReady> {
+        crate::resources::validate_acp_runtime_agent(&agent_id).map_err(anyhow::Error::msg)?;
+
         let cwd = workspace.to_path_buf();
         let label = format!("{}:{}", agent_id, route);
 
@@ -395,4 +397,57 @@ fn selected_agent_path_env(agent_id: &str) -> Option<String> {
     std::env::join_paths(paths)
         .ok()
         .map(|value| value.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NoopClientHandler;
+
+    #[async_trait::async_trait]
+    impl AgentClientHandler for NoopClientHandler {
+        async fn session_notification(
+            &self,
+            _args: schema::SessionNotification,
+        ) -> acp::Result<()> {
+            Ok(())
+        }
+
+        async fn request_permission(
+            &self,
+            _args: schema::RequestPermissionRequest,
+        ) -> acp::Result<schema::RequestPermissionResponse> {
+            Ok(schema::RequestPermissionResponse::new(
+                schema::RequestPermissionOutcome::Cancelled,
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_direct_only_agents_before_process_launch() {
+        let workspace = std::env::temp_dir().join(format!(
+            "vibearound-direct-only-agent-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let error = match Agent::spawn(
+            "codex-desktop".to_string(),
+            &RouteKey::new("qqbot", "chat-a"),
+            &workspace,
+            StartupSession::Fresh,
+            Arc::new(NoopClientHandler),
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        {
+            Ok(_) => panic!("direct-only agent should not spawn"),
+            Err(error) => error,
+        };
+
+        assert!(format!("{:#}", error).contains("Codex Desktop can only be opened directly"));
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
 }
