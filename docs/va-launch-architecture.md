@@ -59,9 +59,17 @@ The `va` CLI mirrors this native boundary with:
 - `va launch --profile-path <path>`
 
 Packaged Desktop and CLI distributions should include the platform-specific
-`va-launch` binary alongside the app/CLI binaries. `VIBEAROUND_VA_LAUNCH_BIN` is
-only a development/test override for pointing Desktop at a non-packaged launcher
-binary.
+`va-launch` binary alongside the app/CLI binaries. `va launch ...` does not call
+the launcher library in-process; it execs the sibling `va-launch` binary and
+forwards only `--profile`, `--profile-path`, `--dry-run`, and `--json`.
+`VIBEAROUND_VA_LAUNCH_BIN` is only a development/test override for pointing
+Desktop or CLI at a non-packaged launcher binary.
+
+Desktop packages declare `va-launch` as a Tauri external binary. The build
+script prepares the source sidecar as `desktop/binaries/va-launch-<target-triple>`
+and Tauri copies it into the app's executable directory as `va-launch` (or
+`va-launch.exe` on Windows). CLI packages must ship the `va` and `va-launch`
+binaries in the same directory.
 
 The current schema version is `1`. Unknown fields are rejected so producers do
 not silently hand `va-launch` a provider profile or another unrelated JSON

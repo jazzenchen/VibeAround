@@ -143,6 +143,7 @@ jobs:
 
           New-Item -ItemType Directory -Force $dist | Out-Null
           Copy-Item "src/target/release/vibearound-desktop.exe" "$dist/VibeAround.exe"
+          Copy-Item "src/target/release/va-launch.exe" "$dist/va-launch.exe"
 
           New-Item -ItemType Directory -Force "$dist/_up_/web" | Out-Null
           Copy-Item -Recurse "src/web/dist" "$dist/_up_/web/dist"

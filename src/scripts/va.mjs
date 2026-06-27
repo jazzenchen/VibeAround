@@ -62,25 +62,53 @@ function isTuiOnlyArgs(argv) {
 }
 
 const route = routeArgs(args);
+const precommands = [];
+if (route.packageName === "va-cli" && route.args[0] === "launch") {
+  precommands.push(["cargo", "build", "-p", "va-launcher"]);
+}
 const command = ["cargo", "run", "-p", route.packageName, "--", ...route.args];
 
 if (process.env.VA_LAUNCHER_DRY_RUN === "1") {
-  console.log(JSON.stringify({ packageName: route.packageName, args: route.args, command }));
+  console.log(
+    JSON.stringify({
+      packageName: route.packageName,
+      args: route.args,
+      precommands,
+      command,
+    }),
+  );
   process.exit(0);
 }
 
-const child = Bun.spawn(command, {
-  cwd: srcRoot,
-  stdin: "inherit",
-  stdout: "inherit",
-  stderr: "inherit",
-});
-
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
-    child.kill(signal);
-  });
+for (const precommand of precommands) {
+  const exitCode = await run(precommand);
+  if (exitCode !== 0) {
+    process.exit(exitCode);
+  }
 }
 
-const exitCode = await child.exited;
-process.exit(exitCode);
+process.exit(await run(command));
+
+async function run(argv) {
+  const child = Bun.spawn(argv, {
+    cwd: srcRoot,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+
+  const handlers = [];
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    const handler = () => {
+      child.kill(signal);
+    };
+    handlers.push([signal, handler]);
+    process.on(signal, handler);
+  }
+
+  const exitCode = await child.exited;
+  for (const [signal, handler] of handlers) {
+    process.off(signal, handler);
+  }
+  return exitCode;
+}

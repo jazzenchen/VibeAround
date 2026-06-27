@@ -9,7 +9,7 @@ for request construction and response decoding.
 
 ```bash
 cd src
-cargo build -p va-cli
+cargo build -p va-cli -p va-launcher
 ./target/debug/va help
 ```
 
@@ -17,9 +17,12 @@ For a release binary:
 
 ```bash
 cd src
-cargo build -p va-cli --release
+cargo build -p va-cli -p va-launcher --release
 ./target/release/va help
 ```
+
+`va launch ...` execs the sibling `va-launch` binary from the same directory as
+`va`. Packaged CLI builds must include both binaries together.
 
 Package scripts are available from `src/`:
 
@@ -29,9 +32,9 @@ bun va tui --refresh-ms 1000
 bun va status
 bun va channel restart feishu
 bun va:build
-bun cli:dev help
+bun cli help
 bun cli:build
-bun tui:dev
+bun tui
 bun tui:build
 ```
 
