@@ -9,8 +9,6 @@ const args = process.argv.slice(2);
 const profile = valueFor("--profile") ?? "debug";
 const desktopSidecars = [
   { binary: "va-launch", packageName: "va-launcher" },
-  { binary: "va", packageName: "va-cli" },
-  { binary: "va-tui", packageName: "va-tui" },
 ];
 
 if (!args.includes("--desktop")) {
