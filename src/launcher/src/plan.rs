@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::{
-    default_command_for_agent, native_resume_args, resolve_terminal_choice, resolve_workspace_path,
-    NativeLaunchInput, TerminalChoice,
+    default_command_for_agent, native_resume_args, resolve_executable_path,
+    resolve_terminal_choice, resolve_workspace_path, validate_launch_command, NativeLaunchInput,
+    TerminalChoice,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,13 +51,19 @@ pub fn build_execution_plan(input: NativeLaunchInput) -> anyhow::Result<Executio
     let terminal = resolve_terminal_choice(input.terminal)?;
 
     let (command, mut args) = if let Some(path) = input.executable_path {
+        let path = resolve_executable_path(path)?;
         (path.to_string_lossy().to_string(), Vec::new())
     } else if let Some(command) = input.command {
+        validate_launch_command(&command)?;
         (command, Vec::new())
     } else if let Some(session_id) = input.session_id.as_deref() {
-        native_resume_args(&input.agent, session_id)?
+        let (command, args) = native_resume_args(&input.agent, session_id)?;
+        validate_launch_command(&command)?;
+        (command, args)
     } else {
-        (default_command_for_agent(&input.agent)?, Vec::new())
+        let command = default_command_for_agent(&input.agent)?;
+        validate_launch_command(&command)?;
+        (command, Vec::new())
     };
     args.extend(input.args.native);
 
@@ -163,24 +170,34 @@ mod tests {
 
     #[test]
     fn builds_default_cli_command() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let fixture = PathFixture::with_command("codex");
+
         let plan = build_execution_plan(input("codex")).unwrap();
+
+        drop(fixture);
         assert_eq!(plan.command, "codex");
         assert!(plan.args.is_empty());
     }
 
     #[test]
     fn builds_resume_command_when_session_id_is_present() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let fixture = PathFixture::with_command("codex");
         let mut input = input("codex");
         input.session_id = Some("abc123".to_string());
 
         let plan = build_execution_plan(input).unwrap();
 
+        drop(fixture);
         assert_eq!(plan.command, "codex");
         assert_eq!(plan.args, vec!["resume", "abc123"]);
     }
 
     #[test]
     fn explicit_command_wins_over_default_resume_command() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let fixture = PathFixture::with_command("custom-codex");
         let mut input = input("codex");
         input.session_id = Some("abc123".to_string());
         input.command = Some("custom-codex".to_string());
@@ -188,6 +205,7 @@ mod tests {
 
         let plan = build_execution_plan(input).unwrap();
 
+        drop(fixture);
         assert_eq!(plan.command, "custom-codex");
         assert_eq!(plan.args, vec!["resume", "abc123"]);
     }
@@ -195,6 +213,7 @@ mod tests {
     #[test]
     fn redacts_secret_like_env_values() {
         let mut input = input("claude");
+        input.executable_path = Some(std::env::current_exe().expect("current test exe"));
         input
             .env
             .insert("ANTHROPIC_API_KEY".into(), "secret".into());
@@ -208,6 +227,19 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_agent_executable() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let fixture = PathFixture::empty();
+
+        let error = build_execution_plan(input("codex"))
+            .unwrap_err()
+            .to_string();
+
+        drop(fixture);
+        assert!(error.contains("agent executable 'codex' was not found in PATH"));
+    }
+
+    #[test]
     fn rejects_missing_workspace() {
         let mut input = input("codex");
         input.workspace = Some(std::env::temp_dir().join(format!(
@@ -218,5 +250,44 @@ mod tests {
         let error = build_execution_plan(input).unwrap_err().to_string();
 
         assert!(error.contains("workspace does not exist"));
+    }
+
+    struct PathFixture {
+        dir: PathBuf,
+        previous_path: Option<std::ffi::OsString>,
+    }
+
+    impl PathFixture {
+        fn empty() -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("va-launch-plan-path-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).expect("create temp path dir");
+            let previous_path = std::env::var_os("PATH");
+            std::env::set_var("PATH", &dir);
+            Self { dir, previous_path }
+        }
+
+        fn with_command(name: &str) -> Self {
+            let fixture = Self::empty();
+            let path = fixture.dir.join(name);
+            std::fs::write(&path, "#!/bin/sh\n").expect("write fake command");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+                    .expect("chmod fake command");
+            }
+            fixture
+        }
+    }
+
+    impl Drop for PathFixture {
+        fn drop(&mut self) {
+            match &self.previous_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
     }
 }
