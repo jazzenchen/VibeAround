@@ -12,6 +12,7 @@ pub fn launcher_config_path() -> anyhow::Result<PathBuf> {
 
 pub fn resolve_terminal_choice(explicit: Option<TerminalChoice>) -> anyhow::Result<TerminalChoice> {
     if let Some(choice) = explicit {
+        ensure_terminal_supported(choice, "launch profile")?;
         return Ok(choice);
     }
     read_or_initialize_terminal()
@@ -55,14 +56,19 @@ fn terminal_from_config_value(value: &Value, path: &Path) -> anyhow::Result<Term
             raw
         )
     })?;
+    ensure_terminal_supported(choice, &format!("launcher config {}", path.display()))?;
+    Ok(choice)
+}
+
+fn ensure_terminal_supported(choice: TerminalChoice, source: &str) -> anyhow::Result<()> {
     if !choice.is_supported_on_current_platform() {
         bail!(
-            "launcher config {} terminal '{}' is not supported on this platform",
-            path.display(),
-            raw
+            "{} terminal '{}' is not supported on this platform",
+            source,
+            choice.id()
         );
     }
-    Ok(choice)
+    Ok(())
 }
 
 fn read_launcher_config(path: &Path) -> anyhow::Result<Map<String, Value>> {
@@ -188,8 +194,24 @@ mod tests {
 
     #[test]
     fn explicit_terminal_skips_config() {
-        let choice = resolve_terminal_choice(Some(TerminalChoice::Terminal)).unwrap();
-        assert_eq!(choice, TerminalChoice::Terminal);
+        let supported = TerminalChoice::default_for_current_platform();
+        let choice = resolve_terminal_choice(Some(supported)).unwrap();
+        assert_eq!(choice, supported);
+    }
+
+    #[test]
+    fn explicit_terminal_must_support_current_platform() {
+        let unsupported = if cfg!(target_os = "macos") {
+            TerminalChoice::PowerShell
+        } else {
+            TerminalChoice::Terminal
+        };
+
+        let error = resolve_terminal_choice(Some(unsupported))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("is not supported on this platform"));
     }
 
     #[test]

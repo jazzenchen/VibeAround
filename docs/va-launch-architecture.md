@@ -16,6 +16,10 @@ concerns:
 - native launch plan construction
 - terminal/app process spawning
 
+`va-launch` is also a standalone native executable. It must be runnable by path,
+for example `/path/to/va-launch --profile <name>` or
+`/path/to/va-launch --profile-path <file>`.
+
 `va-launch` should not own VibeAround provider profile runtime concerns:
 
 - provider profile selection and validation
@@ -53,6 +57,11 @@ The `va` CLI mirrors this native boundary with:
 
 - `va launch --profile <name>`
 - `va launch --profile-path <path>`
+
+Packaged Desktop and CLI distributions should include the platform-specific
+`va-launch` binary alongside the app/CLI binaries. `VIBEAROUND_VA_LAUNCH_BIN` is
+only a development/test override for pointing Desktop at a non-packaged launcher
+binary.
 
 The current schema version is `1`. Unknown fields are rejected so producers do
 not silently hand `va-launch` a provider profile or another unrelated JSON
@@ -125,8 +134,8 @@ skill files and removes VibeAround-managed project integrations for that
 agent/workspace. This prevents stale project config from pointing agents at a
 dead local MCP server.
 
-`--dry-run` only builds and reports the native launch plan; it must not install
-or mutate project files.
+`--dry-run` only validates the launch profile and reports the native launch plan;
+it must not install integrations, mutate project files, or spawn a terminal/app.
 
 ## Current Flow
 
@@ -155,9 +164,10 @@ Desktop / CLI / another producer
   -> va-launch --profile-path <json>
 ```
 
-`va-launch` must not call VibeAround server, Desktop, or a shared provider
-resolver. It must be able to launch from a launch profile JSON without
-VibeAround Desktop or Server running.
+`va-launch` must not call Desktop or a shared provider resolver. It must be able
+to launch from a launch profile JSON without VibeAround Desktop running. The only
+server-aware behavior is the optional local health probe used to decide whether
+project MCP/skill integrations should be written or cleaned before launch.
 
 ## Migration Rule
 

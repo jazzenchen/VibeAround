@@ -37,28 +37,9 @@ impl LaunchContext {
             session_id: session_id.map(ToString::to_string),
         }
     }
-
-    pub(super) fn agent_id(&self) -> &str {
-        &self.agent_id
-    }
 }
 
-pub(super) fn spawn_if_enabled(
-    plan: &LaunchPlan,
-    context: &LaunchContext,
-) -> Option<anyhow::Result<()>> {
-    if std::env::var("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        return None;
-    }
-
-    Some(spawn_process(plan, context))
-}
-
-fn spawn_process(plan: &LaunchPlan, context: &LaunchContext) -> anyhow::Result<()> {
+pub(super) fn spawn(plan: &LaunchPlan, context: &LaunchContext) -> anyhow::Result<()> {
     let profile = profile_from_plan(plan, context);
     let profile_path = write_profile_file(&profile)?;
     let launcher = resolve_va_launch_binary()?;
@@ -230,29 +211,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn legacy_env_disables_va_launch_path() {
-        let _guard = env_test_lock().lock().expect("env test lock");
-        let previous = std::env::var_os("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER");
-        std::env::set_var("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER", "1");
-        let plan = LaunchPlan {
-            env: Vec::new(),
-            command: "codex".to_string(),
-            args: Vec::new(),
-            cleanup_paths: Vec::new(),
-            window_label: "Codex".to_string(),
-            workspace: PathBuf::from("/tmp/work"),
-            macos_app_probe: None,
-            windows_process_probe: None,
-            windows_executable_path: None,
-        };
-
-        let result = spawn_if_enabled(&plan, &LaunchContext::direct("codex", None));
-
-        restore_env("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER", previous);
-        assert!(result.is_none());
-    }
-
     #[cfg(unix)]
     #[test]
     fn process_launch_pushes_launch_profile_file_to_va_launch() {
@@ -276,10 +234,8 @@ mod tests {
 
         let previous_bin = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN");
         let previous_capture = std::env::var_os("VA_LAUNCH_CAPTURE");
-        let previous_legacy = std::env::var_os("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER");
         std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", &fake_bin);
         std::env::set_var("VA_LAUNCH_CAPTURE", &capture);
-        std::env::remove_var("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER");
 
         let plan = LaunchPlan {
             env: vec![("OPENAI_API_KEY".to_string(), "secret".to_string())],
@@ -294,14 +250,13 @@ mod tests {
         };
         let context = LaunchContext::profile(&profile("openai"), "codex", None);
 
-        spawn_process(&plan, &context).expect("spawn fake va-launch");
+        spawn(&plan, &context).expect("spawn fake va-launch");
 
         let captured = std::fs::read_to_string(&capture).expect("read captured input");
         let value: serde_json::Value =
             serde_json::from_str(&captured).expect("parse captured JSON");
         restore_env("VIBEAROUND_VA_LAUNCH_BIN", previous_bin);
         restore_env("VA_LAUNCH_CAPTURE", previous_capture);
-        restore_env("VIBEAROUND_USE_LEGACY_DESKTOP_LAUNCHER", previous_legacy);
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(value["agent"], "codex");

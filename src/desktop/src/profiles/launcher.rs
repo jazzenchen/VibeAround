@@ -10,27 +10,7 @@ mod codex;
 mod codex_desktop;
 mod common;
 mod plan;
-mod templates;
 mod va_launch;
-
-#[cfg(target_os = "macos")]
-#[path = "launcher/macos.rs"]
-mod platform;
-#[cfg(target_os = "windows")]
-#[path = "launcher/windows.rs"]
-mod platform;
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-#[path = "launcher/linux.rs"]
-mod platform;
-
-#[cfg(all(test, target_os = "macos"))]
-#[allow(dead_code)]
-#[path = "launcher/linux.rs"]
-mod linux_for_tests;
-#[cfg(all(test, not(target_os = "windows")))]
-#[allow(dead_code)]
-#[path = "launcher/windows.rs"]
-mod windows_for_tests;
 
 use self::plan::LaunchPlanBuilder;
 use ::common::profiles;
@@ -88,9 +68,5 @@ fn spawn_plan(
     launch_plan: common::LaunchPlan,
     context: va_launch::LaunchContext,
 ) -> anyhow::Result<()> {
-    if let Some(result) = va_launch::spawn_if_enabled(&launch_plan, &context) {
-        return result;
-    }
-    plan::install_project_integrations_for_launch(context.agent_id(), &launch_plan.workspace)?;
-    platform::spawn(launch_plan)
+    va_launch::spawn(&launch_plan, &context)
 }

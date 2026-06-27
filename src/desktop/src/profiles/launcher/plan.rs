@@ -403,23 +403,6 @@ fn append_vibearound_launch_context_env(
     ));
 }
 
-pub(super) fn install_project_integrations_for_launch(
-    agent_id: &str,
-    workspace: &std::path::Path,
-) -> anyhow::Result<()> {
-    let integration_agent_id = project_integration_agent_id(agent_id);
-    agent_integrations::auto_install_project_integrations(integration_agent_id, workspace)
-        .with_context(|| format!("install project integrations for {}", integration_agent_id))
-}
-
-fn project_integration_agent_id(agent_id: &str) -> &str {
-    match agent_id {
-        "claude-desktop" => "claude",
-        "codex-desktop" => "codex",
-        other => other,
-    }
-}
-
 fn append_local_bridge_proxy_bypass_env(env: &mut Vec<(String, String)>) {
     env.retain(|(key, _)| !LOCAL_BRIDGE_PROXY_ENV_KEYS.contains(&key.as_str()));
     env.extend([
@@ -642,13 +625,6 @@ mod tests {
         } else {
             assert!(args.is_empty());
         }
-    }
-
-    #[test]
-    fn desktop_launches_install_companion_cli_integrations() {
-        assert_eq!(project_integration_agent_id("codex-desktop"), "codex");
-        assert_eq!(project_integration_agent_id("claude-desktop"), "claude");
-        assert_eq!(project_integration_agent_id("gemini"), "gemini");
     }
 
     #[test]

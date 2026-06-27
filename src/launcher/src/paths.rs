@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context};
 
 pub fn data_dir() -> anyhow::Result<PathBuf> {
-    if let Some(path) =
-        non_empty_env("VIBEAROUND_DATA_DIR").or_else(|| non_empty_env("VIBEAROUND_HOME"))
-    {
+    if let Some(path) = non_empty_env("VIBEAROUND_DATA_DIR") {
         return Ok(expand_home(&path));
     }
     let home = non_empty_env("HOME")
