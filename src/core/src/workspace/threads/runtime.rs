@@ -1233,7 +1233,7 @@ fn host_startup_session(
 }
 
 pub(crate) fn route_allows_startup_replay(route: &RouteKey) -> bool {
-    route.channel_kind == "web"
+    matches!(route.channel_kind.as_str(), "web" | "tui")
 }
 
 fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
@@ -1503,6 +1503,18 @@ mod tests {
     #[test]
     fn web_routes_load_previous_host_session_for_playback() {
         let route = RouteKey::new("web", "chat-1");
+
+        let startup_session = host_startup_session(&route, None, &thread_with_sessions());
+
+        assert_eq!(
+            startup_session,
+            StartupSession::Load("session-old".to_string())
+        );
+    }
+
+    #[test]
+    fn tui_routes_load_previous_host_session_for_playback() {
+        let route = RouteKey::new("tui", "chat-1");
 
         let startup_session = host_startup_session(&route, None, &thread_with_sessions());
 

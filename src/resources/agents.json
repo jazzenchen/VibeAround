@@ -48,7 +48,7 @@
     "install": { "type": "npm" },
     "acp": {
       "program": "node",
-      "npm_package": "@zed-industries/codex-acp@0.16.0",
+      "npm_package": "@agentclientprotocol/codex-acp@1.0.1",
       "bin_name": "codex-acp"
     },
     "pty": {

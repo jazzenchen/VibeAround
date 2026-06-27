@@ -4,39 +4,58 @@ use va_client::endpoint::ServerEndpoint;
 use va_client::state::ChatState;
 
 use crate::chat::{ChatMessage, ChatRole};
-use crate::data::{fetch_agent_picker, fetch_snapshot, AgentPickerSnapshot, DashboardSnapshot};
-use crate::detail::DetailContent;
+use crate::data::{
+    fetch_agent_picker, fetch_launcher_preferences, fetch_snapshot, AgentPickerSnapshot,
+    DashboardSnapshot,
+};
+use crate::popup::Popup;
 use crate::runtime_socket::RuntimeStream;
-use crate::selection::{AgentSelection, StatusSelection};
 use crate::transport::HttpTransport;
 
-mod agent;
 mod chat;
+mod popup;
 mod runtime;
 
 const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(crate) struct TuiApp {
-    pub(crate) endpoint: String,
     pub(crate) view: AppView,
     pub(crate) chat_state: ChatState,
     pub(crate) chat_connected: bool,
     pub(crate) snapshot: DashboardSnapshot,
     pub(crate) agent_picker: AgentPickerSnapshot,
-    pub(crate) status_selection: StatusSelection,
-    pub(crate) agent_selection: AgentSelection,
     pub(crate) chat_messages: Vec<ChatMessage>,
     pub(crate) chat_input: String,
     pub(crate) chat_cursor: usize,
     pub(crate) chat_scroll: usize,
+    /// Previously submitted inputs (messages and commands), oldest first.
+    input_history: Vec<String>,
+    /// Position within [`Self::input_history`] while recalling, or `None`
+    /// when editing the live draft.
+    history_cursor: Option<usize>,
+    /// The live draft, parked while the user browses history.
+    history_draft: String,
+    /// Highlighted entry in the slash-command autocomplete popup.
+    pub(crate) slash_selection: usize,
+    /// The last submitted input and when, used to drop an immediate duplicate
+    /// (e.g. an IME that fires the commit Enter twice).
+    last_submit: Option<(Instant, String)>,
+    /// Active bottom-up command popup (`/status`, `/agent`), if any.
+    pub(crate) popup: Option<Popup>,
     pub(crate) selected_agent: Option<String>,
     pub(crate) selected_profile: Option<String>,
     pub(crate) selected_workspace: Option<String>,
     pub(crate) selected_session: Option<String>,
     pub(crate) force_new_session: bool,
-    pub(crate) detail: Option<DetailContent>,
+    /// Agent/profile/workspace/session can only be edited before the first
+    /// chat context is bound. Once a message or resume starts, settings become
+    /// read-only for the lifetime of this TUI process.
+    pub(crate) context_locked: bool,
     pub(crate) work_status: Option<String>,
+    /// When the current agent turn started, used to drive the live working
+    /// indicator (spinner + elapsed) in the transcript.
+    pub(crate) turn_started_at: Option<Instant>,
     pub(crate) last_error: Option<String>,
     last_error_scope: Option<ErrorScope>,
     pub(crate) last_action: Option<String>,
@@ -45,30 +64,33 @@ pub(crate) struct TuiApp {
 }
 
 impl TuiApp {
-    pub(crate) fn new(endpoint: &ServerEndpoint) -> Self {
+    pub(crate) fn new(_endpoint: &ServerEndpoint) -> Self {
         Self {
-            endpoint: endpoint.base_url().to_string(),
             view: AppView::Chat,
             chat_state: ChatState::new(),
             chat_connected: false,
             snapshot: DashboardSnapshot::default(),
             agent_picker: AgentPickerSnapshot::default(),
-            status_selection: StatusSelection::default(),
-            agent_selection: AgentSelection::default(),
-            chat_messages: vec![ChatMessage {
-                role: ChatRole::Notice,
-                text: "Type /status for runtime status, /agent for agent settings, /help for commands.".into(),
-            }],
+            // Start clean — the welcome screen's tip and the footer cover
+            // command discovery, so no seed notice in the transcript.
+            chat_messages: Vec::new(),
             chat_input: String::new(),
             chat_cursor: 0,
             chat_scroll: 0,
+            input_history: Vec::new(),
+            history_cursor: None,
+            history_draft: String::new(),
+            slash_selection: 0,
+            last_submit: None,
+            popup: None,
             selected_agent: None,
             selected_profile: None,
             selected_workspace: None,
             selected_session: None,
             force_new_session: false,
-            detail: None,
+            context_locked: false,
             work_status: None,
+            turn_started_at: None,
             last_error: None,
             last_error_scope: None,
             last_action: None,
@@ -81,7 +103,6 @@ impl TuiApp {
         match fetch_snapshot(transport).await {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
-                self.status_selection.clamp(&self.snapshot);
                 self.clear_error(ErrorScope::Status);
                 self.last_refresh = Some(Instant::now());
             }
@@ -92,11 +113,19 @@ impl TuiApp {
         }
     }
 
+    /// Seed the chat context from the launcher's current selection so the
+    /// header shows the real agent/profile/workspace at startup, not `global`.
+    pub(crate) async fn sync_launcher_context(&mut self, transport: &HttpTransport) {
+        if let Ok(preferences) = fetch_launcher_preferences(transport).await {
+            self.agent_picker.preferences = Some(preferences);
+            self.clear_error(ErrorScope::Agent);
+        }
+    }
+
     pub(crate) async fn refresh_agent_picker(&mut self, transport: &HttpTransport) {
         match fetch_agent_picker(transport).await {
             Ok(snapshot) => {
                 self.agent_picker = snapshot;
-                self.agent_selection.clamp(&self.agent_picker);
                 self.clear_error(ErrorScope::Agent);
                 self.last_refresh = Some(Instant::now());
             }
@@ -107,66 +136,9 @@ impl TuiApp {
         }
     }
 
-    pub(crate) async fn open_status(&mut self, transport: &HttpTransport) {
-        self.view = AppView::Status;
-        self.detail = None;
-        self.refresh_status(transport).await;
-    }
-
-    pub(crate) async fn open_agent_picker(&mut self, transport: &HttpTransport) {
-        self.view = AppView::Agent;
-        self.detail = None;
-        self.refresh_agent_picker(transport).await;
-    }
-
+    /// Esc with no popup open clears the input draft.
     pub(crate) fn go_back(&mut self) {
-        match self.view {
-            AppView::StatusDetail => {
-                self.view = AppView::Status;
-                self.detail = None;
-            }
-            AppView::Status | AppView::Agent => {
-                self.view = AppView::Chat;
-                self.detail = None;
-            }
-            AppView::Chat => {
-                self.clear_chat_input();
-            }
-        }
-    }
-
-    pub(crate) fn select_left(&mut self) {
-        match self.view {
-            AppView::Status => self.status_selection.move_left(),
-            AppView::Agent => self.agent_selection.move_left(),
-            AppView::Chat | AppView::StatusDetail => {}
-        }
-    }
-
-    pub(crate) fn select_right(&mut self) {
-        match self.view {
-            AppView::Status => self.status_selection.move_right(),
-            AppView::Agent => self.agent_selection.move_right(),
-            AppView::Chat | AppView::StatusDetail => {}
-        }
-    }
-
-    pub(crate) fn select_up(&mut self) {
-        match self.view {
-            AppView::Status => self.status_selection.move_up(&self.snapshot),
-            AppView::Agent => self.agent_selection.move_up(&self.agent_picker),
-            AppView::Chat => self.scroll_chat_up(1),
-            AppView::StatusDetail => {}
-        }
-    }
-
-    pub(crate) fn select_down(&mut self) {
-        match self.view {
-            AppView::Status => self.status_selection.move_down(&self.snapshot),
-            AppView::Agent => self.agent_selection.move_down(&self.agent_picker),
-            AppView::Chat => self.scroll_chat_down(1),
-            AppView::StatusDetail => {}
-        }
+        self.clear_chat_input();
     }
 
     pub(crate) fn scroll_chat_up(&mut self, lines: usize) {
@@ -181,17 +153,19 @@ impl TuiApp {
         self.chat_scroll = 0;
     }
 
-    pub(crate) fn enter_current_view(&mut self) {
-        match self.view {
-            AppView::Status => {
-                self.detail = self.status_selection.detail(&self.snapshot);
-                if self.detail.is_some() {
-                    self.view = AppView::StatusDetail;
-                }
-            }
-            AppView::Agent => self.select_agent_picker_item(),
-            AppView::Chat | AppView::StatusDetail => {}
-        }
+    /// The chat has not started a real exchange yet (only passive notices).
+    /// Drives the centered welcome/splash screen.
+    pub(crate) fn is_welcome(&self) -> bool {
+        self.view == AppView::Chat
+            && !self.context_locked
+            && self.selected_session.is_none()
+            && self.chat_state.session_id.is_none()
+            && !self.chat_messages.iter().any(|message| {
+                matches!(
+                    message.role,
+                    ChatRole::Request | ChatRole::Response | ChatRole::Work
+                )
+            })
     }
 
     pub(crate) fn effective_agent(&self) -> Option<&str> {
@@ -228,6 +202,14 @@ impl TuiApp {
 
     pub(crate) fn effective_session(&self) -> Option<&str> {
         self.selected_session.as_deref()
+    }
+
+    pub(crate) fn agent_config_editable(&self) -> bool {
+        !self.context_locked
+            && self.is_welcome()
+            && !self.chat_state.turn_active
+            && self.chat_state.session_id.is_none()
+            && self.selected_session.is_none()
     }
 
     pub(crate) fn confirm_exit_request(&mut self) -> bool {
@@ -281,6 +263,7 @@ impl TuiApp {
             .is_some_and(|elapsed| elapsed <= EXIT_CONFIRM_WINDOW)
     }
 
+    #[cfg(test)]
     pub(crate) fn exit_confirmation_pending(&self) -> bool {
         self.exit_confirmation_started.is_some()
     }
@@ -289,9 +272,6 @@ impl TuiApp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AppView {
     Chat,
-    Status,
-    StatusDetail,
-    Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -133,11 +133,14 @@ pub(super) fn profile_row(profile: &ModelProfileSummary) -> Vec<Span<'static>> {
 }
 
 pub(super) fn workspace_row(workspace: &WorkspaceItem) -> Vec<Span<'static>> {
-    let marker = if workspace.is_default { "* " } else { "  " };
-    vec![
-        Span::styled(marker, Style::default().fg(ACTION)),
-        Span::styled(workspace.path.clone(), Style::default()),
-    ]
+    let mut spans = vec![Span::styled(
+        workspace.path.clone(),
+        Style::default().add_modifier(Modifier::BOLD),
+    )];
+    if workspace.is_default {
+        spans.push(Span::styled("  (default)", muted_style()));
+    }
+    spans
 }
 
 fn fixed(value: &str, width: usize) -> String {

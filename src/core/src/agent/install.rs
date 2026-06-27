@@ -524,10 +524,10 @@ mod tests {
     #[test]
     fn parses_scoped_npm_package_specs() {
         assert_eq!(
-            npm_package_spec("@zed-industries/codex-acp@0.16.0"),
+            npm_package_spec("@agentclientprotocol/codex-acp@1.0.1"),
             NpmPackageSpec {
-                package_name: "@zed-industries/codex-acp",
-                requested_version: Some("0.16.0"),
+                package_name: "@agentclientprotocol/codex-acp",
+                requested_version: Some("1.0.1"),
             }
         );
         assert_eq!(
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn derives_default_bin_name_from_package_name() {
         assert_eq!(
-            npm_package_bin_name("@zed-industries/codex-acp@0.16.0"),
+            npm_package_bin_name("@agentclientprotocol/codex-acp@1.0.1"),
             "codex-acp"
         );
         assert_eq!(npm_package_bin_name("plain-agent@1.2.3"), "plain-agent");

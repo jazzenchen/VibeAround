@@ -974,7 +974,7 @@ async function writeFakeAgents(home) {
   await linkBin(bin, "gemini", fakeAgent);
   await linkBin(bin, "opencode", fakeAgent);
 
-  await writePackage(nodeModules, "@zed-industries/codex-acp", "0.14.0");
+  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.0.1");
   await writePackage(nodeModules, "pi-acp", "0.0.27");
   await writePackage(nodeModules, "@agentclientprotocol/claude-agent-acp", "0.0.0");
 }

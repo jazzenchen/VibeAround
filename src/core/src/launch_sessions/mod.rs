@@ -72,7 +72,49 @@ pub async fn list_for_agent_workspaces_with_archived_async(
     limit: usize,
     include_archived: bool,
 ) -> Vec<LaunchSession> {
-    let mut sessions = match agent_id {
+    let mut sessions =
+        native_sessions_for_agent_workspaces_async(agent_id, workspaces, include_archived).await;
+    sessions.extend(
+        workspaces
+            .iter()
+            .flat_map(|workspace| observed_sessions_for_agent_workspace(agent_id, workspace)),
+    );
+    finalize_workspace_sessions(agent_id, sessions, limit, include_archived)
+}
+
+pub async fn list_native_for_agent_workspace_with_archived_async(
+    agent_id: &str,
+    workspace: &Path,
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    let workspaces = [workspace.to_path_buf()];
+    list_native_for_agent_workspaces_with_archived_async(
+        agent_id,
+        &workspaces,
+        limit,
+        include_archived,
+    )
+    .await
+}
+
+pub async fn list_native_for_agent_workspaces_with_archived_async(
+    agent_id: &str,
+    workspaces: &[std::path::PathBuf],
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    let sessions =
+        native_sessions_for_agent_workspaces_async(agent_id, workspaces, include_archived).await;
+    finalize_workspace_sessions(agent_id, sessions, limit, include_archived)
+}
+
+async fn native_sessions_for_agent_workspaces_async(
+    agent_id: &str,
+    workspaces: &[std::path::PathBuf],
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    match agent_id {
         "codex" => codex::sessions_for_workspaces_async(workspaces, include_archived).await,
         "opencode" => {
             let workspaces = workspaces.to_vec();
@@ -94,12 +136,15 @@ pub async fn list_for_agent_workspaces_with_archived_async(
             .await
             .unwrap_or_default()
         }
-    };
-    sessions.extend(
-        workspaces
-            .iter()
-            .flat_map(|workspace| observed_sessions_for_agent_workspace(agent_id, workspace)),
-    );
+    }
+}
+
+fn finalize_workspace_sessions(
+    agent_id: &str,
+    mut sessions: Vec<LaunchSession>,
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
     apply_archive_flags(agent_id, &mut sessions, include_archived);
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     dedupe_by_session_id(&mut sessions);

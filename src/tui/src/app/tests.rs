@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 
 use crate::chat_socket::ChatSocketEvent;
 use crate::config::DEFAULT_BASE_URL;
+use crate::popup::Popup;
 use crate::render;
 use crate::runtime_socket::{RuntimeSocketEvent, RuntimeStream};
-use crate::selection::{AgentPanel, RuntimePanel};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Position;
 use ratatui::Terminal;
@@ -166,74 +166,21 @@ fn expect_message_id(message: &ChatClientMessage) -> String {
 }
 
 #[test]
-fn selects_active_panel_items_with_wrapping_and_clamping() {
-    let mut selection = StatusSelection::default();
-    let mut snapshot = DashboardSnapshot::default();
+fn runtime_socket_events_update_snapshot_and_clamp_popup() {
+    use crate::popup::{Popup, PopupKind, PopupLevel};
 
-    selection.select_next(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), None);
-
-    snapshot.channels = vec![channel("feishu"), channel("discord")];
-    selection.clamp(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
-
-    selection.select_next(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(1));
-
-    selection.select_next(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
-
-    selection.select_previous(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(1));
-
-    snapshot.channels.pop();
-    selection.clamp(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), Some(0));
-
-    snapshot.channels.clear();
-    selection.clamp(&snapshot);
-    assert_eq!(selection.index(RuntimePanel::Channels), None);
-}
-
-#[test]
-fn status_navigation_follows_panel_geometry() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
-    app.snapshot.channels = vec![channel("feishu")];
-    app.snapshot.tunnels = vec![tunnel("cloudflare"), tunnel("ngrok")];
-    app.status_selection.clamp(&app.snapshot);
-
-    assert_eq!(app.status_selection.panel, RuntimePanel::Channels);
-    assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(0));
-
-    app.select_down();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Tunnels);
-    assert_eq!(app.status_selection.index(RuntimePanel::Tunnels), Some(0));
-    app.select_down();
-    assert_eq!(app.status_selection.index(RuntimePanel::Tunnels), Some(1));
-
-    app.select_up();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Channels);
-    app.select_right();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Agents);
-    app.select_down();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Sessions);
-    app.select_left();
-    assert_eq!(app.status_selection.panel, RuntimePanel::Tunnels);
-}
-
-#[test]
-fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
     app.snapshot.channels = vec![channel("feishu"), channel("discord")];
     app.snapshot.tunnels = vec![tunnel("cloudflare")];
     app.snapshot.agents = vec![runtime_agent("tui:chat-1")];
-    app.status_selection.clamp(&app.snapshot);
-    app.status_selection.select_next(&app.snapshot);
-    assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(1));
+    // A status popup browsing channels with the cursor on the second row.
+    app.popup = Some(Popup {
+        kind: PopupKind::Status,
+        level: PopupLevel::Items { category: 0 },
+        cursor: 1,
+        direct_category: None,
+    });
     app.set_error(
         ErrorScope::Runtime(RuntimeStream::Channels),
         "old runtime error",
@@ -243,10 +190,13 @@ fn runtime_socket_events_update_status_snapshot_and_clamp_selection() {
 
     assert_eq!(app.snapshot.channels.len(), 1);
     assert_eq!(app.snapshot.channels[0].kind, "feishu");
-    assert_eq!(app.status_selection.index(RuntimePanel::Channels), Some(0));
+    assert_eq!(
+        app.popup.as_ref().unwrap().cursor,
+        0,
+        "cursor clamps to the shrunk list"
+    );
     assert_eq!(app.last_error, None);
     assert!(app.last_refresh.is_some());
-    assert!(render::view_hint(&app).starts_with("runtime stream updated "));
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Tunnels(vec![tunnel("ngrok")]));
     assert_eq!(app.snapshot.tunnels[0].provider, "ngrok");
@@ -318,50 +268,11 @@ fn runtime_socket_update_only_clears_matching_stream_error() {
 }
 
 #[test]
-fn status_detail_tracks_runtime_socket_updates() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
-    app.snapshot.channels = vec![channel("feishu")];
-    app.status_selection.clamp(&app.snapshot);
-
-    app.enter_current_view();
-    assert_eq!(app.view, AppView::StatusDetail);
-    assert!(app
-        .detail
-        .as_ref()
-        .unwrap()
-        .lines
-        .contains(&"version: 0.1.0".to_string()));
-
-    let mut updated = channel("feishu");
-    updated.version = Some("0.2.0".into());
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(vec![updated]));
-
-    assert_eq!(app.view, AppView::StatusDetail);
-    assert!(app
-        .detail
-        .as_ref()
-        .unwrap()
-        .lines
-        .contains(&"version: 0.2.0".to_string()));
-
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Channels(Vec::new()));
-
-    assert_eq!(app.view, AppView::Status);
-    assert!(app.detail.is_none());
-}
-
-#[test]
 fn pty_session_socket_does_not_mutate_agent_picker_sessions() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Agent;
     app.agent_picker.sessions = vec![launch_session("launch-1", "codex", "/tmp/launch")];
     app.selected_session = Some("launch-1".into());
-    app.agent_selection.panel = AgentPanel::Sessions;
-    app.agent_selection.clamp(&app.agent_picker);
-    assert_eq!(app.agent_selection.index(AgentPanel::Sessions), Some(0));
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Sessions(vec![session(
         "new-session",
@@ -371,69 +282,17 @@ fn pty_session_socket_does_not_mutate_agent_picker_sessions() {
 
     assert_eq!(app.agent_picker.sessions[0].session_id, "launch-1");
     assert_eq!(app.snapshot.sessions[0].session_id, "new-session");
-    assert_eq!(app.agent_selection.index(AgentPanel::Sessions), Some(0));
     assert_eq!(app.selected_session.as_deref(), Some("launch-1"));
 }
 
 #[test]
-fn enter_status_item_opens_detail_and_escape_returns() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
-    app.snapshot.channels = vec![channel("feishu")];
-    app.status_selection.clamp(&app.snapshot);
-
-    app.enter_current_view();
-
-    assert_eq!(app.view, AppView::StatusDetail);
-    assert_eq!(app.detail.as_ref().unwrap().title, "channel feishu");
-
-    app.go_back();
-    assert_eq!(app.view, AppView::Status);
-}
-
-#[test]
-fn status_render_uses_minimal_semantic_boundaries() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Status;
-    app.snapshot.channels = vec![channel("feishu")];
-    app.snapshot.tunnels = vec![tunnel("cloudflare")];
-    app.snapshot.agents = vec![runtime_agent("tui:chat-1")];
-    app.snapshot.sessions = vec![session("session-1", "/tmp/session", "profile-1")];
-    app.status_selection.clamp(&app.snapshot);
-
-    let backend = TestBackend::new(100, 32);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| render::render(frame, &app))
-        .expect("draw");
-    let screen = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<Vec<_>>()
-        .join("");
-
-    assert!(screen.contains("channels"));
-    assert!(screen.contains("feishu"));
-    assert!(screen.contains('│'));
-    assert!(screen.contains('─'));
-    assert!(!screen.contains('┌'));
-    assert!(!screen.contains('┐'));
-    assert!(!screen.contains('└'));
-    assert!(!screen.contains('┘'));
-}
-
-#[test]
-fn default_view_is_chat() {
+fn default_view_is_welcome_chat_with_empty_transcript() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let app = TuiApp::new(&endpoint);
 
     assert_eq!(app.view, AppView::Chat);
-    assert!(app.chat_messages[0].text.contains("/status"));
+    assert!(app.chat_messages.is_empty());
+    assert!(app.is_welcome());
 }
 
 #[test]
@@ -442,14 +301,8 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
     let mut app = TuiApp::new(&endpoint);
     app.chat_connected = true;
     app.chat_messages = vec![
-        ChatMessage {
-            role: ChatRole::Request,
-            text: "hello".into(),
-        },
-        ChatMessage {
-            role: ChatRole::Response,
-            text: "hi there".into(),
-        },
+        ChatMessage::new(ChatRole::Request, "hello"),
+        ChatMessage::new(ChatRole::Response, "hi there"),
     ];
 
     let backend = TestBackend::new(100, 24);
@@ -466,9 +319,8 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
         .collect::<Vec<_>>()
         .join("");
 
-    assert!(screen.contains("› hello"));
+    assert!(screen.contains("  hello"));
     assert!(screen.contains("• hi there"));
-    assert!(screen.contains("● connected"));
     assert_eq!(screen.matches("chat").count(), 0);
     assert!(screen.contains('─'));
     assert!(!screen.contains('┌'));
@@ -478,9 +330,43 @@ fn chat_render_uses_conversation_markers_without_panel_box() {
 }
 
 #[test]
+fn footer_renders_agent_profile_context_instead_of_status_bar() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("deepseek-8uaepyrmp4b6".into());
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Response, "ok"));
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| render::render(frame, &app))
+        .expect("draw");
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<Vec<_>>()
+        .join("");
+
+    assert!(screen.contains("agent codex"));
+    assert!(screen.contains("profile deepseek-8uaepyrmp4b6"));
+    assert_eq!(screen.matches("agent codex").count(), 1);
+    assert!(!screen.contains("Enter send"));
+    assert!(!screen.contains("/new"));
+}
+
+#[test]
 fn chat_render_shows_multiline_input_with_continuation_indent() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    // A real exchange moves past the welcome screen into the working layout,
+    // where the input is pinned to the bottom.
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Response, "ok"));
     app.set_chat_input_for_test("first line\nsecond line");
 
     let backend = TestBackend::new(100, 24);
@@ -501,7 +387,7 @@ fn chat_render_shows_multiline_input_with_continuation_indent() {
     assert!(screen.contains("  second line"));
     terminal
         .backend_mut()
-        .assert_cursor_position(Position::new(17, 20));
+        .assert_cursor_position(Position::new(18, 20));
 }
 
 #[test]
@@ -531,18 +417,15 @@ fn effective_chat_context_prefers_local_selection_over_launcher_preferences() {
 }
 
 #[test]
-fn chat_arrows_scroll_transcript() {
+fn chat_scroll_offset_tracks_scrollback() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
 
-    app.select_up();
-    app.select_up();
+    app.scroll_chat_up(1);
+    app.scroll_chat_up(1);
     assert_eq!(app.chat_scroll, 2);
-    assert_eq!(
-        render::view_hint(&app),
-        "scrollback 2 lines; Down/PageDown moves toward latest"
-    );
-    app.select_down();
+    assert_eq!(render::view_hint(&app), "type a message or slash command");
+    app.scroll_chat_down(1);
     assert_eq!(app.chat_scroll, 1);
     app.follow_chat_tail();
     assert_eq!(app.chat_scroll, 0);
@@ -998,7 +881,11 @@ async fn slash_help_renders_multiline_command_reference() {
     assert_eq!(app.chat_scroll, 0);
     let help = &app.chat_messages.last().unwrap().text;
     assert!(help.contains("Commands\n/status runtime status"));
-    assert!(help.contains("/agent agent, profile, workspace, session"));
+    assert!(help.contains("/settings agent context settings"));
+    assert!(help.contains("/agent choose agent"));
+    assert!(help.contains("/profile choose profile"));
+    assert!(help.contains("/workspaces choose workspace"));
+    assert!(help.contains("/sessions choose or resume session"));
     assert!(help.contains("Shift+Enter newline"));
     assert!(help.contains("Alt+Left/Right word"));
     assert!(help.contains("Ctrl+A/E start/end"));
@@ -1270,6 +1157,25 @@ async fn slash_resume_sends_direct_resume_with_context() {
     app.selected_agent = Some("codex".into());
     app.selected_profile = Some("profile-1".into());
     app.selected_workspace = Some("/tmp/project".into());
+    app.selected_session = Some("old-session".into());
+    app.chat_state.session_id = Some("old-session".into());
+    app.chat_state.turn_active = true;
+    app.chat_state.pending_permission_request_id = Some("permission-old".into());
+    app.chat_state.pending_permission = Some(va_client::state::PendingPermission {
+        request_id: "permission-old".into(),
+        request: serde_json::json!({ "toolCall": { "title": "Old" } }),
+    });
+    app.chat_state.system_messages = vec!["old system".into()];
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Request, "old request"));
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Response, "old response"));
+    app.chat_scroll = 3;
+    app.input_history = vec!["old request".into()];
+    app.history_cursor = Some(0);
+    app.history_draft = "draft".into();
+    app.work_status = Some("old work".into());
+    app.turn_started_at = Some(Instant::now());
     app.force_new_session = true;
     app.chat_input = "/resume session-123456789".into();
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -1287,10 +1193,27 @@ async fn slash_resume_sends_direct_resume_with_context() {
     );
     assert_eq!(app.selected_session.as_deref(), Some("session-123456789"));
     assert!(!app.force_new_session);
+    assert!(!app.is_welcome());
+    assert!(app.chat_messages.is_empty());
+    assert!(app.input_history.is_empty());
+    assert_eq!(app.chat_scroll, 0);
+    assert_eq!(app.work_status, None);
+    assert_eq!(app.turn_started_at, None);
+    assert_eq!(app.chat_state.session_id, None);
+    assert_eq!(app.chat_state.turn_active, false);
+    assert_eq!(app.chat_state.pending_permission_request_id, None);
+    assert_eq!(app.chat_state.pending_permission, None);
+    assert!(app.chat_state.system_messages.is_empty());
     assert_eq!(
         app.last_action.as_deref(),
         Some("resuming session session-1234")
     );
+
+    app.apply_chat_event(ChatEvent::SessionReady {
+        session_id: "session-123456789".into(),
+    });
+
+    assert_eq!(app.selected_session.as_deref(), Some("session-123456789"));
 }
 
 #[tokio::test]
@@ -1354,6 +1277,8 @@ fn session_ready_updates_chat_context_for_followup_messages() {
 fn chat_context_renders_session_mode() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Response, "ok"));
     app.chat_state.session_mode = Some(serde_json::json!({
         "source": "session_mode",
         "currentValue": "acceptEdits",
@@ -1379,46 +1304,149 @@ fn chat_context_renders_session_mode() {
 }
 
 #[test]
-fn agent_picker_context_changes_clear_stale_session_context() {
+fn agent_popup_selection_sets_context_and_clears_stale_fields() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Agent;
     app.agent_picker.agents = vec![agent("claude")];
     app.agent_picker.profiles = vec![profile("claude-profile")];
     app.agent_picker.workspaces = vec![workspace("/tmp/claude")];
     app.agent_picker.sessions = vec![launch_session("session-1", "claude", "/tmp/session")];
-    app.agent_selection.clamp(&app.agent_picker);
     app.selected_agent = Some("codex".into());
     app.selected_profile = Some("codex-profile".into());
     app.selected_workspace = Some("/tmp/codex".into());
     app.selected_session = Some("old-session".into());
 
-    app.enter_current_view();
-
+    // Category indices: 0 agents, 1 profiles, 2 workspaces, 3 sessions.
+    app.apply_agent_popup_selection(0, 0);
     assert_eq!(app.selected_agent.as_deref(), Some("claude"));
     assert_eq!(app.selected_profile, None);
     assert_eq!(app.selected_workspace, None);
     assert_eq!(app.selected_session, None);
 
-    app.select_right();
-    app.enter_current_view();
-
+    // Profiles: index 0 is "direct"; managed profiles start at index 1.
+    app.apply_agent_popup_selection(1, 1);
     assert_eq!(app.selected_profile.as_deref(), Some("claude-profile"));
     assert_eq!(app.selected_session, None);
 
-    app.select_down();
-    app.enter_current_view();
+    app.apply_agent_popup_selection(1, 0);
+    assert_eq!(
+        app.selected_profile, None,
+        "\"direct\" clears the managed profile"
+    );
 
+    // Sessions: index 0 is the "new" entry; real sessions start at index 1.
+    app.apply_agent_popup_selection(3, 1);
     assert_eq!(app.selected_agent.as_deref(), Some("claude"));
     assert_eq!(app.selected_session.as_deref(), Some("session-1"));
     assert_eq!(app.selected_profile, None);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/session"));
 
-    app.select_left();
-    app.enter_current_view();
+    app.apply_agent_popup_selection(3, 0);
+    assert_eq!(
+        app.selected_session, None,
+        "\"new\" clears the bound session"
+    );
+    assert!(app.force_new_session);
 
+    app.apply_agent_popup_selection(2, 0);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/claude"));
     assert_eq!(app.selected_session, None);
+}
+
+#[test]
+fn agent_sessions_filter_by_agent_and_expose_the_effective_item() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.sessions = vec![
+        launch_session("codex-1", "codex", "/tmp/a"),
+        launch_session("claude-1", "claude", "/tmp/b"),
+        launch_session("codex-2", "codex", "/tmp/c"),
+    ];
+    app.selected_agent = Some("codex".into());
+
+    let ids = app
+        .agent_session_items()
+        .iter()
+        .map(|s| s.session_id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec!["codex-1", "codex-2"],
+        "filtered to the codex agent"
+    );
+    // Sessions list = 1 ("new") + 2 filtered.
+    assert_eq!(app.popup_item_count(crate::popup::PopupKind::Agent, 3), 3);
+
+    // No session selected → "new" (index 0) is the effective row.
+    assert!(app.agent_item_is_effective(3, 0));
+    app.selected_session = Some("codex-2".into());
+    assert!(!app.agent_item_is_effective(3, 0));
+    assert!(
+        app.agent_item_is_effective(3, 2),
+        "codex-2 is the second filtered row"
+    );
+}
+
+#[test]
+fn agent_config_is_editable_only_before_chat_context_locks() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    assert!(app.agent_config_editable());
+
+    app.apply_chat_event(ChatEvent::TurnStatus { active: true });
+
+    assert!(!app.agent_config_editable());
+    assert!(app.context_locked);
+}
+
+#[tokio::test]
+async fn direct_session_popup_selection_resumes_and_closes() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.sessions = vec![launch_session("session-123456", "codex", "/tmp/project")];
+    app.context_locked = true;
+    app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("profile-1".into());
+    app.popup = Some(Popup::agent_category(3));
+    if let Some(popup) = &mut app.popup {
+        popup.cursor = 1;
+    }
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.popup_enter(&transport, &tx).await;
+
+    assert!(app.popup.is_none());
+    assert_eq!(app.selected_session.as_deref(), Some("session-123456"));
+    assert!(app.context_locked);
+    assert_eq!(
+        rx.try_recv().expect("resume message"),
+        ChatClientMessage::ResumeSession {
+            agent: Some("codex".into()),
+            profile_id: Some("profile-1".into()),
+            session_id: "session-123456".into(),
+            session_workspace: Some("/tmp/project".into()),
+        }
+    );
+}
+
+#[tokio::test]
+async fn read_only_agent_popup_does_not_apply_selection() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.context_locked = true;
+    app.agent_picker.agents = vec![agent("codex")];
+    app.selected_agent = Some("claude".into());
+    app.popup = Some(Popup::agent_category(0));
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.popup_enter(&transport, &tx).await;
+
+    assert_eq!(app.selected_agent.as_deref(), Some("claude"));
+    assert!(app.popup.is_some());
+    assert!(rx.try_recv().is_err());
 }
 
 #[test]
@@ -1451,6 +1479,55 @@ fn chat_event_appends_raw_agent_chunks() {
 }
 
 #[test]
+fn chat_event_extracts_text_from_content_arrays() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.apply_chat_event(ChatEvent::AcpNotification {
+        payload: serde_json::json!({
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": [
+                    { "type": "text", "text": "hello" },
+                    { "type": "text", "text": " world" }
+                ]
+            }
+        }),
+    });
+
+    assert_eq!(app.chat_messages.last().unwrap().role, ChatRole::Response);
+    assert_eq!(app.chat_messages.last().unwrap().text, "hello world");
+}
+
+#[test]
+fn user_message_chunks_are_recorded_in_input_history() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+
+    app.apply_chat_event(ChatEvent::AcpNotification {
+        payload: serde_json::json!({
+            "update": {
+                "sessionUpdate": "user_message_chunk",
+                "content": { "text": "first instruction" }
+            }
+        }),
+    });
+    app.apply_chat_event(ChatEvent::AcpNotification {
+        payload: serde_json::json!({
+            "update": {
+                "sessionUpdate": "user_message_chunk",
+                "content": { "text": "second instruction" }
+            }
+        }),
+    });
+
+    assert_eq!(
+        app.input_history,
+        vec!["first instruction", "second instruction"]
+    );
+}
+
+#[test]
 fn system_text_starts_a_separate_response_message() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
@@ -1473,57 +1550,60 @@ fn system_text_starts_a_separate_response_message() {
 }
 
 #[test]
-fn tool_updates_change_work_status_without_polluting_transcript() {
+fn tool_updates_render_work_rows_without_assistant_response() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    let initial_count = app.chat_messages.len();
 
     app.apply_chat_event(ChatEvent::TurnStatus { active: true });
     app.apply_chat_event(ChatEvent::AcpNotification {
         payload: serde_json::json!({
             "update": {
                 "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-search",
                 "toolCall": { "title": "Web Search" },
-                "status": "running"
+                "status": "running",
+                "rawInput": { "query": "ratatui list widget" }
+            }
+        }),
+    });
+    app.apply_chat_event(ChatEvent::AcpNotification {
+        payload: serde_json::json!({
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-search",
+                "toolCall": { "title": "Web Search" },
+                "status": "completed",
+                "rawInput": { "query": "ratatui list widget" }
             }
         }),
     });
 
-    assert_eq!(app.chat_messages.len(), initial_count);
+    assert_eq!(app.chat_messages.len(), 1);
+    assert_eq!(app.chat_messages[0].role, ChatRole::Work);
+    assert_eq!(app.chat_messages[0].work_id.as_deref(), Some("call-search"));
+    assert_eq!(
+        app.chat_messages[0].text,
+        "Explored\nSearch ratatui list widget"
+    );
     assert_eq!(
         app.work_status.as_deref(),
-        Some("Tool: Web Search (running)")
+        Some("search: ratatui list widget")
     );
-    assert_eq!(render::view_hint(&app), "Tool: Web Search (running)");
+    assert_eq!(
+        render::view_hint(&app),
+        "agent is working; /stop to interrupt"
+    );
 }
 
 #[test]
-fn agent_picker_selection_updates_chat_context() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.view = AppView::Agent;
-    app.agent_picker.agents = vec![AgentInfo {
-        id: "codex".into(),
-        name: "Codex".into(),
-        description: "Coding agent".into(),
-    }];
-    app.agent_selection.clamp(&app.agent_picker);
-
-    app.enter_current_view();
-
-    assert_eq!(app.selected_agent.as_deref(), Some("codex"));
-    assert_eq!(app.last_action.as_deref(), Some("selected agent codex"));
-}
-
-#[test]
-fn agent_picker_sync_builds_launcher_preference_operations() {
+fn agent_popup_pref_operations_build_launcher_requests() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
     app.selected_agent = Some("codex".into());
 
-    app.agent_selection.panel = AgentPanel::Agents;
+    // Category indices: 0 agents, 1 profiles, 2 workspaces, 3 sessions.
     let operation = app
-        .launcher_preference_operation_for_selection()
+        .agent_popup_pref_operation(0)
         .expect("agent operation")
         .expect("agent writes preference");
     assert_eq!(operation.request().path, "/api/launcher/selected-agent");
@@ -1532,10 +1612,9 @@ fn agent_picker_sync_builds_launcher_preference_operations() {
         Some(serde_json::json!({ "agentId": "codex" }))
     );
 
-    app.agent_selection.panel = AgentPanel::Profiles;
     app.selected_profile = Some("profile-1".into());
     let operation = app
-        .launcher_preference_operation_for_selection()
+        .agent_popup_pref_operation(1)
         .expect("profile operation")
         .expect("profile writes preference");
     assert_eq!(operation.request().path, "/api/launcher/agent-profile");
@@ -1544,10 +1623,9 @@ fn agent_picker_sync_builds_launcher_preference_operations() {
         Some(serde_json::json!({ "agentId": "codex", "profileId": "profile-1" }))
     );
 
-    app.agent_selection.panel = AgentPanel::Workspaces;
     app.selected_workspace = Some("/tmp/project".into());
     let operation = app
-        .launcher_preference_operation_for_selection()
+        .agent_popup_pref_operation(2)
         .expect("workspace operation")
         .expect("workspace writes preference");
     assert_eq!(operation.request().path, "/api/launcher/agent-workspace");
@@ -1556,30 +1634,27 @@ fn agent_picker_sync_builds_launcher_preference_operations() {
         Some(serde_json::json!({ "agentId": "codex", "workspace": "/tmp/project" }))
     );
 
-    app.agent_selection.panel = AgentPanel::Sessions;
     assert!(app
-        .launcher_preference_operation_for_selection()
+        .agent_popup_pref_operation(3)
         .expect("session sync decision")
         .is_none());
 }
 
 #[test]
-fn agent_picker_sync_requires_agent_for_profile_or_workspace_preferences() {
+fn agent_popup_pref_requires_agent_for_profile_or_workspace() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.agent_selection.panel = AgentPanel::Profiles;
     app.selected_profile = Some("profile-1".into());
 
-    let error = match app.launcher_preference_operation_for_selection() {
+    let error = match app.agent_popup_pref_operation(1) {
         Err(error) => error,
         Ok(_) => panic!("expected missing agent error"),
     };
     assert_eq!(error, "select an agent before choosing a profile");
 
-    app.agent_selection.panel = AgentPanel::Workspaces;
     app.selected_profile = None;
     app.selected_workspace = Some("/tmp/project".into());
-    let error = match app.launcher_preference_operation_for_selection() {
+    let error = match app.agent_popup_pref_operation(2) {
         Err(error) => error,
         Ok(_) => panic!("expected missing agent error"),
     };
@@ -1602,4 +1677,194 @@ fn exit_requires_second_ctrl_c_within_window() {
     app.clear_expired_exit_confirmation_at(start + Duration::from_secs(7));
     assert!(!app.exit_confirmation_pending());
     assert!(!app.confirm_exit_request_at(start + Duration::from_secs(8)));
+}
+
+#[test]
+fn input_history_recalls_previous_submissions_and_restores_draft() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.input_history = vec!["first message".into(), "second message".into()];
+    app.set_chat_input_for_test("draft in progress");
+
+    // Up walks backward from newest to oldest, parking the draft.
+    app.history_prev();
+    assert_eq!(app.chat_input, "second message");
+    app.history_prev();
+    assert_eq!(app.chat_input, "first message");
+    app.history_prev();
+    assert_eq!(app.chat_input, "first message", "stays at oldest");
+
+    // Down walks forward and finally restores the parked draft.
+    app.history_next();
+    assert_eq!(app.chat_input, "second message");
+    app.history_next();
+    assert_eq!(app.chat_input, "draft in progress");
+    app.history_next();
+    assert_eq!(app.chat_input, "draft in progress", "no-op past the draft");
+}
+
+#[test]
+fn chat_up_down_history_only_at_single_line_tail() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.input_history = vec!["first message".into(), "second message".into()];
+    app.set_chat_input_for_test("draft in progress");
+
+    app.chat_up();
+    assert_eq!(app.chat_input, "second message");
+    app.chat_down();
+    assert_eq!(app.chat_input, "draft in progress");
+
+    app.set_chat_input_for_test("alpha\nbeta");
+    app.chat_up();
+    assert_eq!(app.chat_cursor, "alph".len());
+    app.chat_down();
+    assert_eq!(app.chat_cursor, "alpha\nbeta".len());
+
+    app.set_chat_input_for_test("single line");
+    app.set_chat_cursor_for_test(3);
+    app.chat_up();
+    assert_eq!(app.chat_cursor, 3);
+}
+
+#[tokio::test]
+async fn slash_commands_are_not_recorded_in_input_history() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.set_chat_input_for_test("/clear");
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert!(app.input_history.is_empty());
+
+    app.set_chat_input_for_test("hello");
+    app.submit_chat_input(&transport, &tx).await;
+
+    assert_eq!(app.input_history, vec!["hello"]);
+}
+
+#[test]
+fn editing_recalled_history_exits_browsing_mode() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.input_history = vec!["alpha".into(), "beta".into()];
+
+    app.history_prev();
+    assert_eq!(app.chat_input, "beta");
+    app.insert_chat_text("!");
+    assert_eq!(app.chat_input, "beta!");
+
+    // After editing, Up re-parks the edited text as the new draft.
+    app.history_prev();
+    assert_eq!(app.chat_input, "beta");
+    app.history_next();
+    assert_eq!(app.chat_input, "beta!");
+}
+
+#[test]
+fn slash_popup_filters_and_navigates() {
+    use crate::chat::slash_command_matches;
+    assert_eq!(slash_command_matches("/").map(|m| m.len()), Some(12));
+    let st = slash_command_matches("/st").expect("matches");
+    assert_eq!(
+        st.iter().map(|c| c.name).collect::<Vec<_>>(),
+        vec!["/status", "/stop"]
+    );
+    assert_eq!(slash_command_matches("/status").map(|m| m.len()), Some(1));
+    assert_eq!(slash_command_matches("/settings").map(|m| m.len()), Some(1));
+    assert_eq!(slash_command_matches("/profile").map(|m| m.len()), Some(1));
+    assert_eq!(
+        slash_command_matches("/workspaces").map(|m| m.len()),
+        Some(1)
+    );
+    assert_eq!(slash_command_matches("/sessions").map(|m| m.len()), Some(1));
+    assert!(slash_command_matches("/nope").is_none());
+    assert!(
+        slash_command_matches("/status arg").is_none(),
+        "space closes it"
+    );
+    assert!(slash_command_matches("hello").is_none());
+
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.set_chat_input_for_test("/st");
+    assert!(app.slash_popup_open());
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/status"));
+    app.slash_select_next();
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/stop"));
+    app.slash_select_next();
+    assert_eq!(
+        app.slash_selected().map(|c| c.name),
+        Some("/status"),
+        "wraps"
+    );
+    app.slash_select_prev();
+    assert_eq!(
+        app.slash_selected().map(|c| c.name),
+        Some("/stop"),
+        "wraps back"
+    );
+}
+
+#[test]
+fn accept_slash_selection_fills_input() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.set_chat_input_for_test("/ag");
+    app.accept_slash_selection(true);
+    assert_eq!(app.chat_input, "/agent ");
+    assert!(!app.slash_popup_open(), "space hides the popup");
+
+    app.set_chat_input_for_test("/ag");
+    app.accept_slash_selection(false);
+    assert_eq!(app.chat_input, "/agent");
+}
+
+#[test]
+fn immediate_duplicate_submission_is_dropped() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    assert!(
+        !app.is_immediate_duplicate("今天有啥新闻?"),
+        "first send goes through"
+    );
+    assert!(
+        app.is_immediate_duplicate("今天有啥新闻?"),
+        "instant repeat is dropped"
+    );
+    assert!(!app.is_immediate_duplicate("a different message"));
+}
+
+#[test]
+fn turn_status_drives_the_working_timer() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    assert!(app.turn_started_at.is_none());
+
+    app.apply_chat_event(ChatEvent::TurnStatus { active: true });
+    assert!(app.turn_started_at.is_some(), "turn start arms the timer");
+
+    app.apply_chat_event(ChatEvent::PromptDone { message_id: None });
+    assert!(app.turn_started_at.is_none(), "completion clears the timer");
+}
+
+#[test]
+fn status_marks_the_runtime_agent_of_the_current_chat() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let mut mine = runtime_agent("tui:chat-1");
+    mine.session_id = Some("sess-current".into());
+    app.snapshot.agents = vec![runtime_agent("feishu:oc_42"), mine];
+
+    // No current session → nothing is the current host.
+    assert!(!app.status_agent_is_current(1));
+
+    app.selected_session = Some("sess-current".into());
+    assert!(
+        !app.status_agent_is_current(0),
+        "other agent is not current"
+    );
+    assert!(app.status_agent_is_current(1), "matched by session id");
 }

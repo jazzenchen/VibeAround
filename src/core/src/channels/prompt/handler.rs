@@ -201,7 +201,7 @@ async fn handle_command(
                     .await
                     .map_err(internal_error)?;
                 let state = runtime.state().await;
-                let sessions = list_sessions_for_state(&state).await;
+                let sessions = list_sessions_for_state(workspace_threads, &state).await;
                 send_system_text(plugin_host, route, &format_session_list(&state, &sessions)).await;
             }
             (ResourceKind::Session, ResourceAction::Switch(id)) => {
@@ -350,7 +350,7 @@ async fn switch_session(
         .await
         .map_err(internal_error)?;
     let state = runtime.state().await;
-    let sessions = list_sessions_for_state(&state).await;
+    let sessions = list_sessions_for_state(workspace_threads, &state).await;
     let matches: Vec<_> = sessions
         .into_iter()
         .filter(|session| {
@@ -924,15 +924,26 @@ fn format_profile_list(state: &ThreadRuntimeState) -> String {
 }
 
 async fn list_sessions_for_state(
+    workspace_threads: &Arc<WorkspaceThreadManager>,
     state: &ThreadRuntimeState,
 ) -> Vec<crate::launch_sessions::LaunchSession> {
-    crate::launch_sessions::list_for_agent_workspace_with_archived_async(
-        &state.host_binding.agent_id,
-        &state.workspace,
-        SESSION_LIST_LIMIT,
-        false,
-    )
-    .await
+    workspace_threads
+        .list_resumable_agent_sessions(
+            &state.host_binding.agent_id,
+            &state.workspace,
+            SESSION_LIST_LIMIT,
+            false,
+        )
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                agent_id = %state.host_binding.agent_id,
+                workspace = %state.workspace.display(),
+                error = %error,
+                "failed to list resumable sessions"
+            );
+            Vec::new()
+        })
 }
 
 fn format_session_list(

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use super::{AppView, ErrorScope, TuiApp};
+use super::{ErrorScope, TuiApp};
 use crate::runtime_socket::{RuntimeSocketEvent, RuntimeStream};
 
 impl TuiApp {
@@ -8,31 +8,19 @@ impl TuiApp {
         match event {
             RuntimeSocketEvent::Channels(channels) => {
                 self.snapshot.channels = channels;
-                self.status_selection.clamp(&self.snapshot);
-                self.sync_status_detail();
-                self.clear_error(ErrorScope::Runtime(RuntimeStream::Channels));
-                self.last_refresh = Some(Instant::now());
+                self.on_runtime_snapshot_updated(RuntimeStream::Channels);
             }
             RuntimeSocketEvent::Tunnels(tunnels) => {
                 self.snapshot.tunnels = tunnels;
-                self.status_selection.clamp(&self.snapshot);
-                self.sync_status_detail();
-                self.clear_error(ErrorScope::Runtime(RuntimeStream::Tunnels));
-                self.last_refresh = Some(Instant::now());
+                self.on_runtime_snapshot_updated(RuntimeStream::Tunnels);
             }
             RuntimeSocketEvent::Agents(agents) => {
                 self.snapshot.agents = agents;
-                self.status_selection.clamp(&self.snapshot);
-                self.sync_status_detail();
-                self.clear_error(ErrorScope::Runtime(RuntimeStream::Agents));
-                self.last_refresh = Some(Instant::now());
+                self.on_runtime_snapshot_updated(RuntimeStream::Agents);
             }
             RuntimeSocketEvent::Sessions(sessions) => {
                 self.snapshot.sessions = sessions;
-                self.status_selection.clamp(&self.snapshot);
-                self.sync_status_detail();
-                self.clear_error(ErrorScope::Runtime(RuntimeStream::Sessions));
-                self.last_refresh = Some(Instant::now());
+                self.on_runtime_snapshot_updated(RuntimeStream::Sessions);
             }
             RuntimeSocketEvent::Error { stream, message } => {
                 self.set_error(ErrorScope::Runtime(stream), message);
@@ -40,14 +28,11 @@ impl TuiApp {
         }
     }
 
-    fn sync_status_detail(&mut self) {
-        if self.view != AppView::StatusDetail {
-            return;
-        }
-
-        self.detail = self.status_selection.detail(&self.snapshot);
-        if self.detail.is_none() {
-            self.view = AppView::Status;
-        }
+    fn on_runtime_snapshot_updated(&mut self, stream: RuntimeStream) {
+        // Keep an open status popup pointing at a valid row as the runtime
+        // streams update underneath it.
+        self.clamp_popup_cursor();
+        self.clear_error(ErrorScope::Runtime(stream));
+        self.last_refresh = Some(Instant::now());
     }
 }

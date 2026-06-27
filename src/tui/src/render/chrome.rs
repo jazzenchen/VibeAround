@@ -3,139 +3,43 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::{AppView, TuiApp};
+use crate::app::TuiApp;
 use crate::chat::session_mode_display_label;
-use crate::theme::{muted_style, ACTION, ERROR, OK, WARN};
+use crate::theme::muted_style;
 
-pub(super) fn context_strip(app: &TuiApp, content_width: u16) -> Paragraph<'static> {
-    let spans = match app.view {
-        AppView::Chat => chat_context_spans(app),
-        AppView::Status | AppView::StatusDetail => status_context_spans(app),
-        AppView::Agent => agent_context_spans(app),
-    };
-    Paragraph::new(vec![Line::from(spans), divider_line(content_width)]).alignment(Alignment::Left)
-}
-
-fn chat_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
+/// The active chat context as label/value pairs (agent, profile, workspace,
+/// session, and mode when set). Rendered as one line on the welcome screen
+/// and split across the working header.
+pub(super) fn context_pairs(app: &TuiApp) -> Vec<(&'static str, String)> {
     let session_label = app
         .effective_session()
         .or(app.chat_state.session_id.as_deref())
-        .map(short_id)
+        .map(str::to_string)
         .unwrap_or_else(|| "new".to_string());
     let agent_label = app
         .effective_agent()
         .or(app.chat_state.default_agent.as_deref())
-        .unwrap_or("global");
-    let mut spans = vec![Span::styled(
-        if app.chat_connected {
-            "● connected"
-        } else {
-            "● offline"
-        },
-        if app.chat_connected {
-            Style::default().fg(OK).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(ERROR).add_modifier(Modifier::BOLD)
-        },
-    )];
-    spans.push(separator());
-    spans.extend(label_value_spans("agent", agent_label));
-    spans.push(group_gap());
-    spans.extend(label_value_spans(
-        "profile",
-        app.effective_profile().unwrap_or("global"),
-    ));
-    spans.push(group_gap());
-    spans.extend(label_value_spans(
-        "workspace",
-        app.effective_workspace().unwrap_or("global"),
-    ));
-    spans.push(group_gap());
-    spans.extend(label_value_spans("session", &session_label));
+        .unwrap_or("global")
+        .to_string();
+    let mut pairs = vec![
+        ("agent", agent_label),
+        (
+            "profile",
+            app.effective_profile().unwrap_or("direct").to_string(),
+        ),
+        (
+            "workspace",
+            app.effective_workspace().unwrap_or("global").to_string(),
+        ),
+        ("session", session_label),
+    ];
     if let Some(mode) = session_mode_display_label(app.chat_state.session_mode.as_ref()) {
-        spans.push(group_gap());
-        spans.extend(label_value_spans("mode", &mode));
+        pairs.push(("mode", mode));
     }
-    spans
+    pairs
 }
 
-fn status_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
-    let service_spans = app
-        .snapshot
-        .service
-        .as_ref()
-        .map(|service| {
-            vec![
-                Span::styled(
-                    service.service.clone(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(service.version.clone(), muted_style()),
-                Span::raw("  "),
-                Span::styled("mode ", muted_style()),
-                Span::styled(
-                    service.mode.clone(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled("port ", muted_style()),
-                Span::styled(
-                    service.port.to_string(),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-            ]
-        })
-        .unwrap_or_else(|| {
-            vec![Span::styled(
-                "service unavailable",
-                Style::default().fg(ERROR).add_modifier(Modifier::BOLD),
-            )]
-        });
-
-    let mut spans = service_spans;
-    spans.push(separator());
-    spans.extend(metric_spans("channels", app.snapshot.channels.len()));
-    spans.push(Span::raw("  "));
-    spans.extend(metric_spans("tunnels", app.snapshot.tunnels.len()));
-    spans.push(Span::raw("  "));
-    spans.extend(metric_spans("agents", app.snapshot.agents.len()));
-    spans.push(Span::raw("  "));
-    spans.extend(metric_spans("sessions", app.snapshot.sessions.len()));
-    spans
-}
-
-fn agent_context_spans(app: &TuiApp) -> Vec<Span<'static>> {
-    let mut spans = vec![Span::styled(
-        "agent context",
-        Style::default().add_modifier(Modifier::BOLD),
-    )];
-    spans.push(separator());
-    spans.extend(label_value_spans(
-        "agent",
-        app.effective_agent().unwrap_or("global"),
-    ));
-    spans.push(group_gap());
-    spans.extend(label_value_spans(
-        "profile",
-        app.effective_profile().unwrap_or("global"),
-    ));
-    spans.push(group_gap());
-    spans.extend(label_value_spans(
-        "workspace",
-        app.effective_workspace().unwrap_or("global"),
-    ));
-    spans.push(group_gap());
-    spans.extend(label_value_spans(
-        "session",
-        &app.effective_session()
-            .map(short_id)
-            .unwrap_or_else(|| "new".into()),
-    ));
-    spans
-}
-
-fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
+pub(super) fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
     vec![
         Span::styled(label, muted_style()),
         Span::raw(" "),
@@ -144,142 +48,43 @@ fn label_value_spans(label: &'static str, value: &str) -> Vec<Span<'static>> {
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ]
-}
-
-fn separator() -> Span<'static> {
-    Span::styled("   |   ", muted_style())
-}
-
-fn group_gap() -> Span<'static> {
-    Span::raw("    ")
-}
-
-fn metric_spans(label: &'static str, value: usize) -> Vec<Span<'static>> {
-    vec![
-        Span::styled(label, muted_style()),
-        Span::raw(" "),
-        Span::styled(
-            value.to_string(),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-    ]
-}
-
-fn short_id(value: &str) -> String {
-    value.chars().take(12).collect()
 }
 
 pub(super) fn command_bar(app: &TuiApp, content_width: u16) -> Paragraph<'static> {
-    let (status, status_style) = if app.exit_confirmation_pending() {
-        (
-            "press Ctrl+C again to quit".to_string(),
-            Style::default().fg(WARN),
-        )
-    } else if let Some(error) = &app.last_error {
-        (format!("error: {error}"), Style::default().fg(ERROR))
-    } else if matches!(app.view, AppView::Chat)
-        && (app.chat_state.pending_permission_request_id.is_some()
-            || app.chat_state.turn_active
-            || app.chat_scroll > 0)
-    {
-        (view_hint(app), muted_style())
-    } else if let Some(action) = &app.last_action {
-        (format!("last: {action}"), muted_style())
-    } else {
-        (view_hint(app), muted_style())
-    };
-    let mut spans = vec![
-        Span::styled(status, status_style),
-        Span::styled("  |  ", muted_style()),
-    ];
-    spans.extend(view_command_spans(app.view));
-    spans.extend([
-        Span::styled("  |  ", muted_style()),
-        key_span("Ctrl+C"),
-        Span::raw(" "),
-        key_span("Ctrl+C"),
-        Span::raw(" quit"),
-    ]);
-    Paragraph::new(vec![divider_line(content_width), Line::from(spans)]).alignment(Alignment::Left)
+    Paragraph::new(vec![divider_line(content_width), footer_context_line(app)])
+        .alignment(Alignment::Left)
 }
 
-pub(crate) fn view_hint(app: &TuiApp) -> String {
-    match app.view {
-        AppView::Chat => {
-            if app.chat_state.pending_permission_request_id.is_some() {
-                "permission pending: /allow [number|option-id] or /deny".to_string()
-            } else if app.chat_state.turn_active {
-                app.work_status
-                    .clone()
-                    .unwrap_or_else(|| "agent is working; /stop to interrupt".to_string())
-            } else if app.chat_scroll > 0 {
-                format!(
-                    "scrollback {} lines; Down/PageDown moves toward latest",
-                    app.chat_scroll
-                )
-            } else if app.force_new_session {
-                "next message starts a new session".to_string()
-            } else {
-                "type a message or slash command".to_string()
-            }
+fn footer_context_line(app: &TuiApp) -> Line<'static> {
+    let pairs = context_pairs(app);
+    let end = 2.min(pairs.len());
+    let mut spans = Vec::new();
+    for (index, (label, value)) in pairs[..end].iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled("   ·   ", muted_style()));
         }
-        AppView::Status => app
-            .last_refresh
-            .map(|instant| {
-                format!(
-                    "runtime stream updated {}s ago",
-                    instant.elapsed().as_secs()
-                )
-            })
-            .unwrap_or_else(|| "status view".to_string()),
-        AppView::StatusDetail => "detail view".to_string(),
-        AppView::Agent => app
-            .last_refresh
-            .map(|instant| format!("agent context loaded {}s ago", instant.elapsed().as_secs()))
-            .unwrap_or_else(|| "agent context".to_string()),
+        spans.extend(label_value_spans(label, value));
+    }
+    Line::from(spans)
+}
+
+#[cfg(test)]
+pub(crate) fn view_hint(app: &TuiApp) -> String {
+    if app.popup_is_open() {
+        "↑↓ move · Enter open/select · Esc back".to_string()
+    } else if app.slash_popup_open() {
+        "↑↓ select · Tab complete · Enter run".to_string()
+    } else if app.chat_state.pending_permission_request_id.is_some() {
+        "permission pending: /allow [number|option-id] or /deny".to_string()
+    } else if app.chat_state.turn_active {
+        "agent is working; /stop to interrupt".to_string()
+    } else if app.force_new_session {
+        "next message starts a new session".to_string()
+    } else {
+        "type a message or slash command".to_string()
     }
 }
 
-fn view_command_spans(view: AppView) -> Vec<Span<'static>> {
-    match view {
-        AppView::Chat => vec![
-            key_span("Enter"),
-            Span::raw(" send  "),
-            key_span("/new"),
-            Span::raw("  "),
-            key_span("/status"),
-            Span::raw("  "),
-            key_span("/agent"),
-            Span::raw("  "),
-            key_span("/help"),
-        ],
-        AppView::Status => vec![
-            key_span("Arrows"),
-            Span::raw(" move  "),
-            key_span("Enter"),
-            Span::raw(" detail  "),
-            key_span("Esc"),
-            Span::raw(" back"),
-        ],
-        AppView::StatusDetail => vec![key_span("Esc"), Span::raw(" back")],
-        AppView::Agent => vec![
-            key_span("Arrows"),
-            Span::raw(" move  "),
-            key_span("Enter"),
-            Span::raw(" select  "),
-            key_span("Esc"),
-            Span::raw(" back"),
-        ],
-    }
-}
-
-fn key_span(value: &'static str) -> Span<'static> {
-    Span::styled(
-        value,
-        Style::default().fg(ACTION).add_modifier(Modifier::BOLD),
-    )
-}
-
-fn divider_line(width: u16) -> Line<'static> {
+pub(super) fn divider_line(width: u16) -> Line<'static> {
     Line::from(Span::styled("─".repeat(usize::from(width)), muted_style()))
 }
