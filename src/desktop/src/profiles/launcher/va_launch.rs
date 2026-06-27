@@ -1,9 +1,19 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::process::Command;
 
 use super::common::LaunchPlan;
 use crate::profiles::terminal;
+use anyhow::{bail, Context};
 
 pub(super) fn spawn_if_enabled(plan: &LaunchPlan) -> Option<anyhow::Result<()>> {
+    if std::env::var("VIBEAROUND_USE_VA_LAUNCH_PROCESS")
+        .ok()
+        .as_deref()
+        == Some("1")
+    {
+        return Some(spawn_process(plan));
+    }
     if std::env::var("VIBEAROUND_USE_VA_LAUNCHER_LIB")
         .ok()
         .as_deref()
@@ -13,6 +23,70 @@ pub(super) fn spawn_if_enabled(plan: &LaunchPlan) -> Option<anyhow::Result<()>> 
     }
     let result = va_launcher::launch(input_from_plan(plan)).map(|_| ());
     Some(result)
+}
+
+fn spawn_process(plan: &LaunchPlan) -> anyhow::Result<()> {
+    let input = input_from_plan(plan);
+    let input_path = write_input_file(&input)?;
+    let launcher = resolve_va_launch_binary()?;
+    let status = Command::new(&launcher)
+        .arg("--input-file")
+        .arg(&input_path)
+        .status()
+        .with_context(|| format!("invoke va-launch at {}", launcher.display()));
+    let _ = std::fs::remove_file(&input_path);
+    let status = status?;
+    if !status.success() {
+        bail!("va-launch failed with exit {:?}", status.code());
+    }
+    Ok(())
+}
+
+fn write_input_file(input: &va_launcher::NativeLaunchInput) -> anyhow::Result<PathBuf> {
+    let path = std::env::temp_dir().join(format!(
+        "vibearound-va-launch-input-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let body = serde_json::to_string(input).context("serialize va-launch input")?;
+    std::fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
+    common::auth::set_owner_only(&path).ok();
+    Ok(path)
+}
+
+fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        bail!("VIBEAROUND_VA_LAUNCH_BIN is not a file: {}", path.display());
+    }
+
+    let binary = if cfg!(target_os = "windows") {
+        "va-launch.exe"
+    } else {
+        "va-launch"
+    };
+
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(binary)));
+    if let Some(path) = sibling {
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+
+    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("target")
+        .join("debug")
+        .join(binary);
+    if dev_path.is_file() {
+        return Ok(dev_path);
+    }
+
+    bail!("va-launch binary not found; build va-launcher or set VIBEAROUND_VA_LAUNCH_BIN")
 }
 
 fn input_from_plan(plan: &LaunchPlan) -> va_launcher::NativeLaunchInput {
@@ -96,5 +170,19 @@ mod tests {
             terminal_choice_for_va_launch(terminal::TerminalChoice::XfceTerminal).id(),
             terminal::TerminalChoice::XfceTerminal.id()
         );
+    }
+
+    #[test]
+    fn explicit_va_launch_binary_must_exist() {
+        let previous = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN");
+        std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", "/definitely/not/va-launch");
+
+        let error = resolve_va_launch_binary().unwrap_err().to_string();
+
+        match previous {
+            Some(value) => std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", value),
+            None => std::env::remove_var("VIBEAROUND_VA_LAUNCH_BIN"),
+        }
+        assert!(error.contains("VIBEAROUND_VA_LAUNCH_BIN is not a file"));
     }
 }
