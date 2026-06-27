@@ -373,7 +373,7 @@ pub async fn run_web_server(
             "/api/workspaces/default",
             put(api::set_default_workspace_handler),
         )
-        .route("/mcp", post(mcp::mcp_handler))
+        .route("/mcp", get(mcp::mcp_sse_handler).post(mcp::mcp_handler))
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
             require_auth,
