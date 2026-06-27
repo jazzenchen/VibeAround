@@ -1,8 +1,9 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{ExecutionPlan, TerminalChoice};
 
@@ -11,6 +12,30 @@ use crate::{ExecutionPlan, TerminalChoice};
 pub struct LaunchHandle {
     pub script_path: PathBuf,
 }
+
+const DESKTOP_LAUNCH_TOML: &str = include_str!("../../resources/desktop-launch.toml");
+
+#[derive(Debug, Deserialize)]
+struct DesktopLaunchTemplates {
+    macos: MacosTemplates,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    windows: WindowsTemplates,
+}
+
+#[derive(Debug, Deserialize)]
+struct MacosTemplates {
+    app_probe: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WindowsTemplates {
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    process_probe: String,
+}
+
+static TEMPLATES: LazyLock<DesktopLaunchTemplates> = LazyLock::new(|| {
+    toml::from_str(DESKTOP_LAUNCH_TOML).expect("Failed to parse desktop-launch.toml")
+});
 
 #[cfg(target_os = "macos")]
 pub fn spawn(plan: &ExecutionPlan) -> anyhow::Result<LaunchHandle> {
@@ -53,7 +78,9 @@ fn build_bash_script(plan: &ExecutionPlan) -> String {
 
     let command = command_with_unix_args(&plan.command, &plan.args);
     let command = macos_open_command_with_env(&command, plan);
-    if !plan.cleanup_paths.is_empty() {
+    if let Some(app_name) = &plan.macos_app_probe {
+        append_macos_app_launch(&mut out, &command, app_name);
+    } else if !plan.cleanup_paths.is_empty() {
         out.push_str(&format!("{command}\n"));
         out.push_str("status=$?\n");
         append_bash_cleanup_paths(&mut out, &plan.cleanup_paths);
@@ -62,6 +89,18 @@ fn build_bash_script(plan: &ExecutionPlan) -> String {
         out.push_str(&format!("exec {command}\n"));
     }
     out
+}
+
+fn append_macos_app_launch(out: &mut String, command: &str, app_name: &str) {
+    let app_script = format!(
+        "application \"{}\" is running",
+        app_name.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+    let app_script = shell_escape::unix::escape(Cow::Owned(app_script));
+    out.push_str(&render_template(
+        &TEMPLATES.macos.app_probe,
+        &[("command", command), ("app_script", &app_script)],
+    ));
 }
 
 fn command_with_unix_args(command: &str, args: &[String]) -> String {
@@ -160,6 +199,22 @@ fn is_valid_env_key(key: &str) -> bool {
         && key
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn windows_process_probe_script(process_name: &str) -> String {
+    render_template(
+        &TEMPLATES.windows.process_probe,
+        &[("process_name", process_name)],
+    )
+}
+
+fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
+    let mut out = template.to_string();
+    for (key, value) in replacements {
+        out = out.replace(&format!("{{{key}}}"), value);
+    }
+    out
 }
 
 #[cfg(target_os = "macos")]
@@ -347,14 +402,15 @@ mod windows {
             std::env::temp_dir().join(format!("vibearound-launch-{}.ps1", uuid::Uuid::new_v4()));
         std::fs::write(&script_path, build_powershell_script(plan))
             .with_context(|| format!("write launch script {}", script_path.display()))?;
+        let mut args = vec!["-ExecutionPolicy", "Bypass"];
+        if plan.windows_process_probe.is_none() {
+            args.push("-NoExit");
+        }
+        args.push("-File");
+        let script_arg = script_path.to_string_lossy();
+        args.push(&script_arg);
         let status = std::process::Command::new("powershell.exe")
-            .args([
-                "-ExecutionPolicy",
-                "Bypass",
-                "-NoExit",
-                "-File",
-                &script_path.to_string_lossy(),
-            ])
+            .args(args)
             .status()
             .context("open PowerShell")?;
         if !status.success() {
@@ -394,6 +450,11 @@ mod windows {
         ));
         out.push_str(&powershell_command_block(&plan.command, &plan.args));
         out.push('\n');
+        if let Some(process_name) = &plan.windows_process_probe {
+            out.push_str(&windows_process_probe_script(&powershell_single_quoted(
+                process_name,
+            )));
+        }
         for path in &plan.cleanup_paths {
             out.push_str(&format!(
                 "Remove-Item -LiteralPath {} -Force -ErrorAction SilentlyContinue\n",
@@ -478,5 +539,25 @@ mod tests {
         let lines: Vec<&str> = script.lines().collect();
         assert_eq!(lines[0], "#!/bin/bash");
         assert_eq!(lines[1], "rm -- \"$0\"");
+    }
+
+    #[test]
+    fn build_bash_script_waits_for_macos_app_probe() {
+        let mut plan = plan(BTreeMap::new(), "open -a Codex", Vec::new());
+        plan.macos_app_probe = Some("Codex".to_string());
+
+        let script = build_bash_script(&plan);
+
+        assert!(script.contains("open -a Codex\nstatus=$?"));
+        assert!(script.contains("osascript -e 'application \"Codex\" is running'"));
+        assert!(script.contains("exit \"$status\""));
+    }
+
+    #[test]
+    fn windows_process_probe_template_inserts_process_name() {
+        let script = windows_process_probe_script("'Codex'");
+
+        assert!(script.contains("Get-Process -Name 'Codex'"));
+        assert!(script.contains("Start-Sleep -Milliseconds 500"));
     }
 }

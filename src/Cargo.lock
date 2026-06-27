@@ -6113,6 +6113,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shell-escape",
+ "toml 0.8.23",
  "uuid",
 ]
 
