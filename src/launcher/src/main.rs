@@ -3,9 +3,11 @@ use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use clap::Parser;
-use va_launcher::{dry_run, parse_env_pair, NativeLaunchArgs, NativeLaunchInput, TerminalChoice};
+use va_launcher::{
+    dry_run, launch, parse_env_pair, NativeLaunchArgs, NativeLaunchInput, TerminalChoice,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -54,21 +56,26 @@ fn main() {
 
 fn run() -> anyhow::Result<()> {
     let args = CliArgs::parse();
-    if !args.dry_run {
-        bail!("native execution is not wired yet; pass --dry-run to inspect the launch plan");
-    }
     let input = read_input(&args)?;
-    let output = dry_run(input)?;
+    let output = if args.dry_run {
+        dry_run(input)?
+    } else {
+        launch(input)?
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
+        println!("status: {:?}", output.status);
         println!(
-            "dry-run: {} {}",
+            "command: {} {}",
             output.plan.command,
             output.plan.args.join(" ")
         );
         println!("workspace: {}", output.plan.workspace.display());
         println!("terminal: {}", output.plan.terminal);
+        if let Some(script_path) = output.script_path {
+            println!("script: {}", script_path.display());
+        }
     }
     Ok(())
 }

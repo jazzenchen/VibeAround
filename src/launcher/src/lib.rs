@@ -5,6 +5,7 @@
 //! server-side `LaunchPlan` contract.
 
 mod plan;
+mod platform;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 pub use plan::{build_execution_plan, redacted_execution_plan, ExecutionPlan, PublicExecutionPlan};
+pub use platform::LaunchHandle;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,12 +111,15 @@ impl TerminalChoice {
 pub struct LaunchOutput {
     pub status: LaunchStatus,
     pub plan: PublicExecutionPlan,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LaunchStatus {
     DryRun,
+    Launched,
 }
 
 pub fn dry_run(input: NativeLaunchInput) -> anyhow::Result<LaunchOutput> {
@@ -122,6 +127,17 @@ pub fn dry_run(input: NativeLaunchInput) -> anyhow::Result<LaunchOutput> {
     Ok(LaunchOutput {
         status: LaunchStatus::DryRun,
         plan: redacted_execution_plan(&plan),
+        script_path: None,
+    })
+}
+
+pub fn launch(input: NativeLaunchInput) -> anyhow::Result<LaunchOutput> {
+    let plan = build_execution_plan(input)?;
+    let handle = platform::spawn(&plan)?;
+    Ok(LaunchOutput {
+        status: LaunchStatus::Launched,
+        plan: redacted_execution_plan(&plan),
+        script_path: Some(handle.script_path),
     })
 }
 
