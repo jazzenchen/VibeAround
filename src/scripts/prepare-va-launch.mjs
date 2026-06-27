@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
 const profile = valueFor("--profile") ?? "debug";
+const desktopSidecars = [
+  { binary: "va-launch", packageName: "va-launcher" },
+  { binary: "va", packageName: "va-cli" },
+  { binary: "va-tui", packageName: "va-tui" },
+];
 
 if (!args.includes("--desktop")) {
   fail("no package target selected; pass --desktop");
@@ -19,33 +24,39 @@ if (!["debug", "release"].includes(profile)) {
 const targetTriple = resolveTargetTriple();
 const targetExtension = targetTriple.includes("windows") ? ".exe" : "";
 const hostExtension = process.platform === "win32" ? ".exe" : "";
-const source = firstExisting([
-  join(srcRoot, "target", targetTriple, profile, `va-launch${targetExtension}`),
-  join(srcRoot, "target", profile, `va-launch${hostExtension}`),
-  join(srcRoot, "target", profile, `va-launch${targetExtension}`),
-]);
-
-if (!source) {
-  fail(
-    `va-launch binary not found for ${profile}; run cargo build ${
-      profile === "release" ? "--release " : ""
-    }-p va-launcher first`,
-  );
-}
 
 if (args.includes("--desktop")) {
-  prepareDesktopSidecar(source, targetTriple, targetExtension);
+  for (const sidecar of desktopSidecars) {
+    prepareDesktopSidecar(sidecar, targetTriple, targetExtension);
+  }
 }
 
-function prepareDesktopSidecar(sourcePath, triple, extension) {
+function prepareDesktopSidecar(sidecar, triple, extension) {
+  const sourcePath = resolveBuiltBinary(sidecar, triple, extension);
   const binariesDir = join(srcRoot, "desktop", "binaries");
-  const destination = join(binariesDir, `va-launch-${triple}${extension}`);
+  const destination = join(binariesDir, `${sidecar.binary}-${triple}${extension}`);
   mkdirSync(binariesDir, { recursive: true });
   copyFileSync(sourcePath, destination);
   if (extension !== ".exe") {
     chmodSync(destination, 0o755);
   }
   console.log(`prepared ${destination}`);
+}
+
+function resolveBuiltBinary(sidecar, triple, extension) {
+  const source = firstExisting([
+    join(srcRoot, "target", triple, profile, `${sidecar.binary}${extension}`),
+    join(srcRoot, "target", profile, `${sidecar.binary}${hostExtension}`),
+    join(srcRoot, "target", profile, `${sidecar.binary}${extension}`),
+  ]);
+  if (source) {
+    return source;
+  }
+  fail(
+    `${sidecar.binary} binary not found for ${profile}; run cargo build ${
+      profile === "release" ? "--release " : ""
+    }-p ${sidecar.packageName} first`,
+  );
 }
 
 function resolveTargetTriple() {
