@@ -92,13 +92,24 @@ mod tests {
     fn reads_named_launch_profile() {
         let _guard = env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
-        let profile_dir = dir.join("launch").join("profiles");
+        let profile_dir = dir.join("profiles");
         std::fs::create_dir_all(&profile_dir).expect("create profile dir");
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{ "default_agent": "codex", "enabled_agents": ["codex"] }"#,
+        )
+        .expect("write settings");
         std::fs::write(
             profile_dir.join("openai.json"),
             r#"{
-  "agent": "codex",
-  "workspace": "/tmp/work"
+  "id": "openai",
+  "label": "OpenAI",
+  "provider": "xai",
+  "auth_mode": "api_key",
+  "api_types": ["openai-responses"],
+  "credentials": {
+    "api_key": "secret"
+  }
 }"#,
         )
         .expect("write profile");
@@ -114,7 +125,7 @@ mod tests {
 
         assert_eq!(input.agent, "codex");
         assert_eq!(input.profile_id.as_deref(), Some("openai"));
-        assert_eq!(input.workspace, Some(PathBuf::from("/tmp/work")));
+        assert_eq!(input.workspace, Some(dir.join("workspaces")));
     }
 
     #[test]

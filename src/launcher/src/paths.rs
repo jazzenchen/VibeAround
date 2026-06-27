@@ -14,11 +14,8 @@ pub fn data_dir() -> anyhow::Result<PathBuf> {
 }
 
 pub fn launch_profile_path(name: &str) -> anyhow::Result<PathBuf> {
-    validate_launch_name(name, "launch profile")?;
-    Ok(data_dir()?
-        .join("launch")
-        .join("profiles")
-        .join(format!("{name}.json")))
+    validate_launch_name(name, "profile")?;
+    Ok(data_dir()?.join("profiles").join(format!("{name}.json")))
 }
 
 pub fn settings_path() -> anyhow::Result<PathBuf> {

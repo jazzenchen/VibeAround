@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::{anyhow, bail, Context};
+use common::{agent_state, config, profiles};
+use profiles::{normalize_legacy_profile, ProfileDef};
 use serde::{Deserialize, Serialize};
 
 use crate::{paths, NativeLaunchArgs, NativeLaunchInput, TerminalChoice};
@@ -81,9 +83,11 @@ impl LaunchProfile {
 }
 
 pub fn load_launch_profile(name: &str) -> anyhow::Result<NativeLaunchInput> {
-    let path = paths::launch_profile_path(name)?;
-    let profile = read_profile_file(&path)?;
-    profile.into_native_input(Some(name.to_string()))
+    paths::validate_launch_name(name, "profile")?;
+    let profile = profiles::schema::load(name)
+        .map(normalize_legacy_profile)
+        .ok_or_else(|| anyhow!("profile '{}' not found", name))?;
+    model_profile_into_native_input(profile)
 }
 
 pub fn load_launch_profile_path(path: &Path) -> anyhow::Result<NativeLaunchInput> {
@@ -102,28 +106,86 @@ fn read_profile_file(path: &Path) -> anyhow::Result<LaunchProfile> {
     serde_json::from_str(&body).with_context(|| format!("parse launch profile {}", path.display()))
 }
 
+fn model_profile_into_native_input(profile: ProfileDef) -> anyhow::Result<NativeLaunchInput> {
+    let cfg = config::ensure_loaded();
+    let prefs = agent_state::read_prefs();
+    let launch_target = resolve_launch_target_for_profile(&profile, &prefs, &cfg)?;
+    let route = profiles::connections::resolve_profile_agent_route(&profile, &launch_target)
+        .ok_or_else(|| anyhow!("profile '{}' cannot launch '{}'", profile.id, launch_target))?;
+    let launch_id = uuid::Uuid::new_v4().to_string();
+    let rendered =
+        profiles::runtime::render_for_agent_route(&profile, &launch_target, &launch_id, &route)?;
+    let command_args = rendered.command_args.clone();
+    let env = profiles::runtime::materialize_env_for_profile(&profile, rendered)?
+        .into_iter()
+        .collect();
+    let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &launch_target);
+
+    Ok(NativeLaunchInput {
+        schema_version: 1,
+        agent: launch_target.clone(),
+        profile_id: Some(profile.id.clone()),
+        launch_target: Some(launch_target),
+        workspace: Some(workspace),
+        session_id: None,
+        terminal: None,
+        command: None,
+        executable_path: None,
+        windows_executable_path: None,
+        window_label: Some(profile.label),
+        env,
+        args: NativeLaunchArgs {
+            native: command_args,
+        },
+        cleanup_paths: Vec::new(),
+        macos_app_probe: None,
+        windows_process_probe: None,
+    })
+}
+
+fn resolve_launch_target_for_profile(
+    profile: &ProfileDef,
+    prefs: &agent_state::AgentsPrefsFile,
+    cfg: &config::Config,
+) -> anyhow::Result<String> {
+    let default_agent = agent_state::resolve_default_agent(prefs, cfg);
+    if profiles::connections::profile_can_launch_agent(profile, &default_agent) {
+        return Ok(default_agent);
+    }
+
+    cfg.enabled_agents
+        .iter()
+        .find(|agent_id| profiles::connections::profile_can_launch_agent(profile, agent_id))
+        .cloned()
+        .ok_or_else(|| anyhow!("profile '{}' has no enabled launch target", profile.id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn named_profile_loads_from_shared_profile_dir() {
+    fn named_profile_loads_api_profile_from_shared_profile_dir() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
-        let profile_dir = dir.join("launch").join("profiles");
+        let profile_dir = dir.join("profiles");
         fs::create_dir_all(&profile_dir).expect("create profile dir");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{ "default_agent": "codex", "enabled_agents": ["codex"] }"#,
+        )
+        .expect("write settings");
         fs::write(
             profile_dir.join("codex-work.json"),
             r#"{
-  "agent": "codex",
-  "workspace": "/tmp/work",
-  "env": {
-    "OPENAI_API_KEY": "secret"
-  },
-  "args": {
-    "native": ["--model", "gpt-5"]
-  },
-  "cleanupPaths": ["/tmp/cleanup"]
+  "id": "codex-work",
+  "label": "Codex Work",
+  "provider": "xai",
+  "auth_mode": "api_key",
+  "api_types": ["openai-responses"],
+  "credentials": {
+    "api_key": "secret"
+  }
 }"#,
         )
         .expect("write profile");
@@ -138,10 +200,10 @@ mod tests {
 
         assert_eq!(input.agent, "codex");
         assert_eq!(input.profile_id.as_deref(), Some("codex-work"));
-        assert_eq!(input.workspace, Some(PathBuf::from("/tmp/work")));
+        assert_eq!(input.launch_target.as_deref(), Some("codex"));
+        assert_eq!(input.workspace, Some(dir.join("workspaces")));
         assert_eq!(input.env["OPENAI_API_KEY"], "secret");
-        assert_eq!(input.args.native, vec!["--model", "gpt-5"]);
-        assert_eq!(input.cleanup_paths, vec![PathBuf::from("/tmp/cleanup")]);
+        assert!(input.cleanup_paths.is_empty());
     }
 
     #[test]
