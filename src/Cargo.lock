@@ -6093,6 +6093,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "va-client",
+ "va-launcher",
 ]
 
 [[package]]
@@ -6111,6 +6112,7 @@ dependencies = [
  "anyhow",
  "clap",
  "common",
+ "open 1.7.1",
  "serde",
  "serde_json",
  "shell-escape",

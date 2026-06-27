@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Args, Subcommand};
 
 use super::Command;
@@ -18,9 +20,28 @@ pub(crate) struct LaunchSessionMutationArgs {
     pub(crate) workspace_path: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LaunchRunArgs {
+    pub(crate) profile: Option<String>,
+    pub(crate) profile_path: Option<PathBuf>,
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub(super) struct LaunchCli {
+    #[arg(long = "profile")]
+    profile: Option<String>,
+    #[arg(long = "profile-path")]
+    profile_path: Option<PathBuf>,
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+    #[command(subcommand)]
+    command: Option<LaunchCommand>,
+}
+
 #[derive(Debug, Subcommand)]
 #[command(rename_all = "kebab-case")]
-pub(super) enum LaunchCommand {
+enum LaunchCommand {
     Sessions(LaunchSessionsCli),
     Archive(LaunchSessionMutationCli),
     Unarchive(LaunchSessionMutationCli),
@@ -59,14 +80,35 @@ pub(super) struct LaunchSessionMutationCli {
     positionals: Vec<String>,
 }
 
-pub(super) fn command_into_command(command: LaunchCommand) -> Result<Command, CliError> {
-    Ok(match command {
-        LaunchCommand::Sessions(args) => Command::LaunchSessions(args.into_args()),
-        LaunchCommand::Archive(args) => Command::LaunchSessionArchive(args.into_args("archive")?),
-        LaunchCommand::Unarchive(args) => {
-            Command::LaunchSessionUnarchive(args.into_args("unarchive")?)
+pub(super) fn command_into_command(cli: LaunchCli) -> Result<Command, CliError> {
+    if let Some(command) = cli.command {
+        if cli.profile.is_some() || cli.profile_path.is_some() || cli.dry_run {
+            return Err(CliError::Usage(
+                "va launch profile flags cannot be combined with launch subcommands".into(),
+            ));
         }
-    })
+        return Ok(match command {
+            LaunchCommand::Sessions(args) => Command::LaunchSessions(args.into_args()),
+            LaunchCommand::Archive(args) => {
+                Command::LaunchSessionArchive(args.into_args("archive")?)
+            }
+            LaunchCommand::Unarchive(args) => {
+                Command::LaunchSessionUnarchive(args.into_args("unarchive")?)
+            }
+        });
+    }
+
+    if cli.profile.is_some() == cli.profile_path.is_some() {
+        return Err(CliError::Usage(
+            "usage: va launch (--profile NAME | --profile-path PATH) [--dry-run]".into(),
+        ));
+    }
+
+    Ok(Command::LaunchRun(LaunchRunArgs {
+        profile: cli.profile,
+        profile_path: cli.profile_path,
+        dry_run: cli.dry_run,
+    }))
 }
 
 impl LaunchSessionsCli {

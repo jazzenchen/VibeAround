@@ -17,6 +17,8 @@ pub struct ExecutionPlan {
     pub terminal: TerminalChoice,
     pub command: String,
     pub args: Vec<String>,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub windows_executable_path: Option<PathBuf>,
     pub workspace: PathBuf,
     pub env: BTreeMap<String, String>,
     pub cleanup_paths: Vec<PathBuf>,
@@ -36,6 +38,8 @@ pub struct PublicExecutionPlan {
     pub terminal: String,
     pub command: String,
     pub args: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub windows_executable_path: Option<PathBuf>,
     pub workspace: PathBuf,
     pub env: BTreeMap<String, String>,
     pub cleanup_paths: Vec<PathBuf>,
@@ -81,6 +85,7 @@ pub fn build_execution_plan(input: NativeLaunchInput) -> anyhow::Result<Executio
         terminal,
         command,
         args,
+        windows_executable_path: input.windows_executable_path,
         workspace,
         env: input.env,
         cleanup_paths: input.cleanup_paths,
@@ -98,6 +103,7 @@ pub fn redacted_execution_plan(plan: &ExecutionPlan) -> PublicExecutionPlan {
         terminal: plan.terminal.id().to_string(),
         command: plan.command.clone(),
         args: plan.args.clone(),
+        windows_executable_path: plan.windows_executable_path.clone(),
         workspace: plan.workspace.clone(),
         env: plan
             .env
@@ -150,6 +156,7 @@ mod tests {
             terminal: Some(TerminalChoice::Terminal),
             command: None,
             executable_path: None,
+            windows_executable_path: None,
             window_label: None,
             env: BTreeMap::new(),
             args: NativeLaunchArgs::default(),

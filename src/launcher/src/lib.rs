@@ -52,6 +52,8 @@ pub struct NativeLaunchInput {
     #[serde(default)]
     pub executable_path: Option<PathBuf>,
     #[serde(default)]
+    pub windows_executable_path: Option<PathBuf>,
+    #[serde(default)]
     pub window_label: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,

@@ -49,6 +49,11 @@ The two may be connected by a resolver, but they are not the same data model.
   `$VIBEAROUND_DATA_DIR/launch/profiles/<name>.json`).
 - `--profile-path <path>` reads the specified JSON file.
 
+The `va` CLI mirrors this native boundary with:
+
+- `va launch --profile <name>`
+- `va launch --profile-path <path>`
+
 The current schema version is `1`. Unknown fields are rejected so producers do
 not silently hand `va-launch` a provider profile or another unrelated JSON
 shape.
@@ -64,6 +69,7 @@ shape.
   "terminal": "terminal",
   "command": "codex",
   "executablePath": null,
+  "windowsExecutablePath": null,
   "windowLabel": "OpenAI Codex",
   "env": {
     "OPENAI_API_KEY": "..."
@@ -79,6 +85,10 @@ shape.
 
 `profileId` is launch metadata from the upstream producer. It must not cause
 `va-launch` to read VibeAround provider profile storage.
+
+`executablePath` is an agent CLI executable override. Windows desktop app launch
+helpers use `windowsExecutablePath` instead so `Start-Process Codex` /
+`Start-Process Claude` can still be normalized as native app launches.
 
 ## Default Agent Executable
 
@@ -101,13 +111,19 @@ not written into `agents.json`.
 
 ## Project Integrations
 
-On real launch, `va-launch` installs project-scoped integrations for the
-resolved workspace using the shared VibeAround settings policy:
+On real launch, `va-launch` first checks the local VibeAround server health
+endpoint. If the server is running, it installs project-scoped integrations for
+the resolved workspace using the shared VibeAround settings policy:
 
 - MCP config follows `settings.json` `integrations.mcp_auto_install`.
 - Skill files follow `settings.json` `integrations.skill_auto_install`.
 - `codex-desktop` installs the companion `codex` project integrations.
 - `claude-desktop` installs the companion `claude` project integrations.
+
+If the local server is not running, `va-launch` does not write project MCP or
+skill files and removes VibeAround-managed project integrations for that
+agent/workspace. This prevents stale project config from pointing agents at a
+dead local MCP server.
 
 `--dry-run` only builds and reports the native launch plan; it must not install
 or mutate project files.

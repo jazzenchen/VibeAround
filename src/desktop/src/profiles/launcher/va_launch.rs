@@ -134,7 +134,8 @@ fn profile_from_plan(plan: &LaunchPlan, context: &LaunchContext) -> va_launcher:
         session_id: context.session_id.clone(),
         terminal: Some(terminal_choice_for_va_launch(terminal::read_preference())),
         command: Some(plan.command.clone()),
-        executable_path: plan.windows_executable_path.clone(),
+        executable_path: None,
+        windows_executable_path: plan.windows_executable_path.clone(),
         window_label: Some(plan.window_label.clone()),
         env: plan.env.iter().cloned().collect::<BTreeMap<_, _>>(),
         args: va_launcher::NativeLaunchArgs {
@@ -208,8 +209,9 @@ mod tests {
         assert_eq!(profile.session_id.as_deref(), Some("session-123"));
         assert_eq!(profile.workspace, Some(PathBuf::from("/tmp/work")));
         assert_eq!(profile.command.as_deref(), Some("codex"));
+        assert_eq!(profile.executable_path, None);
         assert_eq!(
-            profile.executable_path,
+            profile.windows_executable_path,
             Some(PathBuf::from("C:/Codex/Codex.exe"))
         );
         assert_eq!(profile.window_label.as_deref(), Some("Codex profile"));

@@ -31,6 +31,8 @@ pub struct LaunchProfile {
     #[serde(default)]
     pub executable_path: Option<PathBuf>,
     #[serde(default)]
+    pub windows_executable_path: Option<PathBuf>,
+    #[serde(default)]
     pub window_label: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -67,6 +69,7 @@ impl LaunchProfile {
             terminal: self.terminal,
             command: self.command,
             executable_path: self.executable_path,
+            windows_executable_path: self.windows_executable_path,
             window_label: self.window_label,
             env: self.env,
             args: self.args,
@@ -162,6 +165,32 @@ mod tests {
         assert_eq!(input.agent, "claude");
         assert_eq!(input.profile_id.as_deref(), Some("anthropic-main"));
         assert_eq!(input.terminal, Some(TerminalChoice::Terminal));
+    }
+
+    #[test]
+    fn profile_path_loads_windows_executable_path_separately() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("launch.json");
+        fs::write(
+            &path,
+            r#"{
+  "agent": "codex-desktop",
+  "command": "Start-Process Codex",
+  "windowsExecutablePath": "OpenAI.Codex_2p2nqsd0c76g0!App"
+}"#,
+        )
+        .expect("write profile");
+
+        let input = load_launch_profile_path(&path).expect("load profile path");
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(input.command.as_deref(), Some("Start-Process Codex"));
+        assert_eq!(input.executable_path, None);
+        assert_eq!(
+            input.windows_executable_path,
+            Some(PathBuf::from("OpenAI.Codex_2p2nqsd0c76g0!App"))
+        );
     }
 
     #[test]
