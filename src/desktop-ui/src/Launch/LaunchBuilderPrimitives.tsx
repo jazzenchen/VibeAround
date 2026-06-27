@@ -20,6 +20,7 @@ import { useI18n } from "@va/i18n";
 
 import { BrandIcon } from "@/components/brand-icon";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -279,9 +280,13 @@ export function DisabledMoreButton({ reason }: { reason?: string }) {
 export function TooltipButton({
   disabledReason,
   disabled,
+  tooltipTriggerClassName,
   children,
   ...props
-}: ComponentProps<typeof Button> & { disabledReason?: string }) {
+}: ComponentProps<typeof Button> & {
+  disabledReason?: string;
+  tooltipTriggerClassName?: string;
+}) {
   const button = (
     <Button {...props} disabled={disabled}>
       {children}
@@ -292,7 +297,7 @@ export function TooltipButton({
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className="inline-flex"
+          className={cn("inline-flex", tooltipTriggerClassName)}
           tabIndex={-1}
           aria-disabled="true"
           title={disabledReason}
