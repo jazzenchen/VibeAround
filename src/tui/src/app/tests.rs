@@ -1157,6 +1157,25 @@ async fn slash_resume_sends_direct_resume_with_context() {
     app.selected_agent = Some("codex".into());
     app.selected_profile = Some("profile-1".into());
     app.selected_workspace = Some("/tmp/project".into());
+    app.selected_session = Some("old-session".into());
+    app.chat_state.session_id = Some("old-session".into());
+    app.chat_state.turn_active = true;
+    app.chat_state.pending_permission_request_id = Some("permission-old".into());
+    app.chat_state.pending_permission = Some(va_client::state::PendingPermission {
+        request_id: "permission-old".into(),
+        request: serde_json::json!({ "toolCall": { "title": "Old" } }),
+    });
+    app.chat_state.system_messages = vec!["old system".into()];
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Request, "old request"));
+    app.chat_messages
+        .push(ChatMessage::new(ChatRole::Response, "old response"));
+    app.chat_scroll = 3;
+    app.input_history = vec!["old request".into()];
+    app.history_cursor = Some(0);
+    app.history_draft = "draft".into();
+    app.work_status = Some("old work".into());
+    app.turn_started_at = Some(Instant::now());
     app.force_new_session = true;
     app.chat_input = "/resume session-123456789".into();
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -1172,9 +1191,19 @@ async fn slash_resume_sends_direct_resume_with_context() {
             session_workspace: Some("/tmp/project".into()),
         }
     );
-    assert_eq!(app.selected_session, None);
+    assert_eq!(app.selected_session.as_deref(), Some("session-123456789"));
     assert!(!app.force_new_session);
     assert!(!app.is_welcome());
+    assert!(app.chat_messages.is_empty());
+    assert!(app.input_history.is_empty());
+    assert_eq!(app.chat_scroll, 0);
+    assert_eq!(app.work_status, None);
+    assert_eq!(app.turn_started_at, None);
+    assert_eq!(app.chat_state.session_id, None);
+    assert_eq!(app.chat_state.turn_active, false);
+    assert_eq!(app.chat_state.pending_permission_request_id, None);
+    assert_eq!(app.chat_state.pending_permission, None);
+    assert!(app.chat_state.system_messages.is_empty());
     assert_eq!(
         app.last_action.as_deref(),
         Some("resuming session session-1234")

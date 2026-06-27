@@ -677,10 +677,36 @@ impl TuiApp {
             self.effective_workspace().map(str::to_string),
         );
         if self.send_chat_command(message, chat_tx) {
+            self.clear_chat_session_view();
             self.context_locked = true;
+            self.selected_session = Some(session_id.to_string());
             self.force_new_session = false;
             self.last_action = Some(format!("resuming session {}", short_id(session_id)));
         }
+    }
+
+    fn clear_chat_session_view(&mut self) {
+        self.chat_messages.clear();
+        self.chat_input.clear();
+        self.chat_cursor = 0;
+        self.chat_scroll = 0;
+        self.input_history.clear();
+        self.history_cursor = None;
+        self.history_draft.clear();
+        self.slash_selection = 0;
+        self.work_status = None;
+        self.turn_started_at = None;
+        self.chat_state.session_id = None;
+        self.chat_state.session_mode = None;
+        self.chat_state.command_menu = None;
+        self.chat_state.multi_agent_turn = None;
+        self.chat_state.turn_active = false;
+        self.chat_state.pending_permission_request_id = None;
+        self.chat_state.pending_permission = None;
+        self.chat_state.last_prompt_done_message_id = None;
+        self.chat_state.last_error = None;
+        self.chat_state.system_messages.clear();
+        self.clear_error(ErrorScope::Chat);
     }
 
     pub(crate) fn apply_chat_socket_event(&mut self, event: ChatSocketEvent) {
