@@ -2,6 +2,7 @@
 
 use anyhow::{anyhow, bail};
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 
 use super::catalog;
 use super::codex_metadata::{self, CodexModelCatalogSpec};
@@ -270,7 +271,7 @@ fn is_claude_discoverable_model(model: &str) -> bool {
 
 fn render_codex_bridge_profile(
     profile: &ProfileDef,
-    launch_id: &str,
+    _launch_id: &str,
     settings: BridgeLaunchSettings,
 ) -> RenderedProfile {
     let bridge_base_url = format!(
@@ -318,7 +319,7 @@ fn render_codex_bridge_profile(
         })
         .collect();
     if let Some(model_catalog_json) = codex_metadata::build_model_catalog_json(&specs) {
-        let rel_path = format!("codex-model-catalog-{launch_id}.json");
+        let rel_path = codex_model_catalog_rel_path(&settings, &model_catalog_json);
         let catalog_path = super::runtime::profile_state_dir(&profile.id).join(&rel_path);
         let catalog_path = catalog_path.to_string_lossy();
         push_config_arg(
@@ -377,6 +378,32 @@ fn render_codex_bridge_profile(
         command_args,
         config_env: None,
     }
+}
+
+fn codex_model_catalog_rel_path(settings: &BridgeLaunchSettings, contents: &str) -> String {
+    let digest = Sha256::digest(contents.as_bytes());
+    let digest = format!("{digest:x}");
+    format!(
+        "codex-model-catalog-{}-{}-{}.json",
+        file_slug(&settings.scope),
+        file_slug(&settings.target_api_type),
+        &digest[..12]
+    )
+}
+
+fn file_slug(input: &str) -> String {
+    let mut out = String::with_capacity(input.len().min(96));
+    for ch in input.chars().take(96) {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        out.push_str("profile");
+    }
+    out
 }
 
 fn render_opencode_bridge_profile(
@@ -567,6 +594,21 @@ mod tests {
 
     use super::*;
 
+    fn codex_catalog_file(rendered: &RenderedProfile) -> &RenderedSettingsFile {
+        let catalog_file = rendered
+            .settings_files
+            .iter()
+            .find(|settings_file| {
+                settings_file
+                    .rel_path
+                    .starts_with("codex-model-catalog-codex-openai-responses-")
+                    && settings_file.rel_path.ends_with(".json")
+            })
+            .expect("codex model catalog file");
+        assert!(!catalog_file.rel_path.contains("launch-test"));
+        catalog_file
+    }
+
     #[test]
     fn codex_bridge_launch_includes_catalog_context_window() {
         let profile = dashscope_profile();
@@ -598,6 +640,39 @@ mod tests {
     }
 
     #[test]
+    fn codex_bridge_model_catalog_path_is_not_launch_scoped() {
+        let profile = dashscope_profile();
+
+        let first = render_bridge_launch(
+            &profile,
+            "codex",
+            "launch-a",
+            "openai-responses",
+            "openai-chat",
+            Some("qwen3.6-plus"),
+            None,
+            &[],
+        )
+        .expect("first codex bridge launch renders");
+        let second = render_bridge_launch(
+            &profile,
+            "codex",
+            "launch-b",
+            "openai-responses",
+            "openai-chat",
+            Some("qwen3.6-plus"),
+            None,
+            &[],
+        )
+        .expect("second codex bridge launch renders");
+
+        assert_eq!(
+            codex_catalog_file(&first).rel_path,
+            codex_catalog_file(&second).rel_path
+        );
+    }
+
+    #[test]
     fn codex_bridge_launch_includes_kimi_model_catalog() {
         let profile = moonshot_profile();
 
@@ -626,11 +701,7 @@ mod tests {
             .iter()
             .any(|arg| arg.starts_with("model_catalog_json='")));
 
-        let catalog_file = rendered
-            .settings_files
-            .iter()
-            .find(|settings_file| settings_file.rel_path == "codex-model-catalog-launch-test.json")
-            .expect("codex model catalog file");
+        let catalog_file = codex_catalog_file(&rendered);
         let catalog: Value =
             serde_json::from_str(&catalog_file.contents).expect("catalog json parses");
         let model = &catalog["models"][0];
@@ -669,11 +740,7 @@ mod tests {
             .command_args
             .iter()
             .any(|arg| arg == "model='gpt-5.1-codex'"));
-        let catalog_file = rendered
-            .settings_files
-            .iter()
-            .find(|settings_file| settings_file.rel_path == "codex-model-catalog-launch-test.json")
-            .expect("codex model catalog file");
+        let catalog_file = codex_catalog_file(&rendered);
         let catalog: Value =
             serde_json::from_str(&catalog_file.contents).expect("catalog json parses");
         let models = catalog["models"].as_array().expect("models array");
@@ -722,11 +789,7 @@ mod tests {
             .command_args
             .iter()
             .any(|arg| arg == "model='qwen3.6-plus'"));
-        let catalog_file = rendered
-            .settings_files
-            .iter()
-            .find(|settings_file| settings_file.rel_path == "codex-model-catalog-launch-test.json")
-            .expect("codex model catalog file");
+        let catalog_file = codex_catalog_file(&rendered);
         let catalog: Value =
             serde_json::from_str(&catalog_file.contents).expect("catalog json parses");
         let model = &catalog["models"][0];
@@ -765,11 +828,7 @@ mod tests {
         )
         .expect("codex bridge launch renders");
 
-        let catalog_file = rendered
-            .settings_files
-            .iter()
-            .find(|settings_file| settings_file.rel_path == "codex-model-catalog-launch-test.json")
-            .expect("codex model catalog file");
+        let catalog_file = codex_catalog_file(&rendered);
         let catalog: Value =
             serde_json::from_str(&catalog_file.contents).expect("catalog json parses");
         let model = &catalog["models"][0];
@@ -796,11 +855,7 @@ mod tests {
             &[],
         )
         .expect("codex bridge launch renders");
-        let catalog_file = rendered
-            .settings_files
-            .iter()
-            .find(|settings_file| settings_file.rel_path == "codex-model-catalog-launch-test.json")
-            .expect("codex model catalog file");
+        let catalog_file = codex_catalog_file(&rendered);
         let catalog: Value =
             serde_json::from_str(&catalog_file.contents).expect("catalog json parses");
         let model = &catalog["models"][0];
