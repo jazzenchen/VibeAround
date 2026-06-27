@@ -307,7 +307,7 @@ export function AppHeader({
 function VibeAroundLogo({ className }: { className?: string }) {
   return (
     <img
-      src="/brand/vibearound-mark.svg"
+      src={`${import.meta.env.BASE_URL}brand/vibearound-mark.svg`}
       alt=""
       aria-hidden="true"
       draggable={false}
