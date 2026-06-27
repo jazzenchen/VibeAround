@@ -326,10 +326,14 @@ fn render_slash_popup(frame: &mut Frame<'_>, app: &TuiApp, input_area: Rect) {
     };
     let selected = app.slash_selection.min(matches.len().saturating_sub(1));
     let mut lines = vec![Line::from(Span::styled("commands", muted_style()))];
-    for (index, command) in matches.iter().take(SLASH_POPUP_MAX_ROWS).enumerate() {
-        lines.push(slash_popup_row(command, index == selected));
+    for index in slash_popup_window(matches.len(), selected) {
+        lines.push(slash_popup_row(matches[index], index == selected));
     }
     render_bottom_popup(frame, input_area, lines);
+}
+
+fn slash_popup_window(len: usize, selected: usize) -> std::ops::Range<usize> {
+    popup_window(len, selected, SLASH_POPUP_MAX_ROWS)
 }
 
 fn slash_popup_row(command: &SlashCommand, selected: bool) -> Line<'static> {
@@ -906,4 +910,16 @@ fn chat_input_lines(
             ])
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slash_popup_window_keeps_wrapped_selection_visible() {
+        assert_eq!(slash_popup_window(12, 0), 0..8);
+        assert_eq!(slash_popup_window(12, 7), 3..11);
+        assert_eq!(slash_popup_window(12, 11), 4..12);
+    }
 }

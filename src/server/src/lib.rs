@@ -289,7 +289,8 @@ impl ServerDaemon {
 
         // Register built-in internal channels.
         let (web_outbound_tx, mut web_outbound_rx) = web_channel.sender();
-        channel_hub.start_internal_plugin("web", web_outbound_tx);
+        channel_hub.start_internal_plugin("web", web_outbound_tx.clone());
+        channel_hub.start_internal_plugin("tui", web_outbound_tx);
         let web_dispatch_handle = {
             let web_channel = Arc::clone(&web_channel);
             let workspace_thread_manager = Arc::clone(&workspace_thread_manager);
