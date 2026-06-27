@@ -48,13 +48,15 @@ pub async fn ws_chat_handler(
     let Ok(client) = ChatSocketClient::from_query(query.channel.as_deref()) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
+    let chat_id = sanitize_chat_id(query.chat_id.as_deref());
 
-    ws.on_upgrade(move |socket| handle_chat_socket(socket, state, client))
+    ws.on_upgrade(move |socket| handle_chat_socket(socket, state, client, chat_id))
 }
 
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct WsChatQuery {
     channel: Option<String>,
+    chat_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,9 +81,29 @@ impl ChatSocketClient {
     }
 }
 
-async fn handle_chat_socket(socket: WebSocket, state: AppState, client: ChatSocketClient) {
+fn sanitize_chat_id(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || value.len() > 128 {
+        return None;
+    }
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+async fn handle_chat_socket(
+    socket: WebSocket,
+    state: AppState,
+    client: ChatSocketClient,
+    chat_id: Option<String>,
+) {
     let connection_id = Uuid::new_v4().to_string();
-    let chat_id = Uuid::new_v4().to_string();
+    let chat_id = chat_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let channel_id = format!("{}:{}", client.channel_kind, chat_id);
     let mut active_route = RouteKey::new(client.channel_kind, &chat_id);
 
@@ -668,7 +690,7 @@ async fn apply_web_session_resume(
             resume.profile,
             resume.session_id,
             std::path::PathBuf::from(resume.cwd),
-            ExternalSessionAttachMode::NewThread,
+            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
     {
@@ -703,7 +725,7 @@ async fn apply_web_session_resume_now(
             resume.profile,
             resume.session_id,
             std::path::PathBuf::from(resume.cwd),
-            ExternalSessionAttachMode::NewThread,
+            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
     {
@@ -719,7 +741,7 @@ async fn apply_web_session_resume_now(
         .session_id
         .unwrap_or_else(|| requested_session_id.clone());
     let workspace_threads = state.channel_hub.workspace_thread_manager();
-    if let Err(error) = common::channels::prompt::start_runtime_and_notify(
+    let started = match common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
         &runtime,
         &state.channel_hub.plugin_host(),
@@ -728,7 +750,13 @@ async fn apply_web_session_resume_now(
     )
     .await
     {
-        send_web_system_text(state, route, &format!("❌ {}", error)).await;
+        Ok(started) => started,
+        Err(error) => {
+            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            return;
+        }
+    };
+    if !started {
         return;
     }
     let actual_session_id = runtime.state().await.session_id;
@@ -1285,6 +1313,21 @@ mod tests {
         assert_eq!(tui_client().channel_kind, "tui");
         assert_eq!(tui_client().sender_id, "tui-user");
         assert!(ChatSocketClient::from_query(Some("unknown")).is_err());
+    }
+
+    #[test]
+    fn chat_id_query_accepts_only_safe_stable_ids() {
+        assert_eq!(
+            super::sanitize_chat_id(Some("web_abc-123")).as_deref(),
+            Some("web_abc-123")
+        );
+        assert_eq!(
+            super::sanitize_chat_id(Some(" web_abc ")).as_deref(),
+            Some("web_abc")
+        );
+        assert!(super::sanitize_chat_id(Some("web:abc")).is_none());
+        assert!(super::sanitize_chat_id(Some("../secret")).is_none());
+        assert!(super::sanitize_chat_id(Some(&"a".repeat(129))).is_none());
     }
 
     #[test]

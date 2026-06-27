@@ -246,7 +246,7 @@ impl WebChannelManager {
             if !manager.is_idle_deadline_current(&deadline) {
                 return;
             }
-            let _ = workspace_threads.detach_route(&deadline.route).await;
+            let _ = workspace_threads.shutdown_route_host(&deadline.route).await;
         });
     }
 

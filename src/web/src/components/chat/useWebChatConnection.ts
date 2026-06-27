@@ -65,6 +65,8 @@ const USER_CONTENT_PART_ID_PREFIX = "user-content";
 const COMPACTION_NOTICE_DROP_RATIO = 0.55;
 const COMPACTION_NOTICE_MIN_WINDOW_RATIO = 0.25;
 const COMPACTION_NOTICE_MIN_DROP = 128;
+const WEB_CHAT_ID_STORAGE_KEY = "vibearound.web.chat_id";
+const WEB_CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 interface SendChatMessageRequest {
   text: string;
@@ -99,6 +101,27 @@ type SessionUpdateLike = {
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function createWebChatId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `web_${crypto.randomUUID()}`;
+  }
+  return `web_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function stableWebChatId(): string {
+  try {
+    const existing = window.sessionStorage.getItem(WEB_CHAT_ID_STORAGE_KEY);
+    if (existing && WEB_CHAT_ID_PATTERN.test(existing)) {
+      return existing;
+    }
+    const next = createWebChatId();
+    window.sessionStorage.setItem(WEB_CHAT_ID_STORAGE_KEY, next);
+    return next;
+  } catch {
+    return createWebChatId();
+  }
 }
 
 function sessionUpdateName(update: unknown): string | undefined {
@@ -375,7 +398,10 @@ export function useWebChatConnection({
   );
 
   useEffect(() => {
-    const ws = new WebSocket(getWebSocketUrl("/ws/chat"));
+    const chatId = stableWebChatId();
+    const ws = new WebSocket(
+      getWebSocketUrl(`/ws/chat?chat_id=${encodeURIComponent(chatId)}`),
+    );
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);
@@ -798,19 +824,25 @@ export function useWebChatConnection({
         if (profileId !== undefined) {
           payload.profileId = profileId;
         }
+        const currentSessionId =
+          sessionSelection.kind === "current" ? meta.sessionId : undefined;
+        const resumedSessionId =
+          sessionSelection.kind === "resume" && launchSession
+            ? launchSession.session_id
+            : currentSessionId;
         if (sessionSelection.kind === "new") {
           payload.sessionAction = "new";
           if (workspacePath) {
             payload.sessionWorkspace = workspacePath;
           }
-        } else if (sessionSelection.kind === "resume" && launchSession) {
+        } else if (resumedSessionId) {
           payload.sessionAction = "resume";
-          payload.sessionId = launchSession.session_id;
-          payload.sessionWorkspace = launchSession.workspace;
+          payload.sessionId = resumedSessionId;
+          payload.sessionWorkspace = launchSession?.workspace ?? workspacePath;
         }
         ws.send(JSON.stringify(payload));
         const cacheContext: TranscriptCacheContext = {
-          sessionId: launchSession?.session_id,
+          sessionId: resumedSessionId,
           agentId,
           workspace: launchSession?.workspace ?? workspacePath,
           updatedAt: Math.max(launchSession?.updated_at ?? 0, submittedAt),
@@ -833,7 +865,12 @@ export function useWebChatConnection({
         return false;
       }
     },
-    [cacheTranscript, clearActiveTranscriptCacheWriteTimer, clearReplayCacheContext],
+    [
+      cacheTranscript,
+      clearActiveTranscriptCacheWriteTimer,
+      clearReplayCacheContext,
+      meta.sessionId,
+    ],
   );
 
   const setSessionMode = useCallback((modeId: string) => {
