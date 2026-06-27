@@ -32,14 +32,22 @@ pub fn resolve_agent_launch_command(agent: &str, command: &str) -> anyhow::Resul
         return Ok(command.to_string());
     }
 
-    if let Some(configured) = resolve_configured_agent_executable(agent)? {
-        let configured = resolve_executable_path(configured)
-            .with_context(|| format!("configured executable for agent '{}' is invalid", agent))?;
-        return Ok(replace_first_command_word(command, &configured)?);
+    let command_uses_agent_executable = command_uses_default_agent_program(agent, &program);
+    if command_uses_agent_executable {
+        if let Some(configured) = resolve_configured_agent_executable(agent)? {
+            let configured = resolve_executable_path(configured).with_context(|| {
+                format!("configured executable for agent '{}' is invalid", agent)
+            })?;
+            if executable_matches_program(&configured, &program) {
+                return Ok(replace_first_command_word(command, &configured)?);
+            }
+        }
     }
 
     if let Some(scanned) = find_program_in_path(&program) {
-        write_scanned_agent_executable(agent, &scanned)?;
+        if command_uses_agent_executable {
+            write_scanned_agent_executable(agent, &scanned)?;
+        }
         return Ok(replace_first_command_word(command, &scanned)?);
     }
 
@@ -112,6 +120,27 @@ fn is_app_launch_wrapper(program: &str) -> bool {
 
 fn is_path_like_program(program: &str) -> bool {
     Path::new(program).is_absolute() || program.contains('/') || program.contains('\\')
+}
+
+fn command_uses_default_agent_program(agent: &str, program: &str) -> bool {
+    common::resources::agent_by_id(agent)
+        .map(|agent| agent.pty_command_for_current_platform())
+        .and_then(first_command_word)
+        .is_some_and(|default_program| command_name_eq(&default_program, program))
+}
+
+fn executable_matches_program(path: &Path, program: &str) -> bool {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| command_name_eq(name, program))
+}
+
+fn command_name_eq(left: &str, right: &str) -> bool {
+    if cfg!(target_os = "windows") {
+        left.eq_ignore_ascii_case(right)
+    } else {
+        left == right
+    }
 }
 
 fn replace_first_command_word(command: &str, path: &Path) -> anyhow::Result<String> {
@@ -233,26 +262,22 @@ mod tests {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
         std::fs::create_dir_all(&dir).expect("create temp dir");
-        let configured = write_command(&dir, "codex-configured");
-        std::fs::write(
-            dir.join("agents.json"),
-            format!(
-                r#"{{
-  "agents": {{
-    "codex": {{
-      "executable": {{
-        "path": "{}",
-        "source": "manual_path",
-        "sourceLabel": "Manual path",
-        "rank": 0
-      }}
-    }}
-  }}
-}}"#,
-                configured.to_string_lossy()
-            ),
-        )
-        .expect("write agents config");
+        let configured_dir = dir.join("configured");
+        std::fs::create_dir_all(&configured_dir).expect("create configured dir");
+        let configured = write_command(&configured_dir, "codex");
+        let agents = serde_json::json!({
+            "agents": {
+                "codex": {
+                    "executable": {
+                        "path": configured.to_string_lossy(),
+                        "source": "manual_path",
+                        "sourceLabel": "Manual path",
+                        "rank": 0
+                    }
+                }
+            }
+        });
+        std::fs::write(dir.join("agents.json"), agents.to_string()).expect("write agents config");
         let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
         let previous_path = std::env::var_os("PATH");
         std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
@@ -260,8 +285,8 @@ mod tests {
 
         let command = resolve_agent_launch_command("codex", "codex resume abc")
             .expect("resolve configured command");
-        let expected = std::fs::canonicalize(&configured)
-            .expect("canonical configured path")
+        let expected = resolve_executable_path(configured.clone())
+            .expect("resolve configured path")
             .to_string_lossy()
             .to_string();
 
@@ -270,6 +295,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(command, format!("{expected} resume abc"));
+    }
+
+    #[test]
+    fn unrelated_configured_executable_is_ignored() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let configured = write_command(&dir, "powershell");
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let scanned = write_command(&bin_dir, "codex");
+        let agents = serde_json::json!({
+            "agents": {
+                "codex": {
+                    "executable": {
+                        "path": configured.to_string_lossy(),
+                        "source": "path_scan",
+                        "sourceLabel": "PATH scan",
+                        "rank": 4000
+                    }
+                }
+            }
+        });
+        std::fs::write(dir.join("agents.json"), agents.to_string()).expect("write agents config");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        let previous_path = std::env::var_os("PATH");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+        std::env::set_var("PATH", &bin_dir);
+
+        let command = resolve_agent_launch_command("codex", "codex")
+            .expect("resolve scanned command after ignoring unrelated config");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        restore_env("PATH", previous_path);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(command, scanned.to_string_lossy());
     }
 
     #[test]
@@ -302,6 +364,31 @@ mod tests {
     }
 
     #[test]
+    fn explicit_custom_command_does_not_write_agent_executable_config() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let custom = write_command(&bin_dir, "powershell");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        let previous_path = std::env::var_os("PATH");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+        std::env::set_var("PATH", &bin_dir);
+
+        let command = resolve_agent_launch_command("codex", "powershell -NoProfile")
+            .expect("resolve explicit custom command");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        restore_env("PATH", previous_path);
+        let agents_json_exists = dir.join("agents.json").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(command, format!("{} -NoProfile", custom.to_string_lossy()));
+        assert!(!agents_json_exists);
+    }
+
+    #[test]
     fn resolved_executable_with_spaces_is_quoted_in_command() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
@@ -320,9 +407,16 @@ mod tests {
         restore_env("PATH", previous_path);
         let _ = std::fs::remove_dir_all(&dir);
 
-        assert_eq!(command, format!("\"{}\" resume abc", scanned.display()));
+        assert_eq!(
+            command,
+            format!(
+                "{} resume abc",
+                quote_command_word(scanned.to_string_lossy().as_ref())
+            )
+        );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn app_launch_wrapper_does_not_write_agent_executable_config() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
@@ -345,6 +439,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(command, "open -a Codex");
+        assert!(!agents_json_exists);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn shell_builtin_launch_does_not_write_agent_executable_config() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        let previous_path = std::env::var_os("PATH");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+        std::env::set_var("PATH", "");
+
+        let command = resolve_agent_launch_command("codex-desktop", "Start-Process Codex")
+            .expect("resolve app launch command");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        restore_env("PATH", previous_path);
+        let agents_json_exists = dir.join("agents.json").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(command, "Start-Process Codex");
         assert!(!agents_json_exists);
     }
 
