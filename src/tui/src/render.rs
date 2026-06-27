@@ -8,8 +8,8 @@ use ratatui::Frame;
 
 use crate::app::TuiApp;
 use crate::chat::{
-    chat_message_lines_for_messages, input_box_height, input_cursor_offset, input_visible_lines,
-    visible_chat_lines, SlashCommand,
+    input_box_height, input_cursor_offset, input_visible_lines, visible_chat_message_lines,
+    SlashCommand,
 };
 use crate::detail::{agent_detail, channel_detail, session_detail, tunnel_detail};
 use crate::popup::{Popup, PopupLevel};
@@ -813,18 +813,15 @@ fn command_popup_max_rows(app: &TuiApp, panel_height: u16) -> usize {
 fn render_messages(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let visible_rows = usize::from(area.height);
     let content_width = usize::from(area.width.saturating_sub(1)).max(1);
-    let mut lines = chat_message_lines_for_messages(&app.chat_messages, content_width);
-    // A live indicator at the tail so the agent never looks stuck while it
-    // thinks or runs tools before any text streams back.
-    if let Some(indicator) = working_indicator_line(app) {
-        if !lines.is_empty() {
-            lines.push(Line::raw(""));
-        }
-        lines.push(indicator);
-    }
     // Conversation flows from the top; once it overflows, the latest lines stay
     // pinned to the bottom via the scroll offset.
-    let message_lines = visible_chat_lines(lines, visible_rows, app.chat_scroll);
+    let message_lines = visible_chat_message_lines(
+        &app.chat_messages,
+        content_width,
+        visible_rows,
+        app.chat_scroll,
+        working_indicator_line(app),
+    );
     frame.render_widget(
         List::new(
             message_lines

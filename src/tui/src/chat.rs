@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
@@ -826,20 +828,7 @@ pub(crate) fn one_line(value: &str) -> String {
     truncated
 }
 
-pub(crate) fn chat_message_lines_for_messages(
-    messages: &[ChatMessage],
-    content_width: usize,
-) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    for (index, message) in messages.iter().enumerate() {
-        if index > 0 {
-            lines.push(Line::raw(""));
-        }
-        lines.extend(chat_message_wrapped_lines(message, content_width));
-    }
-    lines
-}
-
+#[cfg(test)]
 pub(crate) fn visible_chat_lines(
     lines: Vec<Line<'static>>,
     capacity: usize,
@@ -851,6 +840,57 @@ pub(crate) fn visible_chat_lines(
     let max_start = lines.len().saturating_sub(capacity);
     let start = max_start.saturating_sub(scroll_from_bottom.min(max_start));
     lines.into_iter().skip(start).take(capacity).collect()
+}
+
+pub(crate) fn visible_chat_message_lines(
+    messages: &[ChatMessage],
+    content_width: usize,
+    capacity: usize,
+    scroll_from_bottom: usize,
+    tail_line: Option<Line<'static>>,
+) -> Vec<Line<'static>> {
+    if capacity == 0 {
+        return Vec::new();
+    }
+
+    let target = capacity.saturating_add(scroll_from_bottom).max(capacity);
+    let mut window = VecDeque::new();
+
+    if let Some(line) = tail_line {
+        window.push_front(line);
+        trim_visible_window(&mut window, target);
+        if !messages.is_empty() {
+            window.push_front(Line::raw(""));
+            trim_visible_window(&mut window, target);
+        }
+    }
+
+    for (index, message) in messages.iter().enumerate().rev() {
+        let lines = chat_message_wrapped_lines(message, content_width);
+        for line in lines.into_iter().rev() {
+            window.push_front(line);
+            trim_visible_window(&mut window, target);
+        }
+        if index > 0 {
+            window.push_front(Line::raw(""));
+            trim_visible_window(&mut window, target);
+        }
+        if window.len() >= target {
+            break;
+        }
+    }
+
+    let mut lines = window.into_iter().collect::<Vec<_>>();
+    if lines.len() > capacity {
+        lines.truncate(capacity);
+    }
+    lines
+}
+
+fn trim_visible_window(window: &mut VecDeque<Line<'static>>, target: usize) {
+    while window.len() > target {
+        window.pop_front();
+    }
 }
 
 pub(crate) fn input_box_height(input: &str, content_width: usize, max_body_rows: u16) -> u16 {
@@ -1396,6 +1436,49 @@ mod tests {
 
         assert_eq!(bottom, vec!["3", "4", "5"]);
         assert_eq!(scrolled, vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn visible_chat_message_lines_match_full_render_window() {
+        let messages = vec![
+            ChatMessage::new(ChatRole::Request, "first message"),
+            ChatMessage::new(
+                ChatRole::Response,
+                "second message wraps across the narrow content area",
+            ),
+            ChatMessage::work(Some("tool-1".into()), "ran command"),
+        ];
+        let content_width = 14;
+        let capacity = 5;
+        let tail = Line::from("Working");
+
+        let mut full = Vec::new();
+        for (index, message) in messages.iter().enumerate() {
+            if index > 0 {
+                full.push(Line::raw(""));
+            }
+            full.extend(chat_message_wrapped_lines(message, content_width));
+        }
+        full.push(Line::raw(""));
+        full.push(tail.clone());
+
+        for scroll in [0, 1, 4, 100] {
+            let expected = visible_chat_lines(full.clone(), capacity, scroll)
+                .into_iter()
+                .map(|line| row_text(line.spans))
+                .collect::<Vec<_>>();
+            let actual = visible_chat_message_lines(
+                &messages,
+                content_width,
+                capacity,
+                scroll,
+                Some(tail.clone()),
+            )
+            .into_iter()
+            .map(|line| row_text(line.spans))
+            .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "scroll {scroll}");
+        }
     }
 
     #[test]

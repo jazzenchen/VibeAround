@@ -1308,7 +1308,7 @@ fn agent_popup_selection_sets_context_and_clears_stale_fields() {
     // Sessions: index 0 is the "new" entry; real sessions start at index 1.
     app.apply_agent_popup_selection(3, 1);
     assert_eq!(app.selected_agent.as_deref(), Some("claude"));
-    assert_eq!(app.selected_session, None);
+    assert_eq!(app.selected_session.as_deref(), Some("session-1"));
     assert_eq!(app.selected_profile, None);
     assert_eq!(app.selected_workspace.as_deref(), Some("/tmp/session"));
 
@@ -1379,6 +1379,7 @@ async fn direct_session_popup_selection_resumes_and_closes() {
     app.agent_picker.sessions = vec![launch_session("session-123456", "codex", "/tmp/project")];
     app.context_locked = true;
     app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("profile-1".into());
     app.popup = Some(Popup::agent_category(3));
     if let Some(popup) = &mut app.popup {
         popup.cursor = 1;
@@ -1388,13 +1389,17 @@ async fn direct_session_popup_selection_resumes_and_closes() {
     app.popup_enter(&transport, &tx).await;
 
     assert!(app.popup.is_none());
-    assert_eq!(app.selected_session, None);
+    assert_eq!(app.selected_session.as_deref(), Some("session-123456"));
     assert!(app.context_locked);
-    let message = rx.try_recv().expect("resume message");
-    assert!(matches!(
-        message,
-        ChatClientMessage::ResumeSession { session_id, .. } if session_id == "session-123456"
-    ));
+    assert_eq!(
+        rx.try_recv().expect("resume message"),
+        ChatClientMessage::ResumeSession {
+            agent: Some("codex".into()),
+            profile_id: Some("profile-1".into()),
+            session_id: "session-123456".into(),
+            session_workspace: Some("/tmp/project".into()),
+        }
+    );
 }
 
 #[tokio::test]

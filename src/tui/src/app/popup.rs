@@ -286,16 +286,16 @@ impl TuiApp {
                     self.agent_session_items().get(item - 1).map(|session| {
                         (
                             session.agent_id.clone(),
+                            session.session_id.clone(),
                             session.workspace.clone(),
                             session.short_id.clone(),
                         )
                     })
                 {
-                    let (agent_id, workspace, short_id) = session;
+                    let (agent_id, session_id, workspace, short_id) = session;
                     self.selected_agent = Some(agent_id);
-                    self.selected_profile = None;
+                    self.selected_session = Some(session_id);
                     self.selected_workspace = Some(workspace);
-                    self.selected_session = None;
                     self.force_new_session = false;
                     self.last_action = Some(format!("selected session {short_id}"));
                 }
@@ -324,9 +324,8 @@ impl TuiApp {
             })
         {
             self.selected_agent = Some(agent_id);
-            self.selected_profile = None;
             self.selected_workspace = Some(workspace);
-            self.selected_session = None;
+            self.selected_session = Some(session_id.clone());
             self.force_new_session = false;
             self.last_action = Some(format!("selected session {short_id}"));
             self.resume_chat_session(&session_id, chat_tx);

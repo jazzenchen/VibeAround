@@ -38,6 +38,8 @@ use transport::{HttpTransport, TuiError};
 
 const ENABLE_SCROLL_MOUSE_CAPTURE: &str = "\x1b[?1000h\x1b[?1006h";
 const DISABLE_SCROLL_MOUSE_CAPTURE: &str = "\x1b[?1006l\x1b[?1000l";
+const MAX_TERMINAL_EVENTS_PER_TICK: usize = 256;
+const MOUSE_WHEEL_SCROLL_LINES: isize = 4;
 
 #[tokio::main]
 async fn main() {
@@ -89,135 +91,29 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
             action: "polling terminal events",
             source,
         })? {
-            match event::read().map_err(|source| TuiError::Io {
-                action: "reading terminal events",
-                source,
-            })? {
-                Event::Paste(text) if app.view == AppView::Chat => {
-                    app.insert_chat_text(&text);
+            let mut pending_scroll: isize = 0;
+            let mut should_exit = false;
+            for _ in 0..MAX_TERMINAL_EVENTS_PER_TICK {
+                let event = event::read().map_err(|source| TuiError::Io {
+                    action: "reading terminal events",
+                    source,
+                })?;
+                if handle_terminal_event(&mut app, &transport, &chat_tx, event, &mut pending_scroll)
+                    .await
+                {
+                    should_exit = true;
+                    break;
                 }
-                Event::Mouse(mouse) if app.view == AppView::Chat && !app.popup_is_open() => {
-                    match mouse.kind {
-                        MouseEventKind::ScrollUp => app.scroll_chat_up(4),
-                        MouseEventKind::ScrollDown => app.scroll_chat_down(4),
-                        _ => {}
-                    }
+                if !event::poll(Duration::ZERO).map_err(|source| TuiError::Io {
+                    action: "polling terminal events",
+                    source,
+                })? {
+                    break;
                 }
-                // Some IMEs synthesize key release/repeat events for the commit
-                // Enter; only act on presses so a single keystroke sends once.
-                Event::Key(key) if key.kind != KeyEventKind::Press => {}
-                Event::Key(key) => {
-                    if is_ctrl_c(&key) {
-                        if app.confirm_exit_request() {
-                            break;
-                        }
-                        continue;
-                    }
-
-                    // The bottom-up popup captures navigation while open.
-                    if app.popup_is_open() {
-                        match key.code {
-                            KeyCode::Esc => app.popup_back(),
-                            KeyCode::Up => app.popup_move_up(),
-                            KeyCode::Down => app.popup_move_down(),
-                            KeyCode::Enter => app.popup_enter(&transport, &chat_tx).await,
-                            _ => {}
-                        }
-                        continue;
-                    }
-
-                    match key.code {
-                        KeyCode::Esc => app.go_back(),
-                        KeyCode::Left
-                            if app.view == AppView::Chat
-                                && key.modifiers.contains(KeyModifiers::ALT) =>
-                        {
-                            app.move_chat_cursor_word_left();
-                        }
-                        KeyCode::Right
-                            if app.view == AppView::Chat
-                                && key.modifiers.contains(KeyModifiers::ALT) =>
-                        {
-                            app.move_chat_cursor_word_right();
-                        }
-                        KeyCode::Left if app.view == AppView::Chat => app.move_chat_cursor_left(),
-                        KeyCode::Right if app.view == AppView::Chat => {
-                            app.move_chat_cursor_right();
-                        }
-                        KeyCode::Home if app.view == AppView::Chat => {
-                            app.move_chat_cursor_start();
-                        }
-                        KeyCode::End if app.view == AppView::Chat => {
-                            app.move_chat_cursor_end();
-                        }
-                        KeyCode::Delete if app.view == AppView::Chat => {
-                            app.delete_chat_forward_char();
-                        }
-                        KeyCode::Tab if app.view == AppView::Chat && app.slash_popup_open() => {
-                            app.accept_slash_selection(true);
-                        }
-                        KeyCode::Up if app.view == AppView::Chat && app.slash_popup_open() => {
-                            app.slash_select_prev();
-                        }
-                        KeyCode::Down if app.view == AppView::Chat && app.slash_popup_open() => {
-                            app.slash_select_next();
-                        }
-                        KeyCode::Up if app.view == AppView::Chat => app.chat_up(),
-                        KeyCode::Down if app.view == AppView::Chat => app.chat_down(),
-                        KeyCode::PageUp if app.view == AppView::Chat => app.scroll_chat_up(10),
-                        KeyCode::PageDown if app.view == AppView::Chat => app.scroll_chat_down(10),
-                        KeyCode::Enter if app.view == AppView::Chat && is_multiline_enter(&key) => {
-                            app.insert_chat_newline();
-                        }
-                        KeyCode::Enter => {
-                            if app.slash_popup_open() {
-                                app.accept_slash_selection(false);
-                            }
-                            app.submit_chat_input(&transport, &chat_tx).await
-                        }
-                        KeyCode::Char('u' | 'U')
-                            if app.view == AppView::Chat
-                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.clear_chat_input();
-                        }
-                        KeyCode::Char('w' | 'W')
-                            if app.view == AppView::Chat
-                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.delete_chat_word();
-                        }
-                        KeyCode::Char('k' | 'K')
-                            if app.view == AppView::Chat
-                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.delete_chat_to_end();
-                        }
-                        KeyCode::Char('a' | 'A')
-                            if app.view == AppView::Chat
-                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.move_chat_cursor_start();
-                        }
-                        KeyCode::Char('e' | 'E')
-                            if app.view == AppView::Chat
-                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.move_chat_cursor_end();
-                        }
-                        KeyCode::Backspace if app.view == AppView::Chat => {
-                            app.delete_chat_char();
-                        }
-                        KeyCode::Char(ch)
-                            if app.view == AppView::Chat
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.insert_chat_text(&ch.to_string());
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
+            }
+            apply_pending_scroll(&mut app, pending_scroll);
+            if should_exit {
+                break;
             }
         }
     }
@@ -225,6 +121,136 @@ async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Re
     chat_task.abort();
     runtime_task.abort();
     Ok(())
+}
+
+async fn handle_terminal_event(
+    app: &mut TuiApp,
+    transport: &HttpTransport,
+    chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    terminal_event: Event,
+    pending_scroll: &mut isize,
+) -> bool {
+    match terminal_event {
+        Event::Paste(text) if app.view == AppView::Chat => {
+            app.insert_chat_text(&text);
+        }
+        Event::Mouse(mouse) if app.view == AppView::Chat && !app.popup_is_open() => {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => *pending_scroll += MOUSE_WHEEL_SCROLL_LINES,
+                MouseEventKind::ScrollDown => *pending_scroll -= MOUSE_WHEEL_SCROLL_LINES,
+                _ => {}
+            }
+        }
+        // Some IMEs synthesize key release/repeat events for the commit Enter;
+        // only act on presses so a single keystroke sends once.
+        Event::Key(key) if key.kind != KeyEventKind::Press => {}
+        Event::Key(key) => {
+            if is_ctrl_c(&key) {
+                return app.confirm_exit_request();
+            }
+
+            // The bottom-up popup captures navigation while open.
+            if app.popup_is_open() {
+                match key.code {
+                    KeyCode::Esc => app.popup_back(),
+                    KeyCode::Up => app.popup_move_up(),
+                    KeyCode::Down => app.popup_move_down(),
+                    KeyCode::Enter => app.popup_enter(transport, chat_tx).await,
+                    _ => {}
+                }
+                return false;
+            }
+
+            match key.code {
+                KeyCode::Esc => app.go_back(),
+                KeyCode::Left
+                    if app.view == AppView::Chat && key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    app.move_chat_cursor_word_left();
+                }
+                KeyCode::Right
+                    if app.view == AppView::Chat && key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    app.move_chat_cursor_word_right();
+                }
+                KeyCode::Left if app.view == AppView::Chat => app.move_chat_cursor_left(),
+                KeyCode::Right if app.view == AppView::Chat => app.move_chat_cursor_right(),
+                KeyCode::Home if app.view == AppView::Chat => app.move_chat_cursor_start(),
+                KeyCode::End if app.view == AppView::Chat => app.move_chat_cursor_end(),
+                KeyCode::Delete if app.view == AppView::Chat => app.delete_chat_forward_char(),
+                KeyCode::Tab if app.view == AppView::Chat && app.slash_popup_open() => {
+                    app.accept_slash_selection(true);
+                }
+                KeyCode::Up if app.view == AppView::Chat && app.slash_popup_open() => {
+                    app.slash_select_prev();
+                }
+                KeyCode::Down if app.view == AppView::Chat && app.slash_popup_open() => {
+                    app.slash_select_next();
+                }
+                KeyCode::Up if app.view == AppView::Chat => app.chat_up(),
+                KeyCode::Down if app.view == AppView::Chat => app.chat_down(),
+                KeyCode::PageUp if app.view == AppView::Chat => app.scroll_chat_up(10),
+                KeyCode::PageDown if app.view == AppView::Chat => app.scroll_chat_down(10),
+                KeyCode::Enter if app.view == AppView::Chat && is_multiline_enter(&key) => {
+                    app.insert_chat_newline();
+                }
+                KeyCode::Enter => {
+                    if app.slash_popup_open() {
+                        app.accept_slash_selection(false);
+                    }
+                    app.submit_chat_input(transport, chat_tx).await
+                }
+                KeyCode::Char('u' | 'U')
+                    if app.view == AppView::Chat
+                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    app.clear_chat_input();
+                }
+                KeyCode::Char('w' | 'W')
+                    if app.view == AppView::Chat
+                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    app.delete_chat_word();
+                }
+                KeyCode::Char('k' | 'K')
+                    if app.view == AppView::Chat
+                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    app.delete_chat_to_end();
+                }
+                KeyCode::Char('a' | 'A')
+                    if app.view == AppView::Chat
+                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    app.move_chat_cursor_start();
+                }
+                KeyCode::Char('e' | 'E')
+                    if app.view == AppView::Chat
+                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    app.move_chat_cursor_end();
+                }
+                KeyCode::Backspace if app.view == AppView::Chat => app.delete_chat_char(),
+                KeyCode::Char(ch)
+                    if app.view == AppView::Chat
+                        && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    app.insert_chat_text(&ch.to_string());
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+fn apply_pending_scroll(app: &mut TuiApp, pending_scroll: isize) {
+    if pending_scroll > 0 {
+        app.scroll_chat_up(pending_scroll as usize);
+    } else if pending_scroll < 0 {
+        app.scroll_chat_down(pending_scroll.unsigned_abs());
+    }
 }
 
 fn is_ctrl_c(key: &KeyEvent) -> bool {
