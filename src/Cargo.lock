@@ -6105,6 +6105,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "va-launcher"
+version = "0.7.9"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "va-tui"
 version = "0.7.8"
 dependencies = [
