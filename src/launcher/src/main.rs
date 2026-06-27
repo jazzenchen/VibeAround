@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
-use std::env;
 use std::fs;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{bail, Context};
 use clap::Parser;
 use va_launcher::{
-    dry_run, launch, parse_env_pair, NativeLaunchArgs, NativeLaunchInput, TerminalChoice,
+    data_dir, dry_run, launch, load_launch_profile, load_launch_profile_path, parse_env_pair,
+    validate_launch_name, NativeLaunchArgs, NativeLaunchInput, TerminalChoice,
 };
 
 #[derive(Debug, Parser)]
@@ -22,13 +22,17 @@ struct CliArgs {
     input_file: Option<PathBuf>,
     #[arg(long = "preset")]
     preset: Option<String>,
+    #[arg(long = "profile")]
+    profile: Option<String>,
+    #[arg(long = "profile-path")]
+    profile_path: Option<PathBuf>,
     #[arg(long = "dry-run")]
     dry_run: bool,
     #[arg(long = "json")]
     json: bool,
     #[arg(long)]
     agent: Option<String>,
-    #[arg(long = "profile")]
+    #[arg(long = "profile-id")]
     profile_id: Option<String>,
     #[arg(long = "target")]
     launch_target: Option<String>,
@@ -87,8 +91,9 @@ fn run() -> anyhow::Result<()> {
 
 fn read_input(args: &CliArgs) -> anyhow::Result<NativeLaunchInput> {
     let preset_name = resolve_preset_name(args)?;
+    ensure_single_profile_source(args)?;
     if args.read_stdin {
-        ensure_no_preset(&preset_name, "--stdin")?;
+        ensure_no_named_source(args, &preset_name, "--stdin")?;
         let mut body = String::new();
         std::io::stdin()
             .read_to_string(&mut body)
@@ -96,11 +101,23 @@ fn read_input(args: &CliArgs) -> anyhow::Result<NativeLaunchInput> {
         return serde_json::from_str(&body).context("parse launch input JSON from stdin");
     }
     if let Some(path) = &args.input_file {
-        ensure_no_preset(&preset_name, "--input-file")?;
+        ensure_no_named_source(args, &preset_name, "--input-file")?;
         let body = fs::read_to_string(path)
             .with_context(|| format!("read launch input file {}", path.display()))?;
         return serde_json::from_str(&body)
             .with_context(|| format!("parse launch input JSON from {}", path.display()));
+    }
+    if let Some(name) = &args.profile {
+        ensure_no_preset(&preset_name, "--profile")?;
+        let mut input = load_launch_profile(name)?;
+        apply_invocation_overrides(&mut input, args);
+        return Ok(input);
+    }
+    if let Some(path) = &args.profile_path {
+        ensure_no_preset(&preset_name, "--profile-path")?;
+        let mut input = load_launch_profile_path(path)?;
+        apply_invocation_overrides(&mut input, args);
+        return Ok(input);
     }
     if let Some(preset_name) = preset_name {
         let mut input = read_preset(&preset_name)?;
@@ -148,6 +165,25 @@ fn ensure_no_preset(preset_name: &Option<String>, source: &str) -> anyhow::Resul
     Ok(())
 }
 
+fn ensure_single_profile_source(args: &CliArgs) -> anyhow::Result<()> {
+    if args.profile.is_some() && args.profile_path.is_some() {
+        bail!("use either --profile or --profile-path, not both");
+    }
+    Ok(())
+}
+
+fn ensure_no_named_source(
+    args: &CliArgs,
+    preset_name: &Option<String>,
+    source: &str,
+) -> anyhow::Result<()> {
+    ensure_no_preset(preset_name, source)?;
+    if args.profile.is_some() || args.profile_path.is_some() {
+        bail!("{source} cannot be combined with --profile or --profile-path");
+    }
+    Ok(())
+}
+
 fn read_preset(name: &str) -> anyhow::Result<NativeLaunchInput> {
     let path = preset_path(name)?;
     let body = fs::read_to_string(&path)
@@ -156,32 +192,8 @@ fn read_preset(name: &str) -> anyhow::Result<NativeLaunchInput> {
 }
 
 fn preset_path(name: &str) -> anyhow::Result<PathBuf> {
-    if name.trim().is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name == "."
-        || name == ".."
-        || name.contains("..")
-    {
-        bail!("invalid launch preset name '{}'", name);
-    }
-    Ok(vibearound_home()?
-        .join("launches")
-        .join(format!("{name}.json")))
-}
-
-fn vibearound_home() -> anyhow::Result<PathBuf> {
-    if let Some(path) = non_empty_env("VIBEAROUND_HOME") {
-        return Ok(PathBuf::from(path));
-    }
-    let home = non_empty_env("HOME")
-        .or_else(|| non_empty_env("USERPROFILE"))
-        .context("HOME is not set; pass --input-file instead")?;
-    Ok(Path::new(&home).join(".vibearound"))
-}
-
-fn non_empty_env(key: &str) -> Option<String> {
-    env::var(key).ok().filter(|value| !value.trim().is_empty())
+    validate_launch_name(name, "launch preset")?;
+    Ok(data_dir()?.join("launches").join(format!("{name}.json")))
 }
 
 fn apply_invocation_overrides(input: &mut NativeLaunchInput, args: &CliArgs) {
@@ -224,6 +236,8 @@ mod tests {
             read_stdin: false,
             input_file: None,
             preset: None,
+            profile: None,
+            profile_path: None,
             dry_run: true,
             json: true,
             agent: None,
@@ -245,6 +259,46 @@ mod tests {
     fn rejects_path_like_preset_names() {
         assert!(preset_path("../secret").is_err());
         assert!(preset_path("nested/name").is_err());
+    }
+
+    #[test]
+    fn reads_named_launch_profile() {
+        let _guard = env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        let profile_dir = dir.join("launch").join("profiles");
+        std::fs::create_dir_all(&profile_dir).expect("create profile dir");
+        std::fs::write(
+            profile_dir.join("openai.json"),
+            r#"{
+  "agent": "codex",
+  "workspace": "/tmp/work"
+}"#,
+        )
+        .expect("write profile");
+        let previous = std::env::var_os("VIBEAROUND_DATA_DIR");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+        let mut args = cli_args();
+        args.profile = Some("openai".to_string());
+
+        let input = read_input(&args).expect("read profile input");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(input.agent, "codex");
+        assert_eq!(input.profile_id.as_deref(), Some("openai"));
+        assert_eq!(input.workspace, Some(PathBuf::from("/tmp/work")));
+    }
+
+    #[test]
+    fn rejects_multiple_profile_sources() {
+        let mut args = cli_args();
+        args.profile = Some("openai".to_string());
+        args.profile_path = Some(PathBuf::from("/tmp/profile.json"));
+
+        let error = read_input(&args).unwrap_err().to_string();
+
+        assert!(error.contains("use either --profile or --profile-path"));
     }
 
     #[test]
@@ -278,5 +332,21 @@ mod tests {
         assert_eq!(input.session_id.as_deref(), Some("abc"));
         assert_eq!(input.env["NO_PROXY"], "localhost");
         assert_eq!(input.args.native, vec!["--flag"]);
+    }
+
+    fn temp_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("va-launch-cli-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    fn env_test_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 }

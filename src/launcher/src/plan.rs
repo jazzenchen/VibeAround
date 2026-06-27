@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use anyhow::Context;
 use serde::Serialize;
 
-use crate::{default_command_for_agent, native_resume_args, NativeLaunchInput, TerminalChoice};
+use crate::{
+    default_command_for_agent, native_resume_args, resolve_terminal_choice, NativeLaunchInput,
+    TerminalChoice,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionPlan {
@@ -48,9 +51,7 @@ pub fn build_execution_plan(input: NativeLaunchInput) -> anyhow::Result<Executio
         Some(path) => path,
         None => std::env::current_dir().context("resolve current directory")?,
     };
-    let terminal = input
-        .terminal
-        .unwrap_or_else(TerminalChoice::default_for_current_platform);
+    let terminal = resolve_terminal_choice(input.terminal)?;
 
     let (command, mut args) = if let Some(path) = input.executable_path {
         (path.to_string_lossy().to_string(), Vec::new())

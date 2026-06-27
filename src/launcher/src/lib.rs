@@ -4,8 +4,11 @@
 //! does not call VibeAround server launcher APIs and should not grow a
 //! server-side `LaunchPlan` contract.
 
+mod paths;
 mod plan;
 mod platform;
+mod profile;
+mod terminal_config;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -14,8 +17,11 @@ use anyhow::{anyhow, bail};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
+pub use paths::{data_dir, launch_profile_path, validate_launch_name};
 pub use plan::{build_execution_plan, redacted_execution_plan, ExecutionPlan, PublicExecutionPlan};
 pub use platform::LaunchHandle;
+pub use profile::{load_launch_profile, load_launch_profile_path, LaunchProfile};
+pub use terminal_config::{detect_default_terminal, launcher_config_path, resolve_terminal_choice};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +110,38 @@ impl TerminalChoice {
             Self::Kitty => "kitty",
             Self::Alacritty => "alacritty",
             Self::WezTerm => "wezterm",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "system-terminal" => Some(Self::SystemTerminal),
+            "terminal" => Some(Self::Terminal),
+            "iterm2" => Some(Self::Iterm2),
+            "powershell" | "power-shell" => Some(Self::PowerShell),
+            "gnome-terminal" => Some(Self::GnomeTerminal),
+            "konsole" => Some(Self::Konsole),
+            "xfce4-terminal" | "xfce-terminal" => Some(Self::XfceTerminal),
+            "xterm" => Some(Self::Xterm),
+            "kitty" => Some(Self::Kitty),
+            "alacritty" => Some(Self::Alacritty),
+            "wezterm" | "wez-term" => Some(Self::WezTerm),
+            _ => None,
+        }
+    }
+
+    pub fn is_supported_on_current_platform(self) -> bool {
+        match self {
+            Self::Terminal | Self::Iterm2 => cfg!(target_os = "macos"),
+            Self::PowerShell => cfg!(target_os = "windows"),
+            Self::SystemTerminal
+            | Self::GnomeTerminal
+            | Self::Konsole
+            | Self::XfceTerminal
+            | Self::Xterm
+            | Self::Kitty
+            | Self::Alacritty
+            | Self::WezTerm => cfg!(not(any(target_os = "macos", target_os = "windows"))),
         }
     }
 }
@@ -203,6 +241,12 @@ fn is_valid_env_key(key: &str) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) fn env_test_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -230,5 +274,9 @@ mod tests {
     #[test]
     fn terminal_choice_ids_match_desktop_preferences() {
         assert_eq!(TerminalChoice::XfceTerminal.id(), "xfce4-terminal");
+        assert_eq!(
+            TerminalChoice::from_id("xfce4-terminal"),
+            Some(TerminalChoice::XfceTerminal)
+        );
     }
 }
