@@ -107,6 +107,32 @@ pub fn auto_install_project_integrations(agent: &str, workspace: &Path) -> anyho
     )
 }
 
+/// Remove VibeAround-managed project-scoped integrations for one agent/workspace.
+pub fn uninstall_project_integrations(
+    agent: &str,
+    workspace: &Path,
+    options: ProjectIntegrationOptions,
+) -> anyhow::Result<()> {
+    if !workspace.is_dir() {
+        anyhow::bail!("workspace does not exist: {}", workspace.display());
+    }
+    if workspace == config::home_dir() {
+        tracing::info!(
+            "[agent] skipping project integration cleanup for {} in home directory {:?}",
+            agent,
+            workspace
+        );
+        return Ok(());
+    }
+    if options.mcp {
+        uninstall_project_mcp_config(agent, workspace)?;
+    }
+    if options.skills {
+        uninstall_project_skill(agent, workspace)?;
+    }
+    Ok(())
+}
+
 /// Remove VibeAround-managed integrations from global legacy locations and
 /// every known project workspace.
 pub fn uninstall_managed_integrations(remove_mcp: bool, remove_skills: bool) -> anyhow::Result<()> {
@@ -176,15 +202,14 @@ pub fn uninstall_legacy_integrations(remove_mcp: bool, remove_skills: bool) -> a
 }
 
 fn current_mcp_url() -> String {
-    let port = config::DEFAULT_PORT;
     match crate::auth::read_token_file() {
-        Some(auth) => format!("http://127.0.0.1:{}/va/mcp?token={}", port, auth.token),
+        Some(auth) => format!("http://127.0.0.1:{}/va/mcp?token={}", auth.port, auth.token),
         None => {
             tracing::info!(
                 "[agent] auth.json missing — writing MCP config without token; \
                  coding agents will get 401 until the daemon rewrites it"
             );
-            format!("http://127.0.0.1:{}/va/mcp", port)
+            format!("http://127.0.0.1:{}/va/mcp", config::DEFAULT_PORT)
         }
     }
 }

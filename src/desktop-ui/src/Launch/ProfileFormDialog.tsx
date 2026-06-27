@@ -236,7 +236,14 @@ export function ProfileFormDialog({
     try {
       await onSave(
         initial
-          ? { type: "update", profile: { id: initial.id, ...result.draft } }
+          ? {
+              type: "update",
+              profile: {
+                id: initial.id,
+                ...result.draft,
+                connections: initial.connections,
+              },
+            }
           : { type: "create", draft: result.draft },
       );
       onClose();

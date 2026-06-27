@@ -245,6 +245,7 @@ mod tests {
             overrides,
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         };
 
         let profile = normalize_legacy_profile(profile);
@@ -272,6 +273,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         };
 
         let profile = normalize_legacy_profile(profile);
@@ -303,6 +305,7 @@ mod tests {
             overrides,
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         };
 
         let profile = normalize_legacy_profile(profile);
@@ -340,6 +343,7 @@ mod tests {
             overrides,
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         };
 
         let profile = normalize_legacy_profile(profile);
@@ -365,6 +369,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         };
 
         let profile = normalize_legacy_profile(profile);

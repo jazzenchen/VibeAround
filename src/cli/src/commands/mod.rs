@@ -1,4 +1,5 @@
 mod chat;
+mod launch;
 mod previews;
 mod profiles;
 mod runtime;
@@ -53,6 +54,7 @@ pub(crate) async fn dispatch(options: &Options, command: Command) -> Result<(), 
             crate::auth::clear(options)?;
         }
         Command::TmuxSessions => runtime::tmux_sessions(options).await?,
+        Command::LaunchRun(args) => launch::run(options, &args)?,
         Command::LaunchSessions(args) => sessions::launch_sessions(options, &args).await?,
         Command::LaunchSessionArchive(args) => {
             sessions::launch_session_mutation(options, &args, true).await?;

@@ -55,10 +55,7 @@ enum TopCommand {
         #[command(subcommand)]
         command: AuthCommand,
     },
-    Launch {
-        #[command(subcommand)]
-        command: launch::LaunchCommand,
-    },
+    Launch(launch::LaunchCli),
     Tmux {
         #[command(subcommand)]
         command: TmuxCommand,
@@ -199,7 +196,7 @@ fn top_command_into_command(command: TopCommand) -> Result<Command, CliError> {
             AuthCommand::Status => Command::AuthStatus,
             AuthCommand::Clear => Command::AuthClear,
         },
-        TopCommand::Launch { command } => launch::command_into_command(command)?,
+        TopCommand::Launch(command) => launch::command_into_command(command)?,
         TopCommand::Tmux { command } => match command {
             TmuxCommand::Sessions => Command::TmuxSessions,
         },

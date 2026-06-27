@@ -10,9 +10,10 @@ use std::collections::BTreeMap;
 
 use crate::agent_state;
 
-mod legacy;
-
-use super::{catalog, schema::ProfileDef};
+use super::{
+    catalog,
+    schema::{self, ProfileDef},
+};
 
 pub const DEFAULT_CLAUDE_BRIDGE_MODEL_ID: &str = "claude-sonnet-4-5";
 
@@ -142,7 +143,7 @@ pub fn resolve_profile_agent_route(
     profile: &ProfileDef,
     agent_id: &str,
 ) -> Option<ProfileAgentRoute> {
-    let connections = merged_profile_connections(&agent_state::read_prefs());
+    let connections = merged_profile_connections();
     resolve_profile_agent_route_with_connections(profile, agent_id, &connections)
 }
 
@@ -396,7 +397,7 @@ fn clean_optional_string(value: Option<&str>) -> Option<String> {
 }
 
 pub fn launch_targets_for_profile(profile: &ProfileDef) -> Vec<ProfileLaunchTarget> {
-    let connections = merged_profile_connections(&agent_state::read_prefs());
+    let connections = merged_profile_connections();
     launch_targets_for_profile_with_connections(profile, &connections)
 }
 
@@ -421,14 +422,11 @@ pub fn launch_targets_for_profile_with_connections(
         .collect()
 }
 
-pub fn merged_profile_connections(
-    agent_prefs: &agent_state::AgentsPrefsFile,
-) -> agent_state::ProfileConnectionPreferences {
-    let mut out = legacy::profile_connections();
-    for (profile_id, by_agent) in &agent_prefs.profile_connections {
-        let entry = out.entry(profile_id.clone()).or_default();
-        for (agent_id, preference) in by_agent {
-            entry.insert(agent_id.clone(), preference.clone());
+pub fn merged_profile_connections() -> agent_state::ProfileConnectionPreferences {
+    let mut out = agent_state::ProfileConnectionPreferences::new();
+    for profile in schema::list() {
+        if !profile.connections.is_empty() {
+            out.insert(profile.id, profile.connections);
         }
     }
     out

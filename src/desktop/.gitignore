@@ -2,6 +2,9 @@
 gen/
 WixTools/
 
+# Generated sidecar binaries
+binaries/va-launch-*
+
 # Env
 .env
 .env.local

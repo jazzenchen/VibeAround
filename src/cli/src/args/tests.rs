@@ -477,6 +477,58 @@ fn parses_launch_sessions_command() {
 }
 
 #[test]
+fn parses_launch_profile_command() {
+    let options = parse_args([
+        "launch".to_string(),
+        "--profile".to_string(),
+        "codex-work".to_string(),
+        "--dry-run".to_string(),
+    ])
+    .expect("options");
+
+    assert_eq!(
+        options.command,
+        Some(Command::LaunchRun(LaunchRunArgs {
+            profile: Some("codex-work".into()),
+            profile_path: None,
+            dry_run: true,
+        }))
+    );
+}
+
+#[test]
+fn parses_launch_profile_path_command() {
+    let options = parse_args([
+        "launch".to_string(),
+        "--profile-path".to_string(),
+        "/tmp/launch.json".to_string(),
+    ])
+    .expect("options");
+
+    assert_eq!(
+        options.command,
+        Some(Command::LaunchRun(LaunchRunArgs {
+            profile: None,
+            profile_path: Some(std::path::PathBuf::from("/tmp/launch.json")),
+            dry_run: false,
+        }))
+    );
+}
+
+#[test]
+fn rejects_launch_profile_flags_with_subcommands() {
+    let error = parse_args([
+        "launch".to_string(),
+        "--profile".to_string(),
+        "codex-work".to_string(),
+        "sessions".to_string(),
+    ])
+    .expect_err("error");
+
+    assert!(matches!(error, CliError::Usage(_)));
+}
+
+#[test]
 fn parses_launch_sessions_explicit_archived_false() {
     let options = parse_args([
         "launch".to_string(),

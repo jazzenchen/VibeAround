@@ -33,12 +33,12 @@ interface Props {
 }
 
 /**
- * "直接启动" — fire any of the coder CLIs registered in `agents.json`
+ * "直接启动" — fire any of the registered coder CLIs
  * with no env at all. The CLI does its own thing (OAuth, cached token,
  * provider config, …); VibeAround does not touch credentials.
  *
- * Buttons are populated dynamically from the daemon's agents.json so
- * adding a new CLI is a one-file edit on the agents side; this card
+ * Buttons are populated dynamically from the daemon's agent registry so
+ * adding a new CLI is a registry edit; this card
  * picks it up automatically without a UI release.
  */
 export function DirectCards({

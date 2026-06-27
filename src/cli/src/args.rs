@@ -12,7 +12,7 @@ mod tests;
 
 pub(crate) use chat::{ChatForgetArgs, ChatReplArgs, ChatSendArgs};
 pub(crate) use cli::parse_args;
-pub(crate) use launch::{LaunchSessionMutationArgs, LaunchSessionsArgs};
+pub(crate) use launch::{LaunchRunArgs, LaunchSessionMutationArgs, LaunchSessionsArgs};
 pub(crate) use pair::{PairStartArgs, PairWaitArgs};
 pub(crate) use serve::ServeArgs;
 pub(crate) use session::SessionCreateArgs;
@@ -43,6 +43,7 @@ pub(crate) enum Command {
     AuthClear,
     SettingsReload,
     TmuxSessions,
+    LaunchRun(LaunchRunArgs),
     LaunchSessions(LaunchSessionsArgs),
     LaunchSessionArchive(LaunchSessionMutationArgs),
     LaunchSessionUnarchive(LaunchSessionMutationArgs),
@@ -113,6 +114,8 @@ pub(crate) fn usage() -> &'static str {
         "  tunnel kill PROVIDER         Stop a tunnel runtime\n",
         "  agents                       List enabled agents\n",
         "  agent kill ROUTE_KEY         Kill an attached agent runtime\n",
+        "  launch --profile NAME        Launch a saved va-launch profile\n",
+        "  launch --profile-path PATH    Launch a va-launch profile JSON file\n",
         "  launch sessions              List resumable agent launch sessions\n",
         "  launch archive --agent A ID  Archive a launch session\n",
         "  launch unarchive --agent A ID Unarchive a launch session\n",

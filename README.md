@@ -340,7 +340,7 @@ v0.7.3 changes Startkit state, detected agent sources, desktop launch targets, a
 4. Restore only durable state from the backup.
 5. Launch VibeAround v0.7.3 and rerun onboarding / Startkit setup if Launch, profile, Startkit, or desktop-agent settings look stale.
 
-Restore these durable items only: `settings.json`, `profiles/`, `google-oauth/`, `agents.json`, `launcher.json`, `state/`, `sessions/`, `launch-session-archive.json`, `workspaces/`, and `worktrees/`.
+Restore these durable items only: `settings.json`, `profiles/`, `google-oauth/`, `state/`, `sessions/`, `launch-session-archive.json`, `workspaces/`, and `worktrees/`.
 
 Do not restore generated or runtime data such as `.cache/`, `cache/startkit/`, `agents.detected.json`, `desktop-apps.detected.json`, `profile-state/`, `api-bridge/launches/`, `logs/`, `npm-global/`, `plugins/`, `bin/`, `runtime/`, or `auth.json`.
 
@@ -359,7 +359,7 @@ fi
 
 mkdir -p "$SOURCE"
 
-for item in settings.json profiles google-oauth agents.json launcher.json state sessions launch-session-archive.json workspaces worktrees; do
+for item in settings.json profiles google-oauth state sessions launch-session-archive.json workspaces worktrees; do
   [ -e "$BACKUP/$item" ] && cp -a "$BACKUP/$item" "$SOURCE/"
 done
 ```
@@ -380,7 +380,7 @@ if (Test-Path $SourceRoot) {
 New-Item -ItemType Directory -Force -Path $SourceRoot | Out-Null
 
 $Items = @(
-  "settings.json", "profiles", "google-oauth", "agents.json", "launcher.json",
+  "settings.json", "profiles", "google-oauth",
   "state", "sessions", "launch-session-archive.json", "workspaces", "worktrees"
 )
 

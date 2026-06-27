@@ -14,6 +14,7 @@ fn profile(api_types: &[&str]) -> ProfileDef {
         overrides: BTreeMap::new(),
         use_settings_proxy: false,
         provider_settings: ProviderSettings::default(),
+        connections: Default::default(),
     }
 }
 

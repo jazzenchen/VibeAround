@@ -30,6 +30,8 @@ pub(crate) enum CliError {
     },
     #[error("chat error: {0}")]
     Chat(String),
+    #[error("launch error: {0}")]
+    Launch(String),
     #[error("I/O error while {action}: {source}")]
     Io {
         action: &'static str,

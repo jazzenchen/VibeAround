@@ -120,6 +120,10 @@ pub fn profiles_reorder(app: tauri::AppHandle, profile_ids: Vec<String>) -> Resu
 
 #[tauri::command]
 pub fn profiles_launch(id: String, launch_target: String) -> Result<(), String> {
+    profiles_launch_sync(id, launch_target)
+}
+
+pub(crate) fn profiles_launch_sync(id: String, launch_target: String) -> Result<(), String> {
     let profile = schema::load(&id)
         .map(normalize_legacy_profile_and_persist)
         .ok_or_else(|| format!("profile '{id}' not found"))?;
@@ -131,10 +135,14 @@ pub fn profiles_launch(id: String, launch_target: String) -> Result<(), String> 
 
 /// Launch a CLI directly with no env injection — uses whatever global
 /// OAuth / login session the user already has. `agent_id` is the
-/// agents.json id (e.g. "claude", "codex", "gemini", "cursor", "kiro",
+/// agent registry id (e.g. "claude", "codex", "gemini", "cursor", "kiro",
 /// "qwen-code", "opencode").
 #[tauri::command]
 pub fn profiles_launch_direct(agent_id: String) -> Result<(), String> {
+    profiles_launch_direct_sync(agent_id)
+}
+
+pub(crate) fn profiles_launch_direct_sync(agent_id: String) -> Result<(), String> {
     launcher::launch_direct(&agent_id).map_err(|e| e.to_string())
 }
 
@@ -367,6 +375,10 @@ pub async fn launcher_list_workspaces(
 
 #[tauri::command]
 pub fn profiles_launch_default() -> Result<(), String> {
+    profiles_launch_default_sync()
+}
+
+pub(crate) fn profiles_launch_default_sync() -> Result<(), String> {
     let cfg = config::ensure_loaded();
     let agent_prefs = agent_state::read_prefs();
     let agent_id = agent_state::resolve_default_agent(&agent_prefs, &cfg);
@@ -387,6 +399,14 @@ pub fn profiles_launch_resume(
     launch_target: String,
     session_id: String,
 ) -> Result<(), String> {
+    profiles_launch_resume_sync(id, launch_target, session_id)
+}
+
+pub(crate) fn profiles_launch_resume_sync(
+    id: String,
+    launch_target: String,
+    session_id: String,
+) -> Result<(), String> {
     let profile = schema::load(&id)
         .map(normalize_legacy_profile_and_persist)
         .ok_or_else(|| format!("profile '{id}' not found"))?;
@@ -398,6 +418,13 @@ pub fn profiles_launch_resume(
 
 #[tauri::command]
 pub fn profiles_launch_direct_resume(agent_id: String, session_id: String) -> Result<(), String> {
+    profiles_launch_direct_resume_sync(agent_id, session_id)
+}
+
+pub(crate) fn profiles_launch_direct_resume_sync(
+    agent_id: String,
+    session_id: String,
+) -> Result<(), String> {
     let agent_id = canonical_agent_id(&agent_id);
     launcher::launch_direct_resume(&agent_id, &session_id).map_err(|e| e.to_string())
 }
@@ -677,13 +704,13 @@ pub fn launcher_set_profile_connection(
     preference: agent_state::ProfileConnectionPreference,
 ) -> Result<(), String> {
     let agent_id = validate_connection_agent_id(agent_id)?;
-    let profile = schema::load(&profile_id)
+    let mut profile = schema::load(&profile_id)
         .map(normalize_legacy_profile_and_persist)
         .ok_or_else(|| format!("profile '{profile_id}' not found"))?;
     let preference = sanitize_profile_connection_preference(&profile, &agent_id, preference)?;
 
-    agent_state::write_profile_connection_preference(&profile.id, &agent_id, preference)
-        .map_err(|e| e.to_string())?;
+    schema::set_connection(&mut profile, &agent_id, preference);
+    schema::save(&profile).map_err(|e| e.to_string())?;
     emit_launch_config_changed(&app);
     Ok(())
 }
@@ -783,8 +810,9 @@ fn emit_launch_config_changed(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_agent_launch_args, validate_connection_agent_id};
+    use super::{profiles_launch_direct, sanitize_agent_launch_args, validate_connection_agent_id};
     use common::agent_state::AgentLaunchArgs;
+    use std::path::PathBuf;
 
     #[test]
     fn accepts_supported_profile_connection_targets() {
@@ -834,5 +862,87 @@ mod tests {
             acp: Vec::new(),
         })
         .is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn launch_direct_invokes_va_launch_boundary() {
+        let _guard = env_test_lock().lock().expect("env test lock");
+        let dir = unique_test_dir("direct-va-launch");
+        let data_dir = dir.join("data");
+        let workspace = dir.join("workspace");
+        std::fs::create_dir_all(&data_dir).expect("create data dir");
+        std::fs::create_dir_all(&workspace).expect("create workspace dir");
+        std::fs::write(
+            data_dir.join("launcher.json"),
+            serde_json::json!({
+                "terminal": "powershell",
+                "workspace": workspace.to_string_lossy()
+            })
+            .to_string(),
+        )
+        .expect("write launcher prefs");
+
+        let fake_bin = dir.join("va-launch.cmd");
+        let capture = dir.join("capture.json");
+        std::fs::write(
+            &fake_bin,
+            "@echo off\r\nif \"%~1\"==\"--profile-path\" copy /Y \"%~2\" \"%VA_LAUNCH_CAPTURE%\" >nul & exit /b 0\r\nexit /b 2\r\n",
+        )
+        .expect("write fake va-launch");
+
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        let previous_bin = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN");
+        let previous_capture = std::env::var_os("VA_LAUNCH_CAPTURE");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &data_dir);
+        std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", &fake_bin);
+        std::env::set_var("VA_LAUNCH_CAPTURE", &capture);
+        let _ = common::config::reload();
+
+        profiles_launch_direct("codex".to_string()).expect("direct launch calls va-launch");
+
+        let captured = read_to_string_eventually(&capture);
+        let value: serde_json::Value =
+            serde_json::from_str(&captured).expect("parse captured profile");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        restore_env("VIBEAROUND_VA_LAUNCH_BIN", previous_bin);
+        restore_env("VA_LAUNCH_CAPTURE", previous_capture);
+        let _ = common::config::reload();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(value["agent"], "codex");
+        assert_eq!(value["command"], "codex");
+        assert_eq!(value["terminal"], "powershell");
+        assert_eq!(value["workspace"], workspace.to_string_lossy().to_string());
+    }
+
+    fn unique_test_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "vibearound-profiles-{name}-{}",
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    fn read_to_string_eventually(path: &std::path::Path) -> String {
+        for _ in 0..50 {
+            if let Ok(body) = std::fs::read_to_string(path) {
+                return body;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        std::fs::read_to_string(path).expect("read captured profile")
+    }
+
+    fn env_test_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 }

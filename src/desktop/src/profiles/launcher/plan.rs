@@ -104,9 +104,8 @@ impl<'a> LaunchPlanBuilder<'a> {
 
     fn build_direct_plan(&self, agent_id: &str) -> anyhow::Result<LaunchPlan> {
         let agent = resources::agent_by_id(agent_id)
-            .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
+            .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
 
         let Some(session_id) = self.session_id else {
             if agent_id == "codex-desktop" {
@@ -157,9 +156,8 @@ impl<'a> LaunchPlanBuilder<'a> {
     ) -> anyhow::Result<LaunchPlan> {
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let agent = resources::agent_by_id(agent_id)
-            .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
+            .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
         if agent_id == "codex-desktop" {
             let mut env = Vec::new();
             let mut args = Vec::new();
@@ -237,7 +235,6 @@ impl<'a> LaunchPlanBuilder<'a> {
 
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
         let (command, resume_args) = resume_command_for_agent(agent_id, session_id)?;
         let mut args = rendered.command_args.clone();
         args.extend(terminal_launch_args_for_agent(agent_id));
@@ -404,23 +401,6 @@ fn append_vibearound_launch_context_env(
         VIBEAROUND_LAUNCH_TARGET_ENV.to_string(),
         launch_target.to_string(),
     ));
-}
-
-fn install_project_integrations_for_launch(
-    agent_id: &str,
-    workspace: &std::path::Path,
-) -> anyhow::Result<()> {
-    let integration_agent_id = project_integration_agent_id(agent_id);
-    agent_integrations::auto_install_project_integrations(integration_agent_id, workspace)
-        .with_context(|| format!("install project integrations for {}", integration_agent_id))
-}
-
-fn project_integration_agent_id(agent_id: &str) -> &str {
-    match agent_id {
-        "claude-desktop" => "claude",
-        "codex-desktop" => "codex",
-        other => other,
-    }
 }
 
 fn append_local_bridge_proxy_bypass_env(env: &mut Vec<(String, String)>) {
@@ -597,6 +577,7 @@ mod tests {
             .collect::<BTreeMap<_, _>>(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         }
     }
 
@@ -645,13 +626,6 @@ mod tests {
         } else {
             assert!(args.is_empty());
         }
-    }
-
-    #[test]
-    fn desktop_launches_install_companion_cli_integrations() {
-        assert_eq!(project_integration_agent_id("codex-desktop"), "codex");
-        assert_eq!(project_integration_agent_id("claude-desktop"), "claude");
-        assert_eq!(project_integration_agent_id("gemini"), "gemini");
     }
 
     #[test]

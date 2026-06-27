@@ -342,7 +342,7 @@ v0.7.3 调整了 Startkit 状态、Agent 来源检测、桌面启动目标和 Pr
 4. 只从备份里恢复持久状态。
 5. 启动 VibeAround v0.7.3；如果 Launch、Profile、Startkit 或桌面版 Agent 设置看起来异常，再重新跑 onboarding / Startkit 配置。
 
-只恢复这些持久状态：`settings.json`、`profiles/`、`google-oauth/`、`agents.json`、`launcher.json`、`state/`、`sessions/`、`launch-session-archive.json`、`workspaces/`、`worktrees/`。
+只恢复这些持久状态：`settings.json`、`profiles/`、`google-oauth/`、`state/`、`sessions/`、`launch-session-archive.json`、`workspaces/`、`worktrees/`。
 
 不要恢复这些可重建的缓存/运行期数据：`.cache/`、`cache/startkit/`、`agents.detected.json`、`desktop-apps.detected.json`、`profile-state/`、`api-bridge/launches/`、`logs/`、`npm-global/`、`plugins/`、`bin/`、`runtime/`、`auth.json`。
 
@@ -361,7 +361,7 @@ fi
 
 mkdir -p "$SOURCE"
 
-for item in settings.json profiles google-oauth agents.json launcher.json state sessions launch-session-archive.json workspaces worktrees; do
+for item in settings.json profiles google-oauth state sessions launch-session-archive.json workspaces worktrees; do
   [ -e "$BACKUP/$item" ] && cp -a "$BACKUP/$item" "$SOURCE/"
 done
 ```
@@ -382,7 +382,7 @@ if (Test-Path $SourceRoot) {
 New-Item -ItemType Directory -Force -Path $SourceRoot | Out-Null
 
 $Items = @(
-  "settings.json", "profiles", "google-oauth", "agents.json", "launcher.json",
+  "settings.json", "profiles", "google-oauth",
   "state", "sessions", "launch-session-archive.json", "workspaces", "worktrees"
 )
 

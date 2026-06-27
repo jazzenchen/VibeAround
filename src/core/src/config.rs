@@ -164,9 +164,6 @@ pub struct Config {
     pub tmux_detach_others: bool,
     // --- Agents ---
     pub default_agent: String,
-    /// Per-agent default profile id used when a route has not chosen a
-    /// profile explicitly. Keys are canonical agent ids.
-    pub default_profiles: BTreeMap<String, String>,
     /// Subset of agent IDs from `resources/agents.json` the user has enabled.
     /// Validated at load time — entries that don't resolve via
     /// `resources::agent_by_alias` are dropped.
@@ -377,17 +374,6 @@ impl Config {
         self.default_workspace.clone()
     }
 
-    /// Resolve the default profile id for an agent alias/id.
-    pub fn default_profile_for(&self, agent_kind: &str) -> Option<String> {
-        let agent_id = crate::resources::agent_by_alias(agent_kind)
-            .map(|def| def.id.as_str())
-            .unwrap_or(agent_kind);
-        self.default_profiles
-            .get(agent_id)
-            .cloned()
-            .filter(|s| !s.trim().is_empty())
-    }
-
     pub fn remote_channel_defaults(&self, channel_kind: &str) -> RemoteChannelDefaults {
         self.remote
             .channels
@@ -530,25 +516,6 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "claude".to_string());
 
-    let default_profiles = root
-        .get("default_profiles")
-        .and_then(|v| v.as_object())
-        .map(|obj| {
-            obj.iter()
-                .filter_map(|(agent, profile)| {
-                    let profile = profile.as_str()?.trim();
-                    if profile.is_empty() {
-                        return None;
-                    }
-                    let agent_id = crate::resources::agent_by_alias(agent)
-                        .map(|def| def.id.clone())
-                        .unwrap_or_else(|| agent.to_string());
-                    Some((agent_id, profile.to_string()))
-                })
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
-
     let enabled_agents = root
         .get("enabled_agents")
         .and_then(|v| v.as_array())
@@ -626,7 +593,6 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         preview_base_url,
         tmux_detach_others,
         default_agent,
-        default_profiles,
         enabled_agents,
         integrations,
         proxy,
@@ -1003,7 +969,6 @@ impl Default for Config {
             preview_base_url: None,
             tmux_detach_others: true,
             default_agent: "claude".to_string(),
-            default_profiles: BTreeMap::new(),
             enabled_agents: crate::resources::AGENTS
                 .iter()
                 .map(|a| a.id.clone())

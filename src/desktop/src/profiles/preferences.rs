@@ -33,7 +33,7 @@ pub struct LauncherPreferences {
     pub workspace_options: Vec<WorkspaceOption>,
     /// Canonical agent id selected in the Launch tab.
     pub selected_agent: String,
-    /// Per-agent launch choices stored in `~/.vibearound/agents.json`.
+    /// Per-agent launch choices stored in `settings.json.launcher.agents`.
     pub agent_preferences: BTreeMap<String, AgentLaunchPreferenceSummary>,
     /// VibeAround-wide default agent for tray quick launch and IM startup.
     pub default_agent: String,
@@ -41,7 +41,7 @@ pub struct LauncherPreferences {
     pub default_profile_id: Option<String>,
     /// Agent ids enabled by onboarding/settings.json.
     pub enabled_agents: Vec<String>,
-    /// Back-compat alias for older UI code. New writes go to agents.json.
+    /// Convenience map derived from `agent_preferences` for UI call sites.
     pub default_profiles: BTreeMap<String, String>,
     /// Global policy for wrapping OpenAI-compatible profile launches through
     /// VibeAround's local compatibility bridge.
@@ -130,7 +130,7 @@ pub(super) fn launcher_preferences() -> LauncherPreferences {
         default_profiles,
         compatibility_bridge: terminal::read_compatibility_bridge_preference(),
         local_agent_api_enabled: cfg.local_agent_api.enabled,
-        profile_connections: merged_profile_connections(&agent_prefs),
+        profile_connections: merged_profile_connections(),
     }
 }
 
@@ -167,14 +167,11 @@ fn summarize_agent_preferences(
         .map(|id| canonical_agent_id(id))
         .collect();
     agent_ids.extend(agent_prefs.agents.keys().map(|id| canonical_agent_id(id)));
-    agent_ids.extend(cfg.default_profiles.keys().map(|id| canonical_agent_id(id)));
 
     let mut out = BTreeMap::new();
     for agent_id in agent_ids {
         let stored = agent_prefs.agents.get(&agent_id);
-        let profile_id = stored
-            .and_then(|preference| preference.profile_id.clone())
-            .or_else(|| cfg.default_profiles.get(&agent_id).cloned());
+        let profile_id = stored.and_then(|preference| preference.profile_id.clone());
         let workspace = stored
             .and_then(|preference| preference.workspace.as_ref())
             .map(|path| path.to_string_lossy().to_string());

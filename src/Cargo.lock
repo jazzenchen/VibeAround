@@ -6105,6 +6105,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "va-launcher"
+version = "0.7.9"
+dependencies = [
+ "anyhow",
+ "clap",
+ "common",
+ "open 1.7.1",
+ "serde",
+ "serde_json",
+ "shell-escape",
+ "toml 0.8.23",
+ "uuid",
+]
+
+[[package]]
 name = "va-tui"
 version = "0.7.8"
 dependencies = [
@@ -6167,6 +6182,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "uuid",
+ "va-launcher",
 ]
 
 [[package]]
