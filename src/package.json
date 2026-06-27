@@ -1,7 +1,7 @@
 {
   "name": "vibearound",
   "private": true,
-  "workspaces": ["desktop-ui", "web", "desktop", "shared/client-ts", "shared/ui", "shared/i18n"],
+  "workspaces": ["desktop-ui", "web", "desktop", "launcher", "shared/client-ts", "shared/ui", "shared/i18n"],
   "scripts": {
     "prebuild": "bun run desktop-ui:build && bun run web:build",
     "build": "bun run desktop:build",

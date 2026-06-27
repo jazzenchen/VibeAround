@@ -1,0 +1,10 @@
+{
+  "name": "@va/launcher",
+  "private": true,
+  "version": "0.7.9",
+  "description": "Native terminal and desktop app launcher for VibeAround",
+  "scripts": {
+    "build": "cargo build -p va-launcher",
+    "test": "cargo test -p va-launcher"
+  }
+}
