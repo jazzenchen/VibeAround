@@ -6179,6 +6179,7 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "uuid",
+ "va-launcher",
 ]
 
 [[package]]

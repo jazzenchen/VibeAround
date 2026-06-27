@@ -11,6 +11,7 @@ mod codex_desktop;
 mod common;
 mod plan;
 mod templates;
+mod va_launch;
 
 #[cfg(target_os = "macos")]
 #[path = "launcher/macos.rs"]
@@ -44,7 +45,7 @@ pub fn launch(profile: &ProfileDef, launch_target: &str) -> anyhow::Result<()> {
     let plan = LaunchPlanBuilder::new()
         .profile(profile, launch_target)
         .build()?;
-    platform::spawn(plan)
+    spawn_plan(plan)
 }
 
 pub fn launch_resume(
@@ -56,14 +57,14 @@ pub fn launch_resume(
         .profile(profile, launch_target)
         .resume(session_id)
         .build()?;
-    platform::spawn(plan)
+    spawn_plan(plan)
 }
 
 /// "Direct" launch opens the named coding CLI with no env injection. The CLI
 /// uses whatever global OAuth/login/config it already has on disk.
 pub fn launch_direct(agent_id: &str) -> anyhow::Result<()> {
     let plan = LaunchPlanBuilder::new().direct(agent_id).build()?;
-    platform::spawn(plan)
+    spawn_plan(plan)
 }
 
 pub fn launch_direct_resume(agent_id: &str, session_id: &str) -> anyhow::Result<()> {
@@ -71,5 +72,12 @@ pub fn launch_direct_resume(agent_id: &str, session_id: &str) -> anyhow::Result<
         .direct(agent_id)
         .resume(session_id)
         .build()?;
+    spawn_plan(plan)
+}
+
+fn spawn_plan(plan: common::LaunchPlan) -> anyhow::Result<()> {
+    if let Some(result) = va_launch::spawn_if_enabled(&plan) {
+        return result;
+    }
     platform::spawn(plan)
 }
