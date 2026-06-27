@@ -1,12 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::Context;
 use serde::Serialize;
 
 use crate::{
-    default_command_for_agent, native_resume_args, resolve_terminal_choice, NativeLaunchInput,
-    TerminalChoice,
+    default_command_for_agent, native_resume_args, resolve_terminal_choice, resolve_workspace_path,
+    NativeLaunchInput, TerminalChoice,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,10 +46,7 @@ pub struct PublicExecutionPlan {
 }
 
 pub fn build_execution_plan(input: NativeLaunchInput) -> anyhow::Result<ExecutionPlan> {
-    let workspace = match input.workspace {
-        Some(path) => path,
-        None => std::env::current_dir().context("resolve current directory")?,
-    };
+    let workspace = resolve_workspace_path(input.workspace)?;
     let terminal = resolve_terminal_choice(input.terminal)?;
 
     let (command, mut args) = if let Some(path) = input.executable_path {
@@ -136,12 +132,13 @@ mod tests {
     use crate::NativeLaunchArgs;
 
     fn input(agent: &str) -> NativeLaunchInput {
+        let workspace = temp_workspace();
         NativeLaunchInput {
             schema_version: 1,
             agent: agent.to_string(),
             profile_id: None,
             launch_target: None,
-            workspace: Some(PathBuf::from("/tmp/workspace")),
+            workspace: Some(workspace),
             session_id: None,
             terminal: Some(TerminalChoice::Terminal),
             command: None,
@@ -153,6 +150,15 @@ mod tests {
             macos_app_probe: None,
             windows_process_probe: None,
         }
+    }
+
+    fn temp_workspace() -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "va-launch-plan-workspace-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&path).expect("create temp workspace");
+        path
     }
 
     #[test]
@@ -199,5 +205,18 @@ mod tests {
 
         assert_eq!(public.env["ANTHROPIC_API_KEY"], "<redacted>");
         assert_eq!(public.env["NO_PROXY"], "localhost");
+    }
+
+    #[test]
+    fn rejects_missing_workspace() {
+        let mut input = input("codex");
+        input.workspace = Some(std::env::temp_dir().join(format!(
+            "va-launch-missing-workspace-test-{}",
+            uuid::Uuid::new_v4()
+        )));
+
+        let error = build_execution_plan(input).unwrap_err().to_string();
+
+        assert!(error.contains("workspace does not exist"));
     }
 }

@@ -9,6 +9,7 @@ mod plan;
 mod platform;
 mod profile;
 mod terminal_config;
+mod workspace;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ pub use plan::{build_execution_plan, redacted_execution_plan, ExecutionPlan, Pub
 pub use platform::LaunchHandle;
 pub use profile::{load_launch_profile, load_launch_profile_path, LaunchProfile};
 pub use terminal_config::{detect_default_terminal, launcher_config_path, resolve_terminal_choice};
+pub use workspace::{canonical_workspace_path, resolve_workspace_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
