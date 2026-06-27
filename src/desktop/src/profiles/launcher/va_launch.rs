@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use super::common::LaunchPlan;
 use crate::profiles::terminal;
@@ -65,23 +64,30 @@ pub(super) fn spawn_if_enabled(
 
 fn spawn_process(plan: &LaunchPlan, context: &LaunchContext) -> anyhow::Result<()> {
     let input = input_from_plan(plan, context);
-    let body = serde_json::to_vec(&input).context("serialize va-launch input")?;
+    let input_path = write_input_file(&input)?;
     let launcher = resolve_va_launch_binary()?;
-    let mut child = Command::new(&launcher)
-        .arg("--stdin")
-        .stdin(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("invoke va-launch at {}", launcher.display()))?;
-    let mut stdin = child.stdin.take().context("open va-launch stdin")?;
-    stdin
-        .write_all(&body)
-        .context("write va-launch input to stdin")?;
-    drop(stdin);
-    let status = child.wait().context("wait for va-launch")?;
+    let status = Command::new(&launcher)
+        .arg("--input-file")
+        .arg(&input_path)
+        .status()
+        .with_context(|| format!("invoke va-launch at {}", launcher.display()));
+    let _ = std::fs::remove_file(&input_path);
+    let status = status?;
     if !status.success() {
         bail!("va-launch failed with exit {:?}", status.code());
     }
     Ok(())
+}
+
+fn write_input_file(input: &va_launcher::NativeLaunchInput) -> anyhow::Result<PathBuf> {
+    let path = std::env::temp_dir().join(format!(
+        "vibearound-va-launch-input-{}.json",
+        uuid::Uuid::new_v4()
+    ));
+    let body = serde_json::to_string(input).context("serialize va-launch input")?;
+    std::fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
+    common::auth::set_owner_only(&path).ok();
+    Ok(path)
 }
 
 fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
@@ -249,7 +255,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn process_launch_pushes_profile_input_to_va_launch_stdin() {
+    fn process_launch_pushes_profile_input_file_to_va_launch() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_test_lock().lock().expect("env test lock");
@@ -262,7 +268,7 @@ mod tests {
         let capture = dir.join("capture.json");
         std::fs::write(
             &fake_bin,
-            "#!/bin/sh\nif [ \"$1\" = \"--stdin\" ]; then cat > \"$VA_LAUNCH_CAPTURE\"; exit 0; fi\nexit 2\n",
+            "#!/bin/sh\nif [ \"$1\" = \"--input-file\" ]; then cp \"$2\" \"$VA_LAUNCH_CAPTURE\"; exit 0; fi\nexit 2\n",
         )
         .expect("write fake va-launch");
         std::fs::set_permissions(&fake_bin, std::fs::Permissions::from_mode(0o700))
