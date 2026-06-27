@@ -668,7 +668,7 @@ async fn apply_web_session_resume(
             resume.profile,
             resume.session_id,
             std::path::PathBuf::from(resume.cwd),
-            ExternalSessionAttachMode::ReuseOpenThread,
+            ExternalSessionAttachMode::NewThread,
         )
         .await
     {
@@ -703,7 +703,7 @@ async fn apply_web_session_resume_now(
             resume.profile,
             resume.session_id,
             std::path::PathBuf::from(resume.cwd),
-            ExternalSessionAttachMode::ReuseOpenThread,
+            ExternalSessionAttachMode::NewThread,
         )
         .await
     {

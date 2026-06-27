@@ -7,7 +7,8 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use va_client::endpoint::ServerEndpoint;
 use va_client::events::{
-    chat_ws, decode_chat_event, encode_chat_client_message, ChatClientMessage, ChatEvent,
+    chat_ws_for_channel, decode_chat_event, encode_chat_client_message, ChatClientMessage,
+    ChatEvent,
 };
 
 const CHAT_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
@@ -33,7 +34,7 @@ pub(crate) async fn run_chat_socket(
     mut outgoing: mpsc::UnboundedReceiver<ChatClientMessage>,
     incoming: mpsc::UnboundedSender<ChatSocketEvent>,
 ) {
-    let url = endpoint.websocket_url(&chat_ws());
+    let url = endpoint.websocket_url(&chat_ws_for_channel("tui"));
     let mut failed_attempts = 0;
     let mut pending_message = None;
 
