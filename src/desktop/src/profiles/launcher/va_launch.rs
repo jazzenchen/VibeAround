@@ -50,28 +50,20 @@ pub(super) fn spawn_if_enabled(
     {
         return None;
     }
-    if std::env::var("VIBEAROUND_USE_VA_LAUNCHER_LIB")
-        .ok()
-        .as_deref()
-        == Some("1")
-    {
-        let result = va_launcher::launch(input_from_plan(plan, context)).map(|_| ());
-        return Some(result);
-    }
 
     Some(spawn_process(plan, context))
 }
 
 fn spawn_process(plan: &LaunchPlan, context: &LaunchContext) -> anyhow::Result<()> {
-    let input = input_from_plan(plan, context);
-    let input_path = write_input_file(&input)?;
+    let profile = profile_from_plan(plan, context);
+    let profile_path = write_profile_file(&profile)?;
     let launcher = resolve_va_launch_binary()?;
     let status = Command::new(&launcher)
-        .arg("--input-file")
-        .arg(&input_path)
+        .arg("--profile-path")
+        .arg(&profile_path)
         .status()
         .with_context(|| format!("invoke va-launch at {}", launcher.display()));
-    let _ = std::fs::remove_file(&input_path);
+    let _ = std::fs::remove_file(&profile_path);
     let status = status?;
     if !status.success() {
         bail!("va-launch failed with exit {:?}", status.code());
@@ -79,12 +71,12 @@ fn spawn_process(plan: &LaunchPlan, context: &LaunchContext) -> anyhow::Result<(
     Ok(())
 }
 
-fn write_input_file(input: &va_launcher::NativeLaunchInput) -> anyhow::Result<PathBuf> {
+fn write_profile_file(profile: &va_launcher::LaunchProfile) -> anyhow::Result<PathBuf> {
     let path = std::env::temp_dir().join(format!(
-        "vibearound-va-launch-input-{}.json",
+        "vibearound-va-launch-profile-{}.json",
         uuid::Uuid::new_v4()
     ));
-    let body = serde_json::to_string(input).context("serialize va-launch input")?;
+    let body = serde_json::to_string(profile).context("serialize va-launch profile")?;
     std::fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
     common::auth::set_owner_only(&path).ok();
     Ok(path)
@@ -127,9 +119,10 @@ fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
     bail!("va-launch binary not found; build va-launcher or set VIBEAROUND_VA_LAUNCH_BIN")
 }
 
-fn input_from_plan(plan: &LaunchPlan, context: &LaunchContext) -> va_launcher::NativeLaunchInput {
-    va_launcher::NativeLaunchInput {
-        schema_version: 1,
+fn profile_from_plan(plan: &LaunchPlan, context: &LaunchContext) -> va_launcher::LaunchProfile {
+    va_launcher::LaunchProfile {
+        schema_version: Some(1),
+        id: context.profile_id.clone(),
         agent: context.agent_id.clone(),
         profile_id: context.profile_id.clone(),
         launch_target: context.launch_target.clone(),
@@ -187,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_desktop_launch_plan_to_va_launch_input() {
+    fn maps_desktop_launch_plan_to_va_launch_profile() {
         let plan = LaunchPlan {
             env: vec![("OPENAI_API_KEY".to_string(), "secret".to_string())],
             command: "codex".to_string(),
@@ -201,25 +194,26 @@ mod tests {
         };
 
         let context = LaunchContext::profile(&profile("openai"), "codex", Some("session-123"));
-        let input = input_from_plan(&plan, &context);
+        let profile = profile_from_plan(&plan, &context);
 
-        assert_eq!(input.schema_version, 1);
-        assert_eq!(input.agent, "codex");
-        assert_eq!(input.profile_id.as_deref(), Some("openai"));
-        assert_eq!(input.launch_target.as_deref(), Some("codex"));
-        assert_eq!(input.session_id.as_deref(), Some("session-123"));
-        assert_eq!(input.workspace, Some(PathBuf::from("/tmp/work")));
-        assert_eq!(input.command.as_deref(), Some("codex"));
+        assert_eq!(profile.schema_version, Some(1));
+        assert_eq!(profile.id.as_deref(), Some("openai"));
+        assert_eq!(profile.agent, "codex");
+        assert_eq!(profile.profile_id.as_deref(), Some("openai"));
+        assert_eq!(profile.launch_target.as_deref(), Some("codex"));
+        assert_eq!(profile.session_id.as_deref(), Some("session-123"));
+        assert_eq!(profile.workspace, Some(PathBuf::from("/tmp/work")));
+        assert_eq!(profile.command.as_deref(), Some("codex"));
         assert_eq!(
-            input.executable_path,
+            profile.executable_path,
             Some(PathBuf::from("C:/Codex/Codex.exe"))
         );
-        assert_eq!(input.window_label.as_deref(), Some("Codex profile"));
-        assert_eq!(input.env["OPENAI_API_KEY"], "secret");
-        assert_eq!(input.args.native, vec!["resume", "abc"]);
-        assert_eq!(input.cleanup_paths, vec![PathBuf::from("/tmp/cleanup")]);
-        assert_eq!(input.macos_app_probe.as_deref(), Some("Codex"));
-        assert_eq!(input.windows_process_probe.as_deref(), Some("Codex"));
+        assert_eq!(profile.window_label.as_deref(), Some("Codex profile"));
+        assert_eq!(profile.env["OPENAI_API_KEY"], "secret");
+        assert_eq!(profile.args.native, vec!["resume", "abc"]);
+        assert_eq!(profile.cleanup_paths, vec![PathBuf::from("/tmp/cleanup")]);
+        assert_eq!(profile.macos_app_probe.as_deref(), Some("Codex"));
+        assert_eq!(profile.windows_process_probe.as_deref(), Some("Codex"));
     }
 
     #[test]
@@ -255,7 +249,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn process_launch_pushes_profile_input_file_to_va_launch() {
+    fn process_launch_pushes_launch_profile_file_to_va_launch() {
         use std::os::unix::fs::PermissionsExt;
 
         let _guard = env_test_lock().lock().expect("env test lock");
@@ -268,7 +262,7 @@ mod tests {
         let capture = dir.join("capture.json");
         std::fs::write(
             &fake_bin,
-            "#!/bin/sh\nif [ \"$1\" = \"--input-file\" ]; then cp \"$2\" \"$VA_LAUNCH_CAPTURE\"; exit 0; fi\nexit 2\n",
+            "#!/bin/sh\nif [ \"$1\" = \"--profile-path\" ]; then cp \"$2\" \"$VA_LAUNCH_CAPTURE\"; exit 0; fi\nexit 2\n",
         )
         .expect("write fake va-launch");
         std::fs::set_permissions(&fake_bin, std::fs::Permissions::from_mode(0o700))
@@ -305,6 +299,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(value["agent"], "codex");
+        assert_eq!(value["id"], "openai");
         assert_eq!(value["profileId"], "openai");
         assert_eq!(value["launchTarget"], "codex");
         assert_eq!(value["command"], "codex");

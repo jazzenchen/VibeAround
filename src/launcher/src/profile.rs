@@ -36,6 +36,8 @@ pub struct LaunchProfile {
     #[serde(default)]
     pub args: NativeLaunchArgs,
     #[serde(default)]
+    pub cleanup_paths: Vec<PathBuf>,
+    #[serde(default)]
     pub macos_app_probe: Option<String>,
     #[serde(default)]
     pub windows_process_probe: Option<String>,
@@ -56,7 +58,7 @@ impl LaunchProfile {
             window_label: self.window_label,
             env: self.env,
             args: self.args,
-            cleanup_paths: Vec::new(),
+            cleanup_paths: self.cleanup_paths,
             macos_app_probe: self.macos_app_probe,
             windows_process_probe: self.windows_process_probe,
         }
@@ -105,7 +107,8 @@ mod tests {
   },
   "args": {
     "native": ["--model", "gpt-5"]
-  }
+  },
+  "cleanupPaths": ["/tmp/cleanup"]
 }"#,
         )
         .expect("write profile");
@@ -123,6 +126,7 @@ mod tests {
         assert_eq!(input.workspace, Some(PathBuf::from("/tmp/work")));
         assert_eq!(input.env["OPENAI_API_KEY"], "secret");
         assert_eq!(input.args.native, vec!["--model", "gpt-5"]);
+        assert_eq!(input.cleanup_paths, vec![PathBuf::from("/tmp/cleanup")]);
     }
 
     #[test]

@@ -11,7 +11,7 @@ pub fn data_dir() -> anyhow::Result<PathBuf> {
     }
     let home = non_empty_env("HOME")
         .or_else(|| non_empty_env("USERPROFILE"))
-        .context("HOME is not set; set VIBEAROUND_DATA_DIR or pass --input-file")?;
+        .context("HOME is not set; set VIBEAROUND_DATA_DIR or pass --profile-path")?;
     Ok(Path::new(&home).join(".vibearound"))
 }
 

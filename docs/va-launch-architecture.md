@@ -8,7 +8,7 @@ provider profile runtime concerns with native process launching.
 `va-launch` is the native launch boundary. It should own host-local execution
 concerns:
 
-- launch profile input loading (`--profile`, `--profile-path`, `--input-file`)
+- launch profile JSON loading (`--profile`, `--profile-path`)
 - workspace resolution and validation
 - agent executable resolution and validation
 - terminal preference detection and validation
@@ -23,8 +23,9 @@ concerns:
 - Codex Desktop profile overlay
 - Claude Desktop profile overlay
 
-Those provider/runtime concerns belong in shared VibeAround profile/runtime code
-used by Desktop, CLI, and any future launch entrypoints.
+Those provider/runtime concerns belong upstream of `va-launch`. Desktop, CLI, or
+another producer may perform that work, but the output handed to `va-launch`
+must be a launch profile JSON file.
 
 ## Two Different Profiles
 
@@ -45,8 +46,8 @@ Desktop currently does this:
 1. UI chooses a provider profile and launch target.
 2. Desktop/core prepares provider runtime details: bridge, env, desktop overlay,
    profile materialization, workspace, and project integrations.
-3. Desktop builds a materialized `NativeLaunchInput`.
-4. Desktop invokes `va-launch --input-file <temp-json>`.
+3. Desktop builds a materialized launch profile JSON.
+4. Desktop invokes `va-launch --profile-path <launch-profile-json>`.
 5. `va-launch` validates native launch details and spawns the terminal/app.
 
 This means Desktop launches currently go through `va-launch`, but the provider
@@ -54,20 +55,19 @@ runtime work still happens before `va-launch`.
 
 ## Desired Direction
 
-The desired shape is not to move provider runtime work into `va-launch` core.
-Instead, factor provider/runtime launch preparation into shared code:
+The desired shape is not to move provider runtime work into `va-launch`. Instead,
+provider/runtime launch preparation must happen before `va-launch` is invoked:
 
 ```text
-Desktop / CLI
-  -> shared provider launch resolver
-  -> NativeLaunchInput
-  -> va-launch native engine
+Desktop / CLI / another producer
+  -> provider/runtime preparation when needed
+  -> launch profile JSON
+  -> va-launch --profile-path <json>
 ```
 
-In that shape, Desktop and CLI can pass simpler launch intent, while `va-launch`
-remains focused on native execution. The `va-launch` binary may call the shared
-resolver as an entrypoint convenience, but the resolver remains a VibeAround
-profile/runtime layer, not native launcher logic.
+`va-launch` must not call VibeAround server, Desktop, or a shared provider
+resolver. It must be able to launch from a launch profile JSON without
+VibeAround Desktop or Server running.
 
 ## Migration Rule
 
@@ -77,4 +77,3 @@ When moving launch logic, ask:
   overlays? Keep it in shared profile/runtime code.
 - Does this need local filesystem, executable, terminal, or OS process behavior?
   Keep it in `va-launch`.
-
