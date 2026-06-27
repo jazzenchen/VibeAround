@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::{
-    default_command_for_agent, native_resume_args, resolve_executable_path,
-    resolve_terminal_choice, resolve_workspace_path, validate_launch_command, NativeLaunchInput,
+    default_command_for_agent, native_resume_args, resolve_agent_launch_command,
+    resolve_executable_path, resolve_terminal_choice, resolve_workspace_path, NativeLaunchInput,
     TerminalChoice,
 };
 
@@ -54,15 +54,15 @@ pub fn build_execution_plan(input: NativeLaunchInput) -> anyhow::Result<Executio
         let path = resolve_executable_path(path)?;
         (path.to_string_lossy().to_string(), Vec::new())
     } else if let Some(command) = input.command {
-        validate_launch_command(&command)?;
+        let command = resolve_agent_launch_command(&input.agent, &command)?;
         (command, Vec::new())
     } else if let Some(session_id) = input.session_id.as_deref() {
         let (command, args) = native_resume_args(&input.agent, session_id)?;
-        validate_launch_command(&command)?;
+        let command = resolve_agent_launch_command(&input.agent, &command)?;
         (command, args)
     } else {
         let command = default_command_for_agent(&input.agent)?;
-        validate_launch_command(&command)?;
+        let command = resolve_agent_launch_command(&input.agent, &command)?;
         (command, Vec::new())
     };
     args.extend(input.args.native);
@@ -172,11 +172,12 @@ mod tests {
     fn builds_default_cli_command() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let fixture = PathFixture::with_command("codex");
+        let expected_command = fixture.dir.join("codex").to_string_lossy().to_string();
 
         let plan = build_execution_plan(input("codex")).unwrap();
 
         drop(fixture);
-        assert_eq!(plan.command, "codex");
+        assert_eq!(plan.command, expected_command);
         assert!(plan.args.is_empty());
     }
 
@@ -184,13 +185,14 @@ mod tests {
     fn builds_resume_command_when_session_id_is_present() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let fixture = PathFixture::with_command("codex");
+        let expected_command = fixture.dir.join("codex").to_string_lossy().to_string();
         let mut input = input("codex");
         input.session_id = Some("abc123".to_string());
 
         let plan = build_execution_plan(input).unwrap();
 
         drop(fixture);
-        assert_eq!(plan.command, "codex");
+        assert_eq!(plan.command, expected_command);
         assert_eq!(plan.args, vec!["resume", "abc123"]);
     }
 
@@ -198,6 +200,11 @@ mod tests {
     fn explicit_command_wins_over_default_resume_command() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let fixture = PathFixture::with_command("custom-codex");
+        let expected_command = fixture
+            .dir
+            .join("custom-codex")
+            .to_string_lossy()
+            .to_string();
         let mut input = input("codex");
         input.session_id = Some("abc123".to_string());
         input.command = Some("custom-codex".to_string());
@@ -206,7 +213,7 @@ mod tests {
         let plan = build_execution_plan(input).unwrap();
 
         drop(fixture);
-        assert_eq!(plan.command, "custom-codex");
+        assert_eq!(plan.command, expected_command);
         assert_eq!(plan.args, vec!["resume", "abc123"]);
     }
 
@@ -255,6 +262,7 @@ mod tests {
     struct PathFixture {
         dir: PathBuf,
         previous_path: Option<std::ffi::OsString>,
+        previous_data_dir: Option<std::ffi::OsString>,
     }
 
     impl PathFixture {
@@ -263,8 +271,14 @@ mod tests {
                 .join(format!("va-launch-plan-path-test-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).expect("create temp path dir");
             let previous_path = std::env::var_os("PATH");
+            let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
             std::env::set_var("PATH", &dir);
-            Self { dir, previous_path }
+            std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+            Self {
+                dir,
+                previous_path,
+                previous_data_dir,
+            }
         }
 
         fn with_command(name: &str) -> Self {
@@ -286,6 +300,10 @@ mod tests {
             match &self.previous_path {
                 Some(value) => std::env::set_var("PATH", value),
                 None => std::env::remove_var("PATH"),
+            }
+            match &self.previous_data_dir {
+                Some(value) => std::env::set_var("VIBEAROUND_DATA_DIR", value),
+                None => std::env::remove_var("VIBEAROUND_DATA_DIR"),
             }
             let _ = std::fs::remove_dir_all(&self.dir);
         }

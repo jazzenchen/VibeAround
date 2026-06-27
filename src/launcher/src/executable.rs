@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 
+use crate::{resolve_configured_agent_executable, write_scanned_agent_executable};
+
 pub fn resolve_executable_path(path: PathBuf) -> anyhow::Result<PathBuf> {
     let canonical = std::fs::canonicalize(&path)
         .with_context(|| format!("agent executable does not exist: {}", path.display()))?;
@@ -16,6 +18,32 @@ pub fn resolve_executable_path(path: PathBuf) -> anyhow::Result<PathBuf> {
         );
     }
     Ok(strip_windows_unc_prefix(canonical))
+}
+
+pub fn resolve_agent_launch_command(agent: &str, command: &str) -> anyhow::Result<String> {
+    let program = first_command_word(command).context("launch command is empty")?;
+    if is_shell_builtin_for_current_platform(&program) || is_app_launch_wrapper(&program) {
+        validate_launch_command(command)?;
+        return Ok(command.to_string());
+    }
+
+    if is_path_like_program(&program) {
+        resolve_executable_path(PathBuf::from(&program))?;
+        return Ok(command.to_string());
+    }
+
+    if let Some(configured) = resolve_configured_agent_executable(agent)? {
+        let configured = resolve_executable_path(configured)
+            .with_context(|| format!("configured executable for agent '{}' is invalid", agent))?;
+        return Ok(replace_first_command_word(command, &configured)?);
+    }
+
+    if let Some(scanned) = find_program_in_path(&program) {
+        write_scanned_agent_executable(agent, &scanned)?;
+        return Ok(replace_first_command_word(command, &scanned)?);
+    }
+
+    bail!("agent executable '{}' was not found in PATH", program)
 }
 
 pub fn validate_launch_command(command: &str) -> anyhow::Result<()> {
@@ -34,16 +62,24 @@ pub fn validate_launch_command(command: &str) -> anyhow::Result<()> {
 }
 
 fn first_command_word(command: &str) -> Option<String> {
+    first_command_word_span(command).map(|(word, _)| word)
+}
+
+fn first_command_word_span(command: &str) -> Option<(String, usize)> {
     let mut current = String::new();
     let mut chars = command.chars().peekable();
     let mut quote: Option<char> = None;
+    let mut end = 0;
 
     while let Some(ch) = chars.next() {
+        end += ch.len_utf8();
         match quote {
             Some(q) if ch == q => quote = None,
             Some('"') if ch == '\\' => {
                 if matches!(chars.peek(), Some('"') | Some('\\')) {
-                    current.push(chars.next().expect("peeked next char"));
+                    let next = chars.next().expect("peeked next char");
+                    end += next.len_utf8();
+                    current.push(next);
                 } else {
                     current.push(ch);
                 }
@@ -52,7 +88,7 @@ fn first_command_word(command: &str) -> Option<String> {
             None if ch == '\'' || ch == '"' => quote = Some(ch),
             None if ch.is_whitespace() => {
                 if !current.is_empty() {
-                    return Some(current);
+                    return Some((current, end));
                 }
             }
             None => current.push(ch),
@@ -62,7 +98,7 @@ fn first_command_word(command: &str) -> Option<String> {
     if current.is_empty() {
         None
     } else {
-        Some(current)
+        Some((current, end))
     }
 }
 
@@ -70,8 +106,33 @@ fn is_shell_builtin_for_current_platform(program: &str) -> bool {
     cfg!(target_os = "windows") && matches!(program, "Start-Process")
 }
 
+fn is_app_launch_wrapper(program: &str) -> bool {
+    cfg!(target_os = "macos") && program == "open"
+}
+
 fn is_path_like_program(program: &str) -> bool {
     Path::new(program).is_absolute() || program.contains('/') || program.contains('\\')
+}
+
+fn replace_first_command_word(command: &str, path: &Path) -> anyhow::Result<String> {
+    let (_, end) = first_command_word_span(command).context("launch command is empty")?;
+    let suffix = command[end..].trim_start();
+    let path = quote_command_word(path.to_string_lossy().as_ref());
+    if suffix.is_empty() {
+        Ok(path)
+    } else {
+        Ok(format!("{path} {suffix}"))
+    }
+}
+
+fn quote_command_word(word: &str) -> String {
+    if !word
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch == '"' || ch == '\'')
+    {
+        return word.to_string();
+    }
+    format!("\"{}\"", word.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn find_program_in_path(program: &str) -> Option<PathBuf> {
@@ -168,6 +229,126 @@ mod tests {
     }
 
     #[test]
+    fn configured_executable_replaces_command_program_without_path_scan() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let configured = write_command(&dir, "codex-configured");
+        std::fs::write(
+            dir.join("agents.json"),
+            format!(
+                r#"{{
+  "agents": {{
+    "codex": {{
+      "executable": {{
+        "path": "{}",
+        "source": "manual_path",
+        "sourceLabel": "Manual path",
+        "rank": 0
+      }}
+    }}
+  }}
+}}"#,
+                configured.to_string_lossy()
+            ),
+        )
+        .expect("write agents config");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        let previous_path = std::env::var_os("PATH");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+        std::env::set_var("PATH", "");
+
+        let command = resolve_agent_launch_command("codex", "codex resume abc")
+            .expect("resolve configured command");
+        let expected = std::fs::canonicalize(&configured)
+            .expect("canonical configured path")
+            .to_string_lossy()
+            .to_string();
+
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        restore_env("PATH", previous_path);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(command, format!("{expected} resume abc"));
+    }
+
+    #[test]
+    fn path_scan_writes_agent_executable_config() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let scanned = write_command(&bin_dir, "codex");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        let previous_path = std::env::var_os("PATH");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+        std::env::set_var("PATH", &bin_dir);
+
+        let command =
+            resolve_agent_launch_command("codex", "codex").expect("resolve scanned command");
+        let body = std::fs::read_to_string(dir.join("agents.json")).expect("read agents config");
+        let value: serde_json::Value = serde_json::from_str(&body).expect("parse agents config");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        restore_env("PATH", previous_path);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(command, scanned.to_string_lossy());
+        assert_eq!(
+            value["agents"]["codex"]["executable"]["path"].as_str(),
+            Some(scanned.to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
+    fn resolved_executable_with_spaces_is_quoted_in_command() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        let bin_dir = dir.join("space dir");
+        std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let scanned = write_command(&bin_dir, "codex");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        let previous_path = std::env::var_os("PATH");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+        std::env::set_var("PATH", &bin_dir);
+
+        let command = resolve_agent_launch_command("codex", "codex resume abc")
+            .expect("resolve scanned command");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        restore_env("PATH", previous_path);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(command, format!("\"{}\" resume abc", scanned.display()));
+    }
+
+    #[test]
+    fn app_launch_wrapper_does_not_write_agent_executable_config() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_command(&bin_dir, "open");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        let previous_path = std::env::var_os("PATH");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+        std::env::set_var("PATH", &bin_dir);
+
+        let command = resolve_agent_launch_command("codex-desktop", "open -a Codex")
+            .expect("resolve app launch command");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        restore_env("PATH", previous_path);
+        let agents_json_exists = dir.join("agents.json").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(command, "open -a Codex");
+        assert!(!agents_json_exists);
+    }
+
+    #[test]
     fn rejects_missing_command() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let fixture = PathFixture::empty();
@@ -237,6 +418,13 @@ mod tests {
                 None => env::remove_var("PATH"),
             }
             let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
         }
     }
 

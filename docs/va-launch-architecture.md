@@ -79,6 +79,25 @@ shape.
 `profileId` is launch metadata from the upstream producer. It must not cause
 `va-launch` to read VibeAround provider profile storage.
 
+## Default Agent Executable
+
+`va-launch` resolves an agent executable without Desktop or Server:
+
+1. If the launch profile has `executablePath`, use and validate that path.
+2. Otherwise, read `~/.vibearound/agents.json`
+   (or `$VIBEAROUND_DATA_DIR/agents.json`) and use
+   `agents.<agent>.executable.path` when present.
+3. If no executable is configured for that agent, scan the current `PATH` for
+   the command program, write the discovered path back to
+   `agents.<agent>.executable`, and launch with that path.
+4. Once an executable is configured, `va-launch` trusts that configuration and
+   does not scan again. If the configured executable is invalid, launch fails
+   with a validation error.
+
+App launch wrappers such as `open -a ...` on macOS and `Start-Process ...` on
+Windows are treated as native app commands, not agent CLI executables, and are
+not written into `agents.json`.
+
 ## Current Flow
 
 Desktop currently does this:

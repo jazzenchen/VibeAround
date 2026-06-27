@@ -4,6 +4,7 @@
 //! does not call VibeAround server launcher APIs and should not grow a
 //! server-side `LaunchPlan` contract.
 
+mod agent_config;
 mod executable;
 mod paths;
 mod plan;
@@ -19,7 +20,10 @@ use anyhow::{anyhow, bail};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-pub use executable::{resolve_executable_path, validate_launch_command};
+pub use agent_config::{resolve_configured_agent_executable, write_scanned_agent_executable};
+pub use executable::{
+    resolve_agent_launch_command, resolve_executable_path, validate_launch_command,
+};
 pub use paths::{data_dir, launch_profile_path, validate_launch_name};
 pub use plan::{build_execution_plan, redacted_execution_plan, ExecutionPlan, PublicExecutionPlan};
 pub use platform::LaunchHandle;
