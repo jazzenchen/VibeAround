@@ -39,6 +39,46 @@ There are two separate concepts named "profile":
 
 The two may be connected by a resolver, but they are not the same data model.
 
+## Launch Profile JSON
+
+`va-launch` accepts launch profile JSON from exactly two sources:
+
+- `--profile <name>` reads
+  `~/.vibearound/launch/profiles/<name>.json` (or
+  `$VIBEAROUND_DATA_DIR/launch/profiles/<name>.json`).
+- `--profile-path <path>` reads the specified JSON file.
+
+The current schema version is `1`. Unknown fields are rejected so producers do
+not silently hand `va-launch` a provider profile or another unrelated JSON
+shape.
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "openai-codex",
+  "agent": "codex",
+  "profileId": "openai",
+  "launchTarget": "codex",
+  "workspace": "/Users/example/project",
+  "terminal": "terminal",
+  "command": "codex",
+  "executablePath": null,
+  "windowLabel": "OpenAI Codex",
+  "env": {
+    "OPENAI_API_KEY": "..."
+  },
+  "args": {
+    "native": ["--model", "gpt-5"]
+  },
+  "cleanupPaths": [],
+  "macosAppProbe": null,
+  "windowsProcessProbe": null
+}
+```
+
+`profileId` is launch metadata from the upstream producer. It must not cause
+`va-launch` to read VibeAround provider profile storage.
+
 ## Current Flow
 
 Desktop currently does this:

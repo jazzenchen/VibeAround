@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 
 use crate::{paths, NativeLaunchArgs, NativeLaunchInput, TerminalChoice};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct LaunchProfile {
     #[serde(default)]
     pub schema_version: Option<u32>,
@@ -44,9 +45,20 @@ pub struct LaunchProfile {
 }
 
 impl LaunchProfile {
-    pub fn into_native_input(self, selected_id: Option<String>) -> NativeLaunchInput {
-        NativeLaunchInput {
-            schema_version: self.schema_version.unwrap_or(1),
+    pub fn into_native_input(
+        self,
+        selected_id: Option<String>,
+    ) -> anyhow::Result<NativeLaunchInput> {
+        let schema_version = self.schema_version.unwrap_or(1);
+        if schema_version != 1 {
+            bail!(
+                "unsupported launch profile schemaVersion {}",
+                schema_version
+            );
+        }
+
+        Ok(NativeLaunchInput {
+            schema_version,
             agent: self.agent,
             profile_id: self.profile_id.or(self.id).or(selected_id),
             launch_target: self.launch_target,
@@ -61,14 +73,14 @@ impl LaunchProfile {
             cleanup_paths: self.cleanup_paths,
             macos_app_probe: self.macos_app_probe,
             windows_process_probe: self.windows_process_probe,
-        }
+        })
     }
 }
 
 pub fn load_launch_profile(name: &str) -> anyhow::Result<NativeLaunchInput> {
     let path = paths::launch_profile_path(name)?;
     let profile = read_profile_file(&path)?;
-    Ok(profile.into_native_input(Some(name.to_string())))
+    profile.into_native_input(Some(name.to_string()))
 }
 
 pub fn load_launch_profile_path(path: &Path) -> anyhow::Result<NativeLaunchInput> {
@@ -78,7 +90,7 @@ pub fn load_launch_profile_path(path: &Path) -> anyhow::Result<NativeLaunchInput
         .and_then(|name| name.to_str())
         .filter(|name| !name.trim().is_empty())
         .map(ToString::to_string);
-    Ok(profile.into_native_input(selected_id))
+    profile.into_native_input(selected_id)
 }
 
 fn read_profile_file(path: &Path) -> anyhow::Result<LaunchProfile> {
@@ -150,6 +162,46 @@ mod tests {
         assert_eq!(input.agent, "claude");
         assert_eq!(input.profile_id.as_deref(), Some("anthropic-main"));
         assert_eq!(input.terminal, Some(TerminalChoice::Terminal));
+    }
+
+    #[test]
+    fn rejects_unknown_profile_fields() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("launch.json");
+        fs::write(
+            &path,
+            r#"{
+  "agent": "codex",
+  "providerProfileId": "openai"
+}"#,
+        )
+        .expect("write profile");
+
+        let error = format!("{:#}", load_launch_profile_path(&path).unwrap_err());
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(error.contains("unknown field"));
+    }
+
+    #[test]
+    fn rejects_unsupported_schema_version() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("launch.json");
+        fs::write(
+            &path,
+            r#"{
+  "schemaVersion": 2,
+  "agent": "codex"
+}"#,
+        )
+        .expect("write profile");
+
+        let error = load_launch_profile_path(&path).unwrap_err().to_string();
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(error.contains("unsupported launch profile schemaVersion 2"));
     }
 
     fn temp_dir() -> PathBuf {

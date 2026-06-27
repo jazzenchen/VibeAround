@@ -62,6 +62,7 @@ pub struct NativeLaunchInput {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct NativeLaunchArgs {
     #[serde(default)]
     pub native: Vec<String>,
