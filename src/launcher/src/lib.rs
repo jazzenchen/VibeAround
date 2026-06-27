@@ -69,6 +69,8 @@ pub enum TerminalChoice {
     PowerShell,
     GnomeTerminal,
     Konsole,
+    #[serde(rename = "xfce4-terminal", alias = "xfce-terminal")]
+    #[value(name = "xfce4-terminal", alias = "xfce-terminal")]
     XfceTerminal,
     Xterm,
     Kitty,
@@ -97,7 +99,7 @@ impl TerminalChoice {
             Self::PowerShell => "powershell",
             Self::GnomeTerminal => "gnome-terminal",
             Self::Konsole => "konsole",
-            Self::XfceTerminal => "xfce-terminal",
+            Self::XfceTerminal => "xfce4-terminal",
             Self::Xterm => "xterm",
             Self::Kitty => "kitty",
             Self::Alacritty => "alacritty",
@@ -223,5 +225,10 @@ mod tests {
         let (command, args) = native_resume_args("codex", "session-123").unwrap();
         assert_eq!(command, "codex");
         assert_eq!(args, vec!["resume", "session-123"]);
+    }
+
+    #[test]
+    fn terminal_choice_ids_match_desktop_preferences() {
+        assert_eq!(TerminalChoice::XfceTerminal.id(), "xfce4-terminal");
     }
 }
