@@ -103,7 +103,8 @@ pub fn load_launch_profile_path(path: &Path) -> anyhow::Result<NativeLaunchInput
 fn read_profile_file(path: &Path) -> anyhow::Result<LaunchProfile> {
     let body = fs::read_to_string(path)
         .with_context(|| format!("read launch profile {}", path.display()))?;
-    serde_json::from_str(&body).with_context(|| format!("parse launch profile {}", path.display()))
+    let body = body.strip_prefix('\u{feff}').unwrap_or(&body);
+    serde_json::from_str(body).with_context(|| format!("parse launch profile {}", path.display()))
 }
 
 fn model_profile_into_native_input(profile: ProfileDef) -> anyhow::Result<NativeLaunchInput> {
@@ -227,6 +228,23 @@ mod tests {
         assert_eq!(input.agent, "claude");
         assert_eq!(input.profile_id.as_deref(), Some("anthropic-main"));
         assert_eq!(input.terminal, Some(TerminalChoice::Terminal));
+    }
+
+    #[test]
+    fn profile_path_accepts_utf8_bom() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("launch.json");
+        fs::write(
+            &path,
+            "\u{feff}{\"agent\":\"codex\",\"workspace\":\"/tmp/work\"}",
+        )
+        .expect("write profile");
+
+        let input = load_launch_profile_path(&path).expect("load profile path");
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(input.agent, "codex");
     }
 
     #[test]

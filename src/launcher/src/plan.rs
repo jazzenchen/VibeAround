@@ -144,16 +144,16 @@ mod tests {
     use super::*;
     use crate::NativeLaunchArgs;
 
-    fn input(agent: &str) -> NativeLaunchInput {
+    fn input_fixture(agent: &str) -> InputFixture {
         let workspace = temp_workspace();
-        NativeLaunchInput {
+        let input = NativeLaunchInput {
             schema_version: 1,
             agent: agent.to_string(),
             profile_id: None,
             launch_target: None,
-            workspace: Some(workspace),
+            workspace: Some(workspace.clone()),
             session_id: None,
-            terminal: Some(TerminalChoice::Terminal),
+            terminal: Some(TerminalChoice::default_for_current_platform()),
             command: None,
             executable_path: None,
             windows_executable_path: None,
@@ -163,7 +163,8 @@ mod tests {
             cleanup_paths: Vec::new(),
             macos_app_probe: None,
             windows_process_probe: None,
-        }
+        };
+        InputFixture { input, workspace }
     }
 
     fn temp_workspace() -> PathBuf {
@@ -180,8 +181,9 @@ mod tests {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let fixture = PathFixture::with_command("codex");
         let expected_command = fixture.dir.join("codex").to_string_lossy().to_string();
+        let input = input_fixture("codex");
 
-        let plan = build_execution_plan(input("codex")).unwrap();
+        let plan = build_execution_plan(input.input.clone()).unwrap();
 
         drop(fixture);
         assert_eq!(plan.command, expected_command);
@@ -193,10 +195,10 @@ mod tests {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let fixture = PathFixture::with_command("codex");
         let expected_command = fixture.dir.join("codex").to_string_lossy().to_string();
-        let mut input = input("codex");
-        input.session_id = Some("abc123".to_string());
+        let mut input = input_fixture("codex");
+        input.input.session_id = Some("abc123".to_string());
 
-        let plan = build_execution_plan(input).unwrap();
+        let plan = build_execution_plan(input.input.clone()).unwrap();
 
         drop(fixture);
         assert_eq!(plan.command, expected_command);
@@ -212,12 +214,12 @@ mod tests {
             .join("custom-codex")
             .to_string_lossy()
             .to_string();
-        let mut input = input("codex");
-        input.session_id = Some("abc123".to_string());
-        input.command = Some("custom-codex".to_string());
-        input.args.native = vec!["resume".to_string(), "abc123".to_string()];
+        let mut input = input_fixture("codex");
+        input.input.session_id = Some("abc123".to_string());
+        input.input.command = Some("custom-codex".to_string());
+        input.input.args.native = vec!["resume".to_string(), "abc123".to_string()];
 
-        let plan = build_execution_plan(input).unwrap();
+        let plan = build_execution_plan(input.input.clone()).unwrap();
 
         drop(fixture);
         assert_eq!(plan.command, expected_command);
@@ -226,13 +228,17 @@ mod tests {
 
     #[test]
     fn redacts_secret_like_env_values() {
-        let mut input = input("claude");
-        input.executable_path = Some(std::env::current_exe().expect("current test exe"));
+        let mut input = input_fixture("claude");
+        input.input.executable_path = Some(std::env::current_exe().expect("current test exe"));
         input
+            .input
             .env
             .insert("ANTHROPIC_API_KEY".into(), "secret".into());
-        input.env.insert("NO_PROXY".into(), "localhost".into());
-        let plan = build_execution_plan(input).unwrap();
+        input
+            .input
+            .env
+            .insert("NO_PROXY".into(), "localhost".into());
+        let plan = build_execution_plan(input.input.clone()).unwrap();
 
         let public = redacted_execution_plan(&plan);
 
@@ -244,8 +250,9 @@ mod tests {
     fn rejects_missing_agent_executable() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let fixture = PathFixture::empty();
+        let input = input_fixture("codex");
 
-        let error = build_execution_plan(input("codex"))
+        let error = build_execution_plan(input.input.clone())
             .unwrap_err()
             .to_string();
 
@@ -255,15 +262,28 @@ mod tests {
 
     #[test]
     fn rejects_missing_workspace() {
-        let mut input = input("codex");
-        input.workspace = Some(std::env::temp_dir().join(format!(
+        let mut input = input_fixture("codex");
+        input.input.workspace = Some(std::env::temp_dir().join(format!(
             "va-launch-missing-workspace-test-{}",
             uuid::Uuid::new_v4()
         )));
 
-        let error = build_execution_plan(input).unwrap_err().to_string();
+        let error = build_execution_plan(input.input.clone())
+            .unwrap_err()
+            .to_string();
 
         assert!(error.contains("workspace does not exist"));
+    }
+
+    struct InputFixture {
+        input: NativeLaunchInput,
+        workspace: PathBuf,
+    }
+
+    impl Drop for InputFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.workspace);
+        }
     }
 
     struct PathFixture {

@@ -17,6 +17,7 @@ const DESKTOP_LAUNCH_TOML: &str = include_str!("../../resources/desktop-launch.t
 
 #[derive(Debug, Deserialize)]
 struct DesktopLaunchTemplates {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     macos: MacosTemplates,
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     windows: WindowsTemplates,
@@ -24,6 +25,7 @@ struct DesktopLaunchTemplates {
 
 #[derive(Debug, Deserialize)]
 struct MacosTemplates {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     app_probe: String,
 }
 
@@ -52,6 +54,7 @@ pub fn spawn(plan: &ExecutionPlan) -> anyhow::Result<LaunchHandle> {
     linux::spawn(plan)
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn build_bash_script(plan: &ExecutionPlan) -> String {
     let mut out = String::new();
     out.push_str("#!/bin/bash\n");
@@ -91,6 +94,7 @@ fn build_bash_script(plan: &ExecutionPlan) -> String {
     out
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn append_macos_app_launch(out: &mut String, command: &str, app_name: &str) {
     let app_script = format!(
         "application \"{}\" is running",
@@ -103,6 +107,7 @@ fn append_macos_app_launch(out: &mut String, command: &str, app_name: &str) {
     ));
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn command_with_unix_args(command: &str, args: &[String]) -> String {
     command_words_with_args(command, args)
         .iter()
@@ -151,6 +156,7 @@ fn split_command_words(command: &str) -> Vec<String> {
     words
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn macos_open_command_with_env(command: &str, plan: &ExecutionPlan) -> String {
     if !cfg!(target_os = "macos") || plan.env.is_empty() {
         return command.to_string();
@@ -173,6 +179,7 @@ fn macos_open_command_with_env(command: &str, plan: &ExecutionPlan) -> String {
     out
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn append_bash_color_env(out: &mut String) {
     out.push_str("unset NO_COLOR\n");
     out.push_str(
@@ -182,6 +189,7 @@ fn append_bash_color_env(out: &mut String) {
     out.push_str("export CLICOLOR=${CLICOLOR:-1}\n");
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn append_bash_cleanup_paths(out: &mut String, paths: &[PathBuf]) {
     for path in paths {
         let path = path.to_string_lossy();
@@ -217,6 +225,16 @@ fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
     out
 }
 
+fn launch_script_temp_dir() -> anyhow::Result<PathBuf> {
+    let dir = std::env::temp_dir()
+        .join("vibearound")
+        .join("launch")
+        .join("scripts");
+    std::fs::create_dir_all(&dir)
+        .map_err(|source| anyhow::anyhow!("create {}: {}", dir.display(), source))?;
+    Ok(dir)
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use std::os::unix::fs::PermissionsExt;
@@ -226,10 +244,8 @@ mod macos {
     use super::*;
 
     pub fn spawn(plan: &ExecutionPlan) -> anyhow::Result<LaunchHandle> {
-        let script_path = std::env::temp_dir().join(format!(
-            "vibearound-launch-{}.command",
-            uuid::Uuid::new_v4()
-        ));
+        let script_path =
+            launch_script_temp_dir()?.join(format!("script-{}.command", uuid::Uuid::new_v4()));
         std::fs::write(&script_path, build_bash_script(plan))
             .with_context(|| format!("write launch script {}", script_path.display()))?;
         std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
@@ -280,7 +296,7 @@ mod linux {
 
     fn write_launch_script(plan: &ExecutionPlan) -> anyhow::Result<PathBuf> {
         let script_path =
-            std::env::temp_dir().join(format!("vibearound-launch-{}.sh", uuid::Uuid::new_v4()));
+            launch_script_temp_dir()?.join(format!("script-{}.sh", uuid::Uuid::new_v4()));
         std::fs::write(&script_path, build_bash_script(plan))
             .with_context(|| format!("write launch script {}", script_path.display()))?;
         std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
@@ -410,6 +426,11 @@ mod windows {
             "-ExecutionPolicy Bypass {no_exit}-File {}",
             quote_windows_process_arg(&script_path.to_string_lossy())
         );
+
+        // Use ShellExecuteW through the `open` crate instead of Rust `Command`.
+        // `Command` inherits all inheritable handles by default on Windows; if a
+        // launched CLI keeps the daemon's TCP listener handle alive, VibeAround's
+        // next start sees 127.0.0.1:12358 as occupied by a stale PID.
         open::with(params, "powershell.exe").context("open PowerShell")?;
         Ok(LaunchHandle { script_path })
     }
@@ -421,7 +442,7 @@ mod windows {
             plan.windows_executable_path.as_deref(),
         );
         let script_path =
-            std::env::temp_dir().join(format!("vibearound-launch-{}.ps1", uuid::Uuid::new_v4()));
+            launch_script_temp_dir()?.join(format!("script-{}.ps1", uuid::Uuid::new_v4()));
         std::fs::write(&script_path, build_powershell_script(plan, &command, &args))
             .with_context(|| format!("write launch script {}", script_path.display()))?;
         common::auth::set_owner_only(&script_path).ok();
@@ -435,25 +456,19 @@ mod windows {
             "$Host.UI.RawUI.WindowTitle = {}\n",
             powershell_single_quoted(&format!("VibeAround - {}", plan.window_label))
         ));
+        append_powershell_self_delete(&mut out);
         out.push_str(&format!(
-            "Write-Host '# VibeAround launch: {}'\n",
+            "Write-Host '# VibeAround profile: {}'\n",
             plan.window_label.replace('\'', "''")
         ));
         for (key, value) in &env {
-            if is_valid_env_key(key) {
-                out.push_str(&format!(
-                    "$env:{key} = {}\n",
-                    powershell_single_quoted(value)
-                ));
-            }
+            out.push_str(&format!(
+                "$env:{key} = {}\n",
+                powershell_single_quoted(value)
+            ));
         }
         append_powershell_launch_path(&mut out);
-        out.push_str("Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue\n");
-        out.push_str(
-            "if (-not $env:TERM -or $env:TERM -eq 'dumb') { $env:TERM = 'xterm-256color' }\n",
-        );
-        out.push_str("if (-not $env:COLORTERM) { $env:COLORTERM = 'truecolor' }\n");
-        out.push_str("if (-not $env:CLICOLOR) { $env:CLICOLOR = '1' }\n");
+        append_powershell_color_env(&mut out);
         out.push_str(&format!(
             "Set-Location -LiteralPath {}\n",
             powershell_single_quoted(&plan.workspace.to_string_lossy())
@@ -465,15 +480,20 @@ mod windows {
                 process_name,
             )));
         }
-        for path in &plan.cleanup_paths {
-            out.push_str(&format!(
-                "Remove-Item -LiteralPath {} -Force -ErrorAction SilentlyContinue\n",
-                powershell_single_quoted(&path.to_string_lossy())
-            ));
-        }
+        append_powershell_cleanup_paths(&mut out, &plan.cleanup_paths);
+        out.push_str("if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {\n");
+        out.push_str("  Write-Host \"`nCommand exited with code $LASTEXITCODE\"\n");
+        out.push_str("}\n");
         out.push_str("$scriptPath = $MyInvocation.MyCommand.Path\n");
         out.push_str("if ($scriptPath) { Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue }\n");
         out
+    }
+
+    fn append_powershell_self_delete(out: &mut String) {
+        out.push_str("$scriptPath = $MyInvocation.MyCommand.Path\n");
+        out.push_str(
+            "if ($scriptPath) { Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue }\n",
+        );
     }
 
     fn append_powershell_launch_path(out: &mut String) {
@@ -488,6 +508,24 @@ mod windows {
             "$env:Path = {}\n",
             powershell_single_quoted(&path)
         ));
+    }
+
+    fn append_powershell_color_env(out: &mut String) {
+        out.push_str("Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue\n");
+        out.push_str(
+            "if (-not $env:TERM -or $env:TERM -eq 'dumb') { $env:TERM = 'xterm-256color' }\n",
+        );
+        out.push_str("if (-not $env:COLORTERM) { $env:COLORTERM = 'truecolor' }\n");
+        out.push_str("if (-not $env:CLICOLOR) { $env:CLICOLOR = '1' }\n");
+    }
+
+    fn append_powershell_cleanup_paths(out: &mut String, paths: &[PathBuf]) {
+        for path in paths {
+            out.push_str(&format!(
+                "Remove-Item -LiteralPath {} -Force -ErrorAction SilentlyContinue\n",
+                powershell_single_quoted(&path.to_string_lossy())
+            ));
+        }
     }
 
     fn normalize_windows_claude_profile_launch(
@@ -948,6 +986,196 @@ mod windows {
         out.push('"');
         out
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::collections::BTreeMap;
+
+        fn plan(command: &str, args: Vec<String>) -> ExecutionPlan {
+            ExecutionPlan {
+                agent: "codex".to_string(),
+                profile_id: None,
+                launch_target: None,
+                terminal: TerminalChoice::PowerShell,
+                command: command.to_string(),
+                args,
+                windows_executable_path: None,
+                workspace: PathBuf::from(r"C:\Users\tester\project"),
+                env: BTreeMap::new(),
+                cleanup_paths: Vec::new(),
+                window_label: "Codex Test".to_string(),
+                macos_app_probe: None,
+                windows_process_probe: None,
+            }
+        }
+
+        #[test]
+        fn powershell_script_keeps_codex_config_with_spaces_as_one_argument() {
+            let config_arg =
+                r#"model_catalog_json="C:\Program Files\VibeAround\codex-model-catalog.json""#;
+            let plan = plan("codex", vec!["-c".to_string(), config_arg.to_string()]);
+            let script = build_powershell_script(&plan, &plan.command, &plan.args);
+
+            assert!(script.contains("$vaArgs = @(\n"));
+            assert!(script.contains("  '-c'\n"));
+            assert!(script.contains("C:\\Program Files\\VibeAround\\codex-model-catalog.json"));
+            assert!(script.contains("& $vaCommand @vaArgs"));
+            assert!(!script.contains("Files\\VibeAround\\codex-model-catalog.json'\n"));
+        }
+
+        #[test]
+        fn powershell_script_waits_for_desktop_process_probe() {
+            let mut plan = plan("Start-Process Codex", Vec::new());
+            plan.windows_process_probe = Some("Codex".to_string());
+            let script = build_powershell_script(&plan, &plan.command, &plan.args);
+
+            assert!(script.contains("& $vaCommand @vaArgs\nif ($?) {"));
+            assert!(script.contains("for ($attempt = 1; $attempt -le 10; $attempt++)"));
+            assert!(script.contains("Start-Sleep -Milliseconds 500"));
+            assert!(script.contains("$attempt -ge 4"));
+            assert!(script.contains("Get-Process -Name 'Codex'"));
+        }
+
+        #[test]
+        fn powershell_script_cleans_paths() {
+            let mut plan = plan("claude", Vec::new());
+            plan.cleanup_paths = vec![PathBuf::from(
+                r"C:\Users\tester\AppData\Local\Temp\va settings.json",
+            )];
+            let script = build_powershell_script(&plan, &plan.command, &plan.args);
+
+            assert!(script.contains(
+                "Remove-Item -LiteralPath 'C:\\Users\\tester\\AppData\\Local\\Temp\\va settings.json' -Force -ErrorAction SilentlyContinue\n"
+            ));
+        }
+
+        #[test]
+        fn powershell_script_self_deletes_before_running_command() {
+            let plan = plan("claude", Vec::new());
+            let script = build_powershell_script(&plan, &plan.command, &plan.args);
+
+            let delete_index = script
+                .find("Remove-Item -LiteralPath $scriptPath")
+                .expect("self delete");
+            let command_index = script.find("& $vaCommand @vaArgs").expect("command");
+            assert!(delete_index < command_index);
+        }
+
+        #[test]
+        fn rewrites_quoted_codex_npm_shim_under_space_path_to_node() {
+            let root =
+                std::env::temp_dir().join(format!("VibeAround Test {}", uuid::Uuid::new_v4()));
+            let bin_dir = root.join("bin");
+            let codex_js = bin_dir
+                .join("node_modules")
+                .join("@openai")
+                .join("codex")
+                .join("bin")
+                .join("codex.js");
+            std::fs::create_dir_all(codex_js.parent().expect("codex js parent"))
+                .expect("create shim fixture");
+            std::fs::write(&codex_js, "console.log('codex');\n").expect("write codex js fixture");
+            let shim = bin_dir.join("codex.cmd");
+            std::fs::write(
+                &shim,
+                r#"@ECHO off
+node "%~dp0\node_modules\@openai\codex\bin\codex.js" %*
+"#,
+            )
+            .expect("write codex cmd fixture");
+
+            let command = format!("\"{}\"", shim.to_string_lossy());
+            let (program, args) = normalize_windows_launch_command(
+                &command,
+                &["-c".to_string(), "model='gpt-5'".to_string()],
+                None,
+            );
+
+            assert_eq!(program, "node");
+            assert_eq!(PathBuf::from(&args[0]), codex_js);
+            assert_eq!(&args[1..], ["-c".to_string(), "model='gpt-5'".to_string()]);
+
+            std::fs::remove_dir_all(root).ok();
+        }
+
+        #[test]
+        fn rewrites_claude_npm_shim_to_node_and_preserves_subcommand() {
+            let root =
+                std::env::temp_dir().join(format!("VibeAround Test {}", uuid::Uuid::new_v4()));
+            let bin_dir = root.join("bin");
+            let claude_js = bin_dir
+                .join("node_modules")
+                .join("@anthropic-ai")
+                .join("claude-code")
+                .join("cli.js");
+            std::fs::create_dir_all(claude_js.parent().expect("claude js parent"))
+                .expect("create shim fixture");
+            std::fs::write(&claude_js, "console.log('claude');\n")
+                .expect("write claude js fixture");
+            let shim = bin_dir.join("claude.cmd");
+            std::fs::write(
+                &shim,
+                r#"@ECHO off
+node "%~dp0\node_modules\@anthropic-ai\claude-code\cli.js" %*
+"#,
+            )
+            .expect("write claude cmd fixture");
+
+            let command = format!(
+                "\"{}\" code --permission-mode acceptEdits",
+                shim.to_string_lossy()
+            );
+            let (program, args) = normalize_windows_launch_command(&command, &[], None);
+
+            assert_eq!(program, "node");
+            assert_eq!(PathBuf::from(&args[0]), claude_js);
+            assert_eq!(
+                &args[1..],
+                [
+                    "code".to_string(),
+                    "--permission-mode".to_string(),
+                    "acceptEdits".to_string()
+                ]
+            );
+
+            std::fs::remove_dir_all(root).ok();
+        }
+
+        #[test]
+        fn desktop_launch_uses_manual_executable_path() {
+            let root =
+                std::env::temp_dir().join(format!("VibeAround Test {}", uuid::Uuid::new_v4()));
+            let exe = root.join("Codex.exe");
+            std::fs::create_dir_all(&root).expect("create fixture");
+            std::fs::write(&exe, "").expect("write exe fixture");
+
+            let (program, args) =
+                normalize_windows_launch_command("Start-Process Codex", &[], Some(&exe));
+
+            assert_eq!(program, "Start-Process");
+            assert_eq!(
+                args,
+                vec!["-FilePath".to_string(), exe.to_string_lossy().into_owned()]
+            );
+
+            std::fs::remove_dir_all(root).ok();
+        }
+
+        #[test]
+        fn desktop_launch_uses_configured_windows_start_app_id() {
+            let app_id = PathBuf::from("OpenAI.Codex_2p2nqsd0c76g0!App");
+
+            let (program, args) =
+                normalize_windows_launch_command("Start-Process Codex", &[], Some(&app_id));
+
+            assert_eq!(program, "explorer.exe");
+            assert_eq!(
+                args,
+                vec![r"shell:AppsFolder\OpenAI.Codex_2p2nqsd0c76g0!App".to_string()]
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1019,5 +1247,18 @@ mod tests {
 
         assert!(script.contains("Get-Process -Name 'Codex'"));
         assert!(script.contains("Start-Sleep -Milliseconds 500"));
+    }
+
+    #[test]
+    fn launch_scripts_use_scoped_temp_dir() {
+        let dir = launch_script_temp_dir().expect("create launch script temp dir");
+        let expected_suffix = PathBuf::from("vibearound").join("launch").join("scripts");
+
+        assert!(
+            dir.ends_with(&expected_suffix),
+            "expected {} to end with {}",
+            dir.display(),
+            expected_suffix.display()
+        );
     }
 }
