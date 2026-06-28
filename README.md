@@ -56,6 +56,7 @@ cargo run -p server -- --port 12358 --web-dist web/dist
 va status
 va workspaces
 open http://127.0.0.1:12358/va/
+va tui --refresh-ms 1000
 
 # Launch saved profiles or create attachable CLI sessions
 va launch --profile codex-work

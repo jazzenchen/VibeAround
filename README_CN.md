@@ -56,6 +56,7 @@ cargo run -p server -- --port 12358 --web-dist web/dist
 va status
 va workspaces
 open http://127.0.0.1:12358/va/
+va tui --refresh-ms 1000
 
 # 启动保存好的 profile，或创建可 attach 的 CLI session
 va launch --profile codex-work
