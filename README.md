@@ -10,9 +10,16 @@
 
 </div>
 
-<p align="center">
-  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch screen with agent profile and workspace selection" width="92%" />
-</p>
+<table align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch screen with agent profile and workspace selection" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/tui.webp" alt="VibeAround TUI welcome screen" width="100%" />
+    </td>
+  </tr>
+</table>
 
 ## Important: v0.7.10 Breaking Change
 
@@ -29,6 +36,33 @@ Known impact: API Bridge configuration may be lost during this migration. Re-ena
 ## Why VibeAround
 
 VibeAround keeps AI coding work together without making you rebuild the environment you already have.
+
+### Run Modes
+
+VibeAround can run as the full Desktop app, as a standalone local server, or as CLI-first tooling around the same local runtime. Desktop embeds the server for the all-in-one experience; `va serve` runs the server without the desktop UI; `va launch`, Web Hub, Web Terminal, and the early TUI are different entry points into the same agent/session system.
+
+```bash
+# Full local app on macOS
+open -a VibeAround
+
+# Standalone server without the desktop UI
+va serve --port 12358 --data-dir ~/.vibearound
+
+# From source
+cd src
+cargo run -p server -- --port 12358 --web-dist web/dist
+
+# Inspect and operate the local runtime
+va status
+va workspaces
+open http://127.0.0.1:12358/va/
+
+# Launch saved profiles or create attachable CLI sessions
+va launch --profile codex-work
+va launch --profile-path ./profiles/claude-deepseek.json
+va session create --tool codex --project /path/to/project --attach
+va session create --profile my-profile --target claude --project /path/to/project --attach
+```
 
 - Work with the coding agents you already use, including Claude Code, Codex CLI, Gemini CLI, Pi, OpenCode, Claude Desktop, Codex Desktop, and more.
 - Launch agents directly or through third-party AI APIs, without hand-editing each agent's config files back and forth.
@@ -438,9 +472,9 @@ Friendly community: [LINUX DO](https://linux.do)
 
 WeChat group for Chinese-language discussion:
 
-<img src="assets/community/wechat-group-qr-2026-06-28.webp" width="180" alt="VibeAround WeChat group QR code, valid until June 28, 2026" />
+<img src="assets/community/wechat-group-qr-2026-07-06.webp" width="180" alt="VibeAround WeChat group QR code, valid until July 6, 2026" />
 
-This WeChat QR code is valid until June 28, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
+This WeChat QR code is valid until July 6, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
 
 ## License
 

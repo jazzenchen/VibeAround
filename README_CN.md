@@ -10,9 +10,16 @@
 
 </div>
 
-<p align="center">
-  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch 界面，可选择 Agent Profile 和 Workspace" width="92%" />
-</p>
+<table align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch 界面，可选择 Agent Profile 和 Workspace" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/tui.webp" alt="VibeAround TUI 欢迎界面" width="100%" />
+    </td>
+  </tr>
+</table>
 
 ## 重要：v0.7.10 破坏性变更
 
@@ -29,6 +36,33 @@ VibeAround v0.7.10 修改了本地配置的读取和归一化逻辑。部分配�
 ## 为什么需要 VibeAround
 
 VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量不打扰你已经配置好的环境。
+
+### 运行方式
+
+VibeAround 可以作为完整 Desktop 应用运行，也可以只跑独立的本地 server，或者用 CLI-first 的方式接入同一套本地 runtime。Desktop 会内嵌 server，提供完整图形界面；`va serve` 可以脱离桌面 UI 单独启动 server；`va launch`、Web Hub、Web Terminal 和早期 TUI 则是进入同一套 Agent / Session 系统的不同入口。
+
+```bash
+# macOS 上启动完整本地应用
+open -a VibeAround
+
+# 不启动桌面 UI，只跑独立 server
+va serve --port 12358 --data-dir ~/.vibearound
+
+# 从源码运行 server
+cd src
+cargo run -p server -- --port 12358 --web-dist web/dist
+
+# 查看和操作本地 runtime
+va status
+va workspaces
+open http://127.0.0.1:12358/va/
+
+# 启动保存好的 profile，或创建可 attach 的 CLI session
+va launch --profile codex-work
+va launch --profile-path ./profiles/claude-deepseek.json
+va session create --tool codex --project /path/to/project --attach
+va session create --profile my-profile --target claude --project /path/to/project --attach
+```
 
 - 继续使用你已经熟悉的 Claude Code、Codex CLI、Gemini CLI、Pi、OpenCode、Claude Desktop、Codex Desktop 等 AI 编程 Agent。
 - 直接启动 Agent，或通过第三方 AI API 运行 Agent，不用在不同 Agent 配置文件之间来回手改。
@@ -440,9 +474,9 @@ VibeAround 还处在快速打磨阶段，目前也主要是我一个人在开发
 
 微信交流群：
 
-<img src="assets/community/wechat-group-qr-2026-06-28.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 6 月 28 日" />
+<img src="assets/community/wechat-group-qr-2026-07-06.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 7 月 6 日" />
 
-该微信群二维码有效期至 2026 年 6 月 28 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
+该微信群二维码有效期至 2026 年 7 月 6 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
 
 ## 许可证
 
