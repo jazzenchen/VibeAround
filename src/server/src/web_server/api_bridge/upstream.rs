@@ -520,8 +520,7 @@ mod tests {
 
     use super::{
         apply_upstream_auth, enriched_content_risk_body, join_gemini_generate_content_endpoint,
-        rate_limit_retry_delay, request_stream, BridgeProtocol,
-        UpstreamEndpoint, UpstreamKind,
+        rate_limit_retry_delay, request_stream, BridgeProtocol, UpstreamEndpoint, UpstreamKind,
     };
 
     #[test]
@@ -812,6 +811,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         }
     }
 }

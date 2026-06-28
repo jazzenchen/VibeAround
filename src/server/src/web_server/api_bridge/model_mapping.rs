@@ -16,8 +16,8 @@ pub(super) fn bridge_route_preference(
     target_api_type: &str,
 ) -> Option<agent_state::ProfileBridgePreference> {
     let agent_id = agent_id_from_scope(route_scope?, client_api_type)?;
-    let prefs = agent_state::read_prefs();
-    let preference = prefs.profile_connections.get(&profile.id)?.get(agent_id)?;
+    let connections = connections::merged_profile_connections();
+    let preference = connections.get(&profile.id)?.get(agent_id)?;
     let bridge = preference.bridge.get(client_api_type)?;
     if !bridge.enabled {
         return None;
@@ -217,6 +217,7 @@ mod tests {
             .collect(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
@@ -246,6 +247,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
@@ -280,6 +282,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
@@ -339,6 +342,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         };
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
@@ -383,6 +387,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         }
     }
 

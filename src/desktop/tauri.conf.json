@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "VibeAround",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "identifier": "com.vibearound.app",
   "build": {
-    "beforeDevCommand": "node ../scripts/link-sdk.mjs --mode=local && bun run --cwd ../desktop-ui dev",
+    "beforeDevCommand": "cargo build -p va-launcher && node ../scripts/prepare-va-launch.mjs --profile debug --desktop && node ../scripts/link-sdk.mjs --mode=local && bun run --cwd ../desktop-ui dev",
     "devUrl": "http://localhost:5181",
-    "beforeBuildCommand": "node ../scripts/link-sdk.mjs --mode=release && bun run --cwd ../desktop-ui build && bun run --cwd ../web build",
+    "beforeBuildCommand": "cargo build --release -p va-launcher && node ../scripts/prepare-va-launch.mjs --profile release --desktop && node ../scripts/link-sdk.mjs --mode=release && bun run --cwd ../desktop-ui build && bun run --cwd ../web build",
     "frontendDist": "../desktop-ui/dist"
   },
   "app": {
@@ -43,6 +43,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/va-launch"
     ],
     "resources": [
       "../web/dist/**/*",

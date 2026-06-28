@@ -23,7 +23,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Notify;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 use common::auth::AuthToken;
 use common::channels::{ChannelManager, WebChannelManager};
@@ -301,6 +301,10 @@ pub async fn run_web_server(
             put(api::set_agent_profile_handler),
         )
         .route(
+            "/api/launcher/agent-workspace",
+            put(api::set_agent_workspace_handler),
+        )
+        .route(
             "/api/launcher/agent-launch-args",
             put(api::set_agent_launch_args_handler),
         )
@@ -317,10 +321,15 @@ pub async fn run_web_server(
             put(api::set_profile_connection_handler),
         )
         .route("/api/launcher/plan", post(api::launcher_plan_handler))
+        .route(
+            "/api/workspace-threads/init",
+            post(api::init_workspace_thread_handler),
+        )
         .route("/ws", get(ws_pty::ws_handler))
         .route("/ws/chat", get(ws_chat::ws_chat_handler))
         .route("/ws/channels", get(ws_domains::ws_channels_handler))
         .route("/ws/tunnels", get(ws_domains::ws_tunnels_handler))
+        .route("/ws/sessions", get(ws_domains::ws_sessions_handler))
         .route(
             "/ws/agents/runtime",
             get(ws_domains::ws_agents_runtime_handler),
@@ -368,7 +377,7 @@ pub async fn run_web_server(
             "/api/workspaces/default",
             put(api::set_default_workspace_handler),
         )
-        .route("/mcp", post(mcp::mcp_handler))
+        .route("/mcp", get(mcp::mcp_sse_handler).post(mcp::mcp_handler))
         .route_layer(axum::middleware::from_fn_with_state(
             auth_state.clone(),
             require_auth,
@@ -460,6 +469,19 @@ pub async fn run_web_server(
         .route("/md-preview/{slug}", get(preview::md_preview_handler))
         .nest_service("/assets", ServeDir::new(assets_dir))
         .nest_service("/brand", ServeDir::new(brand_dir))
+        .route_service("/favicon.ico", ServeFile::new(web_dist.join("favicon.ico")))
+        .route_service(
+            "/favicon-32x32.png",
+            ServeFile::new(web_dist.join("favicon-32x32.png")),
+        )
+        .route_service(
+            "/favicon-16x16.png",
+            ServeFile::new(web_dist.join("favicon-16x16.png")),
+        )
+        .route_service(
+            "/apple-touch-icon.png",
+            ServeFile::new(web_dist.join("apple-touch-icon.png")),
+        )
         .fallback(any(spa_fallback_handler));
 
     // ALL VibeAround routes live under `/va/` — the root `/` namespace is

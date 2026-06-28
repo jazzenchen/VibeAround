@@ -7,9 +7,9 @@
 //! "whatever you last received IS the state; replace your view on
 //! each message".
 //!
-//! Factored behind a tiny generic helper (`run_ws_loop`) so the three
-//! endpoints only differ in which manager they poll and which wire
-//! shape they produce.
+//! Factored behind a tiny generic helper (`run_ws_loop`) so the live-domain
+//! endpoints only differ in which manager they poll and which wire shape they
+//! produce.
 
 use std::future::Future;
 
@@ -108,6 +108,50 @@ async fn build_tunnels(
             url: t.url,
             status: t.status,
             uptime_secs: t.uptime_secs,
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// GET /ws/sessions
+// ---------------------------------------------------------------------------
+
+pub async fn ws_sessions_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if !allowed_ws_origin(&state, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    ws.on_upgrade(move |socket| async move {
+        let pty_manager = state.pty_manager.clone();
+        let rx = pty_manager.subscribe_changes();
+        run_ws_loop(socket, rx, "ws/sessions", move || {
+            let pty_manager = pty_manager.clone();
+            async move { build_sessions(&pty_manager).await }
+        })
+        .await;
+    })
+}
+
+async fn build_sessions(
+    manager: &common::pty::PtySessionManager,
+) -> Vec<crate::api_types::SessionListItem> {
+    manager
+        .list_sessions()
+        .into_iter()
+        .map(|item| crate::api_types::SessionListItem {
+            session_id: item.session_id,
+            tool: item.tool,
+            status: item.status,
+            created_at: item.created_at,
+            project_path: item.project_path,
+            profile_id: item.profile_id,
+            profile_label: item.profile_label,
+            launch_target: item.launch_target,
+            tmux_session: item.tmux_session,
         })
         .collect()
 }

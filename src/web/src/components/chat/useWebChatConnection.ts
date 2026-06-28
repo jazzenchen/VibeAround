@@ -56,6 +56,7 @@ import {
 import { currentUnixSeconds } from "./chatTime";
 
 interface UseWebChatConnectionOptions {
+  chatId?: string;
   onAgentSelected?: (agentId: string, source: "config" | "system") => void;
 }
 
@@ -65,13 +66,13 @@ const USER_CONTENT_PART_ID_PREFIX = "user-content";
 const COMPACTION_NOTICE_DROP_RATIO = 0.55;
 const COMPACTION_NOTICE_MIN_WINDOW_RATIO = 0.25;
 const COMPACTION_NOTICE_MIN_DROP = 128;
-
 interface SendChatMessageRequest {
   text: string;
   attachments?: ChatAttachment[];
   agentId: string;
   profileId?: string;
   workspacePath?: string;
+  threadId?: string;
   sessionSelection: ChatSessionSelection;
   launchSession?: LaunchSessionInfo;
 }
@@ -170,6 +171,7 @@ export interface ResumeReplayState {
 }
 
 export function useWebChatConnection({
+  chatId,
   onAgentSelected,
 }: UseWebChatConnectionOptions = {}) {
   const { t } = useI18n();
@@ -375,7 +377,16 @@ export function useWebChatConnection({
   );
 
   useEffect(() => {
-    const ws = new WebSocket(getWebSocketUrl("/ws/chat"));
+    if (!chatId) {
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
+      setConnected(false);
+      return;
+    }
+    const ws = new WebSocket(
+      getWebSocketUrl(`/ws/chat?chat_id=${encodeURIComponent(chatId)}`),
+    );
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);
@@ -732,6 +743,7 @@ export function useWebChatConnection({
   }, [
     applyMessageUpdate,
     cacheTranscript,
+    chatId,
     clearActiveTranscriptCacheWriteTimer,
     clearReplayCacheWriteTimer,
     clearResumeReplayDoneTimer,
@@ -748,6 +760,7 @@ export function useWebChatConnection({
       agentId,
       profileId,
       workspacePath,
+      threadId,
       sessionSelection,
       launchSession,
     }: SendChatMessageRequest) => {
@@ -798,19 +811,28 @@ export function useWebChatConnection({
         if (profileId !== undefined) {
           payload.profileId = profileId;
         }
-        if (sessionSelection.kind === "new") {
+        const currentSessionId =
+          sessionSelection.kind === "current" ? meta.sessionId : undefined;
+        const resumedSessionId =
+          sessionSelection.kind === "resume" && launchSession
+            ? launchSession.session_id
+            : currentSessionId;
+        if (threadId) {
+          payload.threadId = threadId;
+        }
+        if (sessionSelection.kind === "new" && !threadId) {
           payload.sessionAction = "new";
           if (workspacePath) {
             payload.sessionWorkspace = workspacePath;
           }
-        } else if (sessionSelection.kind === "resume" && launchSession) {
+        } else if (resumedSessionId) {
           payload.sessionAction = "resume";
-          payload.sessionId = launchSession.session_id;
-          payload.sessionWorkspace = launchSession.workspace;
+          payload.sessionId = resumedSessionId;
+          payload.sessionWorkspace = launchSession?.workspace ?? workspacePath;
         }
         ws.send(JSON.stringify(payload));
         const cacheContext: TranscriptCacheContext = {
-          sessionId: launchSession?.session_id,
+          sessionId: resumedSessionId,
           agentId,
           workspace: launchSession?.workspace ?? workspacePath,
           updatedAt: Math.max(launchSession?.updated_at ?? 0, submittedAt),
@@ -833,7 +855,12 @@ export function useWebChatConnection({
         return false;
       }
     },
-    [cacheTranscript, clearActiveTranscriptCacheWriteTimer, clearReplayCacheContext],
+    [
+      cacheTranscript,
+      clearActiveTranscriptCacheWriteTimer,
+      clearReplayCacheContext,
+      meta.sessionId,
+    ],
   );
 
   const setSessionMode = useCallback((modeId: string) => {

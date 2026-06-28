@@ -1,20 +1,20 @@
-//! Per-agent launch state stored in `~/.vibearound/agents.json`.
+//! Per-agent launch preferences stored under `settings.json.launcher`.
 //!
-//! `settings.json` owns global app setup such as enabled agents. This file
-//! keeps mutable Launch-tab choices and the global quick-launch default out of
-//! settings so desktop, tray, and IM startup all resolve the same state.
+//! `settings.json` owns both the enabled-agent list and the mutable Launch-tab
+//! choices so desktop, tray, server, and IM startup resolve the same state from
+//! one durable config file.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::profiles::catalog::ContentCapabilities;
-use crate::{auth, config, resources};
+use crate::{config, resources};
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct AgentsPrefsFile {
     /// Launch tab's currently visible agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -27,12 +27,10 @@ pub struct AgentsPrefsFile {
     pub default_profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agents: BTreeMap<String, AgentLaunchPreference>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub profile_connections: ProfileConnectionPreferences,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct AgentLaunchPreference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
@@ -40,16 +38,12 @@ pub struct AgentLaunchPreference {
     pub workspace: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<AgentExecutablePreference>,
-    // Legacy scalar used by earlier builds. New writes use `executable`, but
-    // reads still honor this so existing agents.json files keep working.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executable_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "AgentLaunchArgs::is_empty")]
     pub launch_args: AgentLaunchArgs,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct AgentExecutablePreference {
     pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,17 +132,22 @@ pub type ProfileConnectionPreferences =
     BTreeMap<String, BTreeMap<String, ProfileConnectionPreference>>;
 
 pub fn read_prefs() -> AgentsPrefsFile {
-    let body = match std::fs::read_to_string(prefs_path()) {
-        Ok(body) => body,
-        Err(_) => return AgentsPrefsFile::default(),
-    };
-    match serde_json::from_str(&body) {
-        Ok(prefs) => prefs,
-        Err(e) => {
-            tracing::warn!("[launcher] agents.json parse error: {} - using default", e);
-            AgentsPrefsFile::default()
-        }
-    }
+    config::read_settings_json()
+        .ok()
+        .and_then(|root| root.get("launcher").cloned())
+        .and_then(
+            |launcher| match serde_json::from_value::<AgentsPrefsFile>(launcher) {
+                Ok(prefs) => Some(prefs),
+                Err(error) => {
+                    tracing::warn!(
+                        "[launcher] settings.json launcher prefs parse error: {} - using default",
+                        error
+                    );
+                    None
+                }
+            },
+        )
+        .unwrap_or_default()
 }
 
 pub fn resolve_selected_agent(prefs: &AgentsPrefsFile, cfg: &config::Config) -> String {
@@ -161,7 +160,6 @@ pub fn resolve_selected_agent(prefs: &AgentsPrefsFile, cfg: &config::Config) -> 
 
 pub fn resolve_default_agent(prefs: &AgentsPrefsFile, cfg: &config::Config) -> String {
     resolve_agent_candidate(prefs.default_agent.as_deref(), cfg)
-        .or_else(|| resolve_agent_candidate(prefs.selected_agent.as_deref(), cfg))
         .or_else(|| resolve_agent_candidate(Some(&cfg.default_agent), cfg))
         .or_else(|| cfg.enabled_agents.first().map(|id| canonical_agent_id(id)))
         .unwrap_or_else(|| "codex".to_string())
@@ -169,7 +167,7 @@ pub fn resolve_default_agent(prefs: &AgentsPrefsFile, cfg: &config::Config) -> S
 
 pub fn resolve_agent_profile(
     prefs: &AgentsPrefsFile,
-    cfg: &config::Config,
+    _cfg: &config::Config,
     agent_id: &str,
 ) -> Option<String> {
     let agent_id = canonical_agent_id(agent_id);
@@ -177,11 +175,6 @@ pub fn resolve_agent_profile(
         .agents
         .get(&agent_id)
         .and_then(|preference| clean_optional_string(preference.profile_id.as_deref()))
-        .or_else(|| {
-            cfg.default_profiles
-                .get(&agent_id)
-                .and_then(|id| clean_optional_string(Some(id.as_str())))
-        })
 }
 
 pub fn resolve_default_profile(
@@ -229,14 +222,6 @@ pub fn resolve_agent_executable(
             .executable
             .clone()
             .filter(|executable| !executable.path.as_os_str().is_empty())
-            .or_else(|| {
-                preference
-                    .executable_path
-                    .as_ref()
-                    .filter(|path| !path.as_os_str().is_empty())
-                    .cloned()
-                    .map(AgentExecutablePreference::manual)
-            })
     })
 }
 
@@ -260,7 +245,6 @@ pub fn resolve_agent_acp_args(prefs: &AgentsPrefsFile, agent_id: &str) -> Vec<St
 
 pub fn write_selected_agent(agent_id: &str) -> anyhow::Result<()> {
     update_prefs(|prefs| {
-        freeze_legacy_default(prefs);
         prefs.selected_agent = Some(agent_id.to_string());
     })
 }
@@ -274,7 +258,6 @@ pub fn write_default_launch(agent_id: &str, profile_id: Option<String>) -> anyho
 
 pub fn write_agent_profile(agent_id: &str, profile_id: Option<String>) -> anyhow::Result<()> {
     update_prefs(|prefs| {
-        freeze_legacy_default(prefs);
         let entry = prefs.agents.entry(agent_id.to_string()).or_default();
         entry.profile_id = profile_id;
         prune_empty_agent_entry(prefs, agent_id);
@@ -305,7 +288,6 @@ pub fn write_agent_executable(
     update_prefs(|prefs| {
         let entry = prefs.agents.entry(agent_id.to_string()).or_default();
         entry.executable = executable;
-        entry.executable_path = None;
         prune_empty_agent_entry(prefs, agent_id);
     })
 }
@@ -315,27 +297,6 @@ pub fn write_agent_launch_args(agent_id: &str, launch_args: AgentLaunchArgs) -> 
         let entry = prefs.agents.entry(agent_id.to_string()).or_default();
         entry.launch_args = launch_args;
         prune_empty_agent_entry(prefs, agent_id);
-    })
-}
-
-pub fn write_profile_connection_preference(
-    profile_id: &str,
-    agent_id: &str,
-    preference: ProfileConnectionPreference,
-) -> anyhow::Result<()> {
-    update_prefs(|prefs| {
-        let profile_connections = prefs
-            .profile_connections
-            .entry(profile_id.to_string())
-            .or_default();
-        if connection_preference_is_empty(&preference) {
-            profile_connections.remove(agent_id);
-        } else {
-            profile_connections.insert(agent_id.to_string(), preference);
-        }
-        if profile_connections.is_empty() {
-            prefs.profile_connections.remove(profile_id);
-        }
     })
 }
 
@@ -353,10 +314,8 @@ pub fn remove_profile_references(profile_id: &str) -> anyhow::Result<()> {
             preference.profile_id.is_some()
                 || preference.workspace.is_some()
                 || preference.executable.is_some()
-                || preference.executable_path.is_some()
                 || !preference.launch_args.is_empty()
         });
-        prefs.profile_connections.remove(profile_id);
     })
 }
 
@@ -376,7 +335,6 @@ pub fn remove_workspace_references(workspace: &std::path::Path) -> anyhow::Resul
             preference.profile_id.is_some()
                 || preference.workspace.is_some()
                 || preference.executable.is_some()
-                || preference.executable_path.is_some()
                 || !preference.launch_args.is_empty()
         });
     })
@@ -398,20 +356,33 @@ fn update_prefs(f: impl FnOnce(&mut AgentsPrefsFile)) -> anyhow::Result<()> {
 }
 
 fn write_prefs(prefs: &AgentsPrefsFile) -> anyhow::Result<()> {
-    let path = prefs_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {:?}", parent))?;
-    }
-    let body = serde_json::to_string_pretty(prefs).context("serialize agents prefs")?;
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, body).with_context(|| format!("write {:?}", tmp))?;
-    auth::set_owner_only(&tmp).ok();
-    std::fs::rename(&tmp, &path).with_context(|| format!("rename to {:?}", path))?;
-    Ok(())
-}
-
-fn prefs_path() -> PathBuf {
-    config::data_dir().join("agents.json")
+    let value = serde_json::to_value(prefs)?;
+    let prefs_obj = value.as_object().cloned().unwrap_or_default();
+    config::update_settings_json(|root| {
+        if !root.is_object() {
+            *root = Value::Object(Map::new());
+        }
+        let Some(root_obj) = root.as_object_mut() else {
+            return;
+        };
+        let launcher = root_obj
+            .entry("launcher".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !launcher.is_object() {
+            *launcher = Value::Object(Map::new());
+        }
+        let Some(launcher_obj) = launcher.as_object_mut() else {
+            return;
+        };
+        merge_pref_field(launcher_obj, &prefs_obj, "selected_agent");
+        merge_pref_field(launcher_obj, &prefs_obj, "default_agent");
+        merge_pref_field(launcher_obj, &prefs_obj, "default_profile_id");
+        merge_pref_field(launcher_obj, &prefs_obj, "agents");
+        if launcher_obj.is_empty() {
+            root_obj.remove("launcher");
+        }
+    })
+    .map_err(anyhow::Error::msg)
 }
 
 fn resolve_agent_candidate(candidate: Option<&str>, cfg: &config::Config) -> Option<String> {
@@ -438,21 +409,6 @@ fn clean_optional_string(value: Option<&str>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn freeze_legacy_default(prefs: &mut AgentsPrefsFile) {
-    if prefs.default_agent.is_some() {
-        return;
-    }
-    let Some(current) = prefs.selected_agent.as_deref() else {
-        return;
-    };
-    let agent_id = canonical_agent_id(current);
-    prefs.default_profile_id = prefs
-        .agents
-        .get(&agent_id)
-        .and_then(|preference| preference.profile_id.clone());
-    prefs.default_agent = Some(agent_id);
-}
-
 fn prune_empty_agent_entry(prefs: &mut AgentsPrefsFile, agent_id: &str) {
     let empty = prefs
         .agents
@@ -461,12 +417,19 @@ fn prune_empty_agent_entry(prefs: &mut AgentsPrefsFile, agent_id: &str) {
             entry.profile_id.is_none()
                 && entry.workspace.is_none()
                 && entry.executable.is_none()
-                && entry.executable_path.is_none()
                 && entry.launch_args.is_empty()
         })
         .unwrap_or(false);
     if empty {
         prefs.agents.remove(agent_id);
+    }
+}
+
+fn merge_pref_field(launcher: &mut Map<String, Value>, prefs: &Map<String, Value>, key: &str) {
+    if let Some(value) = prefs.get(key) {
+        launcher.insert(key.to_string(), value.clone());
+    } else {
+        launcher.remove(key);
     }
 }
 
@@ -492,7 +455,7 @@ fn manual_executable_source_label() -> String {
     "Manual path".to_string()
 }
 
-fn connection_preference_is_empty(preference: &ProfileConnectionPreference) -> bool {
+pub(crate) fn connection_preference_is_empty(preference: &ProfileConnectionPreference) -> bool {
     preference
         .selected_api_type
         .as_deref()
@@ -519,6 +482,7 @@ fn connection_preference_is_empty(preference: &ProfileConnectionPreference) -> b
                     .map(str::trim)
                     .unwrap_or_default()
                     .is_empty()
+                && bridge.models.is_empty()
                 && bridge.headers.is_empty()
         })
 }
@@ -632,7 +596,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_executable_preference_wins_over_legacy_path() {
+    fn structured_executable_preference_resolves_by_alias() {
         let prefs = AgentsPrefsFile {
             agents: [(
                 "codex".to_string(),
@@ -648,7 +612,6 @@ mod tests {
                         rank: 1,
                         package: Some("@openai/codex".to_string()),
                     }),
-                    executable_path: Some(PathBuf::from("/legacy/codex")),
                     ..Default::default()
                 },
             )]
@@ -664,27 +627,6 @@ mod tests {
             resolve_agent_executable_path(&prefs, "codex").unwrap(),
             PathBuf::from("/opt/homebrew/bin/codex")
         );
-    }
-
-    #[test]
-    fn legacy_executable_path_reads_as_manual_preference() {
-        let prefs = AgentsPrefsFile {
-            agents: [(
-                "codex".to_string(),
-                AgentLaunchPreference {
-                    executable_path: Some(PathBuf::from("/legacy/codex")),
-                    ..Default::default()
-                },
-            )]
-            .into_iter()
-            .collect(),
-            ..Default::default()
-        };
-
-        let executable = resolve_agent_executable(&prefs, "codex").unwrap();
-        assert_eq!(executable.path, PathBuf::from("/legacy/codex"));
-        assert_eq!(executable.source, "manual_path");
-        assert_eq!(executable.source_label, "Manual path");
     }
 
     #[test]
@@ -713,5 +655,28 @@ mod tests {
             resolve_agent_acp_args(&prefs, "codex"),
             vec!["--strict-config".to_string()]
         );
+    }
+
+    #[test]
+    fn connection_preference_with_model_routes_is_not_empty() {
+        let preference = ProfileConnectionPreference {
+            selected_api_type: None,
+            bridge: [(
+                "anthropic".to_string(),
+                ProfileBridgePreference {
+                    enabled: false,
+                    models: vec![ProfileBridgeModelPreference {
+                        upstream_model: Some("deepseek-v4-pro".to_string()),
+                        fake_model_id: Some("claude-sonnet-4-5".to_string()),
+                        capabilities: Default::default(),
+                    }],
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+
+        assert!(!connection_preference_is_empty(&preference));
     }
 }

@@ -1,0 +1,81 @@
+{
+  "claude": {
+    "command": "claude code --permission-mode acceptEdits",
+    "env": {
+      "DISABLE_AUTOUPDATER": "1",
+      "DISABLE_UPDATES": "1"
+    },
+    "resume": {
+      "command": "claude",
+      "args": ["--resume", "{session_id}", "--permission-mode", "acceptEdits"]
+    }
+  },
+  "claude-desktop": {
+    "command": "open -a Claude",
+    "platform_commands": {
+      "macos": "open -a Claude",
+      "windows": "Start-Process Claude"
+    }
+  },
+  "codex": {
+    "command": "codex",
+    "args": ["-c", "check_for_update_on_startup=false"],
+    "resume": {
+      "command": "codex",
+      "args": ["resume", "{session_id}"]
+    }
+  },
+  "codex-desktop": {
+    "command": "open -a Codex",
+    "platform_commands": {
+      "macos": "open -a Codex",
+      "windows": "Start-Process Codex"
+    }
+  },
+  "pi": {
+    "command": "pi",
+    "resume": {
+      "command": "pi",
+      "args": ["--session", "{session_id}"]
+    }
+  },
+  "gemini": {
+    "command": "gemini",
+    "env": {
+      "NO_UPDATE_NOTIFIER": "1",
+      "NPM_CONFIG_UPDATE_NOTIFIER": "false"
+    },
+    "resume": {
+      "command": "gemini",
+      "args": ["--resume", "{session_id}"]
+    }
+  },
+  "opencode": {
+    "command": "opencode",
+    "resume": {
+      "command": "opencode",
+      "args": ["--session", "{session_id}"]
+    }
+  },
+  "cursor": {
+    "command": "cursor-agent",
+    "resume": {
+      "command": "cursor-agent",
+      "args": ["--resume", "{session_id}"]
+    }
+  },
+  "kiro": {
+    "command": "kiro-cli"
+  },
+  "qwen-code": {
+    "command": "qwen",
+    "env": {
+      "NO_UPDATE_NOTIFIER": "1",
+      "NPM_CONFIG_UPDATE_NOTIFIER": "false"
+    },
+    "resume": {
+      "command": "qwen",
+      "args": ["--resume", "{session_id}"]
+    }
+  }
+}

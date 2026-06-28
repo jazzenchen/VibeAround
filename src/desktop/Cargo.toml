@@ -1,6 +1,6 @@
 [package]
 name = "vibearound-desktop"
-version = "0.7.9"
+version = "0.7.10"
 description = "VibeAround Desktop — Tray-first AI coding orchestrator"
 edition = "2021"
 rust-version = "1.82"
@@ -11,6 +11,7 @@ tauri-build = { version = "2.5", features = [] }
 [dependencies]
 common = { path = "../core" }
 server = { path = "../server" }
+va-launcher = { path = "../launcher" }
 tauri = { version = "2.10", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"

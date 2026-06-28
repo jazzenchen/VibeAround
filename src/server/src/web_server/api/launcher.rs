@@ -31,6 +31,13 @@ pub struct AgentProfileBody {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentWorkspaceBody {
+    pub agent_id: String,
+    pub workspace: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentLaunchArgsBody {
     pub agent_id: String,
     pub launch_args: agent_state::AgentLaunchArgs,
@@ -90,6 +97,17 @@ pub async fn set_agent_profile_handler(
     Ok(Json(launcher_preferences()))
 }
 
+/// PUT /api/launcher/agent-workspace -- set one agent's default workspace.
+pub async fn set_agent_workspace_handler(
+    Json(body): Json<AgentWorkspaceBody>,
+) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
+    let (agent_id, workspace) =
+        validate_agent_workspace_selection(&body.agent_id, &body.workspace)?;
+    agent_state::write_agent_workspace(&agent_id, workspace)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(launcher_preferences()))
+}
+
 /// PUT /api/launcher/agent-launch-args -- set terminal/acp args for one agent.
 pub async fn set_agent_launch_args_handler(
     Json(body): Json<AgentLaunchArgsBody>,
@@ -141,13 +159,13 @@ pub async fn set_profile_connection_handler(
     Json(body): Json<ProfileConnectionBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
     let agent_id = canonical_agent_id(&body.agent_id)?;
-    let profile = load_profile(&body.profile_id)?;
+    let mut profile = load_profile(&body.profile_id)?;
     let preference =
         connections::sanitize_profile_connection_preference(&profile, &agent_id, body.preference)
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    agent_state::write_profile_connection_preference(&profile.id, &agent_id, preference)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    schema::set_connection(&mut profile, &agent_id, preference);
+    schema::save(&profile).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(launcher_preferences()))
 }
 
@@ -173,7 +191,7 @@ fn launcher_preferences() -> crate::api_types::LauncherPreferencesResponse {
         enabled_agents: cfg.enabled_agents.clone(),
         agent_preferences,
         local_agent_api_enabled: cfg.local_agent_api.enabled,
-        profile_connections: connections::merged_profile_connections(&prefs),
+        profile_connections: connections::merged_profile_connections(),
     }
 }
 
@@ -224,6 +242,24 @@ fn validate_agent_profile_selection(
     Ok((agent_id, profile_id))
 }
 
+fn validate_agent_workspace_selection(
+    agent_id: &str,
+    workspace: &str,
+) -> Result<(String, std::path::PathBuf), (StatusCode, String)> {
+    let agent_id = canonical_agent_id(agent_id)?;
+    let workspace = common::workspace::normalize_workspace_cwd(std::path::PathBuf::from(workspace));
+    if !workspace.exists() || !workspace.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "workspace does not exist or is not a directory: {}",
+                workspace.to_string_lossy()
+            ),
+        ));
+    }
+    Ok((agent_id, workspace))
+}
+
 fn canonical_agent_id(agent_id: &str) -> Result<String, (StatusCode, String)> {
     resources::agent_by_alias(agent_id)
         .map(|def| def.id.clone())
@@ -257,7 +293,7 @@ fn sanitize_agent_launch_args(
     })
 }
 
-fn build_launch_plan(
+pub(crate) fn build_launch_plan(
     body: LaunchPlanBody,
 ) -> Result<crate::api_types::LaunchPlanResponse, (StatusCode, String)> {
     let launch_id = uuid::Uuid::new_v4().to_string();
@@ -284,18 +320,25 @@ fn build_direct_launch_plan(
         )
     })?;
     let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);
+    let launch_args = agent.launch_args_for_current_platform();
     let (command, resume_args) = if let Some(session_id) = body.session_id.as_deref() {
         resume_command_for_agent(&agent_id, session_id)?
     } else {
         (
             agent_state::resolve_agent_executable_path(&prefs, &agent_id)
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| agent.pty_command_for_current_platform().to_string()),
+                .unwrap_or_else(|| agent.launch_command_for_current_platform().to_string()),
             Vec::new(),
         )
     };
-    let mut args = agent_state::resolve_agent_terminal_args(&prefs, &agent_id);
+    let mut args = launch_args;
+    args.extend(agent_state::resolve_agent_terminal_args(&prefs, &agent_id));
     args.extend(resume_args);
+    let env = agent
+        .launch_env_for_current_platform()
+        .into_iter()
+        .map(|(key, value)| crate::api_types::LaunchPlanEnvVar { key, value })
+        .collect();
 
     Ok(crate::api_types::LaunchPlanResponse {
         launch_id: launch_id.to_string(),
@@ -304,7 +347,7 @@ fn build_direct_launch_plan(
         launch_target: body.launch_target.unwrap_or_else(|| agent_id.clone()),
         command,
         args,
-        env: Vec::new(),
+        env,
         cwd: workspace.to_string_lossy().to_string(),
         resume_session_id: body.session_id,
         native_execution: agent.direct_only,
@@ -357,17 +400,20 @@ fn build_profile_launch_plan(
     append_vibearound_launch_context_env(&mut env, &profile.id, &launch_target, launch_id);
 
     let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);
+    append_env_defaults(&mut env, agent.launch_env_for_current_platform());
+    let launch_args = agent.launch_args_for_current_platform();
     let (command, resume_args) = if let Some(session_id) = body.session_id.as_deref() {
         resume_command_for_agent(&agent_id, session_id)?
     } else {
         (
             agent_state::resolve_agent_executable_path(&prefs, &agent_id)
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| agent.pty_command_for_current_platform().to_string()),
+                .unwrap_or_else(|| agent.launch_command_for_current_platform().to_string()),
             Vec::new(),
         )
     };
-    let mut args = rendered.command_args;
+    let mut args = launch_args;
+    args.extend(rendered.command_args);
     args.extend(agent_state::resolve_agent_terminal_args(&prefs, &agent_id));
     args.extend(resume_args);
 
@@ -427,50 +473,58 @@ fn append_local_bridge_proxy_bypass_env(env: &mut Vec<(String, String)>) {
     ]);
 }
 
+fn append_env_defaults(env: &mut Vec<(String, String)>, defaults: Vec<(String, String)>) {
+    for (key, value) in defaults {
+        if env.iter().any(|(existing, _)| existing == &key) {
+            continue;
+        }
+        env.push((key, value));
+    }
+}
+
 fn resume_command_for_agent(
     agent_id: &str,
     session_id: &str,
 ) -> Result<(String, Vec<String>), (StatusCode, String)> {
-    let command = match agent_id {
-        "claude" => (
-            "claude".to_string(),
-            vec![
-                "--resume".to_string(),
-                session_id.to_string(),
-                "--permission-mode".to_string(),
-                "acceptEdits".to_string(),
-            ],
-        ),
-        "codex" => (
-            "codex".to_string(),
-            vec!["resume".to_string(), session_id.to_string()],
-        ),
-        "pi" => (
-            "pi".to_string(),
-            vec!["--session".to_string(), session_id.to_string()],
-        ),
-        "gemini" => (
-            "gemini".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        "opencode" => (
-            "opencode".to_string(),
-            vec!["--session".to_string(), session_id.to_string()],
-        ),
-        "cursor" => (
-            "cursor-agent".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        "qwen-code" => (
-            "qwen".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        other => {
-            return Err((
+    let agent = resources::agent_by_id(agent_id).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("unknown agent: '{agent_id}'"),
+        )
+    })?;
+    agent
+        .launch_resume_for_current_platform(session_id)
+        .ok_or_else(|| {
+            (
                 StatusCode::BAD_REQUEST,
-                format!("resume launch is not supported for agent '{other}'"),
-            ))
-        }
-    };
-    Ok(command)
+                format!("resume launch is not supported for agent '{agent_id}'"),
+            )
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_agent_workspace_selection() {
+        let path =
+            std::env::temp_dir().join(format!("va-launcher-workspace-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path).expect("create temp workspace");
+
+        let (agent_id, workspace) =
+            validate_agent_workspace_selection("codex", path.to_str().expect("utf8 path"))
+                .expect("valid workspace");
+
+        assert_eq!(agent_id, "codex");
+        assert_eq!(
+            workspace,
+            std::fs::canonicalize(&path).expect("canonical path")
+        );
+
+        std::fs::remove_dir_all(&path).expect("remove temp workspace");
+        let error = validate_agent_workspace_selection("codex", path.to_str().expect("utf8 path"))
+            .expect_err("missing workspace");
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+    }
 }

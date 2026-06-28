@@ -10,14 +10,18 @@ import {
 } from "lucide-react";
 import { useI18n } from "@va/i18n";
 import type { ChatRuntimeStatus } from "@/lib/dashboard-types";
-import { BrandIcon } from "@/components/brand-icon";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { shortSessionId } from "./chatSessionDisplay";
+import { SessionHostLogo } from "./SessionHostLogo";
 
 interface ChatHeaderProps {
   selectedAgent: string;
   agentLabel: string;
+  profileId?: string | null;
+  profileLabel?: string | null;
+  providerId?: string | null;
+  providerLabel?: string | null;
   routeLabel: string;
   headerSessionLabel: string | null;
   workspacePath?: string;
@@ -36,6 +40,10 @@ interface ChatHeaderProps {
 export function ChatHeader({
   selectedAgent,
   agentLabel,
+  profileId,
+  profileLabel,
+  providerId,
+  providerLabel,
   routeLabel,
   headerSessionLabel,
   workspacePath,
@@ -88,12 +96,15 @@ export function ChatHeader({
             <PanelLeftOpen className="h-4 w-4" />
           )}
         </Button>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <BrandIcon
-            kind="cli"
-            id={selectedAgent}
-            label={agentLabel}
-            className="h-4 w-4"
+        <div className="flex h-10 w-12 shrink-0 items-center justify-center text-muted-foreground">
+          <SessionHostLogo
+            agentId={selectedAgent}
+            agentLabel={agentLabel}
+            profileId={profileId}
+            profileLabel={profileLabel}
+            providerId={providerId}
+            providerLabel={providerLabel}
+            size="md"
           />
         </div>
         <div className="min-w-0">

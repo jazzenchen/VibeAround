@@ -19,6 +19,7 @@ use super::session::{
 
 pub struct PtySessionManager {
     registry: Registry,
+    changes_tx: broadcast::Sender<()>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,17 +56,31 @@ pub struct PtyAttachHandles {
 
 impl PtySessionManager {
     pub fn new() -> Self {
+        let (changes_tx, _) = broadcast::channel(128);
         Self {
             registry: Arc::new(dashmap::DashMap::new()),
+            changes_tx,
         }
     }
 
     pub fn from_registry(registry: Registry) -> Self {
-        Self { registry }
+        let (changes_tx, _) = broadcast::channel(128);
+        Self {
+            registry,
+            changes_tx,
+        }
     }
 
     pub fn registry(&self) -> Registry {
         Arc::clone(&self.registry)
+    }
+
+    pub fn subscribe_changes(&self) -> broadcast::Receiver<()> {
+        self.changes_tx.subscribe()
+    }
+
+    fn notify_changed(&self) {
+        let _ = self.changes_tx.send(());
     }
 
     pub fn list_sessions(&self) -> Vec<PtySessionSummary> {
@@ -130,6 +145,7 @@ impl PtySessionManager {
             live_tx: live_tx.clone(),
         };
         self.registry.insert(session_id, ctx);
+        self.notify_changed();
 
         let buf_clone = Arc::clone(&buffer);
         let tx_clone = live_tx.clone();
@@ -141,11 +157,13 @@ impl PtySessionManager {
         });
 
         let rs = Arc::clone(&run_state);
+        let changes_tx = self.changes_tx.clone();
         tokio::spawn(async move {
             while let Some(new_state) = state_rx.recv().await {
                 if let Ok(mut g) = rs.write() {
                     *g = new_state;
                 }
+                let _ = changes_tx.send(());
             }
         });
 
@@ -190,18 +208,43 @@ impl PtySessionManager {
         theme: Option<String>,
         initial_size: Option<(u16, u16)>,
     ) -> anyhow::Result<PtySessionCreated> {
+        self.create_command_session(
+            tool,
+            command,
+            env,
+            Some(profile_id),
+            Some(profile_label),
+            Some(launch_target),
+            project_path,
+            theme,
+            initial_size,
+        )
+    }
+
+    pub fn create_command_session(
+        &self,
+        tool: PtyTool,
+        command: String,
+        env: Vec<(String, String)>,
+        profile_id: Option<String>,
+        profile_label: Option<String>,
+        launch_target: Option<String>,
+        project_path: Option<String>,
+        theme: Option<String>,
+        initial_size: Option<(u16, u16)>,
+    ) -> anyhow::Result<PtySessionCreated> {
         let cwd = project_path.as_ref().map(std::path::PathBuf::from);
         let (bridge, pty_rx, resize_tx, state_rx) =
             spawn_pty_with_command(tool, cwd, None, theme, initial_size, Some(command), env)
-                .context("Failed to spawn profile PTY")?;
+                .context("Failed to spawn command PTY")?;
 
         let metadata = SessionMetadata {
             created_at: unix_now_secs(),
             project_path: project_path.clone(),
             tool,
-            profile_id: Some(profile_id),
-            profile_label: Some(profile_label),
-            launch_target: Some(launch_target),
+            profile_id,
+            profile_label,
+            launch_target,
             tmux_session: None,
         };
 
@@ -211,6 +254,7 @@ impl PtySessionManager {
     pub fn delete_session(&self, session_id: SessionId) -> bool {
         if let Some((_, ctx)) = self.registry.remove(&session_id) {
             let _ = ctx.bridge.kill();
+            self.notify_changed();
             true
         } else {
             false

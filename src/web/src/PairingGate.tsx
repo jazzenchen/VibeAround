@@ -306,12 +306,12 @@ export function PairingGate() {
             onToggle={(e) => setShowTokenInput((e.target as HTMLDetailsElement).open)}
           >
             <summary className="cursor-pointer select-none px-4 py-3 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">
-              {t("I have a token — paste it")}
+              {t("Get a token from VibeAround Desktop")}
             </summary>
             <form onSubmit={submitToken} className="space-y-3 border-t border-border px-4 py-3">
               <label className="block space-y-1.5">
                 <span className="text-xs text-muted-foreground">
-                  {t("Session auth token (from ~/.vibearound/auth.json)")}
+                  {t("Open VibeAround Desktop > Settings > General, copy Auth Token, then paste it here.")}
                 </span>
                 <Input
                   type="text"

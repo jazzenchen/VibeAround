@@ -6,6 +6,7 @@ use axum::{
 };
 
 use common::pty::{list_tmux_sessions, tmux_available, PtyTool, SessionId};
+use common::workspace::manager::ExternalSessionAttachMode;
 
 use crate::web_server::AppState;
 
@@ -29,6 +30,7 @@ pub(crate) struct CreateSessionBody {
     tool: Option<PtyTool>,
     profile_id: Option<String>,
     launch_target: Option<String>,
+    resume_session_id: Option<String>,
     project_path: Option<String>,
     tmux_session: Option<String>,
     theme: Option<String>,
@@ -80,16 +82,20 @@ pub async fn list_launch_sessions_handler(
         .map(common::workspace::normalize_workspace_cwd)
         .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
     let limit = query.limit.unwrap_or(25).clamp(1, 100);
-    let sessions = common::launch_sessions::list_for_agent_workspace_with_archived_async(
-        &agent_id,
-        &workspace,
-        limit,
-        query.include_archived.unwrap_or(false),
-    )
-    .await
-    .into_iter()
-    .map(|session| launch_session_info(&state, session))
-    .collect();
+    let sessions = state
+        .channel_hub
+        .workspace_thread_manager()
+        .list_resumable_agent_sessions(
+            &agent_id,
+            &workspace,
+            limit,
+            query.include_archived.unwrap_or(false),
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .into_iter()
+        .collect::<Vec<_>>();
+    let sessions = launch_session_infos(&state, sessions).await?;
 
     Ok(Json(sessions))
 }
@@ -140,41 +146,144 @@ pub async fn list_launch_sessions_batch_handler(
     let limit = body.limit.unwrap_or(25).clamp(1, 100);
     let include_archived = body.include_archived.unwrap_or(false);
     let mut sessions = Vec::new();
+    let workspace_threads = state.channel_hub.workspace_thread_manager();
     for agent_id in &agent_ids {
-        sessions.extend(
-            common::launch_sessions::list_for_agent_workspaces_with_archived_async(
-                agent_id,
-                &workspaces,
-                limit,
-                include_archived,
-            )
-            .await
-            .into_iter()
-            .map(|session| launch_session_info(&state, session)),
-        );
+        for workspace in &workspaces {
+            sessions.extend(
+                workspace_threads
+                    .list_resumable_agent_sessions(agent_id, workspace, limit, include_archived)
+                    .await
+                    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+                    .into_iter(),
+            );
+        }
     }
+    let mut sessions = launch_session_infos(&state, sessions).await?;
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     Ok(Json(sessions))
 }
 
-fn launch_session_info(
+async fn launch_session_infos(
+    state: &AppState,
+    sessions: Vec<common::launch_sessions::LaunchSession>,
+) -> Result<Vec<crate::api_types::LaunchSessionInfo>, (StatusCode, String)> {
+    let mut infos = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        infos.push(launch_session_info(state, session).await?);
+    }
+    Ok(infos)
+}
+
+async fn launch_session_info(
     state: &AppState,
     session: common::launch_sessions::LaunchSession,
-) -> crate::api_types::LaunchSessionInfo {
+) -> Result<crate::api_types::LaunchSessionInfo, (StatusCode, String)> {
     let active = state
         .web_channel
         .session_is_active(&session.agent_id, &session.session_id);
-    crate::api_types::LaunchSessionInfo {
+    let thread_host = state
+        .channel_hub
+        .workspace_thread_manager()
+        .thread_host_for_agent_session(
+            &session.agent_id,
+            std::path::Path::new(&session.workspace),
+            &session.session_id,
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let (thread_id, host_agent_id, host_profile_id) =
+        if let Some((thread_id, host_binding)) = thread_host {
+            (
+                Some(thread_id.to_string()),
+                host_binding.agent_id,
+                host_binding.profile_id,
+            )
+        } else {
+            (None, session.agent_id.clone(), session.profile_id.clone())
+        };
+    let host_profile_label = crate::api_types::agent_profile_label(host_profile_id.as_deref());
+    let (host_provider, host_provider_label) = profile_provider_label(host_profile_id.as_deref());
+    Ok(crate::api_types::LaunchSessionInfo {
         short_id: common::launch_sessions::short_id(&session.session_id),
         agent_id: session.agent_id,
+        host_agent_id,
+        host_profile_id,
+        host_profile_label,
+        host_provider,
+        host_provider_label,
         session_id: session.session_id,
         title: session.title,
         workspace: session.workspace,
         updated_at: session.updated_at,
         archived: session.archived,
         active,
+        thread_id,
+    })
+}
+
+fn profile_provider_label(profile_id: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(profile_id) = profile_id else {
+        return (None, None);
+    };
+    let Some(profile) =
+        common::profiles::schema::load(profile_id).map(common::profiles::normalize_legacy_profile)
+    else {
+        return (None, None);
+    };
+    let provider_id = profile.provider;
+    let provider_label = common::profiles::catalog::get(&provider_id)
+        .map(|provider| provider.label.clone())
+        .unwrap_or_else(|| provider_id.clone());
+    (Some(provider_id), Some(provider_label))
+}
+
+pub async fn init_workspace_thread_handler(
+    State(state): State<AppState>,
+    Json(body): Json<crate::api_types::WorkspaceThreadInitRequest>,
+) -> Result<Json<crate::api_types::WorkspaceThreadInitResponse>, (StatusCode, String)> {
+    let agent_id = common::resources::resolve_agent_id(&body.agent_id)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    let workspace = body
+        .workspace_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .map(common::workspace::normalize_workspace_cwd)
+        .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
+    let manager = state.channel_hub.workspace_thread_manager();
+    let trimmed_session_id = body
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|session_id| !session_id.is_empty())
+        .map(ToOwned::to_owned);
+    let runtime = if let Some(session_id) = trimmed_session_id {
+        manager
+            .attach_external_session_to_web_thread(
+                agent_id,
+                body.profile_id,
+                session_id,
+                workspace,
+                ExternalSessionAttachMode::ReuseOpenThread,
+            )
+            .await
+    } else {
+        manager
+            .create_web_thread_for_cwd_with_host(agent_id, body.profile_id, workspace)
+            .await
     }
+    .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    let runtime_state = runtime.state().await;
+    let thread_id = runtime_state.thread_id.to_string();
+    let chat_id = common::workspace::manager::web_chat_id_for_thread(&runtime_state.thread_id);
+    Ok(Json(crate::api_types::WorkspaceThreadInitResponse {
+        thread_id,
+        chat_id,
+        agent_id: runtime_state.host_binding.agent_id,
+        profile_id: runtime_state.host_binding.profile_id,
+        session_id: runtime_state.session_id,
+        workspace: runtime_state.workspace.to_string_lossy().to_string(),
+    }))
 }
 
 #[derive(serde::Deserialize)]
@@ -246,6 +355,10 @@ pub async fn create_session_handler(
         (Some(c), Some(r)) => Some((c, r)),
         _ => None,
     };
+
+    if body.resume_session_id.is_some() {
+        return create_resume_session(state, body, initial_size).map(Json);
+    }
 
     let created = match (body.profile_id.as_deref(), body.launch_target.as_deref()) {
         (Some(profile_id), Some(launch_target)) => {
@@ -374,6 +487,101 @@ pub async fn create_session_handler(
         profile_label: created.profile_label,
         launch_target: created.launch_target,
     }))
+}
+
+fn create_resume_session(
+    state: AppState,
+    body: CreateSessionBody,
+    initial_size: Option<(u16, u16)>,
+) -> Result<crate::api_types::CreateSessionResponse, (StatusCode, String)> {
+    if body.tmux_session.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "resume sessions cannot attach tmux".to_string(),
+        ));
+    }
+    let resume_session_id = body.resume_session_id.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "resume_session_id is required".to_string(),
+        )
+    })?;
+    let agent_id = match (body.profile_id.as_deref(), body.launch_target.as_deref()) {
+        (Some(_), Some(_)) => {
+            if body.tool.is_some() {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "profile resume sessions cannot also specify tool".to_string(),
+                ));
+            }
+            None
+        }
+        (None, None) => {
+            let tool = body.tool.ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "missing tool for direct resume session".to_string(),
+                )
+            })?;
+            let agent_id = tool.agent_id().ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "resume sessions require a coding-agent tool".to_string(),
+                )
+            })?;
+            Some(agent_id.to_string())
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "profile_id and launch_target must be provided together".to_string(),
+            ));
+        }
+    };
+
+    let plan = super::launcher::build_launch_plan(super::launcher::LaunchPlanBody {
+        agent_id,
+        profile_id: body.profile_id.clone(),
+        launch_target: body.launch_target.clone(),
+        session_id: Some(resume_session_id),
+    })?;
+    let pty_tool = PtyTool::from_agent_id(&plan.agent_id).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("agent '{}' cannot be launched in a PTY", plan.agent_id),
+        )
+    })?;
+    let command = command_with_args(&plan.command, &plan.args);
+    let env = plan
+        .env
+        .into_iter()
+        .map(|item| (item.key, item.value))
+        .collect::<Vec<_>>();
+    let project_path = body.project_path.clone().or(Some(plan.cwd));
+    let created = state
+        .pty_manager
+        .create_command_session(
+            pty_tool,
+            command,
+            env,
+            plan.profile_id.clone(),
+            Some(plan.display.title),
+            Some(plan.launch_target.clone()),
+            project_path,
+            body.theme.clone(),
+            initial_size,
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(crate::api_types::CreateSessionResponse {
+        session_id: created.session_id,
+        tool: created.tool,
+        created_at: created.created_at,
+        project_path: created.project_path,
+        profile_id: created.profile_id,
+        profile_label: created.profile_label,
+        launch_target: created.launch_target,
+    })
 }
 
 /// DELETE /api/sessions/:session_id -- kill and remove a session.

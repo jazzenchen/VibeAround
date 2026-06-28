@@ -15,7 +15,7 @@ use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
 
 use super::catalog::ContentCapabilities;
-use crate::{auth, config};
+use crate::{agent_state, auth, config};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -102,6 +102,9 @@ pub struct ProfileDef {
     /// unless the user explicitly saves it.
     #[serde(default, skip_serializing_if = "ProviderSettings::is_empty")]
     pub provider_settings: ProviderSettings,
+    /// Per-agent API bridge/client protocol preferences for this profile.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connections: BTreeMap<String, agent_state::ProfileConnectionPreference>,
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +268,18 @@ pub fn save(profile: &ProfileDef) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn set_connection(
+    profile: &mut ProfileDef,
+    agent_id: &str,
+    preference: agent_state::ProfileConnectionPreference,
+) {
+    if agent_state::connection_preference_is_empty(&preference) {
+        profile.connections.remove(agent_id);
+    } else {
+        profile.connections.insert(agent_id.to_string(), preference);
+    }
+}
+
 pub fn delete(id: &str) -> anyhow::Result<()> {
     if !is_valid_id(id) {
         return Err(anyhow!("invalid profile id '{}'", id));
@@ -334,8 +349,10 @@ mod tests {
 
         assert!(!profile.provider_settings.deepseek.thinking);
         assert!(!profile.provider_settings.deepseek.replay_reasoning_content);
+        assert!(profile.connections.is_empty());
 
         let body = serde_json::to_string(&profile).unwrap();
         assert!(!body.contains("provider_settings"));
+        assert!(!body.contains("connections"));
     }
 }

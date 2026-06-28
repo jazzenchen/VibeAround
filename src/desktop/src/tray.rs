@@ -308,9 +308,7 @@ fn build_agent_profile_submenus<R: Runtime>(
     locale: UiLocale,
 ) -> tauri::Result<Vec<tauri::menu::Submenu<R>>> {
     let profiles = crate::profiles::ordered_profiles();
-    let agent_prefs = common::agent_state::read_prefs();
-    let profile_connections =
-        common::profiles::connections::merged_profile_connections(&agent_prefs);
+    let profile_connections = common::profiles::connections::merged_profile_connections();
 
     let groups = agent_profile_menu_groups(&profiles, &profile_connections);
     let mut out = Vec::new();
@@ -522,6 +520,7 @@ mod tests {
             overrides: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         }
     }
 

@@ -54,6 +54,7 @@ fn sessions_from_db(workspaces: &[PathBuf]) -> Option<Vec<LaunchSession>> {
                 let updated_at: i64 = row.get(3)?;
                 Ok(LaunchSession {
                     agent_id: "opencode".to_string(),
+                    profile_id: None,
                     session_id,
                     title,
                     workspace,
@@ -108,6 +109,7 @@ fn sessions_from_cli(workspaces: &[PathBuf]) -> Vec<LaunchSession> {
                 .unwrap_or_else(|| fallback_title(Path::new(workspace), &session_id));
             Some(LaunchSession {
                 agent_id: "opencode".to_string(),
+                profile_id: None,
                 session_id,
                 title,
                 workspace: workspace.to_string(),

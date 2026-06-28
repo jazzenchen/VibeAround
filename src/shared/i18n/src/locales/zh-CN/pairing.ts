@@ -16,9 +16,9 @@ export const zhCNPairing: Record<string, string> = {
     "打开任意已连接 VibeAround 的 IM 频道。",
   "This page will update automatically.": "此页面会自动更新。",
   "Generate new code": "生成新的配对码",
-  "I have a token — paste it": "我已有 token，直接粘贴",
-  "Session auth token (from ~/.vibearound/auth.json)":
-    "Session auth token（来自 ~/.vibearound/auth.json）",
+  "Get a token from VibeAround Desktop": "从 VibeAround Desktop 获取 token",
+  "Open VibeAround Desktop > Settings > General, copy Auth Token, then paste it here.":
+    "在 VibeAround Desktop 打开 Settings > General，复制 Auth Token 后粘贴到这里。",
   "hex token…": "hex token…",
   "Unlock dashboard": "解锁控制台",
   "VibeAround · pairing codes expire after 1 minute":

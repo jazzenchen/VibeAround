@@ -41,7 +41,7 @@ pub struct WebChannelManager {
     connections: RwLock<HashMap<String, HashMap<String, WebChatSink>>>,
     route_agents: RwLock<HashMap<String, String>>,
     route_sessions: RwLock<HashMap<String, String>>,
-    session_routes: RwLock<HashMap<String, String>>,
+    session_routes: RwLock<HashMap<String, RouteKey>>,
     route_history: RwLock<HashMap<String, Vec<ChannelOutput>>>,
     route_pending_permissions: RwLock<HashMap<String, HashMap<String, ChannelOutput>>>,
     route_pending_user_messages: RwLock<HashMap<String, Vec<PendingUserMessage>>>,
@@ -66,11 +66,12 @@ impl WebChannelManager {
 
     pub fn register_connection(
         &self,
-        route_chat_id: String,
+        route: &RouteKey,
         connection_id: String,
         sink: WebChatSink,
         replay_history: bool,
     ) {
+        let route_chat_id = route.chat_id.clone();
         self.connections
             .write()
             .entry(route_chat_id.clone())
@@ -99,9 +100,8 @@ impl WebChannelManager {
         }
         let active = self.route_activity_state(&route_chat_id);
         if active.is_some() || self.route_has_session(&route_chat_id) {
-            let route = RouteKey::new("web", &route_chat_id);
             let _ = sink.send(ChannelOutput::TurnStatus {
-                route,
+                route: route.clone(),
                 active: active.unwrap_or(false),
             });
         }
@@ -124,7 +124,7 @@ impl WebChannelManager {
             .insert(route_chat_id.to_string(), agent_id);
     }
 
-    pub fn route_for_session(&self, agent_id: &str, session_id: &str) -> Option<String> {
+    pub fn route_for_session(&self, agent_id: &str, session_id: &str) -> Option<RouteKey> {
         self.session_routes
             .read()
             .get(&session_key(agent_id, session_id))
@@ -152,8 +152,8 @@ impl WebChannelManager {
 
     pub fn session_is_active(&self, agent_id: &str, session_id: &str) -> bool {
         self.route_for_session(agent_id, session_id)
-            .as_deref()
-            .is_some_and(|route_chat_id| self.route_is_active(route_chat_id))
+            .as_ref()
+            .is_some_and(|route| self.route_is_active(&route.chat_id))
     }
 
     pub fn mark_route_active(&self, route: &RouteKey) {
@@ -246,7 +246,7 @@ impl WebChannelManager {
             if !manager.is_idle_deadline_current(&deadline) {
                 return;
             }
-            let _ = workspace_threads.detach_route(&deadline.route).await;
+            let _ = workspace_threads.shutdown_route_host(&deadline.route).await;
         });
     }
 
@@ -267,7 +267,7 @@ impl WebChannelManager {
         let chat_id = route.chat_id.clone();
         let mut follow_up_outputs = Vec::new();
         if let ChannelOutput::SessionReady { session_id, .. } = &output {
-            self.bind_route_session(&chat_id, session_id);
+            self.bind_route_session(&route, session_id);
             follow_up_outputs = self.take_pending_user_message_outputs(&route, session_id);
         }
         if let ChannelOutput::PermissionRequest { request_id, .. } = &output {
@@ -289,17 +289,15 @@ impl WebChannelManager {
         }
     }
 
-    fn bind_route_session(&self, route_chat_id: &str, session_id: &str) {
-        let Some(agent_id) = self.route_agents.read().get(route_chat_id).cloned() else {
+    fn bind_route_session(&self, route: &RouteKey, session_id: &str) {
+        let Some(agent_id) = self.route_agents.read().get(&route.chat_id).cloned() else {
             return;
         };
         let key = session_key(&agent_id, session_id);
         self.route_sessions
             .write()
-            .insert(route_chat_id.to_string(), key.clone());
-        self.session_routes
-            .write()
-            .insert(key, route_chat_id.to_string());
+            .insert(route.chat_id.clone(), key.clone());
+        self.session_routes.write().insert(key, route.clone());
     }
 
     fn broadcast_output(&self, route_chat_id: &str, output: ChannelOutput) {
@@ -457,7 +455,7 @@ mod tests {
         manager.mark_route_active(&route);
 
         let (tx, mut rx) = manager.sender();
-        manager.register_connection("chat-1".to_string(), "conn-1".to_string(), tx, true);
+        manager.register_connection(&route, "conn-1".to_string(), tx, true);
 
         assert_eq!(
             rx.try_recv().expect("turn status"),
@@ -475,7 +473,7 @@ mod tests {
         manager.set_route_agent("chat-1", "codex".to_string());
 
         let (tx, mut rx) = manager.sender();
-        manager.register_connection("chat-1".to_string(), "conn-1".to_string(), tx, true);
+        manager.register_connection(&route, "conn-1".to_string(), tx, true);
         manager.record_user_message(
             &route,
             "msg-1".to_string(),
@@ -509,7 +507,7 @@ mod tests {
         assert_eq!(payload["update"]["content"]["text"].as_str(), Some("hello"));
 
         let (tx, mut replay_rx) = manager.sender();
-        manager.register_connection("chat-1".to_string(), "conn-2".to_string(), tx, true);
+        manager.register_connection(&route, "conn-2".to_string(), tx, true);
         assert!(matches!(
             replay_rx.try_recv().expect("replayed session ready"),
             ChannelOutput::SessionReady { .. }
@@ -528,13 +526,32 @@ mod tests {
     }
 
     #[test]
+    fn session_routes_keep_original_channel_kind() {
+        let manager = WebChannelManager::new();
+        let route = RouteKey::new("tui", "chat-1");
+        manager.set_route_agent("chat-1", "codex".to_string());
+        manager.mark_route_active(&route);
+
+        manager.dispatch_output(ChannelOutput::SessionReady {
+            route: route.clone(),
+            session_id: "sid-1".to_string(),
+        });
+
+        assert_eq!(
+            manager.route_for_session("codex", "sid-1"),
+            Some(route.clone())
+        );
+        assert!(manager.session_is_active("codex", "sid-1"));
+    }
+
+    #[test]
     fn prompt_done_drops_unbound_pending_user_message() {
         let manager = WebChannelManager::new();
         let route = RouteKey::new("web", "chat-1");
         manager.set_route_agent("chat-1", "codex".to_string());
 
         let (tx, mut rx) = manager.sender();
-        manager.register_connection("chat-1".to_string(), "conn-1".to_string(), tx, true);
+        manager.register_connection(&route, "conn-1".to_string(), tx, true);
         manager.record_user_message(
             &route,
             "msg-1".to_string(),

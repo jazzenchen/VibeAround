@@ -4,7 +4,7 @@
 //! All data is embedded at compile time via `include_str!` and parsed
 //! once on first access via `LazyLock`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 static AGENTS_JSON: &str = include_str!("../../resources/agents.json");
+static AGENT_LAUNCH_JSON: &str = include_str!("../../resources/agent-launch.json");
 static TUNNELS_JSON: &str = include_str!("../../resources/tunnels.json");
 static PLUGINS_JSON: &str = include_str!("../../resources/plugins.json");
 static MCP_TOOLS_JSON: &str = include_str!("../../resources/mcp-tools.json");
@@ -75,6 +76,48 @@ pub struct AgentPtyConfig {
     pub platform_commands: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct AgentLaunchConfig {
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub platform_commands: HashMap<String, String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub platform_args: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub terminal_args: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub platform_terminal_args: HashMap<String, HashMap<String, Vec<String>>>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub platform_env: HashMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    pub terminal_env: HashMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    pub platform_terminal_env: HashMap<String, HashMap<String, BTreeMap<String, String>>>,
+    #[serde(default)]
+    pub resume: Option<AgentLaunchResumeConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct AgentLaunchResumeConfig {
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub platform_commands: HashMap<String, String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub platform_args: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub terminal_args: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    pub platform_terminal_args: HashMap<String, HashMap<String, Vec<String>>>,
+}
+
 impl AgentDef {
     pub fn supports_current_platform(&self) -> bool {
         self.platforms.is_empty()
@@ -84,6 +127,10 @@ impl AgentDef {
                 .any(|platform| platform == current_platform())
     }
 
+    pub fn supports_acp_runtime(&self) -> bool {
+        !self.direct_only && !self.acp.program.trim().is_empty()
+    }
+
     pub fn pty_command_for_current_platform(&self) -> &str {
         self.pty
             .platform_commands
@@ -91,6 +138,147 @@ impl AgentDef {
             .map(String::as_str)
             .unwrap_or(self.pty.command.as_str())
     }
+
+    pub fn launch_command_for_current_platform(&self) -> &str {
+        self.launch_config()
+            .and_then(AgentLaunchConfig::command_for_current_platform)
+            .unwrap_or_else(|| self.pty_command_for_current_platform())
+    }
+
+    pub fn launch_args_for_current_platform(&self) -> Vec<String> {
+        self.launch_args_for_terminal(None)
+    }
+
+    pub fn launch_args_for_terminal(&self, terminal_id: Option<&str>) -> Vec<String> {
+        self.launch_config()
+            .map(|launch| launch.args_for_terminal(terminal_id))
+            .unwrap_or_default()
+    }
+
+    pub fn launch_env_for_current_platform(&self) -> Vec<(String, String)> {
+        self.launch_env_for_terminal(None)
+    }
+
+    pub fn launch_env_for_terminal(&self, terminal_id: Option<&str>) -> Vec<(String, String)> {
+        let Some(launch) = self.launch_config() else {
+            return Vec::new();
+        };
+        launch.env_for_terminal(terminal_id)
+    }
+
+    pub fn launch_resume_for_current_platform(
+        &self,
+        session_id: &str,
+    ) -> Option<(String, Vec<String>)> {
+        self.launch_resume_for_terminal(session_id, None)
+    }
+
+    pub fn launch_resume_for_terminal(
+        &self,
+        session_id: &str,
+        terminal_id: Option<&str>,
+    ) -> Option<(String, Vec<String>)> {
+        let launch = self.launch_config()?;
+        let resume = launch.resume.as_ref()?;
+        let command = resume
+            .command_for_current_platform()
+            .or_else(|| launch.command_for_current_platform())
+            .unwrap_or_else(|| self.pty_command_for_current_platform())
+            .to_string();
+        let args = resume
+            .args_for_terminal(terminal_id)
+            .iter()
+            .map(|arg| render_launch_template_arg(arg, session_id))
+            .collect();
+        Some((command, args))
+    }
+
+    fn launch_config(&self) -> Option<&'static AgentLaunchConfig> {
+        agent_launch_by_id(&self.id)
+    }
+}
+
+impl AgentLaunchConfig {
+    fn command_for_current_platform(&self) -> Option<&str> {
+        self.platform_commands
+            .get(current_platform())
+            .or(self.command.as_ref())
+            .map(String::as_str)
+    }
+
+    fn args_for_terminal(&self, terminal_id: Option<&str>) -> Vec<String> {
+        let mut args = self.args.clone();
+        if let Some(platform_args) = self.platform_args.get(current_platform()) {
+            args.extend(platform_args.clone());
+        }
+        if let Some(terminal_id) = terminal_id {
+            if let Some(terminal_args) = self.terminal_args.get(terminal_id) {
+                args.extend(terminal_args.clone());
+            }
+            if let Some(platform_terminal_args) = self
+                .platform_terminal_args
+                .get(current_platform())
+                .and_then(|platform| platform.get(terminal_id))
+            {
+                args.extend(platform_terminal_args.clone());
+            }
+        }
+        args
+    }
+
+    fn env_for_terminal(&self, terminal_id: Option<&str>) -> Vec<(String, String)> {
+        let mut env = self.env.clone();
+        if let Some(platform_env) = self.platform_env.get(current_platform()) {
+            env.extend(platform_env.clone());
+        }
+        if let Some(terminal_id) = terminal_id {
+            if let Some(terminal_env) = self.terminal_env.get(terminal_id) {
+                env.extend(terminal_env.clone());
+            }
+            if let Some(platform_terminal_env) = self
+                .platform_terminal_env
+                .get(current_platform())
+                .and_then(|platform| platform.get(terminal_id))
+            {
+                env.extend(platform_terminal_env.clone());
+            }
+        }
+        env.into_iter().collect()
+    }
+}
+
+impl AgentLaunchResumeConfig {
+    fn command_for_current_platform(&self) -> Option<&str> {
+        self.platform_commands
+            .get(current_platform())
+            .or(self.command.as_ref())
+            .map(String::as_str)
+    }
+
+    fn args_for_terminal(&self, terminal_id: Option<&str>) -> Vec<String> {
+        let mut args = self
+            .platform_args
+            .get(current_platform())
+            .cloned()
+            .unwrap_or_else(|| self.args.clone());
+        if let Some(terminal_id) = terminal_id {
+            if let Some(terminal_args) = self.terminal_args.get(terminal_id) {
+                args.extend(terminal_args.clone());
+            }
+            if let Some(platform_terminal_args) = self
+                .platform_terminal_args
+                .get(current_platform())
+                .and_then(|platform| platform.get(terminal_id))
+            {
+                args.extend(platform_terminal_args.clone());
+            }
+        }
+        args
+    }
+}
+
+fn render_launch_template_arg(arg: &str, session_id: &str) -> String {
+    arg.replace("{session_id}", session_id)
 }
 
 fn current_platform() -> &'static str {
@@ -220,6 +408,10 @@ pub struct PtyTheme {
 pub static AGENTS: LazyLock<Vec<AgentDef>> =
     LazyLock::new(|| serde_json::from_str(AGENTS_JSON).expect("Failed to parse agents.json"));
 
+pub static AGENT_LAUNCHES: LazyLock<HashMap<String, AgentLaunchConfig>> = LazyLock::new(|| {
+    serde_json::from_str(AGENT_LAUNCH_JSON).expect("Failed to parse agent-launch.json")
+});
+
 pub static TUNNELS: LazyLock<Vec<TunnelDef>> =
     LazyLock::new(|| serde_json::from_str(TUNNELS_JSON).expect("Failed to parse tunnels.json"));
 
@@ -244,6 +436,12 @@ pub fn agent_by_id(id: &str) -> Option<&'static AgentDef> {
     AGENTS.iter().find(|a| a.id == id)
 }
 
+/// Find the external va-launch template for an agent by ID or alias.
+pub fn agent_launch_by_id(id: &str) -> Option<&'static AgentLaunchConfig> {
+    let canonical = resolve_agent_id(id).unwrap_or_else(|_| id.trim().to_lowercase());
+    AGENT_LAUNCHES.get(canonical.as_str())
+}
+
 /// Find an agent definition by any alias (including the primary ID).
 pub fn agent_by_alias(alias: &str) -> Option<&'static AgentDef> {
     let lower = alias.trim().to_lowercase();
@@ -258,6 +456,23 @@ pub fn resolve_agent_id(alias: &str) -> Result<String, String> {
     agent_by_alias(trimmed)
         .map(|def| def.id.clone())
         .ok_or_else(|| format!("Unknown agent '{}'", trimmed))
+}
+
+pub fn validate_acp_runtime_agent(agent_id: &str) -> Result<&'static AgentDef, String> {
+    let agent =
+        agent_by_id(agent_id).ok_or_else(|| format!("Unknown agent '{}'", agent_id.trim()))?;
+    if agent.supports_acp_runtime() {
+        Ok(agent)
+    } else {
+        Err(acp_runtime_agent_error(agent))
+    }
+}
+
+pub fn acp_runtime_agent_error(agent: &AgentDef) -> String {
+    format!(
+        "{} can only be opened directly from the local desktop app. It cannot run as an IM/channel agent because it does not expose an ACP runtime. Please choose an ACP-compatible agent such as Codex CLI.",
+        agent.display_name
+    )
 }
 
 /// Get all agent IDs.
@@ -368,6 +583,10 @@ mod tests {
     fn all_json_files_parse() {
         // Accessing the statics triggers parsing; .expect() will panic on failure
         assert!(!AGENTS.is_empty(), "agents.json should not be empty");
+        assert!(
+            !AGENT_LAUNCHES.is_empty(),
+            "agent-launch.json should not be empty"
+        );
         assert!(!TUNNELS.is_empty(), "tunnels.json should not be empty");
         assert!(!PLUGINS.is_empty(), "plugins.json should not be empty");
         assert!(!MCP_TOOLS.is_empty(), "mcp-tools.json should not be empty");
@@ -393,6 +612,52 @@ mod tests {
         assert!(agent_by_alias("claude-code").is_some());
         assert!(agent_by_alias("pi-coding-agent").is_some());
         assert!(agent_by_alias("nonexistent").is_none());
+    }
+
+    #[test]
+    fn launch_templates_extend_without_rewriting_pty_commands() {
+        let codex = agent_by_id("codex").expect("codex agent");
+        assert!(agent_launch_by_id("openai-codex").is_some());
+        assert_eq!(codex.pty_command_for_current_platform(), "codex");
+        assert_eq!(codex.launch_command_for_current_platform(), "codex");
+        assert_eq!(
+            codex.launch_args_for_current_platform(),
+            vec!["-c", "check_for_update_on_startup=false"]
+        );
+
+        let claude = agent_by_id("claude").expect("claude agent");
+        assert_eq!(
+            claude.pty_command_for_current_platform(),
+            "claude code --permission-mode acceptEdits"
+        );
+        assert_eq!(
+            claude.launch_env_for_current_platform(),
+            vec![
+                ("DISABLE_AUTOUPDATER".to_string(), "1".to_string()),
+                ("DISABLE_UPDATES".to_string(), "1".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn launch_templates_reference_registered_agents() {
+        for agent_id in AGENT_LAUNCHES.keys() {
+            assert!(
+                agent_by_id(agent_id).is_some(),
+                "launch template references unknown agent '{}'",
+                agent_id
+            );
+        }
+    }
+
+    #[test]
+    fn direct_only_agents_are_not_acp_runtime_agents() {
+        assert!(agent_by_id("codex").unwrap().supports_acp_runtime());
+        assert!(!agent_by_id("codex-desktop").unwrap().supports_acp_runtime());
+
+        let error = validate_acp_runtime_agent("codex-desktop").unwrap_err();
+        assert!(error.contains("Codex Desktop can only be opened directly"));
+        assert!(error.contains("IM/channel agent"));
     }
 
     #[test]

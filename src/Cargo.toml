@@ -2,6 +2,10 @@
 resolver = "2"
 members = [
     "core",
+    "client",
+    "cli",
+    "launcher",
+    "tui",
     "server",
     "desktop",
 ]

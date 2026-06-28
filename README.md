@@ -14,6 +14,18 @@
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch screen with agent profile and workspace selection" width="92%" />
 </p>
 
+## Important: v0.7.10 Breaking Change
+
+VibeAround v0.7.10 changes how local configuration is read and normalized. Some configuration fields have been merged, and some non-essential runtime/log data is no longer useful. For now, the recommended migration is a manual cleanup:
+
+1. Back up `~/.vibearound/profiles` and `~/.vibearound/settings.json`.
+2. Delete the `~/.vibearound` directory.
+3. Copy the backed-up `profiles` directory and `settings.json` back into `~/.vibearound`.
+4. Open VibeAround Desktop.
+5. Go to Settings and run the onboarding flow again.
+
+Known impact: API Bridge configuration may be lost during this migration. Re-enable API Bridge on the affected profiles to restore it.
+
 ## Why VibeAround
 
 VibeAround keeps AI coding work together without making you rebuild the environment you already have.
@@ -318,13 +330,13 @@ Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki
 
 ## Download
 
-Latest release: [VibeAround v0.7.9](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.9).
+Latest release: [VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.10).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.9.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-macOS-arm64-0.7.9.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-Setup-0.7.9.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-MSI-0.7.9.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-Portable-0.7.9.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Linux-x64-AppImage-0.7.9.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Linux-x64-DEB-0.7.9.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.10.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-macOS-arm64-0.7.10.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-Setup-0.7.10.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-MSI-0.7.10.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-Portable-0.7.10.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-AppImage-0.7.10.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-DEB-0.7.10.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
 
@@ -340,7 +352,7 @@ v0.7.3 changes Startkit state, detected agent sources, desktop launch targets, a
 4. Restore only durable state from the backup.
 5. Launch VibeAround v0.7.3 and rerun onboarding / Startkit setup if Launch, profile, Startkit, or desktop-agent settings look stale.
 
-Restore these durable items only: `settings.json`, `profiles/`, `google-oauth/`, `agents.json`, `launcher.json`, `state/`, `sessions/`, `launch-session-archive.json`, `workspaces/`, and `worktrees/`.
+Restore these durable items only: `settings.json`, `profiles/`, `google-oauth/`, `state/`, `sessions/`, `launch-session-archive.json`, `workspaces/`, and `worktrees/`.
 
 Do not restore generated or runtime data such as `.cache/`, `cache/startkit/`, `agents.detected.json`, `desktop-apps.detected.json`, `profile-state/`, `api-bridge/launches/`, `logs/`, `npm-global/`, `plugins/`, `bin/`, `runtime/`, or `auth.json`.
 
@@ -359,7 +371,7 @@ fi
 
 mkdir -p "$SOURCE"
 
-for item in settings.json profiles google-oauth agents.json launcher.json state sessions launch-session-archive.json workspaces worktrees; do
+for item in settings.json profiles google-oauth state sessions launch-session-archive.json workspaces worktrees; do
   [ -e "$BACKUP/$item" ] && cp -a "$BACKUP/$item" "$SOURCE/"
 done
 ```
@@ -380,7 +392,7 @@ if (Test-Path $SourceRoot) {
 New-Item -ItemType Directory -Force -Path $SourceRoot | Out-Null
 
 $Items = @(
-  "settings.json", "profiles", "google-oauth", "agents.json", "launcher.json",
+  "settings.json", "profiles", "google-oauth",
   "state", "sessions", "launch-session-archive.json", "workspaces", "worktrees"
 )
 

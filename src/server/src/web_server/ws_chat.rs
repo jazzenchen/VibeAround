@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
-    State,
+    Query, State,
 };
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -36,6 +36,7 @@ use super::AppState;
 /// WebSocket upgrade handler for web chat.
 pub async fn ws_chat_handler(
     State(state): State<AppState>,
+    Query(query): Query<WsChatQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
@@ -44,23 +45,73 @@ pub async fn ws_chat_handler(
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    ws.on_upgrade(move |socket| handle_chat_socket(socket, state))
+    let Ok(client) = ChatSocketClient::from_query(query.channel.as_deref()) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let chat_id = sanitize_chat_id(query.chat_id.as_deref());
+
+    ws.on_upgrade(move |socket| handle_chat_socket(socket, state, client, chat_id))
 }
 
-async fn handle_chat_socket(socket: WebSocket, state: AppState) {
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct WsChatQuery {
+    channel: Option<String>,
+    chat_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ChatSocketClient {
+    channel_kind: &'static str,
+    sender_id: &'static str,
+}
+
+impl ChatSocketClient {
+    fn from_query(channel: Option<&str>) -> Result<Self, ()> {
+        match channel.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("web") => Ok(Self {
+                channel_kind: "web",
+                sender_id: "web-user",
+            }),
+            Some("tui") => Ok(Self {
+                channel_kind: "tui",
+                sender_id: "tui-user",
+            }),
+            Some(_) => Err(()),
+        }
+    }
+}
+
+fn sanitize_chat_id(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || value.len() > 128 {
+        return None;
+    }
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+async fn handle_chat_socket(
+    socket: WebSocket,
+    state: AppState,
+    client: ChatSocketClient,
+    chat_id: Option<String>,
+) {
     let connection_id = Uuid::new_v4().to_string();
-    let chat_id = Uuid::new_v4().to_string();
-    let channel_id = format!("web:{}", chat_id);
-    let mut active_route = RouteKey::new("web", &chat_id);
+    let chat_id = chat_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let channel_id = format!("{}:{}", client.channel_kind, chat_id);
+    let mut active_route = RouteKey::new(client.channel_kind, &chat_id);
 
     // Register this connection for outbound ACP events
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelOutput>();
-    state.web_channel.register_connection(
-        active_route.chat_id.clone(),
-        connection_id.clone(),
-        tx.clone(),
-        false,
-    );
+    state
+        .web_channel
+        .register_connection(&active_route, connection_id.clone(), tx.clone(), false);
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
@@ -98,7 +149,7 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             Message::Text(text) => {
-                if let Some(input) = parse_web_chat_input(&active_route.chat_id, &text) {
+                if let Some(input) = parse_web_chat_input(&active_route, client.sender_id, &text) {
                     match input {
                         WebChatInput::Message {
                             input,
@@ -233,11 +284,11 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
                             response,
                         } => {
                             state.web_channel.clear_pending_permission(&request_id);
-                            if let Err(error) =
-                                state
-                                    .channel_hub
-                                    .respond_permission("web", &request_id, response)
-                            {
+                            if let Err(error) = state.channel_hub.respond_permission(
+                                &active_route.channel_kind,
+                                &request_id,
+                                response,
+                            ) {
                                 tracing::warn!(
                                     request_id = %request_id,
                                     error = %error,
@@ -261,16 +312,16 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState) {
                                 resolve_web_session_agent(&state, &active_route, agent.clone())
                                     .await
                             {
-                                if let Some(route_chat_id) =
+                                if let Some(route) =
                                     state.web_channel.route_for_session(&agent_id, &session_id)
                                 {
                                     state.web_channel.unregister_connection(
                                         &active_route.chat_id,
                                         &connection_id,
                                     );
-                                    active_route = RouteKey::new("web", &route_chat_id);
+                                    active_route = route;
                                     state.web_channel.register_connection(
-                                        active_route.chat_id.clone(),
+                                        &active_route,
                                         connection_id.clone(),
                                         tx.clone(),
                                         true,
@@ -655,15 +706,32 @@ async fn apply_web_session_resume_now(
     session_id: String,
     cwd: Option<String>,
 ) {
+    let requested_agent = agent
+        .as_deref()
+        .and_then(|agent| common::resources::resolve_agent_id(agent).ok());
+    let requested_agent_invalid = agent.is_some() && requested_agent.is_none();
+    let requested_profile = profile.clone();
+    let requested_session_id = session_id.clone();
     let Some(resume) =
         resolve_web_session_resume(state, route, agent, profile, session_id, cwd).await
     else {
+        if !requested_agent_invalid {
+            replay_current_route_session_if_matching(
+                state,
+                route,
+                requested_agent.as_deref(),
+                requested_profile.as_deref(),
+                &requested_session_id,
+            )
+            .await;
+        }
         return;
     };
 
     state
         .web_channel
         .set_route_agent(&route.chat_id, resume.agent.clone());
+    let requested_session_id = resume.session_id.clone();
     let runtime = match state
         .channel_hub
         .workspace_thread_manager()
@@ -683,8 +751,13 @@ async fn apply_web_session_resume_now(
             return;
         }
     };
+    let expected_session_id = runtime
+        .state()
+        .await
+        .session_id
+        .unwrap_or_else(|| requested_session_id.clone());
     let workspace_threads = state.channel_hub.workspace_thread_manager();
-    if let Err(error) = common::channels::prompt::start_runtime_and_notify(
+    let started = match common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
         &runtime,
         &state.channel_hub.plugin_host(),
@@ -693,7 +766,68 @@ async fn apply_web_session_resume_now(
     )
     .await
     {
-        send_web_system_text(state, route, &format!("❌ {}", error)).await;
+        Ok(started) => started,
+        Err(error) => {
+            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            return;
+        }
+    };
+    if !started {
+        return;
+    }
+    let actual_session_id = runtime.state().await.session_id;
+    if actual_session_id.as_deref() != Some(expected_session_id.as_str()) {
+        let actual = actual_session_id.unwrap_or_else(|| "a new session".to_string());
+        send_web_system_text(
+            state,
+            route,
+            &format!(
+                "Could not resume session {requested_session_id}; agent started {actual} instead."
+            ),
+        )
+        .await;
+    }
+}
+
+async fn replay_current_route_session_if_matching(
+    state: &AppState,
+    route: &RouteKey,
+    agent: Option<&str>,
+    profile: Option<&str>,
+    session_id: &str,
+) -> bool {
+    let manager = state.channel_hub.workspace_thread_manager();
+    let Ok(Some(runtime)) = manager.active_route_runtime(route).await else {
+        return false;
+    };
+    let runtime_state = runtime.state().await;
+    let agent_matches = agent
+        .map(|agent| runtime_state.host_binding.agent_id == agent)
+        .unwrap_or(true);
+    let profile_matches = profile
+        .map(|profile| runtime_state.host_binding.profile_id.as_deref() == Some(profile))
+        .unwrap_or(true);
+    if runtime_state.session_id.as_deref() != Some(session_id) || !agent_matches || !profile_matches
+    {
+        return false;
+    }
+    drop(runtime_state);
+
+    let workspace_threads = state.channel_hub.workspace_thread_manager();
+    match common::channels::prompt::start_runtime_and_notify(
+        &workspace_threads,
+        &runtime,
+        &state.channel_hub.plugin_host(),
+        route,
+        true,
+    )
+    .await
+    {
+        Ok(started) => started,
+        Err(error) => {
+            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            false
+        }
     }
 }
 
@@ -739,6 +873,13 @@ async fn resolve_web_session_resume(
             return None;
         }
     };
+    let profile = profile.or_else(|| {
+        current_state.as_ref().and_then(|state| {
+            (state.host_binding.agent_id == canonical_agent)
+                .then(|| state.host_binding.profile_id.clone())
+                .flatten()
+        })
+    });
 
     if current_state.as_ref().is_some_and(|state| {
         let profile_matches = profile
@@ -889,7 +1030,7 @@ enum WebChatSessionIntent {
     },
 }
 
-fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
+fn parse_web_chat_input(route: &RouteKey, sender_id: &str, text: &str) -> Option<WebChatInput> {
     let parsed = serde_json::from_str::<serde_json::Value>(text);
 
     match parsed {
@@ -914,11 +1055,11 @@ fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
                     Some(WebChatInput::Message {
                         input: ChannelInput::Message {
                             envelope: ChannelEnvelope {
-                                route: RouteKey::new("web", chat_id),
+                                route: route.clone(),
                                 message_id,
                                 turn_id: None,
                                 text: text.to_string(),
-                                sender_id: "web-user".to_string(),
+                                sender_id: sender_id.to_string(),
                                 attachments,
                                 parent_id: None,
                                 cli_kind: agent,
@@ -962,7 +1103,7 @@ fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
                     })
                 }
                 "stop" => Some(WebChatInput::Stop(ChannelInput::Stop {
-                    route: RouteKey::new("web", chat_id),
+                    route: route.clone(),
                 })),
                 "permission_response" => {
                     let request_id = v.get("requestId").and_then(|x| x.as_str())?.to_string();
@@ -991,11 +1132,11 @@ fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
                 Some(WebChatInput::Message {
                     input: ChannelInput::Message {
                         envelope: ChannelEnvelope {
-                            route: RouteKey::new("web", chat_id),
+                            route: route.clone(),
                             message_id: Uuid::new_v4().to_string(),
                             turn_id: None,
                             text: trimmed.to_string(),
-                            sender_id: "web-user".to_string(),
+                            sender_id: sender_id.to_string(),
                             attachments: vec![],
                             parent_id: None,
                             cli_kind: None,
@@ -1162,7 +1303,7 @@ fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
                 },
                 info.agent
                     .profile_id
-                    .unwrap_or_else(|| common::agent::launch::DIRECT_PROFILE_ID.to_string()),
+                    .unwrap_or_else(|| "Native".to_string()),
                 match info.start {
                     common::channels::types::ChannelSessionStart::New => "New session started",
                     common::channels::types::ChannelSessionStart::Resumed =>
@@ -1208,6 +1349,71 @@ fn acp_passthrough(payload: serde_json::Value) -> ChatEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn web_client() -> ChatSocketClient {
+        ChatSocketClient::from_query(None).expect("web client")
+    }
+
+    fn tui_client() -> ChatSocketClient {
+        ChatSocketClient::from_query(Some("tui")).expect("tui client")
+    }
+
+    fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
+        let client = web_client();
+        let route = RouteKey::new(client.channel_kind, chat_id);
+        super::parse_web_chat_input(&route, client.sender_id, text)
+    }
+
+    #[test]
+    fn chat_socket_client_defaults_to_web_and_accepts_tui() {
+        assert_eq!(web_client().channel_kind, "web");
+        assert_eq!(web_client().sender_id, "web-user");
+        assert_eq!(tui_client().channel_kind, "tui");
+        assert_eq!(tui_client().sender_id, "tui-user");
+        assert!(ChatSocketClient::from_query(Some("unknown")).is_err());
+    }
+
+    #[test]
+    fn chat_id_query_accepts_only_safe_stable_ids() {
+        assert_eq!(
+            super::sanitize_chat_id(Some("web_abc-123")).as_deref(),
+            Some("web_abc-123")
+        );
+        assert_eq!(
+            super::sanitize_chat_id(Some(" web_abc ")).as_deref(),
+            Some("web_abc")
+        );
+        assert!(super::sanitize_chat_id(Some("web:abc")).is_none());
+        assert!(super::sanitize_chat_id(Some("../secret")).is_none());
+        assert!(super::sanitize_chat_id(Some(&"a".repeat(129))).is_none());
+    }
+
+    #[test]
+    fn parses_tui_message_with_tui_route_identity() {
+        let input = super::parse_web_chat_input(
+            &RouteKey::new("tui", "chat-1"),
+            tui_client().sender_id,
+            r#"{"type":"message","text":"hello"}"#,
+        )
+        .expect("message input");
+
+        let WebChatInput::Message {
+            input:
+                ChannelInput::Message {
+                    envelope:
+                        ChannelEnvelope {
+                            route, sender_id, ..
+                        },
+                },
+            ..
+        } = input
+        else {
+            panic!("expected tui message");
+        };
+
+        assert_eq!(route, RouteKey::new("tui", "chat-1"));
+        assert_eq!(sender_id, "tui-user");
+    }
 
     #[test]
     fn parses_selected_permission_response() {

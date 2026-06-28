@@ -8,8 +8,6 @@ use common::profiles::{catalog, normalize_legacy_profile_and_persist, schema};
 use common::{config, profiles::AuthMode};
 use serde::Deserialize;
 
-use super::terminal;
-
 #[derive(Debug, Deserialize)]
 pub struct ProfileDraft {
     pub label: String,
@@ -24,6 +22,8 @@ pub struct ProfileDraft {
     pub use_settings_proxy: bool,
     #[serde(default)]
     pub provider_settings: ProviderSettings,
+    #[serde(default)]
+    pub connections: BTreeMap<String, agent_state::ProfileConnectionPreference>,
 }
 
 impl ProfileDraft {
@@ -38,6 +38,7 @@ impl ProfileDraft {
             overrides: self.overrides,
             use_settings_proxy: self.use_settings_proxy,
             provider_settings: self.provider_settings,
+            connections: self.connections,
         }
     }
 }
@@ -81,8 +82,7 @@ pub(super) fn save_profile(profile: &schema::ProfileDef) -> Result<(), String> {
 pub(super) fn delete_profile(id: &str) -> Result<(), String> {
     schema::delete(id).map_err(|e| e.to_string())?;
     clear_default_profile_references(id)?;
-    agent_state::remove_profile_references(id).map_err(|e| e.to_string())?;
-    terminal::remove_profile_connections(id).map_err(|e| e.to_string())
+    agent_state::remove_profile_references(id).map_err(|e| e.to_string())
 }
 
 pub(super) fn reorder_profiles(profile_ids: Vec<String>) -> Result<(), String> {
@@ -117,17 +117,6 @@ pub(crate) fn ordered_profiles() -> Vec<schema::ProfileDef> {
 fn clear_default_profile_references(profile_id: &str) -> Result<(), String> {
     config::update_settings_json(|root| {
         if let Some(obj) = root.as_object_mut() {
-            let mut remove_default_profiles = false;
-            if let Some(map) = obj
-                .get_mut("default_profiles")
-                .and_then(|value| value.as_object_mut())
-            {
-                map.retain(|_, value| value.as_str() != Some(profile_id));
-                remove_default_profiles = map.is_empty();
-            }
-            if remove_default_profiles {
-                obj.remove("default_profiles");
-            }
             if let Some(order) = obj
                 .get_mut("profile_order")
                 .and_then(|value| value.as_array_mut())

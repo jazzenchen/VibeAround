@@ -28,6 +28,8 @@ static OBSERVED_STORE_LOCK: Mutex<()> = Mutex::new(());
 #[serde(rename_all = "camelCase")]
 pub struct LaunchSession {
     pub agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
     pub session_id: String,
     pub title: String,
     pub workspace: String,
@@ -72,7 +74,50 @@ pub async fn list_for_agent_workspaces_with_archived_async(
     limit: usize,
     include_archived: bool,
 ) -> Vec<LaunchSession> {
-    let mut sessions = match agent_id {
+    let mut sessions =
+        native_sessions_for_agent_workspaces_async(agent_id, workspaces, include_archived).await;
+    sessions.extend(
+        workspaces
+            .iter()
+            .flat_map(|workspace| observed_sessions_for_agent_workspace(agent_id, workspace)),
+    );
+    finalize_workspace_sessions(agent_id, sessions, limit, include_archived)
+}
+
+pub async fn list_native_for_agent_workspace_with_archived_async(
+    agent_id: &str,
+    workspace: &Path,
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    let workspaces = [workspace.to_path_buf()];
+    list_native_for_agent_workspaces_with_archived_async(
+        agent_id,
+        &workspaces,
+        limit,
+        include_archived,
+    )
+    .await
+}
+
+pub async fn list_native_for_agent_workspaces_with_archived_async(
+    agent_id: &str,
+    workspaces: &[std::path::PathBuf],
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    let mut sessions =
+        native_sessions_for_agent_workspaces_async(agent_id, workspaces, include_archived).await;
+    apply_observed_profile_ids(agent_id, workspaces, &mut sessions);
+    finalize_workspace_sessions(agent_id, sessions, limit, include_archived)
+}
+
+async fn native_sessions_for_agent_workspaces_async(
+    agent_id: &str,
+    workspaces: &[std::path::PathBuf],
+    include_archived: bool,
+) -> Vec<LaunchSession> {
+    match agent_id {
         "codex" => codex::sessions_for_workspaces_async(workspaces, include_archived).await,
         "opencode" => {
             let workspaces = workspaces.to_vec();
@@ -94,12 +139,15 @@ pub async fn list_for_agent_workspaces_with_archived_async(
             .await
             .unwrap_or_default()
         }
-    };
-    sessions.extend(
-        workspaces
-            .iter()
-            .flat_map(|workspace| observed_sessions_for_agent_workspace(agent_id, workspace)),
-    );
+    }
+}
+
+fn finalize_workspace_sessions(
+    agent_id: &str,
+    mut sessions: Vec<LaunchSession>,
+    limit: usize,
+    include_archived: bool,
+) -> Vec<LaunchSession> {
     apply_archive_flags(agent_id, &mut sessions, include_archived);
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     dedupe_by_session_id(&mut sessions);
@@ -274,12 +322,59 @@ fn observed_sessions_for_agent_workspace(agent_id: &str, workspace: &Path) -> Ve
         })
         .map(|session| LaunchSession {
             agent_id: session.agent_id,
+            profile_id: session.profile_id,
             title: fallback_title(Path::new(&session.workspace), &session.session_id),
             workspace: session.workspace,
             session_id: session.session_id,
             updated_at: session.updated_at,
             source: format!("vibearound-{}", session.source),
             archived: false,
+        })
+        .collect()
+}
+
+fn apply_observed_profile_ids(
+    agent_id: &str,
+    workspaces: &[std::path::PathBuf],
+    sessions: &mut [LaunchSession],
+) {
+    let profiles = observed_profile_ids_for_agent_workspaces(agent_id, workspaces);
+    if profiles.is_empty() {
+        return;
+    }
+    for session in sessions {
+        if session.profile_id.is_some() {
+            continue;
+        }
+        let key = (session.workspace.clone(), session.session_id.clone());
+        if let Some(profile_id) = profiles.get(&key) {
+            session.profile_id = Some(profile_id.clone());
+        }
+    }
+}
+
+fn observed_profile_ids_for_agent_workspaces(
+    agent_id: &str,
+    workspaces: &[std::path::PathBuf],
+) -> HashMap<(String, String), String> {
+    let agent_id =
+        crate::resources::resolve_agent_id(agent_id).unwrap_or_else(|_| agent_id.to_string());
+    let workspace_keys = workspaces
+        .iter()
+        .map(|workspace| workspace_key(workspace))
+        .collect::<HashSet<_>>();
+    read_observed_store()
+        .sessions
+        .into_iter()
+        .filter(|session| {
+            session.agent_id == agent_id
+                && workspace_keys.contains(&session.workspace)
+                && !session.session_id.is_empty()
+        })
+        .filter_map(|session| {
+            session
+                .profile_id
+                .map(|profile_id| ((session.workspace, session.session_id), profile_id))
         })
         .collect()
 }

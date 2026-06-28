@@ -84,6 +84,8 @@ export const zhCNDesktopDashboard: Record<string, string> = {
     "新的启动和 IM 工作目录会创建在这个目录下。",
   "Restart Services": "重启服务",
   Restart: "重启",
+  "Current local service token from auth.json. Regenerated when services restart.":
+    "当前 auth.json 中的本地服务 token。重启服务后会重新生成。",
   "Rerun Onboarding": "重新运行配置向导",
   "Manage local service controls and rerun setup when needed.":
     "管理本地服务，并在需要时重新运行配置向导。",

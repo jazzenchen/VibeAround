@@ -97,7 +97,7 @@ fn write_config_if_changed(path: &Path, current: &str, next: String) -> anyhow::
 }
 
 fn apply_overlay_to_string(current: &str, overlay: &CodexDesktopOverlay) -> String {
-    let cleaned = cleanup_vibearound_blocks(current);
+    let cleaned = normalize_dashboard_mcp_urls(&cleanup_vibearound_blocks(current));
     let (body, restore_lines) = remove_conflicting_root_keys(&cleaned);
     let (root_body, table_body) = split_root_and_table_body(&body);
     let mut sections = Vec::new();
@@ -207,6 +207,54 @@ fn remove_unmarked_vibearound_overlay(input: &str) -> String {
     }
 
     ensure_trailing_newline(out.join("\n"))
+}
+
+fn normalize_dashboard_mcp_urls(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for line in input.lines() {
+        out.push_str(&normalize_dashboard_mcp_urls_in_line(line));
+        out.push('\n');
+    }
+    out
+}
+
+fn normalize_dashboard_mcp_urls_in_line(line: &str) -> String {
+    const HOST_PREFIXES: [&str; 2] = ["http://127.0.0.1:", "http://localhost:"];
+
+    let mut out = line.to_string();
+    for prefix in HOST_PREFIXES {
+        let mut search_from = 0;
+        while let Some(relative_start) = out[search_from..].find(prefix) {
+            let start = search_from + relative_start;
+            let port_start = start + prefix.len();
+            let port_end = port_start
+                + out[port_start..]
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_digit())
+                    .map(char::len_utf8)
+                    .sum::<usize>();
+            if port_end == port_start {
+                search_from = port_start;
+                continue;
+            }
+
+            let Some(rest) = out.get(port_end..) else {
+                break;
+            };
+            if rest.starts_with("/mcp") && rest[4..].chars().next().is_none_or(is_mcp_url_boundary)
+            {
+                out.replace_range(port_end..port_end + 4, "/va/mcp");
+                search_from = port_end + "/va/mcp".len();
+            } else {
+                search_from = port_end;
+            }
+        }
+    }
+    out
+}
+
+fn is_mcp_url_boundary(ch: char) -> bool {
+    ch == '?' || ch == '"' || ch == '\'' || ch.is_ascii_whitespace()
 }
 
 fn remove_conflicting_root_keys(input: &str) -> (String, Vec<String>) {
@@ -563,6 +611,7 @@ mod tests {
             overrides: Default::default(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
+            connections: Default::default(),
         }
     }
 
@@ -597,7 +646,7 @@ mod tests {
 model_provider = "openai"
 
 [mcp_servers.local]
-url = "http://127.0.0.1:12358/mcp"
+url = "http://127.0.0.1:12358/va/mcp"
 "#;
 
         let next = apply_overlay_to_string(current, &overlay());
@@ -611,7 +660,7 @@ url = "http://127.0.0.1:12358/mcp"
         assert!(next.contains("supports_websockets = false"));
         assert!(next.contains("experimental_bearer_token = 'sk-test'"));
         assert!(!next.contains("env_key = 'OPENAI_API_KEY'"));
-        assert!(next.contains("[mcp_servers.local]\nurl = \"http://127.0.0.1:12358/mcp\""));
+        assert!(next.contains("[mcp_servers.local]\nurl = \"http://127.0.0.1:12358/va/mcp\""));
     }
 
     #[test]
@@ -619,7 +668,7 @@ url = "http://127.0.0.1:12358/mcp"
         let current = r#"notify = ["echo", "done"]
 
 [mcp_servers.local]
-url = "http://127.0.0.1:12358/mcp"
+url = "http://127.0.0.1:12358/va/mcp"
 "#;
 
         let next = apply_overlay_to_string(current, &overlay());
@@ -638,6 +687,22 @@ url = "http://127.0.0.1:12358/mcp"
         assert!(provider_index < mcp_index);
         assert!(parsed.get("notify").is_some());
         assert!(provider.get("notify").is_none());
+    }
+
+    #[test]
+    fn overlay_migrates_legacy_local_mcp_url_to_va_base() {
+        let current = r#"[mcp_servers.local]
+url = "http://127.0.0.1:12358/mcp?token=secret"
+
+[mcp_servers.remote]
+url = "https://example.com/mcp"
+"#;
+
+        let next = apply_overlay_to_string(current, &overlay());
+
+        assert!(next.contains("url = \"http://127.0.0.1:12358/va/mcp?token=secret\""));
+        assert!(!next.contains("127.0.0.1:12358/mcp"));
+        assert!(next.contains("url = \"https://example.com/mcp\""));
     }
 
     #[test]

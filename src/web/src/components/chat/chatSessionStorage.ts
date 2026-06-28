@@ -18,6 +18,11 @@ export interface StoredLaunchSelection {
 
 export interface StoredActiveLaunchSession {
   agentId: string;
+  hostAgentId?: string;
+  hostProfileId?: string;
+  hostProfileLabel?: string;
+  hostProvider?: string;
+  hostProviderLabel?: string;
   sessionId: string;
   workspace: string;
   title?: string;
@@ -25,6 +30,7 @@ export interface StoredActiveLaunchSession {
   shortId?: string;
   archived?: boolean;
   active?: boolean;
+  threadId?: string;
 }
 
 interface StoredLaunchSessionCache {
@@ -79,6 +85,13 @@ export function readStoredActiveLaunchSession():
     }
     return {
       agentId: parsed.agentId,
+      hostAgentId: typeof parsed.hostAgentId === "string" ? parsed.hostAgentId : undefined,
+      hostProfileId: typeof parsed.hostProfileId === "string" ? parsed.hostProfileId : undefined,
+      hostProfileLabel:
+        typeof parsed.hostProfileLabel === "string" ? parsed.hostProfileLabel : undefined,
+      hostProvider: typeof parsed.hostProvider === "string" ? parsed.hostProvider : undefined,
+      hostProviderLabel:
+        typeof parsed.hostProviderLabel === "string" ? parsed.hostProviderLabel : undefined,
       sessionId: parsed.sessionId,
       workspace: parsed.workspace,
       title: typeof parsed.title === "string" ? parsed.title : undefined,
@@ -86,6 +99,7 @@ export function readStoredActiveLaunchSession():
       shortId: typeof parsed.shortId === "string" ? parsed.shortId : undefined,
       archived: typeof parsed.archived === "boolean" ? parsed.archived : undefined,
       active: typeof parsed.active === "boolean" ? parsed.active : undefined,
+      threadId: typeof parsed.threadId === "string" ? parsed.threadId : undefined,
     };
   } catch {
     return undefined;
@@ -97,6 +111,11 @@ export function storedActiveLaunchSessionFromInfo(
 ): StoredActiveLaunchSession {
   return {
     agentId: session.agent_id,
+    hostAgentId: session.host_agent_id ?? undefined,
+    hostProfileId: session.host_profile_id ?? undefined,
+    hostProfileLabel: session.host_profile_label ?? undefined,
+    hostProvider: session.host_provider ?? undefined,
+    hostProviderLabel: session.host_provider_label ?? undefined,
     sessionId: session.session_id,
     workspace: session.workspace,
     title: session.title,
@@ -104,6 +123,7 @@ export function storedActiveLaunchSessionFromInfo(
     shortId: session.short_id,
     archived: session.archived,
     active: session.active,
+    threadId: session.thread_id ?? undefined,
   };
 }
 
@@ -112,6 +132,11 @@ export function storedActiveLaunchSessionToInfo(
 ): LaunchSessionInfo {
   return {
     agent_id: session.agentId,
+    host_agent_id: session.hostAgentId,
+    host_profile_id: session.hostProfileId,
+    host_profile_label: session.hostProfileLabel,
+    host_provider: session.hostProvider,
+    host_provider_label: session.hostProviderLabel,
     session_id: session.sessionId,
     workspace: session.workspace,
     title: session.title ?? session.sessionId,
@@ -119,6 +144,7 @@ export function storedActiveLaunchSessionToInfo(
     short_id: session.shortId ?? session.sessionId.slice(0, 8),
     archived: session.archived ?? false,
     active: session.active,
+    thread_id: session.threadId,
   };
 }
 

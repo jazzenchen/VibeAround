@@ -104,9 +104,8 @@ impl<'a> LaunchPlanBuilder<'a> {
 
     fn build_direct_plan(&self, agent_id: &str) -> anyhow::Result<LaunchPlan> {
         let agent = resources::agent_by_id(agent_id)
-            .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
+            .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
 
         let Some(session_id) = self.session_id else {
             if agent_id == "codex-desktop" {
@@ -121,7 +120,7 @@ impl<'a> LaunchPlanBuilder<'a> {
                 command: direct_launch_command_for_agent(
                     agent_id,
                     &agent,
-                    agent.pty_command_for_current_platform(),
+                    agent.launch_command_for_current_platform(),
                 )?,
                 args: terminal_launch_args_for_agent(agent_id),
                 cleanup_paths: Vec::new(),
@@ -157,9 +156,8 @@ impl<'a> LaunchPlanBuilder<'a> {
     ) -> anyhow::Result<LaunchPlan> {
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let agent = resources::agent_by_id(agent_id)
-            .ok_or_else(|| anyhow!("agent '{}' not found in agents.json", agent_id))?;
+            .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
         if agent_id == "codex-desktop" {
             let mut env = Vec::new();
             let mut args = Vec::new();
@@ -175,7 +173,7 @@ impl<'a> LaunchPlanBuilder<'a> {
                 command: direct_launch_command_for_agent(
                     agent_id,
                     &agent,
-                    agent.pty_command_for_current_platform(),
+                    agent.launch_command_for_current_platform(),
                 )?,
                 args,
                 cleanup_paths: Vec::new(),
@@ -197,7 +195,7 @@ impl<'a> LaunchPlanBuilder<'a> {
                 command: direct_launch_command_for_agent(
                     agent_id,
                     &agent,
-                    agent.pty_command_for_current_platform(),
+                    agent.launch_command_for_current_platform(),
                 )?,
                 args: Vec::new(),
                 cleanup_paths: Vec::new(),
@@ -214,7 +212,10 @@ impl<'a> LaunchPlanBuilder<'a> {
 
         Ok(LaunchPlan {
             env,
-            command: launch_command_for_agent(agent_id, agent.pty_command_for_current_platform())?,
+            command: launch_command_for_agent(
+                agent_id,
+                agent.launch_command_for_current_platform(),
+            )?,
             args: command_args,
             cleanup_paths: Vec::new(),
             window_label: profile.label.clone(),
@@ -237,7 +238,6 @@ impl<'a> LaunchPlanBuilder<'a> {
 
         let agent_id = profiles::runtime::agent_id_for(launch_target)?;
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
-        install_project_integrations_for_launch(agent_id, &workspace)?;
         let (command, resume_args) = resume_command_for_agent(agent_id, session_id)?;
         let mut args = rendered.command_args.clone();
         args.extend(terminal_launch_args_for_agent(agent_id));
@@ -262,7 +262,7 @@ fn macos_app_probe_for_direct_agent(agent_id: &str, agent: &resources::AgentDef)
         return None;
     }
     macos_configured_app_name(agent_id)
-        .or_else(|| open_app_name(agent.pty_command_for_current_platform()))
+        .or_else(|| open_app_name(agent.launch_command_for_current_platform()))
 }
 
 fn open_app_name(command: &str) -> Option<String> {
@@ -278,7 +278,7 @@ fn windows_process_probe_for_direct_agent(agent: &resources::AgentDef) -> Option
     if !cfg!(target_os = "windows") || !agent.direct_only {
         return None;
     }
-    start_process_name(agent.pty_command_for_current_platform())
+    start_process_name(agent.launch_command_for_current_platform())
 }
 
 #[cfg(not(test))]
@@ -406,23 +406,6 @@ fn append_vibearound_launch_context_env(
     ));
 }
 
-fn install_project_integrations_for_launch(
-    agent_id: &str,
-    workspace: &std::path::Path,
-) -> anyhow::Result<()> {
-    let integration_agent_id = project_integration_agent_id(agent_id);
-    agent_integrations::auto_install_project_integrations(integration_agent_id, workspace)
-        .with_context(|| format!("install project integrations for {}", integration_agent_id))
-}
-
-fn project_integration_agent_id(agent_id: &str) -> &str {
-    match agent_id {
-        "claude-desktop" => "claude",
-        "codex-desktop" => "codex",
-        other => other,
-    }
-}
-
 fn append_local_bridge_proxy_bypass_env(env: &mut Vec<(String, String)>) {
     env.retain(|(key, _)| !LOCAL_BRIDGE_PROXY_ENV_KEYS.contains(&key.as_str()));
     env.extend([
@@ -483,48 +466,11 @@ fn resume_command_for_agent(
     agent_id: &str,
     session_id: &str,
 ) -> anyhow::Result<(String, Vec<String>)> {
-    let command = match agent_id {
-        "claude" => (
-            "claude".to_string(),
-            vec![
-                "--resume".to_string(),
-                session_id.to_string(),
-                "--permission-mode".to_string(),
-                "acceptEdits".to_string(),
-            ],
-        ),
-        "codex" => (
-            "codex".to_string(),
-            vec!["resume".to_string(), session_id.to_string()],
-        ),
-        "pi" => (
-            "pi".to_string(),
-            vec!["--session".to_string(), session_id.to_string()],
-        ),
-        "gemini" => (
-            "gemini".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        "opencode" => (
-            "opencode".to_string(),
-            vec!["--session".to_string(), session_id.to_string()],
-        ),
-        "cursor" => (
-            "cursor-agent".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        "qwen-code" => (
-            "qwen".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        other => {
-            return Err(anyhow!(
-                "resume launch is not supported for agent '{}'",
-                other
-            ))
-        }
-    };
-    Ok(command)
+    let agent = resources::agent_by_id(agent_id)
+        .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
+    agent
+        .launch_resume_for_current_platform(session_id)
+        .ok_or_else(|| anyhow!("resume launch is not supported for agent '{}'", agent_id))
 }
 
 #[cfg(test)]
@@ -597,6 +543,7 @@ mod tests {
             .collect::<BTreeMap<_, _>>(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
+            connections: Default::default(),
         }
     }
 
@@ -645,13 +592,6 @@ mod tests {
         } else {
             assert!(args.is_empty());
         }
-    }
-
-    #[test]
-    fn desktop_launches_install_companion_cli_integrations() {
-        assert_eq!(project_integration_agent_id("codex-desktop"), "codex");
-        assert_eq!(project_integration_agent_id("claude-desktop"), "claude");
-        assert_eq!(project_integration_agent_id("gemini"), "gemini");
     }
 
     #[test]

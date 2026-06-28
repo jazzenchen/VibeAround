@@ -1,6 +1,6 @@
 //! Workspace/thread orchestration.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,6 +33,23 @@ const LEGACY_CHANNEL_DEFAULT_CHAT_ID: &str = "__channel_default__";
 pub enum ExternalSessionAttachMode {
     ReuseOpenThread,
     NewThread,
+}
+
+struct PreparedExternalSessionThread {
+    workspace: WorkspaceRecord,
+    host_binding: HostBinding,
+    agent_id: String,
+    profile_id: Option<String>,
+    session_id: String,
+    thread: WorkspaceThread,
+}
+
+pub fn web_chat_id_for_thread(thread_id: &WorkspaceThreadId) -> String {
+    format!("ws_{}", thread_id.as_str())
+}
+
+pub fn web_route_for_thread(thread_id: &WorkspaceThreadId) -> RouteKey {
+    RouteKey::new("web", web_chat_id_for_thread(thread_id))
 }
 
 pub struct WorkspaceThreadManager {
@@ -285,92 +302,55 @@ impl WorkspaceThreadManager {
         cwd: PathBuf,
         mode: ExternalSessionAttachMode,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        let profile_id = Some(crate::agent::launch::normalize_launch_profile_id(
-            profile_id.as_deref(),
-        ));
-        let workspace = self.ensure_workspace_for_cwd(cwd).await?;
-        let host_binding = HostBinding::new(agent_id.clone(), profile_id.clone());
-        let projection = self.thread_projection().await?;
-        let session_seen_in_thread_store =
-            projection.for_workspace(&workspace.id, true).any(|thread| {
-                thread
-                    .agent_sessions
-                    .values()
-                    .flatten()
-                    .any(|session| session.agent_id == agent_id && session.session_id == session_id)
-            });
-        let thread = if mode == ExternalSessionAttachMode::ReuseOpenThread {
-            projection
-                .for_workspace(&workspace.id, false)
-                .find(|thread| {
-                    thread.status != ThreadStatus::Closed
-                        && thread.agent_sessions.values().flatten().any(|session| {
-                            session.agent_id == agent_id && session.session_id == session_id
-                        })
-                })
-                .cloned()
-        } else {
-            None
-        };
-        let thread = if let Some(thread) = thread {
-            thread
-        } else {
-            let session_exists = session_seen_in_thread_store
-                || crate::launch_sessions::list_for_agent_workspace_with_archived_async(
-                    &agent_id,
-                    &workspace.cwd,
-                    usize::MAX,
-                    false,
-                )
-                .await
-                .into_iter()
-                .any(|session| session.session_id == session_id);
-            if !session_exists {
-                return Err(anyhow!(
-                    "session '{}' was not found for agent '{}' in workspace {}",
-                    session_id,
-                    agent_id,
-                    workspace.cwd.to_string_lossy()
-                ));
-            }
-            self.new_thread_record_with_host(workspace.id.clone(), host_binding.clone())
-        };
-
-        self.ensure_thread_persisted(&thread).await?;
-        if thread.status != ThreadStatus::Closed && thread.host_binding != host_binding {
-            self.thread_store
-                .append(&ThreadEvent::host_changed(
-                    thread.id.clone(),
-                    host_binding.clone(),
-                    false,
-                ))
-                .await
-                .context("append external session host binding")?;
-            self.notify_change();
-        }
-        if thread.status != ThreadStatus::Closed
-            && !thread.has_agent_session(&host_binding, &session_id)
-        {
-            self.thread_store
-                .append(&ThreadEvent::agent_session_observed(
-                    thread.id.clone(),
-                    agent_id,
-                    profile_id,
-                    session_id,
-                ))
-                .await
-                .context("append external session")?;
-            self.notify_change();
-        }
+        let prepared = self
+            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd, mode)
+            .await?;
+        let thread = self.ensure_external_session_thread(&prepared).await?;
         if self.current_attachment(route).await?.is_some() {
             self.detach_route(route).await?;
         }
-        self.attach_route(route.clone(), workspace.id, thread.id.clone())
+        self.attach_route(
+            route.clone(),
+            prepared.workspace.id.clone(),
+            thread.id.clone(),
+        )
+        .await?;
+        self.runtime_from_thread(thread).await
+    }
+
+    pub async fn attach_external_session_to_web_thread(
+        &self,
+        agent_id: String,
+        profile_id: Option<String>,
+        session_id: String,
+        cwd: PathBuf,
+        mode: ExternalSessionAttachMode,
+    ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        let prepared = self
+            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd, mode)
             .await?;
-        let thread = self
-            .thread(&thread.id)
-            .await?
-            .ok_or_else(|| anyhow!("thread {} not found after attach", thread.id))?;
+        let route = web_route_for_thread(&prepared.thread.id);
+        let thread = self.ensure_external_session_thread(&prepared).await?;
+        self.attach_route(route, prepared.workspace.id.clone(), thread.id.clone())
+            .await?;
+        self.runtime_from_thread(thread).await
+    }
+
+    pub async fn create_web_thread_for_cwd_with_host(
+        &self,
+        agent_id: String,
+        profile_id: Option<String>,
+        cwd: PathBuf,
+    ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        let profile_id = normalize_optional_launch_profile_id(profile_id.as_deref())
+            .or_else(|| launch_setting_profile_for_agent(&agent_id));
+        let workspace = self.ensure_workspace_for_cwd(cwd).await?;
+        let host_binding = HostBinding::new(agent_id, profile_id);
+        let thread = self.new_thread_record_with_host(workspace.id.clone(), host_binding);
+        let route = web_route_for_thread(&thread.id);
+        self.ensure_thread_persisted(&thread).await?;
+        self.attach_route(route, workspace.id, thread.id.clone())
+            .await?;
         self.runtime_from_thread(thread).await
     }
 
@@ -393,6 +373,316 @@ impl WorkspaceThreadManager {
             .active()
             .cloned()
             .collect())
+    }
+
+    pub async fn list_resumable_agent_sessions(
+        &self,
+        agent_id: &str,
+        workspace: &Path,
+        limit: usize,
+        include_archived: bool,
+    ) -> anyhow::Result<Vec<crate::launch_sessions::LaunchSession>> {
+        let workspace = normalize_workspace_cwd(workspace);
+        let excluded = self
+            .subagent_session_ids_for_agent_workspace(agent_id, &workspace)
+            .await?;
+        let sessions = crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
+            agent_id,
+            &workspace,
+            usize::MAX,
+            include_archived,
+        )
+        .await
+        .into_iter()
+        .filter(|session| !excluded.contains(&session.session_id))
+        .take(limit)
+        .collect();
+        Ok(sessions)
+    }
+
+    pub async fn thread_id_for_agent_session(
+        &self,
+        agent_id: &str,
+        workspace: &Path,
+        session_id: &str,
+    ) -> anyhow::Result<Option<WorkspaceThreadId>> {
+        Ok(self
+            .thread_host_for_agent_session(agent_id, workspace, session_id)
+            .await?
+            .map(|(thread_id, _)| thread_id))
+    }
+
+    pub async fn thread_host_for_agent_session(
+        &self,
+        agent_id: &str,
+        workspace: &Path,
+        session_id: &str,
+    ) -> anyhow::Result<Option<(WorkspaceThreadId, HostBinding)>> {
+        let workspace = normalize_workspace_cwd(workspace);
+        let workspace_projection = self.workspace_projection().await?;
+        let Some(workspace) = workspace_by_cwd(&workspace_projection, &workspace) else {
+            return Ok(None);
+        };
+        let thread_projection = self.thread_projection().await?;
+        Ok(thread_projection
+            .for_workspace(&workspace.id, true)
+            .filter(|thread| {
+                thread
+                    .agent_sessions
+                    .values()
+                    .flatten()
+                    .any(|session| session.agent_id == agent_id && session.session_id == session_id)
+            })
+            .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
+            .map(|thread| (thread.id.clone(), thread.host_binding.clone())))
+    }
+
+    pub async fn subagent_session_ids_for_agent_workspace(
+        &self,
+        agent_id: &str,
+        cwd: &Path,
+    ) -> anyhow::Result<HashSet<String>> {
+        let cwd = normalize_workspace_cwd(cwd);
+        let workspace_projection = self.workspace_projection().await?;
+        let Some(workspace) = workspace_by_cwd(&workspace_projection, &cwd) else {
+            return Ok(HashSet::new());
+        };
+        let thread_projection = self.thread_projection().await?;
+        Ok(thread_projection
+            .for_workspace(&workspace.id, true)
+            .flat_map(|thread| thread.agents.values())
+            .filter(|agent| agent.agent_id == agent_id)
+            .filter_map(|agent| agent.session_id.clone())
+            .collect())
+    }
+
+    async fn resolve_external_session_id(
+        &self,
+        projection: &ThreadProjection,
+        workspace_id: &WorkspaceId,
+        workspace: &Path,
+        host_binding: &HostBinding,
+        requested_session_id: &str,
+    ) -> anyhow::Result<String> {
+        let requested_session_id = requested_session_id.trim();
+        if requested_session_id.is_empty() {
+            return Ok(String::new());
+        }
+
+        if let Some(session_id) = resolve_thread_session_alias(
+            projection,
+            workspace_id,
+            host_binding,
+            requested_session_id,
+        )? {
+            return Ok(session_id);
+        }
+
+        let matches = crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
+            &host_binding.agent_id,
+            workspace,
+            usize::MAX,
+            false,
+        )
+        .await
+        .into_iter()
+        .filter(|session| session_id_matches(&session.session_id, requested_session_id))
+        .map(|session| session.session_id)
+        .collect::<Vec<_>>();
+
+        match unique_session_match(matches, requested_session_id)? {
+            Some(session_id) => Ok(session_id),
+            None => Ok(requested_session_id.to_string()),
+        }
+    }
+
+    async fn prepare_external_session_thread(
+        &self,
+        agent_id: String,
+        profile_id: Option<String>,
+        session_id: String,
+        cwd: PathBuf,
+        mode: ExternalSessionAttachMode,
+    ) -> anyhow::Result<PreparedExternalSessionThread> {
+        let workspace = self.ensure_workspace_for_cwd(cwd).await?;
+        let projection = self.thread_projection().await?;
+        let explicit_profile_id = normalize_optional_launch_profile_id(profile_id.as_deref());
+        let launch_setting_profile_id = launch_setting_profile_for_agent(&agent_id);
+        let alias_binding = HostBinding::new(
+            agent_id.clone(),
+            explicit_profile_id
+                .clone()
+                .or_else(|| launch_setting_profile_id.clone()),
+        );
+        let session_id = self
+            .resolve_external_session_id(
+                &projection,
+                &workspace.id,
+                &workspace.cwd,
+                &alias_binding,
+                &session_id,
+            )
+            .await?;
+        let profile_id = match explicit_profile_id {
+            Some(profile_id) => Some(profile_id),
+            None => self
+                .profile_id_for_agent_session(
+                    &projection,
+                    &workspace.id,
+                    &workspace.cwd,
+                    &agent_id,
+                    &session_id,
+                )
+                .await?
+                .or(launch_setting_profile_id),
+        };
+        let host_binding = HostBinding::new(agent_id.clone(), profile_id.clone());
+        let session_seen_in_thread_store =
+            projection.for_workspace(&workspace.id, true).any(|thread| {
+                thread
+                    .agent_sessions
+                    .values()
+                    .flatten()
+                    .any(|session| session.agent_id == agent_id && session.session_id == session_id)
+            });
+        let thread = if mode == ExternalSessionAttachMode::ReuseOpenThread {
+            // TODO: Revisit persisted thread lifecycle states here. "Closed" can
+            // mean user-ended, while Web idle only unloads the runtime; session
+            // resume should not accidentally split one native session across
+            // multiple workspace thread ids.
+            projection
+                .for_workspace(&workspace.id, false)
+                .find(|thread| {
+                    thread.status != ThreadStatus::Closed
+                        && thread.agent_sessions.values().flatten().any(|session| {
+                            session.agent_id == agent_id && session.session_id == session_id
+                        })
+                })
+                .cloned()
+        } else {
+            None
+        };
+        let thread = if let Some(thread) = thread {
+            thread
+        } else {
+            let session_exists = session_seen_in_thread_store
+                || crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
+                    &agent_id,
+                    &workspace.cwd,
+                    usize::MAX,
+                    false,
+                )
+                .await
+                .into_iter()
+                .any(|session| session.session_id == session_id);
+            if !session_exists {
+                return Err(anyhow!(
+                    "session '{}' was not found for agent '{}' in workspace {}",
+                    session_id,
+                    agent_id,
+                    workspace.cwd.to_string_lossy()
+                ));
+            }
+            self.new_thread_record_with_host(workspace.id.clone(), host_binding.clone())
+        };
+
+        Ok(PreparedExternalSessionThread {
+            workspace,
+            host_binding,
+            agent_id,
+            profile_id,
+            session_id,
+            thread,
+        })
+    }
+
+    async fn profile_id_for_agent_session(
+        &self,
+        projection: &ThreadProjection,
+        workspace_id: &WorkspaceId,
+        workspace: &Path,
+        agent_id: &str,
+        session_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        if let Some(profile_id) =
+            projection
+                .for_workspace(workspace_id, true)
+                .filter(|thread| {
+                    thread.agent_sessions.values().flatten().any(|session| {
+                        session.agent_id == agent_id && session.session_id == session_id
+                    })
+                })
+                .max_by(|a, b| a.updated_at.cmp(&b.updated_at))
+                .and_then(|thread| {
+                    if thread.host_binding.agent_id == agent_id {
+                        thread.host_binding.profile_id.clone()
+                    } else {
+                        thread
+                            .agent_sessions
+                            .values()
+                            .flatten()
+                            .filter(|session| {
+                                session.agent_id == agent_id && session.session_id == session_id
+                            })
+                            .max_by(|a, b| a.observed_at.cmp(&b.observed_at))
+                            .and_then(|session| session.profile_id.clone())
+                    }
+                })
+        {
+            return Ok(Some(profile_id));
+        }
+
+        Ok(
+            crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
+                agent_id,
+                workspace,
+                usize::MAX,
+                false,
+            )
+            .await
+            .into_iter()
+            .find(|session| session.session_id == session_id)
+            .and_then(|session| session.profile_id),
+        )
+    }
+
+    async fn ensure_external_session_thread(
+        &self,
+        prepared: &PreparedExternalSessionThread,
+    ) -> anyhow::Result<WorkspaceThread> {
+        let thread = &prepared.thread;
+        self.ensure_thread_persisted(thread).await?;
+        if thread.status != ThreadStatus::Closed && thread.host_binding != prepared.host_binding {
+            self.thread_store
+                .append(&ThreadEvent::host_changed(
+                    thread.id.clone(),
+                    prepared.host_binding.clone(),
+                    false,
+                ))
+                .await
+                .context("append external session host binding")?;
+            self.notify_change();
+        }
+        if thread.status != ThreadStatus::Closed
+            && !thread.has_agent_session(&prepared.host_binding, &prepared.session_id)
+        {
+            self.thread_store
+                .append(&ThreadEvent::agent_session_observed(
+                    thread.id.clone(),
+                    prepared.agent_id.clone(),
+                    prepared.profile_id.clone(),
+                    prepared.session_id.clone(),
+                ))
+                .await
+                .context("append external session")?;
+            self.notify_change();
+        }
+        self.thread(&thread.id).await?.ok_or_else(|| {
+            anyhow!(
+                "thread {} not found after external session attach",
+                thread.id
+            )
+        })
     }
 
     pub async fn switch_workspace_id(
@@ -643,6 +933,9 @@ impl WorkspaceThreadManager {
             .get(&attached.thread_id)
             .map(|entry| Arc::clone(entry.value()))
         else {
+            if route.channel_kind == "web" {
+                return self.runtime_from_thread(thread).await.map(Some);
+            }
             self.detach_route(route).await?;
             return Ok(None);
         };
@@ -914,8 +1207,22 @@ fn default_host_binding() -> HostBinding {
     let prefs = agent_state::read_prefs();
     let agent_id = agent_state::resolve_default_agent(&prefs, &cfg);
     let profile_id = agent_state::resolve_default_profile(&prefs, &cfg, &agent_id)
-        .or(Some("direct".to_string()));
+        .map(|profile| normalize_launch_profile_id(Some(&profile)));
     HostBinding::new(agent_id, profile_id)
+}
+
+fn normalize_optional_launch_profile_id(profile_id: Option<&str>) -> Option<String> {
+    profile_id
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .map(|profile| normalize_launch_profile_id(Some(profile)))
+}
+
+fn launch_setting_profile_for_agent(agent_id: &str) -> Option<String> {
+    let cfg = crate::config::ensure_loaded();
+    let prefs = agent_state::read_prefs();
+    agent_state::resolve_default_profile(&prefs, &cfg, agent_id)
+        .map(|profile| normalize_launch_profile_id(Some(&profile)))
 }
 
 fn default_route_binding_and_workspace(route: &RouteKey) -> (HostBinding, PathBuf) {
@@ -949,8 +1256,7 @@ fn default_channel_binding_and_workspace(channel_kind: &str) -> (HostBinding, Pa
         .or_else(|| {
             agent_state::resolve_default_profile(&prefs, &cfg, &agent_id)
                 .map(|profile| normalize_launch_profile_id(Some(&profile)))
-        })
-        .or_else(|| Some("direct".to_string()));
+        });
     let workspace = im_workspace_for_channel(&cfg, channel_kind);
 
     (HostBinding::new(agent_id, profile_id), workspace)
@@ -995,6 +1301,116 @@ fn workspace_by_cwd<'a>(
     })
 }
 
+fn resolve_thread_session_alias(
+    projection: &ThreadProjection,
+    workspace_id: &WorkspaceId,
+    host_binding: &HostBinding,
+    requested_session_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let exact_binding_matches = projection
+        .for_workspace(workspace_id, true)
+        .filter_map(|thread| thread.agent_sessions.get(host_binding))
+        .flatten()
+        .filter(|session| session_id_matches(&session.session_id, requested_session_id))
+        .map(|session| session.session_id.clone())
+        .collect::<Vec<_>>();
+    if let Some(session_id) = unique_session_match(exact_binding_matches, requested_session_id)? {
+        return Ok(Some(session_id));
+    }
+
+    let agent_matches = projection
+        .for_workspace(workspace_id, true)
+        .flat_map(|thread| thread.agent_sessions.values().flatten())
+        .filter(|session| session.agent_id == host_binding.agent_id)
+        .filter(|session| session_id_matches(&session.session_id, requested_session_id))
+        .map(|session| session.session_id.clone())
+        .collect::<Vec<_>>();
+    if let Some(session_id) = unique_session_match(agent_matches, requested_session_id)? {
+        return Ok(Some(session_id));
+    }
+
+    let thread_matches = projection
+        .for_workspace(workspace_id, true)
+        .filter(|thread| thread_id_matches(&thread.id, requested_session_id))
+        .collect::<Vec<_>>();
+    let Some(thread) = unique_thread_match(thread_matches, requested_session_id)? else {
+        return Ok(None);
+    };
+    latest_host_session_for_thread(thread, host_binding)
+        .map(Some)
+        .ok_or_else(|| {
+            anyhow!(
+                "thread '{}' has no host session for agent '{}'",
+                requested_session_id,
+                host_binding.agent_id
+            )
+        })
+}
+
+fn latest_host_session_for_thread(
+    thread: &WorkspaceThread,
+    host_binding: &HostBinding,
+) -> Option<String> {
+    thread
+        .agent_sessions
+        .get(host_binding)
+        .and_then(|sessions| sessions.last())
+        .map(|session| session.session_id.clone())
+        .or_else(|| {
+            thread
+                .agent_sessions
+                .values()
+                .flatten()
+                .filter(|session| session.agent_id == host_binding.agent_id)
+                .max_by(|a, b| a.observed_at.cmp(&b.observed_at))
+                .map(|session| session.session_id.clone())
+        })
+}
+
+fn unique_session_match(
+    matches: Vec<String>,
+    requested_session_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let mut unique = Vec::new();
+    for session_id in matches {
+        if !unique.contains(&session_id) {
+            unique.push(session_id);
+        }
+    }
+    match unique.as_slice() {
+        [] => Ok(None),
+        [session_id] => Ok(Some(session_id.clone())),
+        _ => Err(anyhow!(
+            "session '{}' is ambiguous; use the full session id",
+            requested_session_id
+        )),
+    }
+}
+
+fn unique_thread_match<'a>(
+    matches: Vec<&'a WorkspaceThread>,
+    requested_session_id: &str,
+) -> anyhow::Result<Option<&'a WorkspaceThread>> {
+    match matches.as_slice() {
+        [] => Ok(None),
+        [thread] => Ok(Some(*thread)),
+        _ => Err(anyhow!(
+            "thread '{}' is ambiguous; use the full thread id",
+            requested_session_id
+        )),
+    }
+}
+
+fn session_id_matches(session_id: &str, requested_session_id: &str) -> bool {
+    session_id == requested_session_id
+        || crate::launch_sessions::short_id(session_id) == requested_session_id
+}
+
+fn thread_id_matches(thread_id: &WorkspaceThreadId, requested_session_id: &str) -> bool {
+    thread_id.as_str() == requested_session_id
+        || thread_id.as_str().chars().take(8).collect::<String>() == requested_session_id
+}
+
 fn runtime_has_started_host(state: &ThreadRuntimeState) -> bool {
     state.initialize.is_some() || state.busy || state.failed.is_some()
 }
@@ -1015,6 +1431,10 @@ fn workspace_name_from_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
+
+    use crate::workspace::threads::{
+        MultiAgentTurnId, MultiAgentTurnMode, ThreadAgentId, ThreadAgentStatus,
+    };
 
     use super::*;
 
@@ -1149,6 +1569,32 @@ mod tests {
                 .thread_id,
             second.state().await.thread_id
         );
+    }
+
+    #[tokio::test]
+    async fn web_route_attachment_rehydrates_runtime_after_host_shutdown() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let route = RouteKey::new("web", "chat-a");
+        let first = manager.resolve_route_runtime(&route).await.unwrap();
+        let first_thread_id = first.state().await.thread_id;
+
+        manager.shutdown_route_host(&route).await.unwrap();
+        assert!(!manager.runtimes.contains_key(&first_thread_id));
+        assert_eq!(
+            manager
+                .current_attachment(&route)
+                .await
+                .unwrap()
+                .unwrap()
+                .thread_id,
+            first_thread_id
+        );
+
+        let second = manager.resolve_route_runtime(&route).await.unwrap();
+
+        assert_eq!(second.state().await.thread_id, first_thread_id);
+        assert!(manager.runtimes.contains_key(&first_thread_id));
     }
 
     #[tokio::test]
@@ -1335,7 +1781,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attach_external_session_defaults_missing_profile_to_direct() {
+    async fn attach_external_session_keeps_missing_profile_unknown() {
         let (workspaces, threads, attachments) = temp_paths();
         let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
         let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
@@ -1345,7 +1791,7 @@ mod tests {
             &manager,
             root.clone(),
             "claude",
-            Some("direct"),
+            None,
             "external-session",
             false,
         )
@@ -1364,11 +1810,45 @@ mod tests {
             .unwrap();
 
         let state = runtime.state().await;
+        assert_eq!(state.host_binding, HostBinding::new("claude", None));
+        assert_eq!(state.session_id.as_deref(), Some("external-session"));
+    }
+
+    #[tokio::test]
+    async fn attach_external_session_preserves_known_profile_when_missing() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let route = RouteKey::new("web", "chat-a");
+        let thread_id = seed_session_thread(
+            &manager,
+            root.clone(),
+            "claude",
+            Some("deepseek-profile"),
+            "external-session",
+            false,
+        )
+        .await;
+
+        let runtime = manager
+            .attach_external_session(
+                &route,
+                "claude".to_string(),
+                None,
+                "external-session".to_string(),
+                root,
+                ExternalSessionAttachMode::ReuseOpenThread,
+            )
+            .await
+            .unwrap();
+
+        let state = runtime.state().await;
+        assert_eq!(state.thread_id, thread_id);
         assert_eq!(
             state.host_binding,
-            HostBinding::new("claude", Some("direct".to_string()))
+            HostBinding::new("claude", Some("deepseek-profile".to_string()))
         );
-        assert_eq!(state.session_id.as_deref(), Some("external-session"));
     }
 
     #[tokio::test]
@@ -1436,6 +1916,101 @@ mod tests {
             .unwrap();
         routes.sort_by_key(|route| route.as_key());
         assert_eq!(routes, vec![im_route, web_route]);
+    }
+
+    #[tokio::test]
+    async fn attach_external_session_resolves_workspace_thread_id_to_host_session() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let route = RouteKey::new("web", "chat-a");
+        let thread_id = seed_session_thread(
+            &manager,
+            root.clone(),
+            "codex",
+            Some("direct"),
+            "native-session",
+            false,
+        )
+        .await;
+
+        let runtime = manager
+            .attach_external_session(
+                &route,
+                "codex".to_string(),
+                Some("direct".to_string()),
+                thread_id.to_string(),
+                root,
+                ExternalSessionAttachMode::ReuseOpenThread,
+            )
+            .await
+            .unwrap();
+
+        let state = runtime.state().await;
+        assert_eq!(state.thread_id, thread_id);
+        assert_eq!(state.session_id.as_deref(), Some("native-session"));
+    }
+
+    #[tokio::test]
+    async fn subagent_session_ids_for_agent_workspace_reads_thread_agents() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let workspace = manager
+            .ensure_workspace_for_cwd(root.clone())
+            .await
+            .unwrap();
+        let host_binding = HostBinding::new("codex", Some("direct".to_string()));
+        let thread = manager.new_thread_record_with_host(workspace.id.clone(), host_binding);
+        manager.ensure_thread_persisted(&thread).await.unwrap();
+
+        let turn_id = MultiAgentTurnId::from("mat_a");
+        let agent_id = ThreadAgentId::from("agent_a");
+        let turn = MultiAgentTurn::new(
+            turn_id.clone(),
+            MultiAgentTurnMode::Parallel,
+            vec![agent_id.clone()],
+        );
+        let agent = ThreadAgent::ready(
+            agent_id.clone(),
+            turn_id,
+            "Builder",
+            "codex",
+            Some("direct".to_string()),
+            "va/subagents/mat_a/builder",
+            root.join("builder").to_string_lossy().to_string(),
+            Some("build".to_string()),
+        );
+        manager
+            .thread_store
+            .append(&ThreadEvent::multi_agent_turn_initialized(
+                thread.id.clone(),
+                turn,
+                vec![agent],
+            ))
+            .await
+            .unwrap();
+        manager
+            .thread_store
+            .append(&ThreadEvent::thread_agent_status_changed_with_session(
+                thread.id,
+                agent_id,
+                ThreadAgentStatus::Running,
+                Some("subagent-native-session".to_string()),
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+
+        let session_ids = manager
+            .subagent_session_ids_for_agent_workspace("codex", &root)
+            .await
+            .unwrap();
+
+        assert!(session_ids.contains("subagent-native-session"));
     }
 
     #[tokio::test]

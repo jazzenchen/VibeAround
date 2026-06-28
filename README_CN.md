@@ -14,6 +14,18 @@
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch 界面，可选择 Agent Profile 和 Workspace" width="92%" />
 </p>
 
+## 重要：v0.7.10 破坏性变更
+
+VibeAround v0.7.10 修改了本地配置的读取和归一化逻辑。部分配置项被合并，部分非必要的运行日志/缓存内容也不再有用。目前建议按下面流程手动清理：
+
+1. 备份 `~/.vibearound/profiles` 和 `~/.vibearound/settings.json`。
+2. 删除整个 `~/.vibearound` 目录。
+3. 将备份的 `profiles` 目录和 `settings.json` 拷贝回 `~/.vibearound`。
+4. 打开 VibeAround Desktop。
+5. 进入 Settings，重新走一遍 onboarding 流程。
+
+已知影响：迁移后 API Bridge 配置可能会丢失。重新在对应 profile 上启用 API Bridge 即可恢复。
+
 ## 为什么需要 VibeAround
 
 VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量不打扰你已经配置好的环境。
@@ -320,13 +332,13 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
 ## 下载
 
-最新版本：[VibeAround v0.7.9](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.9)。
+最新版本：[VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.10)。
 
 | 平台 | 推荐下载 |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.9.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-macOS-arm64-0.7.9.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-Setup-0.7.9.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-MSI-0.7.9.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Windows-x64-Portable-0.7.9.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Linux-x64-AppImage-0.7.9.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.9/VibeAround-Linux-x64-DEB-0.7.9.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.10.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-macOS-arm64-0.7.10.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-Setup-0.7.10.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-MSI-0.7.10.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-Portable-0.7.10.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-AppImage-0.7.10.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-DEB-0.7.10.deb) |
 
 Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Silicon 版本。
 
@@ -342,7 +354,7 @@ v0.7.3 调整了 Startkit 状态、Agent 来源检测、桌面启动目标和 Pr
 4. 只从备份里恢复持久状态。
 5. 启动 VibeAround v0.7.3；如果 Launch、Profile、Startkit 或桌面版 Agent 设置看起来异常，再重新跑 onboarding / Startkit 配置。
 
-只恢复这些持久状态：`settings.json`、`profiles/`、`google-oauth/`、`agents.json`、`launcher.json`、`state/`、`sessions/`、`launch-session-archive.json`、`workspaces/`、`worktrees/`。
+只恢复这些持久状态：`settings.json`、`profiles/`、`google-oauth/`、`state/`、`sessions/`、`launch-session-archive.json`、`workspaces/`、`worktrees/`。
 
 不要恢复这些可重建的缓存/运行期数据：`.cache/`、`cache/startkit/`、`agents.detected.json`、`desktop-apps.detected.json`、`profile-state/`、`api-bridge/launches/`、`logs/`、`npm-global/`、`plugins/`、`bin/`、`runtime/`、`auth.json`。
 
@@ -361,7 +373,7 @@ fi
 
 mkdir -p "$SOURCE"
 
-for item in settings.json profiles google-oauth agents.json launcher.json state sessions launch-session-archive.json workspaces worktrees; do
+for item in settings.json profiles google-oauth state sessions launch-session-archive.json workspaces worktrees; do
   [ -e "$BACKUP/$item" ] && cp -a "$BACKUP/$item" "$SOURCE/"
 done
 ```
@@ -382,7 +394,7 @@ if (Test-Path $SourceRoot) {
 New-Item -ItemType Directory -Force -Path $SourceRoot | Out-Null
 
 $Items = @(
-  "settings.json", "profiles", "google-oauth", "agents.json", "launcher.json",
+  "settings.json", "profiles", "google-oauth",
   "state", "sessions", "launch-session-archive.json", "workspaces", "worktrees"
 )
 

@@ -72,6 +72,7 @@ fn sessions_for_project_key(
                 .unwrap_or_else(|| fallback_title(workspace, &session_id));
             Some(LaunchSession {
                 agent_id: "gemini".to_string(),
+                profile_id: None,
                 session_id,
                 title,
                 workspace: workspace.to_string_lossy().to_string(),

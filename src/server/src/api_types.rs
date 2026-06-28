@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use common::previews::PreviewSnapshot;
 use common::profiles::{catalog, AuthMode};
@@ -64,7 +64,7 @@ pub struct SettingsWriteResponse {
 /// { "id": "claude", "name": "Claude Code", "description": "Claude Code CLI" }
 /// ```
 ///
-/// - `id`: an agent ID from `resources/agents.json` (e.g. `"claude"`,
+/// - `id`: an agent ID from the built-in agent registry (e.g. `"claude"`,
 ///   `"codex"`, `"pi"`, `"gemini"`, `"qwen-code"`).
 /// - `name` / `description`: copied from that file's `display_name` and
 ///   `description` fields.
@@ -89,7 +89,7 @@ pub struct AgentInfo {
 /// ```
 ///
 /// - `agents`: the enabled subset from settings.json (not all agents in
-///   `agents.json`), ordered as configured.
+///   agent registry), ordered as configured.
 /// - `default_agent`: raw string from settings.json. The server does not
 ///   cross-validate against `agents` — consumers should treat an
 ///   unrecognized value as "no default".
@@ -200,7 +200,7 @@ pub struct LaunchPlanDisplay {
 
 impl AgentInfo {
     /// Build an `AgentInfo` for each of the given agent IDs by looking up
-    /// the corresponding entry in `agents.json`. IDs with no matching
+    /// the corresponding entry in the built-in agent registry. IDs with no matching
     /// entry are silently dropped.
     pub fn for_ids(ids: &[String]) -> Vec<Self> {
         ids.iter()
@@ -299,6 +299,15 @@ pub struct CreateSessionResponse {
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchSessionInfo {
     pub agent_id: String,
+    pub host_agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_profile_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_provider_label: Option<String>,
     pub session_id: String,
     pub title: String,
     pub workspace: String,
@@ -306,6 +315,28 @@ pub struct LaunchSessionInfo {
     pub short_id: String,
     pub archived: bool,
     pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+}
+
+/// `POST /api/workspace-threads/init` request.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceThreadInitRequest {
+    pub agent_id: String,
+    pub profile_id: Option<String>,
+    pub session_id: Option<String>,
+    pub workspace_path: Option<String>,
+}
+
+/// `POST /api/workspace-threads/init` response.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceThreadInitResponse {
+    pub thread_id: String,
+    pub chat_id: String,
+    pub agent_id: String,
+    pub profile_id: Option<String>,
+    pub session_id: Option<String>,
+    pub workspace: String,
 }
 
 /// `GET /api/tmux/sessions` response.
