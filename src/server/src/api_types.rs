@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use common::previews::PreviewSnapshot;
 use common::profiles::{catalog, AuthMode};
@@ -299,6 +299,15 @@ pub struct CreateSessionResponse {
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchSessionInfo {
     pub agent_id: String,
+    pub host_agent_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_profile_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host_provider_label: Option<String>,
     pub session_id: String,
     pub title: String,
     pub workspace: String,
@@ -306,6 +315,28 @@ pub struct LaunchSessionInfo {
     pub short_id: String,
     pub archived: bool,
     pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+}
+
+/// `POST /api/workspace-threads/init` request.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceThreadInitRequest {
+    pub agent_id: String,
+    pub profile_id: Option<String>,
+    pub session_id: Option<String>,
+    pub workspace_path: Option<String>,
+}
+
+/// `POST /api/workspace-threads/init` response.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceThreadInitResponse {
+    pub thread_id: String,
+    pub chat_id: String,
+    pub agent_id: String,
+    pub profile_id: Option<String>,
+    pub session_id: Option<String>,
+    pub workspace: String,
 }
 
 /// `GET /api/tmux/sessions` response.

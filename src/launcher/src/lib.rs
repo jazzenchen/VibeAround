@@ -206,40 +206,56 @@ pub fn parse_env_pair(raw: &str) -> anyhow::Result<(String, String)> {
 }
 
 pub fn native_resume_args(agent: &str, session_id: &str) -> anyhow::Result<(String, Vec<String>)> {
-    let command = match agent {
-        "claude" => (
-            "claude",
-            vec!["--resume", session_id, "--permission-mode", "acceptEdits"],
-        ),
-        "codex" => ("codex", vec!["resume", session_id]),
-        "pi" => ("pi", vec!["--session", session_id]),
-        "gemini" => ("gemini", vec!["--resume", session_id]),
-        "opencode" => ("opencode", vec!["--session", session_id]),
-        "cursor" => ("cursor-agent", vec!["--resume", session_id]),
-        "qwen-code" => ("qwen", vec!["--resume", session_id]),
-        other => bail!("resume launch is not supported for agent '{}'", other),
-    };
-    Ok((
-        command.0.to_string(),
-        command.1.into_iter().map(str::to_string).collect(),
-    ))
+    native_resume_args_for_terminal(agent, session_id, None)
+}
+
+pub(crate) fn native_resume_args_for_terminal(
+    agent: &str,
+    session_id: &str,
+    terminal_id: Option<&str>,
+) -> anyhow::Result<(String, Vec<String>)> {
+    let agent_def = launch_agent_def(agent)?;
+    let (command, resume_args) = agent_def
+        .launch_resume_for_terminal(session_id, terminal_id)
+        .ok_or_else(|| anyhow!("resume launch is not supported for agent '{}'", agent))?;
+    let mut args = agent_def.launch_args_for_terminal(terminal_id);
+    args.extend(resume_args);
+    Ok((command, args))
 }
 
 pub fn default_command_for_agent(agent: &str) -> anyhow::Result<String> {
-    match agent {
-        "claude" => Ok("claude".to_string()),
-        "codex" => Ok("codex".to_string()),
-        "pi" => Ok("pi".to_string()),
-        "gemini" => Ok("gemini".to_string()),
-        "opencode" => Ok("opencode".to_string()),
-        "cursor" => Ok("cursor-agent".to_string()),
-        "kiro" => Ok("kiro-cli".to_string()),
-        "qwen-code" => Ok("qwen".to_string()),
-        other => Err(anyhow!(
+    let command = launch_agent_def(agent)?.launch_command_for_current_platform();
+    if command.trim().is_empty() {
+        bail!(
             "agent '{}' needs an explicit command or executablePath",
-            other
-        )),
+            agent
+        );
     }
+    Ok(command.to_string())
+}
+
+pub(crate) fn default_launch_args_for_agent(agent: &str, terminal_id: Option<&str>) -> Vec<String> {
+    common::resources::agent_by_id(agent)
+        .map(|agent_def| agent_def.launch_args_for_terminal(terminal_id))
+        .unwrap_or_default()
+}
+
+pub(crate) fn default_launch_env_for_agent(
+    agent: &str,
+    terminal_id: Option<&str>,
+) -> Vec<(String, String)> {
+    common::resources::agent_by_id(agent)
+        .map(|agent_def| agent_def.launch_env_for_terminal(terminal_id))
+        .unwrap_or_default()
+}
+
+fn launch_agent_def(agent: &str) -> anyhow::Result<&'static common::resources::AgentDef> {
+    common::resources::agent_by_id(agent).ok_or_else(|| {
+        anyhow!(
+            "agent '{}' needs an explicit command or executablePath",
+            agent
+        )
+    })
 }
 
 fn is_valid_env_key(key: &str) -> bool {
@@ -281,7 +297,15 @@ mod tests {
     fn native_resume_args_match_existing_desktop_routes() {
         let (command, args) = native_resume_args("codex", "session-123").unwrap();
         assert_eq!(command, "codex");
-        assert_eq!(args, vec!["resume", "session-123"]);
+        assert_eq!(
+            args,
+            vec![
+                "-c",
+                "check_for_update_on_startup=false",
+                "resume",
+                "session-123"
+            ]
+        );
     }
 
     #[test]

@@ -23,10 +23,12 @@ import {
   type ChatSessionWorkspaceGroup,
 } from "./chatSessionModel";
 import {
-  sessionMetaLabel,
+  formatSessionUpdatedAt,
+  sessionProfileTypeLabel,
   sortSessionsByUpdatedAt,
   workspaceLabel,
 } from "./chatSessionDisplay";
+import { SessionHostLogo } from "./SessionHostLogo";
 
 const SESSION_PREVIEW_LIMIT = 5;
 
@@ -267,7 +269,14 @@ export function ChatSessionSidebar({
                                 loadingSessionKeys?.has(chatSessionKey(session));
                               const archiving = archivingSessionId === session.session_id;
                               const archived = session.archived;
-                              const sessionAgentLabel = agentLabel(session.agent_id);
+                              const sessionHostAgentId =
+                                session.host_agent_id ?? session.agent_id;
+                              const sessionAgentLabel = agentLabel(sessionHostAgentId);
+                              const profileTypeLabel = sessionProfileTypeLabel(
+                                session,
+                                t("Native"),
+                              );
+                              const updatedAtLabel = formatSessionUpdatedAt(session.updated_at);
                               return (
                                 <div
                                   key={chatSessionKey(session)}
@@ -287,14 +296,16 @@ export function ChatSessionSidebar({
                                       )
                                     }
                                   >
-                                    <BrandIcon
-                                      kind="cli"
-                                      id={session.agent_id}
-                                      label={sessionAgentLabel}
-                                      className={cn(
-                                        "mt-0.5 h-3.5 w-3.5 shrink-0",
-                                        archived && "opacity-50",
-                                      )}
+                                    <SessionHostLogo
+                                      agentId={sessionHostAgentId}
+                                      agentLabel={sessionAgentLabel}
+                                      profileId={session.host_profile_id}
+                                      profileLabel={session.host_profile_label}
+                                      providerId={session.host_provider}
+                                      providerLabel={session.host_provider_label}
+                                      archived={archived}
+                                      size="sm"
+                                      className="mt-0.5"
                                     />
                                     <span className="min-w-0 flex-1">
                                       <span
@@ -309,13 +320,28 @@ export function ChatSessionSidebar({
                                       </span>
                                       <span
                                         className={cn(
-                                          "block truncate text-[11px] leading-4",
+                                          "mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-4",
                                           archived
                                             ? "text-muted-foreground/35"
                                             : "text-muted-foreground",
                                         )}
                                       >
-                                        {sessionMetaLabel(session)}
+                                        <span
+                                          className={cn(
+                                            "inline-flex max-w-[7rem] shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none",
+                                            archived
+                                              ? "border-border/40 bg-muted/20 text-muted-foreground/45"
+                                              : "border-border/70 bg-background/80 text-muted-foreground",
+                                          )}
+                                          title={profileTypeLabel}
+                                        >
+                                          <span className="truncate">{profileTypeLabel}</span>
+                                        </span>
+                                        {updatedAtLabel && (
+                                          <span className="min-w-0 truncate">
+                                            {updatedAtLabel}
+                                          </span>
+                                        )}
                                       </span>
                                     </span>
                                     {loading && (

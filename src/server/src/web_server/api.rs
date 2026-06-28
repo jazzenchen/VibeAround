@@ -35,9 +35,9 @@ pub use runtime::{
 pub use service::{health_handler, info_handler};
 pub use sessions::{
     archive_launch_session_handler, create_session_handler, delete_session_handler,
-    list_launch_sessions_batch_handler, list_launch_sessions_handler, list_sessions_handler,
-    list_tmux_sessions_handler, unarchive_launch_session_delete_handler,
-    unarchive_launch_session_handler,
+    init_workspace_thread_handler, list_launch_sessions_batch_handler,
+    list_launch_sessions_handler, list_sessions_handler, list_tmux_sessions_handler,
+    unarchive_launch_session_delete_handler, unarchive_launch_session_handler,
 };
 pub use settings::{get_settings_handler, put_settings_handler};
 pub use workspaces::{

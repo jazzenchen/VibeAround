@@ -85,6 +85,10 @@ type Notice = {
   message: string;
 };
 
+type AuthFile = {
+  token: string;
+};
+
 type SaveState =
   | "idle"
   | "agents"
@@ -270,6 +274,7 @@ export function SettingsDialog({
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saving, setSaving] = useState<SaveState>("idle");
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [authToken, setAuthToken] = useState("");
   const [settingsTab, setSettingsTab] = useState("general");
   const [focusedImPluginId, setFocusedImPluginId] = useState<string | null>(null);
   const pluginUpdatesAutoCheckedRef = useRef(false);
@@ -445,12 +450,26 @@ export function SettingsDialog({
     );
   }, []);
 
+  const readAuthToken = useCallback(async () => {
+    try {
+      const file = await invoke<AuthFile | null>("get_auth_token");
+      const token = file?.token ?? "";
+      setAuthToken(token);
+      return token;
+    } catch (error) {
+      console.warn("[desktop-ui] get_auth_token failed:", error);
+      setAuthToken("");
+      return "";
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setSettingsLoaded(false);
     setManagedPlugins([]);
     setPluginUpdatesChecked(false);
     pluginUpdatesAutoCheckedRef.current = false;
+    setAuthToken("");
     setNotice(null);
     try {
       const [
@@ -489,6 +508,7 @@ export function SettingsDialog({
       hydrateSearchTool(loadedSettings);
       hydrateIntegrations(loadedSettings);
       hydrateGeneral(loadedSettings, workspaceResponse.default_workspace);
+      await readAuthToken();
       setSettingsLoaded(true);
     } catch (error) {
       setNotice({
@@ -507,6 +527,7 @@ export function SettingsDialog({
     hydrateProxy,
     hydrateSearchTool,
     hydrateTunnel,
+    readAuthToken,
   ]);
 
   useEffect(() => {
@@ -767,6 +788,7 @@ export function SettingsDialog({
     setNotice(null);
     try {
       await invoke("restart_services");
+      await readAuthToken();
       onServicesRestarted?.();
       setNotice({ variant: "success", message: "Services restarted." });
     } catch (error) {
@@ -777,7 +799,7 @@ export function SettingsDialog({
     } finally {
       setSaving("idle");
     }
-  }, [onServicesRestarted]);
+  }, [onServicesRestarted, readAuthToken]);
 
   const applyAgentSettings = useCallback(async () => {
     setSaving("agents");
@@ -851,6 +873,7 @@ export function SettingsDialog({
       await invoke("save_settings", { settings: nextSettings });
       setSettings(nextSettings);
       await invoke("restart_services");
+      await readAuthToken();
       onServicesRestarted?.();
       setNotice({ variant: "success", message: "API bridge settings applied." });
     } catch (error) {
@@ -866,6 +889,7 @@ export function SettingsDialog({
     apiBridgeRetryForm,
     apiBridgeRetryFormKey,
     onServicesRestarted,
+    readAuthToken,
   ]);
 
   const applyWebSearchSettings = useCallback(async () => {
@@ -882,6 +906,7 @@ export function SettingsDialog({
       await invoke("save_settings", { settings: nextSettings });
       setSettings(nextSettings);
       await invoke("restart_services");
+      await readAuthToken();
       onServicesRestarted?.();
       setNotice({ variant: "success", message: "Web search settings applied." });
     } catch (error) {
@@ -899,6 +924,7 @@ export function SettingsDialog({
     searchMaxResults,
     searchSources,
     onServicesRestarted,
+    readAuthToken,
   ]);
 
   const uninstallIntegrations = useCallback(
@@ -1051,6 +1077,19 @@ export function SettingsDialog({
     }
   }, [defaultWorkspace]);
 
+  const copyAuthToken = useCallback(async () => {
+    if (!authToken) return;
+    try {
+      await navigator.clipboard.writeText(authToken);
+      setNotice({ variant: "success", message: "Copied" });
+    } catch (error) {
+      setNotice({
+        variant: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [authToken]);
+
   const saveTunnelSettings = useCallback(
     async (restart: boolean) => {
       setSaving(restart ? "tunnel-restart" : "tunnel");
@@ -1069,6 +1108,7 @@ export function SettingsDialog({
 
         if (restart) {
           await invoke("restart_services");
+          await readAuthToken();
           onServicesRestarted?.();
           setNotice({ variant: "success", message: "Tunnel settings applied." });
         } else {
@@ -1091,6 +1131,7 @@ export function SettingsDialog({
       cfToken,
       cfHostname,
       onServicesRestarted,
+      readAuthToken,
     ],
   );
 
@@ -1255,6 +1296,36 @@ export function SettingsDialog({
                       </Select>
                     }
                   />
+                  <div className="space-y-3 border-b border-border px-4 py-4">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{t("Auth Token")}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {t("Current local service token from auth.json. Regenerated when services restart.")}
+                      </div>
+                    </div>
+                    <div className="flex w-full items-center gap-2 rounded-md border border-border/70 bg-muted/20 px-2.5 py-1 shadow-xs">
+                      <div
+                        className={`min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-left font-mono text-[11px] leading-5 ${
+                          authToken ? "text-foreground" : "text-muted-foreground"
+                        }`}
+                        title={authToken || t("Unavailable")}
+                      >
+                        {authToken || (loading ? t("Loading…") : t("Unavailable"))}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                        disabled={!authToken || saving !== "idle"}
+                        aria-label={t("Copy")}
+                        title={t("Copy")}
+                        onClick={() => void copyAuthToken()}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
                   <SettingsActionRow
                     label={t("Restart Services")}
                     description={t("Restart VibeAround runtime services after local changes.")}

@@ -113,6 +113,11 @@ fn session(session_id: &str, project_path: &str, profile_id: &str) -> SessionLis
 fn launch_session(session_id: &str, agent_id: &str, workspace: &str) -> LaunchSessionInfo {
     LaunchSessionInfo {
         agent_id: agent_id.into(),
+        host_agent_id: None,
+        host_profile_id: None,
+        host_profile_label: None,
+        host_provider: None,
+        host_provider_label: None,
         session_id: session_id.into(),
         title: format!("{agent_id} session"),
         workspace: workspace.into(),
@@ -120,6 +125,7 @@ fn launch_session(session_id: &str, agent_id: &str, workspace: &str) -> LaunchSe
         short_id: session_id.chars().take(8).collect(),
         archived: false,
         active: false,
+        thread_id: None,
     }
 }
 

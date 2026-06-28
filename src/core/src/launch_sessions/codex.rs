@@ -120,6 +120,7 @@ fn sessions_from_state_db(
                 let archived: i64 = row.get(4)?;
                 Ok(LaunchSession {
                     agent_id: "codex".to_string(),
+                    profile_id: None,
                     session_id,
                     title,
                     workspace,
@@ -241,6 +242,7 @@ fn session_from_metadata_line(
         .unwrap_or(updated_at);
     Some(LaunchSession {
         agent_id: "codex".to_string(),
+        profile_id: None,
         session_id,
         title,
         workspace,

@@ -124,7 +124,7 @@ fn is_path_like_program(program: &str) -> bool {
 
 fn command_uses_default_agent_program(agent: &str, program: &str) -> bool {
     common::resources::agent_by_id(agent)
-        .map(|agent| agent.pty_command_for_current_platform())
+        .map(|agent| agent.launch_command_for_current_platform())
         .and_then(first_command_word)
         .is_some_and(|default_program| command_name_eq(&default_program, program))
 }

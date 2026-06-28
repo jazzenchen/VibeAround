@@ -131,6 +131,11 @@ export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>;
 
 export const LaunchSessionInfoSchema = z.object({
   agent_id: z.string(),
+  host_agent_id: z.string().nullable().optional(),
+  host_profile_id: z.string().nullable().optional(),
+  host_profile_label: z.string().nullable().optional(),
+  host_provider: z.string().nullable().optional(),
+  host_provider_label: z.string().nullable().optional(),
   session_id: z.string(),
   title: z.string(),
   workspace: z.string(),
@@ -138,9 +143,22 @@ export const LaunchSessionInfoSchema = z.object({
   short_id: z.string(),
   archived: z.boolean(),
   active: z.boolean().optional(),
+  thread_id: z.string().nullable().optional(),
 });
 export type LaunchSessionInfo = z.infer<typeof LaunchSessionInfoSchema>;
 export const LaunchSessionListSchema = z.array(LaunchSessionInfoSchema);
+
+export const WorkspaceThreadInitResponseSchema = z.object({
+  thread_id: z.string(),
+  chat_id: z.string(),
+  agent_id: z.string(),
+  profile_id: z.string().nullable(),
+  session_id: z.string().nullable(),
+  workspace: z.string(),
+});
+export type WorkspaceThreadInitResponse = z.infer<
+  typeof WorkspaceThreadInitResponseSchema
+>;
 
 export const TmuxSessionsResponseSchema = z.object({
   available: z.boolean(),

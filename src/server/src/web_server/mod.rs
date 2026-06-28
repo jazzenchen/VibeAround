@@ -321,6 +321,10 @@ pub async fn run_web_server(
             put(api::set_profile_connection_handler),
         )
         .route("/api/launcher/plan", post(api::launcher_plan_handler))
+        .route(
+            "/api/workspace-threads/init",
+            post(api::init_workspace_thread_handler),
+        )
         .route("/ws", get(ws_pty::ws_handler))
         .route("/ws/chat", get(ws_chat::ws_chat_handler))
         .route("/ws/channels", get(ws_domains::ws_channels_handler))

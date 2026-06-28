@@ -46,8 +46,8 @@ pub fn launch_resume(
     )
 }
 
-/// "Direct" launch opens the named coding CLI with no env injection. The CLI
-/// uses whatever global OAuth/login/config it already has on disk.
+/// "Direct" launch opens the named coding CLI without profile credential env.
+/// The CLI uses whatever global OAuth/login/config it already has on disk.
 pub fn launch_direct(agent_id: &str) -> anyhow::Result<()> {
     let plan = LaunchPlanBuilder::new().direct(agent_id).build()?;
     spawn_plan(plan, va_launch::LaunchContext::direct(agent_id, None))

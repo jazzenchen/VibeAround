@@ -11,9 +11,16 @@ export function formatSessionUpdatedAt(updatedAt: number) {
   return new Date(updatedAt * 1000).toLocaleString();
 }
 
-export function sessionMetaLabel(session: LaunchSessionInfo) {
-  const updatedAt = formatSessionUpdatedAt(session.updated_at);
-  return updatedAt ? `${session.short_id} - ${updatedAt}` : session.short_id;
+export function sessionProfileTypeLabel(
+  session: LaunchSessionInfo,
+  nativeLabel = "Native",
+) {
+  if (session.host_provider_label) return session.host_provider_label;
+  if (session.host_provider) return session.host_provider;
+  if (session.host_profile_id && session.host_profile_id !== "direct") {
+    return session.host_profile_label ?? session.host_profile_id;
+  }
+  return nativeLabel;
 }
 
 export function workspaceLabel(workspace: string) {

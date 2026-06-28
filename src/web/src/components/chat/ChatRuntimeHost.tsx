@@ -10,6 +10,7 @@ import { useWebChatConnection } from "./useWebChatConnection";
 
 interface ChatRuntimeHostProps {
   runtimeKey: string;
+  chatId?: string;
   initialResume?: ChatRuntimeSpec["initialResume"];
   onSnapshot: (runtimeKey: string, snapshot: ChatRuntimeSnapshot) => void;
   onActions: (runtimeKey: string, actions: ChatRuntimeActions | null) => void;
@@ -22,6 +23,7 @@ interface ChatRuntimeHostProps {
 
 export function ChatRuntimeHost({
   runtimeKey,
+  chatId,
   initialResume,
   onSnapshot,
   onActions,
@@ -33,7 +35,10 @@ export function ChatRuntimeHost({
       onAgentSelected(runtimeKey, agentId, source),
     [onAgentSelected, runtimeKey],
   );
-  const connection = useWebChatConnection({ onAgentSelected: handleAgentSelected });
+  const connection = useWebChatConnection({
+    chatId,
+    onAgentSelected: handleAgentSelected,
+  });
 
   useEffect(() => {
     onSnapshot(runtimeKey, {

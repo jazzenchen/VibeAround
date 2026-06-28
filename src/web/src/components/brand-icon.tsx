@@ -35,6 +35,7 @@ interface BrandIconProps {
   label?: string;
   fallback?: string | null;
   framed?: boolean;
+  title?: string;
   className?: string;
 }
 
@@ -44,6 +45,7 @@ export function BrandIcon({
   label,
   fallback,
   framed = false,
+  title,
   className,
 }: BrandIconProps) {
   const src = kind === "cli" ? CLI_LOGOS[id] : PROVIDER_LOGOS[id];
@@ -56,7 +58,7 @@ export function BrandIcon({
 
   if (src) {
     return (
-      <span className={fallbackClass}>
+      <span className={fallbackClass} title={title}>
         <img
           src={assetSrc}
           alt={label ? `${label} logo` : ""}
@@ -68,12 +70,12 @@ export function BrandIcon({
   }
 
   if (fallback) {
-    return <span className={cn(fallbackClass, "text-[0.8em]")}>{fallback}</span>;
+    return <span className={cn(fallbackClass, "text-[0.8em]")} title={title}>{fallback}</span>;
   }
 
   const FallbackIcon = kind === "cli" ? Bot : Sparkles;
   return (
-    <span className={cn(fallbackClass, "text-primary")}>
+    <span className={cn(fallbackClass, "text-primary")} title={title}>
       <FallbackIcon className="h-[60%] w-[60%]" />
     </span>
   );

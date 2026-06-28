@@ -7,6 +7,7 @@ import {
   getLaunchSessionsBatch,
   getProfiles,
   getWorkspaces,
+  initWorkspaceThread,
 } from "@/api/sessions";
 import { getAgentDisplayName } from "@/lib/agents";
 import type { ChatRuntimeStatus } from "@/lib/dashboard-types";
@@ -22,6 +23,7 @@ import { ChatHeader } from "./ChatHeader";
 import { ChatRuntimeHost } from "./ChatRuntimeHost";
 import {
   chatRuntimeKeyForSession,
+  chatIdForThread,
   createDraftRuntimeKey,
   INITIAL_RUNTIME_KEY,
 } from "./chatRuntimeKeys";
@@ -151,6 +153,7 @@ export function ChatView({
   const runtimeActionsRef = useRef<Record<string, ChatRuntimeActions>>({});
   const syncedPromptDoneRef = useRef<Record<string, number>>({});
   const syncedActiveSessionRef = useRef<Record<string, string | undefined>>({});
+  const runtimeThreadInitRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     activeRuntimeKeyRef.current = activeRuntimeKey;
@@ -292,19 +295,56 @@ export function ChatView({
     [syncedLaunchSessionGroups],
   );
   const selectedAgentInfo = agents.find((agent) => agent.id === selectedAgent);
-  const agentLabel = selectedAgentInfo?.name ?? getAgentDisplayName(selectedAgent);
+  const selectedAgentLabel = selectedAgentInfo?.name ?? getAgentDisplayName(selectedAgent);
   const selectedProfileId = profileSelections[selectedAgent] ?? DIRECT_PROFILE_ID;
-  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId);
+  const profilesById = useMemo(
+    () => new Map(profiles.map((profile) => [profile.id, profile])),
+    [profiles],
+  );
+  const profileLabelForId = useCallback(
+    (profileId?: string | null, fallback?: string | null) => {
+      if (fallback) return fallback;
+      if (!profileId) return undefined;
+      if (profileId === DIRECT_PROFILE_ID) return t("Native");
+      return profilesById.get(profileId)?.label ?? profileId;
+    },
+    [profilesById, t],
+  );
+  const activeSpec = runtimeSpecs[activeRuntimeKey];
+  const activeLaunchSession = activeSpec?.launchSession;
+  const activeAgentId =
+    activeLaunchSession?.host_agent_id ??
+    activeLaunchSession?.agent_id ??
+    activeSpec?.agentId ??
+    selectedAgent;
+  const activeAgentInfo = agents.find((agent) => agent.id === activeAgentId);
+  const agentLabel = activeAgentInfo?.name ?? getAgentDisplayName(activeAgentId);
+  const activeProfileId = activeLaunchSession
+    ? activeLaunchSession.host_profile_id
+    : activeSpec?.profileId ?? selectedProfileId;
+  const activeProfile =
+    activeProfileId && activeProfileId !== DIRECT_PROFILE_ID
+      ? profilesById.get(activeProfileId)
+      : undefined;
+  const activeProviderId = activeLaunchSession?.host_provider ?? activeProfile?.provider;
+  const activeProfileLabel = profileLabelForId(
+    activeProfileId,
+    activeLaunchSession?.host_profile_label,
+  );
+  const activeProviderLabel =
+    activeLaunchSession?.host_provider_label ?? activeProfileLabel;
   const selectedWorkspace = workspaces.find(
     (workspace) => workspace.path === selectedWorkspacePath,
   );
   const activeWorkspacePath =
-    runtimeSpecs[activeRuntimeKey]?.launchSession?.workspace ??
-    runtimeSpecs[activeRuntimeKey]?.workspacePath ??
+    activeSpec?.launchSession?.workspace ??
+    activeSpec?.workspacePath ??
     resumeReplay?.workspace ??
     selectedWorkspace?.path ??
     defaultWorkspacePath;
   const sessionSelection = sessionSelections[selectedAgent] ?? { kind: "new" };
+  const activeSessionSelection =
+    sessionSelections[activeAgentId] ?? sessionSelection;
   const selectedLaunchSession =
     sessionSelection.kind === "resume" &&
     selectedLaunchSessions[selectedAgent]?.agent_id === selectedAgent &&
@@ -337,21 +377,24 @@ export function ChatView({
           ? t("Local agent ready")
           : t("Connecting to local agent");
   const headerSessionLabel =
-    sessionSelection.kind === "new"
-      ? null
-      : selectedLaunchSession
-        ? selectedLaunchSession.title
+    activeLaunchSession
+      ? activeLaunchSession.title
+      : activeSessionSelection.kind === "new"
+        ? null
         : meta.sessionId
           ? t("Current session")
           : null;
   const routeLabel =
-    selectedProfileId && selectedProfile
+    activeProfileId
       ? t("{{agent}} / {{profile}}", {
           agent: agentLabel,
-          profile: selectedProfile.label,
+          profile: activeProfileLabel ?? activeProfileId,
         })
       : agentLabel;
-  const showNewChatHome = messages.length === 0 && sessionSelection.kind !== "resume";
+  const showNewChatHome =
+    messages.length === 0 &&
+    !activeLaunchSession &&
+    activeSessionSelection.kind !== "resume";
   const sidebarSessionsLoading = workspacesLoading || sessionsLoading;
   const displaySettings = useMemo(
     () => ({
@@ -375,9 +418,21 @@ export function ChatView({
         spec.launchSession?.title ??
         spec.title ??
         (snapshot.resumeReplay?.title || t("Current session"));
+      const profileId = spec.launchSession?.host_profile_id ?? spec.profileId;
+      const profile =
+        profileId && profileId !== DIRECT_PROFILE_ID ? profilesById.get(profileId) : undefined;
+      const profileLabel = profileLabelForId(
+        profileId,
+        spec.launchSession?.host_profile_label,
+      );
       return [
         {
           agent_id: spec.launchSession?.agent_id ?? spec.agentId,
+          host_agent_id: spec.launchSession?.host_agent_id ?? spec.agentId,
+          host_profile_id: profileId,
+          host_profile_label: profileLabel,
+          host_provider: spec.launchSession?.host_provider ?? profile?.provider,
+          host_provider_label: spec.launchSession?.host_provider_label ?? profileLabel,
           session_id: sessionId,
           title,
           workspace: workspacePath,
@@ -389,13 +444,16 @@ export function ChatView({
           short_id: spec.launchSession?.short_id ?? shortSessionId(sessionId),
           archived: false,
           active: true,
+          thread_id: spec.threadId ?? spec.launchSession?.thread_id,
         } satisfies LaunchSessionInfo,
       ];
     });
   }, [
     defaultWorkspacePath,
+    profileLabelForId,
     runtimeSnapshots,
     runtimeSpecs,
+    profilesById,
     selectedWorkspace?.path,
     t,
   ]);
@@ -486,8 +544,34 @@ export function ChatView({
     return runtimeKey;
   }, [profileSelections]);
 
+  const updateActiveDraftRuntime = useCallback(
+    (agentId: string, profileId: string | undefined, workspacePath?: string) => {
+      if (messages.length > 0 || sessionSelection.kind !== "new") return;
+      delete runtimeThreadInitRef.current[activeRuntimeKey];
+      setRuntimeSpecs((prev) => {
+        const current = prev[activeRuntimeKey];
+        if (!current || current.launchSession) return prev;
+        return {
+          ...prev,
+          [activeRuntimeKey]: {
+            ...current,
+            agentId,
+            profileId,
+            workspacePath,
+            threadId: undefined,
+            chatId: undefined,
+            launchSession: undefined,
+            initialResume: undefined,
+          },
+        };
+      });
+    },
+    [activeRuntimeKey, messages.length, sessionSelection.kind],
+  );
+
   const activateRuntimeForSession = useCallback(
     (session: LaunchSessionInfo) => {
+      const sessionProfileId = session.host_profile_id ?? undefined;
       const existingRuntime = Object.entries(runtimeSpecs).find(([runtimeKey, spec]) => {
         const snapshot = runtimeSnapshots[runtimeKey];
         const sessionId = spec.launchSession?.session_id ?? snapshot?.meta.sessionId;
@@ -508,14 +592,16 @@ export function ChatView({
           [runtimeKey]: {
             ...(prev[runtimeKey] ?? {
               agentId: session.agent_id,
-              profileId: profileSelections[session.agent_id] ?? DIRECT_PROFILE_ID,
+              profileId: sessionProfileId,
             }),
             agentId: session.agent_id,
-            profileId:
-              prev[runtimeKey]?.profileId ??
-              profileSelections[session.agent_id] ??
-              DIRECT_PROFILE_ID,
+            profileId: sessionProfileId,
             workspacePath: session.workspace,
+            threadId: session.thread_id ?? prev[runtimeKey]?.threadId,
+            chatId:
+              session.thread_id !== undefined && session.thread_id !== null
+                ? chatIdForThread(session.thread_id)
+                : prev[runtimeKey]?.chatId,
             launchSession: session,
             title: session.title,
           },
@@ -534,13 +620,15 @@ export function ChatView({
               ...prev,
               [runtimeKey]: {
                 agentId: session.agent_id,
-                profileId: profileSelections[session.agent_id] ?? DIRECT_PROFILE_ID,
+                profileId: sessionProfileId,
                 workspacePath: session.workspace,
+                threadId: session.thread_id ?? undefined,
+                chatId: session.thread_id ? chatIdForThread(session.thread_id) : undefined,
                 launchSession: session,
                 title: session.title,
                 initialResume: {
                   agentId: session.agent_id,
-                  profileId: profileSelections[session.agent_id] ?? DIRECT_PROFILE_ID,
+                  profileId: sessionProfileId,
                   launchSession: session,
                 },
               },
@@ -556,6 +644,175 @@ export function ChatView({
     },
     [profileSelections, runtimeSnapshots, runtimeSpecs],
   );
+
+  useEffect(() => {
+    const knownThreadUpdates = Object.entries(runtimeSpecs).filter(([, spec]) => {
+      const threadId = spec.threadId ?? spec.launchSession?.thread_id ?? undefined;
+      return Boolean(threadId) && (spec.threadId !== threadId || !spec.chatId);
+    });
+    if (knownThreadUpdates.length > 0) {
+      setRuntimeSpecs((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [runtimeKey] of knownThreadUpdates) {
+          const current = next[runtimeKey];
+          if (!current) continue;
+          const threadId = current.threadId ?? current.launchSession?.thread_id ?? undefined;
+          if (!threadId) continue;
+          const chatId = chatIdForThread(threadId);
+          if (current.threadId === threadId && current.chatId === chatId) continue;
+          next[runtimeKey] = { ...current, threadId, chatId };
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }
+
+    for (const [runtimeKey, spec] of Object.entries(runtimeSpecs)) {
+      if (spec.threadId || spec.launchSession?.thread_id) continue;
+      const workspacePath =
+        spec.launchSession?.workspace ??
+        spec.workspacePath ??
+        selectedWorkspace?.path ??
+        defaultWorkspacePath;
+      if (!workspacePath) continue;
+      const sessionId = spec.launchSession?.session_id;
+      const profileId = spec.launchSession?.host_profile_id ?? spec.profileId;
+      const signature = [
+        spec.agentId,
+        profileId ?? "",
+        workspacePath,
+        sessionId ?? "",
+      ].join("\u0000");
+      if (runtimeThreadInitRef.current[runtimeKey] === signature) continue;
+      runtimeThreadInitRef.current[runtimeKey] = signature;
+
+      void initWorkspaceThread({
+        agent_id: spec.agentId,
+        profile_id: profileId,
+        session_id: sessionId,
+        workspace_path: workspacePath,
+      })
+        .then((response) => {
+          const threadId = response.thread_id;
+          const chatId = response.chat_id || chatIdForThread(threadId);
+          setRuntimeSpecs((prev) => {
+            const current = prev[runtimeKey];
+            if (!current) return prev;
+            const currentWorkspace =
+              current.launchSession?.workspace ??
+              current.workspacePath ??
+              selectedWorkspace?.path ??
+              defaultWorkspacePath;
+            const currentSignature = [
+              current.agentId,
+              current.launchSession?.host_profile_id ?? current.profileId ?? "",
+              currentWorkspace ?? "",
+              current.launchSession?.session_id ?? "",
+            ].join("\u0000");
+            if (currentSignature !== signature) return prev;
+            const responseProfileId = response.profile_id ?? profileId;
+            const responseProfile =
+              responseProfileId && responseProfileId !== DIRECT_PROFILE_ID
+                ? profilesById.get(responseProfileId)
+                : undefined;
+            const responseProfileLabel = profileLabelForId(responseProfileId);
+            const launchSession = current.launchSession
+              ? {
+                  ...current.launchSession,
+                  session_id: response.session_id ?? current.launchSession.session_id,
+                  workspace: response.workspace || current.launchSession.workspace,
+                  thread_id: threadId,
+                  host_agent_id: response.agent_id || current.launchSession.host_agent_id,
+                  host_profile_id:
+                    responseProfileId ?? current.launchSession.host_profile_id,
+                  host_profile_label:
+                    responseProfileLabel ?? current.launchSession.host_profile_label,
+                  host_provider:
+                    responseProfile?.provider ?? current.launchSession.host_provider,
+                  host_provider_label:
+                    responseProfileLabel ?? current.launchSession.host_provider_label,
+                }
+              : undefined;
+            const initialResume = current.initialResume
+              ? {
+                  ...current.initialResume,
+                  launchSession: launchSession ?? current.initialResume.launchSession,
+                }
+              : undefined;
+            return {
+              ...prev,
+              [runtimeKey]: {
+                ...current,
+                agentId: response.agent_id || current.agentId,
+                profileId: responseProfileId ?? current.profileId,
+                workspacePath: response.workspace || current.workspacePath,
+                threadId,
+                chatId,
+                launchSession,
+                initialResume,
+              },
+            };
+          });
+
+          const launchSession = spec.launchSession;
+          if (launchSession) {
+            const responseProfileId = response.profile_id ?? profileId;
+            const responseProfile =
+              responseProfileId && responseProfileId !== DIRECT_PROFILE_ID
+                ? profilesById.get(responseProfileId)
+                : undefined;
+            const responseProfileLabel = profileLabelForId(responseProfileId);
+            const launchSessionUpdate = {
+              thread_id: threadId,
+              host_agent_id: response.agent_id || launchSession.host_agent_id,
+              host_profile_id: responseProfileId ?? launchSession.host_profile_id,
+              host_profile_label:
+                responseProfileLabel ?? launchSession.host_profile_label,
+              host_provider: responseProfile?.provider ?? launchSession.host_provider,
+              host_provider_label:
+                responseProfileLabel ?? launchSession.host_provider_label,
+            };
+            setSelectedLaunchSessions((prev) => {
+              const current = prev[launchSession.agent_id];
+              if (
+                !current ||
+                current.session_id !== launchSession.session_id ||
+                current.workspace !== launchSession.workspace
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                [launchSession.agent_id]: { ...current, ...launchSessionUpdate },
+              };
+            });
+            setSyncedLaunchSessionGroups((prev) =>
+              prev.map((group) => ({
+                ...group,
+                sessions: group.sessions.map((session) =>
+                  session.agent_id === launchSession.agent_id &&
+                  session.session_id === launchSession.session_id &&
+                  session.workspace === launchSession.workspace
+                    ? { ...session, ...launchSessionUpdate }
+                    : session,
+                ),
+              })),
+            );
+          }
+        })
+        .catch((error) => {
+          delete runtimeThreadInitRef.current[runtimeKey];
+          console.warn("[ChatView] failed to initialize workspace thread:", error);
+        });
+    }
+  }, [
+    defaultWorkspacePath,
+    profileLabelForId,
+    profilesById,
+    runtimeSpecs,
+    selectedWorkspace?.path,
+  ]);
 
   const removeRuntime = useCallback((runtimeKey: string) => {
     setRuntimeKeys((prev) => prev.filter((key) => key !== runtimeKey));
@@ -794,7 +1051,12 @@ export function ChatView({
         snapshot.resumeReplay?.workspace;
       const activeKey =
         active && sessionId && workspace
-          ? `${spec.agentId}\u0000${workspace}\u0000${sessionId}`
+          ? chatSessionKey({
+              agent_id: spec.agentId,
+              workspace,
+              session_id: sessionId,
+              thread_id: spec.threadId ?? spec.launchSession?.thread_id,
+            })
           : undefined;
       const previousActiveKey = syncedActiveSessionRef.current[runtimeKey];
       if (previousActiveKey === activeKey) continue;
@@ -838,32 +1100,49 @@ export function ChatView({
       selectedWorkspace?.path ??
       defaultWorkspacePath;
     if (!sessionId || !workspace) return;
-    const key = `${spec.agentId}\u0000${workspace}\u0000${sessionId}`;
-    if (storedActiveLaunchSessionKeyRef.current === key) return;
-    writeStoredActiveLaunchSession(
-      storedActiveLaunchSessionFromInfo({
-        agent_id: spec.launchSession?.agent_id ?? spec.agentId,
-        session_id: sessionId,
-        workspace,
-        title:
-          spec.launchSession?.title ??
-          spec.title ??
-          snapshot.resumeReplay?.title ??
-          t("Current session"),
-        updated_at: Math.max(
-          spec.lastPromptAt ?? 0,
-          spec.launchSession?.updated_at ?? 0,
-          snapshot.resumeReplay?.updatedAt ?? 0,
-        ),
-        short_id: spec.launchSession?.short_id ?? shortSessionId(sessionId),
-        archived: spec.launchSession?.archived ?? false,
-        active: true,
-      }),
+    const storedProfileId = spec.launchSession?.host_profile_id ?? spec.profileId;
+    const storedProfileLabel = profileLabelForId(
+      storedProfileId,
+      spec.launchSession?.host_profile_label,
     );
+    const activeSessionInfo = {
+      agent_id: spec.launchSession?.agent_id ?? spec.agentId,
+      host_agent_id: spec.launchSession?.host_agent_id ?? spec.agentId,
+      host_profile_id: storedProfileId,
+      host_profile_label: storedProfileLabel,
+      host_provider:
+        spec.launchSession?.host_provider ??
+        (storedProfileId && storedProfileId !== DIRECT_PROFILE_ID
+          ? profilesById.get(storedProfileId)?.provider
+          : undefined),
+      host_provider_label:
+        spec.launchSession?.host_provider_label ?? storedProfileLabel,
+      session_id: sessionId,
+      workspace,
+      title:
+        spec.launchSession?.title ??
+        spec.title ??
+        snapshot.resumeReplay?.title ??
+        t("Current session"),
+      updated_at: Math.max(
+        spec.lastPromptAt ?? 0,
+        spec.launchSession?.updated_at ?? 0,
+        snapshot.resumeReplay?.updatedAt ?? 0,
+      ),
+      short_id: spec.launchSession?.short_id ?? shortSessionId(sessionId),
+      archived: spec.launchSession?.archived ?? false,
+      active: true,
+      thread_id: spec.threadId ?? spec.launchSession?.thread_id,
+    } satisfies LaunchSessionInfo;
+    const key = chatSessionKey(activeSessionInfo);
+    if (storedActiveLaunchSessionKeyRef.current === key) return;
+    writeStoredActiveLaunchSession(storedActiveLaunchSessionFromInfo(activeSessionInfo));
     storedActiveLaunchSessionKeyRef.current = key;
   }, [
     activeRuntimeKey,
     defaultWorkspacePath,
+    profileLabelForId,
+    profilesById,
     runtimeSnapshots,
     runtimeSpecs,
     selectedWorkspace?.path,
@@ -871,11 +1150,25 @@ export function ChatView({
   ]);
 
   const handleLaunchChange = useCallback((agentId: string, profileId?: string) => {
+    const nextProfileId = profileId ?? DIRECT_PROFILE_ID;
     setSelectedAgent(agentId);
     setProfileSelections((prev) => {
-      return { ...prev, [agentId]: profileId ?? DIRECT_PROFILE_ID };
+      return { ...prev, [agentId]: nextProfileId };
     });
-  }, []);
+    updateActiveDraftRuntime(
+      agentId,
+      nextProfileId,
+      selectedWorkspace?.path ?? defaultWorkspacePath,
+    );
+  }, [defaultWorkspacePath, selectedWorkspace?.path, updateActiveDraftRuntime]);
+
+  const handleWorkspaceSelectionChange = useCallback(
+    (workspacePath: string) => {
+      setSelectedWorkspacePath(workspacePath);
+      updateActiveDraftRuntime(selectedAgent, selectedProfileId, workspacePath);
+    },
+    [selectedAgent, selectedProfileId, updateActiveDraftRuntime],
+  );
 
   const handleSidebarAgentFilterChange = useCallback((agentId: string) => {
     setSidebarAgentFilter(agentId);
@@ -897,13 +1190,14 @@ export function ChatView({
       setWorkspaces(response.workspaces);
       setDefaultWorkspacePath(response.default_workspace);
       setSelectedWorkspacePath(response.workspace.path);
+      updateActiveDraftRuntime(selectedAgent, selectedProfileId, response.workspace.path);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setWorkspaceCreateError(message);
     } finally {
       setWorkspaceCreating(false);
     }
-  }, []);
+  }, [selectedAgent, selectedProfileId, updateActiveDraftRuntime]);
 
   const handleSessionChange = useCallback(
     (selection: ChatSessionSelection, session?: LaunchSessionInfo) => {
@@ -1086,14 +1380,22 @@ export function ChatView({
     if (replayBlocksInput) return;
     if (!sendMessage) return;
     const messageWorkspacePath = selectedWorkspace?.path ?? defaultWorkspacePath;
+    const messageAgentId = activeSpec?.agentId ?? selectedAgent;
+    const messageProfileId = activeSpec?.profileId ?? selectedProfileId;
+    const messageLaunchSession = activeLaunchSession ?? selectedLaunchSession;
+    const messageSessionSelection =
+      activeSessionSelection.kind === "new" && activeLaunchSession
+        ? { kind: "resume" as const, sessionId: activeLaunchSession.session_id }
+        : activeSessionSelection;
     const sent = sendMessage({
       text,
       attachments,
-      agentId: selectedAgent,
-      profileId: selectedProfileId,
+      agentId: messageAgentId,
+      profileId: messageProfileId,
       workspacePath: messageWorkspacePath,
-      sessionSelection,
-      launchSession: selectedLaunchSession,
+      threadId: activeSpec?.threadId,
+      sessionSelection: messageSessionSelection,
+      launchSession: messageLaunchSession,
     });
     if (!sent) return;
 
@@ -1103,30 +1405,34 @@ export function ChatView({
     setRuntimeSpecs((prev) => ({
       ...prev,
       [activeRuntimeKey]: {
-        ...(prev[activeRuntimeKey] ?? { agentId: selectedAgent }),
-        agentId: selectedAgent,
-        profileId: selectedProfileId,
+        ...(prev[activeRuntimeKey] ?? { agentId: messageAgentId }),
+        agentId: messageAgentId,
+        profileId: messageProfileId,
         workspacePath: messageWorkspacePath,
-        launchSession: selectedLaunchSession,
+        launchSession: messageLaunchSession,
         lastPromptAt: promptSubmittedAt,
         title:
           text ||
           attachments[0]?.name ||
-          selectedLaunchSession?.title ||
+          messageLaunchSession?.title ||
           t("Current session"),
       },
     }));
-    if (sessionSelection.kind === "new") {
-      setSessionSelections((prev) => ({ ...prev, [selectedAgent]: { kind: "current" } }));
+    if (messageSessionSelection.kind === "new") {
+      setSessionSelections((prev) => ({ ...prev, [messageAgentId]: { kind: "current" } }));
     }
   }, [
     activeRuntimeKey,
+    activeLaunchSession,
+    activeSessionSelection,
+    activeSpec,
     attachments,
     attachmentsUploading,
     clearAttachments,
     input,
     replayBlocksInput,
     defaultWorkspacePath,
+    runtimeSpecs,
     selectedAgent,
     selectedLaunchSession,
     selectedProfileId,
@@ -1156,6 +1462,7 @@ export function ChatView({
         <ChatRuntimeHost
           key={runtimeKey}
           runtimeKey={runtimeKey}
+          chatId={runtimeSpecs[runtimeKey]?.chatId}
           initialResume={runtimeSpecs[runtimeKey]?.initialResume}
           onSnapshot={handleRuntimeSnapshot}
           onActions={handleRuntimeActions}
@@ -1171,14 +1478,14 @@ export function ChatView({
             workspaceGroups={displayLaunchSessionGroups}
             agents={agents}
             selectedAgentFilter={sidebarAgentFilter}
-            activeAgentId={selectedAgent}
+            activeAgentId={activeAgentId}
             className="flex w-full"
             style={{ width: "100%" }}
             sessionsLoading={sidebarSessionsLoading}
             loadingSessionId={resumeReplay?.sessionId}
             loadingSessionKeys={runtimeBusySessionKeys}
             archivingSessionId={archivingSessionId}
-            sessionSelection={sessionSelection}
+            sessionSelection={activeSessionSelection}
             onSyncSessions={handleSyncSessions}
             onAgentFilterChange={handleSidebarAgentFilterChange}
             onSessionChange={handleSessionChange}
@@ -1206,13 +1513,13 @@ export function ChatView({
               workspaceGroups={displayLaunchSessionGroups}
               agents={agents}
               selectedAgentFilter={sidebarAgentFilter}
-              activeAgentId={selectedAgent}
+              activeAgentId={activeAgentId}
               variant="mobile"
               sessionsLoading={sidebarSessionsLoading}
               loadingSessionId={resumeReplay?.sessionId}
               loadingSessionKeys={runtimeBusySessionKeys}
               archivingSessionId={archivingSessionId}
-              sessionSelection={sessionSelection}
+              sessionSelection={activeSessionSelection}
               onSyncSessions={handleSyncSessions}
               onAgentFilterChange={handleSidebarAgentFilterChange}
               onSessionChange={handleMobileSessionChange}
@@ -1224,8 +1531,12 @@ export function ChatView({
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <ChatHeader
-          selectedAgent={selectedAgent}
+          selectedAgent={activeAgentId}
           agentLabel={agentLabel}
+          profileId={activeProfileId}
+          profileLabel={activeProfileLabel}
+          providerId={activeProviderId}
+          providerLabel={activeProviderLabel}
           routeLabel={routeLabel}
           headerSessionLabel={headerSessionLabel}
           workspacePath={activeWorkspacePath}
@@ -1264,7 +1575,7 @@ export function ChatView({
                 placeholder={
                   connected ? t("Ask {{agent}} anything…", { agent: agentLabel }) : t("Connecting…")
                 }
-                targetLabel={agentLabel}
+                targetLabel={routeLabel}
                 variant="hero"
                 className="pb-1"
               />
@@ -1274,7 +1585,7 @@ export function ChatView({
                   profiles={profiles}
                   selectedAgentId={selectedAgent}
                   selectedProfileId={selectedProfileId}
-                  fallbackAgentLabel={agentLabel}
+                  fallbackAgentLabel={selectedAgentLabel}
                   onLaunchChange={handleLaunchChange}
                   className="min-w-0"
                 />
@@ -1285,7 +1596,7 @@ export function ChatView({
                   loading={workspacesLoading}
                   creating={workspaceCreating}
                   createError={workspaceCreateError}
-                  onWorkspaceChange={setSelectedWorkspacePath}
+                  onWorkspaceChange={handleWorkspaceSelectionChange}
                   onCreateWorkspace={handleCreateWorkspace}
                   layout="panel"
                   className="min-w-0"
@@ -1333,7 +1644,7 @@ export function ChatView({
               placeholder={
                 connected ? t("Message {{agent}}…", { agent: agentLabel }) : t("Connecting…")
               }
-              targetLabel={agentLabel}
+              targetLabel={routeLabel}
             />
           </>
         )}

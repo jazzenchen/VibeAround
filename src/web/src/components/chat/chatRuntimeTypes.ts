@@ -19,6 +19,8 @@ export interface ChatRuntimeSpec {
   agentId: string;
   profileId?: string;
   workspacePath?: string;
+  threadId?: string;
+  chatId?: string;
   launchSession?: LaunchSessionInfo;
   title?: string;
   lastPromptAt?: number;
