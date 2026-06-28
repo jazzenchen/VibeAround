@@ -1,0 +1,27 @@
+{
+  "name": "vibearound",
+  "version": "0.0.1",
+  "description": "VibeAround command-line tools",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "vibearound": "bin/vibearound.mjs",
+    "va": "bin/vibearound.mjs"
+  },
+  "files": [
+    "bin/",
+    "web/dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "prepare-package": "node scripts/prepare-package.mjs",
+    "prepack": "node scripts/prepare-package.mjs"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  }
+}
