@@ -14,6 +14,18 @@
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch screen with agent profile and workspace selection" width="92%" />
 </p>
 
+## Important: v0.7.10 Breaking Change
+
+VibeAround v0.7.10 changes how local configuration is read and normalized. Some configuration fields have been merged, and some non-essential runtime/log data is no longer useful. For now, the recommended migration is a manual cleanup:
+
+1. Back up `~/.vibearound/profiles` and `~/.vibearound/settings.json`.
+2. Delete the `~/.vibearound` directory.
+3. Copy the backed-up `profiles` directory and `settings.json` back into `~/.vibearound`.
+4. Open VibeAround Desktop.
+5. Go to Settings and run the onboarding flow again.
+
+Known impact: API Bridge configuration may be lost during this migration. Re-enable API Bridge on the affected profiles to restore it.
+
 ## Why VibeAround
 
 VibeAround keeps AI coding work together without making you rebuild the environment you already have.
