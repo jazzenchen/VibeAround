@@ -41,6 +41,13 @@
         "vite": "^6.4.2",
       },
     },
+    "launcher": {
+      "name": "@va/launcher",
+      "version": "0.7.9",
+      "bin": {
+        "va-launch": "bin/va-launch.mjs",
+      },
+    },
     "shared/client-ts": {
       "name": "@vibearound/client",
       "version": "0.7.9",
@@ -673,6 +680,8 @@
     "@upsetjs/venn.js": ["@upsetjs/venn.js@2.0.0", "", { "optionalDependencies": { "d3-selection": "^3.0.0", "d3-transition": "^3.0.1" } }, "sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw=="],
 
     "@va/i18n": ["@va/i18n@workspace:shared/i18n"],
+
+    "@va/launcher": ["@va/launcher@workspace:launcher"],
 
     "@va/ui": ["@va/ui@workspace:shared/ui"],
 
