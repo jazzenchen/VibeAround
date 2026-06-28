@@ -51,7 +51,8 @@ Pick an AI agent, model profile or API endpoint, and workspace. VibeAround launc
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/api-inspector.webp" alt="VibeAround Bridge recorder showing requests, responses, and search details" width="88%" />
 </p>
 
-### VibeAround vs CC Switch
+<details>
+<summary><strong>VibeAround vs CC Switch</strong></summary>
 
 | Area | VibeAround | [CC Switch](https://github.com/farion1231/cc-switch) |
 |---|---|---|
@@ -69,6 +70,8 @@ Pick an AI agent, model profile or API endpoint, and workspace. VibeAround launc
 | Host-side web search | ✅ [Host-side Web Search](#host-side-web-search) via `va-search-tool` when providers do not expose native search | ❌ Not currently supported |
 | MCP and Skills | ❌ Not currently supported | ✅ Unified MCP and Skills management across supported apps |
 | Usage and cost tracking | 🚧 Roadmap | ✅ Built-in usage dashboard |
+
+</details>
 
 ## Known Issue
 
@@ -174,7 +177,8 @@ IM integrations are built through the [VibeAround Channel SDK](https://github.co
 - Switch workspaces and agents with `/switch`.
 - Open preview links from the same conversation.
 
-### VibeAround vs cc-connect
+<details>
+<summary><strong>VibeAround vs cc-connect</strong></summary>
 
 | Area | VibeAround | [cc-connect](https://github.com/chenhg5/cc-connect) |
 |---|---|---|
@@ -189,6 +193,8 @@ IM integrations are built through the [VibeAround Channel SDK](https://github.co
 | Web Terminal | ✅ Browser terminal for controlling local AI agent CLIs remotely | ❌ Not currently supported |
 | Web Hub | ✅ Browser launch, session continuation, and chat | ⚠️ Web admin/config dashboard; service runs separately |
 | Scheduling and rich IM commands | ❌ Not currently supported | ✅ `/timer`, `/cron`, `/cancel`, `/ps`, provider/model/mode commands |
+
+</details>
 
 ## Web Terminal
 
@@ -249,7 +255,8 @@ VibeAround turns dev servers, Markdown files, and HTML files into previewable li
 - Use tunnels to access preview links remotely.
 - Preview dev servers, Markdown files, and HTML files.
 
-## Supported AI Agents
+<details>
+<summary><strong>Supported AI Agents</strong></summary>
 
 | Agent | Launch | Continue / handover | Profile routing |
 |---|---:|---:|---:|
@@ -266,7 +273,10 @@ VibeAround turns dev servers, Markdown files, and HTML files into previewable li
 
 ✅ Supported · ⚠️ Partial · ➜ Direct launch · — Not supported
 
-## Supported Providers
+</details>
+
+<details>
+<summary><strong>Supported Providers</strong></summary>
 
 Preset profiles cover common official and compatible providers. Custom endpoints are available when your provider speaks a supported API shape.
 
@@ -285,7 +295,10 @@ Preset profiles cover common official and compatible providers. Custom endpoints
 | Azure OpenAI | Responses and Chat deployment routing |
 | Custom endpoint | Bring your own base URL, headers, models, and API kinds |
 
-## Messaging Channels
+</details>
+
+<details>
+<summary><strong>Messaging Channels</strong></summary>
 
 Channel plugins are built with the [VibeAround Channel SDK](https://github.com/jazzenchen/va-plugin-channel-sdk), then installed and managed by VibeAround.
 
@@ -300,7 +313,10 @@ Channel plugins are built with the [VibeAround Channel SDK](https://github.com/j
 | WeCom | WebSocket bot credentials | Enterprise WeChat workflows |
 | QQ Bot | Guild bot credentials | QQ bot workflows |
 
-## Local-first Security
+</details>
+
+<details>
+<summary><strong>Local-first Security</strong></summary>
 
 VibeAround keeps AI coding work on your computer by default.
 
@@ -311,6 +327,8 @@ VibeAround keeps AI coding work on your computer by default.
 - Public tunnel URLs require browser pairing.
 - Preview links are scoped and short-lived.
 - Agent CLIs use your local project permissions.
+
+</details>
 
 ## Quick Start
 
@@ -345,30 +363,15 @@ The npm package installs both `va` and `vibearound` commands:
 npm install -g vibearound
 ```
 
-Latest CLI package: [`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1). See [Run Modes](#run-modes) for the main `va` commands.
-
-### Run Modes
-
-VibeAround can run as a full desktop app, a standalone local server, or CLI-first tooling around the same local runtime. Use the desktop app for the all-in-one GUI. Use `va serve` when you want Web Hub, Web Terminal, and remote access without the desktop window. Use `va launch` and `va tui` when you want to stay closer to the terminal.
-
 ```bash
-# Start the local server
 va serve
-
-# Inspect the local runtime
-va status
-va workspaces
-
-# Open the terminal UI
 va tui
-
-# Launch saved profiles or create attachable CLI sessions
 va launch --profile codex-work
-va launch --profile-path ./profiles/claude-deepseek.json
-va session create --tool codex --project /path/to/project --attach
 ```
 
 After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
+
+Latest CLI package: [`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1).
 
 ## Upgrade Notes
 

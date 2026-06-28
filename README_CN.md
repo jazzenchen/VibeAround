@@ -51,7 +51,8 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量�
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/api-inspector.webp" alt="VibeAround Bridge recorder，可查看请求、响应和搜索细节" width="88%" />
 </p>
 
-### VibeAround vs CC Switch
+<details>
+<summary><strong>VibeAround vs CC Switch</strong></summary>
 
 | 维度 | VibeAround | [CC Switch](https://github.com/farion1231/cc-switch) |
 |---|---|---|
@@ -69,6 +70,8 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量�
 | Host-side web search | ✅ provider 不提供原生搜索时，通过 [Host-side Web Search](#host-side-web-search) / `va-search-tool` 补上 | ❌ 当前不支持 |
 | MCP 和 Skills | ❌ 当前不支持 | ✅ 在 supported apps 之间统一管理 MCP 和 Skills |
 | Usage / cost tracking | 🚧 Roadmap | ✅ 内置 usage dashboard |
+
+</details>
 
 ## Known Issue
 
@@ -174,7 +177,8 @@ IM 接入是通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plu
 - 用 `/switch` 切换 Workspace 和 Agent。
 - 在同一个对话里打开预览链接。
 
-### VibeAround vs cc-connect
+<details>
+<summary><strong>VibeAround vs cc-connect</strong></summary>
 
 | 维度 | VibeAround | [cc-connect](https://github.com/chenhg5/cc-connect) |
 |---|---|---|
@@ -189,6 +193,8 @@ IM 接入是通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plu
 | Web Terminal | ✅ 用浏览器远程控制本地 AI Agent CLI | ❌ 当前不支持 |
 | Web Hub | ✅ 从浏览器 launch、continue sessions 和 chat | ⚠️ 提供 Web admin/config dashboard；service 需要单独运行 |
 | Scheduling 和 rich IM commands | ❌ 当前不支持 | ✅ `/timer`、`/cron`、`/cancel`、`/ps`、provider/model/mode commands |
+
+</details>
 
 ## Web Terminal
 
@@ -249,7 +255,8 @@ VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物�
 - 通过 tunnel 可以实现远程访问预览链接。
 - 可以预览网站服务、Markdown 文件、HTML 文件。
 
-## 支持的 AI Agent
+<details>
+<summary><strong>支持的 AI Agent</strong></summary>
 
 | Agent | 启动 | 继续 / 交接 | Profile 路由 |
 |---|---:|---:|---:|
@@ -266,7 +273,10 @@ VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物�
 
 ✅ 支持 · ⚠️ 部分支持 · ➜ 直连启动 · — 暂不支持
 
-## 支持的 Provider
+</details>
+
+<details>
+<summary><strong>支持的 Provider</strong></summary>
 
 内置 Profile 已覆盖主流官方 provider 和兼容 provider。只要你的 provider 支持相应的 API 形态，也可以通过自定义 endpoint 接入。
 
@@ -285,7 +295,10 @@ VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物�
 | Azure OpenAI | 支持 Responses 和 Chat deployment 路由 |
 | 自定义 endpoint | 允许自定义 base URL、headers、模型列表和 API 形态 |
 
-## 消息频道
+</details>
+
+<details>
+<summary><strong>消息频道</strong></summary>
 
 消息频道通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plugin-channel-sdk) 构建，再由 VibeAround 安装和统一管理。
 
@@ -300,7 +313,10 @@ VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物�
 | 企业微信 | 配置 WebSocket Bot 凭证 | 企业微信工作流 |
 | QQ Bot | 使用 QQ 频道机器人凭证 | QQ 频道工作流 |
 
-## Local-first 安全模型
+</details>
+
+<details>
+<summary><strong>Local-first 安全模型</strong></summary>
 
 VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
@@ -311,6 +327,8 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 - 公网 tunnel URL 需要浏览器配对，不会直接暴露。
 - Preview 链接有明确的作用域，并且短期有效。
 - Agent CLI 使用你本机的项目权限，不越界。
+
+</details>
 
 ---
 
@@ -347,30 +365,15 @@ npm 包会同时安装 `va` 和 `vibearound` 两个命令：
 npm install -g vibearound
 ```
 
-最新 CLI 包：[`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。主要 `va` 命令见下方 [运行方式](#运行方式)。
-
-### 运行方式
-
-VibeAround 可以作为完整 Desktop 应用运行，也可以只跑独立本地 server，或者以 CLI-first 的方式接入同一套本地 runtime。需要完整图形界面时使用 Desktop 应用；想在不打开桌面窗口的情况下使用 Web Hub、Web Terminal 和远程访问时运行 `va serve`；想更贴近终端工作流时使用 `va launch` 和 `va tui`。
-
 ```bash
-# 启动本地 server
 va serve
-
-# 查看本地 runtime 状态
-va status
-va workspaces
-
-# 打开终端 UI
 va tui
-
-# 启动保存好的 profile，或创建可 attach 的 CLI session
 va launch --profile codex-work
-va launch --profile-path ./profiles/claude-deepseek.json
-va session create --tool codex --project /path/to/project --attach
 ```
 
 server 启动后，在浏览器访问 `http://127.0.0.1:12358/va/`。
+
+最新 CLI 包：[`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。
 
 ## 升级说明
 
