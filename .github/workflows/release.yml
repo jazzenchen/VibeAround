@@ -130,6 +130,10 @@ jobs:
             rename_asset "VibeAround_${version}_amd64.deb" "VibeAround-Linux-x64-DEB-${version}.deb"
           fi
 
+      - name: Build Windows CLI tools
+        if: runner.os == 'Windows'
+        run: cargo build --manifest-path src/Cargo.toml --release -p va-cli -p va-tui
+
       - name: Package Windows portable ZIP
         if: runner.os == 'Windows'
         shell: pwsh
