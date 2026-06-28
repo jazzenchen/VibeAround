@@ -6,7 +6,7 @@
 
 **An all-in-one hub for AI coding agents, keeping your vibe flow around.**
 
-[Download](https://github.com/jazzenchen/VibeAround/releases/latest) | [Demo](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [WeChat](#community) | [简体中文](README_CN.md)
+[Desktop Download](https://github.com/jazzenchen/VibeAround/releases/latest) | [CLI npm](https://www.npmjs.com/package/vibearound) | [Demo](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [WeChat](#community) | [简体中文](README_CN.md)
 
 </div>
 
@@ -21,18 +21,6 @@
   </tr>
 </table>
 
-## Important: v0.7.10 Breaking Change
-
-VibeAround v0.7.10 changes how local configuration is read and normalized. Some configuration fields have been merged, and some non-essential runtime/log data is no longer useful. For now, the recommended migration is a manual cleanup:
-
-1. Back up `~/.vibearound/profiles` and `~/.vibearound/settings.json`.
-2. Delete the `~/.vibearound` directory.
-3. Copy the backed-up `profiles` directory and `settings.json` back into `~/.vibearound`.
-4. Open VibeAround Desktop.
-5. Go to Settings and run the onboarding flow again.
-
-Known impact: API Bridge configuration may be lost during this migration. Re-enable API Bridge on the affected profiles to restore it.
-
 ## Why VibeAround
 
 VibeAround keeps AI coding work together without making you rebuild the environment you already have.
@@ -40,6 +28,14 @@ VibeAround keeps AI coding work together without making you rebuild the environm
 ### Run Modes
 
 VibeAround can run as the full Desktop app, as a standalone local server, or as CLI-first tooling around the same local runtime. Desktop embeds the server for the all-in-one experience; `va serve` runs the server without the desktop UI; `va launch`, Web Hub, Web Terminal, and the early TUI are different entry points into the same agent/session system.
+
+Install the standalone CLI from npm when you want the `va` command without installing the desktop app:
+
+```bash
+npm install -g vibearound
+```
+
+The npm package installs both `va` and `vibearound`; either command reaches the same local runtime entry points.
 
 ```bash
 # Full local app on macOS
@@ -354,18 +350,20 @@ VibeAround keeps AI coding work on your computer by default.
 
 ## Quick Start
 
-1. Download the latest desktop package for your platform.
-2. Open VibeAround and complete onboarding.
-3. Enable the agent CLIs you use.
+1. Install the desktop app for the full GUI, or install the CLI with `npm install -g vibearound`.
+2. Open VibeAround Desktop, or run `va serve` and visit `http://127.0.0.1:12358/va/`.
+3. Complete onboarding and enable the agent CLIs you use.
 4. Add API profiles if you want VibeAround to route model traffic.
-5. Pick an agent, model profile, terminal, workspace, and session from Launch.
-6. Continue from desktop, Web Hub, Web Terminal, or a configured messaging channel.
+5. Pick an agent, model profile, terminal, workspace, and session from Launch or Web Hub.
+6. Continue from desktop, Web Hub, Web Terminal, CLI, or a configured messaging channel.
 
 Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki).
 
-## Download
+## Install
 
-Latest release: [VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.10).
+### Desktop App
+
+Latest desktop release: [VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.10).
 
 | Platform | Recommended download |
 |---|---|
@@ -374,6 +372,36 @@ Latest release: [VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/re
 | Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-AppImage-0.7.10.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-DEB-0.7.10.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
+
+### CLI via npm
+
+The npm package installs both `va` and `vibearound` commands:
+
+```bash
+npm install -g vibearound
+```
+
+```bash
+va serve
+va tui
+va launch
+```
+
+Latest CLI package: [`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1).
+
+## Upgrade Notes
+
+### v0.7.10 Breaking Change
+
+VibeAround v0.7.10 changes how local configuration is read and normalized. Some configuration fields have been merged, and some non-essential runtime/log data is no longer useful. For now, the recommended migration is a manual cleanup:
+
+1. Back up `~/.vibearound/profiles` and `~/.vibearound/settings.json`.
+2. Delete the `~/.vibearound` directory.
+3. Copy the backed-up `profiles` directory and `settings.json` back into `~/.vibearound`.
+4. Open VibeAround Desktop.
+5. Go to Settings and run the onboarding flow again.
+
+Known impact: API Bridge configuration may be lost during this migration. Re-enable API Bridge on the affected profiles to restore it.
 
 <a id="migration-guide-from-06x"></a>
 

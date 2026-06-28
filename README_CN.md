@@ -6,7 +6,7 @@
 
 **AI 编程 Agent 的一站式 Hub。**
 
-[下载](https://github.com/jazzenchen/VibeAround/releases/latest) | [演示](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [微信群](#社区) | [English](README.md)
+[桌面版下载](https://github.com/jazzenchen/VibeAround/releases/latest) | [CLI npm](https://www.npmjs.com/package/vibearound) | [演示](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [微信群](#社区) | [English](README.md)
 
 </div>
 
@@ -21,18 +21,6 @@
   </tr>
 </table>
 
-## 重要：v0.7.10 破坏性变更
-
-VibeAround v0.7.10 修改了本地配置的读取和归一化逻辑。部分配置项被合并，部分非必要的运行日志/缓存内容也不再有用。目前建议按下面流程手动清理：
-
-1. 备份 `~/.vibearound/profiles` 和 `~/.vibearound/settings.json`。
-2. 删除整个 `~/.vibearound` 目录。
-3. 将备份的 `profiles` 目录和 `settings.json` 拷贝回 `~/.vibearound`。
-4. 打开 VibeAround Desktop。
-5. 进入 Settings，重新走一遍 onboarding 流程。
-
-已知影响：迁移后 API Bridge 配置可能会丢失。重新在对应 profile 上启用 API Bridge 即可恢复。
-
 ## 为什么需要 VibeAround
 
 VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量不打扰你已经配置好的环境。
@@ -40,6 +28,14 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量�
 ### 运行方式
 
 VibeAround 可以作为完整 Desktop 应用运行，也可以只跑独立的本地 server，或者用 CLI-first 的方式接入同一套本地 runtime。Desktop 会内嵌 server，提供完整图形界面；`va serve` 可以脱离桌面 UI 单独启动 server；`va launch`、Web Hub、Web Terminal 和早期 TUI 则是进入同一套 Agent / Session 系统的不同入口。
+
+如果你只想使用 `va` 命令，而不安装桌面应用，可以通过 npm 安装独立 CLI：
+
+```bash
+npm install -g vibearound
+```
+
+这个 npm 包会同时安装 `va` 和 `vibearound` 两个命令，它们指向同一套本地 runtime 入口。
 
 ```bash
 # macOS 上启动完整本地应用
@@ -356,18 +352,20 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
 ## 快速开始
 
-1. 下载适合你平台的最新桌面安装包。
-2. 打开 VibeAround，跟随引导完成初始设置。
-3. 启用你常用的 Agent CLI。
+1. 安装完整桌面应用，或通过 `npm install -g vibearound` 安装 CLI。
+2. 打开 VibeAround Desktop，或运行 `va serve` 后访问 `http://127.0.0.1:12358/va/`。
+3. 跟随引导完成初始设置，并启用你常用的 Agent CLI。
 4. 如果希望 VibeAround 统一路由模型流量，添加 API Profile。
-5. 在 Launch 中选择 Agent、模型 Profile、Terminal、Workspace 和 Session。
-6. 之后，你就可以从桌面、Web Hub、Web Terminal 或配置好的消息频道继续工作。
+5. 在 Launch 或 Web Hub 中选择 Agent、模型 Profile、Terminal、Workspace 和 Session。
+6. 之后，你就可以从桌面、Web Hub、Web Terminal、CLI 或配置好的消息频道继续工作。
 
 详细文档见 [Wiki](https://github.com/jazzenchen/VibeAround/wiki)。
 
-## 下载
+## 安装
 
-最新版本：[VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.10)。
+### Desktop 应用
+
+最新桌面版：[VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.10)。
 
 | 平台 | 推荐下载 |
 |---|---|
@@ -376,6 +374,36 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 | Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-AppImage-0.7.10.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-DEB-0.7.10.deb) |
 
 Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Silicon 版本。
+
+### 通过 npm 安装 CLI
+
+npm 包会同时安装 `va` 和 `vibearound` 两个命令：
+
+```bash
+npm install -g vibearound
+```
+
+```bash
+va serve
+va tui
+va launch
+```
+
+最新 CLI 包：[`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。
+
+## 升级说明
+
+### v0.7.10 破坏性变更
+
+VibeAround v0.7.10 修改了本地配置的读取和归一化逻辑。部分配置项被合并，部分非必要的运行日志/缓存内容也不再有用。目前建议按下面流程手动清理：
+
+1. 备份 `~/.vibearound/profiles` 和 `~/.vibearound/settings.json`。
+2. 删除整个 `~/.vibearound` 目录。
+3. 将备份的 `profiles` 目录和 `settings.json` 拷贝回 `~/.vibearound`。
+4. 打开 VibeAround Desktop。
+5. 进入 Settings，重新走一遍 onboarding 流程。
+
+已知影响：迁移后 API Bridge 配置可能会丢失。重新在对应 profile 上启用 API Bridge 即可恢复。
 
 <a id="migration-guide-from-06x-cn"></a>
 
