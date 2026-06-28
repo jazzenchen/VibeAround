@@ -50,6 +50,7 @@ fn session_from_file(path: &Path, workspace: &Path) -> Option<LaunchSession> {
 
     Some(LaunchSession {
         agent_id: "pi".to_string(),
+        profile_id: None,
         session_id,
         title,
         workspace: workspace.to_string_lossy().to_string(),

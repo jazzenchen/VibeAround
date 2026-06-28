@@ -189,6 +189,11 @@ mod tests {
     fn launch_session_line_includes_full_session_id() {
         let line = launch_session_line(&LaunchSessionInfo {
             agent_id: "codex".to_string(),
+            host_agent_id: None,
+            host_profile_id: None,
+            host_profile_label: None,
+            host_provider: None,
+            host_provider_label: None,
             session_id: "full-session-id".to_string(),
             title: "Fix bug".to_string(),
             workspace: "/tmp/project".to_string(),
@@ -196,6 +201,7 @@ mod tests {
             short_id: "abc123".to_string(),
             archived: false,
             active: false,
+            thread_id: None,
         });
 
         assert_eq!(

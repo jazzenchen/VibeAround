@@ -2,7 +2,6 @@
 
 pub mod api_types;
 pub mod boot;
-pub mod openai_bridge;
 mod web_server;
 
 pub use web_server::run_web_server;

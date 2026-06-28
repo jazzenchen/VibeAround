@@ -330,7 +330,10 @@ export function ChatInput({
                 requestAnimationFrame(() => textareaRef.current?.focus());
               }}
             />
-            <span className="min-w-0 truncate px-1 text-xs font-medium text-muted-foreground">
+            <span
+              className="min-w-0 truncate px-1 text-xs font-medium text-muted-foreground"
+              title={targetLabel}
+            >
               {targetLabel}
             </span>
           </div>

@@ -244,6 +244,11 @@ mod tests {
 
         let launch_session = LaunchSessionInfo {
             agent_id: "codex".into(),
+            host_agent_id: None,
+            host_profile_id: None,
+            host_profile_label: None,
+            host_provider: None,
+            host_provider_label: None,
             session_id: "abcdef1234567890".into(),
             title: "Fix tests".into(),
             workspace: "/tmp/project".into(),
@@ -251,6 +256,7 @@ mod tests {
             short_id: "abcdef12".into(),
             archived: false,
             active: true,
+            thread_id: None,
         };
         assert_eq!(
             row_text(launch_session_row(&launch_session)),

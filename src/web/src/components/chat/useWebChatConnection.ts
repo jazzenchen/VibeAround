@@ -56,6 +56,7 @@ import {
 import { currentUnixSeconds } from "./chatTime";
 
 interface UseWebChatConnectionOptions {
+  chatId?: string;
   onAgentSelected?: (agentId: string, source: "config" | "system") => void;
 }
 
@@ -65,15 +66,13 @@ const USER_CONTENT_PART_ID_PREFIX = "user-content";
 const COMPACTION_NOTICE_DROP_RATIO = 0.55;
 const COMPACTION_NOTICE_MIN_WINDOW_RATIO = 0.25;
 const COMPACTION_NOTICE_MIN_DROP = 128;
-const WEB_CHAT_ID_STORAGE_KEY = "vibearound.web.chat_id";
-const WEB_CHAT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-
 interface SendChatMessageRequest {
   text: string;
   attachments?: ChatAttachment[];
   agentId: string;
   profileId?: string;
   workspacePath?: string;
+  threadId?: string;
   sessionSelection: ChatSessionSelection;
   launchSession?: LaunchSessionInfo;
 }
@@ -101,27 +100,6 @@ type SessionUpdateLike = {
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
-}
-
-function createWebChatId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `web_${crypto.randomUUID()}`;
-  }
-  return `web_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-}
-
-function stableWebChatId(): string {
-  try {
-    const existing = window.sessionStorage.getItem(WEB_CHAT_ID_STORAGE_KEY);
-    if (existing && WEB_CHAT_ID_PATTERN.test(existing)) {
-      return existing;
-    }
-    const next = createWebChatId();
-    window.sessionStorage.setItem(WEB_CHAT_ID_STORAGE_KEY, next);
-    return next;
-  } catch {
-    return createWebChatId();
-  }
 }
 
 function sessionUpdateName(update: unknown): string | undefined {
@@ -193,6 +171,7 @@ export interface ResumeReplayState {
 }
 
 export function useWebChatConnection({
+  chatId,
   onAgentSelected,
 }: UseWebChatConnectionOptions = {}) {
   const { t } = useI18n();
@@ -398,7 +377,13 @@ export function useWebChatConnection({
   );
 
   useEffect(() => {
-    const chatId = stableWebChatId();
+    if (!chatId) {
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
+      setConnected(false);
+      return;
+    }
     const ws = new WebSocket(
       getWebSocketUrl(`/ws/chat?chat_id=${encodeURIComponent(chatId)}`),
     );
@@ -758,6 +743,7 @@ export function useWebChatConnection({
   }, [
     applyMessageUpdate,
     cacheTranscript,
+    chatId,
     clearActiveTranscriptCacheWriteTimer,
     clearReplayCacheWriteTimer,
     clearResumeReplayDoneTimer,
@@ -774,6 +760,7 @@ export function useWebChatConnection({
       agentId,
       profileId,
       workspacePath,
+      threadId,
       sessionSelection,
       launchSession,
     }: SendChatMessageRequest) => {
@@ -830,7 +817,10 @@ export function useWebChatConnection({
           sessionSelection.kind === "resume" && launchSession
             ? launchSession.session_id
             : currentSessionId;
-        if (sessionSelection.kind === "new") {
+        if (threadId) {
+          payload.threadId = threadId;
+        }
+        if (sessionSelection.kind === "new" && !threadId) {
           payload.sessionAction = "new";
           if (workspacePath) {
             payload.sessionWorkspace = workspacePath;

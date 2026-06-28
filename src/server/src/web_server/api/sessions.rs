@@ -6,6 +6,7 @@ use axum::{
 };
 
 use common::pty::{list_tmux_sessions, tmux_available, PtyTool, SessionId};
+use common::workspace::manager::ExternalSessionAttachMode;
 
 use crate::web_server::AppState;
 
@@ -93,8 +94,8 @@ pub async fn list_launch_sessions_handler(
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
         .into_iter()
-        .map(|session| launch_session_info(&state, session))
-        .collect();
+        .collect::<Vec<_>>();
+    let sessions = launch_session_infos(&state, sessions).await?;
 
     Ok(Json(sessions))
 }
@@ -153,33 +154,136 @@ pub async fn list_launch_sessions_batch_handler(
                     .list_resumable_agent_sessions(agent_id, workspace, limit, include_archived)
                     .await
                     .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
-                    .into_iter()
-                    .map(|session| launch_session_info(&state, session)),
+                    .into_iter(),
             );
         }
     }
+    let mut sessions = launch_session_infos(&state, sessions).await?;
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     Ok(Json(sessions))
 }
 
-fn launch_session_info(
+async fn launch_session_infos(
+    state: &AppState,
+    sessions: Vec<common::launch_sessions::LaunchSession>,
+) -> Result<Vec<crate::api_types::LaunchSessionInfo>, (StatusCode, String)> {
+    let mut infos = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        infos.push(launch_session_info(state, session).await?);
+    }
+    Ok(infos)
+}
+
+async fn launch_session_info(
     state: &AppState,
     session: common::launch_sessions::LaunchSession,
-) -> crate::api_types::LaunchSessionInfo {
+) -> Result<crate::api_types::LaunchSessionInfo, (StatusCode, String)> {
     let active = state
         .web_channel
         .session_is_active(&session.agent_id, &session.session_id);
-    crate::api_types::LaunchSessionInfo {
+    let thread_host = state
+        .channel_hub
+        .workspace_thread_manager()
+        .thread_host_for_agent_session(
+            &session.agent_id,
+            std::path::Path::new(&session.workspace),
+            &session.session_id,
+        )
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let (thread_id, host_agent_id, host_profile_id) =
+        if let Some((thread_id, host_binding)) = thread_host {
+            (
+                Some(thread_id.to_string()),
+                host_binding.agent_id,
+                host_binding.profile_id,
+            )
+        } else {
+            (None, session.agent_id.clone(), session.profile_id.clone())
+        };
+    let host_profile_label = crate::api_types::agent_profile_label(host_profile_id.as_deref());
+    let (host_provider, host_provider_label) = profile_provider_label(host_profile_id.as_deref());
+    Ok(crate::api_types::LaunchSessionInfo {
         short_id: common::launch_sessions::short_id(&session.session_id),
         agent_id: session.agent_id,
+        host_agent_id,
+        host_profile_id,
+        host_profile_label,
+        host_provider,
+        host_provider_label,
         session_id: session.session_id,
         title: session.title,
         workspace: session.workspace,
         updated_at: session.updated_at,
         archived: session.archived,
         active,
+        thread_id,
+    })
+}
+
+fn profile_provider_label(profile_id: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(profile_id) = profile_id else {
+        return (None, None);
+    };
+    let Some(profile) =
+        common::profiles::schema::load(profile_id).map(common::profiles::normalize_legacy_profile)
+    else {
+        return (None, None);
+    };
+    let provider_id = profile.provider;
+    let provider_label = common::profiles::catalog::get(&provider_id)
+        .map(|provider| provider.label.clone())
+        .unwrap_or_else(|| provider_id.clone());
+    (Some(provider_id), Some(provider_label))
+}
+
+pub async fn init_workspace_thread_handler(
+    State(state): State<AppState>,
+    Json(body): Json<crate::api_types::WorkspaceThreadInitRequest>,
+) -> Result<Json<crate::api_types::WorkspaceThreadInitResponse>, (StatusCode, String)> {
+    let agent_id = common::resources::resolve_agent_id(&body.agent_id)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    let workspace = body
+        .workspace_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .map(common::workspace::normalize_workspace_cwd)
+        .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
+    let manager = state.channel_hub.workspace_thread_manager();
+    let trimmed_session_id = body
+        .session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|session_id| !session_id.is_empty())
+        .map(ToOwned::to_owned);
+    let runtime = if let Some(session_id) = trimmed_session_id {
+        manager
+            .attach_external_session_to_web_thread(
+                agent_id,
+                body.profile_id,
+                session_id,
+                workspace,
+                ExternalSessionAttachMode::ReuseOpenThread,
+            )
+            .await
+    } else {
+        manager
+            .create_web_thread_for_cwd_with_host(agent_id, body.profile_id, workspace)
+            .await
     }
+    .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    let runtime_state = runtime.state().await;
+    let thread_id = runtime_state.thread_id.to_string();
+    let chat_id = common::workspace::manager::web_chat_id_for_thread(&runtime_state.thread_id);
+    Ok(Json(crate::api_types::WorkspaceThreadInitResponse {
+        thread_id,
+        chat_id,
+        agent_id: runtime_state.host_binding.agent_id,
+        profile_id: runtime_state.host_binding.profile_id,
+        session_id: runtime_state.session_id,
+        workspace: runtime_state.workspace.to_string_lossy().to_string(),
+    }))
 }
 
 #[derive(serde::Deserialize)]

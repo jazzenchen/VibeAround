@@ -706,9 +706,25 @@ async fn apply_web_session_resume_now(
     session_id: String,
     cwd: Option<String>,
 ) {
+    let requested_agent = agent
+        .as_deref()
+        .and_then(|agent| common::resources::resolve_agent_id(agent).ok());
+    let requested_agent_invalid = agent.is_some() && requested_agent.is_none();
+    let requested_profile = profile.clone();
+    let requested_session_id = session_id.clone();
     let Some(resume) =
         resolve_web_session_resume(state, route, agent, profile, session_id, cwd).await
     else {
+        if !requested_agent_invalid {
+            replay_current_route_session_if_matching(
+                state,
+                route,
+                requested_agent.as_deref(),
+                requested_profile.as_deref(),
+                &requested_session_id,
+            )
+            .await;
+        }
         return;
     };
 
@@ -770,6 +786,48 @@ async fn apply_web_session_resume_now(
             ),
         )
         .await;
+    }
+}
+
+async fn replay_current_route_session_if_matching(
+    state: &AppState,
+    route: &RouteKey,
+    agent: Option<&str>,
+    profile: Option<&str>,
+    session_id: &str,
+) -> bool {
+    let manager = state.channel_hub.workspace_thread_manager();
+    let Ok(Some(runtime)) = manager.active_route_runtime(route).await else {
+        return false;
+    };
+    let runtime_state = runtime.state().await;
+    let agent_matches = agent
+        .map(|agent| runtime_state.host_binding.agent_id == agent)
+        .unwrap_or(true);
+    let profile_matches = profile
+        .map(|profile| runtime_state.host_binding.profile_id.as_deref() == Some(profile))
+        .unwrap_or(true);
+    if runtime_state.session_id.as_deref() != Some(session_id) || !agent_matches || !profile_matches
+    {
+        return false;
+    }
+    drop(runtime_state);
+
+    let workspace_threads = state.channel_hub.workspace_thread_manager();
+    match common::channels::prompt::start_runtime_and_notify(
+        &workspace_threads,
+        &runtime,
+        &state.channel_hub.plugin_host(),
+        route,
+        true,
+    )
+    .await
+    {
+        Ok(started) => started,
+        Err(error) => {
+            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            false
+        }
     }
 }
 
@@ -1245,7 +1303,7 @@ fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
                 },
                 info.agent
                     .profile_id
-                    .unwrap_or_else(|| common::agent::launch::DIRECT_PROFILE_ID.to_string()),
+                    .unwrap_or_else(|| "Native".to_string()),
                 match info.start {
                     common::channels::types::ChannelSessionStart::New => "New session started",
                     common::channels::types::ChannelSessionStart::Resumed =>

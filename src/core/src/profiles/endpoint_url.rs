@@ -20,10 +20,7 @@ fn base_url_ends_with_api_version(base_url: &str) -> bool {
         return false;
     };
 
-    let digit_count = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .count();
+    let digit_count = rest.chars().take_while(|c| c.is_ascii_digit()).count();
 
     if digit_count == 0 {
         return false;
@@ -72,7 +69,11 @@ mod tests {
     #[test]
     fn versioned_base_v4_trailing_slash() {
         assert_eq!(
-            join_protocol_endpoint("https://open.bigmodel.cn/api/paas/v4/", "chat/completions", true),
+            join_protocol_endpoint(
+                "https://open.bigmodel.cn/api/paas/v4/",
+                "chat/completions",
+                true
+            ),
             "https://open.bigmodel.cn/api/paas/v4/chat/completions"
         );
     }
@@ -116,7 +117,9 @@ mod tests {
 
     #[test]
     fn base_url_ends_with_api_version_v12() {
-        assert!(base_url_ends_with_api_version("https://example.com/api/v12"));
+        assert!(base_url_ends_with_api_version(
+            "https://example.com/api/v12"
+        ));
     }
 
     #[test]
@@ -126,6 +129,8 @@ mod tests {
 
     #[test]
     fn base_url_not_versioned_v_without_digits() {
-        assert!(!base_url_ends_with_api_version("https://example.com/api/vfoo"));
+        assert!(!base_url_ends_with_api_version(
+            "https://example.com/api/vfoo"
+        ));
     }
 }

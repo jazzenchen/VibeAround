@@ -510,7 +510,7 @@ pub(super) async fn mcp_wait_for_subagents(
             return mcp_error_text(
                 id,
                 &format!("Failed to load thread runtime {}: {:#}", thread_id, error),
-            )
+            );
         }
     };
 
@@ -988,7 +988,7 @@ pub(super) async fn mcp_preview_start(
                 id,
                 -32602,
                 "Missing or invalid required argument: port (1-65535)",
-            )
+            );
         }
     };
 

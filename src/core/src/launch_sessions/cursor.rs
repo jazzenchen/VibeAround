@@ -24,6 +24,7 @@ pub(super) fn sessions(workspace: &Path) -> Vec<LaunchSession> {
         };
         out.push(LaunchSession {
             agent_id: "cursor".to_string(),
+            profile_id: None,
             session_id: session_id.to_string(),
             title: title(path).unwrap_or_else(|| fallback_title(workspace, session_id)),
             workspace: workspace.to_string_lossy().to_string(),

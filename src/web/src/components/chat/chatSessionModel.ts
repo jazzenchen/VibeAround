@@ -14,8 +14,12 @@ export interface ChatSessionWorkspaceGroup {
 }
 
 export function chatSessionKey(
-  session: Pick<LaunchSessionInfo, "agent_id" | "workspace" | "session_id">,
+  session: Pick<
+    LaunchSessionInfo,
+    "agent_id" | "workspace" | "session_id" | "thread_id"
+  >,
 ) {
+  if (session.thread_id) return session.thread_id;
   return [
     session.agent_id,
     session.workspace,
@@ -48,7 +52,13 @@ export function sameLaunchSession(a: LaunchSessionInfo, b: LaunchSessionInfo) {
     a.updated_at === b.updated_at &&
     a.short_id === b.short_id &&
     a.archived === b.archived &&
-    Boolean(a.active) === Boolean(b.active)
+    Boolean(a.active) === Boolean(b.active) &&
+    (a.host_agent_id ?? null) === (b.host_agent_id ?? null) &&
+    (a.host_profile_id ?? null) === (b.host_profile_id ?? null) &&
+    (a.host_profile_label ?? null) === (b.host_profile_label ?? null) &&
+    (a.host_provider ?? null) === (b.host_provider ?? null) &&
+    (a.host_provider_label ?? null) === (b.host_provider_label ?? null) &&
+    (a.thread_id ?? null) === (b.thread_id ?? null)
   );
 }
 
@@ -136,6 +146,36 @@ function isLaunchSessionInfo(value: unknown): value is LaunchSessionInfo {
     typeof item.workspace === "string" &&
     typeof item.updated_at === "number" &&
     typeof item.short_id === "string" &&
-    typeof item.archived === "boolean"
+    typeof item.archived === "boolean" &&
+    (
+      item.host_agent_id === undefined ||
+      item.host_agent_id === null ||
+      typeof item.host_agent_id === "string"
+    ) &&
+    (
+      item.host_profile_id === undefined ||
+      item.host_profile_id === null ||
+      typeof item.host_profile_id === "string"
+    ) &&
+    (
+      item.host_profile_label === undefined ||
+      item.host_profile_label === null ||
+      typeof item.host_profile_label === "string"
+    ) &&
+    (
+      item.host_provider === undefined ||
+      item.host_provider === null ||
+      typeof item.host_provider === "string"
+    ) &&
+    (
+      item.host_provider_label === undefined ||
+      item.host_provider_label === null ||
+      typeof item.host_provider_label === "string"
+    ) &&
+    (
+      item.thread_id === undefined ||
+      item.thread_id === null ||
+      typeof item.thread_id === "string"
+    )
   );
 }

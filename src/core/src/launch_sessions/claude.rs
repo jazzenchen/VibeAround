@@ -42,6 +42,7 @@ pub(super) fn sessions(workspace: &Path) -> Vec<LaunchSession> {
                 .unwrap_or_else(|| fallback_title(workspace, &session_id));
             Some(LaunchSession {
                 agent_id: "claude".to_string(),
+                profile_id: None,
                 session_id,
                 title,
                 workspace: workspace.to_string_lossy().to_string(),
