@@ -4,7 +4,8 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
+      # Desktop releases use v<semver>; CLI releases use va-v<semver>.
+      - "v[0-9]*.[0-9]*.[0-9]*"
 
 permissions:
   contents: write
@@ -105,12 +106,20 @@ jobs:
           rename_asset() {
             local from="$1"
             local to="$2"
-            local api_url
+            local api_url existing_url
             api_url="$(gh release view "${{ steps.release.outputs.tag }}" \
               --json assets \
               --jq ".assets[] | select(.name == \"${from}\") | .apiUrl" || true)"
             if [ -z "${api_url}" ]; then
               echo "Asset not found, skipping: ${from}"
+              return 0
+            fi
+            existing_url="$(gh release view "${{ steps.release.outputs.tag }}" \
+              --json assets \
+              --jq ".assets[] | select(.name == \"${to}\") | .apiUrl" || true)"
+            if [ -n "${existing_url}" ]; then
+              gh api --method DELETE "${api_url}" >/dev/null
+              echo "Deleted duplicate ${from}; ${to} already exists"
               return 0
             fi
             gh api \
