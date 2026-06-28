@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::{
-    default_command_for_agent, native_resume_args, resolve_agent_launch_command,
-    resolve_executable_path, resolve_terminal_choice, resolve_workspace_path, NativeLaunchInput,
-    TerminalChoice,
+    default_command_for_agent, default_launch_args_for_agent, default_launch_env_for_agent,
+    native_resume_args_for_terminal, resolve_agent_launch_command, resolve_executable_path,
+    resolve_terminal_choice, resolve_workspace_path, NativeLaunchInput, TerminalChoice,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +53,9 @@ pub struct PublicExecutionPlan {
 pub fn build_execution_plan(input: NativeLaunchInput) -> anyhow::Result<ExecutionPlan> {
     let workspace = resolve_workspace_path(input.workspace)?;
     let terminal = resolve_terminal_choice(input.terminal)?;
+    let terminal_id = terminal.id();
+    let launch_args = default_launch_args_for_agent(&input.agent, Some(terminal_id));
+    let native_args = input.args.native;
 
     let (command, mut args) = if let Some(path) = input.executable_path {
         let path = resolve_executable_path(path)?;
@@ -61,15 +64,30 @@ pub fn build_execution_plan(input: NativeLaunchInput) -> anyhow::Result<Executio
         let command = resolve_agent_launch_command(&input.agent, &command)?;
         (command, Vec::new())
     } else if let Some(session_id) = input.session_id.as_deref() {
-        let (command, args) = native_resume_args(&input.agent, session_id)?;
+        let (command, args) =
+            native_resume_args_for_terminal(&input.agent, session_id, Some(terminal_id))?;
         let command = resolve_agent_launch_command(&input.agent, &command)?;
         (command, args)
     } else {
         let command = default_command_for_agent(&input.agent)?;
         let command = resolve_agent_launch_command(&input.agent, &command)?;
-        (command, Vec::new())
+        (command, launch_args.clone())
     };
-    args.extend(input.args.native);
+    if !launch_args.is_empty()
+        && !args_contain_sequence(&args, &launch_args)
+        && !args_contain_sequence(&native_args, &launch_args)
+    {
+        let mut merged_args = launch_args;
+        merged_args.extend(args);
+        args = merged_args;
+    }
+    args.extend(native_args);
+
+    let mut env = input.env;
+    append_env_defaults(
+        &mut env,
+        default_launch_env_for_agent(&input.agent, Some(terminal_id)),
+    );
 
     let window_label = input.window_label.unwrap_or_else(|| {
         input
@@ -87,12 +105,22 @@ pub fn build_execution_plan(input: NativeLaunchInput) -> anyhow::Result<Executio
         args,
         windows_executable_path: input.windows_executable_path,
         workspace,
-        env: input.env,
+        env,
         cleanup_paths: input.cleanup_paths,
         window_label,
         macos_app_probe: input.macos_app_probe,
         windows_process_probe: input.windows_process_probe,
     })
+}
+
+fn append_env_defaults(env: &mut BTreeMap<String, String>, defaults: Vec<(String, String)>) {
+    for (key, value) in defaults {
+        env.entry(key).or_insert(value);
+    }
+}
+
+fn args_contain_sequence(args: &[String], needle: &[String]) -> bool {
+    !needle.is_empty() && args.windows(needle.len()).any(|window| window == needle)
 }
 
 pub fn redacted_execution_plan(plan: &ExecutionPlan) -> PublicExecutionPlan {
@@ -187,7 +215,7 @@ mod tests {
 
         drop(fixture);
         assert_eq!(plan.command, expected_command);
-        assert!(plan.args.is_empty());
+        assert_eq!(plan.args, vec!["-c", "check_for_update_on_startup=false"]);
     }
 
     #[test]
@@ -202,7 +230,15 @@ mod tests {
 
         drop(fixture);
         assert_eq!(plan.command, expected_command);
-        assert_eq!(plan.args, vec!["resume", "abc123"]);
+        assert_eq!(
+            plan.args,
+            vec![
+                "-c",
+                "check_for_update_on_startup=false",
+                "resume",
+                "abc123"
+            ]
+        );
     }
 
     #[test]
@@ -223,7 +259,41 @@ mod tests {
 
         drop(fixture);
         assert_eq!(plan.command, expected_command);
-        assert_eq!(plan.args, vec!["resume", "abc123"]);
+        assert_eq!(
+            plan.args,
+            vec![
+                "-c",
+                "check_for_update_on_startup=false",
+                "resume",
+                "abc123"
+            ]
+        );
+    }
+
+    #[test]
+    fn launch_template_env_is_added_as_default() {
+        let mut input = input_fixture("claude");
+        input.input.executable_path = Some(std::env::current_exe().expect("current test exe"));
+
+        let plan = build_execution_plan(input.input.clone()).unwrap();
+
+        assert_eq!(plan.env["DISABLE_AUTOUPDATER"], "1");
+        assert_eq!(plan.env["DISABLE_UPDATES"], "1");
+    }
+
+    #[test]
+    fn explicit_env_overrides_launch_template_env() {
+        let mut input = input_fixture("claude");
+        input.input.executable_path = Some(std::env::current_exe().expect("current test exe"));
+        input
+            .input
+            .env
+            .insert("DISABLE_UPDATES".to_string(), "0".to_string());
+
+        let plan = build_execution_plan(input.input.clone()).unwrap();
+
+        assert_eq!(plan.env["DISABLE_AUTOUPDATER"], "1");
+        assert_eq!(plan.env["DISABLE_UPDATES"], "0");
     }
 
     #[test]

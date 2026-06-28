@@ -320,18 +320,25 @@ fn build_direct_launch_plan(
         )
     })?;
     let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);
+    let launch_args = agent.launch_args_for_current_platform();
     let (command, resume_args) = if let Some(session_id) = body.session_id.as_deref() {
         resume_command_for_agent(&agent_id, session_id)?
     } else {
         (
             agent_state::resolve_agent_executable_path(&prefs, &agent_id)
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| agent.pty_command_for_current_platform().to_string()),
+                .unwrap_or_else(|| agent.launch_command_for_current_platform().to_string()),
             Vec::new(),
         )
     };
-    let mut args = agent_state::resolve_agent_terminal_args(&prefs, &agent_id);
+    let mut args = launch_args;
+    args.extend(agent_state::resolve_agent_terminal_args(&prefs, &agent_id));
     args.extend(resume_args);
+    let env = agent
+        .launch_env_for_current_platform()
+        .into_iter()
+        .map(|(key, value)| crate::api_types::LaunchPlanEnvVar { key, value })
+        .collect();
 
     Ok(crate::api_types::LaunchPlanResponse {
         launch_id: launch_id.to_string(),
@@ -340,7 +347,7 @@ fn build_direct_launch_plan(
         launch_target: body.launch_target.unwrap_or_else(|| agent_id.clone()),
         command,
         args,
-        env: Vec::new(),
+        env,
         cwd: workspace.to_string_lossy().to_string(),
         resume_session_id: body.session_id,
         native_execution: agent.direct_only,
@@ -393,17 +400,20 @@ fn build_profile_launch_plan(
     append_vibearound_launch_context_env(&mut env, &profile.id, &launch_target, launch_id);
 
     let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);
+    append_env_defaults(&mut env, agent.launch_env_for_current_platform());
+    let launch_args = agent.launch_args_for_current_platform();
     let (command, resume_args) = if let Some(session_id) = body.session_id.as_deref() {
         resume_command_for_agent(&agent_id, session_id)?
     } else {
         (
             agent_state::resolve_agent_executable_path(&prefs, &agent_id)
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| agent.pty_command_for_current_platform().to_string()),
+                .unwrap_or_else(|| agent.launch_command_for_current_platform().to_string()),
             Vec::new(),
         )
     };
-    let mut args = rendered.command_args;
+    let mut args = launch_args;
+    args.extend(rendered.command_args);
     args.extend(agent_state::resolve_agent_terminal_args(&prefs, &agent_id));
     args.extend(resume_args);
 
@@ -463,52 +473,33 @@ fn append_local_bridge_proxy_bypass_env(env: &mut Vec<(String, String)>) {
     ]);
 }
 
+fn append_env_defaults(env: &mut Vec<(String, String)>, defaults: Vec<(String, String)>) {
+    for (key, value) in defaults {
+        if env.iter().any(|(existing, _)| existing == &key) {
+            continue;
+        }
+        env.push((key, value));
+    }
+}
+
 fn resume_command_for_agent(
     agent_id: &str,
     session_id: &str,
 ) -> Result<(String, Vec<String>), (StatusCode, String)> {
-    let command = match agent_id {
-        "claude" => (
-            "claude".to_string(),
-            vec![
-                "--resume".to_string(),
-                session_id.to_string(),
-                "--permission-mode".to_string(),
-                "acceptEdits".to_string(),
-            ],
-        ),
-        "codex" => (
-            "codex".to_string(),
-            vec!["resume".to_string(), session_id.to_string()],
-        ),
-        "pi" => (
-            "pi".to_string(),
-            vec!["--session".to_string(), session_id.to_string()],
-        ),
-        "gemini" => (
-            "gemini".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        "opencode" => (
-            "opencode".to_string(),
-            vec!["--session".to_string(), session_id.to_string()],
-        ),
-        "cursor" => (
-            "cursor-agent".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        "qwen-code" => (
-            "qwen".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        other => {
-            return Err((
+    let agent = resources::agent_by_id(agent_id).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("unknown agent: '{agent_id}'"),
+        )
+    })?;
+    agent
+        .launch_resume_for_current_platform(session_id)
+        .ok_or_else(|| {
+            (
                 StatusCode::BAD_REQUEST,
-                format!("resume launch is not supported for agent '{other}'"),
-            ))
-        }
-    };
-    Ok(command)
+                format!("resume launch is not supported for agent '{agent_id}'"),
+            )
+        })
 }
 
 #[cfg(test)]

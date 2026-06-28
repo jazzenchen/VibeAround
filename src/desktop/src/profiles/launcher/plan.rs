@@ -120,7 +120,7 @@ impl<'a> LaunchPlanBuilder<'a> {
                 command: direct_launch_command_for_agent(
                     agent_id,
                     &agent,
-                    agent.pty_command_for_current_platform(),
+                    agent.launch_command_for_current_platform(),
                 )?,
                 args: terminal_launch_args_for_agent(agent_id),
                 cleanup_paths: Vec::new(),
@@ -173,7 +173,7 @@ impl<'a> LaunchPlanBuilder<'a> {
                 command: direct_launch_command_for_agent(
                     agent_id,
                     &agent,
-                    agent.pty_command_for_current_platform(),
+                    agent.launch_command_for_current_platform(),
                 )?,
                 args,
                 cleanup_paths: Vec::new(),
@@ -195,7 +195,7 @@ impl<'a> LaunchPlanBuilder<'a> {
                 command: direct_launch_command_for_agent(
                     agent_id,
                     &agent,
-                    agent.pty_command_for_current_platform(),
+                    agent.launch_command_for_current_platform(),
                 )?,
                 args: Vec::new(),
                 cleanup_paths: Vec::new(),
@@ -212,7 +212,10 @@ impl<'a> LaunchPlanBuilder<'a> {
 
         Ok(LaunchPlan {
             env,
-            command: launch_command_for_agent(agent_id, agent.pty_command_for_current_platform())?,
+            command: launch_command_for_agent(
+                agent_id,
+                agent.launch_command_for_current_platform(),
+            )?,
             args: command_args,
             cleanup_paths: Vec::new(),
             window_label: profile.label.clone(),
@@ -259,7 +262,7 @@ fn macos_app_probe_for_direct_agent(agent_id: &str, agent: &resources::AgentDef)
         return None;
     }
     macos_configured_app_name(agent_id)
-        .or_else(|| open_app_name(agent.pty_command_for_current_platform()))
+        .or_else(|| open_app_name(agent.launch_command_for_current_platform()))
 }
 
 fn open_app_name(command: &str) -> Option<String> {
@@ -275,7 +278,7 @@ fn windows_process_probe_for_direct_agent(agent: &resources::AgentDef) -> Option
     if !cfg!(target_os = "windows") || !agent.direct_only {
         return None;
     }
-    start_process_name(agent.pty_command_for_current_platform())
+    start_process_name(agent.launch_command_for_current_platform())
 }
 
 #[cfg(not(test))]
@@ -463,48 +466,11 @@ fn resume_command_for_agent(
     agent_id: &str,
     session_id: &str,
 ) -> anyhow::Result<(String, Vec<String>)> {
-    let command = match agent_id {
-        "claude" => (
-            "claude".to_string(),
-            vec![
-                "--resume".to_string(),
-                session_id.to_string(),
-                "--permission-mode".to_string(),
-                "acceptEdits".to_string(),
-            ],
-        ),
-        "codex" => (
-            "codex".to_string(),
-            vec!["resume".to_string(), session_id.to_string()],
-        ),
-        "pi" => (
-            "pi".to_string(),
-            vec!["--session".to_string(), session_id.to_string()],
-        ),
-        "gemini" => (
-            "gemini".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        "opencode" => (
-            "opencode".to_string(),
-            vec!["--session".to_string(), session_id.to_string()],
-        ),
-        "cursor" => (
-            "cursor-agent".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        "qwen-code" => (
-            "qwen".to_string(),
-            vec!["--resume".to_string(), session_id.to_string()],
-        ),
-        other => {
-            return Err(anyhow!(
-                "resume launch is not supported for agent '{}'",
-                other
-            ))
-        }
-    };
-    Ok(command)
+    let agent = resources::agent_by_id(agent_id)
+        .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
+    agent
+        .launch_resume_for_current_platform(session_id)
+        .ok_or_else(|| anyhow!("resume launch is not supported for agent '{}'", agent_id))
 }
 
 #[cfg(test)]

@@ -39,6 +39,11 @@ static TEMPLATES: LazyLock<DesktopLaunchTemplates> = LazyLock::new(|| {
     toml::from_str(DESKTOP_LAUNCH_TOML).expect("Failed to parse desktop-launch.toml")
 });
 
+const MACOS_TERMINAL_UPDATE_SUPPRESSION_ENV: &[(&str, &str)] = &[
+    ("DISABLE_AUTO_UPDATE", "true"),
+    ("DISABLE_UPDATE_PROMPT", "true"),
+];
+
 #[cfg(target_os = "macos")]
 pub fn spawn(plan: &ExecutionPlan) -> anyhow::Result<LaunchHandle> {
     macos::spawn(plan)
@@ -73,6 +78,7 @@ fn build_bash_script(plan: &ExecutionPlan) -> String {
         let escaped = shell_escape::unix::escape(Cow::Borrowed(value.as_str()));
         out.push_str(&format!("export {key}={escaped}\n"));
     }
+    append_bash_env_defaults(&mut out, terminal_update_suppression_env(), &seen);
     append_bash_color_env(&mut out);
 
     let workspace = plan.workspace.to_string_lossy();
@@ -180,6 +186,24 @@ fn macos_open_command_with_env(command: &str, plan: &ExecutionPlan) -> String {
 }
 
 #[cfg_attr(target_os = "windows", allow(dead_code))]
+fn append_bash_env_defaults(out: &mut String, env: &[(&str, &str)], seen: &HashSet<&str>) {
+    for (key, value) in env {
+        if seen.contains(key) {
+            continue;
+        }
+        out.push_str(&format!("export {key}={value}\n"));
+    }
+}
+
+fn terminal_update_suppression_env() -> &'static [(&'static str, &'static str)] {
+    if cfg!(target_os = "macos") {
+        MACOS_TERMINAL_UPDATE_SUPPRESSION_ENV
+    } else {
+        &[]
+    }
+}
+
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn append_bash_color_env(out: &mut String) {
     out.push_str("unset NO_COLOR\n");
     out.push_str(
@@ -256,7 +280,9 @@ mod macos {
             TerminalChoice::Iterm2 => "iTerm",
             other => bail!("terminal '{}' is not supported on macOS", other.id()),
         };
-        let status = std::process::Command::new("open")
+        let mut command = std::process::Command::new("open");
+        append_macos_open_update_suppression_args(&mut command);
+        let status = command
             .arg("-a")
             .arg(app_name)
             .arg(&script_path)
@@ -271,6 +297,12 @@ mod macos {
             );
         }
         Ok(LaunchHandle { script_path })
+    }
+
+    fn append_macos_open_update_suppression_args(command: &mut std::process::Command) {
+        for (key, value) in terminal_update_suppression_env() {
+            command.arg("--env").arg(format!("{key}={value}"));
+        }
     }
 }
 
@@ -1218,7 +1250,24 @@ mod tests {
 
         assert!(script.contains("'hi$(touch /tmp/pwned)'"));
         assert!(script.contains("exec codex resume 'session id'"));
+        if cfg!(target_os = "macos") {
+            assert!(script.contains("export DISABLE_AUTO_UPDATE=true\n"));
+        } else {
+            assert!(!script.contains("export DISABLE_AUTO_UPDATE=true\n"));
+        }
         assert!(!script.contains("$(touch /tmp/pwned)\n"));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_open_commands_pass_plan_env() {
+        let mut env = BTreeMap::new();
+        env.insert("VA_TEST_ENV".to_string(), "hello world".to_string());
+        let command =
+            macos_open_command_with_env("open -a Codex", &plan(env, "open -a Codex", Vec::new()));
+
+        assert!(command.contains("open --env 'VA_TEST_ENV=hello world'"));
+        assert!(command.ends_with(" -a Codex"));
     }
 
     #[test]
