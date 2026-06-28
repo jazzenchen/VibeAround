@@ -389,68 +389,6 @@ VibeAround v0.7.10 修改了本地配置的读取和归一化逻辑。部分配�
 
 已知影响：迁移后 API Bridge 配置可能会丢失。重新在对应 profile 上启用 API Bridge 即可恢复。
 
-<a id="migration-guide-from-06x-cn"></a>
-
-### 从 0.6.x 迁移指南
-
-v0.7.3 调整了 Startkit 状态、Agent 来源检测、桌面启动目标和 Profile 启动设置。如果你从 0.6.x 升级，建议做一次干净的本地状态迁移：
-
-1. 退出 VibeAround。
-2. 完整备份旧的 `~/.vibearound` 目录。
-3. 删除旧的 `~/.vibearound` 目录。
-4. 只从备份里恢复持久状态。
-5. 启动 VibeAround v0.7.3；如果 Launch、Profile、Startkit 或桌面版 Agent 设置看起来异常，再重新跑 onboarding / Startkit 配置。
-
-只恢复这些持久状态：`settings.json`、`profiles/`、`google-oauth/`、`state/`、`sessions/`、`launch-session-archive.json`、`workspaces/`、`worktrees/`。
-
-不要恢复这些可重建的缓存/运行期数据：`.cache/`、`cache/startkit/`、`agents.detected.json`、`desktop-apps.detected.json`、`profile-state/`、`api-bridge/launches/`、`logs/`、`npm-global/`、`plugins/`、`bin/`、`runtime/`、`auth.json`。
-
-macOS / Linux：
-
-```bash
-set -euo pipefail
-
-BACKUP="$HOME/vibearound-0.6-full-backup-$(date +%Y%m%d%H%M%S)"
-SOURCE="$HOME/.vibearound"
-
-if [ -d "$SOURCE" ]; then
-  cp -a "$SOURCE" "$BACKUP"
-  rm -rf "$SOURCE"
-fi
-
-mkdir -p "$SOURCE"
-
-for item in settings.json profiles google-oauth state sessions launch-session-archive.json workspaces worktrees; do
-  [ -e "$BACKUP/$item" ] && cp -a "$BACKUP/$item" "$SOURCE/"
-done
-```
-
-Windows PowerShell：
-
-```powershell
-$ErrorActionPreference = "Stop"
-
-$Backup = Join-Path $env:USERPROFILE ("vibearound-0.6-full-backup-" + (Get-Date -Format "yyyyMMddHHmmss"))
-$SourceRoot = Join-Path $env:USERPROFILE ".vibearound"
-
-if (Test-Path $SourceRoot) {
-  Copy-Item $SourceRoot $Backup -Recurse -Force
-  Remove-Item $SourceRoot -Recurse -Force
-}
-
-New-Item -ItemType Directory -Force -Path $SourceRoot | Out-Null
-
-$Items = @(
-  "settings.json", "profiles", "google-oauth",
-  "state", "sessions", "launch-session-archive.json", "workspaces", "worktrees"
-)
-
-foreach ($Item in $Items) {
-  $Source = Join-Path $Backup $Item
-  if (Test-Path $Source) { Copy-Item $Source $SourceRoot -Recurse -Force }
-}
-```
-
 ## 本地开发
 
 ```bash
