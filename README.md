@@ -25,42 +25,6 @@
 
 VibeAround keeps AI coding work together without making you rebuild the environment you already have.
 
-### Run Modes
-
-VibeAround can run as the full Desktop app, as a standalone local server, or as CLI-first tooling around the same local runtime. Desktop embeds the server for the all-in-one experience; `va serve` runs the server without the desktop UI; `va launch`, Web Hub, Web Terminal, and the early TUI are different entry points into the same agent/session system.
-
-Install the standalone CLI from npm when you want the `va` command without installing the desktop app:
-
-```bash
-npm install -g vibearound
-```
-
-The npm package installs both `va` and `vibearound`; either command reaches the same local runtime entry points.
-
-```bash
-# Full local app on macOS
-open -a VibeAround
-
-# Standalone server without the desktop UI
-va serve --port 12358 --data-dir ~/.vibearound
-
-# From source
-cd src
-cargo run -p server -- --port 12358 --web-dist web/dist
-
-# Inspect and operate the local runtime
-va status
-va workspaces
-open http://127.0.0.1:12358/va/
-va tui --refresh-ms 1000
-
-# Launch saved profiles or create attachable CLI sessions
-va launch --profile codex-work
-va launch --profile-path ./profiles/claude-deepseek.json
-va session create --tool codex --project /path/to/project --attach
-va session create --profile my-profile --target claude --project /path/to/project --attach
-```
-
 - Work with the coding agents you already use, including Claude Code, Codex CLI, Gemini CLI, Pi, OpenCode, Claude Desktop, Codex Desktop, and more.
 - Launch agents directly or through third-party AI APIs, without hand-editing each agent's config files back and forth.
 - Bridge different AI API protocols so agents and model providers can work together even when their native APIs do not match.
@@ -381,13 +345,30 @@ The npm package installs both `va` and `vibearound` commands:
 npm install -g vibearound
 ```
 
+Latest CLI package: [`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1). See [Run Modes](#run-modes) for the main `va` commands.
+
+### Run Modes
+
+VibeAround can run as a full desktop app, a standalone local server, or CLI-first tooling around the same local runtime. Use the desktop app for the all-in-one GUI. Use `va serve` when you want Web Hub, Web Terminal, and remote access without the desktop window. Use `va launch` and `va tui` when you want to stay closer to the terminal.
+
 ```bash
+# Start the local server
 va serve
+
+# Inspect the local runtime
+va status
+va workspaces
+
+# Open the terminal UI
 va tui
-va launch
+
+# Launch saved profiles or create attachable CLI sessions
+va launch --profile codex-work
+va launch --profile-path ./profiles/claude-deepseek.json
+va session create --tool codex --project /path/to/project --attach
 ```
 
-Latest CLI package: [`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1).
+After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
 
 ## Upgrade Notes
 

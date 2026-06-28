@@ -25,42 +25,6 @@
 
 VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量不打扰你已经配置好的环境。
 
-### 运行方式
-
-VibeAround 可以作为完整 Desktop 应用运行，也可以只跑独立的本地 server，或者用 CLI-first 的方式接入同一套本地 runtime。Desktop 会内嵌 server，提供完整图形界面；`va serve` 可以脱离桌面 UI 单独启动 server；`va launch`、Web Hub、Web Terminal 和早期 TUI 则是进入同一套 Agent / Session 系统的不同入口。
-
-如果你只想使用 `va` 命令，而不安装桌面应用，可以通过 npm 安装独立 CLI：
-
-```bash
-npm install -g vibearound
-```
-
-这个 npm 包会同时安装 `va` 和 `vibearound` 两个命令，它们指向同一套本地 runtime 入口。
-
-```bash
-# macOS 上启动完整本地应用
-open -a VibeAround
-
-# 不启动桌面 UI，只跑独立 server
-va serve --port 12358 --data-dir ~/.vibearound
-
-# 从源码运行 server
-cd src
-cargo run -p server -- --port 12358 --web-dist web/dist
-
-# 查看和操作本地 runtime
-va status
-va workspaces
-open http://127.0.0.1:12358/va/
-va tui --refresh-ms 1000
-
-# 启动保存好的 profile，或创建可 attach 的 CLI session
-va launch --profile codex-work
-va launch --profile-path ./profiles/claude-deepseek.json
-va session create --tool codex --project /path/to/project --attach
-va session create --profile my-profile --target claude --project /path/to/project --attach
-```
-
 - 继续使用你已经熟悉的 Claude Code、Codex CLI、Gemini CLI、Pi、OpenCode、Claude Desktop、Codex Desktop 等 AI 编程 Agent。
 - 直接启动 Agent，或通过第三方 AI API 运行 Agent，不用在不同 Agent 配置文件之间来回手改。
 - 桥接不同 AI API 协议，让 Agent 和模型 provider 即使原生 API 不匹配也能配合工作。
@@ -383,13 +347,30 @@ npm 包会同时安装 `va` 和 `vibearound` 两个命令：
 npm install -g vibearound
 ```
 
+最新 CLI 包：[`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。主要 `va` 命令见下方 [运行方式](#运行方式)。
+
+### 运行方式
+
+VibeAround 可以作为完整 Desktop 应用运行，也可以只跑独立本地 server，或者以 CLI-first 的方式接入同一套本地 runtime。需要完整图形界面时使用 Desktop 应用；想在不打开桌面窗口的情况下使用 Web Hub、Web Terminal 和远程访问时运行 `va serve`；想更贴近终端工作流时使用 `va launch` 和 `va tui`。
+
 ```bash
+# 启动本地 server
 va serve
+
+# 查看本地 runtime 状态
+va status
+va workspaces
+
+# 打开终端 UI
 va tui
-va launch
+
+# 启动保存好的 profile，或创建可 attach 的 CLI session
+va launch --profile codex-work
+va launch --profile-path ./profiles/claude-deepseek.json
+va session create --tool codex --project /path/to/project --attach
 ```
 
-最新 CLI 包：[`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。
+server 启动后，在浏览器访问 `http://127.0.0.1:12358/va/`。
 
 ## 升级说明
 
