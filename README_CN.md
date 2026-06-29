@@ -6,7 +6,7 @@
 
 **AI 编程 Agent 的一站式 Hub。**
 
-[桌面版下载](https://github.com/jazzenchen/VibeAround/releases/latest) | [CLI npm](https://www.npmjs.com/package/vibearound) | [演示](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [微信群](#社区) | [English](README.md)
+[桌面版下载](https://github.com/jazzenchen/VibeAround/releases/latest) | [CLI npm](https://www.npmjs.com/package/@vibearound/cli) | [演示](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [微信群](#社区) | [English](README.md)
 
 </div>
 
@@ -334,7 +334,7 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
 ## 快速开始
 
-1. 安装完整桌面应用，或通过 `npm install -g vibearound` 安装 CLI。
+1. 安装完整桌面应用，或通过 `npm install -g @vibearound/cli` 安装 CLI。
 2. 打开 VibeAround Desktop，或运行 `va serve` 后访问 `http://127.0.0.1:12358/va/`。
 3. 跟随引导完成初始设置，并启用你常用的 Agent CLI。
 4. 如果希望 VibeAround 统一路由模型流量，添加 API Profile。
@@ -362,7 +362,7 @@ Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Sil
 npm 包会同时安装 `va` 和 `vibearound` 两个命令：
 
 ```bash
-npm install -g vibearound
+npm install -g @vibearound/cli
 ```
 
 ```bash
@@ -373,7 +373,7 @@ va launch --profile codex-work
 
 server 启动后，在浏览器访问 `http://127.0.0.1:12358/va/`。
 
-最新 CLI 包：[`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。
+最新 CLI 包：[`@vibearound/cli@0.0.1`](https://www.npmjs.com/package/@vibearound/cli)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。
 
 ## 升级说明
 

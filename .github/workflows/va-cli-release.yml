@@ -48,13 +48,13 @@ jobs:
             gh release edit "${tag}" \
               --title "VibeAround CLI ${version}" \
               --draft=true \
-              --notes "Native assets for npm package vibearound@${version}."
+              --notes "Native assets for npm package @vibearound/cli@${version}."
           else
             gh release create "${tag}" \
               --target "${GITHUB_SHA}" \
               --title "VibeAround CLI ${version}" \
               --draft \
-              --notes "Native assets for npm package vibearound@${version}."
+              --notes "Native assets for npm package @vibearound/cli@${version}."
           fi
 
   build-native:

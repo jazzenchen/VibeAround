@@ -1,5 +1,5 @@
 {
-  "name": "vibearound",
+  "name": "@vibearound/cli",
   "version": "0.0.1",
   "description": "VibeAround command-line tools",
   "license": "MIT",
@@ -22,6 +22,7 @@
     "prepack": "node scripts/prepare-package.mjs"
   },
   "publishConfig": {
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
   }
 }

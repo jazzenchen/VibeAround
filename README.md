@@ -6,7 +6,7 @@
 
 **An all-in-one hub for AI coding agents, keeping your vibe flow around.**
 
-[Desktop Download](https://github.com/jazzenchen/VibeAround/releases/latest) | [CLI npm](https://www.npmjs.com/package/vibearound) | [Demo](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [WeChat](#community) | [简体中文](README_CN.md)
+[Desktop Download](https://github.com/jazzenchen/VibeAround/releases/latest) | [CLI npm](https://www.npmjs.com/package/@vibearound/cli) | [Demo](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [WeChat](#community) | [简体中文](README_CN.md)
 
 </div>
 
@@ -332,7 +332,7 @@ VibeAround keeps AI coding work on your computer by default.
 
 ## Quick Start
 
-1. Install the desktop app for the full GUI, or install the CLI with `npm install -g vibearound`.
+1. Install the desktop app for the full GUI, or install the CLI with `npm install -g @vibearound/cli`.
 2. Open VibeAround Desktop, or run `va serve` and visit `http://127.0.0.1:12358/va/`.
 3. Complete onboarding and enable the agent CLIs you use.
 4. Add API profiles if you want VibeAround to route model traffic.
@@ -360,7 +360,7 @@ Windows and Linux packages are built by GitHub Actions. The macOS package is cur
 The npm package installs both `va` and `vibearound` commands:
 
 ```bash
-npm install -g vibearound
+npm install -g @vibearound/cli
 ```
 
 ```bash
@@ -371,7 +371,7 @@ va launch --profile codex-work
 
 After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
 
-Latest CLI package: [`vibearound@0.0.1`](https://www.npmjs.com/package/vibearound). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1).
+Latest CLI package: [`@vibearound/cli@0.0.1`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1).
 
 ## Upgrade Notes
 

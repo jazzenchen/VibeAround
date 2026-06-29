@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       publish:
-        description: Publish vibearound to npm after packing
+        description: Publish @vibearound/cli to npm after packing
         required: true
         type: boolean
         default: false
@@ -83,8 +83,8 @@ jobs:
       - name: Upload npm tarball
         uses: actions/upload-artifact@v4
         with:
-          name: vibearound-npm-tarball
-          path: src/npm/cli/vibearound-*.tgz
+          name: vibearound-cli-npm-tarball
+          path: src/npm/cli/vibearound-cli-*.tgz
           if-no-files-found: error
 
   publish:
@@ -104,10 +104,10 @@ jobs:
       - name: Download npm tarball
         uses: actions/download-artifact@v5
         with:
-          name: vibearound-npm-tarball
+          name: vibearound-cli-npm-tarball
           path: npm-dist
 
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish npm-dist/vibearound-*.tgz --access public
+        run: npm publish npm-dist/vibearound-cli-*.tgz --access public

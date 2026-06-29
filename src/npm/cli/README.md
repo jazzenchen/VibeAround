@@ -3,7 +3,7 @@
 Install the VibeAround command-line tools from npm:
 
 ```bash
-npm install -g vibearound
+npm install -g @vibearound/cli
 ```
 
 The package registers both `vibearound` and `va`:
