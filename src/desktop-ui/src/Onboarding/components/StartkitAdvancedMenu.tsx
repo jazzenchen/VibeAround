@@ -132,10 +132,10 @@ function SourceChooser({
 }) {
   const entries: Array<[string, { label: string }]> =
     Object.keys(sources).length > 0
-      ? Object.entries(sources)
+      ? sourceEntries(sources)
       : [
-          ["global", { label: "Global" }],
           ["cn", { label: "China mirror" }],
+          ["global", { label: "Global" }],
         ];
 
   return (
@@ -149,6 +149,20 @@ function SourceChooser({
       value={value}
       onChange={onChange}
     />
+  );
+}
+
+function sourceEntries(
+  sources: StartkitManifestSummary["sources"],
+): Array<[string, { label: string }]> {
+  const order = new Map([
+    ["cn", 0],
+    ["global", 1],
+  ]);
+  return Object.entries(sources).sort(
+    ([left], [right]) =>
+      (order.get(left) ?? 99) - (order.get(right) ?? 99) ||
+      left.localeCompare(right),
   );
 }
 
