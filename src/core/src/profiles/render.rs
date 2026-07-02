@@ -288,14 +288,8 @@ fn command_args_for(launch_target: &str, ctx: &BTreeMap<String, String>) -> Vec<
         args.push("-c".to_string());
         args.push(format!("{key}={value}"));
     };
-    if let Some(model) = ctx.get("model").filter(|v| !v.is_empty()) {
-        push_config("model", toml_string(model));
-    }
     if let Some(provider_id) = ctx.get("provider_id").filter(|v| !v.is_empty()) {
         push_config("model_provider", toml_string(provider_id));
-    }
-    if let Some(reasoning_effort) = ctx.get("reasoning_effort").filter(|v| !v.is_empty()) {
-        push_config("model_reasoning_effort", toml_string(reasoning_effort));
     }
     if let Some(context_window) = ctx.get("model_context_window").filter(|v| !v.is_empty()) {
         push_config("model_context_window", context_window.clone());
@@ -422,6 +416,14 @@ fn codex_model_catalog_rel_path(model: &str) -> String {
 }
 
 fn normalize_claude_env(env: &mut Vec<(String, String)>, ctx: &BTreeMap<String, String>) {
+    if ctx
+        .get("provider_id")
+        .is_some_and(|provider| provider == "zai")
+    {
+        normalize_zai_claude_env(env, ctx);
+        return;
+    }
+
     let api_key = first_env_value(env, &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"])
         .or_else(|| ctx.get("api_key").cloned())
         .unwrap_or_default();
@@ -443,6 +445,65 @@ fn normalize_claude_env(env: &mut Vec<(String, String)>, ctx: &BTreeMap<String, 
     push_env_if_nonempty(env, "ANTHROPIC_MODEL", model);
     if let Some(auto_compact_window) = auto_compact_window {
         push_env_if_nonempty(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW", auto_compact_window);
+    }
+}
+
+fn normalize_zai_claude_env(env: &mut Vec<(String, String)>, ctx: &BTreeMap<String, String>) {
+    let api_key = first_env_value(env, &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"])
+        .or_else(|| ctx.get("api_key").cloned())
+        .unwrap_or_default();
+    let base_url = first_env_value(env, &["ANTHROPIC_BASE_URL"])
+        .or_else(|| ctx.get("base_url").cloned())
+        .unwrap_or_default();
+    let model = first_env_value(env, &["ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_MODEL"])
+        .or_else(|| ctx.get("model").cloned())
+        .unwrap_or_default();
+    let model = zai_claude_model(&model, ctx);
+    let haiku_model = if model == "glm-5.2[1m]" || model == "glm-5.2" {
+        "glm-4.7"
+    } else {
+        model.as_str()
+    };
+    let auto_compact_window = ctx
+        .get("model_context_window")
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .or_else(|| (model == "glm-5.2[1m]").then(|| "1000000".to_string()));
+
+    env.retain(|(key, _)| {
+        !is_standardized_claude_env_key(key)
+            && key != "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"
+            && key != "API_TIMEOUT_MS"
+    });
+    push_env_if_nonempty(env, "ANTHROPIC_AUTH_TOKEN", api_key);
+    push_env_if_nonempty(env, "ANTHROPIC_BASE_URL", base_url);
+    push_env_if_nonempty(
+        env,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        haiku_model.to_string(),
+    );
+    push_env_if_nonempty(env, "ANTHROPIC_DEFAULT_SONNET_MODEL", model.clone());
+    push_env_if_nonempty(env, "ANTHROPIC_DEFAULT_OPUS_MODEL", model);
+    if let Some(auto_compact_window) = auto_compact_window {
+        push_env_if_nonempty(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW", auto_compact_window);
+    }
+    push_env_if_nonempty(
+        env,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "1".to_string(),
+    );
+    push_env_if_nonempty(env, "API_TIMEOUT_MS", "3000000".to_string());
+}
+
+fn zai_claude_model(model: &str, ctx: &BTreeMap<String, String>) -> String {
+    if model.eq_ignore_ascii_case("glm-5.2")
+        && ctx
+            .get("model_context_window")
+            .is_some_and(|window| window == "1000000")
+    {
+        "glm-5.2[1m]".to_string()
+    } else {
+        model.to_string()
     }
 }
 
@@ -743,6 +804,43 @@ mod tests {
     }
 
     #[test]
+    fn zai_claude_launch_uses_bigmodel_env_shape() {
+        let profile = anthropic_profile("zai", Some("coding-cn"), "glm-5.2");
+        let provider = catalog::get(&profile.provider).expect("provider exists");
+
+        let rendered =
+            render(&profile, "anthropic", "claude", provider).expect("claude profile renders");
+        let env: BTreeMap<_, _> = rendered
+            .env
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+
+        assert_eq!(env.get("ANTHROPIC_AUTH_TOKEN"), Some(&"test-key"));
+        assert_eq!(
+            env.get("ANTHROPIC_BASE_URL"),
+            Some(&"https://open.bigmodel.cn/api/anthropic")
+        );
+        assert_eq!(env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"), Some(&"glm-4.7"));
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            Some(&"glm-5.2[1m]")
+        );
+        assert_eq!(
+            env.get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+            Some(&"glm-5.2[1m]")
+        );
+        assert_eq!(env.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW"), Some(&"1000000"));
+        assert_eq!(
+            env.get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"),
+            Some(&"1")
+        );
+        assert_eq!(env.get("API_TIMEOUT_MS"), Some(&"3000000"));
+        assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!env.contains_key("ANTHROPIC_MODEL"));
+    }
+
+    #[test]
     fn claude_desktop_launch_uses_claude_env_shape() {
         let profile = anthropic_profile("dashscope", Some("coding-plan"), "qwen3.6-plus");
         let provider = catalog::get(&profile.provider).expect("provider exists");
@@ -766,10 +864,14 @@ mod tests {
         let rendered =
             render(&profile, "openai-responses", "codex", provider).expect("codex profile renders");
 
-        assert!(rendered
+        assert!(!rendered
             .command_args
             .iter()
-            .any(|arg| arg == "model='grok-4.3'"));
+            .any(|arg| arg.starts_with("model=")));
+        assert!(!rendered
+            .command_args
+            .iter()
+            .any(|arg| arg.starts_with("model_reasoning_effort=")));
         assert!(rendered
             .command_args
             .iter()
@@ -847,10 +949,14 @@ mod tests {
         let rendered = render(&profile, "openai-responses", "codex-desktop", provider)
             .expect("codex desktop profile renders");
 
-        assert!(rendered
+        assert!(!rendered
             .command_args
             .iter()
-            .any(|arg| arg == "model='grok-4.3'"));
+            .any(|arg| arg.starts_with("model=")));
+        assert!(!rendered
+            .command_args
+            .iter()
+            .any(|arg| arg.starts_with("model_reasoning_effort=")));
         assert!(rendered
             .command_args
             .iter()

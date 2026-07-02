@@ -214,6 +214,7 @@
       "label": "Coding Plan Global",
       "api_type": "anthropic",
       "default_base_url": "https://api.z.ai/api/anthropic",
+      "auth_header": true,
       "models": [
         {
           "id": "glm-5.2",
@@ -326,6 +327,7 @@
       "label": "Coding Plan CN",
       "api_type": "anthropic",
       "default_base_url": "https://open.bigmodel.cn/api/anthropic",
+      "auth_header": true,
       "models": [
         {
           "id": "glm-5.2",
