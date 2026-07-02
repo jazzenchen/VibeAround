@@ -332,7 +332,7 @@ VibeAround keeps AI coding work on your computer by default.
 
 ## Quick Start
 
-1. Install the desktop app for the full GUI, or install the CLI with `npm install -g @vibearound/cli`.
+1. Install the desktop app for the full GUI, or install the CLI with `npm i @vibearound/cli`.
 2. Open VibeAround Desktop, or run `va serve` and visit `http://127.0.0.1:12358/va/`.
 3. Complete onboarding and enable the agent CLIs you use.
 4. Add API profiles if you want VibeAround to route model traffic.
@@ -360,7 +360,7 @@ Windows and Linux packages are built by GitHub Actions. The macOS package is cur
 The npm package installs both `va` and `vibearound` commands:
 
 ```bash
-npm install -g @vibearound/cli
+npm i @vibearound/cli
 ```
 
 ```bash

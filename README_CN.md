@@ -334,7 +334,7 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
 ## 快速开始
 
-1. 安装完整桌面应用，或通过 `npm install -g @vibearound/cli` 安装 CLI。
+1. 安装完整桌面应用，或通过 `npm i @vibearound/cli` 安装 CLI。
 2. 打开 VibeAround Desktop，或运行 `va serve` 后访问 `http://127.0.0.1:12358/va/`。
 3. 跟随引导完成初始设置，并启用你常用的 Agent CLI。
 4. 如果希望 VibeAround 统一路由模型流量，添加 API Profile。
@@ -362,7 +362,7 @@ Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Sil
 npm 包会同时安装 `va` 和 `vibearound` 两个命令：
 
 ```bash
-npm install -g @vibearound/cli
+npm i @vibearound/cli
 ```
 
 ```bash
