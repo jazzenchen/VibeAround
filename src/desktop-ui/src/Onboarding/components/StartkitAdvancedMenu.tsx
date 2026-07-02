@@ -134,8 +134,8 @@ function SourceChooser({
     Object.keys(sources).length > 0
       ? sourceEntries(sources)
       : [
-          ["cn", { label: "China mirror" }],
           ["global", { label: "Global" }],
+          ["cn", { label: "China mirror" }],
         ];
 
   return (
@@ -156,8 +156,8 @@ function sourceEntries(
   sources: StartkitManifestSummary["sources"],
 ): Array<[string, { label: string }]> {
   const order = new Map([
-    ["cn", 0],
-    ["global", 1],
+    ["global", 0],
+    ["cn", 1],
   ]);
   return Object.entries(sources).sort(
     ([left], [right]) =>
