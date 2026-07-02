@@ -446,6 +446,7 @@ fn normalize_claude_env(env: &mut Vec<(String, String)>, ctx: &BTreeMap<String, 
     if let Some(auto_compact_window) = auto_compact_window {
         push_env_if_nonempty(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW", auto_compact_window);
     }
+    append_third_party_claude_env(env, ctx);
 }
 
 fn normalize_zai_claude_env(env: &mut Vec<(String, String)>, ctx: &BTreeMap<String, String>) {
@@ -493,6 +494,7 @@ fn normalize_zai_claude_env(env: &mut Vec<(String, String)>, ctx: &BTreeMap<Stri
         "1".to_string(),
     );
     push_env_if_nonempty(env, "API_TIMEOUT_MS", "3000000".to_string());
+    append_third_party_claude_env(env, ctx);
 }
 
 fn zai_claude_model(model: &str, ctx: &BTreeMap<String, String>) -> String {
@@ -504,6 +506,32 @@ fn zai_claude_model(model: &str, ctx: &BTreeMap<String, String>) -> String {
         "glm-5.2[1m]".to_string()
     } else {
         model.to_string()
+    }
+}
+
+fn append_third_party_claude_env(env: &mut Vec<(String, String)>, ctx: &BTreeMap<String, String>) {
+    env.retain(|(key, _)| !is_third_party_claude_env_key(key));
+    push_env_if_nonempty(
+        env,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "1".to_string(),
+    );
+    push_env_if_nonempty(env, "CLAUDE_CODE_ATTRIBUTION_HEADER", "0".to_string());
+    push_env_if_nonempty(env, "CLAUDE_CODE_ALWAYS_ENABLE_EFFORT", "1".to_string());
+    push_env_if_nonempty(
+        env,
+        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+        "1".to_string(),
+    );
+    if let Some(context_window) = ctx
+        .get("model_context_window")
+        .filter(|value| !value.is_empty())
+    {
+        push_env_if_nonempty(
+            env,
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+            context_window.clone(),
+        );
     }
 }
 
@@ -534,6 +562,17 @@ fn is_standardized_claude_env_key(key: &str) -> bool {
             | "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
             | "CLAUDE_CODE_SUBAGENT_MODEL"
             | "CLAUDE_CODE_EFFORT_LEVEL"
+    )
+}
+
+fn is_third_party_claude_env_key(key: &str) -> bool {
+    matches!(
+        key,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"
+            | "CLAUDE_CODE_ATTRIBUTION_HEADER"
+            | "CLAUDE_CODE_ALWAYS_ENABLE_EFFORT"
+            | "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"
+            | "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
     )
 }
 
@@ -779,6 +818,11 @@ mod tests {
                     "ANTHROPIC_BASE_URL",
                     "ANTHROPIC_MODEL",
                     "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+                    "CLAUDE_CODE_ATTRIBUTION_HEADER",
+                    "CLAUDE_CODE_ALWAYS_ENABLE_EFFORT",
+                    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
+                    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
                 ]
             );
             assert_eq!(
@@ -794,6 +838,49 @@ mod tests {
                     .env
                     .iter()
                     .find(|(key, _)| key == "CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+                    .map(|(_, value)| value.as_str()),
+                Some(match profile.provider.as_str() {
+                    "moonshot" => "256000",
+                    _ => "1000000",
+                })
+            );
+            assert_eq!(
+                rendered
+                    .env
+                    .iter()
+                    .find(|(key, _)| key == "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
+                    .map(|(_, value)| value.as_str()),
+                Some("1")
+            );
+            assert_eq!(
+                rendered
+                    .env
+                    .iter()
+                    .find(|(key, _)| key == "CLAUDE_CODE_ATTRIBUTION_HEADER")
+                    .map(|(_, value)| value.as_str()),
+                Some("0")
+            );
+            assert_eq!(
+                rendered
+                    .env
+                    .iter()
+                    .find(|(key, _)| key == "CLAUDE_CODE_ALWAYS_ENABLE_EFFORT")
+                    .map(|(_, value)| value.as_str()),
+                Some("1")
+            );
+            assert_eq!(
+                rendered
+                    .env
+                    .iter()
+                    .find(|(key, _)| key == "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS")
+                    .map(|(_, value)| value.as_str()),
+                Some("1")
+            );
+            assert_eq!(
+                rendered
+                    .env
+                    .iter()
+                    .find(|(key, _)| key == "CLAUDE_CODE_MAX_CONTEXT_TOKENS")
                     .map(|(_, value)| value.as_str()),
                 Some(match profile.provider.as_str() {
                     "moonshot" => "256000",
@@ -835,6 +922,13 @@ mod tests {
             env.get("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"),
             Some(&"1")
         );
+        assert_eq!(env.get("CLAUDE_CODE_ATTRIBUTION_HEADER"), Some(&"0"));
+        assert_eq!(env.get("CLAUDE_CODE_ALWAYS_ENABLE_EFFORT"), Some(&"1"));
+        assert_eq!(
+            env.get("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"),
+            Some(&"1")
+        );
+        assert_eq!(env.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some(&"1000000"));
         assert_eq!(env.get("API_TIMEOUT_MS"), Some(&"3000000"));
         assert!(!env.contains_key("ANTHROPIC_API_KEY"));
         assert!(!env.contains_key("ANTHROPIC_MODEL"));
