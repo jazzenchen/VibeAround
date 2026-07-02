@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -10,7 +10,16 @@ import type {
   StartkitPlan,
   StartkitProgressEvent,
   StartkitScanReport,
+  StartkitStatus,
 } from "../types";
+
+const TERMINAL_RUN_STATUSES = new Set<StartkitStatus>([
+  "ok",
+  "needs_config",
+  "blocked",
+  "error",
+  "skipped",
+]);
 
 function pendingReportsFromPlan(
   plan: StartkitPlan,
@@ -126,6 +135,31 @@ function finalizeQueuedReports(
   });
 }
 
+function inferredFinalStatus(
+  plan: StartkitPlan | null,
+  reports: StartkitItemReport[],
+): string | null {
+  if (!plan || plan.itemIds.length === 0) return null;
+
+  const reportsById = new Map(reports.map((report) => [report.id, report]));
+  const plannedReports = plan.itemIds
+    .map((id) => reportsById.get(id))
+    .filter((report): report is StartkitItemReport => Boolean(report));
+
+  if (plannedReports.length !== plan.itemIds.length) return null;
+  if (!plannedReports.every((report) => TERMINAL_RUN_STATUSES.has(report.status))) {
+    return null;
+  }
+
+  if (plannedReports.some((report) => report.status === "error" || report.status === "blocked")) {
+    return "error";
+  }
+  if (plannedReports.some((report) => report.status === "needs_config")) {
+    return "needs_input";
+  }
+  return "complete";
+}
+
 interface UseStartkitFlowResult {
   plan: StartkitPlan | null;
   reports: StartkitItemReport[];
@@ -162,6 +196,18 @@ export function useStartkitFlow(): UseStartkitFlowResult {
     () => new Map(reports.map((report) => [report.id, report])),
     [reports],
   );
+  const inferredStatus = useMemo(
+    () => inferredFinalStatus(plan, reports),
+    [plan, reports],
+  );
+
+  useEffect(() => {
+    if (!running || complete || !activeRunIdRef.current || !inferredStatus) return;
+    activeRunIdRef.current = null;
+    setFinalStatus(inferredStatus);
+    setComplete(true);
+    setRunning(false);
+  }, [complete, inferredStatus, running]);
 
   const refreshPlan = useCallback(async (choices: StartkitChoices) => {
     try {

@@ -119,6 +119,7 @@ export const zhCNOnboarding: Record<string, string> = {
   "Remote access provider.": "远程访问方式。",
   "Installing selected setup": "正在安装",
   "Preparing selected setup": "正在准备所选安装项",
+  "Finalizing setup": "正在完成安装",
   "Copy command": "复制命令",
   "Checking this computer": "正在检测环境",
   "Setup finished with issues": "安装完成，但有问题",
