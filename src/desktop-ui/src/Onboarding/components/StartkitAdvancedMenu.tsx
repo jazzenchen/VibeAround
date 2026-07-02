@@ -2,7 +2,9 @@ import {
   Globe,
   Package,
   SlidersHorizontal,
+  Wrench,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useI18n } from "@va/i18n";
 
 import { Button } from "@/components/ui/button";
@@ -11,7 +13,6 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 import type { StartkitManifestSummary } from "../types";
@@ -56,14 +57,14 @@ export function StartkitAdvancedMenu({
             onChange={onDownloadSource}
             t={t}
           />
-          <ToolchainChooser
+          <InstallPathChooser
             value={toolchainMode}
             onChange={onToolchainMode}
             t={t}
           />
-          <PortableToolchainToggle
+          <PortableToolchainChooser
             checked={portableToolchain}
-            onCheckedChange={onPortableToolchain}
+            onChange={onPortableToolchain}
             t={t}
           />
         </div>
@@ -72,7 +73,7 @@ export function StartkitAdvancedMenu({
   );
 }
 
-function ToolchainChooser({
+function InstallPathChooser({
   value,
   onChange,
   t,
@@ -82,55 +83,39 @@ function ToolchainChooser({
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   return (
-    <div>
-      <div className="mb-2 flex items-center gap-2 text-xs font-medium">
-        <Package className="h-3.5 w-3.5 text-primary" />
-        {t("Toolchain")}
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {(["system", "managed"] as const).map((mode) => (
-          <Button
-            key={mode}
-            type="button"
-            size="sm"
-            variant="outline"
-            className={cn(
-              "justify-center text-xs",
-              value === mode && "border-primary bg-primary/10 text-primary",
-            )}
-            onClick={() => onChange(mode)}
-          >
-            {mode === "system" ? t("System") : t("VibeAround managed")}
-          </Button>
-        ))}
-      </div>
-    </div>
+    <SegmentedChooser
+      icon={<Package className="h-3.5 w-3.5 text-primary" />}
+      label={t("Install Path")}
+      options={[
+        { value: "system", label: t("System") },
+        { value: "managed", label: t("Managed") },
+      ]}
+      value={value}
+      onChange={(next) => onChange(next as ToolchainMode)}
+    />
   );
 }
 
-function PortableToolchainToggle({
+function PortableToolchainChooser({
   checked,
-  onCheckedChange,
+  onChange,
   t,
 }: {
   checked: boolean;
-  onCheckedChange: (value: boolean) => void;
+  onChange: (value: boolean) => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
-  const label = isWindowsPlatform()
-    ? t("Use portable npm/Git")
-    : t("Use portable npm");
-
   return (
-    <div className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2.5">
-      <div className="min-w-0 text-xs font-medium">{label}</div>
-      <Switch
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-        aria-label={label}
-        size="sm"
-      />
-    </div>
+    <SegmentedChooser
+      icon={<Wrench className="h-3.5 w-3.5 text-primary" />}
+      label={t("Toolchain")}
+      options={[
+        { value: "system", label: t("System") },
+        { value: "portable", label: t("Portable") },
+      ]}
+      value={checked ? "portable" : "system"}
+      onChange={(next) => onChange(next === "portable")}
+    />
   );
 }
 
@@ -154,32 +139,56 @@ function SourceChooser({
         ];
 
   return (
+    <SegmentedChooser
+      icon={<Globe className="h-3.5 w-3.5 text-primary" />}
+      label={t("npm registry")}
+      options={entries.map(([id, source]) => ({
+        value: id,
+        label: t(source.label),
+      }))}
+      value={value}
+      onChange={onChange}
+    />
+  );
+}
+
+function SegmentedChooser({
+  icon,
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  icon: ReactNode;
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
     <div>
       <div className="mb-2 flex items-center gap-2 text-xs font-medium">
-        <Globe className="h-3.5 w-3.5 text-primary" />
-        {t("npm registry")}
+        {icon}
+        {label}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        {entries.map(([id, source]) => (
+        {options.map((option) => (
           <Button
-            key={id}
+            key={option.value}
             type="button"
             size="sm"
             variant="outline"
             className={cn(
               "justify-center text-xs",
-              value === id && "border-primary bg-primary/10 text-primary",
+              value === option.value &&
+                "border-primary bg-primary/10 text-primary",
             )}
-            onClick={() => onChange(id)}
+            onClick={() => onChange(option.value)}
           >
-            {t(source.label)}
+            {option.label}
           </Button>
         ))}
       </div>
     </div>
   );
-}
-
-function isWindowsPlatform() {
-  return typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
 }

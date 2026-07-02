@@ -1319,8 +1319,8 @@ export function SettingsDialog({
                     </div>
                   </div>
                   <SettingsActionRow
-                    label={t("Agent Toolchain")}
-                    description={t("Choose where VibeAround looks for agent CLIs when no manual executable path is set.")}
+                    label={t("Install Path")}
+                    description={t("Choose where VibeAround installs and selects agent CLIs when no manual executable path is set.")}
                     action={
                       <Select
                         value={toolchainMode}
@@ -1335,25 +1335,33 @@ export function SettingsDialog({
                         <SelectContent>
                           <SelectItem value="system">{t("System")}</SelectItem>
                           <SelectItem value="managed">
-                            {t("VibeAround managed")}
+                            {t("Managed")}
                           </SelectItem>
                         </SelectContent>
                       </Select>
                     }
                   />
                   <SettingsActionRow
-                    label={portableToolchainLabel(t)}
-                    description={t("Use VibeAround's portable runtime instead of system runtime tools.")}
+                    label={t("Toolchain")}
+                    description={t("Choose whether installs and launches use system runtime tools or VibeAround's portable runtime.")}
                     action={
-                      <Switch
-                        checked={portableToolchain}
-                        onCheckedChange={(checked) =>
-                          void savePortableToolchain(checked)
+                      <Select
+                        value={portableToolchain ? "portable" : "system"}
+                        onValueChange={(value) =>
+                          void savePortableToolchain(value === "portable")
                         }
-                        aria-label={portableToolchainLabel(t)}
-                        size="sm"
                         disabled={saving !== "idle"}
-                      />
+                      >
+                        <SelectTrigger className="h-8 w-48 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="system">{t("System")}</SelectItem>
+                          <SelectItem value="portable">
+                            {t("Portable")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
                     }
                   />
                   <div className="space-y-3 border-b border-border px-4 py-4">
@@ -2827,16 +2835,6 @@ function buildGeneralSettings({
     portable_toolchain: portableToolchain,
   };
   return result;
-}
-
-function portableToolchainLabel(
-  t: (key: string, params?: Record<string, string | number>) => string,
-) {
-  return isWindowsPlatform() ? t("Use portable npm/Git") : t("Use portable npm");
-}
-
-function isWindowsPlatform() {
-  return typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
 }
 
 function buildAgentSettings({
