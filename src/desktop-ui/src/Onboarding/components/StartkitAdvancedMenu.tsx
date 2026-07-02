@@ -11,6 +11,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 import type { StartkitManifestSummary } from "../types";
@@ -20,14 +21,18 @@ export function StartkitAdvancedMenu({
   sources,
   downloadSource,
   toolchainMode,
+  portableToolchain,
   onDownloadSource,
   onToolchainMode,
+  onPortableToolchain,
 }: {
   sources: StartkitManifestSummary["sources"];
   downloadSource: string;
   toolchainMode: ToolchainMode;
+  portableToolchain: boolean;
   onDownloadSource: (value: string) => void;
   onToolchainMode: (value: ToolchainMode) => void;
+  onPortableToolchain: (value: boolean) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -54,6 +59,11 @@ export function StartkitAdvancedMenu({
           <ToolchainChooser
             value={toolchainMode}
             onChange={onToolchainMode}
+            t={t}
+          />
+          <PortableToolchainToggle
+            checked={portableToolchain}
+            onCheckedChange={onPortableToolchain}
             t={t}
           />
         </div>
@@ -94,6 +104,32 @@ function ToolchainChooser({
           </Button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function PortableToolchainToggle({
+  checked,
+  onCheckedChange,
+  t,
+}: {
+  checked: boolean;
+  onCheckedChange: (value: boolean) => void;
+  t: (key: string, params?: Record<string, string | number>) => string;
+}) {
+  const label = isWindowsPlatform()
+    ? t("Use portable npm/Git")
+    : t("Use portable npm");
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2.5">
+      <div className="min-w-0 text-xs font-medium">{label}</div>
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        aria-label={label}
+        size="sm"
+      />
     </div>
   );
 }
@@ -142,4 +178,8 @@ function SourceChooser({
       </div>
     </div>
   );
+}
+
+function isWindowsPlatform() {
+  return typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
 }

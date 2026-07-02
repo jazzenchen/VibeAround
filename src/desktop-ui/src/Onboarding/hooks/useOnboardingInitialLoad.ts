@@ -40,6 +40,7 @@ export function useOnboardingInitialLoad({
   setDiscoveredPlugins,
   setDownloadSource,
   setToolchainMode,
+  setPortableToolchain,
   setEnabledAgents,
   setEnabledChannels,
   setChannelConfigs,
@@ -59,6 +60,7 @@ export function useOnboardingInitialLoad({
   setDiscoveredPlugins: (value: DiscoveredChannelPlugin[]) => void;
   setDownloadSource: (value: string) => void;
   setToolchainMode: (value: ToolchainMode) => void;
+  setPortableToolchain: (value: boolean) => void;
   setEnabledAgents: (value: Set<AgentId>) => void;
   setEnabledChannels: (value: Set<string>) => void;
   setChannelConfigs: (value: Record<string, Record<string, string>>) => void;
@@ -98,6 +100,7 @@ export function useOnboardingInitialLoad({
           hydrateStartkitPrefs(loadedSettings, {
             setDownloadSource,
             setToolchainMode,
+            setPortableToolchain,
           });
           hydrateAgents(loadedSettings, orderedAgents, setEnabledAgents);
           hydrateChannels(loadedSettings, pluginDefs, {
@@ -134,6 +137,7 @@ export function useOnboardingInitialLoad({
     setChannelVerbose,
     setDiscoveredPlugins,
     setDownloadSource,
+    setPortableToolchain,
     setToolchainMode,
     setEnabledAgents,
     setEnabledChannels,

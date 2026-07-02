@@ -47,13 +47,17 @@ pub fn enriched_env() -> &'static HashMap<String, String> {
 /// Return the environment VibeAround should pass to child processes.
 ///
 /// This is the cached shell environment captured from the user's login shell.
-/// In VibeAround-managed toolchain mode, the app-managed Node/Git paths and
-/// managed npm package binaries are prepended so app-owned tools win over user
-/// PATH entries without modifying the user's shell profile.
+/// When enabled, the portable Node/Git paths are prepended so app-owned runtime
+/// tools win over user PATH entries without modifying the user's shell profile.
+/// VibeAround-managed package binaries are controlled separately by
+/// `toolchain_mode`.
 pub fn child_env() -> HashMap<String, String> {
     let mut env = enriched_env().clone();
-    if crate::config::ensure_loaded().toolchain_mode.is_managed() {
+    let config = crate::config::ensure_loaded();
+    if config.portable_toolchain {
         crate::toolchain::prepend_managed_tool_paths(&mut env);
+    }
+    if config.toolchain_mode.is_managed() {
         prepend_managed_npm_bin_path(&mut env);
     }
     env

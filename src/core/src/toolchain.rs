@@ -1,6 +1,6 @@
-//! VibeAround-managed portable toolchain.
+//! VibeAround-managed portable runtime toolchain.
 //!
-//! Managed mode keeps Node.js and selected helper tools under
+//! The portable toolchain option keeps Node.js and selected helper tools under
 //! `~/.vibearound/runtime` and exposes them to child processes through
 //! `process::env::child_env()`. Scans are local-only; installers perform the
 //! network work and update a small manifest once the extracted tool is usable.
