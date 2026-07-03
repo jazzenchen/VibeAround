@@ -34,6 +34,7 @@ use managed::{
 };
 use plan::{
     effective_item_dependencies, find_item, is_managed_mode, item_summary, plan_from_manifest,
+    portable_toolchain_enabled,
 };
 use script::{run_script, ScriptOutput};
 
@@ -187,6 +188,8 @@ pub struct StartkitChoices {
     pub source: String,
     #[serde(default = "default_toolchain_mode")]
     pub toolchain_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_toolchain: Option<bool>,
     #[serde(default)]
     pub shell_path: bool,
 }
@@ -199,6 +202,7 @@ impl Default for StartkitChoices {
             channels: Vec::new(),
             source: default_source(),
             toolchain_mode: default_toolchain_mode(),
+            portable_toolchain: Some(false),
             shell_path: false,
         }
     }
@@ -1263,6 +1267,7 @@ mod tests {
             channels: Vec::new(),
             source: "global".to_string(),
             toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
             shell_path: false,
         });
 
@@ -1281,6 +1286,7 @@ mod tests {
             channels: Vec::new(),
             source: "global".to_string(),
             toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
             shell_path: false,
         });
 
@@ -1307,6 +1313,7 @@ mod tests {
             channels: Vec::new(),
             source: "global".to_string(),
             toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
             shell_path: false,
         });
 
@@ -1333,6 +1340,7 @@ mod tests {
             channels: Vec::new(),
             source: "global".to_string(),
             toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
             shell_path: false,
         });
 
@@ -1351,6 +1359,7 @@ mod tests {
             channels: Vec::new(),
             source: "cn".to_string(),
             toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
             shell_path: false,
         });
 
@@ -1379,6 +1388,7 @@ mod tests {
             channels: Vec::new(),
             source: "global".to_string(),
             toolchain_mode: "managed".to_string(),
+            portable_toolchain: Some(false),
             shell_path: false,
         });
 
@@ -1401,6 +1411,7 @@ mod tests {
             channels: Vec::new(),
             source: "global".to_string(),
             toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
             shell_path: false,
         });
 
@@ -1465,6 +1476,7 @@ mod tests {
             channels: vec!["telegram".to_string()],
             source: "global".to_string(),
             toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
             shell_path: false,
         });
 
@@ -1474,13 +1486,14 @@ mod tests {
     }
 
     #[test]
-    fn managed_channels_on_macos_do_not_pull_git() {
+    fn portable_channels_on_macos_do_not_pull_git() {
         let item_ids = ids(StartkitChoices {
             agents: Vec::new(),
             tunnel: "none".to_string(),
             channels: vec!["telegram".to_string()],
             source: "global".to_string(),
             toolchain_mode: "managed".to_string(),
+            portable_toolchain: Some(true),
             shell_path: false,
         });
 
@@ -1490,7 +1503,24 @@ mod tests {
     }
 
     #[test]
-    fn managed_channels_on_windows_include_portable_git() {
+    fn managed_channels_on_macos_pull_git_when_portable_disabled() {
+        let item_ids = ids(StartkitChoices {
+            agents: Vec::new(),
+            tunnel: "none".to_string(),
+            channels: vec!["telegram".to_string()],
+            source: "global".to_string(),
+            toolchain_mode: "managed".to_string(),
+            portable_toolchain: Some(false),
+            shell_path: false,
+        });
+
+        assert!(item_ids.contains(&"essentials.node".to_string()));
+        assert!(item_ids.contains(&"essentials.git".to_string()));
+        assert!(item_ids.contains(&"channels.plugins".to_string()));
+    }
+
+    #[test]
+    fn portable_channels_on_windows_include_portable_git() {
         let item_ids = ids_for_platform(
             StartkitChoices {
                 agents: Vec::new(),
@@ -1498,6 +1528,7 @@ mod tests {
                 channels: vec!["telegram".to_string()],
                 source: "global".to_string(),
                 toolchain_mode: "managed".to_string(),
+                portable_toolchain: Some(true),
                 shell_path: false,
             },
             "windows",
@@ -1519,6 +1550,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(choices.toolchain_mode, "system");
+        assert_eq!(choices.portable_toolchain, None);
         assert!(!choices.shell_path);
     }
 
@@ -1530,6 +1562,7 @@ mod tests {
             channels: Vec::new(),
             source: "global".to_string(),
             toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
             shell_path: true,
         });
 

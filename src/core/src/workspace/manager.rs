@@ -1787,10 +1787,11 @@ mod tests {
         let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let route = RouteKey::new("feishu", "chat-a");
+        let agent_id = format!("test-agent-{}", Uuid::new_v4());
         seed_session_thread(
             &manager,
             root.clone(),
-            "claude",
+            &agent_id,
             None,
             "external-session",
             false,
@@ -1800,7 +1801,7 @@ mod tests {
         let runtime = manager
             .attach_external_session(
                 &route,
-                "claude".to_string(),
+                agent_id.clone(),
                 None,
                 "external-session".to_string(),
                 root,
@@ -1810,7 +1811,7 @@ mod tests {
             .unwrap();
 
         let state = runtime.state().await;
-        assert_eq!(state.host_binding, HostBinding::new("claude", None));
+        assert_eq!(state.host_binding, HostBinding::new(agent_id, None));
         assert_eq!(state.session_id.as_deref(), Some("external-session"));
     }
 

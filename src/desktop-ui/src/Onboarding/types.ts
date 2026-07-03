@@ -85,6 +85,8 @@ export interface Settings {
   startkit?: {
     source?: string;
     toolchain_mode?: ToolchainMode | string;
+    portable_toolchain?: boolean;
+    portableToolchain?: boolean;
     shell_path?: boolean;
   };
   tunnel?: {
@@ -224,6 +226,7 @@ export interface StartkitChoices {
   channels: string[];
   source: string;
   toolchainMode: ToolchainMode;
+  portableToolchain: boolean;
   shellPath: false;
 }
 

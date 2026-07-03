@@ -139,7 +139,8 @@ pub(in crate::startkit) fn effective_item_dependencies<'a>(
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    if item.id == "channels.plugins" && is_managed_mode(choices) && platform != "windows" {
+    if item.id == "channels.plugins" && portable_toolchain_enabled(choices) && platform != "windows"
+    {
         deps.retain(|dep| *dep != "essentials.git");
     }
     if let Some(agent_id) = super::agent_id_from_cli_item(&item.id) {
@@ -151,7 +152,7 @@ pub(in crate::startkit) fn effective_item_dependencies<'a>(
 }
 
 fn should_include(item: &StartkitItem, choices: &StartkitChoices, platform: &str) -> bool {
-    if item.id == "essentials.git" && is_managed_mode(choices) && platform != "windows" {
+    if item.id == "essentials.git" && portable_toolchain_enabled(choices) && platform != "windows" {
         return false;
     }
     item.include_if.iter().any(|rule| match rule.as_str() {
@@ -183,6 +184,12 @@ pub(in crate::startkit) fn is_managed_mode(choices: &StartkitChoices) -> bool {
         .toolchain_mode
         .trim()
         .eq_ignore_ascii_case("managed")
+}
+
+pub(in crate::startkit) fn portable_toolchain_enabled(choices: &StartkitChoices) -> bool {
+    choices
+        .portable_toolchain
+        .unwrap_or_else(|| is_managed_mode(choices))
 }
 
 pub(in crate::startkit) fn supports_platform(item: &StartkitItem, platform: &str) -> bool {

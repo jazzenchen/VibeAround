@@ -353,14 +353,14 @@ where
     F: FnMut(String),
     C: Fn() -> bool,
 {
-    if !crate::config::ensure_loaded().toolchain_mode.is_managed() {
+    if !crate::config::ensure_loaded().portable_toolchain {
         return Ok(());
     }
     let status = crate::toolchain::managed_node_status(None).await;
     if status.ready {
         return Ok(());
     }
-    on_log("Installing VibeAround-managed Node.js".to_string());
+    on_log("Installing VibeAround portable Node.js".to_string());
     crate::toolchain::ensure_node_lts(
         &crate::toolchain::NodeSource::default(),
         on_log,

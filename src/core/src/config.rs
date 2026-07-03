@@ -155,6 +155,7 @@ pub struct Config {
     pub cloudflare_tunnel_token: Option<String>,
     pub cloudflare_hostname: Option<String>,
     pub toolchain_mode: ToolchainMode,
+    pub portable_toolchain: bool,
     // --- Workspaces ---
     /// Default workspace root for new agent sessions.
     pub default_workspace: PathBuf,
@@ -463,12 +464,20 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let toolchain_mode = root
-        .get("startkit")
+    let startkit_settings = root.get("startkit");
+    let toolchain_mode = startkit_settings
         .and_then(|value| value.get("toolchain_mode"))
         .and_then(|value| value.as_str())
         .map(ToolchainMode::from_config)
         .unwrap_or_default();
+    let portable_toolchain = startkit_settings
+        .and_then(|value| {
+            value
+                .get("portable_toolchain")
+                .or_else(|| value.get("portableToolchain"))
+        })
+        .and_then(|value| value.as_bool())
+        .unwrap_or_else(|| toolchain_mode.is_managed());
 
     let raw_channels = root
         .get("channels")
@@ -588,6 +597,7 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         cloudflare_tunnel_token,
         cloudflare_hostname,
         toolchain_mode,
+        portable_toolchain,
         default_workspace,
         workspaces,
         preview_base_url,
@@ -964,6 +974,7 @@ impl Default for Config {
             cloudflare_tunnel_token: None,
             cloudflare_hostname: None,
             toolchain_mode: ToolchainMode::System,
+            portable_toolchain: false,
             default_workspace: builtin_workspaces_dir(),
             workspaces: vec![],
             preview_base_url: None,
@@ -1097,6 +1108,38 @@ mod tests {
             Some("http://127.0.0.1:7890")
         );
         assert!(!config.proxy.is_configured());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn portable_toolchain_can_be_configured_independently() {
+        let dir = unique_test_dir("portable-toolchain");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "startkit": { "toolchain_mode": "managed", "portable_toolchain": false } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert_eq!(config.toolchain_mode, ToolchainMode::Managed);
+        assert!(!config.portable_toolchain);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_managed_toolchain_enables_portable_toolchain() {
+        let dir = unique_test_dir("legacy-portable-toolchain");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "startkit": { "toolchain_mode": "managed" } }"#).unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert_eq!(config.toolchain_mode, ToolchainMode::Managed);
+        assert!(config.portable_toolchain);
         fs::remove_dir_all(&dir).unwrap();
     }
 

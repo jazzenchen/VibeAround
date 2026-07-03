@@ -15,6 +15,7 @@ export function hydrateStartkitPrefs(
   setters: {
     setDownloadSource: (value: string) => void;
     setToolchainMode: (value: ToolchainMode) => void;
+    setPortableToolchain: (value: boolean) => void;
   },
 ) {
   if (loadedSettings.startkit?.source) {
@@ -25,6 +26,14 @@ export function hydrateStartkitPrefs(
     loadedSettings.startkit?.toolchain_mode === "managed"
   ) {
     setters.setToolchainMode(loadedSettings.startkit.toolchain_mode);
+  }
+  const portableToolchain =
+    loadedSettings.startkit?.portable_toolchain ??
+    loadedSettings.startkit?.portableToolchain;
+  if (typeof portableToolchain === "boolean") {
+    setters.setPortableToolchain(portableToolchain);
+  } else if (loadedSettings.startkit?.toolchain_mode === "managed") {
+    setters.setPortableToolchain(true);
   }
 }
 

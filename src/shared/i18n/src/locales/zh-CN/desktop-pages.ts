@@ -8,11 +8,19 @@ export const zhCNDesktopPages: Record<string, string> = {
   "Apply & Restart Services": "应用并重启服务",
   "Restarting services…": "正在重启服务…",
   "Agent Toolchain": "Agent 工具链",
+  "Install Path": "安装位置",
+  Toolchain: "工具链",
   "Agent path not found": "未找到 Agent 路径",
   "Choose Default Workspace": "选择默认工作区",
   "Choose where VibeAround looks for agent CLIs when no manual executable path is set.":
     "没有手动指定可执行文件路径时，选择 VibeAround 查找 Agent CLI 的位置。",
+  "Choose where VibeAround installs and selects agent CLIs when no manual executable path is set.":
+    "没有手动指定可执行文件路径时，选择 VibeAround 安装并选择 Agent CLI 的位置。",
+  "Choose whether installs and launches use system runtime tools or VibeAround's portable runtime.":
+    "选择安装和启动时使用系统运行时工具，还是使用 VibeAround 的便携运行时。",
   "VibeAround managed": "VibeAround 托管",
+  Managed: "托管",
+  Portable: "便携",
   System: "系统",
   "Web Search": "Web 搜索",
   "Web search": "Web 搜索",

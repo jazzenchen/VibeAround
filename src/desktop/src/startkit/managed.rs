@@ -6,8 +6,8 @@ use anyhow::anyhow;
 use tauri::{AppHandle, Runtime};
 
 use super::{
-    base_report, current_platform, emit_progress, is_managed_mode, Manifest, StartkitChoices,
-    StartkitItem, StartkitItemReport, StartkitItemStatus,
+    base_report, current_platform, emit_progress, portable_toolchain_enabled, Manifest,
+    StartkitChoices, StartkitItem, StartkitItemReport, StartkitItemStatus,
 };
 
 pub(in crate::startkit) async fn execute_managed_toolchain_item(
@@ -17,7 +17,7 @@ pub(in crate::startkit) async fn execute_managed_toolchain_item(
     cancelled: Option<&Arc<AtomicBool>>,
     progress: Option<&(dyn Fn(&StartkitItem, StartkitItemStatus, Option<String>) + Sync)>,
 ) -> anyhow::Result<Option<StartkitItemReport>> {
-    if !is_managed_mode(choices) {
+    if !portable_toolchain_enabled(choices) {
         return Ok(None);
     }
 
@@ -38,7 +38,7 @@ pub(in crate::startkit) async fn execute_managed_toolchain_item(
                 progress(
                     item,
                     StartkitItemStatus::Running,
-                    Some("Installing VibeAround-managed Node.js".to_string()),
+                    Some("Installing VibeAround portable Node.js".to_string()),
                 );
             }
             let source = node_source_for_choices(manifest, choices)?;
@@ -52,7 +52,7 @@ pub(in crate::startkit) async fn execute_managed_toolchain_item(
                 progress(
                     item,
                     StartkitItemStatus::Running,
-                    Some("Installing VibeAround-managed Portable Git".to_string()),
+                    Some("Installing VibeAround portable Git".to_string()),
                 );
             }
             let status =
@@ -62,9 +62,7 @@ pub(in crate::startkit) async fn execute_managed_toolchain_item(
         }
         "essentials.git" => StartkitItemReport {
             status: StartkitItemStatus::Skipped,
-            message: Some(
-                "Managed plugin installs do not require system Git on this platform".to_string(),
-            ),
+            message: Some("Portable toolchain does not require Git on this platform".to_string()),
             actions: Vec::new(),
             ..base_report(item)
         },
@@ -140,7 +138,7 @@ pub(in crate::startkit) async fn scan_managed_toolchain_item(
     choices: &StartkitChoices,
     platform: &str,
 ) -> Option<StartkitItemReport> {
-    if !is_managed_mode(choices) {
+    if !portable_toolchain_enabled(choices) {
         return None;
     }
 
@@ -154,9 +152,7 @@ pub(in crate::startkit) async fn scan_managed_toolchain_item(
         }
         "essentials.git" => StartkitItemReport {
             status: StartkitItemStatus::Skipped,
-            message: Some(
-                "Managed plugin installs do not require system Git on this platform".to_string(),
-            ),
+            message: Some("Portable toolchain does not require Git on this platform".to_string()),
             actions: Vec::new(),
             ..base_report(item)
         },

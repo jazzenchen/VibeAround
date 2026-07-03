@@ -1,6 +1,6 @@
 [package]
 name = "va-launcher"
-version = "0.7.10"
+version = "0.7.11"
 description = "VibeAround native launch implementation crate for @va/launcher"
 edition = "2021"
 rust-version = "1.82"
