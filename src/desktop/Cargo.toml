@@ -1,6 +1,6 @@
 [package]
 name = "vibearound-desktop"
-version = "0.7.10"
+version = "0.7.11"
 description = "VibeAround Desktop — Tray-first AI coding orchestrator"
 edition = "2021"
 rust-version = "1.82"
