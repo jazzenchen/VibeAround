@@ -1,0 +1,154 @@
+name: VA CLI Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag for VA CLI assets. Defaults to va-v<package version>.
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    name: Prepare VA CLI release
+    runs-on: ubuntu-22.04
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      va_version: ${{ steps.meta.outputs.va_version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          VA_VERSION="$(node -p "require('./src/npm/cli/package.json').version")"
+          RELEASE_TAG="${{ inputs.release_tag }}"
+          if [ -z "${RELEASE_TAG}" ]; then
+            RELEASE_TAG="va-v${VA_VERSION}"
+          fi
+          echo "va_version=${VA_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.release_tag }}"
+          version="${{ steps.meta.outputs.va_version }}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release edit "${tag}" \
+              --title "VibeAround CLI ${version}" \
+              --draft=true \
+              --notes "Native assets for npm package @vibearound/cli@${version}."
+          else
+            gh release create "${tag}" \
+              --target "${GITHUB_SHA}" \
+              --title "VibeAround CLI ${version}" \
+              --draft \
+              --notes "Native assets for npm package @vibearound/cli@${version}."
+          fi
+
+  build-native:
+    name: Build CLI ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    needs: prepare-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-22.04
+            npm-platform: linux
+            npm-arch: x64
+          - name: Windows x64
+            runner: windows-latest
+            npm-platform: win32
+            npm-arch: x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src -> target
+
+      - name: Prepare native CLI payload
+        shell: bash
+        run: |
+          node src/npm/cli/scripts/prepare-package.mjs \
+            --skip-web \
+            --platform "${{ matrix.npm-platform }}" \
+            --arch "${{ matrix.npm-arch }}"
+
+      - name: Archive native CLI payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSET="VibeAround-CLI-${{ matrix.npm-platform }}-${{ matrix.npm-arch }}-${{ needs.prepare-release.outputs.va_version }}.tgz"
+          tar -czf "${ASSET}" \
+            -C src/npm/cli \
+            "bin/native/${{ matrix.npm-platform }}-${{ matrix.npm-arch }}"
+          echo "asset=${ASSET}" >> "${GITHUB_ENV}"
+
+      - name: Upload native CLI payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.prepare-release.outputs.release_tag }}" "${asset}" --clobber
+
+  build-web:
+    name: Build CLI web payload
+    runs-on: ubuntu-22.04
+    needs: prepare-release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        run: bun install --cwd src --frozen-lockfile
+
+      - name: Build web dashboard
+        run: bun run --cwd src web:build
+
+      - name: Archive web payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p src/npm/cli/web
+          rm -rf src/npm/cli/web/dist
+          cp -R src/web/dist src/npm/cli/web/
+          ASSET="VibeAround-CLI-web-${{ needs.prepare-release.outputs.va_version }}.tgz"
+          tar -czf "${ASSET}" -C src/npm/cli "web/dist"
+          echo "asset=${ASSET}" >> "${GITHUB_ENV}"
+
+      - name: Upload web payload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ needs.prepare-release.outputs.release_tag }}" "${asset}" --clobber

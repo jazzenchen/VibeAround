@@ -28,6 +28,13 @@ import type {
 } from "../types";
 
 const GROUP_ORDER = ["computer", "agents", "messaging", "remote"];
+const TERMINAL_INSTALL_STATUSES = new Set<StartkitStatus>([
+  "ok",
+  "needs_config",
+  "blocked",
+  "error",
+  "skipped",
+]);
 
 export function InstallPanel({
   groupedReports,
@@ -87,18 +94,34 @@ export function InstallPanel({
       })),
     [choices, discoveredPlugins, groups, pluginRegistry],
   );
-  const headline = running
-    ? installProgressLabel(installReports, t)
-    : installHeadline({ scanning, running, complete, finalStatus, t });
+  const installReportsSettled =
+    installReports.length > 0 &&
+    installReports.every((report) => TERMINAL_INSTALL_STATUSES.has(report.status));
+  const allReportsSettled =
+    reports.length > 0 &&
+    reports.every((report) => TERMINAL_INSTALL_STATUSES.has(report.status));
+  const displayRunning = running && !allReportsSettled;
+  const displayComplete = complete || (running && allReportsSettled);
+  const headline = displayRunning
+    ? installReportsSettled
+      ? t("Finalizing setup")
+      : installProgressLabel(installReports, t)
+    : installHeadline({
+        scanning,
+        running: false,
+        complete: displayComplete,
+        finalStatus: finalStatus ?? (displayComplete ? "complete" : null),
+        t,
+      });
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-4xl items-center py-4">
       <div className="w-full space-y-4">
         <section className="px-1">
           <div className="flex items-start gap-3">
-            {running || scanning ? (
+            {displayRunning || scanning ? (
               <Loader2 className="mt-0.5 h-5 w-5 animate-spin text-primary" />
-            ) : complete ? (
+            ) : displayComplete ? (
               <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
             ) : (
               <TerminalSquare className="mt-0.5 h-5 w-5 text-primary" />

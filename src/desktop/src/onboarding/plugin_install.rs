@@ -63,7 +63,7 @@ where
     std::fs::create_dir_all(&plugins_dir).context("creating plugins directory")?;
 
     if has_step(&install_steps, "git_clone") {
-        if let Some(archive_url) = managed_archive_url(&request.github_url) {
+        if let Some(archive_url) = portable_archive_url(&request.github_url) {
             install_github_archive_checkout(
                 &target_dir,
                 &archive_url,
@@ -73,6 +73,7 @@ where
             )
             .await?;
         } else {
+            ensure_portable_git_for_plugin(&mut on_log, &is_cancelled).await?;
             // If a previous install left a partial directory, wipe it for a clean clone.
             // Complete git installs are refreshed to the registry HEAD so "Install"
             // also acts as "Update" for already-installed plugins.
@@ -309,10 +310,13 @@ pub fn check_plugin_status(plugin_id: String) -> String {
     "installed_not_discoverable".to_string()
 }
 
-fn managed_archive_url(github_url: &str) -> Option<String> {
-    if !common::config::ensure_loaded().toolchain_mode.is_managed() {
+fn portable_archive_url(github_url: &str) -> Option<String> {
+    let config = common::config::ensure_loaded();
+    if !config.portable_toolchain || cfg!(windows) {
         return None;
     }
+    // Portable Git is only bundled on Windows; other portable installs avoid
+    // requiring a system Git checkout by using GitHub source archives.
     archive::github_head_archive_url(github_url)
 }
 
@@ -370,13 +374,13 @@ where
     F: FnMut(String),
     C: Fn() -> bool,
 {
-    if !common::config::ensure_loaded().toolchain_mode.is_managed() {
+    if !common::config::ensure_loaded().portable_toolchain {
         return Ok(());
     }
     if common::toolchain::managed_node_status(None).await.ready {
         return Ok(());
     }
-    on_log("Installing VibeAround-managed Node.js".to_string());
+    on_log("Installing VibeAround portable Node.js".to_string());
     common::toolchain::ensure_node_lts(
         &common::toolchain::NodeSource::default(),
         on_log,
@@ -384,6 +388,26 @@ where
     )
     .await
     .map(|_| ())
+}
+
+async fn ensure_portable_git_for_plugin<F, C>(
+    on_log: &mut F,
+    is_cancelled: &C,
+) -> anyhow::Result<()>
+where
+    F: FnMut(String),
+    C: Fn() -> bool,
+{
+    if !common::config::ensure_loaded().portable_toolchain || !cfg!(windows) {
+        return Ok(());
+    }
+    if common::toolchain::managed_git_status().await.ready {
+        return Ok(());
+    }
+    on_log("Installing VibeAround portable Git".to_string());
+    common::toolchain::ensure_windows_portable_git(on_log, is_cancelled)
+        .await
+        .map(|_| ())
 }
 
 fn default_install_steps() -> Vec<String> {

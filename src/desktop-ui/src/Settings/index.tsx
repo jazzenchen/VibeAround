@@ -231,6 +231,7 @@ export function SettingsDialog({
   const [proxyHttp, setProxyHttp] = useState("");
   const [proxyNoProxy, setProxyNoProxy] = useState("");
   const [toolchainMode, setToolchainMode] = useState<ToolchainMode>("system");
+  const [portableToolchain, setPortableToolchain] = useState(false);
   const [retry429Enabled, setRetry429Enabled] = useState(true);
   const [retry429MaxRetries, setRetry429MaxRetries] = useState("10");
   const [retry429Unlimited, setRetry429Unlimited] = useState(false);
@@ -447,6 +448,14 @@ export function SettingsDialog({
       loadedSettings.startkit?.toolchain_mode === "managed"
         ? "managed"
         : "system",
+    );
+    const configuredPortableToolchain =
+      loadedSettings.startkit?.portable_toolchain ??
+      loadedSettings.startkit?.portableToolchain;
+    setPortableToolchain(
+      typeof configuredPortableToolchain === "boolean"
+        ? configuredPortableToolchain
+        : loadedSettings.startkit?.toolchain_mode === "managed",
     );
   }, []);
 
@@ -1001,6 +1010,7 @@ export function SettingsDialog({
         settings,
         defaultWorkspace: workspace,
         toolchainMode,
+        portableToolchain,
       });
       await invoke("save_settings", { settings: nextSettings });
       setSettings(nextSettings);
@@ -1020,6 +1030,7 @@ export function SettingsDialog({
   }, [
     settings,
     toolchainMode,
+    portableToolchain,
     onServicesRestarted,
   ]);
 
@@ -1032,6 +1043,7 @@ export function SettingsDialog({
         settings,
         defaultWorkspace,
         toolchainMode: mode,
+        portableToolchain,
       });
       await invoke("save_settings", { settings: nextSettings });
       setSettings(nextSettings);
@@ -1050,6 +1062,39 @@ export function SettingsDialog({
   }, [
     settings,
     defaultWorkspace,
+    portableToolchain,
+    onServicesRestarted,
+  ]);
+
+  const savePortableToolchain = useCallback(async (enabled: boolean) => {
+    setPortableToolchain(enabled);
+    setSaving("general");
+    setNotice(null);
+    try {
+      const nextSettings = buildGeneralSettings({
+        settings,
+        defaultWorkspace,
+        toolchainMode,
+        portableToolchain: enabled,
+      });
+      await invoke("save_settings", { settings: nextSettings });
+      setSettings(nextSettings);
+      const response = await apiFetch("/api/settings/reload", { method: "POST" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      onServicesRestarted?.();
+      setNotice({ variant: "success", message: "General settings applied." });
+    } catch (error) {
+      setNotice({
+        variant: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSaving("idle");
+    }
+  }, [
+    settings,
+    defaultWorkspace,
+    toolchainMode,
     onServicesRestarted,
   ]);
 
@@ -1274,8 +1319,8 @@ export function SettingsDialog({
                     </div>
                   </div>
                   <SettingsActionRow
-                    label={t("Agent Toolchain")}
-                    description={t("Choose where VibeAround looks for agent CLIs when no manual executable path is set.")}
+                    label={t("Install Path")}
+                    description={t("Choose where VibeAround installs and selects agent CLIs when no manual executable path is set.")}
                     action={
                       <Select
                         value={toolchainMode}
@@ -1290,7 +1335,30 @@ export function SettingsDialog({
                         <SelectContent>
                           <SelectItem value="system">{t("System")}</SelectItem>
                           <SelectItem value="managed">
-                            {t("VibeAround managed")}
+                            {t("Managed")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    }
+                  />
+                  <SettingsActionRow
+                    label={t("Toolchain")}
+                    description={t("Choose whether installs and launches use system runtime tools or VibeAround's portable runtime.")}
+                    action={
+                      <Select
+                        value={portableToolchain ? "portable" : "system"}
+                        onValueChange={(value) =>
+                          void savePortableToolchain(value === "portable")
+                        }
+                        disabled={saving !== "idle"}
+                      >
+                        <SelectTrigger className="h-8 w-48 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="system">{t("System")}</SelectItem>
+                          <SelectItem value="portable">
+                            {t("Portable")}
                           </SelectItem>
                         </SelectContent>
                       </Select>
@@ -2747,10 +2815,12 @@ function buildGeneralSettings({
   settings,
   defaultWorkspace,
   toolchainMode,
+  portableToolchain,
 }: {
   settings: AppSettings;
   defaultWorkspace: string;
   toolchainMode: ToolchainMode;
+  portableToolchain: boolean;
 }): AppSettings {
   const result: AppSettings = { ...settings };
   const workspace = defaultWorkspace.trim();
@@ -2762,6 +2832,7 @@ function buildGeneralSettings({
   result.startkit = {
     ...(isRecord(settings.startkit) ? settings.startkit : {}),
     toolchain_mode: toolchainMode,
+    portable_toolchain: portableToolchain,
   };
   return result;
 }

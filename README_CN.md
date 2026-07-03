@@ -6,25 +6,20 @@
 
 **AI 编程 Agent 的一站式 Hub。**
 
-[下载](https://github.com/jazzenchen/VibeAround/releases/latest) | [演示](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [微信群](#社区) | [English](README.md)
+[桌面版下载](https://github.com/jazzenchen/VibeAround/releases/latest) | [CLI npm](https://www.npmjs.com/package/@vibearound/cli) | [演示](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [微信群](#社区) | [English](README.md)
 
 </div>
 
-<p align="center">
-  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch 界面，可选择 Agent Profile 和 Workspace" width="92%" />
-</p>
-
-## 重要：v0.7.10 破坏性变更
-
-VibeAround v0.7.10 修改了本地配置的读取和归一化逻辑。部分配置项被合并，部分非必要的运行日志/缓存内容也不再有用。目前建议按下面流程手动清理：
-
-1. 备份 `~/.vibearound/profiles` 和 `~/.vibearound/settings.json`。
-2. 删除整个 `~/.vibearound` 目录。
-3. 将备份的 `profiles` 目录和 `settings.json` 拷贝回 `~/.vibearound`。
-4. 打开 VibeAround Desktop。
-5. 进入 Settings，重新走一遍 onboarding 流程。
-
-已知影响：迁移后 API Bridge 配置可能会丢失。重新在对应 profile 上启用 API Bridge 即可恢复。
+<table align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch 界面，可选择 Agent Profile 和 Workspace" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/tui.webp" alt="VibeAround TUI 欢迎界面" width="100%" />
+    </td>
+  </tr>
+</table>
 
 ## 为什么需要 VibeAround
 
@@ -56,7 +51,8 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量�
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/api-inspector.webp" alt="VibeAround Bridge recorder，可查看请求、响应和搜索细节" width="88%" />
 </p>
 
-### VibeAround vs CC Switch
+<details>
+<summary><strong>VibeAround vs CC Switch</strong></summary>
 
 | 维度 | VibeAround | [CC Switch](https://github.com/farion1231/cc-switch) |
 |---|---|---|
@@ -74,6 +70,8 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量�
 | Host-side web search | ✅ provider 不提供原生搜索时，通过 [Host-side Web Search](#host-side-web-search) / `va-search-tool` 补上 | ❌ 当前不支持 |
 | MCP 和 Skills | ❌ 当前不支持 | ✅ 在 supported apps 之间统一管理 MCP 和 Skills |
 | Usage / cost tracking | 🚧 Roadmap | ✅ 内置 usage dashboard |
+
+</details>
 
 ## Known Issue
 
@@ -179,7 +177,8 @@ IM 接入是通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plu
 - 用 `/switch` 切换 Workspace 和 Agent。
 - 在同一个对话里打开预览链接。
 
-### VibeAround vs cc-connect
+<details>
+<summary><strong>VibeAround vs cc-connect</strong></summary>
 
 | 维度 | VibeAround | [cc-connect](https://github.com/chenhg5/cc-connect) |
 |---|---|---|
@@ -194,6 +193,8 @@ IM 接入是通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plu
 | Web Terminal | ✅ 用浏览器远程控制本地 AI Agent CLI | ❌ 当前不支持 |
 | Web Hub | ✅ 从浏览器 launch、continue sessions 和 chat | ⚠️ 提供 Web admin/config dashboard；service 需要单独运行 |
 | Scheduling 和 rich IM commands | ❌ 当前不支持 | ✅ `/timer`、`/cron`、`/cancel`、`/ps`、provider/model/mode commands |
+
+</details>
 
 ## Web Terminal
 
@@ -254,7 +255,8 @@ VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物�
 - 通过 tunnel 可以实现远程访问预览链接。
 - 可以预览网站服务、Markdown 文件、HTML 文件。
 
-## 支持的 AI Agent
+<details>
+<summary><strong>支持的 AI Agent</strong></summary>
 
 | Agent | 启动 | 继续 / 交接 | Profile 路由 |
 |---|---:|---:|---:|
@@ -271,7 +273,10 @@ VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物�
 
 ✅ 支持 · ⚠️ 部分支持 · ➜ 直连启动 · — 暂不支持
 
-## 支持的 Provider
+</details>
+
+<details>
+<summary><strong>支持的 Provider</strong></summary>
 
 内置 Profile 已覆盖主流官方 provider 和兼容 provider。只要你的 provider 支持相应的 API 形态，也可以通过自定义 endpoint 接入。
 
@@ -290,7 +295,10 @@ VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物�
 | Azure OpenAI | 支持 Responses 和 Chat deployment 路由 |
 | 自定义 endpoint | 允许自定义 base URL、headers、模型列表和 API 形态 |
 
-## 消息频道
+</details>
+
+<details>
+<summary><strong>消息频道</strong></summary>
 
 消息频道通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plugin-channel-sdk) 构建，再由 VibeAround 安装和统一管理。
 
@@ -305,7 +313,10 @@ VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物�
 | 企业微信 | 配置 WebSocket Bot 凭证 | 企业微信工作流 |
 | QQ Bot | 使用 QQ 频道机器人凭证 | QQ 频道工作流 |
 
-## Local-first 安全模型
+</details>
+
+<details>
+<summary><strong>Local-first 安全模型</strong></summary>
 
 VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
@@ -317,92 +328,66 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 - Preview 链接有明确的作用域，并且短期有效。
 - Agent CLI 使用你本机的项目权限，不越界。
 
+</details>
+
 ---
 
 ## 快速开始
 
-1. 下载适合你平台的最新桌面安装包。
-2. 打开 VibeAround，跟随引导完成初始设置。
-3. 启用你常用的 Agent CLI。
+1. 安装完整桌面应用，或通过 `npm i @vibearound/cli` 安装 CLI。
+2. 打开 VibeAround Desktop，或运行 `va serve` 后访问 `http://127.0.0.1:12358/va/`。
+3. 跟随引导完成初始设置，并启用你常用的 Agent CLI。
 4. 如果希望 VibeAround 统一路由模型流量，添加 API Profile。
-5. 在 Launch 中选择 Agent、模型 Profile、Terminal、Workspace 和 Session。
-6. 之后，你就可以从桌面、Web Hub、Web Terminal 或配置好的消息频道继续工作。
+5. 在 Launch 或 Web Hub 中选择 Agent、模型 Profile、Terminal、Workspace 和 Session。
+6. 之后，你就可以从桌面、Web Hub、Web Terminal、CLI 或配置好的消息频道继续工作。
 
 详细文档见 [Wiki](https://github.com/jazzenchen/VibeAround/wiki)。
 
-## 下载
+## 安装
 
-最新版本：[VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.10)。
+### Desktop 应用
+
+最新桌面版：[VibeAround v0.7.11](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.11)。
 
 | 平台 | 推荐下载 |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.10.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-macOS-arm64-0.7.10.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-Setup-0.7.10.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-MSI-0.7.10.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-Portable-0.7.10.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-AppImage-0.7.10.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-DEB-0.7.10.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.11.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-macOS-arm64-0.7.11.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-Setup-0.7.11.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-MSI-0.7.11.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-Portable-0.7.11.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Linux-x64-AppImage-0.7.11.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Linux-x64-DEB-0.7.11.deb) |
 
 Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Silicon 版本。
 
-<a id="migration-guide-from-06x-cn"></a>
+### 通过 npm 安装 CLI
 
-### 从 0.6.x 迁移指南
-
-v0.7.3 调整了 Startkit 状态、Agent 来源检测、桌面启动目标和 Profile 启动设置。如果你从 0.6.x 升级，建议做一次干净的本地状态迁移：
-
-1. 退出 VibeAround。
-2. 完整备份旧的 `~/.vibearound` 目录。
-3. 删除旧的 `~/.vibearound` 目录。
-4. 只从备份里恢复持久状态。
-5. 启动 VibeAround v0.7.3；如果 Launch、Profile、Startkit 或桌面版 Agent 设置看起来异常，再重新跑 onboarding / Startkit 配置。
-
-只恢复这些持久状态：`settings.json`、`profiles/`、`google-oauth/`、`state/`、`sessions/`、`launch-session-archive.json`、`workspaces/`、`worktrees/`。
-
-不要恢复这些可重建的缓存/运行期数据：`.cache/`、`cache/startkit/`、`agents.detected.json`、`desktop-apps.detected.json`、`profile-state/`、`api-bridge/launches/`、`logs/`、`npm-global/`、`plugins/`、`bin/`、`runtime/`、`auth.json`。
-
-macOS / Linux：
+npm 包会同时安装 `va` 和 `vibearound` 两个命令：
 
 ```bash
-set -euo pipefail
-
-BACKUP="$HOME/vibearound-0.6-full-backup-$(date +%Y%m%d%H%M%S)"
-SOURCE="$HOME/.vibearound"
-
-if [ -d "$SOURCE" ]; then
-  cp -a "$SOURCE" "$BACKUP"
-  rm -rf "$SOURCE"
-fi
-
-mkdir -p "$SOURCE"
-
-for item in settings.json profiles google-oauth state sessions launch-session-archive.json workspaces worktrees; do
-  [ -e "$BACKUP/$item" ] && cp -a "$BACKUP/$item" "$SOURCE/"
-done
+npm i @vibearound/cli
 ```
 
-Windows PowerShell：
-
-```powershell
-$ErrorActionPreference = "Stop"
-
-$Backup = Join-Path $env:USERPROFILE ("vibearound-0.6-full-backup-" + (Get-Date -Format "yyyyMMddHHmmss"))
-$SourceRoot = Join-Path $env:USERPROFILE ".vibearound"
-
-if (Test-Path $SourceRoot) {
-  Copy-Item $SourceRoot $Backup -Recurse -Force
-  Remove-Item $SourceRoot -Recurse -Force
-}
-
-New-Item -ItemType Directory -Force -Path $SourceRoot | Out-Null
-
-$Items = @(
-  "settings.json", "profiles", "google-oauth",
-  "state", "sessions", "launch-session-archive.json", "workspaces", "worktrees"
-)
-
-foreach ($Item in $Items) {
-  $Source = Join-Path $Backup $Item
-  if (Test-Path $Source) { Copy-Item $Source $SourceRoot -Recurse -Force }
-}
+```bash
+va serve
+va tui
+va launch --profile codex-work
 ```
+
+server 启动后，在浏览器访问 `http://127.0.0.1:12358/va/`。
+
+最新 CLI 包：[`@vibearound/cli@0.0.1`](https://www.npmjs.com/package/@vibearound/cli)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。
+
+## 升级说明
+
+### v0.7.10 破坏性变更
+
+VibeAround v0.7.10 修改了本地配置的读取和归一化逻辑。部分配置项被合并，部分非必要的运行日志/缓存内容也不再有用。目前建议按下面流程手动清理：
+
+1. 备份 `~/.vibearound/profiles` 和 `~/.vibearound/settings.json`。
+2. 删除整个 `~/.vibearound` 目录。
+3. 将备份的 `profiles` 目录和 `settings.json` 拷贝回 `~/.vibearound`。
+4. 打开 VibeAround Desktop。
+5. 进入 Settings，重新走一遍 onboarding 流程。
+
+已知影响：迁移后 API Bridge 配置可能会丢失。重新在对应 profile 上启用 API Bridge 即可恢复。
 
 ## 本地开发
 
@@ -440,9 +425,9 @@ VibeAround 还处在快速打磨阶段，目前也主要是我一个人在开发
 
 微信交流群：
 
-<img src="assets/community/wechat-group-qr-2026-06-28.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 6 月 28 日" />
+<img src="assets/community/wechat-group-qr-2026-07-06.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 7 月 6 日" />
 
-该微信群二维码有效期至 2026 年 6 月 28 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
+该微信群二维码有效期至 2026 年 7 月 6 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
 
 ## 许可证
 

@@ -1300,6 +1300,7 @@ mod tests {
             coding_anthropic.default_base_url,
             "https://api.z.ai/api/anthropic"
         );
+        assert!(coding_anthropic.auth_header);
         assert_eq!(
             model(coding_anthropic, "glm-5.2").context_window,
             Some(1_000_000)
@@ -1317,6 +1318,7 @@ mod tests {
             coding_cn_anthropic.default_base_url,
             "https://open.bigmodel.cn/api/anthropic"
         );
+        assert!(coding_cn_anthropic.auth_header);
         assert!(find_endpoint(provider, "anthropic", Some("cn")).is_none());
 
         let global_chat =

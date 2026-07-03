@@ -1,0 +1,113 @@
+name: Publish NPM CLI
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: GitHub release tag that contains VibeAround-CLI assets
+        required: true
+        type: string
+      publish:
+        description: Publish @vibearound/cli to npm after packing
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  pack:
+    name: Pack npm tarball from release assets
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          submodules: recursive
+
+      - name: Resolve CLI version
+        id: cli
+        run: |
+          set -euo pipefail
+          VA_VERSION="$(node -p "require('./src/npm/cli/package.json').version")"
+          echo "va_version=${VA_VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download CLI release payloads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "${{ inputs.release_tag }}" \
+            --pattern "VibeAround-CLI-*-${{ steps.cli.outputs.va_version }}.tgz" \
+            --pattern "VibeAround-CLI-*-${{ steps.cli.outputs.va_version }}.zip" \
+            --dir release-assets
+          count="$(find release-assets -name '*.tgz' | wc -l | tr -d ' ')"
+          zip_count="$(find release-assets -name '*.zip' | wc -l | tr -d ' ')"
+          count="$((count + zip_count))"
+          if [ "${count}" -lt 4 ]; then
+            echo "Expected at least 4 CLI release payloads, found ${count}" >&2
+            find release-assets -maxdepth 1 -type f -print >&2
+            exit 1
+          fi
+
+      - name: Assemble npm package
+        run: |
+          set -euo pipefail
+          mkdir -p src/npm/cli/bin/native
+          find release-assets -name '*.tgz' -print0 \
+            | xargs -0 -I{} tar -xzf {} -C src/npm/cli
+          find release-assets -name '*.zip' -print0 \
+            | xargs -0 -I{} unzip -q -o {} -d src/npm/cli
+          cp LICENSE src/npm/cli/LICENSE
+          find src/npm/cli/bin/native -maxdepth 2 -type f -print | sort
+          test -f src/npm/cli/web/dist/index.html
+
+      - name: Smoke test npm shims
+        run: |
+          set -euo pipefail
+          node --check src/npm/cli/bin/vibearound.mjs
+          node --check src/npm/cli/scripts/prepare-package.mjs
+          VIBEAROUND_NPM_CLI_DRY_RUN=1 node src/npm/cli/bin/vibearound.mjs tui --once
+          VIBEAROUND_NPM_CLI_DRY_RUN=1 node src/npm/cli/bin/vibearound.mjs serve --port 12358
+          VIBEAROUND_NPM_CLI_DRY_RUN=1 node src/npm/cli/bin/vibearound.mjs launch --profile codex
+          node src/npm/cli/bin/vibearound.mjs help
+
+      - name: Pack npm tarball
+        run: npm pack ./src/npm/cli --pack-destination ./src/npm/cli --ignore-scripts
+
+      - name: Upload npm tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibearound-cli-npm-tarball
+          path: src/npm/cli/vibearound-cli-*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: Publish npm package
+    runs-on: ubuntu-22.04
+    needs: pack
+    if: ${{ inputs.publish }}
+    environment: npm
+
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+
+      - name: Download npm tarball
+        uses: actions/download-artifact@v5
+        with:
+          name: vibearound-cli-npm-tarball
+          path: npm-dist
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish npm-dist/vibearound-cli-*.tgz --access public

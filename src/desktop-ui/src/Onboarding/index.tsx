@@ -79,6 +79,7 @@ export default function Onboarding() {
   const [downloadSource, setDownloadSource] = useState("global");
   const [toolchainMode, setToolchainMode] =
     useState<ToolchainMode>(DEFAULT_TOOLCHAIN_MODE);
+  const [portableToolchain, setPortableToolchain] = useState(false);
   const [enabledAgents, setEnabledAgents] = useState<Set<AgentId>>(new Set());
   const [enabledChannels, setEnabledChannels] = useState<Set<string>>(
     new Set(),
@@ -128,6 +129,7 @@ export default function Onboarding() {
     setDiscoveredPlugins,
     setDownloadSource,
     setToolchainMode,
+    setPortableToolchain,
     setEnabledAgents,
     setEnabledChannels,
     setChannelConfigs,
@@ -151,6 +153,7 @@ export default function Onboarding() {
       channels: Array.from(enabledChannels),
       source: downloadSource,
       toolchainMode,
+      portableToolchain,
       shellPath: false,
     }),
     [
@@ -159,6 +162,7 @@ export default function Onboarding() {
       enabledChannels,
       downloadSource,
       toolchainMode,
+      portableToolchain,
     ],
   );
 
@@ -189,6 +193,7 @@ export default function Onboarding() {
             : {}),
           source: downloadSource,
           toolchain_mode: toolchainMode,
+          portable_toolchain: portableToolchain,
           shell_path: false,
         },
       };
@@ -208,6 +213,7 @@ export default function Onboarding() {
       cfHostname,
       downloadSource,
       toolchainMode,
+      portableToolchain,
     ],
   );
 
@@ -218,21 +224,32 @@ export default function Onboarding() {
       channels: [],
       source: downloadSource,
       toolchainMode,
+      portableToolchain,
       shellPath: false,
     }),
-    [downloadSource, toolchainMode],
+    [downloadSource, toolchainMode, portableToolchain],
   );
 
   const checkAgentUpdates = useCallback(
     (agentIds: string[]) => {
       const pendingAgentIds = agentIds.filter((agentId) => {
-        const signature = itemCheckSignature(agentId, downloadSource, toolchainMode);
+        const signature = itemCheckSignature(
+          agentId,
+          downloadSource,
+          toolchainMode,
+          portableToolchain ? "portable" : "system-runtime",
+        );
         return !checkedAgentUpdateSignaturesRef.current.has(signature);
       });
       if (pendingAgentIds.length === 0) return;
       for (const agentId of pendingAgentIds) {
         checkedAgentUpdateSignaturesRef.current.add(
-          itemCheckSignature(agentId, downloadSource, toolchainMode),
+          itemCheckSignature(
+            agentId,
+            downloadSource,
+            toolchainMode,
+            portableToolchain ? "portable" : "system-runtime",
+          ),
         );
       }
 
@@ -264,12 +281,17 @@ export default function Onboarding() {
           );
         });
     },
-    [agentStatusChoices, downloadSource, toolchainMode],
+    [agentStatusChoices, downloadSource, toolchainMode, portableToolchain],
   );
 
   useEffect(() => {
     if (!loaded) return;
-    const signature = itemCheckSignature("startkit-options", downloadSource, toolchainMode);
+    const signature = itemCheckSignature(
+      "startkit-options",
+      downloadSource,
+      toolchainMode,
+      portableToolchain ? "portable" : "system-runtime",
+    );
     if (previousStartkitOptionsRef.current === null) {
       previousStartkitOptionsRef.current = signature;
       return;
@@ -286,7 +308,7 @@ export default function Onboarding() {
     setPluginUpdateReports([]);
     setTunnelReports([]);
     startkit.reset();
-  }, [downloadSource, loaded, startkit.reset, toolchainMode]);
+  }, [downloadSource, loaded, portableToolchain, startkit.reset, toolchainMode]);
 
   useEffect(() => {
     if (!loaded || activeStep !== "install" || startkit.running || startkit.scanning) return;
@@ -297,6 +319,7 @@ export default function Onboarding() {
       [...choices.channels].sort().join(","),
       choices.tunnel,
       choices.toolchainMode,
+      choices.portableToolchain ? "portable" : "system-runtime",
     );
     if (checkedInstallScanSignaturesRef.current.has(signature)) return;
     checkedInstallScanSignaturesRef.current.add(signature);
@@ -317,13 +340,23 @@ export default function Onboarding() {
     if (!loaded || activeStep !== "agents" || agents.length === 0 || startkit.running) return;
     const agentIds = agents.map((agent) => agent.id).sort();
     const pendingAgentIds = agentIds.filter((agentId) => {
-      const signature = itemCheckSignature(agentId, "local", toolchainMode);
+      const signature = itemCheckSignature(
+        agentId,
+        "local",
+        toolchainMode,
+        portableToolchain ? "portable" : "system-runtime",
+      );
       return !checkedAgentLocalSignaturesRef.current.has(signature);
     });
     if (pendingAgentIds.length === 0) return;
     for (const agentId of pendingAgentIds) {
       checkedAgentLocalSignaturesRef.current.add(
-        itemCheckSignature(agentId, "local", toolchainMode),
+        itemCheckSignature(
+          agentId,
+          "local",
+          toolchainMode,
+          portableToolchain ? "portable" : "system-runtime",
+        ),
       );
     }
     setAgentInstallReports((previous) =>
@@ -358,6 +391,7 @@ export default function Onboarding() {
     settings,
     startkit.running,
     toolchainMode,
+    portableToolchain,
   ]);
 
   useEffect(() => {
@@ -446,13 +480,23 @@ export default function Onboarding() {
       .filter((id) => id !== "none")
       .sort();
     const pendingTunnelIds = tunnelIds.filter((id) => {
-      const signature = itemCheckSignature(id, "tunnel", toolchainMode);
+      const signature = itemCheckSignature(
+        id,
+        "tunnel",
+        toolchainMode,
+        portableToolchain ? "portable" : "system-runtime",
+      );
       return !checkedTunnelSignaturesRef.current.has(signature);
     });
     if (pendingTunnelIds.length === 0) return;
     for (const id of pendingTunnelIds) {
       checkedTunnelSignaturesRef.current.add(
-        itemCheckSignature(id, "tunnel", toolchainMode),
+        itemCheckSignature(
+          id,
+          "tunnel",
+          toolchainMode,
+          portableToolchain ? "portable" : "system-runtime",
+        ),
       );
     }
 
@@ -486,6 +530,7 @@ export default function Onboarding() {
     settings,
     tunnels,
     toolchainMode,
+    portableToolchain,
   ]);
 
   useEffect(() => {
@@ -878,8 +923,10 @@ export default function Onboarding() {
             sources={manifest?.sources ?? {}}
             downloadSource={downloadSource}
             toolchainMode={toolchainMode}
+            portableToolchain={portableToolchain}
             onDownloadSource={setDownloadSource}
             onToolchainMode={setToolchainMode}
+            onPortableToolchain={setPortableToolchain}
           />
           <LanguageMenu />
         </div>

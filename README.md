@@ -6,25 +6,20 @@
 
 **An all-in-one hub for AI coding agents, keeping your vibe flow around.**
 
-[Download](https://github.com/jazzenchen/VibeAround/releases/latest) | [Demo](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [WeChat](#community) | [简体中文](README_CN.md)
+[Desktop Download](https://github.com/jazzenchen/VibeAround/releases/latest) | [CLI npm](https://www.npmjs.com/package/@vibearound/cli) | [Demo](https://youtu.be/6kxNKTMz-AM) | [Wiki](https://github.com/jazzenchen/VibeAround/wiki) | [Discord](https://discord.gg/KsJWkY64GN) | [WeChat](#community) | [简体中文](README_CN.md)
 
 </div>
 
-<p align="center">
-  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch screen with agent profile and workspace selection" width="92%" />
-</p>
-
-## Important: v0.7.10 Breaking Change
-
-VibeAround v0.7.10 changes how local configuration is read and normalized. Some configuration fields have been merged, and some non-essential runtime/log data is no longer useful. For now, the recommended migration is a manual cleanup:
-
-1. Back up `~/.vibearound/profiles` and `~/.vibearound/settings.json`.
-2. Delete the `~/.vibearound` directory.
-3. Copy the backed-up `profiles` directory and `settings.json` back into `~/.vibearound`.
-4. Open VibeAround Desktop.
-5. Go to Settings and run the onboarding flow again.
-
-Known impact: API Bridge configuration may be lost during this migration. Re-enable API Bridge on the affected profiles to restore it.
+<table align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/launch.webp" alt="VibeAround Launch screen with agent profile and workspace selection" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/tui.webp" alt="VibeAround TUI welcome screen" width="100%" />
+    </td>
+  </tr>
+</table>
 
 ## Why VibeAround
 
@@ -56,7 +51,8 @@ Pick an AI agent, model profile or API endpoint, and workspace. VibeAround launc
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/api-inspector.webp" alt="VibeAround Bridge recorder showing requests, responses, and search details" width="88%" />
 </p>
 
-### VibeAround vs CC Switch
+<details>
+<summary><strong>VibeAround vs CC Switch</strong></summary>
 
 | Area | VibeAround | [CC Switch](https://github.com/farion1231/cc-switch) |
 |---|---|---|
@@ -74,6 +70,8 @@ Pick an AI agent, model profile or API endpoint, and workspace. VibeAround launc
 | Host-side web search | ✅ [Host-side Web Search](#host-side-web-search) via `va-search-tool` when providers do not expose native search | ❌ Not currently supported |
 | MCP and Skills | ❌ Not currently supported | ✅ Unified MCP and Skills management across supported apps |
 | Usage and cost tracking | 🚧 Roadmap | ✅ Built-in usage dashboard |
+
+</details>
 
 ## Known Issue
 
@@ -179,7 +177,8 @@ IM integrations are built through the [VibeAround Channel SDK](https://github.co
 - Switch workspaces and agents with `/switch`.
 - Open preview links from the same conversation.
 
-### VibeAround vs cc-connect
+<details>
+<summary><strong>VibeAround vs cc-connect</strong></summary>
 
 | Area | VibeAround | [cc-connect](https://github.com/chenhg5/cc-connect) |
 |---|---|---|
@@ -194,6 +193,8 @@ IM integrations are built through the [VibeAround Channel SDK](https://github.co
 | Web Terminal | ✅ Browser terminal for controlling local AI agent CLIs remotely | ❌ Not currently supported |
 | Web Hub | ✅ Browser launch, session continuation, and chat | ⚠️ Web admin/config dashboard; service runs separately |
 | Scheduling and rich IM commands | ❌ Not currently supported | ✅ `/timer`, `/cron`, `/cancel`, `/ps`, provider/model/mode commands |
+
+</details>
 
 ## Web Terminal
 
@@ -254,7 +255,8 @@ VibeAround turns dev servers, Markdown files, and HTML files into previewable li
 - Use tunnels to access preview links remotely.
 - Preview dev servers, Markdown files, and HTML files.
 
-## Supported AI Agents
+<details>
+<summary><strong>Supported AI Agents</strong></summary>
 
 | Agent | Launch | Continue / handover | Profile routing |
 |---|---:|---:|---:|
@@ -271,7 +273,10 @@ VibeAround turns dev servers, Markdown files, and HTML files into previewable li
 
 ✅ Supported · ⚠️ Partial · ➜ Direct launch · — Not supported
 
-## Supported Providers
+</details>
+
+<details>
+<summary><strong>Supported Providers</strong></summary>
 
 Preset profiles cover common official and compatible providers. Custom endpoints are available when your provider speaks a supported API shape.
 
@@ -290,7 +295,10 @@ Preset profiles cover common official and compatible providers. Custom endpoints
 | Azure OpenAI | Responses and Chat deployment routing |
 | Custom endpoint | Bring your own base URL, headers, models, and API kinds |
 
-## Messaging Channels
+</details>
+
+<details>
+<summary><strong>Messaging Channels</strong></summary>
 
 Channel plugins are built with the [VibeAround Channel SDK](https://github.com/jazzenchen/va-plugin-channel-sdk), then installed and managed by VibeAround.
 
@@ -305,7 +313,10 @@ Channel plugins are built with the [VibeAround Channel SDK](https://github.com/j
 | WeCom | WebSocket bot credentials | Enterprise WeChat workflows |
 | QQ Bot | Guild bot credentials | QQ bot workflows |
 
-## Local-first Security
+</details>
+
+<details>
+<summary><strong>Local-first Security</strong></summary>
 
 VibeAround keeps AI coding work on your computer by default.
 
@@ -317,90 +328,64 @@ VibeAround keeps AI coding work on your computer by default.
 - Preview links are scoped and short-lived.
 - Agent CLIs use your local project permissions.
 
+</details>
+
 ## Quick Start
 
-1. Download the latest desktop package for your platform.
-2. Open VibeAround and complete onboarding.
-3. Enable the agent CLIs you use.
+1. Install the desktop app for the full GUI, or install the CLI with `npm i @vibearound/cli`.
+2. Open VibeAround Desktop, or run `va serve` and visit `http://127.0.0.1:12358/va/`.
+3. Complete onboarding and enable the agent CLIs you use.
 4. Add API profiles if you want VibeAround to route model traffic.
-5. Pick an agent, model profile, terminal, workspace, and session from Launch.
-6. Continue from desktop, Web Hub, Web Terminal, or a configured messaging channel.
+5. Pick an agent, model profile, terminal, workspace, and session from Launch or Web Hub.
+6. Continue from desktop, Web Hub, Web Terminal, CLI, or a configured messaging channel.
 
 Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki).
 
-## Download
+## Install
 
-Latest release: [VibeAround v0.7.10](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.10).
+### Desktop App
+
+Latest desktop release: [VibeAround v0.7.11](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.11).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.10.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-macOS-arm64-0.7.10.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-Setup-0.7.10.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-MSI-0.7.10.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Windows-x64-Portable-0.7.10.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-AppImage-0.7.10.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.10/VibeAround-Linux-x64-DEB-0.7.10.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.11.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-macOS-arm64-0.7.11.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-Setup-0.7.11.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-MSI-0.7.11.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-Portable-0.7.11.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Linux-x64-AppImage-0.7.11.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Linux-x64-DEB-0.7.11.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
 
-<a id="migration-guide-from-06x"></a>
+### CLI via npm
 
-### Migration Guide From 0.6.x
-
-v0.7.3 changes Startkit state, detected agent sources, desktop launch targets, and profile launch settings. If you are upgrading from 0.6.x, do a clean local-state migration:
-
-1. Quit VibeAround.
-2. Make a full backup of the old `~/.vibearound` directory.
-3. Remove the old `~/.vibearound` directory.
-4. Restore only durable state from the backup.
-5. Launch VibeAround v0.7.3 and rerun onboarding / Startkit setup if Launch, profile, Startkit, or desktop-agent settings look stale.
-
-Restore these durable items only: `settings.json`, `profiles/`, `google-oauth/`, `state/`, `sessions/`, `launch-session-archive.json`, `workspaces/`, and `worktrees/`.
-
-Do not restore generated or runtime data such as `.cache/`, `cache/startkit/`, `agents.detected.json`, `desktop-apps.detected.json`, `profile-state/`, `api-bridge/launches/`, `logs/`, `npm-global/`, `plugins/`, `bin/`, `runtime/`, or `auth.json`.
-
-macOS / Linux:
+The npm package installs both `va` and `vibearound` commands:
 
 ```bash
-set -euo pipefail
-
-BACKUP="$HOME/vibearound-0.6-full-backup-$(date +%Y%m%d%H%M%S)"
-SOURCE="$HOME/.vibearound"
-
-if [ -d "$SOURCE" ]; then
-  cp -a "$SOURCE" "$BACKUP"
-  rm -rf "$SOURCE"
-fi
-
-mkdir -p "$SOURCE"
-
-for item in settings.json profiles google-oauth state sessions launch-session-archive.json workspaces worktrees; do
-  [ -e "$BACKUP/$item" ] && cp -a "$BACKUP/$item" "$SOURCE/"
-done
+npm i @vibearound/cli
 ```
 
-Windows PowerShell:
-
-```powershell
-$ErrorActionPreference = "Stop"
-
-$Backup = Join-Path $env:USERPROFILE ("vibearound-0.6-full-backup-" + (Get-Date -Format "yyyyMMddHHmmss"))
-$SourceRoot = Join-Path $env:USERPROFILE ".vibearound"
-
-if (Test-Path $SourceRoot) {
-  Copy-Item $SourceRoot $Backup -Recurse -Force
-  Remove-Item $SourceRoot -Recurse -Force
-}
-
-New-Item -ItemType Directory -Force -Path $SourceRoot | Out-Null
-
-$Items = @(
-  "settings.json", "profiles", "google-oauth",
-  "state", "sessions", "launch-session-archive.json", "workspaces", "worktrees"
-)
-
-foreach ($Item in $Items) {
-  $Source = Join-Path $Backup $Item
-  if (Test-Path $Source) { Copy-Item $Source $SourceRoot -Recurse -Force }
-}
+```bash
+va serve
+va tui
+va launch --profile codex-work
 ```
+
+After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
+
+Latest CLI package: [`@vibearound/cli@0.0.1`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1).
+
+## Upgrade Notes
+
+### v0.7.10 Breaking Change
+
+VibeAround v0.7.10 changes how local configuration is read and normalized. Some configuration fields have been merged, and some non-essential runtime/log data is no longer useful. For now, the recommended migration is a manual cleanup:
+
+1. Back up `~/.vibearound/profiles` and `~/.vibearound/settings.json`.
+2. Delete the `~/.vibearound` directory.
+3. Copy the backed-up `profiles` directory and `settings.json` back into `~/.vibearound`.
+4. Open VibeAround Desktop.
+5. Go to Settings and run the onboarding flow again.
+
+Known impact: API Bridge configuration may be lost during this migration. Re-enable API Bridge on the affected profiles to restore it.
 
 ## Develop Locally
 
@@ -438,9 +423,9 @@ Friendly community: [LINUX DO](https://linux.do)
 
 WeChat group for Chinese-language discussion:
 
-<img src="assets/community/wechat-group-qr-2026-06-28.webp" width="180" alt="VibeAround WeChat group QR code, valid until June 28, 2026" />
+<img src="assets/community/wechat-group-qr-2026-07-06.webp" width="180" alt="VibeAround WeChat group QR code, valid until July 6, 2026" />
 
-This WeChat QR code is valid until June 28, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
+This WeChat QR code is valid until July 6, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
 
 ## License
 
