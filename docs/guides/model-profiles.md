@@ -12,8 +12,8 @@ A model profile stores a provider credential plus routing rules, so agents can u
 In the desktop app's model profile screen (or via the dashboard):
 
 1. **Pick a provider.** The catalog offers Kimi/Moonshot, DashScope, DeepSeek, OpenRouter, MiniMax, MiMo, Volcengine, Z.AI/GLM, Gemini/Vertex, xAI, NVIDIA NIM, and Azure OpenAI — each with known endpoints, models, and context windows prefilled. Or choose **custom** for any compatible endpoint.
-2. **Pick the endpoint variant** where the provider has several (global vs CN, pay-as-you-go vs coding plan). Variants differ in base URL, available models, and sometimes dialect.
-3. **Paste the API key.** Keys are stored locally and only ever sent to that provider by the daemon.
+2. **Pick the endpoint variant** where the provider has several (global vs CN, pay-as-you-go vs coding plan). Variants differ in base URL, available models, and sometimes dialect — the full per-provider breakdown is in the [provider endpoints reference](../reference/provider-endpoints.md).
+3. **Paste the API key.** Keys are stored locally and only ever sent to that provider by the daemon. **Match the key to the plan**: several providers issue different credentials for pay-as-you-go vs Coding/Token plans even when base URLs look alike.
 4. **Choose models.** Which upstream models the profile exposes, and which is the default. For agents that validate model names, the profile can define alias model ids that map to the real upstream model.
 
 Profiles are managed at runtime — create, edit, reorder, delete — without restarting the daemon. `va profiles` lists them from the CLI.

@@ -57,6 +57,7 @@ VibeAround lets you reach your local AI coding agents (Claude Code, Codex, Gemin
 | [CLI](reference/cli.md) | Every `va` command |
 | [API surfaces](reference/api-surfaces.md) | MCP tools, local API routes, WebSocket endpoints, preview URLs |
 | [Timers and limits](reference/timers-and-limits.md) | Every timeout, TTL, interval, and size limit — the single authoritative table |
+| [Provider endpoints](reference/provider-endpoints.md) | Per-provider plans, regions, base URLs, models, and credential semantics |
 
 ## Internals
 

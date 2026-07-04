@@ -61,6 +61,8 @@ The built-in catalog ships endpoint and model definitions for these providers. E
 
 A **custom** profile (any OpenAI/Anthropic/Gemini-compatible endpoint) is always available beyond the catalog, and the `direct` profile launches an agent with its own vendor login and no bridge.
 
+Plan-by-plan detail — endpoint groups, regions, base URLs, model sets, and which credential each plan expects — is in the [provider endpoints reference](../reference/provider-endpoints.md).
+
 ## Platforms
 
 | Platform | Desktop app | Standalone server / CLI |

@@ -45,4 +45,4 @@ No timeout exists on permission requests by design — an agent turn waits for t
 *Source anchors: the "Defined in" column above — each row names its constant.*
 *Last verified: v0.7.11*
 
-<sub>[◀ API surfaces reference](api-surfaces.md) · [Documentation index](../README.md) · [Internals ▶](../internals/README.md)</sub>
+<sub>[◀ API surfaces reference](api-surfaces.md) · [Documentation index](../README.md) · [Provider endpoints reference ▶](provider-endpoints.md)</sub>
