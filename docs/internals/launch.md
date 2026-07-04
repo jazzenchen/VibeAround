@@ -15,7 +15,7 @@ All four converge on the same profile rendering code — a Kimi profile produces
 
 ## Producers: desktop vs CLI
 
-Both producers end at the same boundary: **exec the sibling `va-launch` binary with a launch-profile JSON**. Neither calls the launcher library in-process.
+Both producers end at the same boundary: **exec the sibling `va-launch` binary with a launch-profile JSON**. Neither calls the launcher library in-process. Two "profile" concepts meet at this boundary — a **provider profile** (credentials + routing) is rendered *into* a **launch profile** (a native launch request, [schema v1](../reference/configuration.md#launch-profile-json-schema-v1)); `va-launch` only ever sees the latter and never reads provider storage (`profileId` in the JSON is metadata).
 
 | | Desktop | `va` CLI |
 |---|---|---|

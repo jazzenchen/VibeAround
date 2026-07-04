@@ -26,7 +26,7 @@ UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3�
 → `src/launcher/` (resolution order), `~/.vibearound/agents.json`
 
 **5. Project integrations.** va-launch probes the local daemon's health endpoint:
-- **Daemon up** → install project-scoped MCP config and skills for this agent/workspace (honoring the `integrations.*` settings).
+- **Daemon up** → install project-scoped MCP config and skills for this agent/workspace (honoring the [`integrations.*` settings](../../reference/configuration.md#settingsjson)). Desktop-app targets install their **companion CLI's** integrations: `claude-desktop` → `claude`, `codex-desktop` → `codex`.
 - **Daemon down** → *remove* VibeAround-managed project integrations, so a dead MCP server is never left configured.
 → `src/launcher/` (health probe), `src/core/src/agent/{mcp,skills}.rs`
 
