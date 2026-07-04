@@ -30,6 +30,34 @@ Loopback-only, gated by the local-bridge check; bodies up to 64 MB. Mechanism: [
 
 `{api_type}` ∈ `openai-responses` | `openai-chat` | `anthropic` | `gemini`. Gemini clients additionally get the generateContent-shaped route.
 
+### Copy-paste examples
+
+Local-bridge routes need **no Authorization header** — the gate is loopback peer + loopback Host (they are unreachable through tunnels). Substitute your profile id and a model id the profile exposes.
+
+List the models a profile serves:
+
+```bash
+curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/models
+```
+
+Chat completion through the bridge (client speaks OpenAI Chat; the daemon translates to whatever the profile's provider speaks):
+
+```bash
+curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "kimi-k2.7-code", "messages": [{"role": "user", "content": "hello"}]}'
+```
+
+Agent-as-API — the same request shape, but executed by a hosted coding agent (tools, workspace and all) instead of a bare model:
+
+```bash
+curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "claude", "messages": [{"role": "user", "content": "what does this repo do?"}]}'
+```
+
+Add `"stream": true` to either body for SSE streaming. The `{scope}` path segment (`curl-test` above) is free-form launch metadata — anything URL-safe works for manual calls.
+
 ## WebSocket endpoints
 
 All token-authenticated; see [architecture overview](../architecture/overview.md#communication-paths) for payload details.
