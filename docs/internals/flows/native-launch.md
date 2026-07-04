@@ -1,6 +1,6 @@
 # Flow: agent launch
 
-From "Launch" click (or `va launch`) to an agent CLI running in your terminal. The architecture rule shaping this flow: provider/runtime preparation happens **before** the native launcher; `va-launch` itself is a standalone binary that must work without the desktop app.
+From "Launch" click (or `va launch`) to an agent CLI running in your terminal. The architecture rule shaping this flow: provider/runtime preparation happens **before** the native launcher; `va-launch` itself is a standalone binary that must work without the desktop app. Mechanism details — env layers, per-OS scripts, argument sources — live in the [launch subsystem deep-dive](../launch.md).
 
 ## Hop by hop
 

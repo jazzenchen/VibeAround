@@ -67,7 +67,7 @@ For debugging and changing the code. See the [internals index](internals/README.
 - **[internals/flows/](internals/README.md#flows)** follow *one request through time* — hop by hop with code anchors.
 - **[internals/modules/](internals/README.md#modules)** describe *one component in space* — responsibility, key types, invariants, known debt.
 
-If you want to trace behavior, start from the flow; if you want to modify a component, start from the module; the flow and module pages cross-link where they meet.
+If you want to trace behavior, start from the flow; if you want to modify a component, start from the module; the flow and module pages cross-link where they meet. Cross-cutting subsystems get dedicated deep-dives — currently [Launch](internals/launch.md) (env injection, per-OS handling, producers).
 
 ## Conventions used in these docs
 

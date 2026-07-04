@@ -36,6 +36,14 @@ Fixed structure per page: responsibility · key types · interactions · invaria
 | [auth](modules/auth.md) | Daemon token and pairing codes |
 | [server](modules/server.md) | The axum shell: routes, WebSockets, MCP, bridge, boot/shutdown |
 
+## Subsystem deep-dives
+
+Cross-cutting subsystems that span several modules get a dedicated page:
+
+| Page | Covers |
+|---|---|
+| [Launch](launch.md) | The four launch paths, env assembly and injection per path, per-OS terminal handling, argument sources, desktop vs CLI producers |
+
 ## Related material
 
 - Known defects and planned refactors: `reports/architecture-review-remediation-2026-07-04.md` (module pages' "known debt" sections link to its items).

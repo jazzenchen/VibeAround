@@ -79,3 +79,5 @@ App-launch wrappers (`open -a …`, `Start-Process …`) are treated as native a
 
 *Source anchors: `src/launcher/src/` (platform.rs — scripts and per-OS spawn, plan.rs — ExecutionPlan, executable.rs, terminal_config.rs, lib.rs — TerminalChoice), `src/core/src/agent/launch.rs` (materialize_profile_for_agent, profile-id env), `src/core/src/profiles/{render.rs,runtime.rs,bridge_launch.rs}` (env families, ConfigEnvTarget, profile-state dir), `src/core/src/agent_state.rs` (launch_args.terminal/acp), `src/desktop/src/profiles/launcher/` (desktop producer, resume plan), `src/core/src/process/env.rs` + `src/core/src/pty/runtime.rs` (hosted/PTY env).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: server](modules/server.md) · [Documentation index](../README.md)</sub>

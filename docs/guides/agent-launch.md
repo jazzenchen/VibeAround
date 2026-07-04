@@ -1,6 +1,6 @@
 # Agent launch guide
 
-Agent Launch opens a coding agent CLI in your own terminal — credentials materialized, model routing configured, project integrations installed — instead of hosting it inside the daemon. Use it when you want the full native CLI experience with VibeAround's profile and continuity benefits.
+Agent Launch opens a coding agent CLI in your own terminal — credentials materialized, model routing configured, project integrations installed — instead of hosting it inside the daemon. Use it when you want the full native CLI experience with VibeAround's profile and continuity benefits. (Curious what exactly gets injected and how? See the [launch subsystem internals](../internals/launch.md).)
 
 ## Launching from the desktop app
 
