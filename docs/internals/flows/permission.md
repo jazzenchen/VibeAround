@@ -42,6 +42,8 @@ The no-timeout design needs cleanup guarantees instead:
 
 The net invariant: **every registered oneshot is consumed exactly once** — by the tap, by channel cancellation, or by shutdown. An agent turn can wait indefinitely on a human, but never on a dead process.
 
+> Known gap: the pending entry is tagged with the **first** attached route's channel kind only, while the card fans out to every attached route — on a multi-surface thread (handover), taps from the other surfaces are rejected by the channel check, and the wrong-channel re-insert can race the plugin-death drain. Tracked as H13 in the remediation plan.
+
 ---
 
 *Source anchors: `src/core/src/channels/bridge_handler.rs` (request_permission), `src/core/src/channels/plugin_host.rs` (pending_permissions, respond_permission, cancel_channel_permissions, shutdown_all), `src/core/src/channels/transport_stdio/` (forwarder), `src/core/src/channels/outbox.rs` (durability), `src/server/src/web_server/ws_chat.rs` (web response path).*

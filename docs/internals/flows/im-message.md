@@ -58,7 +58,9 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► sh
 | Daemon restarts between 4 and 8 | The in-flight turn is lost; thread + session persist and resume |
 | Agent spawn fails at 7 | `❌` system text; auth-required errors auto-close the thread |
 | Agent crashes mid-turn at 8 | Turn errors out; next prompt spawns fresh and resumes the session |
-| Plugin dead at 10 | Durable outputs wait in the outbox for the respawned plugin |
+| Plugin dead at 10 | Durable outputs wait in the outbox for the respawned plugin † |
+
+> † Known gap: this holds only while no runtime is registered for the channel. In the crash window the dead runtime is still routable, so durable outputs are marked sent (queued into the dead bridge) or nacked-and-dropped instead of waiting. Tracked as M14 in the remediation plan.
 
 ---
 
