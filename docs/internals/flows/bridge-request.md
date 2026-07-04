@@ -1,6 +1,6 @@
 # Flow: bridge request
 
-One model API call from a launched agent CLI, followed through the local bridge to the provider and back. Concepts in [Local API and bridge](../architecture/local-api-and-bridge.md); this page is the request path itself.
+One model API call from a launched agent CLI, followed through the local bridge to the provider and back. Concepts in [Local API and bridge](../../architecture/local-api-and-bridge.md); this page is the request path itself.
 
 ## Hop by hop
 

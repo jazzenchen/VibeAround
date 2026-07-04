@@ -4,7 +4,7 @@
 
 ## Responsibility
 
-Own all persistent conversation state and its runtime counterparts. Three event-sourced stores (workspaces, threads, route attachments) plus an in-memory map of live `ThreadRuntime`s. Everything the [Concepts](../architecture/concepts.md) page describes is implemented here.
+Own all persistent conversation state and its runtime counterparts. Three event-sourced stores (workspaces, threads, route attachments) plus an in-memory map of live `ThreadRuntime`s. Everything the [Concepts](../../architecture/concepts.md) page describes is implemented here.
 
 ## Key types
 

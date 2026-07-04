@@ -1,6 +1,6 @@
 # Module: auth
 
-`src/core/src/auth/` — the two credentials that gate every surface: the per-boot daemon token and short-lived pairing codes. Policy discussion: [security model](../architecture/security-model.md).
+`src/core/src/auth/` — the two credentials that gate every surface: the per-boot daemon token and short-lived pairing codes. Policy discussion: [security model](../../architecture/security-model.md).
 
 ## Responsibility
 

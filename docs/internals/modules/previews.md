@@ -23,7 +23,7 @@ Track preview sessions (dev-server ports and rendered files), mint owner and sha
 
 ## Invariants — do not break
 
-1. **Share URLs are the only unauthenticated surface** — single slug, hard TTL. Never widen scope or lifetime without revisiting the [security model](../architecture/security-model.md).
+1. **Share URLs are the only unauthenticated surface** — single slug, hard TTL. Never widen scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
 2. **Preview processes are session-scoped**: an agent session's dev servers die with `/close` and with the daemon — no orphaned `npm run dev`.
 3. Owner links require the daemon token; share expiry must not affect the owner path.
 

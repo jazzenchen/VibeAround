@@ -1,6 +1,6 @@
 # Module: pty
 
-`src/core/src/pty/` — pseudo-terminal sessions backing the web terminal. Flow: [PTY terminal](../flows/pty-terminal.md).
+`src/core/src/pty/` — pseudo-terminal sessions backing the web terminal. Flow: [PTY terminal](../flows/web-terminal.md).
 
 ## Responsibility
 

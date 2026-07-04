@@ -35,7 +35,7 @@ With tmux installed, the dashboard can attach to an existing tmux session instea
 |---|---|---|---|
 | PTY session (this flow) | daemon | raw bytes over WS | yes |
 | Hosted agent ([IM flow](im-message.md)) | daemon (supervisor) | ACP over stdio | yes |
-| Launched CLI ([launch flow](agent-launch.md)) | your terminal | n/a (independent) | no |
+| Launched CLI ([launch flow](native-launch.md)) | your terminal | n/a (independent) | no |
 
 A PTY session running an agent CLI is a *terminal* view of that CLI — its sessions are native sessions, discoverable and handover-able like any launched CLI's.
 
