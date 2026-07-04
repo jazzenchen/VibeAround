@@ -17,11 +17,11 @@ First launch walks through toolchain, agents, profiles, and channels — see [In
 
 ## Model profiles
 
-The profile screens manage the full profile lifecycle — create from the provider catalog or as custom endpoints, edit credentials and models, reorder, delete. Changes apply immediately to new launches and host switches; no daemon restart. Details and pairing advice: [Model profiles guide](model-profiles-guide.md).
+The profile screens manage the full profile lifecycle — create from the provider catalog or as custom endpoints, edit credentials and models, reorder, delete. Changes apply immediately to new launches and host switches; no daemon restart. Details and pairing advice: [Model profiles guide](model-profiles.md).
 
 ## Agent Launch
 
-The Launch screen renders agent + workspace + profile into a native terminal launch, with terminal preference (Terminal.app/iTerm2/PowerShell/Linux terminals) and per-agent argument defaults. It also lists **resumable sessions** — including ones created outside VibeAround — with archive/unarchive controls. Details: [Agent launch guide](agent-launch-guide.md).
+The Launch screen renders agent + workspace + profile into a native terminal launch, with terminal preference (Terminal.app/iTerm2/PowerShell/Linux terminals) and per-agent argument defaults. It also lists **resumable sessions** — including ones created outside VibeAround — with archive/unarchive controls. Details: [Agent launch guide](agent-launch.md).
 
 Desktop-app agents (`claude-desktop`, `codex-desktop`) are detected separately (installed vendor apps) and launched as GUI apps with profile overlays where supported.
 
@@ -31,7 +31,7 @@ The plugin manager installs, updates, and removes channel plugins; channel scree
 
 ## Settings
 
-The settings screens edit `~/.vibearound/settings.json` fields — workspaces, default agent, tunnel provider and credentials, proxy, search tool, integrations toggles ([Reference](reference.md) documents every field). Editing the file by hand while the app runs is fine; use the reload action (or `va settings reload`) to apply.
+The settings screens edit `~/.vibearound/settings.json` fields — workspaces, default agent, tunnel provider and credentials, proxy, search tool, integrations toggles ([Reference](../reference/configuration.md) documents every field). Editing the file by hand while the app runs is fine; use the reload action (or `va settings reload`) to apply.
 
 ## Where the desktop app is optional
 

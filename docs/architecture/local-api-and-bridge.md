@@ -1,6 +1,6 @@
 # Local API and bridge
 
-VibeAround ships its own model API bridge: a local translation layer that lets any supported client API dialect talk to any configured provider. It is what makes "one Kimi subscription powers Codex, Claude Code, and Gemini CLI" work. This page explains what the bridge is and how requests flow through it; for setting up profiles see the [Model profiles guide](model-profiles-guide.md).
+VibeAround ships its own model API bridge: a local translation layer that lets any supported client API dialect talk to any configured provider. It is what makes "one Kimi subscription powers Codex, Claude Code, and Gemini CLI" work. This page explains what the bridge is and how requests flow through it; for setting up profiles see the [Model profiles guide](../guides/model-profiles.md).
 
 ## What problem the bridge solves
 

@@ -39,7 +39,7 @@ The thread was closed (by `/close`, or auto-closed after an unrecoverable agent 
 Stop the turn (stop button / plugin stop), check `/status`. If the agent process crashed, the next prompt spawns a fresh one and resumes the session. Persistent failures right at spawn usually mean the agent CLI is missing or needs login — try launching it manually once.
 
 **`/switch` to another agent lost my context.**
-Switching hosts starts a new CLI session for the new agent with a context **briefing** — conversational context carries as a summary, but the new agent does not inherit the old agent's transcript or tool state. Switching back resumes the original agent's own session. See [Session lifecycle](session-lifecycle.md).
+Switching hosts starts a new CLI session for the new agent with a context **briefing** — conversational context carries as a summary, but the new agent does not inherit the old agent's transcript or tool state. Switching back resumes the original agent's own session. See [Session lifecycle](../architecture/session-lifecycle.md).
 
 **Authentication required errors from an agent.**
 The agent CLI itself needs a vendor login (`claude login`, etc.) — VibeAround hosts it but cannot log in for you. The thread auto-closes on this error; log in in a terminal, then `/new`.
@@ -56,12 +56,12 @@ Codes are one-shot and short-lived — issue a fresh one and use it immediately.
 `va launch sessions` shows what discovery sees. The session must belong to the same agent and workspace the chat is bound to; archived sessions are hidden (unarchive with `va launch unarchive`).
 
 **A preview share link stopped working after a few minutes.**
-Share links expire after 600 seconds by design. Re-share, or use the owner link where you are authenticated. See [Security model](security-model.md).
+Share links expire after 600 seconds by design. Re-share, or use the owner link where you are authenticated. See [Security model](../architecture/security-model.md).
 
 ## Models and profiles
 
 **The agent rejects the model name.**
-Use the profile's alias model id (agents often validate model names against their vendor's list). The [Model profiles guide](model-profiles-guide.md#troubleshooting-profiles) has a fuller table for 401s, capability mismatches, and rate limits.
+Use the profile's alias model id (agents often validate model names against their vendor's list). The [Model profiles guide](model-profiles.md#troubleshooting-profiles) has a fuller table for 401s, capability mismatches, and rate limits.
 
 ## Platform quirks
 

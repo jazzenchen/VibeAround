@@ -1,6 +1,6 @@
 # Model profiles guide
 
-A model profile stores a provider credential plus routing rules, so agents can use that provider without knowing anything about it. This page shows how to create and use profiles; the mechanism behind them is explained in [Local API and bridge](local-api-and-bridge.md).
+A model profile stores a provider credential plus routing rules, so agents can use that provider without knowing anything about it. This page shows how to create and use profiles; the mechanism behind them is explained in [Local API and bridge](../architecture/local-api-and-bridge.md).
 
 ## When you need a profile — and when you don't
 
@@ -22,7 +22,7 @@ Profiles are managed at runtime — create, edit, reorder, delete — without re
 
 **Hosted conversations (IM / web chat).** Bind a profile per channel default (`remote.channels.<kind>.profile_id`), per thread (`/switch host <agent> <profile>` or `/profile --switch <id>`), or per web-chat launch selection. The hosted agent process gets environment and config pointing at the local bridge under that profile.
 
-**Terminal launches.** Pick agent + profile in the desktop Launch screen or a saved launch profile (`va launch --profile <name>`). The rendered config makes the agent talk to `http://127.0.0.1:12358/va/local-api/...`; the daemon translates to the provider. See [Agent launch guide](agent-launch-guide.md).
+**Terminal launches.** Pick agent + profile in the desktop Launch screen or a saved launch profile (`va launch --profile <name>`). The rendered config makes the agent talk to `http://127.0.0.1:12358/va/local-api/...`; the daemon translates to the provider. See [Agent launch guide](agent-launch.md).
 
 **Any OpenAI-compatible tool.** Point the tool at the profile's local endpoint (shown in the profile UI) and it gets the same translation — this is how non-agent tools share your provider setup.
 

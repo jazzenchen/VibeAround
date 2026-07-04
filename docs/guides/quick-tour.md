@@ -39,10 +39,10 @@ Permission requests arrive as tappable buttons. `/stop` cancels a runaway turn. 
 
 Continuity is the point, so move something:
 
-**Terminal → phone.** Launch an agent CLI through VibeAround (desktop **Launch**, or `va launch --profile <name>`), work a bit, then ask the agent to run its handover tool (the `vibearound` skill exposes it as `/vibearound handover`). You get a short code. In your Telegram bot chat:
+**Terminal → phone.** Launch an agent CLI through VibeAround (desktop **Launch**, or `va launch --profile <name>`), work a bit, then ask the agent to run its handover tool (the `vibearound` skill exposes it as `/vibearound handover`). You get a short 4-character code, valid for two minutes. In your Telegram bot chat:
 
 ```text
-/pickup 837261
+/pickup K7PQ
 ```
 
 The chat attaches to the terminal session — same context, same workspace, continue where you left off.
@@ -53,11 +53,11 @@ The chat attaches to the terminal session — same context, same workspace, cont
 
 | You want to… | Read |
 |---|---|
-| Understand what just happened (threads, routes, sessions) | [Concepts](concepts.md) |
-| Use one provider subscription across agent CLIs | [Model profiles guide](model-profiles-guide.md) |
+| Understand what just happened (threads, routes, sessions) | [Concepts](../architecture/concepts.md) |
+| Use one provider subscription across agent CLIs | [Model profiles guide](model-profiles.md) |
 | Reach the dashboard away from home | [Tunnels and remote access](tunnels-and-remote-access.md) |
 | The full slash-command list | [IM usage](im-usage.md) |
-| Share a running dev server for 10 minutes | [Web dashboard guide](web-dashboard-guide.md) |
+| Share a running dev server for 10 minutes | [Web dashboard guide](web-dashboard.md) |
 
 ---
 

@@ -8,7 +8,7 @@ The Launch screen asks for three choices:
 
 1. **Agent** — any enabled agent, including the desktop-app targets (`claude-desktop`, `codex-desktop`) which open the vendor's GUI app instead of a CLI.
 2. **Workspace** — the directory the agent starts in.
-3. **Model profile** — `direct` (agent's own vendor login) or one of your provider profiles (see [Model profiles guide](model-profiles-guide.md)).
+3. **Model profile** — `direct` (agent's own vendor login) or one of your provider profiles (see [Model profiles guide](model-profiles.md)).
 
 VibeAround renders the launch — environment variables, per-agent config overlays, bridge URLs when the profile needs them — and opens your terminal app (Terminal.app or iTerm2 on macOS, PowerShell on Windows, `xdg-terminal-exec`/common terminals on Linux). Terminal preference is configurable.
 
@@ -42,7 +42,7 @@ va launch archive --agent claude <id>  # hide one from pickers
 va launch unarchive --agent claude <id>
 ```
 
-These sessions appear in the desktop/dashboard resume pickers and can be attached to a chat with `/session --switch <id>` or handed over with the in-CLI handover tool + `/pickup <code>`. That is the bridge between "working in a terminal" and "continuing from a phone" — see [Session lifecycle](session-lifecycle.md).
+These sessions appear in the desktop/dashboard resume pickers and can be attached to a chat with `/session --switch <id>` or handed over with the in-CLI handover tool + `/pickup <code>`. That is the bridge between "working in a terminal" and "continuing from a phone" — see [Session lifecycle](../architecture/session-lifecycle.md).
 
 ## Launch vs hosted: which to use
 

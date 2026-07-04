@@ -1,6 +1,6 @@
 # Tunnels and remote access
 
-A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Three providers are built in; every remote browser must pair before it gets in. The trust rules behind this page are in [Security model](security-model.md).
+A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Three providers are built in; every remote browser must pair before it gets in. The trust rules behind this page are in [Security model](../architecture/security-model.md).
 
 ## Choosing a provider
 

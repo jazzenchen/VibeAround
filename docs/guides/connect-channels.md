@@ -49,7 +49,7 @@ Users can still `/switch` per thread; these are just starting values.
 
 ## Supported channels
 
-Telegram, Slack, Feishu/Lark, Discord, WeChat, DingTalk, WeCom, and QQ Bot — the kind ids are listed in the [Supported matrix](supported-matrix.md). Each plugin README documents:
+Telegram, Slack, Feishu/Lark, Discord, WeChat, DingTalk, WeCom, and QQ Bot — the kind ids are listed in the [Supported matrix](../product/supported-matrix.md). Each plugin README documents:
 
 - how to create the bot and obtain credentials,
 - required platform permissions/scopes,

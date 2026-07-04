@@ -37,7 +37,7 @@ VibeAround runs a local daemon that hosts your agents and exposes them through e
 
 A Rust daemon (`vibearound-server`) owns the runtime: channel plugins, workspace threads, agent processes, the API bridge, previews, and tunnels. The desktop app (Tauri) embeds that daemon and adds GUI management. The web dashboard, the IM plugins, the TUI, and the `va` CLI are all clients of the same daemon — which is why a conversation can move between them without losing its place.
 
-Continue with [Concepts](concepts.md) for the six-term vocabulary the rest of the docs use, or [How it works](how-it-works.md) for the message flow.
+Continue with [Concepts](../architecture/concepts.md) for the six-term vocabulary the rest of the docs use, or [How it works](../architecture/overview.md) for the message flow.
 
 ---
 

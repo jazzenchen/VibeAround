@@ -50,7 +50,7 @@ Cancelling an in-flight turn is a channel-level signal, not a host slash command
 | `/profile --switch <id>` | Re-bind the thread to another profile |
 | `/agent <anything else>` | Pass through as a native command to the hosted agent (e.g. `/agent compact`) |
 
-Switching hosts starts a new CLI session for the new agent with a context briefing; switching back later resumes the previous agent's own session. See [Session lifecycle](session-lifecycle.md).
+Switching hosts starts a new CLI session for the new agent with a context briefing; switching back later resumes the previous agent's own session. See [Session lifecycle](../architecture/session-lifecycle.md).
 
 ### Sessions and continuity
 

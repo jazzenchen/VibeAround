@@ -1,6 +1,6 @@
 # Channel plugin system
 
-Every IM integration — Telegram, Slack, Feishu, Discord, WeChat, DingTalk, WeCom, QQ Bot — is a **channel plugin**: a separate Node.js process that speaks the platform's API on one side and a small ACP-based protocol to the VibeAround daemon on the other. This page explains how that system works. To configure an existing channel, see [Connect channels](connect-channels.md); to write a new plugin, see [Build a channel plugin](build-a-channel-plugin.md).
+Every IM integration — Telegram, Slack, Feishu, Discord, WeChat, DingTalk, WeCom, QQ Bot — is a **channel plugin**: a separate Node.js process that speaks the platform's API on one side and a small ACP-based protocol to the VibeAround daemon on the other. This page explains how that system works. To configure an existing channel, see [Connect channels](../guides/connect-channels.md); to write a new plugin, see [Build a channel plugin](../guides/build-a-channel-plugin.md).
 
 ## Why out-of-process plugins
 

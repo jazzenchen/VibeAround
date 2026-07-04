@@ -38,11 +38,11 @@ Channels are plugins (separate npm packages); the web chat and TUI are built-in 
 | Web chat | `web` | Built-in (dashboard) |
 | TUI chat | `tui` | Built-in (`vibearound tui`) |
 
-Per-platform capabilities (attachments, card layouts, group behavior) are documented in each plugin's own README; configuration lives under `channels.<kind>` in `settings.json` — see [Connect channels](connect-channels.md).
+Per-platform capabilities (attachments, card layouts, group behavior) are documented in each plugin's own README; configuration lives under `channels.<kind>` in `settings.json` — see [Connect channels](../guides/connect-channels.md).
 
 ## Model providers (profile catalog)
 
-The built-in catalog ships endpoint and model definitions for these providers. Each endpoint declares which API dialects it serves — the bridge translates whenever your agent's dialect differs (see [Local API and bridge](local-api-and-bridge.md)).
+The built-in catalog ships endpoint and model definitions for these providers. Each endpoint declares which API dialects it serves — the bridge translates whenever your agent's dialect differs (see [Local API and bridge](../architecture/local-api-and-bridge.md)).
 
 | Provider id | Label | Upstream dialects available | Notes |
 |---|---|---|---|

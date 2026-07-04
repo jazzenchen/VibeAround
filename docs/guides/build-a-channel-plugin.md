@@ -1,6 +1,6 @@
 # Build a channel plugin
 
-A channel plugin connects one IM platform to VibeAround: it turns platform events into channel envelopes and channel outputs into platform messages. This page gets you from zero to a running plugin; the architecture it plugs into is described in [Channel plugin system](channel-plugin-system.md).
+A channel plugin connects one IM platform to VibeAround: it turns platform events into channel envelopes and channel outputs into platform messages. This page gets you from zero to a running plugin; the architecture it plugs into is described in [Channel plugin system](../architecture/channel-plugin-system.md).
 
 ## What you are building
 

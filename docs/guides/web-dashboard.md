@@ -28,12 +28,12 @@ Share what is running on your machine without deploying:
 
 - **Dev server previews.** Register a local port and get a preview page that reverse-proxies it, with an iframe toolbar. Agents create these automatically when they start dev servers (via the `va-preview` skill / MCP `preview` tool).
 - **Markdown preview.** Any markdown file rendered GitHub-style (`md_preview` tool or the `va-md-preview` skill).
-- **Two links per preview:** the owner URL (token-authenticated, lives as long as the preview) and a share URL that expires after 10 minutes and needs no auth — safe to paste in a group chat. See [Security model](security-model.md).
+- **Two links per preview:** the owner URL (token-authenticated, lives as long as the preview) and a share URL that expires after 10 minutes and needs no auth — safe to paste in a group chat. See [Security model](../architecture/security-model.md).
 - `va previews` / `va preview delete <slug>` manage them from the CLI; preview processes started for you are killed when the daemon stops.
 
 ## Runtime management
 
-Dashboard panels mirror what `va status` reports — channel plugin states (with restart controls), tunnel status, active agent runtimes, PTY sessions, workspaces, and model profiles. Anything you can do there also has a CLI verb ([Reference](reference.md)).
+Dashboard panels mirror what `va status` reports — channel plugin states (with restart controls), tunnel status, active agent runtimes, PTY sessions, workspaces, and model profiles. Anything you can do there also has a CLI verb ([Reference](../reference/configuration.md)).
 
 ## Mobile
 
