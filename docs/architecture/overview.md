@@ -125,3 +125,5 @@ The supervisor gives every child process (channel plugins, agent adapters) crash
 
 *Source anchors: `src/server/src/lib.rs` (daemon boot, input sharding), `src/server/src/web_server/mod.rs` + `ws_pty.rs` / `ws_chat.rs` / `ws_domains.rs` (WebSocket families), `src/core/src/lib.rs` (module map), `src/core/src/channels/` (plugin transport, dispatch), `src/core/src/workspace/` (threads, attachments), `src/core/src/process/supervisor.rs` + `acp_transport.rs` (ACP framing), `src/core/src/tunnels/providers/` (tunnel process forms), `src/core/src/profiles/bridge_launch.rs` (local API URLs), `src/launcher/` (va-launch).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Concepts](concepts.md) · [Documentation index](../README.md) · [Session lifecycle ▶](session-lifecycle.md)</sub>

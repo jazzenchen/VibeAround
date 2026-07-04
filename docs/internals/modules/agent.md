@@ -40,3 +40,5 @@ Wrap a single agent subprocess behind a typed handle (`Agent`) speaking ACP, and
 
 *Source anchors: `src/core/src/agent/` (runtime, bridge, launch, mcp, skills, install), `src/resources/agents.json`, `src/core/src/resources.rs`.*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: process](process.md) · [Documentation index](../../README.md) · [Module: profiles ▶](profiles.md)</sub>

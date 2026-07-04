@@ -64,3 +64,5 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► sh
 
 *Source anchors: `src/core/src/channels/` (types, transport_stdio, plugin_host, outbox, bridge_handler, prompt/), `src/server/src/lib.rs` (sharding), `src/core/src/workspace/manager.rs` + `threads/runtime.rs` (thread resolution, agent lifecycle).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Internals](../README.md) · [Documentation index](../../README.md) · [Flow: web chat ▶](web-chat.md)</sub>

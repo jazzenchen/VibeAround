@@ -45,3 +45,5 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 
 *Source anchors: `src/core/src/workspace/` (manager, threads/, handoff, context_transfer, registry, store), `reports/architecture-review-remediation-2026-07-04.md` (H1, H2, L8, L9).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: channels](channels.md) · [Documentation index](../../README.md) · [Module: process ▶](process.md)</sub>

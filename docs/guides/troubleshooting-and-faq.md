@@ -77,3 +77,5 @@ Daemon logs go to the data directory's log files and to the desktop app's log vi
 
 *Source anchors: `src/core/src/auth/pair.rs` (code TTL), `src/core/src/channels/prompt/mod.rs` (auto-close reasons), `src/core/src/workspace/` (persistence), `src/core/src/previews/store.rs` (share TTL), `src/server/src/lib.rs` (orphan sweep, Windows bind retry), `src/core/src/logging.rs` (log destinations).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Build from source](build-from-source.md) · [Documentation index](../README.md) · [Concepts ▶](../architecture/concepts.md)</sub>

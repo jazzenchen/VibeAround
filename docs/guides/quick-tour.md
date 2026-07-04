@@ -63,3 +63,5 @@ The chat attaches to the terminal session — same context, same workspace, cont
 
 *Source anchors: `src/core/src/channels/prompt/handler.rs` (commands), `src/core/src/workspace/handoff.rs` (pickup), `src/skills/vibearound/SKILL.md` (handover skill).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Install and onboarding](install-and-onboarding.md) · [Documentation index](../README.md) · [Desktop app guide ▶](desktop-app.md)</sub>

@@ -48,3 +48,5 @@ All three converge on `attach_external_session` — one binding path, three door
 
 *Source anchors: `src/core/src/workspace/handoff.rs` (codes), `src/server/src/web_server/mcp/tools.rs` (prepare_handover, get_session_id), `src/core/src/channels/prompt/handler.rs` (pickup), `src/core/src/workspace/manager.rs` (attach_external_session), `src/core/src/launch_sessions/` (session resolution).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Flow: agent launch](native-launch.md) · [Documentation index](../../README.md) · [Flow: PTY terminal ▶](web-terminal.md)</sub>

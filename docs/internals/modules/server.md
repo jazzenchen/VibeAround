@@ -46,3 +46,5 @@ Expose core's managers over the wire and own daemon composition: `ServerDaemon::
 
 *Source anchors: `src/server/src/lib.rs`, `src/server/src/web_server/` (all submodules above), `reports/architecture-review-remediation-2026-07-04.md` (M6, H3, L11).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: auth](auth.md) · [Documentation index](../../README.md)</sub>

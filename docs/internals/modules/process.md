@@ -41,3 +41,5 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 
 *Source anchors: `src/core/src/process/` (supervisor, bridge, registry, acp_transport, env, kill, log), `reports/architecture-review-remediation-2026-07-04.md` (M5, §3).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: workspace](workspace.md) · [Documentation index](../../README.md) · [Module: agent ▶](agent.md)</sub>

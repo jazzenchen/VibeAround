@@ -36,3 +36,5 @@ Generate and persist the daemon auth token, and manage the pairing-code table th
 
 *Source anchors: `src/core/src/auth/` (token, pair, mod), `src/server/src/web_server/auth.rs` (enforcement), `src/server/src/web_server/pair.rs` (HTTP flow).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: tunnels](tunnels.md) · [Documentation index](../../README.md) · [Module: server ▶](server.md)</sub>

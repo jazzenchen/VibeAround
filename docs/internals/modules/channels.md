@@ -45,3 +45,5 @@ Host channel plugins (out-of-process stdio and in-process websocket), normalize 
 
 *Source anchors: `src/core/src/channels/` (all files above), `src/server/src/lib.rs` (shard workers).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Flow: PTY terminal](../flows/web-terminal.md) · [Documentation index](../../README.md) · [Module: workspace ▶](workspace.md)</sub>

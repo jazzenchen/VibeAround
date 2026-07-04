@@ -67,3 +67,5 @@ These sessions appear in the desktop/dashboard resume pickers and can be attache
 
 *Source anchors: `src/launcher/` (va-launch: validation, integrations, spawn), `~/.vibearound/launch/profiles/` schema (launch profile JSON v1), `src/core/src/agent/launch.rs` + `src/core/src/profiles/bridge_launch.rs` (profile rendering), `src/core/src/launch_sessions/` (session discovery), `src/cli/src/args.rs` (va launch commands).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Model profiles guide](model-profiles.md) · [Documentation index](../README.md) · [Tunnels and remote access ▶](tunnels-and-remote-access.md)</sub>

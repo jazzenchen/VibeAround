@@ -43,3 +43,5 @@ Continue with [Concepts](../architecture/concepts.md) for the six-term vocabular
 
 *Source anchors: `README.md` (positioning), `src/server/src/lib.rs` (daemon composition), `src/resources/agents.json` (agent registry), `src/resources/profile-catalog/` (providers).*
 *Last verified: v0.7.11*
+
+<sub>[Documentation index](../README.md) · [Supported matrix ▶](supported-matrix.md)</sub>

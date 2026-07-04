@@ -35,3 +35,5 @@ Track preview sessions (dev-server ports and rendered files), mint owner and sha
 
 *Source anchors: `src/core/src/previews/` (mod, store), `src/server/src/web_server/preview/` (proxy, iframe, markdown, cookie_proxy), `src/server/src/web_server/mcp/tools.rs` (preview tools).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: pty](pty.md) · [Documentation index](../../README.md) · [Module: tunnels ▶](tunnels.md)</sub>

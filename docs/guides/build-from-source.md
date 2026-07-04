@@ -78,3 +78,5 @@ Channel plugins and `@vibearound/plugin-channel-sdk` are separate repositories w
 
 *Source anchors: `src/package.json` (build scripts), `src/Cargo.toml` (workspace members), `src/scripts/prepare-va-launch.mjs` (sidecar), `src/npm/cli/` (npm packaging).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Build a channel plugin](build-a-channel-plugin.md) · [Documentation index](../README.md) · [Troubleshooting and FAQ ▶](troubleshooting-and-faq.md)</sub>

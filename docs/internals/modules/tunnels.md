@@ -38,3 +38,5 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 
 *Source anchors: `src/core/src/tunnels/` (mod, providers/), `src/core/src/config.rs` (tunnel settings), `src/server/src/lib.rs` (boot wiring).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: previews](previews.md) · [Documentation index](../../README.md) · [Module: auth ▶](auth.md)</sub>

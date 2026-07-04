@@ -43,3 +43,5 @@ Define the profile schema, ship the provider catalog, persist user profiles, and
 
 *Source anchors: `src/core/src/profiles/` (schema, catalog, connections/, render, bridge_launch, runtime, google_oauth, headers), `src/resources/profile-catalog/`.*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: agent](agent.md) · [Documentation index](../../README.md) · [Module: pty ▶](pty.md)</sub>

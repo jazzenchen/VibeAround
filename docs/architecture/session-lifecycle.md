@@ -63,14 +63,11 @@ A thread can run a multi-agent turn: the host agent uses the `initialize_subagen
 
 ## Timing reference
 
-| Timer | Value | Effect |
-|---|---|---|
-| Host agent idle shutdown | 10 minutes | Agent process stopped, thread stays open |
-| Channel plugin heartbeat | 15 s expected / 90 s watchdog | Plugin killed and respawned if frozen |
-| Supervisor respawn tick | 5 s | Granularity of crash-restart scheduling |
-| Preview share links | short TTL (minutes) | Share URLs expire; owner URLs persist |
+All lifecycle timers (idle shutdown, heartbeat/watchdog, code TTLs, share-link expiry) live in one authoritative table: [Timers and limits](../reference/timers-and-limits.md).
 
 ---
 
 *Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handoff.rs` (pickup codes), `src/core/src/workspace/context_transfer.rs` (switch briefing), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
 *Last verified: v0.7.11*
+
+<sub>[◀ How it works](overview.md) · [Documentation index](../README.md) · [Channel plugin system ▶](channel-plugin-system.md)</sub>

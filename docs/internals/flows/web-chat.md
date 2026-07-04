@@ -56,3 +56,5 @@ The TUI chat registers as its own in-process channel kind (`tui`) over the same 
 
 *Source anchors: `src/server/src/web_server/ws_chat.rs` (socket loop, intents, events), `src/core/src/channels/transport_websocket.rs` (WebChannelManager, idle), `src/server/src/lib.rs` (web/tui channel registration, dispatch task).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Flow: IM message](im-message.md) · [Documentation index](../../README.md) · [Flow: permission request ▶](permission.md)</sub>

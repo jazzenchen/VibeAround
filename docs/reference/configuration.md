@@ -94,3 +94,5 @@ Default port: `12358`. Dashboard: `http://127.0.0.1:12358/` (token required).
 
 *Source anchors: `src/core/src/config.rs` (settings parser — key names above mirror it), `src/core/src/workspace/threads/runtime.rs` (injected env), `src/launcher/` (agents.json, launch profiles).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Security model](../architecture/security-model.md) · [Documentation index](../README.md) · [CLI reference ▶](cli.md)</sub>

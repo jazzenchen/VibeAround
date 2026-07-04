@@ -79,3 +79,5 @@ Uninstalling the app or package never deletes this directory; remove it manually
 
 *Source anchors: `src/npm/cli/` (package contents), `src/core/src/config.rs` (data_dir, DEFAULT_PORT, settings bootstrap), `src/desktop/src/onboarding/` (onboarding steps), `src/core/src/toolchain.rs` (system/managed), `src/cli/src/args.rs` (va commands).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Supported matrix](../product/supported-matrix.md) · [Documentation index](../README.md) · [Quick tour ▶](quick-tour.md)</sub>

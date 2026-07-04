@@ -41,3 +41,5 @@ Everything the app manages is also reachable headlessly: `va serve` + `settings.
 
 *Source anchors: `src/desktop/src/` (main, tray, onboarding/, profiles/, startkit/), `src/desktop-ui/src/` (screens), `src/core/src/toolchain.rs` (system/managed), `src/desktop/src/desktop_detection.rs` (vendor apps).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Quick tour](quick-tour.md) · [Documentation index](../README.md) · [Web dashboard guide ▶](web-dashboard.md)</sub>

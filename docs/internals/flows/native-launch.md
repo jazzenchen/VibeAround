@@ -48,3 +48,5 @@ UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3�
 
 *Source anchors: `src/launcher/` (va-launch), `src/core/src/agent/launch.rs` + `src/core/src/profiles/bridge_launch.rs` (provider prep), `src/core/src/agent/{mcp,skills}.rs` (integrations), `src/cli/src/args.rs` (va launch), internal boundary notes in `.docs/va-launch-architecture.md`.*
 *Last verified: v0.7.11*
+
+<sub>[◀ Flow: bridge request](bridge-request.md) · [Documentation index](../../README.md) · [Flow: handover ▶](handover.md)</sub>

@@ -79,3 +79,5 @@ Global flags: `--auth-file PATH`, `--base-url URL`, `--token TOKEN`, `--json`.
 
 *Source anchors: `src/cli/src/args.rs` (command enum and usage text — this page mirrors it 1:1).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Configuration reference](configuration.md) · [Documentation index](../README.md) · [API surfaces reference ▶](api-surfaces.md)</sub>

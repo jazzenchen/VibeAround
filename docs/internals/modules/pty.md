@@ -36,3 +36,5 @@ Spawn shells or agent CLIs under a portable PTY (via `portable_pty`), keep a reg
 
 *Source anchors: `src/core/src/pty/` (mod, runtime, manager, session), `src/server/src/web_server/ws_pty.rs`, `src/server/src/lib.rs` (shutdown deletion).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Module: profiles](profiles.md) · [Documentation index](../../README.md) · [Module: previews ▶](previews.md)</sub>

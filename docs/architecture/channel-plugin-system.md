@@ -55,3 +55,5 @@ The main repository contains the plugin *host* (discovery, supervision, transpor
 
 *Source anchors: `src/core/src/plugins/` (discovery, manifest), `src/core/src/channels/` (transport_stdio, plugin_host, outbox, monitor), `src/core/src/process/supervisor.rs` (respawn, watchdog), `src/core/src/routing.rs` (RouteKey).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Session lifecycle](session-lifecycle.md) · [Documentation index](../README.md) · [Local API and bridge ▶](local-api-and-bridge.md)</sub>

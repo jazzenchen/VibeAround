@@ -60,3 +60,5 @@ The bridge binds to the loopback interface and requires the local bridge auth ga
 
 *Source anchors: `src/server/src/web_server/api_bridge/` (protocol, routes, model_mapping, content_policy, upstream, local_agent), `src/core/src/profiles/bridge_launch.rs` (URL rendering), `src/resources/profile-catalog/` (providers), `src/server/src/web_server/mod.rs` (route table, body limit).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Channel plugin system](channel-plugin-system.md) · [Documentation index](../README.md) · [Security model ▶](security-model.md)</sub>

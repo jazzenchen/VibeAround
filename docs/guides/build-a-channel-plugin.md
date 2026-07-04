@@ -57,3 +57,5 @@ Plugins ship as their own repositories/npm packages, installed into the plugins 
 
 *Source anchors: `src/core/src/plugins/` (manifest, discovery dirs), `src/core/src/channels/transport_stdio/` (wire protocol), `src/core/src/channels/types.rs` (envelope/output shapes), `src/core/src/channels/monitor.rs` + `process/supervisor.rs` (heartbeat, respawn), `src/core/src/routing.rs` (route keys, attachment key rules); SDK: `@vibearound/plugin-channel-sdk`.*
 *Last verified: v0.7.11*
+
+<sub>[◀ Tunnels and remote access](tunnels-and-remote-access.md) · [Documentation index](../README.md) · [Build from source ▶](build-from-source.md)</sub>

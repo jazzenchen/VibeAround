@@ -74,3 +74,5 @@ A **custom** profile (any OpenAI/Anthropic/Gemini-compatible endpoint) is always
 
 *Source anchors: `src/resources/agents.json` (agent registry — ids, aliases, direct_only, resume templates), `src/resources/profile-catalog/` (provider endpoints and dialects), `src/server/src/lib.rs` (built-in web/tui channels), `README.md` (packaging status).*
 *Last verified: v0.7.11*
+
+<sub>[◀ What is VibeAround](what-is-vibearound.md) · [Documentation index](../README.md) · [Install and onboarding ▶](../guides/install-and-onboarding.md)</sub>

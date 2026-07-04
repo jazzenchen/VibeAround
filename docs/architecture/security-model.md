@@ -68,3 +68,5 @@ Honest limits of the model:
 
 *Source anchors: `src/server/src/web_server/auth.rs` (token middleware, local-origin rules), `src/core/src/auth/` (token file, pairing TTL), `src/core/src/previews/store.rs` (SHARE_TTL_SECS), `src/core/src/routing.rs` (attachment key validation), `src/server/src/web_server/mod.rs` (route protection layout).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Local API and bridge](local-api-and-bridge.md) · [Documentation index](../README.md) · [Configuration reference ▶](../reference/configuration.md)</sub>

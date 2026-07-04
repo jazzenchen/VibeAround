@@ -76,3 +76,5 @@ The `va` CLI can target a remote daemon: `va --base-url https://va.example.com -
 
 *Source anchors: `src/core/src/tunnels/` (providers: ngrok, localtunnel, cloudflare), `src/core/src/config.rs` (tunnel settings), `src/core/src/auth/pair.rs` (60 s codes), `src/server/src/web_server/auth.rs` (local-origin trust), `src/core/src/previews/store.rs` (share TTL), `src/cli/src/` (pair/tunnel commands).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Agent launch guide](agent-launch.md) · [Documentation index](../README.md) · [Build a channel plugin ▶](build-a-channel-plugin.md)</sub>

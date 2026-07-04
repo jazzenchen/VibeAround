@@ -68,3 +68,5 @@ A message arrives on a route. The route resolves to its attached open thread (cr
 
 *Source anchors: `src/core/src/routing.rs` (RouteKey), `src/core/src/workspace/` (workspaces, threads, attachments), `src/core/src/resources.rs` + `src/resources/agents.json` (agent registry), `src/core/src/profiles/` (profiles), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Troubleshooting and FAQ](../guides/troubleshooting-and-faq.md) · [Documentation index](../README.md) · [How it works ▶](overview.md)</sub>

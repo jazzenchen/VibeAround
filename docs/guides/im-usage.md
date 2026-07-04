@@ -76,3 +76,5 @@ Anything starting with `/` that does not parse is reported back as unknown rathe
 
 *Source anchors: `src/core/src/channels/prompt/handler.rs` (parse_thread_command — the command grammar above mirrors it 1:1), `src/core/src/channels/prompt/mod.rs` (attachments, callbacks), `src/core/src/channels/types.rs` (Stop/Close inputs).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Web dashboard guide](web-dashboard.md) · [Documentation index](../README.md) · [Connect channels ▶](connect-channels.md)</sub>

@@ -40,3 +40,5 @@ Fixed structure per page: responsibility · key types · interactions · invaria
 
 - Known defects and planned refactors: `reports/architecture-review-remediation-2026-07-04.md` (module pages' "known debt" sections link to its items).
 - Rustdoc module headers in the source are the finest-grained authority; these pages are maps, not replacements.
+
+<sub>[◀ Timers and limits](../reference/timers-and-limits.md) · [Documentation index](../README.md) · [Flow: IM message ▶](flows/im-message.md)</sub>

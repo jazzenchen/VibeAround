@@ -43,3 +43,5 @@ A PTY session running an agent CLI is a *terminal* view of that CLI — its sess
 
 *Source anchors: `src/core/src/pty/` (registry, runtime, session), `src/server/src/web_server/ws_pty.rs` + `mod.rs` (WS handler, resize), `src/core/src/process/env.rs` (enriched env), `src/resources/agents.json` (pty commands), `src/server/src/lib.rs` (shutdown).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Flow: handover](handover.md) · [Documentation index](../../README.md) · [Module: channels ▶](../modules/channels.md)</sub>

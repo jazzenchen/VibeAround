@@ -53,3 +53,5 @@ Models without native web search can still search: enable the host-side search t
 
 *Source anchors: `src/resources/profile-catalog/` (providers, endpoints, models, capabilities), `src/core/src/profiles/` (schema, catalog, render, bridge_launch), `src/server/src/web_server/api_bridge/` (model_mapping, content_policy, rate-limit retry), `src/core/src/config.rs` (search_tool, replace_provider_web_search).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Connect channels](connect-channels.md) · [Documentation index](../README.md) · [Agent launch guide ▶](agent-launch.md)</sub>

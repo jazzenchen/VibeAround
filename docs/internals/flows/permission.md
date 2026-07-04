@@ -46,3 +46,5 @@ The net invariant: **every registered oneshot is consumed exactly once** — by 
 
 *Source anchors: `src/core/src/channels/bridge_handler.rs` (request_permission), `src/core/src/channels/plugin_host.rs` (pending_permissions, respond_permission, cancel_channel_permissions, shutdown_all), `src/core/src/channels/transport_stdio/` (forwarder), `src/core/src/channels/outbox.rs` (durability), `src/server/src/web_server/ws_chat.rs` (web response path).*
 *Last verified: v0.7.11*
+
+<sub>[◀ Flow: web chat](web-chat.md) · [Documentation index](../../README.md) · [Flow: bridge request ▶](bridge-request.md)</sub>

@@ -56,3 +56,5 @@ agent CLI ──1─► /va/local-api/{profile}/{scope}/{api_type}/v1/…
 
 *Source anchors: `src/server/src/web_server/api_bridge/` (protocol, routes, model_mapping, content_policy, server_tools, upstream, stream, completion, local_agent), `src/core/src/profiles/bridge_launch.rs`, `src/server/src/web_server/bridge_recording.rs`.*
 *Last verified: v0.7.11*
+
+<sub>[◀ Flow: permission request](permission.md) · [Documentation index](../../README.md) · [Flow: agent launch ▶](native-launch.md)</sub>

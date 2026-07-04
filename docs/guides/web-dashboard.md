@@ -43,3 +43,5 @@ The dashboard is responsive; the chat surface includes mobile command controls s
 
 *Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`, `src/skills/va-md-preview/`.*
 *Last verified: v0.7.11*
+
+<sub>[◀ Desktop app guide](desktop-app.md) · [Documentation index](../README.md) · [IM usage ▶](im-usage.md)</sub>
