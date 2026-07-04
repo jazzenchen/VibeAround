@@ -18,7 +18,43 @@ The daemon owns everything else: routing, threads, agents, ordering, persistence
 npm i @vibearound/plugin-channel-sdk
 ```
 
-The SDK wraps the stdio ACP transport: connection handshake, envelope/output types, heartbeat emission, and helpers for permission-card round-trips. Look at an existing plugin (the Telegram plugin is the smallest realistic reference) and the SDK repository's protocol reference for the full message shapes.
+The SDK wraps the stdio ACP transport: connection handshake, envelope/output types, heartbeat emission, and helpers for permission-card round-trips. Look at an existing plugin ([va-plugin-channel-telegram](https://github.com/jazzenchen/va-plugin-channel-telegram) is the smallest realistic reference; all ten are linked in the [supported matrix](../product/supported-matrix.md#im-channels)) and the [SDK repository](https://github.com/jazzenchen/VibeAround) (`src/plugins/va-plugin-channel-sdk`, published as `@vibearound/plugin-channel-sdk`) for the full message shapes.
+
+### The wire shapes you will actually handle
+
+Both directions are JSON with a `kind` tag, camelCase fields, and snake_case inside `route`/`attachments`. An inbound user message (plugin → daemon):
+
+```json
+{
+  "kind": "message",
+  "route": { "channel_kind": "telegram", "bot_id": "my_bot", "chat_id": "chat_42" },
+  "messageId": "msg_1001",
+  "text": "fix the failing test",
+  "senderId": "user_7",
+  "attachments": [
+    { "message_id": "msg_1001", "file_key": "upload_ab12", "file_name": "log.txt", "resource_type": "text/plain", "size": 5120 }
+  ]
+}
+```
+
+A button tap comes back as a callback (empty `text`, the choice in `actionValue`):
+
+```json
+{ "kind": "callback", "route": { … }, "messageId": "msg_1002", "text": "", "actionValue": "allow_once" }
+```
+
+The permission request you must render as a card (daemon → plugin) — answer it through the SDK's `client.requestPermission` handler with the same `requestId`:
+
+```json
+{
+  "kind": "permissionRequest",
+  "route": { … },
+  "requestId": "perm_9f3e",
+  "payload": { "…": "a JSON-serialized ACP RequestPermissionRequest: tool call info + options" }
+}
+```
+
+Other outputs you render or ignore: `threadReply` (streamed agent output), `systemText`, `turnStatus` (typing indicator on/off), `promptDone`, `sessionInfo` / `sessionMode` / `commandMenu` (richer UI), `multiAgentTurn` / `subagentStatus` (multi-agent progress). Control inputs you can send: `stop`, `close`, `log`.
 
 > Version rule: depend on a published SDK version (`^x.y.z`). Never ship a plugin pinned to a local `file:` path.
 
