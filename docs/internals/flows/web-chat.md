@@ -21,10 +21,12 @@ The browser sends typed JSON, not bare text. The main ones:
 | Type | Meaning |
 |---|---|
 | message (+ optional `session_intent`, `profile`, `session_mode`) | A prompt, possibly with launch selection attached |
-| `stop` | Cancel the in-flight turn |
+| `stop` | Cancel the in-flight turn † |
 | `PermissionResponse` | A tapped permission card ([permission flow](permission.md)) |
 | `SetMode` / `SetConfigOption` | Change agent session mode / config option |
 | `ResumeSession` | Attach a native CLI session to this web thread |
+
+> † Known gap: `stop` currently travels through the same per-route FIFO queue as messages, so it is only processed after the in-flight turn finishes. Tracked as H12 in the remediation plan.
 
 ## The session-intent step
 

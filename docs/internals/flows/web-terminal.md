@@ -19,6 +19,8 @@ browser xterm ◄──WS /ws?session_id=──► ws_pty handler ◄──chann
 
 **4. Detach vs kill.** Closing the tab drops the WebSocket but **not** the session — the child keeps running, output buffers, and a later attach resumes the view (`va session attach <id>` does the same from a real terminal). Explicit kill (`va session kill`, dashboard close, `va pty kill`) terminates the child and removes the registry entry.
 
+> Known gap: a client that falls more than 256 broadcast messages behind during an output burst is disconnected instead of resynced, and bytes emitted between the scrollback dump and the live subscription are lost. Tracked as M16 in the remediation plan.
+
 **5. Exit propagation.** The runtime polls the child; when it exits, run state is pushed to the frontend so the tab can show "process exited" instead of a frozen screen.
 
 **6. Daemon shutdown.** All PTY sessions are deleted on daemon stop — PTY children do not outlive the daemon (unlike launched terminals, which are yours).
