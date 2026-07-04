@@ -18,7 +18,7 @@ The daemon owns everything else: routing, threads, agents, ordering, persistence
 npm i @vibearound/plugin-channel-sdk
 ```
 
-The SDK wraps the stdio ACP transport: connection handshake, envelope/output types, heartbeat emission, and helpers for permission-card round-trips. Look at an existing plugin ([va-plugin-channel-telegram](https://github.com/jazzenchen/va-plugin-channel-telegram) is the smallest realistic reference; all ten are linked in the [supported matrix](../product/supported-matrix.md#im-channels)) and the [SDK repository](https://github.com/jazzenchen/VibeAround) (`src/plugins/va-plugin-channel-sdk`, published as `@vibearound/plugin-channel-sdk`) for the full message shapes.
+The SDK wraps the stdio ACP transport: connection handshake, envelope/output types, heartbeat emission, and helpers for permission-card round-trips. Look at an existing plugin ([va-plugin-channel-telegram](https://github.com/jazzenchen/va-plugin-channel-telegram) is the smallest realistic reference; all ten are linked in the [supported matrix](../product/supported-matrix.md#im-channels)) and the [SDK repository](https://github.com/jazzenchen/va-plugin-channel-sdk) (published as `@vibearound/plugin-channel-sdk`) for the full message shapes.
 
 ### The wire shapes you will actually handle
 
