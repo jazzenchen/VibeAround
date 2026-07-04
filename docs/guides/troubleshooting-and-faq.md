@@ -71,7 +71,16 @@ Use the profile's alias model id (agents often validate model names against thei
 
 ## Where are the logs?
 
-Daemon logs go to the data directory's log files and to the desktop app's log view; plugin stderr is embedded in daemon logs tagged by channel kind. When reporting an issue, `va doctor` output plus the relevant log window is the useful minimum.
+Daemon logs are written to `~/.vibearound/logs/runtime/vibearound.log.<date>` (daily rolling files, ANSI-free) and mirrored to stdout / the desktop app's log view. Plugin stderr is embedded in the daemon log, tagged by channel kind.
+
+The filter is the standard `RUST_LOG` env var; the default is `info,common=debug` (verbose runtime, quiet dependencies). For a debug session:
+
+```bash
+RUST_LOG=debug va serve                      # everything at debug
+RUST_LOG=warn,common::channels=trace va serve  # trace one subsystem
+```
+
+When reporting an issue, `va doctor` output plus the relevant slice of the current log file is the useful minimum.
 
 ---
 

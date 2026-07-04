@@ -16,6 +16,7 @@ Everything lives under `~/.vibearound/` (override with `VIBEAROUND_DATA_DIR`):
 | `plugins/<kind>/` | desktop plugin manager | Installed channel plugins + manifests | Only during plugin development |
 | `workspaces/` | daemon | Default root for created workspaces | It is your files |
 | `.cache/` | channel plugins | Downloaded chat attachments | Safe to purge |
+| `logs/runtime/` | daemon | Daily rolling log files (`vibearound.log.<date>`) | Safe to purge |
 | `*.jsonl` (workspace/thread/attachment event logs) | daemon | Conversation state ([workspace module](../internals/modules/workspace.md)) | **No** — append-only event logs |
 | `launcher.json` | desktop | Desktop-only launch preferences (terminal choice, per-agent workspace compat) | Prefer the UI |
 | `desktop-apps.detected.json` | desktop detection | Cached Claude/Codex Desktop app locations | No — cache |
@@ -146,6 +147,7 @@ Two "profile" concepts meet here and must not be confused: a **provider profile*
 | Variable | Consumer | Meaning |
 |---|---|---|
 | `VIBEAROUND_DATA_DIR` | daemon, va-launch | Override `~/.vibearound` |
+| `RUST_LOG` | daemon | Log filter (default `info,common=debug`); see [troubleshooting](../guides/troubleshooting-and-faq.md#where-are-the-logs) |
 | `VIBEAROUND_VA_LAUNCH_BIN` | desktop/CLI (dev only) | Point at a non-packaged `va-launch` |
 | `VIBEAROUND_CHANNEL_KIND`, `VIBEAROUND_CHAT_ID`, `VIBEAROUND_AGENT_KIND`, `VIBEAROUND_THREAD_ID`, `VIBEAROUND_WORKSPACE_ID` | hosted agent processes | Injected context about the owning route/thread |
 
