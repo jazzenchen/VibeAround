@@ -25,18 +25,19 @@ VibeAround drives agents over the Agent Client Protocol (ACP). Every hosted agen
 
 Channels are plugins (separate npm packages); the web chat and TUI are built-in surfaces that use the same routing. All channels support the core flow: prompts, streamed replies, slash commands, and permission cards.
 
-| Channel | Kind id | Delivered as |
-|---|---|---|
-| Telegram | `telegram` | Plugin |
-| Slack | `slack` | Plugin |
-| Feishu / Lark | `feishu` | Plugin (interactive cards use the V2 card schema) |
-| Discord | `discord` | Plugin |
-| WeChat | `wechat` | Plugin |
-| DingTalk | `dingtalk` | Plugin |
-| WeCom (企业微信) | `wecom` | Plugin |
-| QQ Bot | `qq` | Plugin |
-| Web chat | `web` | Built-in (dashboard) |
-| TUI chat | `tui` | Built-in (`vibearound tui`) |
+| Channel | Kind id | Delivered as | Repository |
+|---|---|---|---|
+| Telegram | `telegram` | Plugin | [va-plugin-channel-telegram](https://github.com/jazzenchen/va-plugin-channel-telegram) |
+| Slack | `slack` | Plugin | [va-plugin-channel-slack](https://github.com/jazzenchen/va-plugin-channel-slack) |
+| Feishu / Lark | `feishu` | Plugin (interactive cards use the V2 card schema) | [va-plugin-channel-feishu](https://github.com/jazzenchen/va-plugin-channel-feishu) |
+| Discord | `discord` | Plugin | [va-plugin-channel-discord](https://github.com/jazzenchen/va-plugin-channel-discord) |
+| WeChat | `weixin-openclaw-bridge` | Plugin | [va-plugin-channel-weixin-openclaw-bridge](https://github.com/jazzenchen/va-plugin-channel-weixin-openclaw-bridge) |
+| WhatsApp | `whatsapp` | Plugin | [va-plugin-channel-whatsapp](https://github.com/jazzenchen/va-plugin-channel-whatsapp) |
+| DingTalk | `dingtalk` | Plugin | [va-plugin-channel-dingtalk](https://github.com/jazzenchen/va-plugin-channel-dingtalk) |
+| WeCom (企业微信) | `wecom` | Plugin | [va-plugin-channel-wecom](https://github.com/jazzenchen/va-plugin-channel-wecom) |
+| QQ Bot | `qqbot` | Plugin | [va-plugin-channel-qqbot](https://github.com/jazzenchen/va-plugin-channel-qqbot) |
+| Web chat | `web` | Built-in (dashboard) | — |
+| TUI chat | `tui` | Built-in (`vibearound tui`) | — |
 
 Per-platform capabilities (attachments, card layouts, group behavior) are documented in each plugin's own README; configuration lives under `channels.<kind>` in `settings.json` — see [Connect channels](../guides/connect-channels.md).
 
@@ -74,7 +75,7 @@ Plan-by-plan detail — endpoint groups, regions, base URLs, model sets, and whi
 
 ---
 
-*Source anchors: `src/resources/agents.json` (agent registry — ids, aliases, direct_only, resume templates), `src/resources/profile-catalog/` (provider endpoints and dialects), `src/server/src/lib.rs` (built-in web/tui channels), `README.md` (packaging status).*
+*Source anchors: `src/resources/agents.json` (agent registry — ids, aliases, direct_only, resume templates), `src/resources/plugins.json` (channel plugin registry — kind ids and repositories), `src/resources/profile-catalog/` (provider endpoints and dialects), `src/server/src/lib.rs` (built-in web/tui channels), `README.md` (packaging status).*
 *Last verified: v0.7.11*
 
 <sub>[◀ What is VibeAround](what-is-vibearound.md) · [Documentation index](../README.md) · [Install and onboarding ▶](../guides/install-and-onboarding.md)</sub>
