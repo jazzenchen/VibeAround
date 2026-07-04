@@ -58,7 +58,7 @@ Every edge in the picture, with its transport and payload shape:
 
 ## Module map
 
-Where each responsibility lives:
+Where each responsibility lives. Every runtime module also has a deep-dive page under [modules/](../README.md#modules), and every end-to-end path a walkthrough under [flows/](../README.md#flows):
 
 **`core` — the runtime library (no HTTP server, no UI):**
 
