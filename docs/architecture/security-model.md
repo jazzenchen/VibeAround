@@ -13,7 +13,7 @@ zone 3  IM platforms              messages only, mediated by plugins and permiss
 
 ## Zone 1: local clients and the auth token
 
-Every daemon start generates a fresh random bearer token, written to `~/.vibearound/auth.json`. All protected HTTP and WebSocket routes require it, as `Authorization: Bearer <token>` or a `?token=` query parameter. The desktop app opens the dashboard with the token appended; the `va` CLI reads the token file; a browser that presents a stale token after a daemon restart is rejected and must reload through an authorized entry point.
+Every daemon start generates a fresh random bearer token, written to [`~/.vibearound/auth.json`](../reference/configuration.md#all-files-on-disk). All protected HTTP and WebSocket routes require it, as `Authorization: Bearer <token>` or a `?token=` query parameter. The desktop app opens the dashboard with the token appended; the `va` CLI reads the token file; a browser that presents a stale token after a daemon restart is rejected and must reload through an authorized entry point.
 
 Practical consequences:
 
@@ -24,7 +24,7 @@ Practical consequences:
 
 Tunnels (ngrok, localtunnel, Cloudflare) publish the dashboard to a public URL. Two gates apply:
 
-1. **Pairing.** A browser on a non-local hostname must complete pairing: the dashboard shows a 6-digit code that expires after 60 seconds, and the code must be confirmed from an already-trusted surface — typed into a connected IM chat (`/pair <code>`) or approved locally. Pairing binds that browser to the daemon's current auth token.
+1. **Pairing.** A browser on a non-local hostname must complete pairing: the dashboard shows a 6-digit code that expires after 60 seconds, and the code must be confirmed from an already-trusted surface — typed into a connected IM chat (`/pair <code>`) or approved locally. Pairing binds that browser to the daemon's current auth token (all TTLs: [timers and limits](../reference/timers-and-limits.md#lifecycles-and-ttls)).
 2. **Token.** After pairing, the same bearer-token rules apply as locally.
 
 Local hostnames (`localhost`, `127.0.0.1`, `::1`, and the desktop app's own origins) skip pairing but never skip the token.

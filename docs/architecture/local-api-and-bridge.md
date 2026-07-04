@@ -23,7 +23,7 @@ Any client dialect can be paired with any provider dialect. When client and prov
 
 ## Endpoint families
 
-All bridge endpoints are served by the local daemon under `/va/` and accept only local, authenticated callers:
+All bridge endpoints are served by the local daemon under `/va/` and accept only local, authenticated callers (route tables: [API surfaces reference](../reference/api-surfaces.md#local-api-route-families)):
 
 ```text
 /va/local-api/{profile}/{scope}/{target_api_type}/v1/…    # profile-scoped bridge (primary)

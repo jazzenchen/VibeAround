@@ -15,7 +15,7 @@ Rules of thumb: **localtunnel** for zero-setup trials; **ngrok** for a personal 
 
 ## Configuration
 
-In `~/.vibearound/settings.json` (or the desktop settings screen):
+In [`~/.vibearound/settings.json`](../reference/configuration.md#settingsjson) (or the desktop settings screen):
 
 ```jsonc
 {

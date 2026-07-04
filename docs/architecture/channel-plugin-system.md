@@ -14,7 +14,7 @@ Two channels are built in rather than plugins: `web` (the dashboard's web chat) 
 
 Plugins are discovered from the VibeAround data directory (`~/.vibearound/plugins/<id>/`), each with a manifest declaring `kind: "channel"`, its entry point, and configuration schema. The desktop onboarding flow installs plugin packages there; a project-local plugins directory is also scanned in development.
 
-A discovered plugin only **runs** if its channel has configuration under `channels.<name>` in `settings.json` — no config means the plugin stays disabled.
+A discovered plugin only **runs** if its channel has configuration under `channels.<name>` in [`settings.json`](../reference/configuration.md#settingsjson) — no config means the plugin stays disabled.
 
 ## Process lifecycle
 
@@ -27,7 +27,7 @@ register ──► spawn (node <entry>) ──► running ──► crash / free
 The daemon's process supervisor owns every plugin process:
 
 - **Crash respawn.** An exited plugin is respawned after a short delay, indefinitely.
-- **Heartbeat watchdog.** Plugins emit a `_va/heartbeat` notification every 15 seconds; if none arrives for 90 seconds the plugin is presumed frozen, killed, and respawned. This catches hung platform SDKs that never exit.
+- **Heartbeat watchdog.** Plugins emit a `_va/heartbeat` notification every 15 seconds; if none arrives for 90 seconds the plugin is presumed frozen, killed, and respawned. This catches hung platform SDKs that never exit (values: [timers and limits](../reference/timers-and-limits.md#supervision)).
 - **Outbox replay.** Durable outputs (system messages, permission requests) are queued in an outbox; if a send fails because the plugin is down, they are re-delivered after the respawn, so a permission card is not lost to a plugin restart.
 - **Pending-permission drain.** If a plugin dies while a permission request is waiting for a tap, the pending request is cancelled so the agent's turn fails fast instead of hanging forever.
 
