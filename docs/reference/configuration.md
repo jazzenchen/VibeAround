@@ -1,6 +1,26 @@
 # Configuration reference
 
-settings.json, environment variables, and the data directory layout. Companion pages: [CLI reference](cli.md), [API surfaces](api-surfaces.md).
+Every file VibeAround reads or writes, with full schemas for the ones you may edit by hand. Companion pages: [CLI reference](cli.md), [API surfaces](api-surfaces.md), [provider endpoints](provider-endpoints.md).
+
+## All files on disk
+
+Everything lives under `~/.vibearound/` (override with `VIBEAROUND_DATA_DIR`):
+
+| File / directory | Written by | Contents | Hand-editable? |
+|---|---|---|---|
+| `settings.json` | you, desktop settings UI, onboarding | Main configuration — [full schema below](#settingsjson) | **Yes** (then `va settings reload`) |
+| `agents.json` | desktop Launch UI, `va-launch` (executable discovery) | Per-agent launch preferences — [schema below](#agentsjson) | Yes, carefully |
+| `launch/profiles/<name>.json` | you, desktop (temp materialized copies) | Saved native-launch profiles — [schema below](#launch-profile-json-schema-v1) | **Yes** (that is the point) |
+| `auth.json` | daemon, every start | `{port, token}` for out-of-process clients | No — rewritten each start |
+| `profile-state/<profile-id>/` | profile rendering | Rendered per-profile agent config files (settings overlays); env pointers reference these ([launch internals](../internals/launch.md#environment-assembly-layer-by-layer)) | No — regenerated per render |
+| `plugins/<kind>/` | desktop plugin manager | Installed channel plugins + manifests | Only during plugin development |
+| `workspaces/` | daemon | Default root for created workspaces | It is your files |
+| `.cache/` | channel plugins | Downloaded chat attachments | Safe to purge |
+| `*.jsonl` (workspace/thread/attachment event logs) | daemon | Conversation state ([workspace module](../internals/modules/workspace.md)) | **No** — append-only event logs |
+| `launcher.json` | desktop | Desktop-only launch preferences (terminal choice, per-agent workspace compat) | Prefer the UI |
+| `desktop-apps.detected.json` | desktop detection | Cached Claude/Codex Desktop app locations | No — cache |
+
+VibeAround also writes **into each enabled agent's own global config** (MCP server entry + skill files, at the paths declared in the agent registry — e.g. `~/.claude.json` `mcpServers` and `~/.claude/skills/vibearound/`). These writes are marked VibeAround-managed and are removed by launch-time cleanup when the daemon is down ([launch flow, step 5](../internals/flows/native-launch.md)).
 
 ## settings.json
 
@@ -65,6 +85,61 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
   "tmux": { "detach_others": true }
 }
 ```
+
+## agents.json
+
+Launch preferences, three layers deep. Agent ids accept the registry aliases ([supported matrix](../product/supported-matrix.md)).
+
+```jsonc
+{
+  "selected_agent": "claude",        // Launch tab's visible agent (UI state)
+  "default_agent": "claude",         // VibeAround-wide default: tray quick launch, IM thread creation
+  "default_profile_id": "moonshot",  // profile snapshot for that default
+  "agents": {
+    "codex": {
+      "profile_id": "deepseek",      // per-agent default profile
+      "workspace": "~/dev/app",      // per-agent default workspace
+      "executable": {                 // resolved CLI — written back by va-launch discovery
+        "path": "/opt/homebrew/bin/codex",
+        "version": "…", "source": "path-scan", "rank": 0
+      },
+      "launch_args": {
+        "terminal": ["--flag-for-your-own-terminal"],  // native launches only
+        "acp": ["--flag-for-hosted-spawns"]            // IM/web hosted spawns only
+      }
+    }
+  }
+}
+```
+
+The two `launch_args` lists are deliberately separate — a flag you trust in your own terminal is not automatically safe for an IM-driven host ([launch internals](../internals/launch.md#argument-handling)). A stale `executable.path` makes launches fail validation; delete the entry to force a PATH re-scan.
+
+## Launch profile JSON (schema v1)
+
+Saved under `launch/profiles/<name>.json`, consumed by `va launch --profile <name>` / `--profile-path <file>`. **Unknown fields are rejected** — handing the launcher a provider profile or other JSON fails loudly instead of half-working.
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "openai-codex",              // profile name
+  "agent": "codex",                  // registry agent id
+  "profileId": "openai",             // metadata only — va-launch never reads provider storage
+  "launchTarget": "codex",
+  "workspace": "/Users/example/project",
+  "terminal": "terminal",            // terminal id; see launch internals for the per-OS list
+  "command": "codex",                // command line (quote-aware word splitting)
+  "executablePath": null,            // explicit CLI override (skips agents.json + PATH)
+  "windowsExecutablePath": null,     // Windows app-launch variant
+  "windowLabel": "OpenAI Codex",
+  "env": { "OPENAI_API_KEY": "…" },  // exported by the generated launch script
+  "args": { "native": ["--model", "gpt-5"] },
+  "cleanupPaths": [],                // temp files deleted after the command exits
+  "macosAppProbe": null,             // app name for the "already running" osascript check
+  "windowsProcessProbe": null
+}
+```
+
+Two "profile" concepts meet here and must not be confused: a **provider profile** (credentials + model routing, managed in the app) versus a **launch profile** (this file — a native launch request). A resolver connects them: the desktop renders a provider profile *into* a materialized launch profile at launch time; saved CLI launch profiles hold the rendered snapshot ([launch internals](../internals/launch.md#producers-desktop-vs-cli)).
 
 ## Environment variables
 
