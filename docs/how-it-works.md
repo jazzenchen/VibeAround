@@ -5,28 +5,82 @@ This page follows the two journeys that define VibeAround: an IM message reachin
 ## The runtime at a glance
 
 ```text
- web SPA / desktop UI      TUI / CLI (va)
-        │ HTTP + WS              │ HTTP (va-client)
-        ▼                        ▼
-   ┌─────────────────────────────────────┐
-   │  vibearound-server (axum daemon)    │   ◄── embedded by the desktop app
-   │  HTTP · WebSocket · MCP · bridge    │
-   ├─────────────────────────────────────┤
-   │  core runtime                       │
-   │  channels · workspace threads ·     │
-   │  process supervisor · profiles ·    │
-   │  PTY · previews · tunnels           │
-   └───────┬──────────────────┬──────────┘
-           │ stdio ACP        │ ACP
-           ▼                  ▼
-   channel plugin        agent CLI processes
-   processes             (claude, codex, …)
-   (telegram, feishu…)        │ optional loopback
-                              ▼
-                      /va/local-api bridge ──► upstream model APIs
+ web SPA ───────────────┐       TUI / CLI (va)          desktop-ui (React)
+  │HTTP   │WS ×3        │             │ HTTP + WS            │ Tauri IPC
+  │/api/* │/ws (pty)    │             │ (va-client)          ▼
+  │       │/ws/chat     │             │                desktop (Tauri shell)
+  │       │/ws/* state  │             │                      │ embeds in-process
+  ▼       ▼             ▼             ▼                      ▼
+   ┌───────────────────────────────────────────────────────────────┐
+   │              vibearound-server (axum daemon)                  │
+   │  REST /api/* · WS (pty, chat, live state) · MCP /mcp          │
+   │  api_bridge /va/local-api · preview reverse proxy · pairing   │
+   ├───────────────────────────────────────────────────────────────┤
+   │  core runtime                                                 │
+   │  channels · workspace threads · process supervisor ·          │
+   │  profiles · pty · previews · tunnels · auth · search          │
+   └──┬──────────────┬──────────────┬───────────────┬──────────────┘
+      │ stdio        │ stdio        │ pseudo-tty    │ child / SDK
+      │ JSON-RPC     │ JSON-RPC     ▼               ▼
+      │ (ACP)        │ (ACP)    shell / agent   tunnel processes
+      ▼              ▼          CLI sessions    (cloudflared, npx
+  channel plugin  agent CLI     (web terminal)  localtunnel; ngrok
+  processes       processes                     via in-process SDK)
+  (telegram, …)      │
+                     │ HTTP loopback (bridged profiles)
+                     ▼
+             /va/local-api bridge ──HTTPS──► upstream model APIs
 ```
 
 Everything is one process plus supervised children. The desktop app embeds the same daemon the standalone `va serve` runs; every UI is a client of it.
+
+## Communication paths
+
+Every edge in the picture, with its transport and payload shape:
+
+| Edge | Transport | Protocol / payload |
+|---|---|---|
+| web SPA → server (REST) | HTTP `/api/*` | JSON, bearer token |
+| web SPA ↔ server (terminal) | WebSocket `/ws?session_id=` | raw terminal bytes + JSON resize messages |
+| web SPA ↔ server (chat) | WebSocket `/ws/chat` | JSON chat events: typed inputs, streamed output, permission cards |
+| web SPA ↔ server (live state) | WebSocket `/ws/channels`, `/ws/tunnels`, `/ws/sessions`, `/ws/agents/runtime` | full-list snapshots re-sent on every change ("last message is the state") |
+| TUI / `va` CLI → server | HTTP + `/ws/chat` | same contracts, via the `va-client` protocol crate |
+| desktop-ui → desktop shell | Tauri IPC | native commands (windows, launch, config screens) |
+| desktop shell → daemon | in-process | embeds `ServerDaemon` directly |
+| daemon ↔ channel plugins | child stdio | newline-delimited JSON-RPC (ACP framing): envelopes in; outputs, permission cards, `_va/heartbeat` out |
+| daemon ↔ agent CLIs | child stdio | ACP (JSON-RPC): initialize, sessions, prompts, notifications, permission requests |
+| daemon ↔ web-terminal sessions | pseudo-tty | byte streams through the PTY registry |
+| agents → daemon (tools) | HTTP `/mcp` | MCP: JSON-RPC over streamable HTTP (+ SSE) |
+| launched CLIs → daemon (models) | HTTP loopback `/va/local-api/…` | the client's provider dialect (OpenAI / Anthropic / Gemini shapes) |
+| daemon → model providers | HTTPS | provider dialect after bridge translation |
+| daemon → tunnels | in-process SDK (ngrok) or child process (`cloudflared`, `npx localtunnel`) | provider-specific |
+| daemon → previewed dev servers | HTTP reverse proxy | pass-through with iframe toolbar injection |
+
+## Module map
+
+Where each responsibility lives:
+
+**`core` — the runtime library (no HTTP server, no UI):**
+
+| Module | Owns |
+|---|---|
+| `channels` | plugin host, stdio/websocket transports, input dispatch, outbox, monitor |
+| `workspace` | workspaces, threads, route attachments, handoff, context transfer (event-sourced) |
+| `process` | supervisor (spawn/respawn/watchdog), child registry, ACP transport, env enrichment |
+| `agent` | ACP agent handle, launch rendering, MCP/skill config injection |
+| `profiles` | profile schema, catalog, rendering, bridge launch URLs, provider connections |
+| `pty` | PTY session registry and runtime — the web terminal's backend |
+| `previews` | live preview registry, owner/share URLs, port cleanup |
+| `tunnels` | ngrok / localtunnel / cloudflare providers |
+| `auth` | daemon token, pairing codes |
+| `launch_sessions` | native CLI session discovery and archiving |
+| `plugins` | plugin discovery and manifests |
+| `search` | host-side web search runtime |
+| `config`, `storage`, `state`, `routing`, `resources` | settings, JSONL event stores, StateSource contract, route keys, agent registry |
+
+**`server` — the axum shell over core:** `web_server/api` (REST), `ws_pty` / `ws_chat` / `ws_domains` (the three WebSocket families), `mcp` (tools endpoint), `api_bridge` (dialect translation, model mapping, content policy, upstream), `preview` (reverse proxy, markdown rendering), `auth` + `pair` (token middleware, pairing), `boot` (daemon assembly).
+
+**Other crates:** `client` (pure Rust protocol library for the HTTP/WS contract), `cli` and `tui` (its consumers), `desktop` (Tauri shell + IPC commands), `launcher` (the `va-launch` native launch binary).
 
 ## Journey 1: an IM message becomes an agent reply
 
@@ -69,5 +123,5 @@ The supervisor gives every child process (channel plugins, agent adapters) crash
 
 ---
 
-*Source anchors: `src/server/src/lib.rs` (daemon boot, input sharding), `src/core/src/channels/` (plugin transport, dispatch), `src/core/src/workspace/` (threads, attachments), `src/core/src/process/supervisor.rs`, `src/core/src/profiles/bridge_launch.rs` (local API URLs), `src/launcher/` (va-launch).*
+*Source anchors: `src/server/src/lib.rs` (daemon boot, input sharding), `src/server/src/web_server/mod.rs` + `ws_pty.rs` / `ws_chat.rs` / `ws_domains.rs` (WebSocket families), `src/core/src/lib.rs` (module map), `src/core/src/channels/` (plugin transport, dispatch), `src/core/src/workspace/` (threads, attachments), `src/core/src/process/supervisor.rs` + `acp_transport.rs` (ACP framing), `src/core/src/tunnels/providers/` (tunnel process forms), `src/core/src/profiles/bridge_launch.rs` (local API URLs), `src/launcher/` (va-launch).*
 *Last verified: v0.7.11*
