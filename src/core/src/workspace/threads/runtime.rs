@@ -286,33 +286,6 @@ impl ThreadRuntime {
         true
     }
 
-    pub async fn switch_host(
-        &self,
-        host_binding: HostBinding,
-        context_transfer: bool,
-    ) -> acp::Result<()> {
-        self.mark_activity();
-        let _spawn_guard = self.spawn_lock.lock().await;
-        if let Some(agent) = self.agent.lock().await.take() {
-            agent.shutdown().await;
-        }
-        *self.host_client_handler.lock().await = None;
-        *self.session_id.lock().await = None;
-        *self.initialize.lock().await = None;
-        *self.failed.lock().await = None;
-
-        let thread_id = self.thread.lock().await.id.clone();
-        let event = ThreadEvent::host_changed(thread_id, host_binding, context_transfer);
-        append_thread_event(&self.store, &event).await?;
-        self.apply_thread_event(&event).await?;
-        let thread = self.thread.lock().await;
-        let next_session_id = latest_session_for_host(&thread);
-        drop(thread);
-        *self.session_id.lock().await = next_session_id;
-        self.notify_change();
-        Ok(())
-    }
-
     pub async fn switch_profile_preserving_session(
         &self,
         host_binding: HostBinding,
@@ -338,7 +311,7 @@ impl ThreadRuntime {
         *self.failed.lock().await = None;
 
         let thread_id = self.thread.lock().await.id.clone();
-        let event = ThreadEvent::host_changed(thread_id.clone(), host_binding.clone(), false);
+        let event = ThreadEvent::host_changed(thread_id.clone(), host_binding.clone());
         append_thread_event(&self.store, &event).await?;
         self.apply_thread_event(&event).await?;
 

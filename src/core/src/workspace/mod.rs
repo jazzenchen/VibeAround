@@ -3,7 +3,6 @@
 //! A workspace owns threads. IM/Web routes attach to workspace threads; agent
 //! sessions remain implementation details of each thread runtime.
 
-pub mod context_transfer;
 pub mod handoff;
 pub mod manager;
 pub mod registry;
