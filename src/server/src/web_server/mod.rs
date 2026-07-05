@@ -76,6 +76,9 @@ pub(crate) struct AppState {
     search_runtime: Option<Arc<SearchToolRuntime>>,
     /// Live, non-persistent bridge body recorder for the launch popup.
     bridge_recorder: bridge_recording::BridgeRecorder,
+    /// Local API bridge client token. Scoped `/local-api/...` routes use this
+    /// before forwarding with the profile's real upstream credentials.
+    auth_token: Arc<AuthToken>,
 }
 
 /// Ensure web dist exists (build web first).
@@ -221,6 +224,7 @@ pub async fn run_web_server(
         replace_provider_web_search,
         search_runtime,
         bridge_recorder: bridge_recording::BridgeRecorder::default(),
+        auth_token: Arc::clone(&auth_token),
     };
 
     let auth_state = AuthState(Arc::clone(&auth_token));

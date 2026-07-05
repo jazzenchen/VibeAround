@@ -394,7 +394,7 @@ fn authorization_header(headers: &InboundHeaderMap) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn inbound_api_key(headers: &InboundHeaderMap) -> Option<String> {
+pub(super) fn inbound_api_key(headers: &InboundHeaderMap) -> Option<String> {
     headers
         .get("x-api-key")
         .or_else(|| headers.get("x-goog-api-key"))

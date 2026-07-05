@@ -163,8 +163,13 @@ pub async fn local_messages_handler(
 }
 
 pub async fn local_models_handler(
+    State(state): State<AppState>,
     Path((profile_id, scope, target_api_type)): Path<(String, String, String)>,
+    headers: HeaderMap,
 ) -> Response {
+    if let Some(response) = super::validate_local_bridge_client(&state, &headers) {
+        return response;
+    }
     let route_scope = scope.clone();
     super::models_handler(profile_id, Some(route_scope), Some(scope), target_api_type).await
 }
@@ -211,6 +216,11 @@ async fn handle_post_bridge_request<F>(
 where
     F: FnOnce(&mut Value) -> Result<(), String>,
 {
+    if manual_scope.is_some() {
+        if let Some(response) = super::validate_local_bridge_client(&state, &headers) {
+            return response;
+        }
+    }
     let request_id = uuid::Uuid::new_v4().to_string();
     let recorder_subscribers = state.bridge_recorder.subscriber_count();
     let original_request_payload =
