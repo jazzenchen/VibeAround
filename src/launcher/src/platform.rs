@@ -475,10 +475,19 @@ mod windows {
         );
         let script_path =
             launch_script_temp_dir()?.join(format!("script-{}.ps1", uuid::Uuid::new_v4()));
-        std::fs::write(&script_path, build_powershell_script(plan, &command, &args))
+        let script = build_powershell_script(plan, &command, &args);
+        write_powershell_script(&script_path, &script)
             .with_context(|| format!("write launch script {}", script_path.display()))?;
         common::auth::set_owner_only(&script_path).ok();
         Ok(script_path)
+    }
+
+    fn write_powershell_script(path: &Path, script: &str) -> anyhow::Result<()> {
+        let mut bytes = Vec::with_capacity(3 + script.len());
+        bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+        bytes.extend_from_slice(script.as_bytes());
+        std::fs::write(path, bytes)?;
+        Ok(())
     }
 
     fn build_powershell_script(plan: &ExecutionPlan, command: &str, args: &[String]) -> String {
@@ -1092,6 +1101,22 @@ mod windows {
                 .expect("self delete");
             let command_index = script.find("& $vaCommand @vaArgs").expect("command");
             assert!(delete_index < command_index);
+        }
+
+        #[test]
+        fn writes_powershell_script_with_utf8_bom() {
+            let script = "Set-Location -LiteralPath 'D:\\_P\\26\\中文workspace'\n";
+            let path = std::env::temp_dir().join(format!(
+                "vibearound-launch-script-{}.ps1",
+                uuid::Uuid::new_v4()
+            ));
+
+            write_powershell_script(&path, script).expect("write script");
+            let bytes = std::fs::read(&path).expect("read script");
+            let _ = std::fs::remove_file(&path);
+
+            assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
+            assert_eq!(std::str::from_utf8(&bytes[3..]).unwrap(), script);
         }
 
         #[test]
