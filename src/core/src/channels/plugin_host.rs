@@ -340,6 +340,10 @@ impl PluginHost {
         self.outbox.mark_nacked_now(output_id)
     }
 
+    pub fn outbox_pending_count(&self) -> usize {
+        self.outbox.pending_count()
+    }
+
     fn pending_output_is_live(&self, output: &ChannelOutput) -> bool {
         !matches!(
             output,
@@ -510,6 +514,21 @@ mod tests {
 
         assert!(!host.pending_permissions.contains_key("req-1"));
         assert!(rx.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn outbox_pending_count_includes_outputs_waiting_for_runtime() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+
+        host.send_output(ChannelOutput::SystemText {
+            route: RouteKey::new("feishu", "chat-a"),
+            text: "hello".to_string(),
+            reply_to: None,
+        })
+        .await;
+
+        assert_eq!(host.outbox_pending_count(), 1);
     }
 
     #[test]

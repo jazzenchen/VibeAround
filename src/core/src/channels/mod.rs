@@ -237,6 +237,10 @@ impl ChannelManager {
         self.plugin_host.send_output(output).await;
     }
 
+    pub fn outbox_pending_count(&self) -> usize {
+        self.plugin_host.outbox_pending_count()
+    }
+
     pub fn respond_permission(
         &self,
         channel_kind: &str,

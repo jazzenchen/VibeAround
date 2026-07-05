@@ -77,6 +77,10 @@ impl ChannelOutbox {
             .cloned()
             .collect()
     }
+
+    pub fn pending_count(&self) -> usize {
+        self.pending.lock().len()
+    }
 }
 
 fn discard_persisted_outbox_files() {
@@ -121,6 +125,7 @@ mod tests {
 
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].output_id, feishu_id);
+        assert_eq!(outbox.pending_count(), 2);
     }
 
     #[tokio::test]
