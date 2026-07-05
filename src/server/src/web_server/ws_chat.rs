@@ -121,6 +121,7 @@ async fn handle_chat_socket(
         tx.clone(),
         replay_history,
     );
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
@@ -143,10 +144,20 @@ async fn handle_chat_socket(
 
     // Outbound: drain ChannelOutput → ChatEvent → websocket.
     let outbound_task = tokio::spawn(async move {
-        while let Some(output) = rx.recv().await {
-            let event = output_to_chat_event(output);
-            if send_event(&mut ws_tx, &event).await.is_err() {
-                break;
+        loop {
+            tokio::select! {
+                Some(output) = rx.recv() => {
+                    let event = output_to_chat_event(output);
+                    if send_event(&mut ws_tx, &event).await.is_err() {
+                        break;
+                    }
+                }
+                Some(event) = event_rx.recv() => {
+                    if send_event(&mut ws_tx, &event).await.is_err() {
+                        break;
+                    }
+                }
+                else => break,
             }
         }
     });
@@ -313,6 +324,8 @@ async fn handle_chat_socket(
                                     error = %error,
                                     "web permission response ignored"
                                 );
+                                let _ = event_tx
+                                    .send(permission_response_error_event(&request_id, &error));
                             }
                         }
                         WebChatInput::ResumeSession {
@@ -1367,6 +1380,12 @@ fn acp_passthrough(payload: serde_json::Value) -> ChatEvent {
     ChatEvent::AcpNotification { payload }
 }
 
+fn permission_response_error_event(request_id: &str, error: &str) -> ChatEvent {
+    ChatEvent::Error {
+        error: format!("Permission response for request `{request_id}` was ignored: {error}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1415,6 +1434,19 @@ mod tests {
         assert!(super::should_replay_initial_route_history(&Some(
             "ws_thread".to_string()
         )));
+    }
+
+    #[test]
+    fn permission_response_error_is_user_visible() {
+        let ChatEvent::Error { error } = super::permission_response_error_event(
+            "req-1",
+            "permission request is no longer pending",
+        ) else {
+            panic!("expected error event");
+        };
+
+        assert!(error.contains("req-1"));
+        assert!(error.contains("permission request is no longer pending"));
     }
 
     #[test]
