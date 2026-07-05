@@ -1888,7 +1888,7 @@ function PluginsSettingsPanel({
             type="button"
             variant="outline"
             size="sm"
-            className={`shrink-0 ${SETTINGS_BUTTON_CLASS}`}
+            className={`h-7 shrink-0 px-2.5 ${SETTINGS_BUTTON_CLASS}`}
             disabled={checkingUpdates}
             onClick={onCheckUpdates}
           >
