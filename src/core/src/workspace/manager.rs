@@ -1286,7 +1286,24 @@ pub fn normalize_workspace_cwd(cwd: impl AsRef<Path>) -> PathBuf {
             .map(|dir| dir.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
     };
-    absolute.canonicalize().unwrap_or(absolute)
+    normalize_platform_cwd(absolute.canonicalize().unwrap_or(absolute))
+}
+
+#[cfg(windows)]
+fn normalize_platform_cwd(path: PathBuf) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = value.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path
+}
+
+#[cfg(not(windows))]
+fn normalize_platform_cwd(path: PathBuf) -> PathBuf {
+    path
 }
 
 fn workspace_by_cwd<'a>(
@@ -1436,6 +1453,19 @@ mod tests {
     };
 
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_platform_cwd_strips_windows_verbatim_prefixes() {
+        assert_eq!(
+            normalize_platform_cwd(PathBuf::from(r"\\?\D:\_P\26\test_VibeAround")),
+            PathBuf::from(r"D:\_P\26\test_VibeAround")
+        );
+        assert_eq!(
+            normalize_platform_cwd(PathBuf::from(r"\\?\UNC\server\share\test_VibeAround")),
+            PathBuf::from(r"\\server\share\test_VibeAround")
+        );
+    }
 
     fn temp_paths() -> (PathBuf, PathBuf, PathBuf) {
         let root = std::env::temp_dir().join(format!("vibearound-wtm-{}", Uuid::new_v4()));
@@ -1727,13 +1757,13 @@ mod tests {
 
         assert_eq!(
             runtime.state().await.workspace,
-            root.canonicalize().unwrap()
+            normalize_workspace_cwd(&root)
         );
         assert!(manager
             .workspace_projection()
             .await
             .unwrap()
-            .get_by_cwd(&root.canonicalize().unwrap())
+            .get_by_cwd(&normalize_workspace_cwd(&root))
             .is_some());
     }
 
@@ -1768,14 +1798,14 @@ mod tests {
 
         assert_eq!(
             runtime.state().await.workspace,
-            root.canonicalize().unwrap()
+            normalize_workspace_cwd(&root)
         );
         assert_eq!(runtime.state().await.thread_id, thread_id);
         assert!(manager
             .workspace_projection()
             .await
             .unwrap()
-            .get_by_cwd(&root.canonicalize().unwrap())
+            .get_by_cwd(&normalize_workspace_cwd(&root))
             .is_some());
     }
 
@@ -2154,7 +2184,10 @@ mod tests {
             first.state().await.workspace_id,
             second.state().await.workspace_id
         );
-        assert_eq!(second.state().await.workspace, root.canonicalize().unwrap());
+        assert_eq!(
+            second.state().await.workspace,
+            normalize_workspace_cwd(&root)
+        );
         assert_eq!(
             manager
                 .current_attachment(&second_route)
