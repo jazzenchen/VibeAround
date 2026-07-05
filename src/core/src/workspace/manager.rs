@@ -952,7 +952,7 @@ impl WorkspaceThreadManager {
             self.detach_route(route).await?;
             return Ok(None);
         }
-        if route.channel_kind == "web" {
+        if route_can_rehydrate_runtime(route) {
             return self.runtime_from_thread(thread).await.map(Some);
         }
         self.detach_route(route).await?;
@@ -1432,6 +1432,10 @@ fn runtime_has_started_host(state: &ThreadRuntimeState) -> bool {
     state.initialize.is_some() || state.busy || state.failed.is_some()
 }
 
+fn route_can_rehydrate_runtime(route: &RouteKey) -> bool {
+    matches!(route.channel_kind.as_str(), "web" | "tui")
+}
+
 fn is_legacy_channel_default_route(route: &RouteKey) -> bool {
     route.chat_id == LEGACY_CHANNEL_DEFAULT_CHAT_ID
 }
@@ -1633,9 +1637,18 @@ mod tests {
 
     #[tokio::test]
     async fn web_route_attachment_rehydrates_runtime_after_host_shutdown() {
+        route_attachment_rehydrates_runtime_after_host_shutdown("web").await;
+    }
+
+    #[tokio::test]
+    async fn tui_route_attachment_rehydrates_runtime_after_host_shutdown() {
+        route_attachment_rehydrates_runtime_after_host_shutdown("tui").await;
+    }
+
+    async fn route_attachment_rehydrates_runtime_after_host_shutdown(channel_kind: &str) {
         let (workspaces, threads, attachments) = temp_paths();
         let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-        let route = RouteKey::new("web", "chat-a");
+        let route = RouteKey::new(channel_kind, "chat-a");
         let first = manager.resolve_route_runtime(&route).await.unwrap();
         let first_thread_id = first.state().await.thread_id;
 
