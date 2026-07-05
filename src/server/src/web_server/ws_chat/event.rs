@@ -76,3 +76,21 @@ pub(super) fn permission_response_error_event(request_id: &str, error: &str) -> 
         error: format!("Permission response for request `{request_id}` was ignored: {error}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_response_error_is_user_visible() {
+        let ChatEvent::Error { error } = super::permission_response_error_event(
+            "req-1",
+            "permission request is no longer pending",
+        ) else {
+            panic!("expected error event");
+        };
+
+        assert!(error.contains("req-1"));
+        assert!(error.contains("permission request is no longer pending"));
+    }
+}
