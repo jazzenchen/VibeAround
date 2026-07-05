@@ -12,6 +12,7 @@ use tokio::sync::broadcast;
 #[serde(transparent)]
 pub struct SessionId(pub uuid::Uuid);
 
+#[allow(clippy::new_without_default)]
 impl SessionId {
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4())

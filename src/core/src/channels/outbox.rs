@@ -83,6 +83,12 @@ impl ChannelOutbox {
     }
 }
 
+impl Default for ChannelOutbox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn discard_persisted_outbox_files() {
     for path in [
         crate::config::legacy_state_file(OUTBOX_FILE),

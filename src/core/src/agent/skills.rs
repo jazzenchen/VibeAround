@@ -210,16 +210,14 @@ fn write_managed_skill_file(
     target: &Path,
     content: &str,
 ) -> anyhow::Result<()> {
-    if target.exists() {
-        if !target.is_file() || !is_managed_skill_file(target)? {
-            tracing::warn!(
-                "[integrations] Skipped {}/{} skill at {:?}: existing file is not VibeAround-managed",
-                agent,
-                skill_name,
-                target
-            );
-            return Ok(());
-        }
+    if target.exists() && (!target.is_file() || !is_managed_skill_file(target)?) {
+        tracing::warn!(
+            "[integrations] Skipped {}/{} skill at {:?}: existing file is not VibeAround-managed",
+            agent,
+            skill_name,
+            target
+        );
+        return Ok(());
     }
 
     if let Some(parent) = target.parent() {

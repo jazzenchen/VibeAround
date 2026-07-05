@@ -1231,15 +1231,9 @@ fn aggregate_turn_status(
         .iter()
         .filter_map(|agent_id| agents.get(agent_id).map(|agent| agent.status))
         .collect();
-    if statuses
-        .iter()
-        .any(|status| *status == ThreadAgentStatus::Error)
-    {
+    if statuses.contains(&ThreadAgentStatus::Error) {
         ThreadAgentStatus::Error
-    } else if statuses
-        .iter()
-        .any(|status| *status == ThreadAgentStatus::Running)
-    {
+    } else if statuses.contains(&ThreadAgentStatus::Running) {
         ThreadAgentStatus::Running
     } else if !statuses.is_empty()
         && statuses
