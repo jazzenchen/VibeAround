@@ -418,6 +418,7 @@ async fn handle_chat_socket(
             .workspace_thread_manager()
             .detach_route(&active_route)
             .await;
+        state.web_channel.forget_route(&active_route.chat_id);
     }
 }
 
@@ -440,6 +441,7 @@ async fn abort_direct_resume_task(
         .workspace_thread_manager()
         .detach_route(route)
         .await;
+    state.web_channel.forget_route(&route.chat_id);
 }
 
 fn input_route(input: &ChannelInput) -> Option<RouteKey> {
