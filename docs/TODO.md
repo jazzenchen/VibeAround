@@ -21,4 +21,6 @@ When adding: `![alt text](../assets/<name>.png)` under the matching section; kee
 
 ## Deferred
 
+- When CLI configuration commands ship (channel/profile setup without editing settings.json), update: quick-tour §2, install-and-onboarding (npm section), connect-channels, reference/cli.
+
 - Chinese translations (`-CN` pages) — deliberately postponed; prioritize `connect-channels`, `im-usage`, and the Feishu/WeCom/DingTalk-relevant guides when the batch starts.

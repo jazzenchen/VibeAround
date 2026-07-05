@@ -22,8 +22,10 @@ Try `/status` in the chat to see what you are attached to: thread id, workspace,
 
 Connect one IM channel — Telegram is the fastest first one:
 
-1. Create a bot with [@BotFather](https://t.me/BotFather), copy the token.
-2. Add the channel in the desktop app (or `settings.json` → `channels.telegram`, then `va channel sync`) — details in [Connect channels](connect-channels.md).
+1. Create the bot on Telegram's side and grab its token — that part happens in Telegram, not VibeAround ([what the plugin needs](channels/telegram.md)).
+2. Add the credential to VibeAround:
+   - **Desktop app** — open the channel screen, pick Telegram, paste the token. No files to edit.
+   - **CLI / headless** — add it under `channels.telegram` in `settings.json`, then `va channel sync`. (Dedicated CLI commands for channel configuration are planned; editing the file is the current way.)
 3. Open a chat with your bot and say hello.
 
 Your bot chat is now a full agent conversation:
@@ -33,7 +35,7 @@ Your bot chat is now a full agent conversation:
 fix the failing test in ~/dev/my-app and show me the diff
 ```
 
-Permission requests arrive as tappable buttons. `/stop` cancels a runaway turn. This chat has its **own** thread — independent from your web chat, both can run simultaneously.
+Permission requests arrive as tappable buttons. This chat has its **own** thread — independent from your web chat, both can run simultaneously.
 
 ## 3. One conversation, two surfaces (5 minutes)
 
