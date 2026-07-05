@@ -120,20 +120,22 @@ impl AgentClientHandler for SubagentBridgeHandler {
         }
 
         let routes = self.attached_web_routes().await;
-        let Some(first_route) = routes.first() else {
+        if routes.is_empty() {
             return Ok(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Cancelled,
             ));
-        };
+        }
 
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
-        self.plugin_host
-            .pending_permissions
-            .insert(request_id.clone(), (first_route.channel_kind.clone(), tx));
+        self.plugin_host.register_pending_permission(
+            request_id.clone(),
+            routes.iter().map(|route| route.channel_kind.clone()),
+            tx,
+        );
 
         let mut payload = serde_json::to_value(&args).map_err(|e| {
-            self.plugin_host.pending_permissions.remove(&request_id);
+            self.plugin_host.remove_pending_permission(&request_id);
             acp::Error::new(-32603, format!("serialize requestPermission: {}", e))
         })?;
         if let Some(object) = payload.as_object_mut() {
@@ -160,7 +162,7 @@ impl AgentClientHandler for SubagentBridgeHandler {
         match rx.await {
             Ok(response) => Ok(response),
             Err(_) => {
-                self.plugin_host.pending_permissions.remove(&request_id);
+                self.plugin_host.remove_pending_permission(&request_id);
                 Ok(acp::RequestPermissionResponse::new(
                     acp::RequestPermissionOutcome::Cancelled,
                 ))

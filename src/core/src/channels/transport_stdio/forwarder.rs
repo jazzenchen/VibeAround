@@ -162,13 +162,15 @@ pub(super) async fn forward_output_to_plugin(
                         "[{}] failed to parse PermissionRequest payload route={} request_id={}: {}",
                         channel_kind, route, request_id, e
                     );
-                        if let Some((_, (_, tx))) =
-                            plugin_host.pending_permissions.remove(&request_id)
-                        {
-                            let _ = tx.send(schema::RequestPermissionResponse::new(
+                        complete_permission_request(
+                            plugin_host,
+                            channel_kind,
+                            &route.to_string(),
+                            &request_id,
+                            schema::RequestPermissionResponse::new(
                                 schema::RequestPermissionOutcome::Cancelled,
-                            ));
-                        }
+                            ),
+                        );
                         return;
                     }
                 };
@@ -180,11 +182,15 @@ pub(super) async fn forward_output_to_plugin(
                 "request": request,
             });
             let Some(raw_params) = raw_json_params(channel_kind, &params) else {
-                if let Some((_, (_, tx))) = plugin_host.pending_permissions.remove(&request_id) {
-                    let _ = tx.send(schema::RequestPermissionResponse::new(
+                complete_permission_request(
+                    plugin_host,
+                    channel_kind,
+                    &route.to_string(),
+                    &request_id,
+                    schema::RequestPermissionResponse::new(
                         schema::RequestPermissionOutcome::Cancelled,
-                    ));
-                }
+                    ),
+                );
                 return;
             };
             let response = conn
@@ -193,20 +199,17 @@ pub(super) async fn forward_output_to_plugin(
                 ))
                 .block_task()
                 .await;
-            let Some((_, (_, tx))) = plugin_host.pending_permissions.remove(&request_id) else {
-                tracing::info!(
-                    "[{}] PermissionRequest response dropped — no pending route={} request_id={}",
-                    channel_kind,
-                    route,
-                    request_id
-                );
-                return;
-            };
             match response {
                 Ok(value) => {
                     match serde_json::from_value::<schema::RequestPermissionResponse>(value) {
                         Ok(resp) => {
-                            let _ = tx.send(resp);
+                            complete_permission_request(
+                                plugin_host,
+                                channel_kind,
+                                &route.to_string(),
+                                &request_id,
+                                resp,
+                            );
                         }
                         Err(e) => {
                             tracing::info!(
@@ -216,9 +219,15 @@ pub(super) async fn forward_output_to_plugin(
                                 request_id,
                                 e
                             );
-                            let _ = tx.send(schema::RequestPermissionResponse::new(
-                                schema::RequestPermissionOutcome::Cancelled,
-                            ));
+                            complete_permission_request(
+                                plugin_host,
+                                channel_kind,
+                                &route.to_string(),
+                                &request_id,
+                                schema::RequestPermissionResponse::new(
+                                    schema::RequestPermissionOutcome::Cancelled,
+                                ),
+                            );
                         }
                     }
                 }
@@ -230,12 +239,36 @@ pub(super) async fn forward_output_to_plugin(
                         request_id,
                         e
                     );
-                    let _ = tx.send(schema::RequestPermissionResponse::new(
-                        schema::RequestPermissionOutcome::Cancelled,
-                    ));
+                    complete_permission_request(
+                        plugin_host,
+                        channel_kind,
+                        &route.to_string(),
+                        &request_id,
+                        schema::RequestPermissionResponse::new(
+                            schema::RequestPermissionOutcome::Cancelled,
+                        ),
+                    );
                 }
             }
         }
+    }
+}
+
+fn complete_permission_request(
+    plugin_host: &PluginHost,
+    channel_kind: &str,
+    route: &str,
+    request_id: &str,
+    response: schema::RequestPermissionResponse,
+) {
+    if let Err(error) = plugin_host.respond_permission(channel_kind, request_id, response) {
+        tracing::info!(
+            "[{}] PermissionRequest response dropped route={} request_id={}: {}",
+            channel_kind,
+            route,
+            request_id,
+            error
+        );
     }
 }
 

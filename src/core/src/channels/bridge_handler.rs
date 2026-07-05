@@ -363,29 +363,25 @@ impl AgentClientHandler for ChannelBridgeHandler {
             return Err(acp::Error::method_not_found());
         }
 
-        // Register a oneshot keyed by a fresh request_id, tagged with this
-        // channel kind. The plugin-bridge forwarder task consumes it once
-        // the plugin's ACP response arrives. The tag lets
-        // `PluginHost::cancel_channel_permissions` drain orphaned entries
-        // when the plugin dies, so `rx.await` below resolves as `Cancelled`
-        // instead of stalling the agent turn.
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
         let routes = self.attached_routes().await;
-        let Some(first_route) = routes.first() else {
+        if routes.is_empty() {
             return Ok(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Cancelled,
             ));
-        };
-        self.plugin_host
-            .pending_permissions
-            .insert(request_id.clone(), (first_route.channel_kind.clone(), tx));
+        }
+        self.plugin_host.register_pending_permission(
+            request_id.clone(),
+            routes.iter().map(|route| route.channel_kind.clone()),
+            tx,
+        );
 
         let options_len = args.options.len();
         let payload = match serde_json::to_value(&args) {
             Ok(v) => v,
             Err(e) => {
-                self.plugin_host.pending_permissions.remove(&request_id);
+                self.plugin_host.remove_pending_permission(&request_id);
                 return Err(acp::Error::new(
                     -32603,
                     format!("serialize requestPermission: {}", e),
@@ -417,7 +413,7 @@ impl AgentClientHandler for ChannelBridgeHandler {
         match rx.await {
             Ok(response) => Ok(response),
             Err(_) => {
-                self.plugin_host.pending_permissions.remove(&request_id);
+                self.plugin_host.remove_pending_permission(&request_id);
                 tracing::info!(
                     "[ChannelBridgeHandler] request_permission dropped (plugin gone?) thread={} request_id={}",
                     self.thread_id, request_id

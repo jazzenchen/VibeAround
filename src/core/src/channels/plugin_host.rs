@@ -23,6 +23,7 @@
 //! state machines — those are `process::Supervisor`, the bridge threads,
 //! and `ChannelMonitor` respectively.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Weak};
 
 use agent_client_protocol::schema::v1 as acp;
@@ -47,16 +48,10 @@ pub struct PluginHost {
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     send_locks: DashMap<ChannelKind, Arc<ParkingMutex<()>>>,
     /// Pending `requestPermission` replies keyed by a fresh request_id.
-    /// Value is `(channel_kind, sender)`: the sender is consumed by the
-    /// plugin-bridge forwarder task once the plugin's ACP response arrives
-    /// (see `transport_stdio::forwarder`), and the channel_kind lets us
-    /// drain orphaned entries when that plugin dies
-    /// (`cancel_channel_permissions`). Without the drain, a plugin crash
-    /// during approval leaves the sender alive here forever and
-    /// `request_permission`'s `rx.await` in `bridge_handler` stalls the
-    /// upstream agent turn.
-    pub pending_permissions:
-        DashMap<String, (ChannelKind, oneshot::Sender<acp::RequestPermissionResponse>)>,
+    /// Each entry records every channel kind that received the permission card.
+    /// The first valid answer consumes the sender; plugin shutdown removes only
+    /// that channel kind and drops the sender once no visible surface can answer.
+    pending_permissions: DashMap<String, PendingPermission>,
     /// Back-pointer to the ChannelMonitor. Weak to avoid a reference cycle
     /// (ChannelMonitor holds `Arc<PluginHost>`). Used by the plugin bridge
     /// to call `touch` on `_va/heartbeat`. `mark_crashed` is no longer
@@ -352,12 +347,40 @@ impl PluginHost {
         let request_ids: Vec<String> = self
             .pending_permissions
             .iter()
-            .filter(|entry| entry.value().0 == channel_kind)
+            .filter(|entry| entry.value().channel_kinds.contains(channel_kind))
             .map(|entry| entry.key().clone())
             .collect();
         for id in request_ids {
-            self.pending_permissions.remove(&id);
+            let mut should_remove = false;
+            if let Some(mut pending) = self.pending_permissions.get_mut(&id) {
+                pending.channel_kinds.remove(channel_kind);
+                should_remove = pending.channel_kinds.is_empty();
+            }
+            if should_remove {
+                self.pending_permissions.remove(&id);
+            }
         }
+    }
+
+    pub fn register_pending_permission<I>(
+        &self,
+        request_id: String,
+        channel_kinds: I,
+        tx: oneshot::Sender<acp::RequestPermissionResponse>,
+    ) where
+        I: IntoIterator<Item = ChannelKind>,
+    {
+        self.pending_permissions.insert(
+            request_id,
+            PendingPermission {
+                channel_kinds: channel_kinds.into_iter().collect(),
+                tx,
+            },
+        );
+    }
+
+    pub fn remove_pending_permission(&self, request_id: &str) {
+        self.pending_permissions.remove(request_id);
     }
 
     /// Resolve a pending permission request from an in-process client such as
@@ -370,19 +393,28 @@ impl PluginHost {
         request_id: &str,
         response: acp::RequestPermissionResponse,
     ) -> Result<(), String> {
-        let Some((_, (pending_channel, tx))) = self.pending_permissions.remove(request_id) else {
+        let Some((_, pending)) = self
+            .pending_permissions
+            .remove_if(request_id, |_, pending| {
+                pending.channel_kinds.contains(channel_kind)
+            })
+        else {
+            if self.pending_permissions.contains_key(request_id) {
+                return Err("permission request belongs to a different channel".to_string());
+            }
             return Err("permission request is no longer pending".to_string());
         };
 
-        if pending_channel != channel_kind {
-            self.pending_permissions
-                .insert(request_id.to_string(), (pending_channel, tx));
-            return Err("permission request belongs to a different channel".to_string());
-        }
-
-        tx.send(response)
+        pending
+            .tx
+            .send(response)
             .map_err(|_| "permission requester is no longer listening".to_string())
     }
+}
+
+struct PendingPermission {
+    channel_kinds: HashSet<ChannelKind>,
+    tx: oneshot::Sender<acp::RequestPermissionResponse>,
 }
 
 fn should_replay_output(output: &ChannelOutput) -> bool {
@@ -396,6 +428,10 @@ fn should_replay_output(output: &ChannelOutput) -> bool {
 mod tests {
     use super::*;
     use crate::routing::RouteKey;
+
+    fn permission_response() -> acp::RequestPermissionResponse {
+        acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled)
+    }
 
     #[test]
     fn replay_outbox_only_keeps_durable_outputs() {
@@ -419,5 +455,59 @@ mod tests {
             route,
             active: true,
         }));
+    }
+
+    #[tokio::test]
+    async fn pending_permission_accepts_any_registered_channel() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission(
+            "req-1".to_string(),
+            vec!["feishu".to_string(), "web".to_string()],
+            tx,
+        );
+
+        assert!(host
+            .respond_permission("slack", "req-1", permission_response())
+            .is_err());
+        assert!(host.pending_permissions.contains_key("req-1"));
+
+        host.respond_permission("web", "req-1", permission_response())
+            .unwrap();
+
+        assert!(!host.pending_permissions.contains_key("req-1"));
+        assert!(rx.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancel_channel_permissions_keeps_other_surfaces_alive() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission(
+            "req-1".to_string(),
+            vec!["feishu".to_string(), "web".to_string()],
+            tx,
+        );
+
+        host.cancel_channel_permissions("feishu");
+
+        assert!(host.pending_permissions.contains_key("req-1"));
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        host.respond_permission("web", "req-1", permission_response())
+            .unwrap();
+        assert!(rx.await.is_ok());
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission("req-2".to_string(), vec!["feishu".to_string()], tx);
+
+        host.cancel_channel_permissions("feishu");
+
+        assert!(!host.pending_permissions.contains_key("req-2"));
+        assert!(rx.await.is_err());
     }
 }
