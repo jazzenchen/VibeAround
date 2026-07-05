@@ -657,7 +657,6 @@ impl WorkspaceThreadManager {
                 .append(&ThreadEvent::host_changed(
                     thread.id.clone(),
                     prepared.host_binding.clone(),
-                    false,
                 ))
                 .await
                 .context("append external session host binding")?;

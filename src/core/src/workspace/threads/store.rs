@@ -318,7 +318,6 @@ pub enum ThreadEvent {
         occurred_at: String,
         thread_id: WorkspaceThreadId,
         host_binding: HostBinding,
-        context_transfer: bool,
     },
     AgentSessionObserved {
         schema_version: u8,
@@ -394,7 +393,6 @@ impl ThreadEvent {
     pub fn host_changed(
         thread_id: impl Into<WorkspaceThreadId>,
         host_binding: HostBinding,
-        context_transfer: bool,
     ) -> Self {
         Self::HostChanged {
             schema_version: SCHEMA_VERSION,
@@ -402,7 +400,6 @@ impl ThreadEvent {
             occurred_at: now(),
             thread_id: thread_id.into(),
             host_binding,
-            context_transfer,
         }
     }
 
@@ -801,7 +798,7 @@ mod tests {
                 Some("profile_a".to_string()),
                 "session-1",
             ),
-            ThreadEvent::host_changed(thread_id.clone(), claude.clone(), true),
+            ThreadEvent::host_changed(thread_id.clone(), claude.clone()),
             ThreadEvent::multi_agent_turn_initialized(
                 thread_id.clone(),
                 MultiAgentTurn::new(
