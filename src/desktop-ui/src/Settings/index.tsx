@@ -2085,7 +2085,7 @@ function PluginInventoryCard({
               onClick={onConfigureSearch}
             >
               <SlidersHorizontal className="h-3 w-3" />
-              {t("Configure")}
+              {t("Configure plugin")}
             </Button>
           )}
           <Button
