@@ -272,7 +272,19 @@ async fn handle_chat_socket(
                                 &active_route,
                             )
                             .await;
-                            state.channel_hub.handle_input(input);
+                            let route = input_route(&input).unwrap_or_else(|| active_route.clone());
+                            if let Err(error) = state
+                                .channel_hub
+                                .workspace_thread_manager()
+                                .cancel_route(&route)
+                                .await
+                            {
+                                tracing::warn!(
+                                    route = %route,
+                                    error = %error,
+                                    "failed to cancel web chat route"
+                                );
+                            }
                             let deadline = state.web_channel.mark_route_idle(&active_route);
                             state.web_channel.schedule_idle_close(
                                 state.channel_hub.workspace_thread_manager(),

@@ -725,6 +725,23 @@ impl WorkspaceThreadManager {
         self.active_runtime_for_route(route).await
     }
 
+    pub async fn cancel_route(&self, route: &RouteKey) -> anyhow::Result<bool> {
+        let Some(runtime) = self.active_runtime_for_route(route).await? else {
+            return Ok(false);
+        };
+        match runtime.cancel().await {
+            Ok(()) => Ok(true),
+            Err(error) => {
+                tracing::debug!(
+                    route = %route,
+                    error = %error.message,
+                    "ignored route cancel"
+                );
+                Ok(false)
+            }
+        }
+    }
+
     pub async fn attach_thread(
         &self,
         route: &RouteKey,
@@ -1504,6 +1521,31 @@ mod tests {
                 .workspace_id,
             WorkspaceId::general()
         );
+    }
+
+    #[tokio::test]
+    async fn cancel_unattached_route_is_noop() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let route = RouteKey::new("web", "chat-a");
+
+        let cancelled = manager.cancel_route(&route).await.unwrap();
+
+        assert!(!cancelled);
+        assert!(manager.current_attachment(&route).await.unwrap().is_none());
+        assert!(manager
+            .workspace_store
+            .read_events()
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(manager.thread_store.read_events().await.unwrap().is_empty());
+        assert!(manager
+            .attachment_store
+            .read_events()
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

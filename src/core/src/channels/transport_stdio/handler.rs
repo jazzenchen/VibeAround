@@ -133,7 +133,7 @@ impl PluginAgentHandler {
             chat_id = %chat_id
         );
 
-        let _ = self.input_tx.send(ChannelInput::Stop { route });
+        let _ = self.workspace_thread_manager.cancel_route(&route).await;
         Ok(())
     }
 
