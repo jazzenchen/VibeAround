@@ -1,4 +1,4 @@
-//! Short-lived handoff codes for attaching an external agent session to a
+//! Short-lived handover codes for attaching an external agent session to a
 //! workspace thread.
 
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use rand::rngs::OsRng;
 use rand::Rng;
 
-struct HandoffEntry {
+struct HandoverEntry {
     agent_kind: String,
     profile_id: Option<String>,
     session_id: String,
@@ -17,14 +17,14 @@ struct HandoffEntry {
     expires_at: Instant,
 }
 
-static HANDOFF_CODES: LazyLock<Mutex<HashMap<String, HandoffEntry>>> =
+static HANDOVER_CODES: LazyLock<Mutex<HashMap<String, HandoverEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const TTL: Duration = Duration::from_secs(120);
 const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HandoffPayload {
+pub struct HandoverPayload {
     pub agent_kind: String,
     pub profile_id: Option<String>,
     pub session_id: String,
@@ -41,8 +41,8 @@ fn generate_code() -> String {
         .collect()
 }
 
-pub fn store(payload: HandoffPayload) -> String {
-    let mut map = HANDOFF_CODES.lock();
+pub fn store(payload: HandoverPayload) -> String {
+    let mut map = HANDOVER_CODES.lock();
     let now = Instant::now();
     map.retain(|_, entry| entry.expires_at > now);
 
@@ -54,7 +54,7 @@ pub fn store(payload: HandoffPayload) -> String {
     };
     map.insert(
         code.clone(),
-        HandoffEntry {
+        HandoverEntry {
             agent_kind: payload.agent_kind,
             profile_id: payload.profile_id,
             session_id: payload.session_id,
@@ -65,12 +65,12 @@ pub fn store(payload: HandoffPayload) -> String {
     code
 }
 
-pub fn consume(code: &str) -> Option<HandoffPayload> {
-    let mut map = HANDOFF_CODES.lock();
+pub fn consume(code: &str) -> Option<HandoverPayload> {
+    let mut map = HANDOVER_CODES.lock();
     let now = Instant::now();
     map.retain(|_, entry| entry.expires_at > now);
     let entry = map.remove(&code.to_uppercase())?;
-    Some(HandoffPayload {
+    Some(HandoverPayload {
         agent_kind: entry.agent_kind,
         profile_id: entry.profile_id,
         session_id: entry.session_id,
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn store_and_consume_roundtrip() {
-        let code = store(HandoffPayload {
+        let code = store(HandoverPayload {
             agent_kind: "claude".into(),
             profile_id: Some("deepseek".into()),
             session_id: "sess-1".into(),
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn consume_is_one_shot() {
-        let code = store(HandoffPayload {
+        let code = store(HandoverPayload {
             agent_kind: "gemini".into(),
             profile_id: None,
             session_id: "sess-2".into(),
