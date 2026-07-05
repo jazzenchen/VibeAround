@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
+use super::bridge_url;
 use super::catalog;
 use super::codex_metadata::{self, CodexModelCatalogSpec};
 use super::connections::ProfileBridgeModelRoute;
@@ -207,12 +208,11 @@ fn render_claude_bridge_profile(
     _launch_id: &str,
     settings: BridgeLaunchSettings,
 ) -> RenderedProfile {
-    let bridge_base_url = format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}",
+    let bridge_base_url = bridge_url::local_api_base(
         config::DEFAULT_PORT,
-        profile.id,
-        settings.scope,
-        settings.target_api_type
+        &profile.id,
+        &settings.scope,
+        &settings.target_api_type,
     );
     RenderedProfile {
         env: claude_env(settings.api_key.clone(), bridge_base_url, &settings),
@@ -274,12 +274,11 @@ fn render_codex_bridge_profile(
     _launch_id: &str,
     settings: BridgeLaunchSettings,
 ) -> RenderedProfile {
-    let bridge_base_url = format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}/v1",
+    let bridge_base_url = bridge_url::local_api_v1_base(
         config::DEFAULT_PORT,
-        profile.id,
-        settings.scope,
-        settings.target_api_type
+        &profile.id,
+        &settings.scope,
+        &settings.target_api_type,
     );
     let provider_key = format!("model_providers.{}", profile.provider);
     let mut command_args = Vec::new();
@@ -465,12 +464,11 @@ fn render_gemini_bridge_profile(
     profile: &ProfileDef,
     settings: BridgeLaunchSettings,
 ) -> RenderedProfile {
-    let bridge_base_url = format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}",
+    let bridge_base_url = bridge_url::local_api_base(
         config::DEFAULT_PORT,
-        profile.id,
-        settings.scope,
-        settings.target_api_type
+        &profile.id,
+        &settings.scope,
+        &settings.target_api_type,
     );
     RenderedProfile {
         env: vec![
@@ -541,13 +539,12 @@ fn opencode_bridge_base_url(
     } else {
         "/v1"
     };
-    format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}{}",
+    bridge_url::local_api_base_with_suffix(
         config::DEFAULT_PORT,
-        profile.id,
-        settings.scope,
-        settings.target_api_type,
-        suffix
+        &profile.id,
+        &settings.scope,
+        &settings.target_api_type,
+        suffix,
     )
 }
 

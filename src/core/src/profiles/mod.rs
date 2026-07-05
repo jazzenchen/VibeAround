@@ -7,6 +7,7 @@
 //! profiles.
 
 mod bridge_launch;
+pub mod bridge_url;
 pub mod catalog;
 pub mod codex_metadata;
 pub mod connections;

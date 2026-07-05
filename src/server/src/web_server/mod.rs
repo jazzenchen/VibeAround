@@ -27,6 +27,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use common::auth::AuthToken;
 use common::channels::{ChannelManager, WebChannelManager};
+use common::profiles::bridge_url;
 use common::pty::{PtySessionManager, Registry};
 use common::search::SearchToolRuntime;
 use common::tunnels::TunnelManager;
@@ -139,8 +140,8 @@ async fn spa_fallback_handler(
 
 fn is_dashboard_api_path(path: &str) -> bool {
     [
-        "/va/local-api/",
-        "/local-api/",
+        bridge_url::LOCAL_API_PUBLIC_PATH_PREFIX,
+        bridge_url::LOCAL_API_ROUTE_PATH_PREFIX,
         "/va/local-agent/",
         "/local-agent/",
         "/va/bridge/",
@@ -431,23 +432,23 @@ pub async fn run_web_server(
         // Stable local API base for configured clients. `scope` selects the
         // route/profile preference; it is not a bridge session identifier.
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/v1/responses",
+            bridge_url::LOCAL_API_RESPONSES_ROUTE,
             post(api_bridge::local_responses_handler),
         )
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/v1/chat/completions",
+            bridge_url::LOCAL_API_CHAT_COMPLETIONS_ROUTE,
             post(api_bridge::local_chat_completions_handler),
         )
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/v1/messages",
+            bridge_url::LOCAL_API_MESSAGES_ROUTE,
             post(api_bridge::local_messages_handler),
         )
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/v1/models",
+            bridge_url::LOCAL_API_MODELS_ROUTE,
             get(api_bridge::local_models_handler),
         )
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/{version}/models/{model_action}",
+            bridge_url::LOCAL_API_GEMINI_MODELS_ACTION_ROUTE,
             post(api_bridge::local_gemini_generate_content_handler),
         )
         .route_layer(axum::middleware::from_fn(require_local_bridge))
