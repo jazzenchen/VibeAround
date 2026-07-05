@@ -77,6 +77,7 @@ interface SettingsDialogProps {
 export type SettingsDialogTarget = {
   tab: string;
   pluginId?: string | null;
+  pluginStatusFilter?: PluginInstallStatusFilter | null;
   nonce?: number;
 };
 
@@ -1496,6 +1497,12 @@ export function SettingsDialog({
                     installingPlugins={installingManagedPlugins}
                     checkingUpdates={checkingPluginUpdates}
                     updatesChecked={pluginUpdatesChecked}
+                    targetStatusFilter={
+                      initialTarget?.tab === "plugins"
+                        ? initialTarget.pluginStatusFilter
+                        : null
+                    }
+                    targetNonce={initialTarget?.nonce}
                     onInstallPlugin={installManagedPlugin}
                     onConfigureSearch={() => changeSettingsTab("web-search")}
                     onCheckUpdates={() => void refreshPluginInventory()}
@@ -1766,6 +1773,8 @@ function PluginsSettingsPanel({
   installingPlugins,
   checkingUpdates,
   updatesChecked,
+  targetStatusFilter,
+  targetNonce,
   onInstallPlugin,
   onConfigureSearch,
   onCheckUpdates,
@@ -1775,6 +1784,8 @@ function PluginsSettingsPanel({
   installingPlugins: Set<string>;
   checkingUpdates: boolean;
   updatesChecked: boolean;
+  targetStatusFilter?: PluginInstallStatusFilter | null;
+  targetNonce?: number;
   onInstallPlugin: (category: ManagedPluginCategory, id: string) => void;
   onConfigureSearch: () => void;
   onCheckUpdates: () => void;
@@ -1785,6 +1796,12 @@ function PluginsSettingsPanel({
     useState<PluginInstallStatusFilter>("all");
   const [categoryFilter, setCategoryFilter] =
     useState<PluginCategoryFilter>("all");
+
+  useEffect(() => {
+    if (!targetStatusFilter) return;
+    setStatusFilter(targetStatusFilter);
+    setCategoryFilter("all");
+  }, [targetStatusFilter, targetNonce]);
 
   const items = plugins;
 
