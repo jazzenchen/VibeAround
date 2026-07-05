@@ -77,8 +77,10 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
   },
 
   // --- Channel plugin config: passed to plugins verbatim ---
+  // Per-channel fields: see guides/channels/. Every channel also accepts
+  // an optional verbose object (both flags default to false).
   "channels": {
-    "telegram": { "bot_token": "…" },
+    "telegram": { "bot_token": "…", "verbose": { "show_thinking": true, "show_tool_use": true } },
     "feishu":   { "app_id": "…", "app_secret": "…" }
   },
 

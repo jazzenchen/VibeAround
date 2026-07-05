@@ -39,7 +39,7 @@ Channels are plugins (separate npm packages); the web chat and TUI are built-in 
 | Web chat | `web` | Built-in (dashboard) | — |
 | TUI chat | `tui` | Built-in (`vibearound tui`) | — |
 
-Per-platform capabilities (attachments, card layouts, group behavior) are documented in each plugin's own README; configuration lives under `channels.<kind>` in `settings.json` — see [Connect channels](../guides/connect-channels.md).
+Per-channel setup pages (platform steps + verified config blocks) live under [guides/channels/](../guides/connect-channels.md#supported-channels); configuration lives under `channels.<kind>` in `settings.json`.
 
 ## Model providers (profile catalog)
 

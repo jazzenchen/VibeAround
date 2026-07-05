@@ -49,7 +49,21 @@ Users can still `/switch` per thread; these are just starting values.
 
 ## Supported channels
 
-Kind ids and repository links for all ten channels are in the [supported matrix](../product/supported-matrix.md#im-channels) — each repository's README covers the platform side:
+Every channel has a dedicated setup page with platform-side steps and a code-verified config block:
+
+| Channel | Setup page |
+|---|---|
+| Telegram | [channels/telegram](channels/telegram.md) |
+| Feishu / Lark | [channels/feishu](channels/feishu.md) — permission JSON, long-connection subscriptions |
+| Slack | [channels/slack](channels/slack.md) — one-paste app manifest, Socket Mode |
+| Discord | [channels/discord](channels/discord.md) |
+| DingTalk | [channels/dingtalk](channels/dingtalk.md) |
+| WeCom | [channels/wecom](channels/wecom.md) |
+| QQ Bot | [channels/qqbot](channels/qqbot.md) |
+| WeChat | [channels/wechat](channels/wechat.md) — QR login |
+| WhatsApp | [channels/whatsapp](channels/whatsapp.md) — QR login |
+
+Kind ids and repository links are also in the [supported matrix](../product/supported-matrix.md#im-channels). Each plugin README additionally documents:
 
 - how to create the bot and obtain credentials,
 - required platform permissions/scopes,
