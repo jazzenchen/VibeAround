@@ -167,7 +167,7 @@ Two "profile" concepts meet here and must not be confused: a **provider profile*
 └── workspace-threads.jsonl # + workspace/attachment event logs
 ```
 
-Default port: `12358`. Dashboard: `http://127.0.0.1:12358/` (token required).
+Default port: `12358`. Dashboard: `http://127.0.0.1:12358/va/` (token required; the root path redirects to `/va/`).
 
 ---
 

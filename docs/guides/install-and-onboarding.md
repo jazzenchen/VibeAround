@@ -41,7 +41,7 @@ Start the server:
 va serve
 ```
 
-The daemon binds `127.0.0.1:12358`, writes its auth token to `~/.vibearound/auth.json`, and serves the dashboard at `http://127.0.0.1:12358/` (open it with the token — `va status` shows the URL). Configuration is `~/.vibearound/settings.json`, created with defaults on first run; there is no GUI onboarding in this mode, so channels and profiles are configured by editing settings (see [Reference](../reference/configuration.md)) or through the dashboard.
+The daemon binds `127.0.0.1:12358`, writes its auth token to `~/.vibearound/auth.json`, and serves the dashboard at `http://127.0.0.1:12358/va/` (open it with the token — `va status` shows the URL). Configuration is `~/.vibearound/settings.json`, created with defaults on first run; there is no GUI onboarding in this mode, so channels and profiles are configured by editing settings (see [Reference](../reference/configuration.md)) or through the dashboard.
 
 Useful first commands:
 

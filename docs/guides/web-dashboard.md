@@ -1,6 +1,6 @@
 # Web dashboard guide
 
-The dashboard is the browser surface the daemon serves at `http://127.0.0.1:12358/` — a terminal, a chat, live previews, and runtime management in one SPA. Locally it opens pre-authenticated from the desktop app; remotely it works through a tunnel with pairing ([Tunnels and remote access](tunnels-and-remote-access.md)).
+The dashboard is the browser surface the daemon serves at `http://127.0.0.1:12358/va/` (the root path redirects there) — a terminal, a chat, live previews, and runtime management in one SPA. Locally it opens pre-authenticated from the desktop app; remotely it works through a tunnel with pairing ([Tunnels and remote access](tunnels-and-remote-access.md)).
 
 ## Web Chat
 
