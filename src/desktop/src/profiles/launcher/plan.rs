@@ -119,15 +119,15 @@ impl<'a> LaunchPlanBuilder<'a> {
                 env: Vec::new(),
                 command: direct_launch_command_for_agent(
                     agent_id,
-                    &agent,
+                    agent,
                     agent.launch_command_for_current_platform(),
                 )?,
                 args: terminal_launch_args_for_agent(agent_id),
                 cleanup_paths: Vec::new(),
                 window_label: format!("{} (direct)", agent.display_name),
                 workspace,
-                macos_app_probe: macos_app_probe_for_direct_agent(agent_id, &agent),
-                windows_process_probe: windows_process_probe_for_direct_agent(&agent),
+                macos_app_probe: macos_app_probe_for_direct_agent(agent_id, agent),
+                windows_process_probe: windows_process_probe_for_direct_agent(agent),
                 windows_executable_path: windows_executable_path_for_agent(agent_id),
             });
         };
@@ -137,13 +137,13 @@ impl<'a> LaunchPlanBuilder<'a> {
         args.extend(resume_args);
         Ok(LaunchPlan {
             env: Vec::new(),
-            command: direct_launch_command_for_agent(agent_id, &agent, &command)?,
+            command: direct_launch_command_for_agent(agent_id, agent, &command)?,
             args,
             cleanup_paths: Vec::new(),
             window_label: format!("{} (resume)", agent.display_name),
             workspace,
-            macos_app_probe: macos_app_probe_for_direct_agent(agent_id, &agent),
-            windows_process_probe: windows_process_probe_for_direct_agent(&agent),
+            macos_app_probe: macos_app_probe_for_direct_agent(agent_id, agent),
+            windows_process_probe: windows_process_probe_for_direct_agent(agent),
             windows_executable_path: windows_executable_path_for_agent(agent_id),
         })
     }
@@ -172,15 +172,15 @@ impl<'a> LaunchPlanBuilder<'a> {
                 env,
                 command: direct_launch_command_for_agent(
                     agent_id,
-                    &agent,
+                    agent,
                     agent.launch_command_for_current_platform(),
                 )?,
                 args,
                 cleanup_paths: Vec::new(),
                 window_label: profile.label.clone(),
                 workspace,
-                macos_app_probe: macos_app_probe_for_direct_agent(agent_id, &agent),
-                windows_process_probe: windows_process_probe_for_direct_agent(&agent),
+                macos_app_probe: macos_app_probe_for_direct_agent(agent_id, agent),
+                windows_process_probe: windows_process_probe_for_direct_agent(agent),
                 windows_executable_path: windows_executable_path_for_agent(agent_id),
             });
         }
@@ -194,15 +194,15 @@ impl<'a> LaunchPlanBuilder<'a> {
                 env,
                 command: direct_launch_command_for_agent(
                     agent_id,
-                    &agent,
+                    agent,
                     agent.launch_command_for_current_platform(),
                 )?,
                 args: Vec::new(),
                 cleanup_paths: Vec::new(),
                 window_label: profile.label.clone(),
                 workspace,
-                macos_app_probe: macos_app_probe_for_direct_agent(agent_id, &agent),
-                windows_process_probe: windows_process_probe_for_direct_agent(&agent),
+                macos_app_probe: macos_app_probe_for_direct_agent(agent_id, agent),
+                windows_process_probe: windows_process_probe_for_direct_agent(agent),
                 windows_executable_path: windows_executable_path_for_agent(agent_id),
             });
         }

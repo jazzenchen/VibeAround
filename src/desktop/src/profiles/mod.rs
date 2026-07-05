@@ -228,10 +228,7 @@ pub async fn launcher_agent_executable_resolution(
             .is_some_and(|key| key == candidate_key(&candidate));
         candidate_views.push(candidate_view(&agent_id, candidate, selected));
     }
-    let selected = match selected {
-        Some(candidate) => Some(candidate_view(&agent_id, candidate, true)),
-        None => None,
-    };
+    let selected = selected.map(|candidate| candidate_view(&agent_id, candidate, true));
 
     Ok(AgentExecutableResolution {
         agent_id: agent_id.clone(),

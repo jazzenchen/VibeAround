@@ -7,6 +7,7 @@
 //!   1. adding a variant to `TerminalChoice`,
 //!   2. teaching `detect_installed` how to find it, and
 //!   3. adding an OS/terminal executor under `launcher/`.
+//!
 //! No catalog changes; no schema migration.
 
 use std::path::{Path, PathBuf};
@@ -335,9 +336,9 @@ pub fn launch_home_dir() -> anyhow::Result<PathBuf> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        return std::env::var_os("HOME")
+        std::env::var_os("HOME")
             .map(PathBuf::from)
-            .ok_or_else(|| anyhow::anyhow!("could not determine home directory"));
+            .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))
     }
 }
 
