@@ -12,7 +12,7 @@ use tokio::sync::{broadcast, Mutex};
 
 use crate::agent::launch::normalize_launch_profile_id;
 use crate::agent_state;
-use crate::routing::RouteKey;
+use crate::routing::{channel_traits, DefaultWorkspaceKind, RouteKey};
 
 use super::registry::{WorkspaceId, WorkspaceProjection, WorkspaceRecord, GENERAL_WORKSPACE_ID};
 use super::store::{WorkspaceEvent, WorkspaceEventStore};
@@ -1005,10 +1005,11 @@ impl WorkspaceThreadManager {
         route: &RouteKey,
         workspace_path: PathBuf,
     ) -> anyhow::Result<WorkspaceRecord> {
-        if route.channel_kind == "web" {
-            self.ensure_general_workspace().await
-        } else {
-            self.ensure_workspace_for_cwd(workspace_path).await
+        match channel_traits(&route.channel_kind).default_workspace {
+            DefaultWorkspaceKind::General => self.ensure_general_workspace().await,
+            DefaultWorkspaceKind::ChannelDefault => {
+                self.ensure_workspace_for_cwd(workspace_path).await
+            }
         }
     }
 
@@ -1243,13 +1244,16 @@ fn launch_setting_profile_for_agent(agent_id: &str) -> Option<String> {
 }
 
 fn default_route_binding_and_workspace(route: &RouteKey) -> (HostBinding, PathBuf) {
-    if route.channel_kind == "web" {
-        let cfg = crate::config::ensure_loaded();
-        let host_binding = default_host_binding();
-        return (host_binding, cfg.resolve_workspace(""));
+    match channel_traits(&route.channel_kind).default_workspace {
+        DefaultWorkspaceKind::General => {
+            let cfg = crate::config::ensure_loaded();
+            let host_binding = default_host_binding();
+            (host_binding, cfg.resolve_workspace(""))
+        }
+        DefaultWorkspaceKind::ChannelDefault => {
+            default_channel_binding_and_workspace(&route.channel_kind)
+        }
     }
-
-    default_channel_binding_and_workspace(&route.channel_kind)
 }
 
 fn default_channel_binding_and_workspace(channel_kind: &str) -> (HostBinding, PathBuf) {
@@ -1433,7 +1437,7 @@ fn runtime_has_started_host(state: &ThreadRuntimeState) -> bool {
 }
 
 fn route_can_rehydrate_runtime(route: &RouteKey) -> bool {
-    matches!(route.channel_kind.as_str(), "web" | "tui")
+    channel_traits(&route.channel_kind).rehydratable_runtime
 }
 
 fn is_legacy_channel_default_route(route: &RouteKey) -> bool {

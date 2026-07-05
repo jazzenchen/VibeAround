@@ -16,7 +16,7 @@ use agent_client_protocol::schema::v1 as acp;
 use tokio::sync::{mpsc, Mutex};
 
 use crate::agent::AgentClientHandler;
-use crate::routing::RouteKey;
+use crate::routing::{channel_traits, RouteKey};
 use crate::workspace::registry::WorkspaceId;
 use crate::workspace::threads::store::{HostBinding, WorkspaceThreadId};
 use crate::workspace::threads::{ThreadAgent, ThreadAgentId};
@@ -76,11 +76,11 @@ impl ChannelBridgeHandler {
         }
     }
 
-    async fn attached_web_routes(&self) -> Vec<RouteKey> {
+    async fn attached_rich_agent_event_routes(&self) -> Vec<RouteKey> {
         self.attached_routes()
             .await
             .into_iter()
-            .filter(|route| route.channel_kind == "web")
+            .filter(|route| channel_traits(&route.channel_kind).rich_agent_events)
             .collect()
     }
 
@@ -231,7 +231,7 @@ impl ChannelBridgeHandler {
             format!("Host assignment:\n\n{}", task.trim())
         };
         let payload = synthetic_user_message_payload(&format!("subagent:{}", agent.id), text);
-        for route in self.attached_web_routes().await {
+        for route in self.attached_rich_agent_event_routes().await {
             self.plugin_host
                 .send_output(ChannelOutput::SubagentAcp {
                     route,
@@ -268,7 +268,7 @@ impl ChannelBridgeHandler {
                 };
                 for route in routes
                     .into_iter()
-                    .filter(|route| route.channel_kind == "web")
+                    .filter(|route| channel_traits(&route.channel_kind).rich_agent_events)
                 {
                     plugin_host
                         .send_output(ChannelOutput::SubagentStatus {
@@ -283,7 +283,7 @@ impl ChannelBridgeHandler {
     }
 
     async fn send_system_text(&self, text: &str) {
-        for route in self.attached_web_routes().await {
+        for route in self.attached_rich_agent_event_routes().await {
             self.plugin_host
                 .send_output(ChannelOutput::SystemText {
                     route,

@@ -33,7 +33,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::proc_log;
 use crate::process::registry::ProcessKind;
-use crate::routing::ChannelKind;
+use crate::routing::{channel_traits, ChannelKind};
 
 use super::monitor::ChannelMonitor;
 use super::outbox::ChannelOutbox;
@@ -128,7 +128,9 @@ impl PluginHost {
         let route = output.route_key().clone();
         let runtime = self.runtime_for_channel(&route.channel_kind);
 
-        if matches!(&runtime, Some(PluginRuntime::WebSocket(_))) || route.channel_kind == "web" {
+        if matches!(&runtime, Some(PluginRuntime::WebSocket(_)))
+            || !channel_traits(&route.channel_kind).durable_outbox
+        {
             self.send_direct(output, route, runtime).await;
             return;
         }
@@ -529,6 +531,21 @@ mod tests {
         .await;
 
         assert_eq!(host.outbox_pending_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn presentation_channels_do_not_queue_outputs_without_runtime() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+
+        host.send_output(ChannelOutput::SystemText {
+            route: RouteKey::new("tui", "chat-a"),
+            text: "hello".to_string(),
+            reply_to: None,
+        })
+        .await;
+
+        assert_eq!(host.outbox_pending_count(), 0);
     }
 
     #[test]

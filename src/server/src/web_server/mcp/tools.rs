@@ -463,7 +463,8 @@ pub(super) async fn mcp_initialize_subagents(
         );
     }
 
-    notify_web_multi_agent_turn(state, &thread_id, &initialized.turn, &initialized.agents).await;
+    notify_presentation_multi_agent_turn(state, &thread_id, &initialized.turn, &initialized.agents)
+        .await;
     let start_errors = start_initialized_subagents(state, &thread_id, &initialized.agents).await;
 
     let body = serde_json::json!({
@@ -737,13 +738,13 @@ fn ensure_git_head(repo_root: &Path) -> anyhow::Result<String> {
     git_output(repo_root, &["rev-parse", "--verify", "HEAD"])
 }
 
-async fn notify_web_multi_agent_turn(
+async fn notify_presentation_multi_agent_turn(
     state: &AppState,
     thread_id: &common::workspace::threads::WorkspaceThreadId,
     turn: &common::workspace::threads::MultiAgentTurn,
     agents: &[common::workspace::threads::ThreadAgent],
 ) {
-    for route in web_routes_for_thread(state, thread_id, "multi-agent turn").await {
+    for route in presentation_routes_for_thread(state, thread_id, "multi-agent turn").await {
         state
             .channel_hub
             .send_output(common::channels::ChannelOutput::MultiAgentTurn {
@@ -768,8 +769,9 @@ async fn start_initialized_subagents(
         }
     };
 
-    let web_routes = web_routes_for_thread(state, thread_id, "subagent launch").await;
-    let launch_route = web_routes
+    let presentation_routes =
+        presentation_routes_for_thread(state, thread_id, "subagent launch").await;
+    let launch_route = presentation_routes
         .first()
         .cloned()
         .unwrap_or_else(|| common::routing::RouteKey::new("web", thread_id.as_str()));
@@ -779,7 +781,8 @@ async fn start_initialized_subagents(
     let thread_for_status = thread_id.clone();
     tokio::spawn(async move {
         while let Some(agent) = status_rx.recv().await {
-            notify_web_subagent_status(&state_for_status, &thread_for_status, &agent).await;
+            notify_presentation_subagent_status(&state_for_status, &thread_for_status, &agent)
+                .await;
         }
     });
 
@@ -814,12 +817,12 @@ async fn start_initialized_subagents(
     errors
 }
 
-async fn notify_web_subagent_status(
+async fn notify_presentation_subagent_status(
     state: &AppState,
     thread_id: &common::workspace::threads::WorkspaceThreadId,
     agent: &common::workspace::threads::ThreadAgent,
 ) {
-    for route in web_routes_for_thread(state, thread_id, "subagent status").await {
+    for route in presentation_routes_for_thread(state, thread_id, "subagent status").await {
         state
             .channel_hub
             .send_output(common::channels::ChannelOutput::SubagentStatus {
@@ -830,7 +833,7 @@ async fn notify_web_subagent_status(
     }
 }
 
-async fn web_routes_for_thread(
+async fn presentation_routes_for_thread(
     state: &AppState,
     thread_id: &common::workspace::threads::WorkspaceThreadId,
     purpose: &'static str,
@@ -843,14 +846,14 @@ async fn web_routes_for_thread(
     {
         Ok(routes) => routes
             .into_iter()
-            .filter(|route| route.channel_kind == "web")
+            .filter(|route| common::routing::channel_traits(&route.channel_kind).rich_agent_events)
             .collect(),
         Err(error) => {
             tracing::warn!(
                 thread_id = %thread_id,
                 error = %error,
                 purpose,
-                "failed to resolve web routes for thread"
+                "failed to resolve presentation routes for thread"
             );
             Vec::new()
         }

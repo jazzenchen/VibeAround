@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::{sleep, Duration};
 
 use crate::agent::{Agent, AgentClientHandler, StartupSession};
-use crate::routing::RouteKey;
+use crate::routing::{channel_traits, RouteKey};
 use crate::workspace::registry::WorkspaceId;
 
 use super::store::{
@@ -1206,7 +1206,7 @@ fn host_startup_session(
 }
 
 pub(crate) fn route_allows_startup_replay(route: &RouteKey) -> bool {
-    matches!(route.channel_kind.as_str(), "web" | "tui")
+    channel_traits(&route.channel_kind).startup_replay
 }
 
 fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
