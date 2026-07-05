@@ -252,8 +252,14 @@ impl WorkspaceThreadManager {
             .compact()
             .await
             .context("compact route attachments")?;
+        self.remove_idle_route_lock(route);
         self.notify_change();
         Ok(())
+    }
+
+    fn remove_idle_route_lock(&self, route: &RouteKey) {
+        self.route_locks
+            .remove_if(route, |_, lock| Arc::strong_count(lock) == 1);
     }
 
     pub async fn close_thread(
@@ -1715,14 +1721,33 @@ mod tests {
 
         let runtime = manager.resolve_route_runtime(&route).await.unwrap();
         let thread_id = runtime.state().await.thread_id;
+        assert!(manager.route_locks.contains_key(&route));
 
         manager.detach_route(&route).await.unwrap();
 
         assert!(manager.current_attachment(&route).await.unwrap().is_none());
+        assert!(!manager.route_locks.contains_key(&route));
         assert_eq!(
             manager.thread(&thread_id).await.unwrap().unwrap().status,
             crate::workspace::threads::store::ThreadStatus::Open
         );
+    }
+
+    #[tokio::test]
+    async fn route_lock_cleanup_keeps_in_use_lock() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let route = RouteKey::new("web", "chat-a");
+
+        let route_lock = manager.route_lock(&route);
+        manager.remove_idle_route_lock(&route);
+
+        assert!(manager.route_locks.contains_key(&route));
+        drop(route_lock);
+
+        manager.remove_idle_route_lock(&route);
+
+        assert!(!manager.route_locks.contains_key(&route));
     }
 
     #[tokio::test]
