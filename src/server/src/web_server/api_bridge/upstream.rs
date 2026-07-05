@@ -248,6 +248,7 @@ pub(super) fn request_stream(protocol: BridgeProtocol, request: &Value) -> bool 
     }
 }
 
+#[allow(clippy::result_large_err)]
 pub(super) fn apply_upstream_auth(
     request: reqwest::RequestBuilder,
     protocol: BridgeProtocol,

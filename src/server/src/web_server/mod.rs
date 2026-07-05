@@ -179,6 +179,7 @@ fn clear_inherit_flag(_: &tokio::net::TcpListener) -> std::io::Result<()> {
 /// Runs the Axum server (static files + WebSocket + session API). The listener is bound to
 /// 127.0.0.1 by ServerDaemon before startup returns.
 /// Call from desktop via tauri::async_runtime::spawn, or run standalone via the server binary.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_web_server(
     listener: tokio::net::TcpListener,
     dist_path: PathBuf,

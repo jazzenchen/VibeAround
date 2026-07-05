@@ -196,6 +196,7 @@ pub async fn local_gemini_generate_content_handler(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_post_bridge_request<F>(
     state: AppState,
     profile_id: String,

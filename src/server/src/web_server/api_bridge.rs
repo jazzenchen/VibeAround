@@ -54,6 +54,7 @@ use upstream::{
 use super::bridge_recording::{ActiveBridgeRecord, BridgeRecordMetadata};
 use super::AppState;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn bridge_handler(
     state: AppState,
     profile_id: String,
@@ -674,6 +675,7 @@ async fn translated_web_search_fallback_response(
     )
 }
 
+#[allow(clippy::result_large_err)]
 fn encode_fallback_upstream_request(
     upstream: &upstream::UpstreamEndpoint,
     client_protocol: BridgeProtocol,
@@ -832,6 +834,7 @@ fn retry_context(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bridge_record_metadata(
     profile_id: &str,
     route_scope: Option<&String>,
@@ -871,6 +874,7 @@ fn upstream_http_client(state: &AppState, profile: &ProfileDef) -> Result<reqwes
     proxy_http_client(&cfg.proxy)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_upstream_request(
     state: &AppState,
     upstream: &upstream::UpstreamEndpoint,
