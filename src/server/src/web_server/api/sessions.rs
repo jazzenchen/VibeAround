@@ -361,7 +361,7 @@ pub async fn create_session_handler(
     }
 
     let created = match (body.profile_id.as_deref(), body.launch_target.as_deref()) {
-        (Some(profile_id), Some(launch_target)) => {
+        (Some(_), Some(_)) => {
             if body.tool.is_some() {
                 return Err((
                     StatusCode::BAD_REQUEST,
@@ -374,77 +374,20 @@ pub async fn create_session_handler(
                     "profile sessions cannot attach tmux".to_string(),
                 ));
             }
-            let profile = common::profiles::schema::load(profile_id)
-                .map(common::profiles::normalize_legacy_profile_and_persist)
-                .ok_or_else(|| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        format!("profile '{}' not found", profile_id),
-                    )
-                })?;
-            let route =
-                common::profiles::connections::resolve_profile_agent_route(&profile, launch_target)
-                    .ok_or_else(|| {
-                        (
-                            StatusCode::BAD_REQUEST,
-                            format!("profile '{}' cannot launch '{}'", profile.id, launch_target),
-                        )
-                    })?;
-            let launch_id = uuid::Uuid::new_v4().to_string();
-            let rendered = common::profiles::runtime::render_for_agent_route(
-                &profile,
-                launch_target,
-                &launch_id,
-                &route,
-            )
-            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-            let command_args = rendered.command_args.clone();
-            let mut env = common::profiles::runtime::materialize_env(&profile.id, rendered)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            if route.bridge_target_api_type.is_none() {
-                common::profiles::runtime::append_settings_proxy_env(&profile, &mut env)
-                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            }
-            env.push(("VIBEAROUND_LAUNCH_ID".to_string(), launch_id));
-            env.push(("VIBEAROUND_PROFILE_ID".to_string(), profile.id.clone()));
-            env.push((
-                "VIBEAROUND_LAUNCH_TARGET".to_string(),
-                launch_target.to_string(),
-            ));
-            let agent_id = common::profiles::runtime::agent_id_for(launch_target)
-                .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-            let agent = common::resources::agent_by_id(agent_id).ok_or_else(|| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("agent '{}' not found", agent_id),
-                )
+            let plan = super::launcher::build_launch_plan(super::launcher::LaunchPlanBody {
+                agent_id: None,
+                profile_id: body.profile_id.clone(),
+                launch_target: body.launch_target.clone(),
+                session_id: None,
+                terminal_id: Some(super::launcher::WEB_PTY_TERMINAL_ID.to_string()),
             })?;
-            let pty_tool = PtyTool::from_agent_id(agent_id).ok_or_else(|| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("agent '{}' cannot be launched in a PTY", agent_id),
-                )
-            })?;
-            state
-                .pty_manager
-                .create_profile_session(
-                    pty_tool,
-                    command_with_args(
-                        &common::agent_detection::resolve_agent_command(
-                            agent_id,
-                            &agent.pty.command,
-                        ),
-                        &command_args,
-                    ),
-                    env,
-                    profile.id.clone(),
-                    profile.label.clone(),
-                    launch_target.to_string(),
-                    body.project_path.clone(),
-                    body.theme.clone(),
-                    initial_size,
-                )
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            create_session_from_launch_plan(
+                &state,
+                plan,
+                body.project_path.clone(),
+                body.theme.clone(),
+                initial_size,
+            )?
         }
         (None, None) => {
             let tool = body.tool.ok_or_else(|| {
@@ -459,16 +402,39 @@ pub async fn create_session_handler(
                     "tmux sessions must use the generic tool".to_string(),
                 ));
             }
-            state
-                .pty_manager
-                .create_session(
-                    tool,
+            if tool == PtyTool::Generic || body.tmux_session.is_some() {
+                state
+                    .pty_manager
+                    .create_session(
+                        tool,
+                        body.project_path.clone(),
+                        body.tmux_session.clone(),
+                        body.theme.clone(),
+                        initial_size,
+                    )
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            } else {
+                let agent_id = tool.agent_id().ok_or_else(|| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        "direct agent sessions require a coding-agent tool".to_string(),
+                    )
+                })?;
+                let plan = super::launcher::build_launch_plan(super::launcher::LaunchPlanBody {
+                    agent_id: Some(agent_id.to_string()),
+                    profile_id: None,
+                    launch_target: None,
+                    session_id: None,
+                    terminal_id: Some(super::launcher::WEB_PTY_TERMINAL_ID.to_string()),
+                })?;
+                create_session_from_launch_plan(
+                    &state,
+                    plan,
                     body.project_path.clone(),
-                    body.tmux_session.clone(),
                     body.theme.clone(),
                     initial_size,
-                )
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+                )?
+            }
         }
         _ => {
             return Err((
@@ -478,15 +444,7 @@ pub async fn create_session_handler(
         }
     };
 
-    Ok(Json(crate::api_types::CreateSessionResponse {
-        session_id: created.session_id,
-        tool: created.tool,
-        created_at: created.created_at,
-        project_path: created.project_path,
-        profile_id: created.profile_id,
-        profile_label: created.profile_label,
-        launch_target: created.launch_target,
-    }))
+    Ok(Json(create_session_response(created)))
 }
 
 fn create_resume_session(
@@ -544,7 +502,25 @@ fn create_resume_session(
         profile_id: body.profile_id.clone(),
         launch_target: body.launch_target.clone(),
         session_id: Some(resume_session_id),
+        terminal_id: Some(super::launcher::WEB_PTY_TERMINAL_ID.to_string()),
     })?;
+    let created = create_session_from_launch_plan(
+        &state,
+        plan,
+        body.project_path.clone(),
+        body.theme.clone(),
+        initial_size,
+    )?;
+    Ok(create_session_response(created))
+}
+
+fn create_session_from_launch_plan(
+    state: &AppState,
+    plan: crate::api_types::LaunchPlanResponse,
+    project_path: Option<String>,
+    theme: Option<String>,
+    initial_size: Option<(u16, u16)>,
+) -> Result<common::pty::PtySessionCreated, (StatusCode, String)> {
     let pty_tool = PtyTool::from_agent_id(&plan.agent_id).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -557,7 +533,7 @@ fn create_resume_session(
         .into_iter()
         .map(|item| (item.key, item.value))
         .collect::<Vec<_>>();
-    let project_path = body.project_path.clone().or(Some(plan.cwd));
+    let project_path = project_path.or(Some(plan.cwd));
     let created = state
         .pty_manager
         .create_command_session(
@@ -568,12 +544,18 @@ fn create_resume_session(
             Some(plan.display.title),
             Some(plan.launch_target.clone()),
             project_path,
-            body.theme.clone(),
+            theme,
             initial_size,
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(crate::api_types::CreateSessionResponse {
+    Ok(created)
+}
+
+fn create_session_response(
+    created: common::pty::PtySessionCreated,
+) -> crate::api_types::CreateSessionResponse {
+    crate::api_types::CreateSessionResponse {
         session_id: created.session_id,
         tool: created.tool,
         created_at: created.created_at,
@@ -581,7 +563,7 @@ fn create_resume_session(
         profile_id: created.profile_id,
         profile_label: created.profile_label,
         launch_target: created.launch_target,
-    })
+    }
 }
 
 /// DELETE /api/sessions/:session_id -- kill and remove a session.
