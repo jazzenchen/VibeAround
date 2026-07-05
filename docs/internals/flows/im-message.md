@@ -32,7 +32,7 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► sh
 **5. Command parse.** The text is checked against the slash-command grammar (`/new`, `/close`, `/switch`, `/pickup`, `/status`, resource commands, `/va` prefix forms). Commands are executed against the workspace-thread layer and answered with system texts — the flow ends here for them.
 → `src/core/src/channels/prompt/handler.rs` (`parse_thread_command`, `handle_command`)
 
-**6. Route → thread runtime.** `resolve_route_runtime` looks up the route's attachment: attached open thread → its runtime; no attachment → create a default workspace (chat-derived cwd), persist a new thread event, attach the route. A per-route lock makes this idempotent under concurrency.
+**6. Route → thread runtime.** `resolve_route_runtime` looks up the route's attachment: attached open thread → its runtime; no attachment → create a default workspace, persist a new thread event, attach the route. The default workspace for an IM route is `<default_workspace>/im/<channel_kind>` (path separators in the kind sanitized to `_`); the host agent/profile come from `remote.channels.<kind>` defaults, falling back to the global default. A per-route lock makes this idempotent under concurrency.
 → `src/core/src/workspace/manager.rs` (`resolve_route_runtime`)
 
 **7. Ensure agent + session.** The thread runtime spawns its host agent if absent: profile env materialized, `VIBEAROUND_*` context env injected, process registered with the supervisor (restart policy `Never`), ACP `initialize` exchanged. Then it ensures a CLI session — resuming the thread's recorded session id when there is one.

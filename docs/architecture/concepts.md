@@ -20,7 +20,7 @@ Route (web:ws_wt_9f3e)   ──attached to──►   │
 
 ## Workspace
 
-A workspace is a directory on your machine that agents work in — typically a project checkout. Workspaces are registered explicitly (desktop UI, `va workspace add`, or automatically when a thread needs one) and each gets a stable id. The special **General** workspace backs web chats that were not started from a specific project directory.
+A workspace is a directory on your machine that agents work in — typically a project checkout. Workspaces are registered explicitly (desktop UI, `va workspace add`, or automatically when a thread needs one) and each gets a stable id. Two defaults exist for conversations that never chose a project: web chats fall back to the **General** workspace, and each IM channel gets `<default_workspace>/im/<channel>` on first contact — so a fresh Telegram chat works in `…/im/telegram` until you `/workspace --switch` it somewhere real.
 
 - A workspace contains any number of threads.
 - Deleting or switching a workspace never touches the directory contents; VibeAround only manages its own records.
