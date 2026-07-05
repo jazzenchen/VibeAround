@@ -43,6 +43,9 @@ const STARTKIT_PROGRESS_EVENT: &str = "startkit-progress";
 const STARTKIT_COMPLETE_EVENT: &str = "startkit-complete";
 const STARTKIT_ITEM_SCAN_TIMEOUT: Duration = Duration::from_secs(8);
 
+pub(in crate::startkit) type StartkitProgress<'a> =
+    Option<&'a (dyn Fn(&StartkitItem, StartkitItemStatus, Option<String>) + Sync)>;
+
 pub struct StartkitRunState {
     active: Arc<Mutex<Option<Arc<StartkitRunControl>>>>,
 }
@@ -738,7 +741,7 @@ async fn execute_item_with_cancel(
     choices: &StartkitChoices,
     item_id: &str,
     cancelled: Option<&Arc<AtomicBool>>,
-    progress: Option<&(dyn Fn(&StartkitItem, StartkitItemStatus, Option<String>) + Sync)>,
+    progress: StartkitProgress<'_>,
 ) -> anyhow::Result<StartkitItemReport> {
     let manifest = load_manifest()?;
     let platform = current_platform();
