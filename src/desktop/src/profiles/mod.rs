@@ -940,6 +940,10 @@ mod tests {
     fn read_to_string_eventually(path: &std::path::Path) -> String {
         for _ in 0..50 {
             if let Ok(body) = std::fs::read_to_string(path) {
+                if body.trim().is_empty() {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    continue;
+                }
                 return body;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
