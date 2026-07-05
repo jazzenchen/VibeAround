@@ -1872,30 +1872,34 @@ function PluginsSettingsPanel({
           </p>
           {notice}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={SETTINGS_BUTTON_CLASS}
-          disabled={checkingUpdates}
-          onClick={onCheckUpdates}
-        >
-          {checkingUpdates ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <RotateCw className="h-3 w-3" />
-          )}
-          {checkingUpdates ? t("Refreshing…") : t("Refresh status")}
-        </Button>
       </div>
 
       <div className="space-y-3 rounded-md border border-border px-3 py-3">
-        <PluginFilterGroup
-          label={t("Install status")}
-          options={statusFilterOptions}
-          value={statusFilter}
-          onChange={setStatusFilter}
-        />
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <PluginFilterGroup
+              label={t("Install status")}
+              options={statusFilterOptions}
+              value={statusFilter}
+              onChange={setStatusFilter}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={`!h-7 !px-2.5 shrink-0 ${SETTINGS_BUTTON_CLASS}`}
+            disabled={checkingUpdates}
+            onClick={onCheckUpdates}
+          >
+            {checkingUpdates ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RotateCw className="h-3 w-3" />
+            )}
+            {checkingUpdates ? t("Refreshing…") : t("Refresh status")}
+          </Button>
+        </div>
         <PluginFilterGroup
           label={t("Category")}
           options={categoryFilterOptions}
