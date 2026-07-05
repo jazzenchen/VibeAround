@@ -196,6 +196,7 @@ impl PtySessionManager {
         Ok(self.register_session(metadata, bridge, pty_rx, resize_tx, state_rx))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_profile_session(
         &self,
         tool: PtyTool,
@@ -221,6 +222,7 @@ impl PtySessionManager {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_command_session(
         &self,
         tool: PtyTool,

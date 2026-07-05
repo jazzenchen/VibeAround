@@ -11,6 +11,13 @@ use tokio::sync::mpsc;
 use crate::proc_log;
 use crate::process::registry::ProcessKind;
 
+type PtySpawnParts = (
+    PtyBridge,
+    mpsc::Receiver<Vec<u8>>,
+    ResizeSender,
+    mpsc::Receiver<PtyRunState>,
+);
+
 /// Shell command: login shell on Unix, cmd on Windows. Caller must set PTY env.
 #[cfg(unix)]
 fn shell_command() -> CommandBuilder {
@@ -302,12 +309,7 @@ pub fn spawn_pty(
     tmux_session: Option<String>,
     theme: Option<String>,
     initial_size: Option<(u16, u16)>,
-) -> anyhow::Result<(
-    PtyBridge,
-    mpsc::Receiver<Vec<u8>>,
-    ResizeSender,
-    mpsc::Receiver<PtyRunState>,
-)> {
+) -> anyhow::Result<PtySpawnParts> {
     spawn_pty_with_command(
         tool,
         cwd,
@@ -327,12 +329,7 @@ pub(super) fn spawn_pty_with_command(
     initial_size: Option<(u16, u16)>,
     command_override: Option<String>,
     extra_env: Vec<(String, String)>,
-) -> anyhow::Result<(
-    PtyBridge,
-    mpsc::Receiver<Vec<u8>>,
-    ResizeSender,
-    mpsc::Receiver<PtyRunState>,
-)> {
+) -> anyhow::Result<PtySpawnParts> {
     let pty_system = native_pty_system();
     let (cols, rows) = initial_size.unwrap_or((80, 24));
     let pair = pty_system

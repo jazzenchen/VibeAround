@@ -12,6 +12,7 @@ use super::render::{ConfigEnvTarget, RenderedProfile, RenderedSettingsFile};
 use super::schema::{AuthMode, ProfileDef};
 use crate::config;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_bridge_launch(
     profile: &ProfileDef,
     launch_target: &str,

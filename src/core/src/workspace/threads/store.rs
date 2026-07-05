@@ -219,6 +219,7 @@ pub struct ThreadAgent {
 }
 
 impl ThreadAgent {
+    #[allow(clippy::too_many_arguments)]
     pub fn ready(
         id: impl Into<ThreadAgentId>,
         turn_id: impl Into<MultiAgentTurnId>,

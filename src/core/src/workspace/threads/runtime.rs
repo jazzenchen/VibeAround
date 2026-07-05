@@ -567,6 +567,7 @@ impl ThreadRuntime {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_subagent_prompt_task(
         self: &Arc<Self>,
         thread_agent: ThreadAgent,
@@ -593,6 +594,7 @@ impl ThreadRuntime {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_subagent_prompt_with_retries(
         self: Arc<Self>,
         thread_agent: ThreadAgent,

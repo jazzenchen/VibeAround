@@ -31,6 +31,7 @@ use super::runtime::{QueuedChannelOutput, StdioPluginRuntime};
 
 /// Run the ACP agent-side connection for a plugin to completion. Returns
 /// when the child closes stdout or the cancel signal fires.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_acp_plugin_bridge(
     channel_kind: String,
     config: serde_json::Value,
