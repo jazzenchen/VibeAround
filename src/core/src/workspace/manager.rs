@@ -14,6 +14,7 @@ use crate::agent::launch::normalize_launch_profile_id;
 use crate::agent_state;
 use crate::routing::RouteKey;
 
+use super::normalize_platform_cwd;
 use super::registry::{WorkspaceId, WorkspaceProjection, WorkspaceRecord, GENERAL_WORKSPACE_ID};
 use super::store::{WorkspaceEvent, WorkspaceEventStore};
 use super::threads::attachment::{
@@ -1287,23 +1288,6 @@ pub fn normalize_workspace_cwd(cwd: impl AsRef<Path>) -> PathBuf {
             .unwrap_or_else(|_| path.to_path_buf())
     };
     normalize_platform_cwd(absolute.canonicalize().unwrap_or(absolute))
-}
-
-#[cfg(windows)]
-fn normalize_platform_cwd(path: PathBuf) -> PathBuf {
-    let value = path.to_string_lossy();
-    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{rest}"));
-    }
-    if let Some(rest) = value.strip_prefix(r"\\?\") {
-        return PathBuf::from(rest);
-    }
-    path
-}
-
-#[cfg(not(windows))]
-fn normalize_platform_cwd(path: PathBuf) -> PathBuf {
-    path
 }
 
 fn workspace_by_cwd<'a>(
