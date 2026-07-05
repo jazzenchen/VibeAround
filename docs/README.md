@@ -21,6 +21,10 @@ VibeAround lets you reach your local AI coding agents (Claude Code, Codex, Gemin
 | [What is VibeAround](product/what-is-vibearound.md) | What problem does it solve, and for whom? |
 | [Supported matrix](product/supported-matrix.md) | Which agents, channels, and model providers are supported? |
 
+## Use cases
+
+Scenario-oriented pages (also the website's landing content): [remote coding](use-cases/remote-coding.md) · [Codex on mobile](use-cases/codex-mobile.md) · [Codex remote](use-cases/codex-remote.md) · [Claude remote](use-cases/claude-remote.md) · [Gemini remote](use-cases/gemini-remote.md) · [OpenCode remote](use-cases/opencode-remote.md) · [Claude Code switcher](use-cases/claude-code-switcher.md) · [local AI switch](use-cases/local-ai-switch.md)
+
 ## Guides
 
 | Page | What you get done |
