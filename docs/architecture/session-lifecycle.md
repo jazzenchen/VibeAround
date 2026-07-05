@@ -47,15 +47,15 @@ Handover attaches a second route to an existing thread, or re-binds an external 
 2. **Web → phone.** The same mechanism backs the dashboard's handover flow: the web thread's session is picked up by an IM route.
 3. **Multiple listeners.** Because attachment is additive, output fans out to every attached route: you can watch the same turn in the web dashboard and in Telegram simultaneously.
 
-Pickup codes are one-shot and expire quickly; an invalid or reused code fails with a chat message rather than attaching anything.
+Pickup codes are one-shot, expire quickly, and live **in memory only** — a daemon restart clears them, so re-issue the handover if VibeAround restarted in between. An invalid or reused code fails with a chat message rather than attaching anything.
 
 ## Switching the host agent
 
-`/switch host <agent>` (or `/switch <agent>`, optionally `<agent>+<profile>`) changes which CLI hosts the thread:
+`/switch host <agent>` (or `/switch <agent>`, optionally `<agent>+<profile>`) behaves differently depending on what changes:
 
-- The current agent process is stopped; the thread's host binding is rewritten; the next prompt spawns the new agent.
-- The new agent starts a **new CLI session** — session transcripts do not transfer between different agent products. VibeAround performs a context transfer step so the new agent is briefed on the conversation so far, but tool-level state (running processes, shell state) does not carry.
-- Switching back later resumes the previous agent's own session where it left off, because the thread retains per-agent session records.
+- **Different agent** → a **new thread** is created with the target host and a fresh CLI session; the old thread stays open but loses the route. Conversation context does not carry across agent products.
+- **Same agent, different profile** → the current thread is kept and the **same session is preserved**; the agent host restarts under the new profile and resumes where it was.
+- To get back to an earlier agent's conversation, use `/session` + `/session --switch <id>` — session records survive on their threads even after the route moved on.
 
 ## Multi-agent turns and subagents
 
@@ -67,7 +67,7 @@ All lifecycle timers (idle shutdown, heartbeat/watchdog, code TTLs, share-link e
 
 ---
 
-*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handoff.rs` (pickup codes), `src/core/src/workspace/context_transfer.rs` (switch briefing), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
+*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handoff.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (switch_host: new-thread vs preserve-session split), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
 *Last verified: v0.7.11*
 
 <sub>[◀ How it works](overview.md) · [Documentation index](../README.md) · [Channel plugin system ▶](channel-plugin-system.md)</sub>

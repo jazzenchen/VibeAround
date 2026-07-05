@@ -39,7 +39,7 @@ The thread was closed (by `/close`, or auto-closed after an unrecoverable agent 
 Stop the turn (stop button / plugin stop), check `/status`. If the agent process crashed, the next prompt spawns a fresh one and resumes the session. Persistent failures right at spawn usually mean the agent CLI is missing or needs login — try launching it manually once.
 
 **`/switch` to another agent lost my context.**
-Switching hosts starts a new CLI session for the new agent with a context **briefing** — conversational context carries as a summary, but the new agent does not inherit the old agent's transcript or tool state. Switching back resumes the original agent's own session. See [Session lifecycle](../architecture/session-lifecycle.md).
+Expected: switching to a different agent creates a new thread with a fresh session — context does not carry between agent products. The old conversation is still there: `/session` lists it, `/session --switch <id>` re-attaches it. Switching only the profile (same agent) keeps the session. See [Session lifecycle](../architecture/session-lifecycle.md).
 
 **Authentication required errors from an agent.**
 The agent CLI itself needs a vendor login (`claude login`, etc.) — VibeAround hosts it but cannot log in for you. The thread auto-closes on this error; log in in a terminal, then `/new`.
