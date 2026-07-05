@@ -16,7 +16,7 @@ pub(super) async fn bearer_token(client: &reqwest::Client) -> Result<String, Res
     }
 
     match google_oauth::vibearound_access_token(client).await {
-        Ok(token) => return Ok(token),
+        Ok(token) => Ok(token),
         Err(primary_error) => {
             let mut fallback_errors = vec![format!("{primary_error:#}")];
             for path in [

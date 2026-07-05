@@ -143,10 +143,7 @@ fn map_sse_stream(
                     state.done = true;
                     state.finish_recording();
                     return Some((
-                        Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("upstream stream error: {e}"),
-                        )),
+                        Err(io::Error::other(format!("upstream stream error: {e}"))),
                         state,
                     ));
                 }
