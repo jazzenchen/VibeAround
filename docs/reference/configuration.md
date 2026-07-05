@@ -12,6 +12,7 @@ Everything lives under `~/.vibearound/` (override with `VIBEAROUND_DATA_DIR`):
 | `agents.json` | desktop Launch UI, `va-launch` (executable discovery) | Per-agent launch preferences — [schema below](#agentsjson) | Yes, carefully |
 | `launch/profiles/<name>.json` | you, desktop (temp materialized copies) | Saved native-launch profiles — [schema below](#launch-profile-json-schema-v1) | **Yes** (that is the point) |
 | `auth.json` | daemon, every start | `{port, token}` for out-of-process clients | No — rewritten each start |
+| `profiles/<profile-id>.json` | desktop/dashboard profile UI | Saved model profiles (provider, endpoint, key, model routes) | Prefer the UI; hand-edits are read on reload |
 | `profile-state/<profile-id>/` | profile rendering | Rendered per-profile agent config files (settings overlays); env pointers reference these ([launch internals](../internals/launch.md#environment-assembly-layer-by-layer)) | No — regenerated per render |
 | `plugins/<kind>/` | desktop plugin manager | Installed channel plugins + manifests | Only during plugin development |
 | `workspaces/` | daemon | Default root for created workspaces | It is your files |
