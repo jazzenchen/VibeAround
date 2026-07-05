@@ -16,17 +16,18 @@ use crate::process::bridge::{BridgeFuture, CancelSignal, ProcessBridge, StdioPip
 use crate::workspace::WorkspaceThreadManager;
 
 use super::plugin_host::PluginHost;
-use super::transport_stdio::run_acp_plugin_bridge;
-use super::{ChannelInput, ChannelOutput};
+use super::transport_stdio::{run_acp_plugin_bridge, QueuedChannelOutput, StdioPluginRuntime};
+use super::ChannelInput;
 
 /// The per-spawn ACP bridge for a stdio channel plugin.
 pub struct ChannelPluginBridge {
     pub channel_kind: String,
     pub raw_config: serde_json::Value,
     pub input_tx: mpsc::UnboundedSender<ChannelInput>,
-    pub output_rx: mpsc::UnboundedReceiver<ChannelOutput>,
+    pub output_rx: mpsc::UnboundedReceiver<QueuedChannelOutput>,
     pub workspace_thread_manager: Arc<WorkspaceThreadManager>,
     pub plugin_host: Arc<PluginHost>,
+    pub runtime: Arc<StdioPluginRuntime>,
 }
 
 impl ProcessBridge for ChannelPluginBridge {
@@ -42,6 +43,7 @@ impl ProcessBridge for ChannelPluginBridge {
                 this.output_rx,
                 this.workspace_thread_manager,
                 this.plugin_host,
+                this.runtime,
                 cancel,
             )
             .await

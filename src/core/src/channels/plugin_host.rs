@@ -98,6 +98,21 @@ impl PluginHost {
         self.flush_pending(channel_kind, &plugin_runtime);
     }
 
+    pub fn remove_stdio_runtime_if_current(
+        &self,
+        channel_kind: &str,
+        runtime: &Arc<StdioPluginRuntime>,
+    ) -> bool {
+        let send_lock = self.send_lock(channel_kind);
+        let _send_guard = send_lock.lock();
+        self.runtimes
+            .remove_if(channel_kind, |_, current| match current {
+                PluginRuntime::Stdio(current) => Arc::ptr_eq(current, runtime),
+                PluginRuntime::WebSocket(_) => false,
+            })
+            .is_some()
+    }
+
     pub fn register_websocket_plugin(
         &self,
         channel_kind: impl Into<ChannelKind>,
@@ -149,19 +164,8 @@ impl PluginHost {
         );
 
         if let Some(runtime) = runtime {
-            match runtime.send_output_now(output) {
-                Ok(()) if !output_id.is_empty() => {
-                    if let Err(error) = self.outbox.mark_sent_now(&output_id) {
-                        proc_log!(
-                            warn,
-                            kind = ProcessKind::ChannelPlugin,
-                            label = route.channel_kind,
-                            event = "outbox_mark_sent_failed",
-                            route = %route,
-                            error = %error
-                        );
-                    }
-                }
+            let queued_output_id = (!output_id.is_empty()).then(|| output_id.clone());
+            match runtime.send_output_with_outbox_id_now(queued_output_id, output) {
                 Ok(()) => {}
                 Err(error) if !output_id.is_empty() => {
                     if let Err(mark_error) = self.outbox.mark_nacked_now(&output_id) {
@@ -278,19 +282,31 @@ impl PluginHost {
         }
         let channel_kind = channel_kind.to_string();
         for pending in pending {
-            match runtime.send_output_now(pending.output) {
-                Ok(()) => {
-                    if let Err(error) = self.outbox.mark_sent_now(&pending.output_id) {
-                        proc_log!(
-                            warn,
-                            kind = ProcessKind::ChannelPlugin,
-                            label = channel_kind,
-                            event = "outbox_flush_mark_sent_failed",
-                            output_id = %pending.output_id,
-                            error = %error
-                        );
-                    }
+            if !self.pending_output_is_live(&pending.output) {
+                if let Err(error) = self.outbox.mark_sent_now(&pending.output_id) {
+                    proc_log!(
+                        warn,
+                        kind = ProcessKind::ChannelPlugin,
+                        label = channel_kind,
+                        event = "outbox_drop_stale_mark_sent_failed",
+                        output_id = %pending.output_id,
+                        error = %error
+                    );
+                } else {
+                    proc_log!(
+                        info,
+                        kind = ProcessKind::ChannelPlugin,
+                        label = channel_kind,
+                        event = "outbox_drop_stale_permission",
+                        output_id = %pending.output_id
+                    );
                 }
+                continue;
+            }
+            match runtime
+                .send_output_with_outbox_id_now(Some(pending.output_id.clone()), pending.output)
+            {
+                Ok(()) => {}
                 Err(error) => {
                     if let Err(mark_error) = self.outbox.mark_nacked_now(&pending.output_id) {
                         proc_log!(
@@ -314,6 +330,22 @@ impl PluginHost {
                 }
             }
         }
+    }
+
+    pub(crate) fn mark_outbox_sent(&self, output_id: &str) -> crate::storage::jsonl::Result<()> {
+        self.outbox.mark_sent_now(output_id)
+    }
+
+    pub(crate) fn mark_outbox_nacked(&self, output_id: &str) -> crate::storage::jsonl::Result<()> {
+        self.outbox.mark_nacked_now(output_id)
+    }
+
+    fn pending_output_is_live(&self, output: &ChannelOutput) -> bool {
+        !matches!(
+            output,
+            ChannelOutput::PermissionRequest { request_id, .. }
+                if !self.pending_permissions.contains_key(request_id)
+        )
     }
 
     pub async fn shutdown_all(&self) {
@@ -478,6 +510,48 @@ mod tests {
 
         assert!(!host.pending_permissions.contains_key("req-1"));
         assert!(rx.await.is_ok());
+    }
+
+    #[test]
+    fn remove_stdio_runtime_only_removes_current_runtime() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let (output_tx, _output_rx) = tokio::sync::mpsc::unbounded_channel();
+        let old_runtime = Arc::new(StdioPluginRuntime::new("feishu", output_tx));
+        host.replace_stdio_runtime("feishu", Arc::clone(&old_runtime));
+
+        let (output_tx, _output_rx) = tokio::sync::mpsc::unbounded_channel();
+        let new_runtime = Arc::new(StdioPluginRuntime::new("feishu", output_tx));
+        host.replace_stdio_runtime("feishu", Arc::clone(&new_runtime));
+
+        assert!(!host.remove_stdio_runtime_if_current("feishu", &old_runtime));
+        assert!(matches!(
+            host.runtime_for_channel("feishu"),
+            Some(PluginRuntime::Stdio(runtime)) if Arc::ptr_eq(&runtime, &new_runtime)
+        ));
+
+        assert!(host.remove_stdio_runtime_if_current("feishu", &new_runtime));
+        assert!(host.runtime_for_channel("feishu").is_none());
+    }
+
+    #[test]
+    fn permission_request_replay_requires_live_pending_permission() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let output = ChannelOutput::PermissionRequest {
+            route: RouteKey::new("feishu", "chat-a"),
+            request_id: "req-1".to_string(),
+            payload: serde_json::json!({}),
+        };
+
+        assert!(!host.pending_output_is_live(&output));
+
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission("req-1".to_string(), vec!["feishu".to_string()], tx);
+        assert!(host.pending_output_is_live(&output));
+
+        host.cancel_channel_permissions("feishu");
+        assert!(!host.pending_output_is_live(&output));
     }
 
     #[tokio::test]

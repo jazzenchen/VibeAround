@@ -30,7 +30,7 @@ pub(super) async fn forward_output_to_plugin(
     channel_kind: &str,
     plugin_host: &Arc<PluginHost>,
     output: ChannelOutput,
-) {
+) -> Result<(), String> {
     match output {
         ChannelOutput::ThreadReply { route, reply } => {
             send_ext_notification(
@@ -38,13 +38,13 @@ pub(super) async fn forward_output_to_plugin(
                 channel_kind,
                 "va/thread_reply",
                 &serde_json::json!({
-                    "target": {
-                        "chatId": route.chat_id.clone(),
-                    },
-                    "reply": reply,
+                "target": {
+                    "chatId": route.chat_id.clone(),
+                },
+                "reply": reply,
                 }),
             )
-            .await;
+            .await?;
         }
         ChannelOutput::RawAcp { route, .. } => {
             tracing::info!(
@@ -63,7 +63,7 @@ pub(super) async fn forward_output_to_plugin(
                     "text": text,
                 }),
             )
-            .await;
+            .await?;
         }
         ChannelOutput::AgentReady {
             route,
@@ -81,7 +81,7 @@ pub(super) async fn forward_output_to_plugin(
                     "version": version,
                 }),
             )
-            .await;
+            .await?;
         }
         ChannelOutput::SessionReady {
             route, session_id, ..
@@ -95,7 +95,7 @@ pub(super) async fn forward_output_to_plugin(
                     "sessionId": session_id,
                 }),
             )
-            .await;
+            .await?;
         }
         ChannelOutput::SessionInfo { route, info } => {
             send_ext_notification(
@@ -107,7 +107,7 @@ pub(super) async fn forward_output_to_plugin(
                     "info": info,
                 }),
             )
-            .await;
+            .await?;
         }
         ChannelOutput::SessionMode {
             route,
@@ -122,7 +122,7 @@ pub(super) async fn forward_output_to_plugin(
                     "sessionMode": session_mode,
                 }),
             )
-            .await;
+            .await?;
         }
         ChannelOutput::CommandMenu {
             route,
@@ -139,7 +139,7 @@ pub(super) async fn forward_output_to_plugin(
                     "agentCommands": agent_commands,
                 }),
             )
-            .await;
+            .await?;
         }
         ChannelOutput::PromptDone { .. }
         | ChannelOutput::TurnStatus { .. }
@@ -171,7 +171,7 @@ pub(super) async fn forward_output_to_plugin(
                                 schema::RequestPermissionOutcome::Cancelled,
                             ),
                         );
-                        return;
+                        return Ok(());
                     }
                 };
             let params = serde_json::json!({
@@ -191,7 +191,7 @@ pub(super) async fn forward_output_to_plugin(
                         schema::RequestPermissionOutcome::Cancelled,
                     ),
                 );
-                return;
+                return Ok(());
             };
             let response = conn
                 .send_request(schema::AgentRequest::ExtMethodRequest(
@@ -232,6 +232,7 @@ pub(super) async fn forward_output_to_plugin(
                     }
                 }
                 Err(e) => {
+                    let error = e.to_string();
                     tracing::info!(
                         "[{}] plugin requestPermission failed route={} request_id={}: {}",
                         channel_kind,
@@ -248,10 +249,12 @@ pub(super) async fn forward_output_to_plugin(
                             schema::RequestPermissionOutcome::Cancelled,
                         ),
                     );
+                    return Err(error);
                 }
             }
         }
     }
+    Ok(())
 }
 
 fn complete_permission_request(
@@ -291,20 +294,25 @@ async fn send_ext_notification(
     channel_kind: &str,
     method: &str,
     params: &serde_json::Value,
-) {
+) -> Result<(), String> {
     let Some(raw_params) = raw_json_params(channel_kind, params) else {
-        return;
+        return Err(format!(
+            "failed to serialize ext_notification {method} params"
+        ));
     };
     let notification = schema::AgentNotification::ExtNotification(schema::ExtNotification::new(
         format!("_{}", method),
         raw_params,
     ));
     if let Err(error) = conn.send_notification(notification) {
+        let message = error.to_string();
         tracing::info!(
             "[{}] failed to send ext_notification {}: {}",
             channel_kind,
             method,
             error
         );
+        return Err(message);
     }
+    Ok(())
 }

@@ -13,15 +13,21 @@ use tokio::sync::mpsc;
 use super::super::ChannelOutput;
 
 #[derive(Debug)]
+pub struct QueuedChannelOutput {
+    pub output_id: Option<String>,
+    pub output: ChannelOutput,
+}
+
+#[derive(Debug)]
 pub struct StdioPluginRuntime {
     channel_kind: String,
-    output_tx: mpsc::UnboundedSender<ChannelOutput>,
+    output_tx: mpsc::UnboundedSender<QueuedChannelOutput>,
 }
 
 impl StdioPluginRuntime {
     pub fn new(
         channel_kind: impl Into<String>,
-        output_tx: mpsc::UnboundedSender<ChannelOutput>,
+        output_tx: mpsc::UnboundedSender<QueuedChannelOutput>,
     ) -> Self {
         Self {
             channel_kind: channel_kind.into(),
@@ -34,11 +40,21 @@ impl StdioPluginRuntime {
     }
 
     pub fn send_output_now(&self, output: ChannelOutput) -> Result<(), String> {
-        self.output_tx.send(output).map_err(|error| {
-            let message = format!("failed to send output to ACP plugin bridge: {error}");
-            tracing::info!("[{}] {}", self.channel_kind, message);
-            message
-        })
+        self.send_queued_output_now(None, output)
+    }
+
+    pub fn send_queued_output_now(
+        &self,
+        output_id: Option<String>,
+        output: ChannelOutput,
+    ) -> Result<(), String> {
+        self.output_tx
+            .send(QueuedChannelOutput { output_id, output })
+            .map_err(|error| {
+                let message = format!("failed to send output to ACP plugin bridge: {error}");
+                tracing::info!("[{}] {}", self.channel_kind, message);
+                message
+            })
     }
 
     pub async fn send_output(&self, output: ChannelOutput) -> Result<(), String> {
