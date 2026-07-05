@@ -37,6 +37,20 @@ In [`~/.vibearound/settings.json`](../reference/configuration.md#settingsjson) (
 { "tunnel_provider": "localtunnel" }
 ```
 
+### Cloudflare needs one manual step
+
+VibeAround starts `cloudflared tunnel run --token …` and uses your hostname for generated URLs — but it does **not** create the Cloudflare *Published application route*. In Zero Trust, add one for the same tunnel:
+
+| Field | Value |
+|---|---|
+| Public hostname | The hostname configured in VibeAround, e.g. `vibe.example.com` |
+| Path | Leave empty (match all paths) |
+| Service | `HTTP` → `localhost:12358` |
+
+Then open `https://vibe.example.com/va/` — the dashboard lives under `/va/`, so test that path, not just the root.
+
+To isolate Cloudflare from VibeAround: stop VibeAround, serve anything on `127.0.0.1:12358` (`python3 -m http.server 12358 --bind 127.0.0.1`), and `curl -i https://vibe.example.com/`. A Cloudflare 404 before your temp server answers means the problem is in the hostname/DNS/route/tunnel-health layer, not VibeAround. References: [Published applications](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/), [run parameters](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/run-parameters/).
+
 The tunnel starts with the daemon. Status and the public URL show in the dashboard, `va tunnels`, and the desktop app; `va tunnel kill <provider>` stops one without restarting the daemon.
 
 ## First visit from a remote browser: pairing
@@ -67,6 +81,7 @@ The `va` CLI can target a remote daemon: `va --base-url https://va.example.com -
 | Symptom | Check |
 |---|---|
 | Public URL never appears | Provider token invalid, or egress blocked — daemon logs show the tunnel error; `va tunnels` shows state |
+| Cloudflare: tunnel healthy but 404 | Missing/wrong Published application route — see the Cloudflare section above |
 | Pairing code always "invalid or expired" | Codes last 60 s — generate and confirm within the window; confirm you typed it in a chat connected to the *same* daemon |
 | Everything 401s after a daemon restart | Expected: tokens regenerate — reload from a trusted entry point and re-pair remote browsers |
 | localtunnel URL changes every start | That is localtunnel; use ngrok reserved domains or Cloudflare for stability |

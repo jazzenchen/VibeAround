@@ -73,7 +73,7 @@ Global flags: `--auth-file PATH`, `--base-url URL`, `--token TOKEN`, `--json`.
 | `va previews` / `va preview delete SLUG` | List / close live previews |
 | `va profiles` | List model profiles |
 
-`vibearound tui` opens the terminal UI on the same contract.
+`va tui` (aliases: `vibearound tui`, `va dashboard`, `--tui`) opens the terminal UI on the same contract.
 
 ---
 
