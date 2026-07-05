@@ -96,6 +96,10 @@ fn sanitize_chat_id(value: Option<&str>) -> Option<String> {
     }
 }
 
+fn should_replay_initial_route_history(chat_id: &Option<String>) -> bool {
+    chat_id.is_some()
+}
+
 async fn handle_chat_socket(
     socket: WebSocket,
     state: AppState,
@@ -103,21 +107,24 @@ async fn handle_chat_socket(
     chat_id: Option<String>,
 ) {
     let connection_id = Uuid::new_v4().to_string();
+    let replay_history = should_replay_initial_route_history(&chat_id);
     let chat_id = chat_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let channel_id = format!("{}:{}", client.channel_kind, chat_id);
     let mut active_route = RouteKey::new(client.channel_kind, &chat_id);
 
-    // Register this connection for outbound ACP events
+    // Explicit chat_id attachments are reconnects or existing thread views, so
+    // replay the bounded route history independent of runtime lifetime.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelOutput>();
-    state
-        .web_channel
-        .register_connection(&active_route, connection_id.clone(), tx.clone(), false);
+    state.web_channel.register_connection(
+        &active_route,
+        connection_id.clone(),
+        tx.clone(),
+        replay_history,
+    );
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    // Load config for initial agent metadata. Web chat always receives the
-    // complete ACP transcript; the browser applies its own visibility filter
-    // so replay cache stays independent from the current UI settings.
+    // Load config for initial agent metadata.
     let cfg = config::ensure_loaded();
     let agent_prefs = agent_state::read_prefs();
 
@@ -1398,6 +1405,14 @@ mod tests {
         assert!(super::sanitize_chat_id(Some("web:abc")).is_none());
         assert!(super::sanitize_chat_id(Some("../secret")).is_none());
         assert!(super::sanitize_chat_id(Some(&"a".repeat(129))).is_none());
+    }
+
+    #[test]
+    fn explicit_chat_id_replays_initial_route_history() {
+        assert!(!super::should_replay_initial_route_history(&None));
+        assert!(super::should_replay_initial_route_history(&Some(
+            "ws_thread".to_string()
+        )));
     }
 
     #[test]
