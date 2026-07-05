@@ -20,7 +20,7 @@ Use this workflow when:
 3. Add the project as a workspace.
 4. Start a session through [Agent Launch](../guides/agent-launch.md).
 5. Enable one remote surface: [Session Handover](../architecture/session-lifecycle.md), [Remote Messaging & Web Terminal](../guides/im-usage.md), or [Live Preview](../guides/web-dashboard.md).
-6. Review [Local-first Security](../architecture/security-model.md) before enabling tunnels or public-facing links.
+6. Review the [Security model](../architecture/security-model.md) before enabling tunnels or public-facing links.
 
 ## Remote Surfaces
 
@@ -44,7 +44,7 @@ Use this workflow when:
 
 - [Session Handover](../architecture/session-lifecycle.md)
 - [Remote Messaging & Web Terminal](../guides/im-usage.md)
-- [Local-first Security](../architecture/security-model.md)
+- [Security model](../architecture/security-model.md)
 - [Codex Mobile Workflow](codex-mobile.md)
 
 ---

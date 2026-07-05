@@ -1,6 +1,6 @@
 # OpenCode Remote Access
 
-OpenCode remote access in VibeAround is a local-first workflow. OpenCode runs near the repository and tools on the host machine, while VibeAround provides browser, mobile, terminal, messaging, and preview entry points back to the session.
+OpenCode remote access in VibeAround keeps execution on your own computer: OpenCode runs next to the repository and tools on the host machine, while VibeAround provides browser, mobile, terminal, messaging, and preview entry points back to the session.
 
 ## Setup Path
 

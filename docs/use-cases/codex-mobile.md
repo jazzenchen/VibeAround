@@ -2,7 +2,7 @@
 
 VibeAround can help users continue Codex CLI work from a phone while the actual session stays on the local host. This is useful when the agent needs a decision, a test result needs review, or a long task should keep moving while you are away from the desk.
 
-Use this page when the goal is to control or inspect a local Codex CLI workflow from another device. If you are comparing hosted Codex workflows, official mobile access, SSH, tunnels, and VibeAround's local-first model, read [Codex Remote Comparison](codex-remote.md) after this setup path.
+Use this page when the goal is to control or inspect a local Codex CLI workflow from another device. If you are comparing hosted Codex workflows, official mobile access, SSH, tunnels, and VibeAround's approach, where execution stays on your own computer, read [Codex Remote Comparison](codex-remote.md) after this setup path.
 
 VibeAround is independent software and is not affiliated with OpenAI. Codex and ChatGPT are OpenAI products.
 
@@ -42,7 +42,7 @@ Treat the phone as a control surface for the local workspace. Protect browser pa
 - [Codex Remote Comparison](codex-remote.md)
 - [Remote Coding](remote-coding.md)
 - [Provider Profiles & API Bridge](../guides/model-profiles.md)
-- [Local-first Security](../architecture/security-model.md)
+- [Security model](../architecture/security-model.md)
 
 ---
 

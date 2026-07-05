@@ -1,6 +1,6 @@
 # Codex Remote Comparison
 
-Developers searching for Codex remote workflows are often comparing several patterns: local Codex CLI, mobile review, SSH hosts, hosted cloud environments, and browser-based control surfaces. VibeAround targets the local-first part of that map.
+Developers searching for Codex remote workflows are often comparing several patterns: local Codex CLI, mobile review, SSH hosts, hosted cloud environments, and browser-based control surfaces. VibeAround targets the part of that map where the agent stays on your own computer.
 
 VibeAround is independent software and does not replace OpenAI's official Codex products.
 

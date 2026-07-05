@@ -32,7 +32,7 @@ See [Claude Code Provider Switcher](claude-code-switcher.md) for the provider-pr
 - [Agent Launch](../guides/agent-launch.md)
 - [Provider Profiles & API Bridge](../guides/model-profiles.md)
 - [Remote Coding](remote-coding.md)
-- [Local-first Security](../architecture/security-model.md)
+- [Security model](../architecture/security-model.md)
 
 ---
 
