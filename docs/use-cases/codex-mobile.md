@@ -46,7 +46,6 @@ Treat the phone as a control surface for the local workspace. Protect browser pa
 
 ---
 
-*Mirrored to the website docs; originally authored there (2026-06), fact-check pass pending screenshots.*
 *Last verified: v0.7.11*
 
 <sub>[Documentation index](../README.md)</sub>

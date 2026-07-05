@@ -32,7 +32,6 @@ If Gemini CLI does not work through VibeAround, first run it directly in the sam
 
 ---
 
-*Mirrored to the website docs; originally authored there (2026-06), fact-check pass pending screenshots.*
 *Last verified: v0.7.11*
 
 <sub>[Documentation index](../README.md)</sub>

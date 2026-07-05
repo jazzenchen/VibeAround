@@ -33,7 +33,6 @@ Switching should be visible, reversible, and repeatable. A user should know whic
 
 ---
 
-*Mirrored to the website docs; originally authored there (2026-06), fact-check pass pending screenshots.*
 *Last verified: v0.7.11*
 
 <sub>[Documentation index](../README.md)</sub>

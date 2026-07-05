@@ -33,7 +33,6 @@ Use the official cloud or remote product when it fits the job directly. Use Vibe
 
 ---
 
-*Mirrored to the website docs; originally authored there (2026-06), fact-check pass pending screenshots.*
 *Last verified: v0.7.11*
 
 <sub>[Documentation index](../README.md)</sub>
