@@ -935,6 +935,14 @@ impl WorkspaceThreadManager {
         let Some(attached) = self.current_attachment(route).await? else {
             return Ok(None);
         };
+        if let Some(runtime) = self
+            .runtimes
+            .get(&attached.thread_id)
+            .map(|entry| Arc::clone(entry.value()))
+        {
+            return Ok(Some(runtime));
+        }
+
         let Some(thread) = self.thread(&attached.thread_id).await? else {
             self.detach_route(route).await?;
             return Ok(None);
@@ -944,18 +952,11 @@ impl WorkspaceThreadManager {
             self.detach_route(route).await?;
             return Ok(None);
         }
-        let Some(runtime) = self
-            .runtimes
-            .get(&attached.thread_id)
-            .map(|entry| Arc::clone(entry.value()))
-        else {
-            if route.channel_kind == "web" {
-                return self.runtime_from_thread(thread).await.map(Some);
-            }
-            self.detach_route(route).await?;
-            return Ok(None);
-        };
-        Ok(Some(runtime))
+        if route.channel_kind == "web" {
+            return self.runtime_from_thread(thread).await.map(Some);
+        }
+        self.detach_route(route).await?;
+        Ok(None)
     }
 
     async fn attach_route(
@@ -1521,6 +1522,24 @@ mod tests {
                 .workspace_id,
             WorkspaceId::general()
         );
+    }
+
+    #[tokio::test]
+    async fn active_runtime_resolve_does_not_reload_thread_store() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let route = RouteKey::new("feishu", "chat-a");
+
+        let first = manager.resolve_route_runtime(&route).await.unwrap();
+        let first_thread_id = first.state().await.thread_id;
+        tokio::fs::write(manager.thread_store.path(), b"not valid jsonl\n")
+            .await
+            .unwrap();
+
+        let second = manager.resolve_route_runtime(&route).await.unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(second.state().await.thread_id, first_thread_id);
     }
 
     #[tokio::test]
