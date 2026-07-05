@@ -442,29 +442,83 @@ mod windows {
     use super::*;
 
     pub fn spawn(plan: &ExecutionPlan) -> anyhow::Result<LaunchHandle> {
-        if plan.terminal != TerminalChoice::PowerShell {
-            bail!(
-                "terminal '{}' is not supported on Windows",
-                plan.terminal.id()
-            );
-        }
+        let launch = WindowsTerminalLaunch::from_choice(plan.terminal)?;
         let script_path = write_launch_script(plan)?;
-        let no_exit = if plan.windows_process_probe.is_some() {
-            ""
-        } else {
-            "-NoExit "
-        };
-        let params = format!(
-            "-ExecutionPolicy Bypass {no_exit}-File {}",
-            quote_windows_process_arg(&script_path.to_string_lossy())
-        );
+        let keep_open = plan.windows_process_probe.is_none();
+        let params = launch.params(&script_path, keep_open, &plan.window_label);
 
         // Use ShellExecuteW through the `open` crate instead of Rust `Command`.
         // `Command` inherits all inheritable handles by default on Windows; if a
         // launched CLI keeps the daemon's TCP listener handle alive, VibeAround's
         // next start sees 127.0.0.1:12358 as occupied by a stale PID.
-        open::with(params, "powershell.exe").context("open PowerShell")?;
+        open::with(params, launch.program()).with_context(|| format!("open {}", launch.label()))?;
         Ok(LaunchHandle { script_path })
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum WindowsTerminalLaunch {
+        PowerShell,
+        PowerShell7,
+        WindowsTerminalPowerShell,
+        WindowsTerminalPowerShell7,
+    }
+
+    impl WindowsTerminalLaunch {
+        fn from_choice(choice: TerminalChoice) -> anyhow::Result<Self> {
+            match choice {
+                TerminalChoice::PowerShell => Ok(Self::PowerShell),
+                TerminalChoice::PowerShell7 => Ok(Self::PowerShell7),
+                TerminalChoice::WindowsTerminalPowerShell => Ok(Self::WindowsTerminalPowerShell),
+                TerminalChoice::WindowsTerminalPowerShell7 => Ok(Self::WindowsTerminalPowerShell7),
+                other => bail!("terminal '{}' is not supported on Windows", other.id()),
+            }
+        }
+
+        fn program(self) -> &'static str {
+            match self {
+                Self::PowerShell => "powershell.exe",
+                Self::PowerShell7 => "pwsh.exe",
+                Self::WindowsTerminalPowerShell | Self::WindowsTerminalPowerShell7 => "wt.exe",
+            }
+        }
+
+        fn label(self) -> &'static str {
+            match self {
+                Self::PowerShell => "PowerShell",
+                Self::PowerShell7 => "PowerShell 7",
+                Self::WindowsTerminalPowerShell | Self::WindowsTerminalPowerShell7 => {
+                    "Windows Terminal"
+                }
+            }
+        }
+
+        fn shell_program(self) -> &'static str {
+            match self {
+                Self::PowerShell | Self::WindowsTerminalPowerShell => "powershell.exe",
+                Self::PowerShell7 | Self::WindowsTerminalPowerShell7 => "pwsh.exe",
+            }
+        }
+
+        fn params(self, script_path: &Path, keep_open: bool, window_label: &str) -> String {
+            let shell_params = powershell_params(script_path, keep_open);
+            match self {
+                Self::PowerShell | Self::PowerShell7 => shell_params,
+                Self::WindowsTerminalPowerShell | Self::WindowsTerminalPowerShell7 => format!(
+                    "new-tab --title {} {} {}",
+                    quote_windows_process_arg(&format!("VibeAround - {window_label}")),
+                    self.shell_program(),
+                    shell_params
+                ),
+            }
+        }
+    }
+
+    fn powershell_params(script_path: &Path, keep_open: bool) -> String {
+        let no_exit = if keep_open { "-NoExit " } else { "" };
+        format!(
+            "-ExecutionPolicy Bypass {no_exit}-File {}",
+            quote_windows_process_arg(&script_path.to_string_lossy())
+        )
     }
 
     fn write_launch_script(plan: &ExecutionPlan) -> anyhow::Result<PathBuf> {
@@ -1117,6 +1171,30 @@ mod windows {
 
             assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
             assert_eq!(std::str::from_utf8(&bytes[3..]).unwrap(), script);
+        }
+
+        #[test]
+        fn powershell7_launch_uses_pwsh_program() {
+            let path = Path::new(r"C:\Temp\launch script.ps1");
+            let launch = WindowsTerminalLaunch::PowerShell7;
+
+            assert_eq!(launch.program(), "pwsh.exe");
+            assert_eq!(
+                launch.params(path, false, "Codex Test"),
+                r#"-ExecutionPolicy Bypass -File "C:\Temp\launch script.ps1""#
+            );
+        }
+
+        #[test]
+        fn windows_terminal_launch_wraps_selected_shell() {
+            let path = Path::new(r"C:\Temp\launch script.ps1");
+            let launch = WindowsTerminalLaunch::WindowsTerminalPowerShell7;
+
+            assert_eq!(launch.program(), "wt.exe");
+            assert_eq!(
+                launch.params(path, true, "Codex Test"),
+                r#"new-tab --title "VibeAround - Codex Test" pwsh.exe -ExecutionPolicy Bypass -NoExit -File "C:\Temp\launch script.ps1""#
+            );
         }
 
         #[test]
