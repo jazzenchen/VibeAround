@@ -599,5 +599,41 @@ fn command_with_args(command: &str, args: &[String]) -> String {
 }
 
 fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
+    #[cfg(windows)]
+    {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+    #[cfg(not(windows))]
+    {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn command_with_args_uses_powershell_quoting_on_windows() {
+        assert_eq!(
+            command_with_args(
+                "claude",
+                &["team's session".to_string(), "path with spaces".to_string()]
+            ),
+            "claude 'team''s session' 'path with spaces'"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn command_with_args_uses_shell_quoting_on_unix() {
+        assert_eq!(
+            command_with_args(
+                "claude",
+                &["team's session".to_string(), "path with spaces".to_string()]
+            ),
+            "claude 'team'\"'\"'s session' 'path with spaces'"
+        );
+    }
 }
