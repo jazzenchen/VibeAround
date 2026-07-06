@@ -371,7 +371,7 @@ va launch --profile codex-work
 
 After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
 
-Latest CLI package: [`@vibearound/cli@0.0.1`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1).
+Latest CLI package: [`@vibearound/cli@0.0.2`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.2](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.2).
 
 ## Upgrade Notes
 

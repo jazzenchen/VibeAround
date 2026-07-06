@@ -373,7 +373,7 @@ va launch --profile codex-work
 
 server 启动后，在浏览器访问 `http://127.0.0.1:12358/va/`。
 
-最新 CLI 包：[`@vibearound/cli@0.0.1`](https://www.npmjs.com/package/@vibearound/cli)。各平台 payload 单独记录在 [VibeAround CLI 0.0.1](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.1)。
+最新 CLI 包：[`@vibearound/cli@0.0.2`](https://www.npmjs.com/package/@vibearound/cli)。各平台 payload 单独记录在 [VibeAround CLI 0.0.2](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.2)。
 
 ## 升级说明
 
