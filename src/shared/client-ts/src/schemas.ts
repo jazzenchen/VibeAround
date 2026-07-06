@@ -72,7 +72,7 @@ export const ProfileLaunchOptionSchema = z.object({
   id: z.string(),
   label: z.string(),
   provider: z.string(),
-  launch_targets: z.array(ProfileLaunchTargetSchema),
+  launch_targets: z.array(ProfileLaunchTargetSchema).default([]),
 });
 export type ProfileLaunchOption = z.infer<typeof ProfileLaunchOptionSchema>;
 export const ProfileLaunchOptionsSchema = z.array(ProfileLaunchOptionSchema);

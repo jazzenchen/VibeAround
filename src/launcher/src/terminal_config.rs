@@ -114,7 +114,12 @@ fn platform_choices() -> &'static [TerminalChoice] {
     }
     #[cfg(target_os = "windows")]
     {
-        return &[TerminalChoice::PowerShell];
+        return &[
+            TerminalChoice::PowerShell,
+            TerminalChoice::PowerShell7,
+            TerminalChoice::WindowsTerminalPowerShell,
+            TerminalChoice::WindowsTerminalPowerShell7,
+        ];
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -135,7 +140,18 @@ fn is_installed(choice: TerminalChoice) -> bool {
     match choice {
         TerminalChoice::Terminal => cfg!(target_os = "macos"),
         TerminalChoice::Iterm2 => Path::new("/Applications/iTerm.app").exists(),
-        TerminalChoice::PowerShell => cfg!(target_os = "windows"),
+        TerminalChoice::PowerShell => {
+            cfg!(target_os = "windows") && command_in_path("powershell.exe")
+        }
+        TerminalChoice::PowerShell7 => cfg!(target_os = "windows") && command_in_path("pwsh.exe"),
+        TerminalChoice::WindowsTerminalPowerShell => {
+            cfg!(target_os = "windows")
+                && command_in_path("wt.exe")
+                && command_in_path("powershell.exe")
+        }
+        TerminalChoice::WindowsTerminalPowerShell7 => {
+            cfg!(target_os = "windows") && command_in_path("wt.exe") && command_in_path("pwsh.exe")
+        }
         TerminalChoice::SystemTerminal => [
             "xdg-terminal-exec",
             "x-terminal-emulator",

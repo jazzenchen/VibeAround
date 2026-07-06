@@ -27,6 +27,9 @@ pub enum TerminalChoice {
     Terminal,
     Iterm2,
     PowerShell,
+    PowerShell7,
+    WindowsTerminalPowerShell,
+    WindowsTerminalPowerShell7,
     SystemTerminal,
     GnomeTerminal,
     Konsole,
@@ -72,7 +75,12 @@ impl TerminalChoice {
     #[cfg(target_os = "macos")]
     pub const ALL: &'static [TerminalChoice] = &[Self::Terminal, Self::Iterm2];
     #[cfg(target_os = "windows")]
-    pub const ALL: &'static [TerminalChoice] = &[Self::PowerShell];
+    pub const ALL: &'static [TerminalChoice] = &[
+        Self::PowerShell,
+        Self::PowerShell7,
+        Self::WindowsTerminalPowerShell,
+        Self::WindowsTerminalPowerShell7,
+    ];
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     pub const ALL: &'static [TerminalChoice] = &[
         Self::SystemTerminal,
@@ -90,6 +98,9 @@ impl TerminalChoice {
             Self::Terminal => "terminal",
             Self::Iterm2 => "iterm2",
             Self::PowerShell => "powershell",
+            Self::PowerShell7 => "powershell-7",
+            Self::WindowsTerminalPowerShell => "windows-terminal-powershell",
+            Self::WindowsTerminalPowerShell7 => "windows-terminal-powershell-7",
             Self::SystemTerminal => "system-terminal",
             Self::GnomeTerminal => "gnome-terminal",
             Self::Konsole => "konsole",
@@ -106,6 +117,9 @@ impl TerminalChoice {
             Self::Terminal => "Terminal.app",
             Self::Iterm2 => "iTerm2",
             Self::PowerShell => "PowerShell",
+            Self::PowerShell7 => "PowerShell 7",
+            Self::WindowsTerminalPowerShell => "Windows Terminal / PowerShell",
+            Self::WindowsTerminalPowerShell7 => "Windows Terminal / PowerShell 7",
             Self::SystemTerminal => "System terminal",
             Self::GnomeTerminal => "GNOME Terminal",
             Self::Konsole => "Konsole",
@@ -122,6 +136,9 @@ impl TerminalChoice {
             "terminal" => Some(Self::Terminal),
             "iterm2" => Some(Self::Iterm2),
             "powershell" => Some(Self::PowerShell),
+            "powershell-7" => Some(Self::PowerShell7),
+            "windows-terminal-powershell" => Some(Self::WindowsTerminalPowerShell),
+            "windows-terminal-powershell-7" => Some(Self::WindowsTerminalPowerShell7),
             "system-terminal" => Some(Self::SystemTerminal),
             "gnome-terminal" => Some(Self::GnomeTerminal),
             "konsole" => Some(Self::Konsole),
@@ -160,11 +177,23 @@ impl TerminalChoice {
 pub fn detect_installed() -> Vec<TerminalChoice> {
     let mut out = Vec::new();
     for choice in TerminalChoice::ALL {
-        if is_installed(*choice) {
+        if is_available(*choice) {
             out.push(*choice);
         }
     }
     out
+}
+
+pub fn is_available(choice: TerminalChoice) -> bool {
+    TerminalChoice::ALL.contains(&choice) && is_installed(choice)
+}
+
+pub fn default_available_for_platform() -> TerminalChoice {
+    TerminalChoice::ALL
+        .iter()
+        .copied()
+        .find(|choice| is_installed(*choice))
+        .unwrap_or_else(TerminalChoice::default_for_platform)
 }
 
 fn is_installed(choice: TerminalChoice) -> bool {
@@ -172,8 +201,18 @@ fn is_installed(choice: TerminalChoice) -> bool {
         // Terminal.app ships with macOS; assume present.
         TerminalChoice::Terminal => cfg!(target_os = "macos"),
         TerminalChoice::Iterm2 => std::path::Path::new("/Applications/iTerm.app").exists(),
-        // PowerShell ships with supported Windows versions.
-        TerminalChoice::PowerShell => cfg!(target_os = "windows"),
+        TerminalChoice::PowerShell => {
+            cfg!(target_os = "windows") && command_in_path("powershell.exe")
+        }
+        TerminalChoice::PowerShell7 => cfg!(target_os = "windows") && command_in_path("pwsh.exe"),
+        TerminalChoice::WindowsTerminalPowerShell => {
+            cfg!(target_os = "windows")
+                && command_in_path("wt.exe")
+                && command_in_path("powershell.exe")
+        }
+        TerminalChoice::WindowsTerminalPowerShell7 => {
+            cfg!(target_os = "windows") && command_in_path("wt.exe") && command_in_path("pwsh.exe")
+        }
         TerminalChoice::SystemTerminal => [
             "xdg-terminal-exec",
             "x-terminal-emulator",
@@ -248,8 +287,8 @@ pub fn read_preference() -> TerminalChoice {
         .terminal
         .as_deref()
         .and_then(TerminalChoice::from_id)
-        .filter(|choice| TerminalChoice::ALL.contains(choice))
-        .unwrap_or_else(TerminalChoice::default_for_platform)
+        .filter(|choice| is_available(*choice))
+        .unwrap_or_else(default_available_for_platform)
 }
 
 pub fn write_preference(choice: TerminalChoice) -> anyhow::Result<()> {

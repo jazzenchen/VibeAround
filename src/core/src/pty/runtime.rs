@@ -28,7 +28,9 @@ fn shell_command() -> CommandBuilder {
 
 #[cfg(windows)]
 fn shell_command() -> CommandBuilder {
-    let c = CommandBuilder::new("cmd.exe");
+    let mut c = CommandBuilder::new("powershell.exe");
+    c.arg("-NoLogo");
+    c.arg("-NoProfile");
     c
 }
 
@@ -56,6 +58,7 @@ fn set_pty_env(c: &mut CommandBuilder, theme: Option<&str>, extra_env: &[(String
     c.env_remove("NO_COLOR");
 }
 
+#[cfg(not(windows))]
 fn bash_wrapper(
     script: &str,
     theme: Option<&str>,
@@ -69,8 +72,85 @@ fn bash_wrapper(
     wrap
 }
 
+#[cfg(windows)]
+fn powershell_wrapper(
+    script: &str,
+    theme: Option<&str>,
+    extra_env: &[(String, String)],
+    no_exit: bool,
+) -> CommandBuilder {
+    let mut wrap = CommandBuilder::new("powershell.exe");
+    wrap.arg("-NoLogo");
+    wrap.arg("-NoProfile");
+    wrap.arg("-ExecutionPolicy");
+    wrap.arg("Bypass");
+    if no_exit {
+        wrap.arg("-NoExit");
+    }
+    wrap.arg("-EncodedCommand");
+    wrap.arg(powershell_encoded_command(script));
+    set_pty_env(&mut wrap, theme, extra_env);
+    wrap.env_remove("TMUX");
+    wrap
+}
+
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(windows)]
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(windows)]
+fn powershell_launch_script(cwd: Option<&Path>, command: Option<&str>) -> String {
+    let mut lines = Vec::new();
+    if let Some(dir) = cwd {
+        let dir = dir.to_string_lossy();
+        lines.push(format!(
+            "Set-Location -LiteralPath {}",
+            powershell_quote(dir.as_ref())
+        ));
+    }
+    if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
+        lines.push(command.to_string());
+        lines.push("if ($null -ne $global:LASTEXITCODE) { exit $global:LASTEXITCODE }".to_string());
+    }
+    lines.join("\r\n")
+}
+
+#[cfg(windows)]
+fn powershell_encoded_command(script: &str) -> String {
+    let mut bytes = Vec::with_capacity(script.len() * 2);
+    for code_unit in script.encode_utf16() {
+        bytes.extend_from_slice(&code_unit.to_le_bytes());
+    }
+    base64_encode(&bytes)
+}
+
+#[cfg(windows)]
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(((bytes.len() + 2) / 3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        out.push(TABLE[(b0 >> 2) as usize] as char);
+        out.push(TABLE[(((b0 & 0b0000_0011) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(((b1 & 0b0000_1111) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(b2 & 0b0011_1111) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 /// Exec string for each tool when wrapping with cd/tmux.
@@ -104,8 +184,15 @@ fn tool_exec_argv(tool: PtyTool, tmux_session: Option<&str>) -> String {
 }
 
 fn error_exec_argv(message: &str) -> String {
-    let script = format!("printf '%s\\n' {}; exit 127", shell_quote(message));
-    format!("bash -lc {}", shell_quote(&script))
+    #[cfg(windows)]
+    {
+        return format!("Write-Error {}; exit 127", powershell_quote(message));
+    }
+    #[cfg(not(windows))]
+    {
+        let script = format!("printf '%s\\n' {}; exit 127", shell_quote(message));
+        format!("bash -lc {}", shell_quote(&script))
+    }
 }
 
 fn command_for_tool(
@@ -117,16 +204,24 @@ fn command_for_tool(
     extra_env: &[(String, String)],
 ) -> CommandBuilder {
     if let Some(command) = command_override {
-        let line = if let Some(dir) = cwd {
-            format!(
-                "cd {} && exec {}",
-                shell_quote(&dir.to_string_lossy()),
-                command
-            )
-        } else {
-            format!("exec {}", command)
-        };
-        return bash_wrapper(&line, theme, extra_env);
+        #[cfg(windows)]
+        {
+            let line = powershell_launch_script(cwd, Some(command));
+            return powershell_wrapper(&line, theme, extra_env, false);
+        }
+        #[cfg(not(windows))]
+        {
+            let line = if let Some(dir) = cwd {
+                format!(
+                    "cd {} && exec {}",
+                    shell_quote(&dir.to_string_lossy()),
+                    command
+                )
+            } else {
+                format!("exec {}", command)
+            };
+            return bash_wrapper(&line, theme, extra_env);
+        }
     }
 
     if let Some(dir) = cwd {
@@ -140,13 +235,34 @@ fn command_for_tool(
             );
             return bash_wrapper(&line, theme, extra_env);
         }
-        #[cfg(not(unix))]
-        let _ = dir;
+        #[cfg(windows)]
+        {
+            if tmux_session.is_none() {
+                if tool == PtyTool::Generic {
+                    let line = powershell_launch_script(Some(dir), None);
+                    return powershell_wrapper(&line, theme, extra_env, true);
+                }
+                let exec = tool_exec_argv(tool, None);
+                let line = powershell_launch_script(Some(dir), Some(&exec));
+                return powershell_wrapper(&line, theme, extra_env, false);
+            }
+        }
     }
 
     if tmux_session.is_some() {
-        let exec = tool_exec_argv(tool, tmux_session);
-        return bash_wrapper(&exec, theme, extra_env);
+        #[cfg(windows)]
+        {
+            let line = powershell_launch_script(
+                None,
+                Some("Write-Error 'tmux sessions are not supported in Windows web PTY'; exit 127"),
+            );
+            return powershell_wrapper(&line, theme, extra_env, false);
+        }
+        #[cfg(not(windows))]
+        {
+            let exec = tool_exec_argv(tool, tmux_session);
+            return bash_wrapper(&exec, theme, extra_env);
+        }
     }
 
     if tool == PtyTool::Generic {
@@ -156,6 +272,12 @@ fn command_for_tool(
     }
 
     let exec = tool_exec_argv(tool, None);
+    #[cfg(windows)]
+    {
+        let line = powershell_launch_script(None, Some(&exec));
+        return powershell_wrapper(&line, theme, extra_env, false);
+    }
+    #[cfg(not(windows))]
     bash_wrapper(&format!("exec {exec}"), theme, extra_env)
 }
 
@@ -238,6 +360,32 @@ mod tests {
     fn shell_quote_handles_single_quotes() {
         assert_eq!(shell_quote("plain"), "'plain'");
         assert_eq!(shell_quote("team's session"), "'team'\"'\"'s session'");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_quote_handles_single_quotes() {
+        assert_eq!(powershell_quote("plain"), "'plain'");
+        assert_eq!(powershell_quote("team's session"), "'team''s session'");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_encoded_command_uses_utf16le_base64() {
+        assert_eq!(powershell_encoded_command("A"), "QQA=");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_launch_script_sets_literal_cwd() {
+        let script = powershell_launch_script(
+            Some(Path::new(r"D:\_P\26\中文workspace")),
+            Some("claude code"),
+        );
+
+        assert!(script.contains(r"Set-Location -LiteralPath 'D:\_P\26\中文workspace'"));
+        assert!(script.contains("claude code"));
+        assert!(script.contains("exit $global:LASTEXITCODE"));
     }
 }
 

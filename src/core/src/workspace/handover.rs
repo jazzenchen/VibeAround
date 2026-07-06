@@ -1,4 +1,4 @@
-//! Short-lived handoff codes for attaching an external agent session to a
+//! Short-lived handover codes for attaching an external agent session to a
 //! workspace thread.
 
 use std::collections::{HashMap, VecDeque};
@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use rand::rngs::OsRng;
 use rand::Rng;
 
-struct HandoffEntry {
+struct HandoverEntry {
     agent_kind: String,
     profile_id: Option<String>,
     session_id: String,
@@ -17,9 +17,9 @@ struct HandoffEntry {
     expires_at: Instant,
 }
 
-static HANDOFF_CODES: LazyLock<Mutex<HashMap<String, HandoffEntry>>> =
+static HANDOVER_CODES: LazyLock<Mutex<HashMap<String, HandoverEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static HANDOFF_FAILED_ATTEMPTS: LazyLock<Mutex<VecDeque<Instant>>> =
+static HANDOVER_FAILED_ATTEMPTS: LazyLock<Mutex<VecDeque<Instant>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
 
 const TTL: Duration = Duration::from_secs(120);
@@ -28,7 +28,7 @@ const MAX_FAILED_ATTEMPTS: usize = 10;
 const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HandoffPayload {
+pub struct HandoverPayload {
     pub agent_kind: String,
     pub profile_id: Option<String>,
     pub session_id: String,
@@ -45,8 +45,8 @@ fn generate_code() -> String {
         .collect()
 }
 
-pub fn store(payload: HandoffPayload) -> String {
-    let mut map = HANDOFF_CODES.lock();
+pub fn store(payload: HandoverPayload) -> String {
+    let mut map = HANDOVER_CODES.lock();
     let now = Instant::now();
     map.retain(|_, entry| entry.expires_at > now);
 
@@ -58,7 +58,7 @@ pub fn store(payload: HandoffPayload) -> String {
     };
     map.insert(
         code.clone(),
-        HandoffEntry {
+        HandoverEntry {
             agent_kind: payload.agent_kind,
             profile_id: payload.profile_id,
             session_id: payload.session_id,
@@ -69,25 +69,25 @@ pub fn store(payload: HandoffPayload) -> String {
     code
 }
 
-pub fn consume(code: &str) -> Option<HandoffPayload> {
+pub fn consume(code: &str) -> Option<HandoverPayload> {
     let now = Instant::now();
     if failed_attempt_limit_reached(now) {
         tracing::warn!(
             window_secs = FAILED_ATTEMPT_WINDOW.as_secs(),
             max_attempts = MAX_FAILED_ATTEMPTS,
-            "handoff pickup rejected after too many failed attempts"
+            "handover pickup rejected after too many failed attempts"
         );
         return None;
     }
 
-    let mut map = HANDOFF_CODES.lock();
+    let mut map = HANDOVER_CODES.lock();
     map.retain(|_, entry| entry.expires_at > now);
     let Some(entry) = map.remove(&code.to_uppercase()) else {
         drop(map);
         record_failed_attempt(now);
         return None;
     };
-    Some(HandoffPayload {
+    Some(HandoverPayload {
         agent_kind: entry.agent_kind,
         profile_id: entry.profile_id,
         session_id: entry.session_id,
@@ -96,13 +96,13 @@ pub fn consume(code: &str) -> Option<HandoffPayload> {
 }
 
 fn failed_attempt_limit_reached(now: Instant) -> bool {
-    let mut attempts = HANDOFF_FAILED_ATTEMPTS.lock();
+    let mut attempts = HANDOVER_FAILED_ATTEMPTS.lock();
     prune_failed_attempts(&mut attempts, now);
     attempts.len() >= MAX_FAILED_ATTEMPTS
 }
 
 fn record_failed_attempt(now: Instant) {
-    let mut attempts = HANDOFF_FAILED_ATTEMPTS.lock();
+    let mut attempts = HANDOVER_FAILED_ATTEMPTS.lock();
     prune_failed_attempts(&mut attempts, now);
     attempts.push_back(now);
 }
@@ -123,8 +123,8 @@ mod tests {
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn reset_for_test() {
-        HANDOFF_CODES.lock().clear();
-        HANDOFF_FAILED_ATTEMPTS.lock().clear();
+        HANDOVER_CODES.lock().clear();
+        HANDOVER_FAILED_ATTEMPTS.lock().clear();
     }
 
     #[test]
@@ -144,7 +144,7 @@ mod tests {
     fn store_and_consume_roundtrip() {
         let _guard = TEST_LOCK.lock();
         reset_for_test();
-        let code = store(HandoffPayload {
+        let code = store(HandoverPayload {
             agent_kind: "claude".into(),
             profile_id: Some("deepseek".into()),
             session_id: "sess-1".into(),
@@ -161,7 +161,7 @@ mod tests {
     fn consume_is_one_shot() {
         let _guard = TEST_LOCK.lock();
         reset_for_test();
-        let code = store(HandoffPayload {
+        let code = store(HandoverPayload {
             agent_kind: "gemini".into(),
             profile_id: None,
             session_id: "sess-2".into(),
@@ -179,7 +179,7 @@ mod tests {
         for attempt in 0..MAX_FAILED_ATTEMPTS {
             assert!(consume(&format!("MISS{attempt}")).is_none());
         }
-        let valid_code = store(HandoffPayload {
+        let valid_code = store(HandoverPayload {
             agent_kind: "claude".into(),
             profile_id: Some("default".into()),
             session_id: "sess-1".into(),

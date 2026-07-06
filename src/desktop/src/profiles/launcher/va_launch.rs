@@ -254,6 +254,13 @@ fn terminal_choice_for_va_launch(choice: terminal::TerminalChoice) -> va_launche
         terminal::TerminalChoice::Terminal => va_launcher::TerminalChoice::Terminal,
         terminal::TerminalChoice::Iterm2 => va_launcher::TerminalChoice::Iterm2,
         terminal::TerminalChoice::PowerShell => va_launcher::TerminalChoice::PowerShell,
+        terminal::TerminalChoice::PowerShell7 => va_launcher::TerminalChoice::PowerShell7,
+        terminal::TerminalChoice::WindowsTerminalPowerShell => {
+            va_launcher::TerminalChoice::WindowsTerminalPowerShell
+        }
+        terminal::TerminalChoice::WindowsTerminalPowerShell7 => {
+            va_launcher::TerminalChoice::WindowsTerminalPowerShell7
+        }
         terminal::TerminalChoice::SystemTerminal => va_launcher::TerminalChoice::SystemTerminal,
         terminal::TerminalChoice::GnomeTerminal => va_launcher::TerminalChoice::GnomeTerminal,
         terminal::TerminalChoice::Konsole => va_launcher::TerminalChoice::Konsole,
@@ -330,6 +337,19 @@ mod tests {
         assert_eq!(
             terminal_choice_for_va_launch(terminal::TerminalChoice::XfceTerminal).id(),
             terminal::TerminalChoice::XfceTerminal.id()
+        );
+        assert_eq!(
+            terminal_choice_for_va_launch(terminal::TerminalChoice::PowerShell7).id(),
+            terminal::TerminalChoice::PowerShell7.id()
+        );
+        assert_eq!(
+            terminal_choice_for_va_launch(terminal::TerminalChoice::WindowsTerminalPowerShell).id(),
+            terminal::TerminalChoice::WindowsTerminalPowerShell.id()
+        );
+        assert_eq!(
+            terminal_choice_for_va_launch(terminal::TerminalChoice::WindowsTerminalPowerShell7)
+                .id(),
+            terminal::TerminalChoice::WindowsTerminalPowerShell7.id()
         );
     }
 
