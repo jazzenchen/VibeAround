@@ -316,7 +316,7 @@ Channel plugins are built with the [VibeAround Channel SDK](https://github.com/j
 </details>
 
 <details>
-<summary><strong>Local-first Security</strong></summary>
+<summary><strong>Security Model</strong></summary>
 
 VibeAround keeps AI coding work on your computer by default.
 
