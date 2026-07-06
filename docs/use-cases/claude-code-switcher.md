@@ -1,32 +1,43 @@
 # Claude Code Provider Switcher
 
-Provider switching is useful when a team wants Claude Code workflows to run through named profiles instead of repeatedly editing environment variables, endpoint URLs, or agent configuration. VibeAround's provider profiles and API Bridge make that routing visible at launch time.
+The scenario: you want to run Claude Code, but through a provider and key you chose — DeepSeek, Kimi, GLM, OpenRouter, or a self-hosted compatible endpoint — without editing environment variables before every session and without an official coding-plan subscription. VibeAround's provider profiles and API Bridge make that routing a named, visible choice at launch time.
 
-## What A Switcher Should Solve
+Claude and Claude Code are Anthropic products. VibeAround is independent software that coordinates local workflows.
 
-- Select a provider profile before starting a session.
-- Keep model aliases and endpoint details out of ad hoc terminal notes.
-- Route through a local bridge when the agent and provider use different API shapes.
-- Preserve the ability to use Claude Code's native configuration when that is the best path.
+## The Walkthrough
 
-## Recommended Workflow
+1. **Create a provider profile.** In the desktop app's model profile screen:
+   - Pick a provider from the catalog (Kimi/Moonshot, DeepSeek, OpenRouter, Z.AI/GLM, DashScope, and more — endpoints and models prefilled), or **custom** for any compatible endpoint.
+   - Pick the endpoint variant where the provider has several (global vs CN, pay-as-you-go vs coding plan) — the key must match the plan.
+   - Paste the API key. It is stored locally and only ever sent to that provider by the daemon.
+   - Choose which models the profile exposes and which is the default. For agents that validate model names, define alias model ids that map to the real upstream model.
 
-1. Create one provider profile in [Provider Profiles & API Bridge](../guides/model-profiles.md).
-2. Test the profile with a small task.
-3. Add model aliases only after the base route works.
-4. Launch Claude Code from VibeAround with the selected profile.
-5. Record any provider-specific limitations in the profile notes.
+   Full details in the [model profiles guide](../guides/model-profiles.md); `va profiles` lists profiles from the CLI.
+2. **Launch Claude Code with the profile.** Desktop **Launch** screen: pick Claude Code + workspace + the new profile — or from the CLI:
+
+   ```bash
+   va launch --profile <name>            # launch with the saved launch profile
+   va launch --profile <name> --dry-run  # print the rendered plan without launching
+   ```
+
+   The rendered config points Claude Code's model traffic at the local bridge (`127.0.0.1:12358`); the daemon translates to the provider. Keep the daemon running for the session's lifetime.
+3. **Test with a small task** before relying on the route. If the agent says "model not found", use the profile's alias model id, not the upstream id.
+4. **Switch mid-conversation when hosted.** In an IM or web chat thread, `/profile --list` shows the profiles and `/profile --switch <id>` re-binds the thread — useful for comparing providers on the same task.
 
 ## When Not To Switch
 
-Do not add a profile layer when native Claude Code configuration is already the simplest, most reliable choice for the current task. Provider switching is most valuable when repeatability, explicit routing, model comparison, or bridge translation matters.
+Do not add a profile layer when native Claude Code configuration (your Anthropic login) is already the simplest, most reliable choice. Provider switching is most valuable when repeatability, explicit routing, model comparison, third-party keys, or bridge translation matter.
+
+## The Same Switch, Everywhere
+
+Profiles are not Claude Code specific. The same profile can launch Codex CLI, Gemini CLI, OpenCode, and the other supported agents, and any OpenAI-compatible tool can point at the profile's local endpoint (shown in the profile UI) to share the same provider setup. Agent, workspace, session, and profile are all selected per launch — visible, reversible, repeatable.
 
 ## Related Docs
 
-- [Supported Providers](../reference/provider-endpoints.md)
-- [Claude Remote Access](claude-remote.md)
-- [Local AI Switch](local-ai-switch.md)
-- [Architecture](../architecture/overview.md)
+- [Model profiles guide](../guides/model-profiles.md)
+- [Provider endpoints reference](../reference/provider-endpoints.md)
+- [Claude Code remote access](claude-remote.md)
+- [Local API and bridge](../architecture/local-api-and-bridge.md)
 
 ---
 
