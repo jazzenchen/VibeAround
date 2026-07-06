@@ -293,7 +293,7 @@ pub(super) async fn mcp_prepare_handover(
         },
     };
 
-    let code = common::workspace::handoff::store(common::workspace::handoff::HandoffPayload {
+    let code = common::workspace::handover::store(common::workspace::handover::HandoverPayload {
         agent_kind: agent_kind_str.to_string(),
         profile_id: Some(profile_id),
         session_id,

@@ -21,6 +21,7 @@ const LOCAL_BRIDGE_PROXY_ENV_KEYS: &[&str] = &[
 ];
 const VIBEAROUND_LAUNCH_ID_ENV: &str = "VIBEAROUND_LAUNCH_ID";
 const VIBEAROUND_LAUNCH_TARGET_ENV: &str = "VIBEAROUND_LAUNCH_TARGET";
+pub(crate) const WEB_PTY_TERMINAL_ID: &str = "web-pty";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +70,8 @@ pub struct LaunchPlanBody {
     pub profile_id: Option<String>,
     pub launch_target: Option<String>,
     pub session_id: Option<String>,
+    #[serde(default, skip_deserializing)]
+    pub(crate) terminal_id: Option<String>,
 }
 
 /// GET /api/launcher/preferences -- server-owned launcher runtime preferences.
@@ -309,6 +312,7 @@ fn build_direct_launch_plan(
 ) -> Result<crate::api_types::LaunchPlanResponse, (StatusCode, String)> {
     let cfg = config::ensure_loaded();
     let prefs = agent_state::read_prefs();
+    let terminal_id = body.terminal_id.as_deref();
     let agent_id = match body.agent_id {
         Some(agent_id) => canonical_agent_id(&agent_id)?,
         None => agent_state::resolve_selected_agent(&prefs, &cfg),
@@ -320,14 +324,14 @@ fn build_direct_launch_plan(
         )
     })?;
     let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);
-    let launch_args = agent.launch_args_for_current_platform();
+    let launch_args = agent.launch_args_for_terminal(terminal_id);
     let (command, resume_args) = if let Some(session_id) = body.session_id.as_deref() {
-        resume_command_for_agent(&agent_id, session_id)?
+        resume_command_for_agent(&agent_id, session_id, terminal_id)?
     } else {
         (
             agent_state::resolve_agent_executable_path(&prefs, &agent_id)
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| agent.launch_command_for_current_platform().to_string()),
+                .unwrap_or_else(|| agent.launch_command_for_terminal(terminal_id).to_string()),
             Vec::new(),
         )
     };
@@ -335,7 +339,7 @@ fn build_direct_launch_plan(
     args.extend(agent_state::resolve_agent_terminal_args(&prefs, &agent_id));
     args.extend(resume_args);
     let env = agent
-        .launch_env_for_current_platform()
+        .launch_env_for_terminal(terminal_id)
         .into_iter()
         .map(|(key, value)| crate::api_types::LaunchPlanEnvVar { key, value })
         .collect();
@@ -364,6 +368,7 @@ fn build_profile_launch_plan(
 ) -> Result<crate::api_types::LaunchPlanResponse, (StatusCode, String)> {
     let cfg = config::ensure_loaded();
     let prefs = agent_state::read_prefs();
+    let terminal_id = body.terminal_id.as_deref();
     let profile = load_profile(&profile_id)?;
     let launch_target = body.launch_target.ok_or_else(|| {
         (
@@ -400,15 +405,15 @@ fn build_profile_launch_plan(
     append_vibearound_launch_context_env(&mut env, &profile.id, &launch_target, launch_id);
 
     let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);
-    append_env_defaults(&mut env, agent.launch_env_for_current_platform());
-    let launch_args = agent.launch_args_for_current_platform();
+    append_env_defaults(&mut env, agent.launch_env_for_terminal(terminal_id));
+    let launch_args = agent.launch_args_for_terminal(terminal_id);
     let (command, resume_args) = if let Some(session_id) = body.session_id.as_deref() {
-        resume_command_for_agent(&agent_id, session_id)?
+        resume_command_for_agent(&agent_id, session_id, terminal_id)?
     } else {
         (
             agent_state::resolve_agent_executable_path(&prefs, &agent_id)
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| agent.launch_command_for_current_platform().to_string()),
+                .unwrap_or_else(|| agent.launch_command_for_terminal(terminal_id).to_string()),
             Vec::new(),
         )
     };
@@ -485,6 +490,7 @@ fn append_env_defaults(env: &mut Vec<(String, String)>, defaults: Vec<(String, S
 fn resume_command_for_agent(
     agent_id: &str,
     session_id: &str,
+    terminal_id: Option<&str>,
 ) -> Result<(String, Vec<String>), (StatusCode, String)> {
     let agent = resources::agent_by_id(agent_id).ok_or_else(|| {
         (
@@ -493,7 +499,7 @@ fn resume_command_for_agent(
         )
     })?;
     agent
-        .launch_resume_for_current_platform(session_id)
+        .launch_resume_for_terminal(session_id, terminal_id)
         .ok_or_else(|| {
             (
                 StatusCode::BAD_REQUEST,

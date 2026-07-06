@@ -85,6 +85,29 @@ pub enum TerminalChoice {
     #[serde(rename = "powershell", alias = "power-shell")]
     #[value(name = "powershell", alias = "power-shell")]
     PowerShell,
+    #[serde(rename = "powershell-7", alias = "powershell7", alias = "pwsh")]
+    #[value(name = "powershell-7", alias = "powershell7", alias = "pwsh")]
+    PowerShell7,
+    #[serde(
+        rename = "windows-terminal-powershell",
+        alias = "windows-terminal-power-shell"
+    )]
+    #[value(
+        name = "windows-terminal-powershell",
+        alias = "windows-terminal-power-shell"
+    )]
+    WindowsTerminalPowerShell,
+    #[serde(
+        rename = "windows-terminal-powershell-7",
+        alias = "windows-terminal-power-shell-7",
+        alias = "windows-terminal-powershell7"
+    )]
+    #[value(
+        name = "windows-terminal-powershell-7",
+        alias = "windows-terminal-power-shell-7",
+        alias = "windows-terminal-powershell7"
+    )]
+    WindowsTerminalPowerShell7,
     GnomeTerminal,
     Konsole,
     #[serde(rename = "xfce4-terminal", alias = "xfce-terminal")]
@@ -115,6 +138,9 @@ impl TerminalChoice {
             Self::Terminal => "terminal",
             Self::Iterm2 => "iterm2",
             Self::PowerShell => "powershell",
+            Self::PowerShell7 => "powershell-7",
+            Self::WindowsTerminalPowerShell => "windows-terminal-powershell",
+            Self::WindowsTerminalPowerShell7 => "windows-terminal-powershell-7",
             Self::GnomeTerminal => "gnome-terminal",
             Self::Konsole => "konsole",
             Self::XfceTerminal => "xfce4-terminal",
@@ -131,6 +157,13 @@ impl TerminalChoice {
             "terminal" => Some(Self::Terminal),
             "iterm2" => Some(Self::Iterm2),
             "powershell" | "power-shell" => Some(Self::PowerShell),
+            "powershell-7" | "powershell7" | "pwsh" => Some(Self::PowerShell7),
+            "windows-terminal-powershell" | "windows-terminal-power-shell" => {
+                Some(Self::WindowsTerminalPowerShell)
+            }
+            "windows-terminal-powershell-7"
+            | "windows-terminal-power-shell-7"
+            | "windows-terminal-powershell7" => Some(Self::WindowsTerminalPowerShell7),
             "gnome-terminal" => Some(Self::GnomeTerminal),
             "konsole" => Some(Self::Konsole),
             "xfce4-terminal" | "xfce-terminal" => Some(Self::XfceTerminal),
@@ -145,7 +178,10 @@ impl TerminalChoice {
     pub fn is_supported_on_current_platform(self) -> bool {
         match self {
             Self::Terminal | Self::Iterm2 => cfg!(target_os = "macos"),
-            Self::PowerShell => cfg!(target_os = "windows"),
+            Self::PowerShell
+            | Self::PowerShell7
+            | Self::WindowsTerminalPowerShell
+            | Self::WindowsTerminalPowerShell7 => cfg!(target_os = "windows"),
             Self::SystemTerminal
             | Self::GnomeTerminal
             | Self::Konsole
@@ -314,6 +350,15 @@ mod tests {
         assert_eq!(
             TerminalChoice::from_id("xfce4-terminal"),
             Some(TerminalChoice::XfceTerminal)
+        );
+        assert_eq!(TerminalChoice::PowerShell7.id(), "powershell-7");
+        assert_eq!(
+            TerminalChoice::from_id("windows-terminal-powershell"),
+            Some(TerminalChoice::WindowsTerminalPowerShell)
+        );
+        assert_eq!(
+            TerminalChoice::from_id("windows-terminal-powershell-7"),
+            Some(TerminalChoice::WindowsTerminalPowerShell7)
         );
     }
 }

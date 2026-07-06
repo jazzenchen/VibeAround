@@ -1,7 +1,7 @@
 {
   "name": "@va/launcher",
   "private": true,
-  "version": "0.7.11",
+  "version": "0.7.12",
   "description": "Native terminal and desktop app launcher for VibeAround",
   "bin": {
     "va-launch": "bin/va-launch.mjs"
