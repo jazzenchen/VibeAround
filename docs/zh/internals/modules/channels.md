@@ -1,0 +1,49 @@
+# Module: channels
+
+`src/core/src/channels/`：从“某个界面收到消息”到“thread runtime 收到 prompt”之间的一切，以及反向路径。经过它的流程：[IM 消息](../flows/im-message.md)、[Web Chat](../flows/web-chat.md)、[权限请求](../flows/permission.md)。
+
+## 职责
+
+托管 channel plugins（进程外 stdio 和进程内 websocket），把所有入站流量归一化成 `ChannelInput`，派发到 workspace-thread layer，并把每个 `ChannelOutput` 路由回应该渲染它的界面。它拥有消息的*传输和路由*，但从不拥有对话状态（那是 `workspace`），也不负责进程启动（那是 `process`）。
+
+## 关键类型
+
+| Type | File | Role |
+|---|---|---|
+| `ChannelManager` | `mod.rs` | Daemon 生命周期 facade：input queue、plugin registration、sync、shutdown |
+| `ChannelInput` / `ChannelOutput` / `ChannelEnvelope` | `types.rs` | 每个界面都使用的 wire vocabulary |
+| `PluginHost` | `plugin_host.rs` | 路由表：channel kind → live runtime；pending-permissions table |
+| `PluginRuntime` | `plugin_runtime.rs` | stdio / websocket runtime 的 enum |
+| `ChannelPluginBridge` | `plugin_bridge.rs` | 驱动一个 stdio plugin ACP 连接的 ProcessBridge impl |
+| `ChannelMonitor` | `monitor.rs` | Dashboard 通过 supervisor 查看 plugin lifecycle 的 facade |
+| `ChannelOutbox` | `outbox.rs` | 可 replay outputs（system texts、permission cards）的 durable queue |
+| `ChannelBridgeHandler` | `bridge_handler.rs` | 每个 thread 的 ACP client handler：notification fan-out + permission round-trip |
+| `handle_channel_input` | `prompt/` | 唯一 dispatch 入口：command parse → thread ops → prompt |
+
+## 交互
+
+- **← plugins/surfaces：** stdio plugins 通过 bridge；web/TUI 通过 `WebChannelManager` 注册的 senders。
+- **→ workspace：** `prompt/handler.rs` 调 `WorkspaceThreadManager` 做 route resolution、commands、prompts。
+- **→ process：** monitor 把 plugin manifests 注册给 `Supervisor`；bridge factory 在每次 respawn 后把 live runtime 重新注册进 `PluginHost`。
+- **← agent：** `ChannelBridgeHandler` 从 hosted agents 接收 ACP notifications/permission requests，并转成 outputs。
+
+## 不变量：不要破坏
+
+1. **Per-route ordering** 来自 server 的 shard workers；本模块里不能启动绕过它的 per-message tasks。
+2. **`handle_input` 绝不阻塞**，它只是 queue send；面向平台的代码绝不能等待 agent 工作。
+3. **每个 pending permission 都会终止**：注册的 oneshot 会被点按消费，被 bridge death 时的 `cancel_channel_permissions` 消费（每次 death 刚好一次），或被 `shutdown_all` 消费。给 plugin 加新退出路径时，也必须在那里 drain。
+4. **Replayable vs direct outputs**：只有 durable kinds 走 outbox（`should_replay_output`）；streaming chunks 在 plugin restart 跨越时刻意允许丢失。
+5. 一个 channel 的 outbound send 会持有该 channel 的 send lock，避免 respawn-replay 和 live sends 交错。
+
+## 已知技术债
+
+- `channel_kind == "web"` 字符串特判（core 中 7 处）应变成声明式 channel traits，remediation M4。
+- Web-chat session-intent side effects 早于 queue serialization 运行，remediation M6。
+- `send_locks` map entries 从不 prune（受 channel count 限制，主要是 cosmetic）。
+
+---
+
+*Source anchors: `src/core/src/channels/` (all files above), `src/server/src/lib.rs` (shard workers).*
+*Last verified: v0.7.11*
+
+<sub>[◀ Flow: PTY 终端](../flows/web-terminal.md) · [文档索引](../../README.md) · [Module: workspace ▶](workspace.md)</sub>

@@ -63,7 +63,7 @@ fix the failing test in ~/dev/my-app and show me the diff
 
 ---
 
-*Source anchors: `src/core/src/channels/prompt/handler.rs` (commands), `src/core/src/workspace/handoff.rs` (pickup), `src/skills/vibearound/SKILL.md` (handover skill).*
+*Source anchors: `src/core/src/channels/prompt/handler.rs` (commands), `src/core/src/workspace/handover.rs` (pickup), `src/skills/vibearound/SKILL.md` (handover skill).*
 *Last verified: v0.7.11*
 
 <sub>[◀ 安装与上手](install-and-onboarding.md) · [文档索引](../README.md) · [桌面应用指南 ▶](desktop-app.md)</sub>

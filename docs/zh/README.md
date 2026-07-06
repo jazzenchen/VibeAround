@@ -4,7 +4,7 @@ VibeAround 让你从已经在用的各种界面访问本地的 AI 编程 Agent�
 
 **第一次来？** 按这个顺序读：[VibeAround 是什么](product/what-is-vibearound.md) → [安装](guides/install-and-onboarding.md) → [快速导览](guides/quick-tour.md) → [核心概念](architecture/concepts.md)。其余内容按需查阅。
 
-> 本目录是英文文档的中文版。开发者向的 internals 文档（流程走读与模块内幕）只维护英文版：[internals/](../internals/README.md)。中英内容不一致时，以[英文版](../README.md)为准。
+> 本目录是英文文档的中文版。中英内容不一致时，以[英文版](../README.md)为准。
 
 ## 分区
 
@@ -14,7 +14,7 @@ VibeAround 让你从已经在用的各种界面访问本地的 AI 编程 Agent�
 | [guides/](#指南) | 面向任务的操作指南 | 你想把某件事做成 |
 | [architecture/](#架构) | 核心概念与系统如何运转 | 你想理解它 |
 | [reference/](#参考) | 速查表：设置、CLI、API 面、各种上限 | 你要核对一个细节 |
-| [internals/](../internals/README.md)（英文） | 流程走读与各模块内幕 | 你在调试或修改代码 |
+| [internals/](#internals) | 流程走读与各模块内幕 | 你在调试或修改代码 |
 
 ## 产品
 
@@ -64,6 +64,16 @@ VibeAround 让你从已经在用的各种界面访问本地的 AI 编程 Agent�
 | [API 面](reference/api-surfaces.md) | MCP 工具、本地 API 路由、WebSocket 端点、预览 URL |
 | [计时器与上限](reference/timers-and-limits.md) | 每一个超时、TTL、间隔和大小限制 —— 唯一权威表 |
 | [供应商端点](reference/provider-endpoints.md) | 各供应商的套餐、区域、base URL、模型与凭据语义 |
+
+## Internals
+
+用于调试和修改代码。完整地图见 [internals 索引](internals/README.md)。内容分成三类：
+
+- **[architecture/](#架构)** 回答“为什么这样设计”，是读者层面的系统模型。
+- **[internals/flows/](internals/README.md#flows)** 跟踪一条请求随时间经过的每一跳，并提供代码锚点。
+- **[internals/modules/](internals/README.md#modules)** 描述一个组件在系统中的职责、关键类型、不变量和已知技术债。
+
+要追踪行为，从 flow 开始；要修改组件，从 module 开始。Flow 和 module 会在交汇处互相链接。横切子系统有单独深挖，目前是 [Launch](internals/launch.md)。
 
 ## 本文档的约定
 

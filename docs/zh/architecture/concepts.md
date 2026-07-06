@@ -25,7 +25,7 @@ Workspace 是你机器上供 Agent 工作的目录 —— 通常是一个项目�
 - 一个 Workspace 包含任意数量的 Thread。
 - 删除或切换 Workspace 永远不碰目录内容；VibeAround 只管理自己的记录。
 
-*细节：[workspace 模块内幕](../../internals/modules/workspace.md) · [`va workspace` 命令](../reference/cli.md#workspaces-previews-profiles) · [`default_workspace` / `workspaces` 设置](../reference/configuration.md#settingsjson)*
+*细节：[workspace 模块内幕](../internals/modules/workspace.md) · [`va workspace` 命令](../reference/cli.md#workspaces-previews-profiles) · [`default_workspace` / `workspaces` 设置](../reference/configuration.md#settingsjson)*
 
 ## Thread
 
@@ -35,7 +35,7 @@ Thread 是一段有连续性的对话：拥有"我们聊到哪了"的单位。�
 - `/close` 只关闭，不开新的。
 - Thread 可以托管**子 Agent** —— 为多 Agent 回合额外拉起的 Agent 进程 —— 与宿主 Agent 并存。
 
-*细节：[会话生命周期](session-lifecycle.md)（开启/关闭规则、重启行为） · [workspace 模块内幕](../../internals/modules/workspace.md) · [子 Agent MCP 工具](../reference/api-surfaces.md#mcp-tools)*
+*细节：[会话生命周期](session-lifecycle.md)（开启/关闭规则、重启行为） · [workspace 模块内幕](../internals/modules/workspace.md) · [子 Agent MCP 工具](../reference/api-surfaces.md#mcp-tools)*
 
 ## Route
 
@@ -44,7 +44,7 @@ Route 是穿过某渠道的一条对话路径的稳定地址：三元组 *(chann
 - 多条 Route 可以附着到同一个 Thread。会话交接就是这么回事：第二条 Route 附着到你在别处开始的 Thread 上。
 - 同一 Route 上的消息严格按序处理；不同 Route 上的消息并行。
 
-*细节：[IM 消息流](../../internals/flows/im-message.md)（Route 如何解析） · [channels 模块内幕](../../internals/modules/channels.md) · [交接流程](../../internals/flows/handover.md)*
+*细节：[IM 消息流](../internals/flows/im-message.md)（Route 如何解析） · [channels 模块内幕](../internals/modules/channels.md) · [交接流程](../internals/flows/handover.md)*
 
 ## Agent
 
@@ -53,7 +53,7 @@ Agent 是 VibeAround 能驱动的编程 CLI：Claude Code、Codex、Gemini CLI�
 - `/switch host <agent>` 切到不同 Agent 会开一个带全新 Session 的**新 Thread**（上下文不在不同 Agent 产品之间传递）；只切 Profile 则保留 Thread 和 Session。
 - Agent 定义（ACP 适配器包、PTY 命令、恢复模板、配置注入路径）来自内置注册表。
 
-*细节：[支持的 Agent 矩阵](../product/supported-matrix.md#编程-agent) · [agent 模块内幕](../../internals/modules/agent.md) · [启动子系统](../../internals/launch.md)（Agent 如何被启动） · [`/switch` 命令参考](../guides/im-usage.md#agent-与-profile)*
+*细节：[支持的 Agent 矩阵](../product/supported-matrix.md#编程-agent) · [agent 模块内幕](../internals/modules/agent.md) · [启动子系统](../internals/launch.md)（Agent 如何被启动） · [`/switch` 命令参考](../guides/im-usage.md#agent-与-profile)*
 
 ## Profile
 
@@ -62,7 +62,7 @@ Agent 是 VibeAround 能驱动的编程 CLI：Claude Code、Codex、Gemini CLI�
 - Profile 按每次启动或每个 Thread 的宿主绑定来选择；同一 Thread 可以换一个 Profile 重新托管。
 - 特殊的 `direct` Profile 意思是"让 Agent 用自己的官方登录启动，不经过 Bridge"。
 
-*细节：[模型 Profile 指南](../guides/model-profiles.md)（配置方法） · [供应商端点参考](../reference/provider-endpoints.md)（套餐、base URL、模型） · [Bridge 机制](local-api-and-bridge.md) · [profiles 模块内幕](../../internals/modules/profiles.md)*
+*细节：[模型 Profile 指南](../guides/model-profiles.md)（配置方法） · [供应商端点参考](../reference/provider-endpoints.md)（套餐、base URL、模型） · [Bridge 机制](local-api-and-bridge.md) · [profiles 模块内幕](../internals/modules/profiles.md)*
 
 ## Session
 
@@ -70,7 +70,7 @@ Session 是 Agent CLI 自己的对话记录 —— `claude --resume <id>` 或 `c
 
 - Session 属于 Agent，不属于 VibeAround。VibeAround 跟踪并重新发现它们（包括在 VibeAround 之外创建的），但对话记录存在 Agent 自己的存储里。
 
-*细节：[会话生命周期](session-lifecycle.md)（什么能挺过什么） · [交接流程](../../internals/flows/handover.md) · [`va launch sessions` 命令](../reference/cli.md#agents-and-launches)*
+*细节：[会话生命周期](session-lifecycle.md)（什么能挺过什么） · [交接流程](../internals/flows/handover.md) · [`va launch sessions` 命令](../reference/cli.md#agents-and-launches)*
 
 ## 各部分如何协作
 

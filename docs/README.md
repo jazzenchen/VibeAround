@@ -4,7 +4,7 @@ VibeAround lets you reach your local AI coding agents (Claude Code, Codex, Gemin
 
 **New here?** Read in this order: [What is VibeAround](product/what-is-vibearound.md) → [Install](guides/install-and-onboarding.md) → [Quick tour](guides/quick-tour.md) → [Concepts](architecture/concepts.md). Everything else is lookup material.
 
-**中文文档**：[docs/zh/](zh/README.md)（internals 仅维护英文版）。
+**中文文档**：[docs/zh/](zh/README.md)。
 
 ## Sections
 

@@ -1,6 +1,6 @@
 # Module: workspace
 
-`src/core/src/workspace/` — the conversation state model: workspaces, threads, route attachments, handoff, context transfer. If [channels](channels.md) is the postal service, this module is the filing system deciding which conversation every letter belongs to.
+`src/core/src/workspace/` — the conversation state model: workspaces, threads, route attachments, and handover codes. If [channels](channels.md) is the postal service, this module is the filing system deciding which conversation every letter belongs to.
 
 ## Responsibility
 
@@ -15,8 +15,7 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 | `WorkspaceEventStore` / `ThreadEventStore` / `RouteAttachmentEventStore` | `store.rs`, `threads/store.rs`, `threads/attachment.rs` | Append-only JSONL logs + projection replay |
 | `WorkspaceThread` / `ThreadProjection` | `threads/store.rs` | Persistent thread record: status, host binding, agent sessions, multi-agent turns |
 | `HostBinding` | `threads/store.rs` | (agent id, profile id) pair hosting a thread |
-| `handoff` | `handoff.rs` | 4-char / 120 s one-shot pickup codes |
-| `context_transfer` | `context_transfer.rs` | Briefing text when `/switch` changes the host agent |
+| `handover` | `handover.rs` | 4-char / 120 s one-shot pickup codes |
 
 ## Interactions
 
@@ -43,7 +42,7 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 
 ---
 
-*Source anchors: `src/core/src/workspace/` (manager, threads/, handoff, context_transfer, registry, store), `reports/architecture-review-remediation-2026-07-04.md` (H1, H2, L8, L9).*
+*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store), `reports/architecture-review-remediation-2026-07-04.md` (H1, H2, L8, L9).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: channels](channels.md) · [Documentation index](../../README.md) · [Module: process ▶](process.md)</sub>
