@@ -83,6 +83,10 @@ pub struct AgentLaunchConfig {
     #[serde(default)]
     pub platform_commands: HashMap<String, String>,
     #[serde(default)]
+    pub terminal_commands: HashMap<String, String>,
+    #[serde(default)]
+    pub platform_terminal_commands: HashMap<String, HashMap<String, String>>,
+    #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub platform_args: HashMap<String, Vec<String>>,
@@ -108,6 +112,10 @@ pub struct AgentLaunchResumeConfig {
     pub command: Option<String>,
     #[serde(default)]
     pub platform_commands: HashMap<String, String>,
+    #[serde(default)]
+    pub terminal_commands: HashMap<String, String>,
+    #[serde(default)]
+    pub platform_terminal_commands: HashMap<String, HashMap<String, String>>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -140,8 +148,12 @@ impl AgentDef {
     }
 
     pub fn launch_command_for_current_platform(&self) -> &str {
+        self.launch_command_for_terminal(None)
+    }
+
+    pub fn launch_command_for_terminal(&self, terminal_id: Option<&str>) -> &str {
         self.launch_config()
-            .and_then(AgentLaunchConfig::command_for_current_platform)
+            .and_then(|launch| launch.command_for_terminal(terminal_id))
             .unwrap_or_else(|| self.pty_command_for_current_platform())
     }
 
@@ -181,8 +193,8 @@ impl AgentDef {
         let launch = self.launch_config()?;
         let resume = launch.resume.as_ref()?;
         let command = resume
-            .command_for_current_platform()
-            .or_else(|| launch.command_for_current_platform())
+            .command_for_terminal(terminal_id)
+            .or_else(|| launch.command_for_terminal(terminal_id))
             .unwrap_or_else(|| self.pty_command_for_current_platform())
             .to_string();
         let args = resume
@@ -199,7 +211,19 @@ impl AgentDef {
 }
 
 impl AgentLaunchConfig {
-    fn command_for_current_platform(&self) -> Option<&str> {
+    fn command_for_terminal(&self, terminal_id: Option<&str>) -> Option<&str> {
+        if let Some(terminal_id) = terminal_id {
+            if let Some(command) = self
+                .platform_terminal_commands
+                .get(current_platform())
+                .and_then(|platform| platform.get(terminal_id))
+            {
+                return Some(command.as_str());
+            }
+            if let Some(command) = self.terminal_commands.get(terminal_id) {
+                return Some(command.as_str());
+            }
+        }
         self.platform_commands
             .get(current_platform())
             .or(self.command.as_ref())
@@ -248,7 +272,19 @@ impl AgentLaunchConfig {
 }
 
 impl AgentLaunchResumeConfig {
-    fn command_for_current_platform(&self) -> Option<&str> {
+    fn command_for_terminal(&self, terminal_id: Option<&str>) -> Option<&str> {
+        if let Some(terminal_id) = terminal_id {
+            if let Some(command) = self
+                .platform_terminal_commands
+                .get(current_platform())
+                .and_then(|platform| platform.get(terminal_id))
+            {
+                return Some(command.as_str());
+            }
+            if let Some(command) = self.terminal_commands.get(terminal_id) {
+                return Some(command.as_str());
+            }
+        }
         self.platform_commands
             .get(current_platform())
             .or(self.command.as_ref())
@@ -636,6 +672,36 @@ mod tests {
                 ("DISABLE_AUTOUPDATER".to_string(), "1".to_string()),
                 ("DISABLE_UPDATES".to_string(), "1".to_string())
             ]
+        );
+    }
+
+    #[test]
+    fn launch_templates_can_override_commands_by_terminal() {
+        let platform = current_platform().to_string();
+        let mut platform_terminal_commands = HashMap::new();
+        platform_terminal_commands.insert(
+            platform.clone(),
+            HashMap::from([("web-pty".to_string(), "platform-web".to_string())]),
+        );
+        let launch = AgentLaunchConfig {
+            command: Some("base".to_string()),
+            platform_commands: HashMap::from([(platform, "platform".to_string())]),
+            terminal_commands: HashMap::from([
+                ("web-pty".to_string(), "terminal-web".to_string()),
+                ("native".to_string(), "terminal-native".to_string()),
+            ]),
+            platform_terminal_commands,
+            ..Default::default()
+        };
+
+        assert_eq!(launch.command_for_terminal(None), Some("platform"));
+        assert_eq!(
+            launch.command_for_terminal(Some("native")),
+            Some("terminal-native")
+        );
+        assert_eq!(
+            launch.command_for_terminal(Some("web-pty")),
+            Some("platform-web")
         );
     }
 

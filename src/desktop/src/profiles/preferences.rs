@@ -24,8 +24,7 @@ pub struct TerminalOption {
 pub struct LauncherPreferences {
     /// `id` of the currently-preferred terminal.
     pub terminal: String,
-    /// Every supported terminal, with an `installed` flag the UI uses to gray
-    /// out unavailable choices instead of just hiding them.
+    /// Installed terminal choices available on this host.
     pub options: Vec<TerminalOption>,
     /// Resolved cwd used for profile/direct launches.
     pub workspace: String,
@@ -84,16 +83,12 @@ pub struct AgentExecutablePreferenceSummary {
 }
 
 pub(super) fn launcher_preferences() -> LauncherPreferences {
-    let installed_ids: HashSet<&'static str> = terminal::detect_installed()
-        .iter()
-        .map(|c| c.id())
-        .collect();
-    let options = terminal::TerminalChoice::ALL
-        .iter()
+    let options = terminal::detect_installed()
+        .into_iter()
         .map(|c| TerminalOption {
             id: c.id().to_string(),
             label: c.label().to_string(),
-            installed: installed_ids.contains(c.id()),
+            installed: true,
         })
         .collect();
     let cfg = config::ensure_loaded();

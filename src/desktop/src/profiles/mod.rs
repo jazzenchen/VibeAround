@@ -624,6 +624,9 @@ pub fn launcher_set_terminal(terminal_id: String) -> Result<(), String> {
             terminal_id
         ));
     }
+    if !terminal::is_available(choice) {
+        return Err(format!("terminal '{}' is not installed", terminal_id));
+    }
     terminal::write_preference(choice).map_err(|e| e.to_string())
 }
 

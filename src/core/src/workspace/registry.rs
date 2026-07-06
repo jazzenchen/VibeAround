@@ -140,6 +140,7 @@ impl WorkspaceProjection {
         is_general: bool,
         occurred_at: String,
     ) -> Result<(), WorkspaceProjectionError> {
+        let cwd = super::normalize_platform_cwd(cwd);
         if self.by_id.contains_key(&workspace_id) {
             return Err(WorkspaceProjectionError::DuplicateWorkspaceId { workspace_id });
         }
@@ -217,5 +218,23 @@ mod tests {
 
         assert!(projection.get(&workspace_id).unwrap().archived);
         assert!(projection.get_by_cwd(&cwd).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn projection_normalizes_windows_verbatim_cwd() {
+        let workspace_id = WorkspaceId::from("ws_a");
+        let events = vec![WorkspaceEvent::registered(
+            workspace_id.clone(),
+            PathBuf::from(r"\\?\D:\_P\26\test_VibeAround"),
+            "Project",
+            false,
+        )];
+
+        let projection = WorkspaceProjection::from_events(&events).unwrap();
+        let cwd = PathBuf::from(r"D:\_P\26\test_VibeAround");
+
+        assert_eq!(projection.get(&workspace_id).unwrap().cwd, cwd);
+        assert!(projection.get_by_cwd(&cwd).is_some());
     }
 }

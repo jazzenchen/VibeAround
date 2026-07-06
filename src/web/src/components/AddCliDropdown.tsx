@@ -55,7 +55,7 @@ export function AddCliDropdown({
   const refreshProfiles = () => {
     getProfiles()
       .then((items) => {
-        setProfiles(items.filter((profile) => profile.launch_targets.length > 0));
+        setProfiles(items.filter((profile) => (profile.launch_targets ?? []).length > 0));
       })
       .catch((e) => console.error("[VibeAround] getProfiles:", e));
   };
@@ -227,7 +227,7 @@ function groupProfilesByAgent(profiles: ProfileLaunchOption[]): ProfileAgentGrou
   const byAgent = new Map<string, ProfileAgentGroup>();
 
   for (const profile of profiles) {
-    for (const target of profile.launch_targets) {
+    for (const target of profile.launch_targets ?? []) {
       let group = byAgent.get(target.id);
       if (!group) {
         group = { agentId: target.id, label: target.label, items: [] };
