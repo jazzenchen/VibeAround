@@ -4,6 +4,8 @@ VibeAround lets you reach your local AI coding agents (Claude Code, Codex, Gemin
 
 **New here?** Read in this order: [What is VibeAround](product/what-is-vibearound.md) → [Install](guides/install-and-onboarding.md) → [Quick tour](guides/quick-tour.md) → [Concepts](architecture/concepts.md). Everything else is lookup material.
 
+**中文文档**：[docs/zh/](zh/README.md)（internals 仅维护英文版）。
+
 ## Sections
 
 | Directory | What it holds | Read it when |
@@ -23,7 +25,7 @@ VibeAround lets you reach your local AI coding agents (Claude Code, Codex, Gemin
 
 ## Use cases
 
-Scenario-oriented pages (also the website's landing content): [remote coding](use-cases/remote-coding.md) · [Codex on mobile](use-cases/codex-mobile.md) · [Codex remote](use-cases/codex-remote.md) · [Claude remote](use-cases/claude-remote.md) · [Gemini remote](use-cases/gemini-remote.md) · [OpenCode remote](use-cases/opencode-remote.md) · [Claude Code switcher](use-cases/claude-code-switcher.md) · [local AI switch](use-cases/local-ai-switch.md)
+Scenario-oriented pages (also the website's landing content): [remote coding](use-cases/remote-coding.md) · [Codex on mobile](use-cases/codex-mobile.md) · [Codex remote](use-cases/codex-remote.md) · [Claude remote](use-cases/claude-remote.md) · [Gemini remote](use-cases/gemini-remote.md) · [OpenCode remote](use-cases/opencode-remote.md) · [Claude Code switcher](use-cases/claude-code-switcher.md)
 
 ## Guides
 

@@ -1,48 +1,51 @@
 # Codex CLI From Phone
 
-VibeAround can help users continue Codex CLI work from a phone while the actual session stays on the local host. This is useful when the agent needs a decision, a test result needs review, or a long task should keep moving while you are away from the desk.
+The scenario: Codex CLI is halfway through a long refactor on your desk machine, and you have to leave for lunch, a meeting, or the commute. With VibeAround the session keeps running on the local host, and your phone becomes the place where you review results, answer the agent's questions, and keep the task moving.
 
-Use this page when the goal is to control or inspect a local Codex CLI workflow from another device. If you are comparing hosted Codex workflows, official mobile access, SSH, tunnels, and VibeAround's approach, where execution stays on your own computer, read [Codex Remote Comparison](codex-remote.md) after this setup path.
+VibeAround is independent software and is not affiliated with OpenAI. Codex and ChatGPT are OpenAI products. If you are comparing hosted Codex workflows, SSH, tunnels, and VibeAround's local-host approach, read [Codex remote comparison](codex-remote.md) after this walkthrough.
 
-VibeAround is independent software and is not affiliated with OpenAI. Codex and ChatGPT are OpenAI products.
+## The Walkthrough
 
-## What This Workflow Provides
+Prerequisites: VibeAround installed with Codex enabled ([install and onboarding](../guides/install-and-onboarding.md)), and Codex CLI working from a plain terminal.
 
-- A local host where Codex CLI can run beside the real repository.
-- Browser and mobile entry points for session continuation.
-- Web Terminal access when a shell view is needed.
-- Messaging-channel access for short prompts and status checks.
-- Optional provider profiles and API Bridge routes when a local workflow needs explicit model routing.
+1. **Connect a messaging channel once.** Telegram is the fastest: create the bot, paste its token into the desktop channel screen (or `channels.telegram` in `settings.json` + `va channel sync`). Details in [connect channels](../guides/connect-channels.md).
+2. **Start the work at the desk.** Either launch Codex in your own terminal through VibeAround (desktop **Launch** screen: agent + workspace + profile, or `va launch --profile codex`), or just message your bot directly — the first message spawns a hosted Codex session in the workspace.
+3. **Hand the terminal session to your phone.** In the launched CLI, run the handover tool (`/vibearound handover`). You get a short code, valid for two minutes. In your bot chat:
 
-## Setup Path
+   ```text
+   /pickup K7PQ
+   ```
 
-1. Confirm Codex CLI works outside VibeAround.
-2. Add the repository as a VibeAround workspace.
-3. Launch or continue a Codex session from [Agent Launch](../guides/agent-launch.md).
-4. Open the session from a mobile browser with [Session Handover](../architecture/session-lifecycle.md).
-5. Add [Remote Messaging & Web Terminal](../guides/im-usage.md) only after the local session works.
-6. Use [Live Preview](../guides/web-dashboard.md) to review local outputs from the same phone-friendly flow.
+   The chat attaches to the terminal session — same context, same workspace.
+4. **Steer from the phone.** Permission requests arrive as tappable cards. Useful commands while away:
 
-## Good Mobile Tasks
+   ```text
+   /status        what am I attached to? busy or idle?
+   /session       list resumable sessions in this workspace
+   /new           abandon course, start a fresh thread
+   ```
 
-Mobile is best for steering, approval, and review. It is usually not the best place for broad file inspection.
+5. **Review outputs visually** with [Live Preview](../guides/web-dashboard.md) when the result is a dev server, Markdown, or HTML — the preview link opens fine in a phone browser.
 
-- Ask the agent for status.
-- Approve or reject a proposed direction.
-- Request a focused test or build.
+## What Phones Are Good At
+
+Mobile is for steering, approval, and review — not broad file inspection.
+
+- Ask the agent for status, approve or reject a proposed direction.
+- Request a focused test or build and read the summary.
 - Review a preview link.
 - Pause, archive, or hand the session back to the desktop.
 
 ## Security Notes
 
-Treat the phone as a control surface for the local workspace. Protect browser pairing, messaging channel membership, and terminal access the same way you protect direct shell access.
+Treat the phone as a control surface for the local workspace. Protect browser pairing, messaging channel membership, and terminal access the same way you protect direct shell access — see the [security model](../architecture/security-model.md).
 
 ## Related Docs
 
-- [Codex Remote Comparison](codex-remote.md)
-- [Remote Coding](remote-coding.md)
-- [Provider Profiles & API Bridge](../guides/model-profiles.md)
-- [Security model](../architecture/security-model.md)
+- [Codex remote comparison](codex-remote.md)
+- [Remote coding](remote-coding.md)
+- [IM usage — full command reference](../guides/im-usage.md)
+- [Model profiles guide](../guides/model-profiles.md)
 
 ---
 

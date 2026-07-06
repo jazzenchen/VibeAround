@@ -423,9 +423,9 @@ Friendly community: [LINUX DO](https://linux.do)
 
 WeChat group for Chinese-language discussion:
 
-<img src="assets/community/wechat-group-qr-2026-07-06.webp" width="180" alt="VibeAround WeChat group QR code, valid until July 6, 2026" />
+<img src="assets/community/wechat-group-qr-2026-07-13.webp" width="180" alt="VibeAround WeChat group QR code, valid until July 13, 2026" />
 
-This WeChat QR code is valid until July 6, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
+This WeChat QR code is valid until July 13, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
 
 ## License
 
