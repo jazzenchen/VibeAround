@@ -69,7 +69,7 @@ mod tests {
             200,
             json!({
                 "service": "vibearound-server",
-                "version": "0.7.11",
+                "version": "0.7.12",
                 "port": 12358,
                 "mode": "server",
                 "auth_mode": "token",

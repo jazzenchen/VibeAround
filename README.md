@@ -345,13 +345,13 @@ Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki
 
 ### Desktop App
 
-Latest desktop release: [VibeAround v0.7.11](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.11).
+Latest desktop release: [VibeAround v0.7.12](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.12).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.11.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-macOS-arm64-0.7.11.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-Setup-0.7.11.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-MSI-0.7.11.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Windows-x64-Portable-0.7.11.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Linux-x64-AppImage-0.7.11.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.11/VibeAround-Linux-x64-DEB-0.7.11.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.12.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-macOS-arm64-0.7.12.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Windows-x64-Setup-0.7.12.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Windows-x64-MSI-0.7.12.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Windows-x64-Portable-0.7.12.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Linux-x64-AppImage-0.7.12.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Linux-x64-DEB-0.7.12.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
 
