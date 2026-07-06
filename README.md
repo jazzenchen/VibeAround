@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="Logo.svg" alt="VibeAround logo" width="96" />
+<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/logo.svg" alt="VibeAround logo" width="96" />
 
 # VibeAround
 
@@ -203,7 +203,7 @@ Control local AI agents from desktop or mobile browsers.
 VibeAround exposes local terminal sessions through the web dashboard so you can drive AI agent CLIs from desktop or mobile browsers while execution stays on your computer.
 
 <p align="center">
-  <img src="assets/marketing/screenshots/en/web-terminal.png" alt="VibeAround Web Terminal for remote agent control" width="88%" />
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/web-terminal.webp" alt="VibeAround Web Terminal for remote agent control" width="88%" />
 </p>
 
 - Access local AI agent CLIs through Web Terminal from desktop or mobile browsers.
@@ -218,8 +218,8 @@ VibeAround Web Hub gives you a browser interface for choosing agents, API profil
 
 <table>
   <tr>
-    <td width="72%" align="center"><img src="assets/marketing/screenshots/en/cover-web-dashboard.png" alt="VibeAround web dashboard cover" width="92%" /></td>
-    <td width="28%" align="center"><img src="assets/marketing/screenshots/en/web-dashboard-mobile.png" alt="VibeAround mobile web dashboard" width="220" /></td>
+    <td width="72%" align="center"><img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/cover-web-dashboard.webp" alt="VibeAround web dashboard cover" width="92%" /></td>
+    <td width="28%" align="center"><img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/web-dashboard-mobile.webp" alt="VibeAround mobile web dashboard" width="220" /></td>
   </tr>
 </table>
 
@@ -248,7 +248,7 @@ Preview what AI agents are building.
 VibeAround turns dev servers, Markdown files, and HTML files into previewable links you can open from desktop browsers, mobile browsers, or messaging apps.
 
 <p align="center">
-  <img src="assets/marketing/screenshots/en/preview-in-a-row.png" alt="Ask for previews from messaging apps, pair a browser, and open web or Markdown previews" width="92%" />
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/preview-in-a-row.webp" alt="Ask for previews from messaging apps, pair a browser, and open web or Markdown previews" width="92%" />
 </p>
 
 - Generate owner links and scoped short-lived share links.
@@ -423,7 +423,7 @@ Friendly community: [LINUX DO](https://linux.do)
 
 WeChat group for Chinese-language discussion:
 
-<img src="assets/community/wechat-group-qr-2026-07-13.webp" width="180" alt="VibeAround WeChat group QR code, valid until July 13, 2026" />
+<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr-2026-07-13.webp" width="180" alt="VibeAround WeChat group QR code, valid until July 13, 2026" />
 
 This WeChat QR code is valid until July 13, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
 
