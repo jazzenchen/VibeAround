@@ -6,7 +6,6 @@ import type {
   ContentCapabilities,
   FieldDef,
   ProfileApiConfig,
-  ProfileHeaderConfig,
   ProfileModelConfig,
   ProviderSettings,
 } from "./types";
@@ -241,6 +240,7 @@ export function apiConfigForEndpoint(
   current: ProfileApiConfig | undefined,
   override: ApiTypeOverrides | undefined,
 ): ProfileApiConfig {
+  const currentWithoutHeaders = current ? { ...current, headers: [] } : undefined;
   const selectedModel =
     cleanString(override?.model) ??
     cleanString(current?.model) ??
@@ -248,7 +248,7 @@ export function apiConfigForEndpoint(
     "";
   const capabilities = override?.capabilities ?? current?.capabilities ?? undefined;
   return {
-    ...current,
+    ...currentWithoutHeaders,
     enabled: current?.enabled ?? true,
     endpoint_id: endpointId(endpoint),
     base_url:
@@ -257,9 +257,7 @@ export function apiConfigForEndpoint(
     model: selectedModel || undefined,
     reasoning_effort: override?.reasoning_effort ?? current?.reasoning_effort ?? undefined,
     capabilities,
-    headers: current?.headers?.length
-      ? current.headers
-      : defaultHeaderConfigs(endpoint),
+    headers: [],
     models: current?.models?.length
       ? current.models
       : defaultModelConfigs(endpoint, selectedModel, capabilities),
@@ -289,65 +287,6 @@ export function syncApiConfigsForProvider(
     };
   }
   return out;
-}
-
-function defaultHeaderConfigs(
-  endpoint: CatalogEntry["endpoints"][number],
-): ProfileHeaderConfig[] {
-  const headers: ProfileHeaderConfig[] = Object.entries(endpoint.headers ?? {}).map(
-    ([name, value]) => ({
-      name,
-      value,
-      enabled: true,
-      locked: true,
-    }),
-  );
-  const authHeader = defaultAuthHeader(endpoint);
-  if (
-    authHeader &&
-    !headers.some((header) => header.name.toLowerCase() === authHeader.name.toLowerCase())
-  ) {
-    headers.push(authHeader);
-  }
-  return headers;
-}
-
-function defaultAuthHeader(
-  endpoint: CatalogEntry["endpoints"][number],
-): ProfileHeaderConfig | null {
-  if (endpoint.api_type === "openai-chat" || endpoint.api_type === "openai-responses") {
-    return {
-      name: "Authorization",
-      value: "Bearer $apiKey",
-      enabled: true,
-      locked: true,
-    };
-  }
-  if (endpoint.api_type === "anthropic" && endpoint.auth_header) {
-    return {
-      name: "Authorization",
-      value: "Bearer $apiKey",
-      enabled: true,
-      locked: true,
-    };
-  }
-  if (endpoint.api_type === "anthropic") {
-    return {
-      name: "x-api-key",
-      value: "$apiKey",
-      enabled: true,
-      locked: true,
-    };
-  }
-  if (endpoint.api_type === "gemini") {
-    return {
-      name: "x-goog-api-key",
-      value: "$apiKey",
-      enabled: true,
-      locked: true,
-    };
-  }
-  return null;
 }
 
 function defaultModelConfigs(

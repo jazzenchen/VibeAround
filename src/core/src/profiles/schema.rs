@@ -283,53 +283,13 @@ fn legacy_api_config(
             .or_else(|| endpoint.models.first().map(|model| model.id.clone())),
         reasoning_effort: overrides.reasoning_effort.clone(),
         capabilities: overrides.capabilities.clone(),
-        headers: default_headers(endpoint),
+        headers: Vec::new(),
         models: default_models(
             endpoint,
             overrides.model.as_deref(),
             overrides.capabilities.clone(),
         ),
     })
-}
-
-fn default_headers(endpoint: &EndpointDef) -> Vec<ProfileHeaderConfig> {
-    let mut out = Vec::new();
-    for (name, value) in &endpoint.headers {
-        out.push(ProfileHeaderConfig {
-            name: name.clone(),
-            value: value.clone(),
-            enabled: true,
-            locked: true,
-        });
-    }
-    if let Some((name, value)) = default_auth_header(endpoint) {
-        if !out
-            .iter()
-            .any(|header| header.name.eq_ignore_ascii_case(&name))
-        {
-            out.push(ProfileHeaderConfig {
-                name,
-                value,
-                enabled: true,
-                locked: true,
-            });
-        }
-    }
-    out
-}
-
-fn default_auth_header(endpoint: &EndpointDef) -> Option<(String, String)> {
-    match endpoint.api_type.as_str() {
-        "openai-chat" | "openai-responses" => {
-            Some(("Authorization".to_string(), "Bearer $apiKey".to_string()))
-        }
-        "anthropic" if endpoint.auth_header => {
-            Some(("Authorization".to_string(), "Bearer $apiKey".to_string()))
-        }
-        "anthropic" => Some(("x-api-key".to_string(), "$apiKey".to_string())),
-        "gemini" => Some(("x-goog-api-key".to_string(), "$apiKey".to_string())),
-        _ => None,
-    }
 }
 
 fn default_models(
@@ -608,9 +568,7 @@ mod tests {
             Some("https://token.sensenova.cn")
         );
         assert_eq!(anthropic.model.as_deref(), Some("sensenova-6.7-flash-lite"));
-        assert_eq!(anthropic.headers[0].name, "x-api-key");
-        assert_eq!(anthropic.headers[0].value, "$apiKey");
-        assert!(anthropic.headers[0].locked);
+        assert!(anthropic.headers.is_empty());
         assert!(anthropic.models[0].custom);
 
         let chat = profile.api_configs.get("openai-chat").unwrap();
@@ -618,7 +576,6 @@ mod tests {
             chat.base_url.as_deref(),
             Some("https://token.sensenova.cn/v1")
         );
-        assert_eq!(chat.headers[0].name, "Authorization");
-        assert_eq!(chat.headers[0].value, "Bearer $apiKey");
+        assert!(chat.headers.is_empty());
     }
 }

@@ -268,23 +268,8 @@ fn api_type_headers(
     schema::enabled_api_types(profile)
         .iter()
         .filter_map(|api_type| {
-            let headers = api_config_for(profile, provider, api_type)
-                .map(|config| {
-                    config
-                        .headers
-                        .into_iter()
-                        .filter(|header| header.enabled)
-                        .filter_map(|header| {
-                            let name = header.name.trim().to_string();
-                            (!name.is_empty()).then_some((name, header.value))
-                        })
-                        .collect::<BTreeMap<_, _>>()
-                })
-                .filter(|headers| !headers.is_empty())
-                .or_else(|| {
-                    endpoint_for(profile, provider, api_type)
-                        .map(|endpoint| endpoint.headers.clone())
-                })?;
+            let headers = endpoint_for(profile, provider, api_type)
+                .map(|endpoint| endpoint.headers.clone())?;
             (!headers.is_empty()).then_some((api_type.clone(), headers))
         })
         .collect()

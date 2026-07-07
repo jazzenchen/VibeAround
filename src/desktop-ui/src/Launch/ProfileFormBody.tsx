@@ -68,9 +68,7 @@ import type {
   AuthMode,
   CatalogEntry,
   FieldDef,
-  ModelDef,
   ProfileApiConfig,
-  ProfileHeaderConfig,
   ProfileModelConfig,
 } from "./types";
 import type { ProviderSettings } from "./types";
@@ -297,11 +295,22 @@ export function FormBody({
     const key = modelDialogKey(apiType, endpoint);
     setSelectedTestModels((current) => {
       if (current[key]?.length) return current;
+      const config = apiConfigForEndpoint(
+        endpoint,
+        apiConfigs[apiType],
+        overrides[apiType],
+      );
+      const enabledModels = (config.models ?? [])
+        .filter((model) => model.enabled !== false)
+        .map((model) => model.id.trim())
+        .filter(Boolean);
       const initialModels = selectedModel
-        ? [selectedModel]
-        : endpoint.models[0]?.id
-          ? [endpoint.models[0].id]
-          : [];
+        ? Array.from(new Set([selectedModel, ...enabledModels]))
+        : enabledModels.length > 0
+          ? enabledModels
+          : endpoint.models[0]?.id
+            ? [endpoint.models[0].id]
+            : [];
       return { ...current, [key]: initialModels };
     });
     setModelsDialogApiType(apiType);
@@ -335,10 +344,73 @@ export function FormBody({
   const modelsDialogOverride = modelsDialogApiType
     ? (overrides[modelsDialogApiType] ?? {})
     : {};
+  const modelsDialogConfig =
+    modelsDialogApiType && modelsDialogEndpoint
+      ? apiConfigForEndpoint(
+          modelsDialogEndpoint,
+          apiConfigs[modelsDialogApiType],
+          modelsDialogOverride,
+        )
+      : null;
   const modelsDialogSelectedModel =
     modelsDialogApiType && modelsDialogEndpoint
-      ? modelsDialogOverride.model?.trim() || modelsDialogEndpoint.models[0]?.id || ""
+      ? modelsDialogOverride.model?.trim() ||
+        modelsDialogConfig?.model?.trim() ||
+        modelsDialogEndpoint.models[0]?.id ||
+        ""
       : "";
+
+  function updateModelsDialogConfig(
+    nextModels: ProfileModelConfig[],
+    preferredDefaultModel?: string,
+  ) {
+    if (!modelsDialogApiType || !modelsDialogEndpoint) return;
+    const enabledIds = enabledProfileModelIds(nextModels);
+    const preferred = preferredDefaultModel?.trim() || modelsDialogSelectedModel.trim();
+    const defaultModel =
+      preferred && enabledIds.includes(preferred)
+        ? preferred
+        : enabledIds[0] || preferred;
+    const nextOverride: ApiTypeOverrides = {
+      ...(overrides[modelsDialogApiType] ?? {}),
+    };
+    const catalogDefaultModel = modelsDialogEndpoint.models[0]?.id ?? "";
+    if (!defaultModel) {
+      delete nextOverride.model;
+    } else if (
+      !requiresProfileModel(provider, modelsDialogEndpoint) &&
+      defaultModel === catalogDefaultModel
+    ) {
+      delete nextOverride.model;
+    } else {
+      nextOverride.model = defaultModel;
+    }
+    setOverrides({
+      ...overrides,
+      [modelsDialogApiType]: nextOverride,
+    });
+    updateApiConfig(modelsDialogApiType, (config) => ({
+      ...apiConfigForEndpoint(modelsDialogEndpoint, config, nextOverride),
+      model: defaultModel || undefined,
+      models: nextModels,
+    }));
+    setSelectedTestModels((current) => ({
+      ...current,
+      [modelDialogKey(modelsDialogApiType, modelsDialogEndpoint)]: enabledIds,
+    }));
+  }
+
+  function updateModelsDialogDefault(model: string) {
+    if (!modelsDialogConfig) return;
+    updateModelsDialogConfig(ensureProfileModel(modelsDialogConfig.models ?? [], model), model);
+  }
+
+  function updateModelsDialogEnabled(modelIds: string[]) {
+    if (!modelsDialogConfig) return;
+    updateModelsDialogConfig(
+      setProfileModelsEnabled(modelsDialogConfig.models ?? [], modelIds),
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -356,18 +428,14 @@ export function FormBody({
           editable={apiKindsEditable}
           selectedApiTypes={effectiveSelectedApiTypes}
           setSelectedApiTypes={applySelectedApiTypes}
-          onOpenModels={
-            provider.id === "custom"
-              ? undefined
-              : (endpoint) => {
-                  const selectedModel =
-                    overrides[endpoint.api_type]?.model?.trim() ||
-                    apiConfigs[endpoint.api_type]?.model?.trim() ||
-                    endpoint.models[0]?.id ||
-                    "";
-                  openModelsDialog(endpoint.api_type, endpoint, selectedModel);
-                }
-          }
+          onOpenModels={(endpoint) => {
+            const selectedModel =
+              overrides[endpoint.api_type]?.model?.trim() ||
+              apiConfigs[endpoint.api_type]?.model?.trim() ||
+              endpoint.models[0]?.id ||
+              "";
+            openModelsDialog(endpoint.api_type, endpoint, selectedModel);
+          }}
         />
       </FormSection>
 
@@ -478,15 +546,7 @@ export function FormBody({
                               [apiType]: nextOverride,
                             });
                             updateApiConfig(apiType, (config) => ({
-                              ...apiConfigForEndpoint(
-                                nextEndpoint,
-                                config,
-                                nextOverride,
-                              ),
-                              headers: mergeProfileHeaders(
-                                defaultProfileHeaders(nextEndpoint),
-                                config.headers,
-                              ),
+                              ...apiConfigForEndpoint(nextEndpoint, config, nextOverride),
                             }));
                           }}
                         >
@@ -649,36 +709,6 @@ export function FormBody({
                         </div>
                       </FieldRow>
                     )}
-                    <ProfileHeadersField
-                      headers={apiConfig.headers ?? []}
-                      onChange={(headers) =>
-                        updateApiConfig(apiType, (config) => ({
-                          ...config,
-                          headers,
-                        }))
-                      }
-                    />
-                    <ProfileModelsField
-                      models={apiConfig.models ?? []}
-                      defaultModel={apiConfig.model ?? ov.model ?? ""}
-                      onDefaultModelChange={(model) => {
-                        setOverrides({
-                          ...overrides,
-                          [apiType]: { ...ov, model },
-                        });
-                        updateApiConfig(apiType, (config) => ({
-                          ...config,
-                          model,
-                          models: ensureProfileModel(config.models, model),
-                        }));
-                      }}
-                      onChange={(models) =>
-                        updateApiConfig(apiType, (config) => ({
-                          ...config,
-                          models,
-                        }))
-                      }
-                    />
                   </div>
                 );
               })}
@@ -710,8 +740,10 @@ export function FormBody({
               endpoint={modelsDialogEndpoint}
               baseUrl={
                 modelsDialogOverride.base_url?.trim() ||
+                modelsDialogConfig?.base_url?.trim() ||
                 modelsDialogEndpoint.default_base_url
               }
+              models={modelsDialogConfig?.models ?? []}
               selectedModel={modelsDialogSelectedModel}
               checkedModels={
                 selectedTestModels[
@@ -723,31 +755,9 @@ export function FormBody({
                 modelStatusKey(modelsDialogApiType, modelsDialogEndpoint, model)
               }
               testingDisabled={!!testingDisabled}
-              onDefaultModelChange={(model) => {
-                const key = modelDialogKey(modelsDialogApiType, modelsDialogEndpoint);
-                const nextOverride: ApiTypeOverrides = {
-                  ...(overrides[modelsDialogApiType] ?? {}),
-                };
-                if (model === modelsDialogEndpoint.models[0]?.id) {
-                  delete nextOverride.model;
-                } else {
-                  nextOverride.model = model;
-                }
-                setOverrides({
-                  ...overrides,
-                  [modelsDialogApiType]: nextOverride,
-                });
-                setSelectedTestModels((current) => ({
-                  ...current,
-                  [key]: current[key]?.length ? current[key] : [model],
-                }));
-              }}
-              onCheckedModelsChange={(models) =>
-                setSelectedTestModels({
-                  ...selectedTestModels,
-                  [modelDialogKey(modelsDialogApiType, modelsDialogEndpoint)]: models,
-                })
-              }
+              onDefaultModelChange={updateModelsDialogDefault}
+              onCheckedModelsChange={updateModelsDialogEnabled}
+              onModelsChange={updateModelsDialogConfig}
               onTestSelected={() =>
                 void testSelectedModels(modelsDialogApiType, modelsDialogEndpoint)
               }
@@ -809,87 +819,6 @@ function EndpointGroupField({
   );
 }
 
-function defaultProfileHeaders(
-  endpoint: CatalogEntry["endpoints"][number],
-): ProfileHeaderConfig[] {
-  const headers: ProfileHeaderConfig[] = Object.entries(endpoint.headers ?? {}).map(
-    ([name, value]) => ({
-      name,
-      value,
-      enabled: true,
-      locked: true,
-    }),
-  );
-  const authHeader = defaultProfileAuthHeader(endpoint);
-  if (
-    authHeader &&
-    !headers.some((header) => header.name.toLowerCase() === authHeader.name.toLowerCase())
-  ) {
-    headers.push(authHeader);
-  }
-  return headers;
-}
-
-function defaultProfileAuthHeader(
-  endpoint: CatalogEntry["endpoints"][number],
-): ProfileHeaderConfig | null {
-  if (endpoint.api_type === "openai-chat" || endpoint.api_type === "openai-responses") {
-    return {
-      name: "Authorization",
-      value: "Bearer $apiKey",
-      enabled: true,
-      locked: true,
-    };
-  }
-  if (endpoint.api_type === "anthropic" && endpoint.auth_header) {
-    return {
-      name: "Authorization",
-      value: "Bearer $apiKey",
-      enabled: true,
-      locked: true,
-    };
-  }
-  if (endpoint.api_type === "anthropic") {
-    return {
-      name: "x-api-key",
-      value: "$apiKey",
-      enabled: true,
-      locked: true,
-    };
-  }
-  if (endpoint.api_type === "gemini") {
-    return {
-      name: "x-goog-api-key",
-      value: "$apiKey",
-      enabled: true,
-      locked: true,
-    };
-  }
-  return null;
-}
-
-function mergeProfileHeaders(
-  defaults: ProfileHeaderConfig[],
-  current: ProfileHeaderConfig[] | null | undefined,
-): ProfileHeaderConfig[] {
-  if (!current?.length) return defaults;
-  const currentByName = new Map(
-    current.map((header) => [header.name.trim().toLowerCase(), header]),
-  );
-  const merged = defaults.map((header) => {
-    const existing = currentByName.get(header.name.trim().toLowerCase());
-    return existing ? { ...header, ...existing, locked: true } : header;
-  });
-  for (const header of current) {
-    const key = header.name.trim().toLowerCase();
-    if (header.locked || merged.some((item) => item.name.trim().toLowerCase() === key)) {
-      continue;
-    }
-    merged.push(header);
-  }
-  return merged;
-}
-
 function ensureProfileModel(
   models: ProfileModelConfig[] | null | undefined,
   modelId: string,
@@ -897,7 +826,11 @@ function ensureProfileModel(
   const id = modelId.trim();
   const next = models?.length ? [...models] : [];
   if (!id) return next;
-  if (next.some((model) => model.id === id)) return next;
+  const existingIndex = next.findIndex((model) => model.id === id);
+  if (existingIndex >= 0) {
+    next[existingIndex] = { ...next[existingIndex], enabled: true };
+    return next;
+  }
   return [
     {
       id,
@@ -909,290 +842,26 @@ function ensureProfileModel(
   ];
 }
 
-function ProfileHeadersField({
-  headers,
-  onChange,
-}: {
-  headers: ProfileHeaderConfig[];
-  onChange: (headers: ProfileHeaderConfig[]) => void;
-}) {
-  const { t } = useI18n();
-
-  function updateHeader(index: number, next: ProfileHeaderConfig) {
-    onChange(headers.map((header, i) => (i === index ? next : header)));
-  }
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] font-medium text-muted-foreground">
-          {t("Request headers")}
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-7 px-2 text-[11px]"
-          onClick={() =>
-            onChange([
-              ...headers,
-              { name: "", value: "", enabled: true, locked: false },
-            ])
-          }
-        >
-          <Plus className="h-3 w-3" />
-          {t("Header")}
-        </Button>
-      </div>
-      <div className="space-y-1">
-        {headers.map((header, index) => (
-          <div
-            key={`${header.name}:${index}`}
-            className="grid grid-cols-[24px_minmax(120px,0.8fr)_minmax(160px,1fr)_28px] items-center gap-1.5"
-          >
-            <input
-              type="checkbox"
-              checked={header.enabled !== false}
-              onChange={(event) =>
-                updateHeader(index, {
-                  ...header,
-                  enabled: event.target.checked,
-                })
-              }
-              className="h-3.5 w-3.5 accent-primary"
-              aria-label={t("Enable header")}
-            />
-            <Input
-              type="text"
-              value={header.name}
-              disabled={!!header.locked}
-              onChange={(event) =>
-                updateHeader(index, { ...header, name: event.target.value })
-              }
-              placeholder="Authorization"
-              className={MONO_INPUT_CLASS}
-            />
-            <Input
-              type="text"
-              value={header.value}
-              onChange={(event) =>
-                updateHeader(index, { ...header, value: event.target.value })
-              }
-              placeholder="Bearer $apiKey"
-              className={MONO_INPUT_CLASS}
-            />
-            {header.locked ? (
-              <span className="h-7 w-7" />
-            ) : (
-              <button
-                type="button"
-                onClick={() => onChange(headers.filter((_, i) => i !== index))}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/40 hover:text-destructive"
-                title={t("Delete")}
-                aria-label={t("Delete")}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function enabledProfileModelIds(models: ProfileModelConfig[]): string[] {
+  return models
+    .filter((model) => model.enabled !== false)
+    .map((model) => model.id.trim())
+    .filter(Boolean);
 }
 
-function ProfileModelsField({
-  models,
-  defaultModel,
-  onDefaultModelChange,
-  onChange,
-}: {
-  models: ProfileModelConfig[];
-  defaultModel: string;
-  onDefaultModelChange: (model: string) => void;
-  onChange: (models: ProfileModelConfig[]) => void;
-}) {
-  const { t } = useI18n();
-  const [customModel, setCustomModel] = useState("");
-
-  function updateModel(index: number, next: ProfileModelConfig) {
-    onChange(models.map((model, i) => (i === index ? next : model)));
+function setProfileModelsEnabled(
+  models: ProfileModelConfig[],
+  enabledIds: string[],
+): ProfileModelConfig[] {
+  const enabled = new Set(enabledIds.map((id) => id.trim()).filter(Boolean));
+  let next = [...models];
+  for (const id of enabled) {
+    next = ensureProfileModel(next, id);
   }
-
-  function fallbackDefaultModel(nextModels: ProfileModelConfig[]): string {
-    return nextModels.find((model) => model.enabled !== false)?.id ?? "";
-  }
-
-  function addCustomModel() {
-    const id = customModel.trim();
-    if (!id) return;
-    const next = ensureProfileModel(models, id);
-    onChange(next);
-    onDefaultModelChange(defaultModel || id);
-    setCustomModel("");
-  }
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] font-medium text-muted-foreground">
-          {t("Models")}
-        </div>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <Input
-            type="text"
-            value={customModel}
-            onChange={(event) => setCustomModel(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                addCustomModel();
-              }
-            }}
-            placeholder={t("custom model")}
-            className={`${MONO_INPUT_CLASS} w-44`}
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 w-8 px-0"
-            onClick={addCustomModel}
-            title={t("Add model")}
-            aria-label={t("Add model")}
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-      {models.length > 0 && (
-        <div className="max-h-56 overflow-auto rounded-md border border-border/60 [scrollbar-gutter:stable]">
-          {models.map((model, index) => {
-            const capabilities = model.capabilities ?? {};
-            return (
-              <div
-                key={`${model.id}:${index}`}
-                className="grid min-h-9 grid-cols-[28px_28px_minmax(140px,1fr)_minmax(146px,auto)_28px] items-center gap-1.5 border-b border-border/50 px-1.5 py-1 text-xs last:border-b-0"
-              >
-                <button
-                  type="button"
-                  onClick={() => onDefaultModelChange(model.id)}
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${
-                    defaultModel === model.id
-                      ? "text-primary"
-                      : "text-muted-foreground/50 hover:bg-accent/40 hover:text-foreground"
-                  }`}
-                  title={t("Set default model")}
-                  aria-label={t("Set default model")}
-                >
-                  <Star
-                    className="h-3.5 w-3.5"
-                    fill={defaultModel === model.id ? "currentColor" : "none"}
-                  />
-                </button>
-                <input
-                  type="checkbox"
-                  checked={model.enabled !== false}
-                  onChange={(event) => {
-                    const nextModel = {
-                      ...model,
-                      enabled: event.target.checked,
-                    };
-                    const nextModels = models.map((item, i) =>
-                      i === index ? nextModel : item,
-                    );
-                    onChange(nextModels);
-                    if (!event.target.checked && defaultModel === model.id) {
-                      onDefaultModelChange(fallbackDefaultModel(nextModels));
-                    }
-                  }}
-                  className="h-3.5 w-3.5 accent-primary"
-                  aria-label={t("Enable model")}
-                />
-                {model.custom ? (
-                  <Input
-                    type="text"
-                    value={model.id}
-                    onChange={(event) =>
-                      updateModel(index, { ...model, id: event.target.value })
-                    }
-                    className={MONO_INPUT_CLASS}
-                  />
-                ) : (
-                  <span
-                    className="min-w-0 truncate font-mono text-[12px]"
-                    title={model.id}
-                  >
-                    {model.label || model.id}
-                  </span>
-                )}
-                <div className="flex min-w-0 items-center gap-1">
-                  <MiniCapabilityToggle
-                    label="Img"
-                    checked={!!capabilities.image_input}
-                    onChange={(checked) =>
-                      updateModel(index, {
-                        ...model,
-                        capabilities: {
-                          ...capabilities,
-                          image_input: checked,
-                        },
-                      })
-                    }
-                  />
-                  <MiniCapabilityToggle
-                    label="File"
-                    checked={!!capabilities.file_input}
-                    onChange={(checked) =>
-                      updateModel(index, {
-                        ...model,
-                        capabilities: {
-                          ...capabilities,
-                          file_input: checked,
-                        },
-                      })
-                    }
-                  />
-                  <MiniCapabilityToggle
-                    label="Web"
-                    checked={!!capabilities.web_search}
-                    onChange={(checked) =>
-                      updateModel(index, {
-                        ...model,
-                        capabilities: {
-                          ...capabilities,
-                          web_search: checked,
-                        },
-                      })
-                    }
-                  />
-                </div>
-                {model.custom ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextModels = models.filter((_, i) => i !== index);
-                      onChange(nextModels);
-                      if (defaultModel === model.id) {
-                        onDefaultModelChange(fallbackDefaultModel(nextModels));
-                      }
-                    }}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/40 hover:text-destructive"
-                    title={t("Delete")}
-                    aria-label={t("Delete")}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                ) : (
-                  <span className="h-7 w-7" />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
+  return next.map((model) => ({
+    ...model,
+    enabled: enabled.has(model.id.trim()),
+  }));
 }
 
 function MiniCapabilityToggle({
@@ -1224,20 +893,20 @@ function MiniCapabilityToggle({
   );
 }
 
-function mergedModelCapabilities(
+function mergedProfileModelCapabilities(
   endpoint: CatalogEntry["endpoints"][number],
-  option: ModelDef | null,
+  model: ProfileModelConfig,
 ) {
   return {
     image_input:
       !!endpoint.capabilities?.content?.image_input ||
-      !!option?.capabilities?.image_input,
+      !!model.capabilities?.image_input,
     file_input:
       !!endpoint.capabilities?.content?.file_input ||
-      !!option?.capabilities?.file_input,
+      !!model.capabilities?.file_input,
     web_search:
       !!endpoint.capabilities?.content?.web_search ||
-      !!option?.capabilities?.web_search,
+      !!model.capabilities?.web_search,
   };
 }
 
@@ -1252,6 +921,7 @@ function ModelCatalogDialog({
   apiType,
   endpoint,
   baseUrl,
+  models,
   selectedModel,
   checkedModels,
   statuses,
@@ -1259,6 +929,7 @@ function ModelCatalogDialog({
   testingDisabled,
   onDefaultModelChange,
   onCheckedModelsChange,
+  onModelsChange,
   onTestSelected,
   onClose,
 }: {
@@ -1266,6 +937,7 @@ function ModelCatalogDialog({
   apiType: string;
   endpoint: CatalogEntry["endpoints"][number];
   baseUrl: string;
+  models: ProfileModelConfig[];
   selectedModel: string;
   checkedModels: string[];
   statuses: Record<string, ModelTestStatus>;
@@ -1273,11 +945,14 @@ function ModelCatalogDialog({
   testingDisabled: boolean;
   onDefaultModelChange: (model: string) => void;
   onCheckedModelsChange: (models: string[]) => void;
+  onModelsChange: (models: ProfileModelConfig[], preferredDefaultModel?: string) => void;
   onTestSelected: () => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const allModelIds = endpoint.models.map((model) => model.id);
+  const [customModel, setCustomModel] = useState("");
+  const modelRows = models;
+  const allModelIds = modelRows.map((model) => model.id);
   const allChecked =
     allModelIds.length > 0 &&
     allModelIds.every((model) => checkedModels.includes(model));
@@ -1291,6 +966,29 @@ function ModelCatalogDialog({
         ? Array.from(new Set([...checkedModels, model]))
         : checkedModels.filter((candidate) => candidate !== model),
     );
+  }
+
+  function updateModel(modelId: string, patch: Partial<ProfileModelConfig>) {
+    onModelsChange(
+      modelRows.map((model) =>
+        model.id === modelId ? { ...model, ...patch } : model,
+      ),
+    );
+  }
+
+  function addCustomModel() {
+    const id = customModel.trim();
+    if (!id) return;
+    const nextModels = ensureProfileModel(modelRows, id);
+    onModelsChange(nextModels, selectedModel || id);
+    setCustomModel("");
+  }
+
+  function removeCustomModel(modelId: string) {
+    const nextModels = modelRows.filter((model) => model.id !== modelId);
+    const nextDefault =
+      selectedModel === modelId ? enabledProfileModelIds(nextModels)[0] : selectedModel;
+    onModelsChange(nextModels, nextDefault);
   }
 
   return (
@@ -1315,6 +1013,31 @@ function ModelCatalogDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-auto px-5 py-3 [scrollbar-gutter:stable]">
+          <div className="mb-3 flex min-w-0 gap-2">
+            <Input
+              type="text"
+              value={customModel}
+              onChange={(event) => setCustomModel(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addCustomModel();
+                }
+              }}
+              placeholder={t("custom model")}
+              className={MONO_INPUT_CLASS}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5"
+              onClick={addCustomModel}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("Add")}
+            </Button>
+          </div>
           <div className="overflow-hidden rounded-md border border-border/70">
             <div className="grid grid-cols-[44px_44px_minmax(180px,1fr)_76px_minmax(150px,1fr)_minmax(84px,120px)] items-center gap-2 border-b border-border/70 bg-muted/50 px-2 py-1.5 text-[10px] font-medium text-muted-foreground">
               <span>{t("Default")}</span>
@@ -1325,17 +1048,17 @@ function ModelCatalogDialog({
                   onCheckedModelsChange(event.target.checked ? allModelIds : [])
                 }
                 className="h-3.5 w-3.5 accent-primary"
-                aria-label={t("Select all")}
+                aria-label={t("Enable all models")}
               />
               <span>{t("Model")}</span>
               <span>{t("Context")}</span>
               <span>{t("Capabilities")}</span>
               <span>{t("Test")}</span>
             </div>
-            {endpoint.models.map((model) => {
+            {modelRows.map((model) => {
               const checked = checkedModels.includes(model.id);
               const status = statuses[statusKeyFor(model.id)] ?? { state: "idle" };
-              const capabilities = mergedModelCapabilities(endpoint, model);
+              const capabilities = mergedProfileModelCapabilities(endpoint, model);
               return (
                 <div
                   key={model.id}
@@ -1364,34 +1087,91 @@ function ModelCatalogDialog({
                     checked={checked}
                     onChange={(event) => setChecked(model.id, event.target.checked)}
                     className="h-3.5 w-3.5 accent-primary"
-                    aria-label={t("Select model for testing")}
+                    aria-label={t("Enable model")}
                   />
-                  <span
-                    className={`min-w-0 truncate ${
-                      model.label ? "text-[12px]" : "font-mono text-[12px]"
-                    }`}
-                    title={model.id}
-                  >
-                    {model.label || model.id}
-                  </span>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      className={`min-w-0 truncate ${
+                        model.label ? "text-[12px]" : "font-mono text-[12px]"
+                      }`}
+                      title={model.id}
+                    >
+                      {model.label || model.id}
+                    </span>
+                    {model.custom && (
+                      <button
+                        type="button"
+                        onClick={() => removeCustomModel(model.id)}
+                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/40 hover:text-destructive"
+                        title={t("Delete")}
+                        aria-label={t("Delete")}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                   <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                    {model.context_window
-                      ? formatContextWindow(model.context_window)
-                      : "?"}
+                    {model.context_window ? formatContextWindow(model.context_window) : "?"}
                   </span>
-                  <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-                    {capabilityText(capabilities, t)}
-                  </span>
+                  {model.custom ? (
+                    <div className="flex min-w-0 items-center gap-1">
+                      <MiniCapabilityToggle
+                        label="Img"
+                        checked={!!model.capabilities?.image_input}
+                        onChange={(checked) =>
+                          updateModel(model.id, {
+                            capabilities: {
+                              ...(model.capabilities ?? {}),
+                              image_input: checked,
+                            },
+                          })
+                        }
+                      />
+                      <MiniCapabilityToggle
+                        label="File"
+                        checked={!!model.capabilities?.file_input}
+                        onChange={(checked) =>
+                          updateModel(model.id, {
+                            capabilities: {
+                              ...(model.capabilities ?? {}),
+                              file_input: checked,
+                            },
+                          })
+                        }
+                      />
+                      <MiniCapabilityToggle
+                        label="Web"
+                        checked={!!model.capabilities?.web_search}
+                        onChange={(checked) =>
+                          updateModel(model.id, {
+                            capabilities: {
+                              ...(model.capabilities ?? {}),
+                              web_search: checked,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                      {capabilityText(capabilities, t)}
+                    </span>
+                  )}
                   <ModelTestStatusBadge status={status} />
                 </div>
               );
             })}
+            {modelRows.length === 0 && (
+              <div className="px-2 py-6 text-center text-xs text-muted-foreground">
+                {t("No models")}
+              </div>
+            )}
           </div>
         </div>
 
         <DialogFooter className="shrink-0 border-t border-border px-5 py-3 sm:justify-between">
           <div className="flex min-w-0 items-center text-xs text-muted-foreground">
-            {t("{{count}} selected", { count: checkedModels.length })}
+            {t("{{count}} enabled", { count: checkedModels.length })}
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>
@@ -1418,7 +1198,7 @@ function ModelCatalogDialog({
 }
 
 function capabilityText(
-  capabilities: ReturnType<typeof mergedModelCapabilities>,
+  capabilities: ReturnType<typeof mergedProfileModelCapabilities>,
   t: (key: string, vars?: Record<string, string | number | null | undefined>) => string,
 ) {
   const items = [
@@ -1666,7 +1446,7 @@ function ApiKindsField({
       <div className="flex flex-wrap gap-1.5">
         {endpoints.map((ep) => {
           const checked = selectedApiTypes.includes(ep.api_type);
-          const showModels = checked && ep.models.length > 0 && !!onOpenModels;
+          const showModels = checked && !!onOpenModels;
           if (editable) {
             return (
               <label

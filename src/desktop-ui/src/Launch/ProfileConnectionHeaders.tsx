@@ -213,7 +213,7 @@ function BridgeHeadersField({
                 type="text"
                 value={row.value}
                 onChange={(event) => updateValue(row.id, event.currentTarget.value)}
-                placeholder="https://app.example"
+                placeholder="Bearer $apiKey"
                 className="h-7 w-full font-mono text-xs"
               />
               <Button

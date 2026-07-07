@@ -177,14 +177,7 @@ pub(super) fn upstream_endpoint(
             ),
         ));
     }
-    let headers = api_config
-        .as_ref()
-        .map(|config| api_config_headers(config, &profile))
-        .filter(|headers| !headers.is_empty())
-        .unwrap_or_else(|| endpoint.headers.clone());
-    let managed_auth = api_config
-        .as_ref()
-        .is_some_and(|config| api_config_has_auth_header(config));
+    let headers = endpoint.headers.clone();
     let append_v1_path = api_config
         .as_ref()
         .and_then(|config| config.append_v1_path)
@@ -206,59 +199,10 @@ pub(super) fn upstream_endpoint(
         profile,
         headers,
         auth_header: endpoint.auth_header,
-        managed_auth,
+        managed_auth: false,
         kind,
         append_v1_path,
     })
-}
-
-fn api_config_headers(
-    config: &schema::ProfileApiConfig,
-    profile: &ProfileDef,
-) -> BTreeMap<String, String> {
-    config
-        .headers
-        .iter()
-        .filter(|header| header.enabled)
-        .filter_map(|header| {
-            let name = header.name.trim();
-            if name.is_empty() {
-                return None;
-            }
-            Some((
-                name.to_string(),
-                render_profile_header_value(&header.value, profile),
-            ))
-        })
-        .collect()
-}
-
-fn api_config_has_auth_header(config: &schema::ProfileApiConfig) -> bool {
-    config.headers.iter().any(|header| {
-        let name = header.name.trim();
-        name.eq_ignore_ascii_case("authorization")
-            || name.eq_ignore_ascii_case("x-api-key")
-            || name.eq_ignore_ascii_case("x-goog-api-key")
-    })
-}
-
-fn render_profile_header_value(value: &str, profile: &ProfileDef) -> String {
-    let api_key = profile
-        .credentials
-        .get("api_key")
-        .map(String::as_str)
-        .unwrap_or_default();
-    let api_token = profile
-        .credentials
-        .get("api_token")
-        .or_else(|| profile.credentials.get("apiKey"))
-        .map(String::as_str)
-        .unwrap_or(api_key);
-    value
-        .replace("$apiKey", api_key)
-        .replace("$api_key", api_key)
-        .replace("$apiToken", api_token)
-        .replace("$api_token", api_token)
 }
 
 fn join_gemini_generate_content_endpoint(base_url: &str, model: &str, stream: bool) -> String {
