@@ -415,7 +415,7 @@ export function FormBody({
   return (
     <div className="space-y-3">
       <FormSection title={t("Profile")}>
-        <FieldRow label={t("Label")} hint={t("Visible name for this profile.")}>
+        <FieldRow label={t("Label")}>
           <Input
             type="text"
             value={label}
@@ -590,15 +590,6 @@ export function FormBody({
                             : "Base URL"
                         }
                         required={ep.default_base_url === ""}
-                        hint={
-                          ep.default_base_url
-                            ? t("Leave blank to use the catalog default.")
-                            : provider.id === "custom"
-                              ? t("Required for custom endpoints.")
-                              : provider.id === "gemini"
-                                ? t("Required for Vertex AI; use the endpoint root ending in /endpoints/openapi.")
-                              : t("Endpoint URL from the provider dashboard.")
-                        }
                       >
                         <Input
                           type="text"
@@ -1290,12 +1281,7 @@ function ProxyField({
           : "border-border hover:bg-accent/30 cursor-pointer"
       }`}
     >
-      <span className="min-w-0">
-        <span className="block font-medium">{t("Use HTTP proxy")}</span>
-        <span className="block text-[10px] text-muted-foreground/70">
-          {t("Provider requests for this profile use the configured HTTP proxy when it is enabled.")}
-        </span>
-      </span>
+      <span className="min-w-0 font-medium">{t("Use HTTP proxy")}</span>
       <input
         type="checkbox"
         checked={checked}
@@ -1484,11 +1470,6 @@ function ApiKindsField({
           );
         })}
       </div>
-      {editable && (
-        <p className="text-[10px] text-muted-foreground/60 mt-1">
-          {t("Select every API shape this endpoint supports.")}
-        </p>
-      )}
     </div>
   );
 }
@@ -1539,12 +1520,10 @@ function CredentialField({
 
 function FieldRow({
   label,
-  hint,
   required,
   children,
 }: {
   label: string;
-  hint?: string;
   required?: boolean;
   children: ReactNode;
 }) {
@@ -1557,11 +1536,6 @@ function FieldRow({
         {required && <span className="text-destructive ml-0.5">*</span>}
       </div>
       {children}
-      {hint && (
-        <div className="text-[10px] text-muted-foreground/60 mt-0.5">
-          {t(hint)}
-        </div>
-      )}
     </label>
   );
 }
