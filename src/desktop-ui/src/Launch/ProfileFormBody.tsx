@@ -46,7 +46,6 @@ import {
 import {
   arraysEqual,
   apiConfigForEndpoint,
-  canOverrideInputSupport,
   collectFields,
   defaultAuthMode,
   endpointId,
@@ -615,75 +614,6 @@ export function FormBody({
                           }
                           className={MONO_INPUT_CLASS}
                         />
-                      </FieldRow>
-                    )}
-                    {canOverrideInputSupport(provider, ep) && (
-                      <FieldRow label={t("Input support")}>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <CheckRow
-                            label="Images"
-                            checked={!!ov.capabilities?.image_input}
-                            onChange={(checked) => {
-                              const capabilities = {
-                                ...(ov.capabilities ?? {}),
-                                image_input: checked,
-                              };
-                              setOverrides({
-                                ...overrides,
-                                [apiType]: {
-                                  ...ov,
-                                  capabilities,
-                                },
-                              });
-                              updateApiConfig(apiType, (config) => ({
-                                ...config,
-                                capabilities,
-                              }));
-                            }}
-                          />
-                          <CheckRow
-                            label="Files"
-                            checked={!!ov.capabilities?.file_input}
-                            onChange={(checked) => {
-                              const capabilities = {
-                                ...(ov.capabilities ?? {}),
-                                file_input: checked,
-                              };
-                              setOverrides({
-                                ...overrides,
-                                [apiType]: {
-                                  ...ov,
-                                  capabilities,
-                                },
-                              });
-                              updateApiConfig(apiType, (config) => ({
-                                ...config,
-                                capabilities,
-                              }));
-                            }}
-                          />
-                          <CheckRow
-                            label="Web search"
-                            checked={!!ov.capabilities?.web_search}
-                            onChange={(checked) => {
-                              const capabilities = {
-                                ...(ov.capabilities ?? {}),
-                                web_search: checked,
-                              };
-                              setOverrides({
-                                ...overrides,
-                                [apiType]: {
-                                  ...ov,
-                                  capabilities,
-                                },
-                              });
-                              updateApiConfig(apiType, (config) => ({
-                                ...config,
-                                capabilities,
-                              }));
-                            }}
-                          />
-                        </div>
                       </FieldRow>
                     )}
                   </div>
