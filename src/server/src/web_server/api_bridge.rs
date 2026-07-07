@@ -950,6 +950,7 @@ async fn build_upstream_request(
         request,
         upstream.protocol,
         upstream.auth_header,
+        upstream.managed_auth,
         headers,
         manual_profile_api_key,
     )

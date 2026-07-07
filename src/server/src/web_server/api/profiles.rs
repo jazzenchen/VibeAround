@@ -48,6 +48,8 @@ pub struct ModelProfileDraft {
     #[serde(default)]
     pub overrides: BTreeMap<String, schema::ApiTypeOverrides>,
     #[serde(default)]
+    pub api_configs: BTreeMap<String, schema::ProfileApiConfig>,
+    #[serde(default)]
     pub use_settings_proxy: bool,
     #[serde(default)]
     pub provider_settings: schema::ProviderSettings,
@@ -140,6 +142,7 @@ impl ModelProfileDraft {
             api_types: self.api_types,
             credentials: self.credentials,
             overrides: self.overrides,
+            api_configs: self.api_configs,
             use_settings_proxy: self.use_settings_proxy,
             provider_settings: self.provider_settings,
             connections: self.connections,

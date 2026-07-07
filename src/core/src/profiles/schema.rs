@@ -346,7 +346,7 @@ fn default_models(
         .map(str::trim)
         .filter(|model| !model.is_empty())
     {
-        if !models.iter().any(|model| model.id == selected_model) {
+        if catalog::canonical_model_id(endpoint, selected_model).is_none() {
             models.insert(
                 0,
                 ProfileModelConfig {
