@@ -75,6 +75,34 @@ export interface ApiTypeOverrides {
   capabilities?: ContentCapabilities | null;
 }
 
+export interface ProfileApiConfig {
+  enabled?: boolean;
+  endpoint_id?: string | null;
+  base_url?: string | null;
+  append_v1_path?: boolean | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  capabilities?: ContentCapabilities | null;
+  headers?: ProfileHeaderConfig[] | null;
+  models?: ProfileModelConfig[] | null;
+}
+
+export interface ProfileHeaderConfig {
+  name: string;
+  value: string;
+  enabled?: boolean | null;
+  locked?: boolean | null;
+}
+
+export interface ProfileModelConfig {
+  id: string;
+  label?: string | null;
+  enabled?: boolean | null;
+  context_window?: number | null;
+  capabilities?: ContentCapabilities | null;
+  custom?: boolean | null;
+}
+
 export interface ProviderSettings {
   deepseek?: DeepSeekProviderSettings | null;
 }
@@ -115,6 +143,7 @@ export interface ProfileDef {
   api_types: string[];
   credentials: Record<string, string>;
   overrides: Record<string, ApiTypeOverrides>;
+  api_configs?: Record<string, ProfileApiConfig>;
   use_settings_proxy?: boolean;
   provider_settings?: ProviderSettings;
   connections?: Partial<Record<ConnectionAgentId, ProfileConnectionPreference>>;

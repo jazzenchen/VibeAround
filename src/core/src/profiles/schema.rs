@@ -14,7 +14,7 @@ use anyhow::{anyhow, bail, Context};
 use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
 
-use super::catalog::ContentCapabilities;
+use super::catalog::{self, ContentCapabilities, EndpointDef, ModelDef};
 use crate::{agent_state, auth, config};
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,53 @@ pub struct ApiTypeOverrides {
     pub reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<ContentCapabilities>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ProfileApiConfig {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub append_v1_path: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<ContentCapabilities>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<ProfileHeaderConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<ProfileModelConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ProfileHeaderConfig {
+    pub name: String,
+    pub value: String,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub locked: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ProfileModelConfig {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "ContentCapabilities::is_empty")]
+    pub capabilities: ContentCapabilities,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub custom: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -73,6 +120,14 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProfileDef {
     pub id: String,
@@ -93,6 +148,11 @@ pub struct ProfileDef {
     /// inherit catalog defaults.
     #[serde(default)]
     pub overrides: BTreeMap<String, ApiTypeOverrides>,
+    /// Materialized editable API configs cloned from the provider catalog.
+    /// Legacy `api_types` + `overrides` remain the compatibility source for
+    /// older profile files and are projected into this map on load/save.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub api_configs: BTreeMap<String, ProfileApiConfig>,
     /// When true, provider-bound requests for this profile use the global
     /// Settings HTTP proxy when that proxy is enabled.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -156,6 +216,162 @@ pub fn validate(profile: &ProfileDef) -> anyhow::Result<()> {
         bail!("profile must declare at least one api kind");
     }
     Ok(())
+}
+
+pub fn enabled_api_types(profile: &ProfileDef) -> Vec<String> {
+    if profile.api_configs.is_empty() {
+        return profile.api_types.clone();
+    }
+    profile
+        .api_configs
+        .iter()
+        .filter_map(|(api_type, config)| config.enabled.then(|| api_type.clone()))
+        .collect()
+}
+
+pub fn api_config_for(
+    profile: &ProfileDef,
+    provider: &catalog::ProviderCatalog,
+    api_type: &str,
+) -> Option<ProfileApiConfig> {
+    profile
+        .api_configs
+        .get(api_type)
+        .cloned()
+        .or_else(|| legacy_api_config(profile, provider, api_type))
+}
+
+pub fn hydrate_api_configs(profile: &mut ProfileDef) {
+    let Some(provider) = catalog::get(&profile.provider) else {
+        return;
+    };
+    let api_types = profile.api_types.clone();
+    for api_type in api_types {
+        if profile.api_configs.contains_key(&api_type) {
+            continue;
+        }
+        if let Some(config) = legacy_api_config(profile, provider, &api_type) {
+            profile.api_configs.insert(api_type, config);
+        }
+    }
+}
+
+fn legacy_api_config(
+    profile: &ProfileDef,
+    provider: &catalog::ProviderCatalog,
+    api_type: &str,
+) -> Option<ProfileApiConfig> {
+    if !profile.api_types.iter().any(|item| item == api_type) {
+        return None;
+    }
+    let overrides = profile.overrides.get(api_type).cloned().unwrap_or_default();
+    let endpoint = catalog::find_endpoint(provider, api_type, overrides.endpoint_id.as_deref())?;
+    Some(ProfileApiConfig {
+        enabled: true,
+        endpoint_id: overrides
+            .endpoint_id
+            .clone()
+            .or_else(|| endpoint.id.clone())
+            .or_else(|| Some(endpoint.api_type.clone())),
+        base_url: overrides.base_url.clone().or_else(|| {
+            (!endpoint.default_base_url.is_empty()).then(|| endpoint.default_base_url.clone())
+        }),
+        append_v1_path: Some(endpoint.append_v1_path),
+        model: overrides
+            .model
+            .clone()
+            .or_else(|| endpoint.models.first().map(|model| model.id.clone())),
+        reasoning_effort: overrides.reasoning_effort.clone(),
+        capabilities: overrides.capabilities.clone(),
+        headers: default_headers(endpoint),
+        models: default_models(
+            endpoint,
+            overrides.model.as_deref(),
+            overrides.capabilities.clone(),
+        ),
+    })
+}
+
+fn default_headers(endpoint: &EndpointDef) -> Vec<ProfileHeaderConfig> {
+    let mut out = Vec::new();
+    for (name, value) in &endpoint.headers {
+        out.push(ProfileHeaderConfig {
+            name: name.clone(),
+            value: value.clone(),
+            enabled: true,
+            locked: true,
+        });
+    }
+    if let Some((name, value)) = default_auth_header(endpoint) {
+        if !out
+            .iter()
+            .any(|header| header.name.eq_ignore_ascii_case(&name))
+        {
+            out.push(ProfileHeaderConfig {
+                name,
+                value,
+                enabled: true,
+                locked: true,
+            });
+        }
+    }
+    out
+}
+
+fn default_auth_header(endpoint: &EndpointDef) -> Option<(String, String)> {
+    match endpoint.api_type.as_str() {
+        "openai-chat" | "openai-responses" => {
+            Some(("Authorization".to_string(), "Bearer $apiKey".to_string()))
+        }
+        "anthropic" if endpoint.auth_header => {
+            Some(("Authorization".to_string(), "Bearer $apiKey".to_string()))
+        }
+        "anthropic" => Some(("x-api-key".to_string(), "$apiKey".to_string())),
+        "gemini" => Some(("x-goog-api-key".to_string(), "$apiKey".to_string())),
+        _ => None,
+    }
+}
+
+fn default_models(
+    endpoint: &EndpointDef,
+    selected_model: Option<&str>,
+    capability_overrides: Option<ContentCapabilities>,
+) -> Vec<ProfileModelConfig> {
+    let mut models: Vec<_> = endpoint
+        .models
+        .iter()
+        .map(model_config_from_catalog)
+        .collect();
+    if let Some(selected_model) = selected_model
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        if !models.iter().any(|model| model.id == selected_model) {
+            models.insert(
+                0,
+                ProfileModelConfig {
+                    id: selected_model.to_string(),
+                    label: None,
+                    enabled: true,
+                    context_window: None,
+                    capabilities: capability_overrides.unwrap_or_default(),
+                    custom: true,
+                },
+            );
+        }
+    }
+    models
+}
+
+fn model_config_from_catalog(model: &ModelDef) -> ProfileModelConfig {
+    ProfileModelConfig {
+        id: model.id.clone(),
+        label: model.label.clone(),
+        enabled: true,
+        context_window: model.context_window,
+        capabilities: model.capabilities.clone(),
+        custom: false,
+    }
 }
 
 pub fn generate_unique_id(provider_id: &str) -> anyhow::Result<String> {
@@ -242,13 +458,16 @@ pub fn load(id: &str) -> Option<ProfileDef> {
 
 fn load_path(path: &Path) -> anyhow::Result<ProfileDef> {
     let body = std::fs::read_to_string(path).with_context(|| format!("read {:?}", path))?;
-    let profile: ProfileDef =
+    let mut profile: ProfileDef =
         serde_json::from_str(&body).with_context(|| format!("parse {:?}", path))?;
+    hydrate_api_configs(&mut profile);
     Ok(profile)
 }
 
 pub fn save(profile: &ProfileDef) -> anyhow::Result<()> {
-    validate(profile)?;
+    let mut profile = profile.clone();
+    hydrate_api_configs(&mut profile);
+    validate(&profile)?;
     let dir = profiles_dir();
     std::fs::create_dir_all(&dir).with_context(|| format!("create {:?}", dir))?;
     // Lock down the profiles dir on Unix so other local users can't
@@ -261,7 +480,7 @@ pub fn save(profile: &ProfileDef) -> anyhow::Result<()> {
 
     let target = profile_path(&profile.id);
     let tmp = dir.join(format!(".{}.tmp.{}.json", profile.id, std::process::id()));
-    let body = serde_json::to_string_pretty(profile).context("serialize profile")?;
+    let body = serde_json::to_string_pretty(&profile).context("serialize profile")?;
     std::fs::write(&tmp, body).with_context(|| format!("write {:?}", tmp))?;
     auth::set_owner_only(&tmp).ok();
     std::fs::rename(&tmp, &target).with_context(|| format!("rename to {:?}", target))?;
@@ -354,5 +573,52 @@ mod tests {
         let body = serde_json::to_string(&profile).unwrap();
         assert!(!body.contains("provider_settings"));
         assert!(!body.contains("connections"));
+    }
+
+    #[test]
+    fn hydrates_legacy_custom_profile_api_configs() {
+        let mut profile: ProfileDef = serde_json::from_str(
+            r#"{
+                "id": "sensenova",
+                "label": "SenseNova",
+                "provider": "custom",
+                "auth_mode": "api_key",
+                "api_types": ["anthropic", "openai-chat"],
+                "credentials": { "api_key": "sk-test" },
+                "overrides": {
+                    "anthropic": {
+                        "base_url": "https://token.sensenova.cn",
+                        "model": "sensenova-6.7-flash-lite"
+                    },
+                    "openai-chat": {
+                        "base_url": "https://token.sensenova.cn/v1",
+                        "model": "sensenova-6.7-flash-lite"
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        hydrate_api_configs(&mut profile);
+
+        let anthropic = profile.api_configs.get("anthropic").unwrap();
+        assert!(anthropic.enabled);
+        assert_eq!(
+            anthropic.base_url.as_deref(),
+            Some("https://token.sensenova.cn")
+        );
+        assert_eq!(anthropic.model.as_deref(), Some("sensenova-6.7-flash-lite"));
+        assert_eq!(anthropic.headers[0].name, "x-api-key");
+        assert_eq!(anthropic.headers[0].value, "$apiKey");
+        assert!(anthropic.headers[0].locked);
+        assert!(anthropic.models[0].custom);
+
+        let chat = profile.api_configs.get("openai-chat").unwrap();
+        assert_eq!(
+            chat.base_url.as_deref(),
+            Some("https://token.sensenova.cn/v1")
+        );
+        assert_eq!(chat.headers[0].name, "Authorization");
+        assert_eq!(chat.headers[0].value, "Bearer $apiKey");
     }
 }
