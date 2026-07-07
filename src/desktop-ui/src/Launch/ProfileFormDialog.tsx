@@ -207,6 +207,19 @@ export function ProfileFormDialog({
     };
   }
 
+  function selectedProfileModel(apiType: string): string {
+    const overrideModel = overrides[apiType]?.model?.trim();
+    if (overrideModel) return overrideModel;
+    const config = apiConfigs[apiType];
+    const configModel = config?.model?.trim();
+    if (configModel) return configModel;
+    return (
+      config?.models
+        ?.find((model) => model.enabled !== false)
+        ?.id.trim() ?? ""
+    );
+  }
+
   function validateProfileDraft({
     requireLabel,
     requireApiKeyAuth,
@@ -237,7 +250,7 @@ export function ProfileFormDialog({
       const ep = selectedEndpoint(provider, apiType, overrides);
       if (!ep) continue;
       const ov = overrides[apiType];
-      if (requiresProfileModel(provider, ep) && !ov?.model?.trim()) {
+      if (requiresProfileModel(provider, ep) && !selectedProfileModel(apiType)) {
         return { error: t("Model is required for {{apiType}}", { apiType }) };
       }
       if (ep.default_base_url) continue;

@@ -614,32 +614,6 @@ export function FormBody({
                         />
                       </FieldRow>
                     )}
-                    {requiresProfileModel(provider, ep) && (
-                      <FieldRow
-                        label={
-                          provider.id === "azure" ? "Deployment name" : "Model"
-                        }
-                      >
-                        <Input
-                          type="text"
-                          value={ov.model ?? apiConfig.model ?? ""}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            setOverrides({
-                              ...overrides,
-                              [apiType]: { ...ov, model: value },
-                            });
-                            updateApiConfig(apiType, (config) => ({
-                              ...config,
-                              model: value,
-                              models: ensureProfileModel(config.models, value),
-                            }));
-                          }}
-                          placeholder={t("model id (e.g. gpt-4o, claude-sonnet-4-6)")}
-                          className={MONO_INPUT_CLASS}
-                        />
-                      </FieldRow>
-                    )}
                     {canOverrideInputSupport(provider, ep) && (
                       <FieldRow label={t("Input support")}>
                         <div className="grid grid-cols-2 gap-1.5">
