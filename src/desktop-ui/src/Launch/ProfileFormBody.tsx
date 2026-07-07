@@ -10,7 +10,9 @@ import {
   ListChecks,
   Loader2,
   LogIn,
+  Plus,
   Star,
+  Trash2,
 } from "lucide-react";
 import { useI18n } from "@va/i18n";
 
@@ -43,6 +45,7 @@ import {
 } from "./api";
 import {
   arraysEqual,
+  apiConfigForEndpoint,
   canOverrideInputSupport,
   collectFields,
   defaultAuthMode,
@@ -66,6 +69,9 @@ import type {
   CatalogEntry,
   FieldDef,
   ModelDef,
+  ProfileApiConfig,
+  ProfileHeaderConfig,
+  ProfileModelConfig,
 } from "./types";
 import type { ProviderSettings } from "./types";
 import { apiTypeLabel, apiTypeShort } from "./types";
@@ -89,6 +95,8 @@ interface FormBodyProps {
   setCredentials: (v: Record<string, string>) => void;
   overrides: Record<string, ApiTypeOverrides>;
   setOverrides: (v: Record<string, ApiTypeOverrides>) => void;
+  apiConfigs: Record<string, ProfileApiConfig>;
+  setApiConfigs: (v: Record<string, ProfileApiConfig>) => void;
   useSettingsProxy: boolean;
   setUseSettingsProxy: (v: boolean) => void;
   providerSettings: ProviderSettings;
@@ -111,6 +119,8 @@ export function FormBody({
   setCredentials,
   overrides,
   setOverrides,
+  apiConfigs,
+  setApiConfigs,
   useSettingsProxy,
   setUseSettingsProxy,
   providerSettings,
@@ -160,15 +170,7 @@ export function FormBody({
   const apiKindsEditable = providerApiKindsEditable(provider);
   const configurableApiTypes = effectiveSelectedApiTypes.filter((apiType) => {
     const ep = selectedEndpoint(provider, apiType, overrides);
-    if (!ep) return false;
-    const endpointOptions = endpointsForApiType(provider, apiType);
-    const ov = overrides[apiType] ?? {};
-    return (
-      (!usesEndpointGroups && endpointOptions.length > 1) ||
-      shouldShowBaseUrl(provider, ep, ov) ||
-      requiresProfileModel(provider, ep) ||
-      canOverrideInputSupport(provider, ep)
-    );
+    return !!ep;
   });
 
   useEffect(() => {
@@ -248,8 +250,31 @@ export function FormBody({
       )[endpoint.api_type];
     }
     setOverrides(nextOverrides);
+    const nextApiConfigs = { ...apiConfigs };
+    for (const endpoint of visibleApiKindEndpoints) {
+      const currentConfig = nextApiConfigs[endpoint.api_type] ?? {};
+      nextApiConfigs[endpoint.api_type] = {
+        ...apiConfigForEndpoint(
+          endpoint,
+          currentConfig,
+          nextOverrides[endpoint.api_type],
+        ),
+        enabled: apiTypes.includes(endpoint.api_type),
+      };
+    }
+    setApiConfigs(nextApiConfigs);
     setSelectedApiTypes(apiTypes);
     setAuthMode(defaultAuthMode(provider, apiTypes, nextOverrides, authMode));
+  }
+
+  function updateApiConfig(
+    apiType: string,
+    updater: (config: ProfileApiConfig) => ProfileApiConfig,
+  ) {
+    setApiConfigs({
+      ...apiConfigs,
+      [apiType]: updater(apiConfigs[apiType] ?? { enabled: true }),
+    });
   }
 
   function modelDialogKey(apiType: string, endpoint: CatalogEntry["endpoints"][number]) {
@@ -317,6 +342,35 @@ export function FormBody({
 
   return (
     <div className="space-y-3">
+      <FormSection title={t("API types")}>
+        {usesEndpointGroups && selectedGroup && (
+          <EndpointGroupField
+            groups={endpointGroups}
+            selectedGroupId={selectedGroup.id}
+            onChange={applyEndpointGroup}
+          />
+        )}
+
+        <ApiKindsField
+          endpoints={visibleApiKindEndpoints}
+          editable={apiKindsEditable}
+          selectedApiTypes={effectiveSelectedApiTypes}
+          setSelectedApiTypes={applySelectedApiTypes}
+          onOpenModels={
+            provider.id === "custom"
+              ? undefined
+              : (endpoint) => {
+                  const selectedModel =
+                    overrides[endpoint.api_type]?.model?.trim() ||
+                    apiConfigs[endpoint.api_type]?.model?.trim() ||
+                    endpoint.models[0]?.id ||
+                    "";
+                  openModelsDialog(endpoint.api_type, endpoint, selectedModel);
+                }
+          }
+        />
+      </FormSection>
+
       <FormSection title={t("Profile")}>
         <FieldRow label={t("Label")} hint={t("Visible name for this profile.")}>
           <Input
@@ -331,14 +385,6 @@ export function FormBody({
 
       {effectiveSelectedApiTypes.length > 0 && (
         <FormSection title={t("Endpoint settings")}>
-          {usesEndpointGroups && selectedGroup && (
-            <EndpointGroupField
-              groups={endpointGroups}
-              selectedGroupId={selectedGroup.id}
-              onChange={applyEndpointGroup}
-            />
-          )}
-
           {authModeOptions.length > 1 && (
             <FieldRow label={t("Auth method")}>
               <Select
@@ -387,6 +433,11 @@ export function FormBody({
                 const ep = selectedEndpoint(provider, apiType, overrides);
                 if (!ep) return null;
                 const ov = overrides[apiType] ?? {};
+                const apiConfig = apiConfigForEndpoint(
+                  ep,
+                  apiConfigs[apiType],
+                  ov,
+                );
                 const endpointOptions = endpointsForApiType(provider, apiType);
                 return (
                   <div
@@ -426,6 +477,17 @@ export function FormBody({
                               ...overrides,
                               [apiType]: nextOverride,
                             });
+                            updateApiConfig(apiType, (config) => ({
+                              ...apiConfigForEndpoint(
+                                nextEndpoint,
+                                config,
+                                nextOverride,
+                              ),
+                              headers: mergeProfileHeaders(
+                                defaultProfileHeaders(nextEndpoint),
+                                config.headers,
+                              ),
+                            }));
                           }}
                         >
                           <SelectTrigger
@@ -468,13 +530,18 @@ export function FormBody({
                       >
                         <Input
                           type="text"
-                          value={ov.base_url ?? ""}
-                          onChange={(e) =>
+                          value={ov.base_url ?? apiConfig.base_url ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
                             setOverrides({
                               ...overrides,
-                              [apiType]: { ...ov, base_url: e.target.value },
-                            })
-                          }
+                              [apiType]: { ...ov, base_url: value },
+                            });
+                            updateApiConfig(apiType, (config) => ({
+                              ...config,
+                              base_url: value,
+                            }));
+                          }}
                           placeholder={
                             ep.default_base_url ||
                             (provider.id === "azure"
@@ -495,13 +562,19 @@ export function FormBody({
                       >
                         <Input
                           type="text"
-                          value={ov.model ?? ""}
-                          onChange={(e) =>
+                          value={ov.model ?? apiConfig.model ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
                             setOverrides({
                               ...overrides,
-                              [apiType]: { ...ov, model: e.target.value },
-                            })
-                          }
+                              [apiType]: { ...ov, model: value },
+                            });
+                            updateApiConfig(apiType, (config) => ({
+                              ...config,
+                              model: value,
+                              models: ensureProfileModel(config.models, value),
+                            }));
+                          }}
                           placeholder={t("model id (e.g. gpt-4o, claude-sonnet-4-6)")}
                           className={MONO_INPUT_CLASS}
                         />
@@ -513,54 +586,99 @@ export function FormBody({
                           <CheckRow
                             label="Images"
                             checked={!!ov.capabilities?.image_input}
-                            onChange={(checked) =>
+                            onChange={(checked) => {
+                              const capabilities = {
+                                ...(ov.capabilities ?? {}),
+                                image_input: checked,
+                              };
                               setOverrides({
                                 ...overrides,
                                 [apiType]: {
                                   ...ov,
-                                  capabilities: {
-                                    ...(ov.capabilities ?? {}),
-                                    image_input: checked,
-                                  },
+                                  capabilities,
                                 },
-                              })
-                            }
+                              });
+                              updateApiConfig(apiType, (config) => ({
+                                ...config,
+                                capabilities,
+                              }));
+                            }}
                           />
                           <CheckRow
                             label="Files"
                             checked={!!ov.capabilities?.file_input}
-                            onChange={(checked) =>
+                            onChange={(checked) => {
+                              const capabilities = {
+                                ...(ov.capabilities ?? {}),
+                                file_input: checked,
+                              };
                               setOverrides({
                                 ...overrides,
                                 [apiType]: {
                                   ...ov,
-                                  capabilities: {
-                                    ...(ov.capabilities ?? {}),
-                                    file_input: checked,
-                                  },
+                                  capabilities,
                                 },
-                              })
-                            }
+                              });
+                              updateApiConfig(apiType, (config) => ({
+                                ...config,
+                                capabilities,
+                              }));
+                            }}
                           />
                           <CheckRow
                             label="Web search"
                             checked={!!ov.capabilities?.web_search}
-                            onChange={(checked) =>
+                            onChange={(checked) => {
+                              const capabilities = {
+                                ...(ov.capabilities ?? {}),
+                                web_search: checked,
+                              };
                               setOverrides({
                                 ...overrides,
                                 [apiType]: {
                                   ...ov,
-                                  capabilities: {
-                                    ...(ov.capabilities ?? {}),
-                                    web_search: checked,
-                                  },
+                                  capabilities,
                                 },
-                              })
-                            }
+                              });
+                              updateApiConfig(apiType, (config) => ({
+                                ...config,
+                                capabilities,
+                              }));
+                            }}
                           />
                         </div>
                       </FieldRow>
                     )}
+                    <ProfileHeadersField
+                      headers={apiConfig.headers ?? []}
+                      onChange={(headers) =>
+                        updateApiConfig(apiType, (config) => ({
+                          ...config,
+                          headers,
+                        }))
+                      }
+                    />
+                    <ProfileModelsField
+                      models={apiConfig.models ?? []}
+                      defaultModel={apiConfig.model ?? ov.model ?? ""}
+                      onDefaultModelChange={(model) => {
+                        setOverrides({
+                          ...overrides,
+                          [apiType]: { ...ov, model },
+                        });
+                        updateApiConfig(apiType, (config) => ({
+                          ...config,
+                          model,
+                          models: ensureProfileModel(config.models, model),
+                        }));
+                      }}
+                      onChange={(models) =>
+                        updateApiConfig(apiType, (config) => ({
+                          ...config,
+                          models,
+                        }))
+                      }
+                    />
                   </div>
                 );
               })}
@@ -579,24 +697,6 @@ export function FormBody({
               }
             />
           ))}
-
-          <ApiKindsField
-            endpoints={visibleApiKindEndpoints}
-            editable={apiKindsEditable}
-            selectedApiTypes={effectiveSelectedApiTypes}
-            setSelectedApiTypes={applySelectedApiTypes}
-            onOpenModels={
-              provider.id === "custom"
-                ? undefined
-                : (endpoint) => {
-                    const selectedModel =
-                      overrides[endpoint.api_type]?.model?.trim() ||
-                      endpoint.models[0]?.id ||
-                      "";
-                    openModelsDialog(endpoint.api_type, endpoint, selectedModel);
-                  }
-            }
-          />
 
           <ProxyField
             checked={useSettingsProxy}
@@ -706,6 +806,421 @@ function EndpointGroupField({
         </SelectContent>
       </Select>
     </FieldRow>
+  );
+}
+
+function defaultProfileHeaders(
+  endpoint: CatalogEntry["endpoints"][number],
+): ProfileHeaderConfig[] {
+  const headers: ProfileHeaderConfig[] = Object.entries(endpoint.headers ?? {}).map(
+    ([name, value]) => ({
+      name,
+      value,
+      enabled: true,
+      locked: true,
+    }),
+  );
+  const authHeader = defaultProfileAuthHeader(endpoint);
+  if (
+    authHeader &&
+    !headers.some((header) => header.name.toLowerCase() === authHeader.name.toLowerCase())
+  ) {
+    headers.push(authHeader);
+  }
+  return headers;
+}
+
+function defaultProfileAuthHeader(
+  endpoint: CatalogEntry["endpoints"][number],
+): ProfileHeaderConfig | null {
+  if (endpoint.api_type === "openai-chat" || endpoint.api_type === "openai-responses") {
+    return {
+      name: "Authorization",
+      value: "Bearer $apiKey",
+      enabled: true,
+      locked: true,
+    };
+  }
+  if (endpoint.api_type === "anthropic" && endpoint.auth_header) {
+    return {
+      name: "Authorization",
+      value: "Bearer $apiKey",
+      enabled: true,
+      locked: true,
+    };
+  }
+  if (endpoint.api_type === "anthropic") {
+    return {
+      name: "x-api-key",
+      value: "$apiKey",
+      enabled: true,
+      locked: true,
+    };
+  }
+  if (endpoint.api_type === "gemini") {
+    return {
+      name: "x-goog-api-key",
+      value: "$apiKey",
+      enabled: true,
+      locked: true,
+    };
+  }
+  return null;
+}
+
+function mergeProfileHeaders(
+  defaults: ProfileHeaderConfig[],
+  current: ProfileHeaderConfig[] | null | undefined,
+): ProfileHeaderConfig[] {
+  if (!current?.length) return defaults;
+  const currentByName = new Map(
+    current.map((header) => [header.name.trim().toLowerCase(), header]),
+  );
+  const merged = defaults.map((header) => {
+    const existing = currentByName.get(header.name.trim().toLowerCase());
+    return existing ? { ...header, ...existing, locked: true } : header;
+  });
+  for (const header of current) {
+    const key = header.name.trim().toLowerCase();
+    if (header.locked || merged.some((item) => item.name.trim().toLowerCase() === key)) {
+      continue;
+    }
+    merged.push(header);
+  }
+  return merged;
+}
+
+function ensureProfileModel(
+  models: ProfileModelConfig[] | null | undefined,
+  modelId: string,
+): ProfileModelConfig[] {
+  const id = modelId.trim();
+  const next = models?.length ? [...models] : [];
+  if (!id) return next;
+  if (next.some((model) => model.id === id)) return next;
+  return [
+    {
+      id,
+      enabled: true,
+      capabilities: {},
+      custom: true,
+    },
+    ...next,
+  ];
+}
+
+function ProfileHeadersField({
+  headers,
+  onChange,
+}: {
+  headers: ProfileHeaderConfig[];
+  onChange: (headers: ProfileHeaderConfig[]) => void;
+}) {
+  const { t } = useI18n();
+
+  function updateHeader(index: number, next: ProfileHeaderConfig) {
+    onChange(headers.map((header, i) => (i === index ? next : header)));
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          {t("Request headers")}
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-[11px]"
+          onClick={() =>
+            onChange([
+              ...headers,
+              { name: "", value: "", enabled: true, locked: false },
+            ])
+          }
+        >
+          <Plus className="h-3 w-3" />
+          {t("Header")}
+        </Button>
+      </div>
+      <div className="space-y-1">
+        {headers.map((header, index) => (
+          <div
+            key={`${header.name}:${index}`}
+            className="grid grid-cols-[24px_minmax(120px,0.8fr)_minmax(160px,1fr)_28px] items-center gap-1.5"
+          >
+            <input
+              type="checkbox"
+              checked={header.enabled !== false}
+              onChange={(event) =>
+                updateHeader(index, {
+                  ...header,
+                  enabled: event.target.checked,
+                })
+              }
+              className="h-3.5 w-3.5 accent-primary"
+              aria-label={t("Enable header")}
+            />
+            <Input
+              type="text"
+              value={header.name}
+              disabled={!!header.locked}
+              onChange={(event) =>
+                updateHeader(index, { ...header, name: event.target.value })
+              }
+              placeholder="Authorization"
+              className={MONO_INPUT_CLASS}
+            />
+            <Input
+              type="text"
+              value={header.value}
+              onChange={(event) =>
+                updateHeader(index, { ...header, value: event.target.value })
+              }
+              placeholder="Bearer $apiKey"
+              className={MONO_INPUT_CLASS}
+            />
+            {header.locked ? (
+              <span className="h-7 w-7" />
+            ) : (
+              <button
+                type="button"
+                onClick={() => onChange(headers.filter((_, i) => i !== index))}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/40 hover:text-destructive"
+                title={t("Delete")}
+                aria-label={t("Delete")}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProfileModelsField({
+  models,
+  defaultModel,
+  onDefaultModelChange,
+  onChange,
+}: {
+  models: ProfileModelConfig[];
+  defaultModel: string;
+  onDefaultModelChange: (model: string) => void;
+  onChange: (models: ProfileModelConfig[]) => void;
+}) {
+  const { t } = useI18n();
+  const [customModel, setCustomModel] = useState("");
+
+  function updateModel(index: number, next: ProfileModelConfig) {
+    onChange(models.map((model, i) => (i === index ? next : model)));
+  }
+
+  function fallbackDefaultModel(nextModels: ProfileModelConfig[]): string {
+    return nextModels.find((model) => model.enabled !== false)?.id ?? "";
+  }
+
+  function addCustomModel() {
+    const id = customModel.trim();
+    if (!id) return;
+    const next = ensureProfileModel(models, id);
+    onChange(next);
+    onDefaultModelChange(defaultModel || id);
+    setCustomModel("");
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          {t("Models")}
+        </div>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Input
+            type="text"
+            value={customModel}
+            onChange={(event) => setCustomModel(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addCustomModel();
+              }
+            }}
+            placeholder={t("custom model")}
+            className={`${MONO_INPUT_CLASS} w-44`}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 w-8 px-0"
+            onClick={addCustomModel}
+            title={t("Add model")}
+            aria-label={t("Add model")}
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      {models.length > 0 && (
+        <div className="max-h-56 overflow-auto rounded-md border border-border/60 [scrollbar-gutter:stable]">
+          {models.map((model, index) => {
+            const capabilities = model.capabilities ?? {};
+            return (
+              <div
+                key={`${model.id}:${index}`}
+                className="grid min-h-9 grid-cols-[28px_28px_minmax(140px,1fr)_minmax(146px,auto)_28px] items-center gap-1.5 border-b border-border/50 px-1.5 py-1 text-xs last:border-b-0"
+              >
+                <button
+                  type="button"
+                  onClick={() => onDefaultModelChange(model.id)}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${
+                    defaultModel === model.id
+                      ? "text-primary"
+                      : "text-muted-foreground/50 hover:bg-accent/40 hover:text-foreground"
+                  }`}
+                  title={t("Set default model")}
+                  aria-label={t("Set default model")}
+                >
+                  <Star
+                    className="h-3.5 w-3.5"
+                    fill={defaultModel === model.id ? "currentColor" : "none"}
+                  />
+                </button>
+                <input
+                  type="checkbox"
+                  checked={model.enabled !== false}
+                  onChange={(event) => {
+                    const nextModel = {
+                      ...model,
+                      enabled: event.target.checked,
+                    };
+                    const nextModels = models.map((item, i) =>
+                      i === index ? nextModel : item,
+                    );
+                    onChange(nextModels);
+                    if (!event.target.checked && defaultModel === model.id) {
+                      onDefaultModelChange(fallbackDefaultModel(nextModels));
+                    }
+                  }}
+                  className="h-3.5 w-3.5 accent-primary"
+                  aria-label={t("Enable model")}
+                />
+                {model.custom ? (
+                  <Input
+                    type="text"
+                    value={model.id}
+                    onChange={(event) =>
+                      updateModel(index, { ...model, id: event.target.value })
+                    }
+                    className={MONO_INPUT_CLASS}
+                  />
+                ) : (
+                  <span
+                    className="min-w-0 truncate font-mono text-[12px]"
+                    title={model.id}
+                  >
+                    {model.label || model.id}
+                  </span>
+                )}
+                <div className="flex min-w-0 items-center gap-1">
+                  <MiniCapabilityToggle
+                    label="Img"
+                    checked={!!capabilities.image_input}
+                    onChange={(checked) =>
+                      updateModel(index, {
+                        ...model,
+                        capabilities: {
+                          ...capabilities,
+                          image_input: checked,
+                        },
+                      })
+                    }
+                  />
+                  <MiniCapabilityToggle
+                    label="File"
+                    checked={!!capabilities.file_input}
+                    onChange={(checked) =>
+                      updateModel(index, {
+                        ...model,
+                        capabilities: {
+                          ...capabilities,
+                          file_input: checked,
+                        },
+                      })
+                    }
+                  />
+                  <MiniCapabilityToggle
+                    label="Web"
+                    checked={!!capabilities.web_search}
+                    onChange={(checked) =>
+                      updateModel(index, {
+                        ...model,
+                        capabilities: {
+                          ...capabilities,
+                          web_search: checked,
+                        },
+                      })
+                    }
+                  />
+                </div>
+                {model.custom ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextModels = models.filter((_, i) => i !== index);
+                      onChange(nextModels);
+                      if (defaultModel === model.id) {
+                        onDefaultModelChange(fallbackDefaultModel(nextModels));
+                      }
+                    }}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/40 hover:text-destructive"
+                    title={t("Delete")}
+                    aria-label={t("Delete")}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <span className="h-7 w-7" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniCapabilityToggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <label
+      className={`inline-flex h-7 items-center gap-1 rounded-md border px-1.5 text-[10px] ${
+        checked
+          ? "border-primary bg-primary/10"
+          : "border-border/70 hover:bg-accent/30"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-3 w-3 accent-primary"
+      />
+      <span>{t(label)}</span>
+    </label>
   );
 }
 
