@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 common = { path = "../core" }
-va-ai-api-bridge = { git = "https://github.com/jazzenchen/va-ai-api-bridge", rev = "8bad207b6459505ccb2fd3794b5e18fad03cc8cc" }
+va-ai-api-bridge = { git = "https://github.com/jazzenchen/va-ai-api-bridge", rev = "8a49c899070819c64d64e61a11e19dee329e5089" }
 axum = { version = "0.8", features = ["json", "ws", "tokio"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 tokio = { version = "1.49", features = ["full"] }
