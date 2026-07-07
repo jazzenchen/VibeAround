@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use common::profiles::{catalog, runtime, AuthMode, ProfileDef};
+use common::profiles::{catalog, runtime, schema, AuthMode, ProfileDef};
 use serde::Serialize;
 
 /// List item — does NOT include credentials. Used to render the Launch tab
@@ -103,6 +103,7 @@ mod tests {
 
 fn profile_summary(profile: ProfileDef) -> ProfileSummary {
     let provider = catalog::get(&profile.provider);
+    let enabled_api_types = schema::enabled_api_types(&profile);
     let (label, icon) = match provider {
         Some(catalog) => (catalog.label.clone(), catalog.icon.clone()),
         None => (profile.provider.clone(), None),
@@ -120,7 +121,7 @@ fn profile_summary(profile: ProfileDef) -> ProfileSummary {
         provider_label: label,
         provider_icon: icon,
         auth_mode: profile.auth_mode,
-        launch_targets: runtime::launch_targets_for_api_types(&profile.api_types)
+        launch_targets: runtime::launch_targets_for_api_types(&enabled_api_types)
             .into_iter()
             .map(|(id, label, api_type)| LaunchTargetSummary {
                 id: id.to_string(),
@@ -129,7 +130,7 @@ fn profile_summary(profile: ProfileDef) -> ProfileSummary {
                 warning: warnings_for_targets.get(api_type).cloned(),
             })
             .collect(),
-        api_types: profile.api_types,
+        api_types: enabled_api_types,
         api_type_warnings,
         api_type_models,
         api_type_model_options,
@@ -145,14 +146,12 @@ fn api_type_warnings(
     let Some(provider) = provider else {
         return warnings;
     };
-    for api_type in &profile.api_types {
-        let endpoint_id = profile
-            .overrides
-            .get(api_type)
-            .and_then(|overrides| overrides.endpoint_id.as_deref());
-        if let Some(endpoint) = catalog::find_endpoint(provider, api_type, endpoint_id) {
+    for api_type in schema::enabled_api_types(profile) {
+        let endpoint_id = selected_endpoint_id(profile, Some(provider), &api_type);
+        if let Some(endpoint) = catalog::find_endpoint(provider, &api_type, endpoint_id.as_deref())
+        {
             if let Some(warning) = &endpoint.compatibility_warning {
-                warnings.insert(api_type.clone(), warning.clone());
+                warnings.insert(api_type, warning.clone());
             }
         }
     }
@@ -163,17 +162,30 @@ fn api_type_models(
     profile: &ProfileDef,
     provider: Option<&'static catalog::ProviderCatalog>,
 ) -> BTreeMap<String, String> {
-    profile
-        .api_types
+    schema::enabled_api_types(profile)
         .iter()
         .filter_map(|api_type| {
             let endpoint = endpoint_for(profile, provider, api_type);
-            let model = profile
-                .overrides
-                .get(api_type)
-                .and_then(|overrides| overrides.model.as_ref())
-                .filter(|model| !model.trim().is_empty())
-                .cloned()
+            let config = api_config_for(profile, provider, api_type);
+            let model = config
+                .as_ref()
+                .and_then(|config| clean_string(config.model.as_deref()))
+                .or_else(|| {
+                    profile
+                        .overrides
+                        .get(api_type)
+                        .and_then(|overrides| overrides.model.as_ref())
+                        .and_then(|model| clean_string(Some(model)))
+                })
+                .or_else(|| {
+                    config.as_ref().and_then(|config| {
+                        config
+                            .models
+                            .iter()
+                            .filter(|model| model.enabled)
+                            .find_map(|model| clean_string(Some(&model.id)))
+                    })
+                })
                 .or_else(|| {
                     endpoint
                         .and_then(|endpoint| endpoint.models.first())
@@ -189,24 +201,42 @@ fn api_type_model_options(
     provider: Option<&'static catalog::ProviderCatalog>,
     api_type_models: &BTreeMap<String, String>,
 ) -> BTreeMap<String, Vec<catalog::ModelDef>> {
-    profile
-        .api_types
+    schema::enabled_api_types(profile)
         .iter()
         .filter_map(|api_type| {
-            let mut models = endpoint_for(profile, provider, api_type)
-                .map(|endpoint| endpoint.models.clone())
-                .unwrap_or_default();
-            if let Some(model) = profile
-                .overrides
-                .get(api_type)
-                .and_then(|overrides| overrides.model.as_ref())
-                .filter(|model| !model.trim().is_empty())
+            let config = api_config_for(profile, provider, api_type);
+            let mut models = config
+                .as_ref()
+                .map(|config| {
+                    config
+                        .models
+                        .iter()
+                        .filter(|model| model.enabled)
+                        .map(profile_model_to_catalog)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|models| !models.is_empty())
+                .unwrap_or_else(|| {
+                    endpoint_for(profile, provider, api_type)
+                        .map(|endpoint| endpoint.models.clone())
+                        .unwrap_or_default()
+                });
+            if let Some(model) = config
+                .as_ref()
+                .and_then(|config| clean_string(config.model.as_deref()))
+                .or_else(|| {
+                    profile
+                        .overrides
+                        .get(api_type)
+                        .and_then(|overrides| overrides.model.as_ref())
+                        .and_then(|model| clean_string(Some(model)))
+                })
             {
-                if !models.iter().any(|item| item.id == *model) {
+                if !models.iter().any(|item| item.id == model) {
                     models.insert(
                         0,
                         catalog::ModelDef {
-                            id: model.clone(),
+                            id: model,
                             label: None,
                             aliases: Vec::new(),
                             context_window: None,
@@ -235,14 +265,39 @@ fn api_type_headers(
     profile: &ProfileDef,
     provider: Option<&'static catalog::ProviderCatalog>,
 ) -> BTreeMap<String, BTreeMap<String, String>> {
-    profile
-        .api_types
+    schema::enabled_api_types(profile)
         .iter()
         .filter_map(|api_type| {
-            let headers = endpoint_for(profile, provider, api_type)?.headers.clone();
+            let headers = api_config_for(profile, provider, api_type)
+                .map(|config| {
+                    config
+                        .headers
+                        .into_iter()
+                        .filter(|header| header.enabled)
+                        .filter_map(|header| {
+                            let name = header.name.trim().to_string();
+                            (!name.is_empty()).then_some((name, header.value))
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .filter(|headers| !headers.is_empty())
+                .or_else(|| {
+                    endpoint_for(profile, provider, api_type)
+                        .map(|endpoint| endpoint.headers.clone())
+                })?;
             (!headers.is_empty()).then_some((api_type.clone(), headers))
         })
         .collect()
+}
+
+fn profile_model_to_catalog(model: &schema::ProfileModelConfig) -> catalog::ModelDef {
+    catalog::ModelDef {
+        id: model.id.clone(),
+        label: model.label.clone(),
+        aliases: Vec::new(),
+        context_window: model.context_window,
+        capabilities: model.capabilities.clone(),
+    }
 }
 
 fn endpoint_for<'a>(
@@ -251,10 +306,38 @@ fn endpoint_for<'a>(
     api_type: &str,
 ) -> Option<&'a catalog::EndpointDef> {
     provider.and_then(|catalog| {
-        let endpoint_id = profile
-            .overrides
-            .get(api_type)
-            .and_then(|overrides| overrides.endpoint_id.as_deref());
-        catalog::find_endpoint(catalog, api_type, endpoint_id)
+        let endpoint_id = selected_endpoint_id(profile, Some(catalog), api_type);
+        catalog::find_endpoint(catalog, api_type, endpoint_id.as_deref())
     })
+}
+
+fn api_config_for(
+    profile: &ProfileDef,
+    provider: Option<&catalog::ProviderCatalog>,
+    api_type: &str,
+) -> Option<schema::ProfileApiConfig> {
+    let provider = provider?;
+    schema::api_config_for(profile, provider, api_type).filter(|config| config.enabled)
+}
+
+fn selected_endpoint_id(
+    profile: &ProfileDef,
+    provider: Option<&catalog::ProviderCatalog>,
+    api_type: &str,
+) -> Option<String> {
+    api_config_for(profile, provider, api_type)
+        .and_then(|config| config.endpoint_id)
+        .or_else(|| {
+            profile
+                .overrides
+                .get(api_type)
+                .and_then(|overrides| overrides.endpoint_id.clone())
+        })
+}
+
+fn clean_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
