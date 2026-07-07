@@ -531,10 +531,10 @@ mod tests {
             }
         );
         assert_eq!(
-            npm_package_spec("@agentclientprotocol/claude-agent-acp@0.48.0"),
+            npm_package_spec("@agentclientprotocol/claude-agent-acp@0.57.0"),
             NpmPackageSpec {
                 package_name: "@agentclientprotocol/claude-agent-acp",
-                requested_version: Some("0.48.0"),
+                requested_version: Some("0.57.0"),
             }
         );
     }

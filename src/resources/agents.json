@@ -7,7 +7,7 @@
     "install": { "type": "npm" },
     "acp": {
       "program": "node",
-      "npm_package": "@agentclientprotocol/claude-agent-acp@0.48.0",
+      "npm_package": "@agentclientprotocol/claude-agent-acp@0.57.0",
       "bin_name": "claude-agent-acp"
     },
     "pty": {
