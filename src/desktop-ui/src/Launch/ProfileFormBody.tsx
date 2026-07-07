@@ -414,6 +414,18 @@ export function FormBody({
 
   return (
     <div className="space-y-3">
+      <FormSection title={t("Profile")}>
+        <FieldRow label={t("Label")} hint={t("Visible name for this profile.")}>
+          <Input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={`${provider.label} (work)`}
+            className={INPUT_CLASS}
+          />
+        </FieldRow>
+      </FormSection>
+
       <FormSection title={t("API types")}>
         {usesEndpointGroups && selectedGroup && (
           <EndpointGroupField
@@ -437,18 +449,6 @@ export function FormBody({
             openModelsDialog(endpoint.api_type, endpoint, selectedModel);
           }}
         />
-      </FormSection>
-
-      <FormSection title={t("Profile")}>
-        <FieldRow label={t("Label")} hint={t("Visible name for this profile.")}>
-          <Input
-            type="text"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder={`${provider.label} (work)`}
-            className={INPUT_CLASS}
-          />
-        </FieldRow>
       </FormSection>
 
       {effectiveSelectedApiTypes.length > 0 && (
