@@ -424,9 +424,7 @@ export function FormBody({
             className={INPUT_CLASS}
           />
         </FieldRow>
-      </FormSection>
 
-      <FormSection title={t("API types")}>
         {usesEndpointGroups && selectedGroup && (
           <EndpointGroupField
             groups={endpointGroups}
@@ -449,52 +447,66 @@ export function FormBody({
             openModelsDialog(endpoint.api_type, endpoint, selectedModel);
           }}
         />
+
+        {effectiveSelectedApiTypes.length > 0 && authModeOptions.length > 1 && (
+          <FieldRow label={t("Auth method")}>
+            <Select
+              value={authMode}
+              onValueChange={(value) =>
+                setAuthMode(
+                  defaultAuthMode(
+                    provider,
+                    effectiveSelectedApiTypes,
+                    overrides,
+                    value as AuthMode,
+                  ),
+                )
+              }
+            >
+              <SelectTrigger size="sm" className="h-8 w-full text-[13px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {authModeOptions.map((auth) => (
+                  <SelectItem
+                    key={auth.mode}
+                    value={auth.mode}
+                    className="text-xs"
+                  >
+                    {t(auth.label ?? auth.mode)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FieldRow>
+        )}
+
+        {effectiveSelectedApiTypes.length > 0 && googleAccountsSelected && (
+          <GoogleOAuthField
+            status={googleStatus}
+            loading={googleLoading}
+            error={googleError}
+            onLogin={handleGoogleOAuthLogin}
+          />
+        )}
+
+        {effectiveSelectedApiTypes.length > 0 &&
+          fieldDefs.map((f) => (
+            <CredentialField
+              key={f.name}
+              field={f}
+              value={credentials[f.name] ?? ""}
+              reveal={revealKeys[f.name] ?? false}
+              onChange={(v) => setCredentials({ ...credentials, [f.name]: v })}
+              onToggleReveal={() =>
+                setRevealKeys({ ...revealKeys, [f.name]: !revealKeys[f.name] })
+              }
+            />
+          ))}
       </FormSection>
 
       {effectiveSelectedApiTypes.length > 0 && (
         <FormSection title={t("Endpoint settings")}>
-          {authModeOptions.length > 1 && (
-            <FieldRow label={t("Auth method")}>
-              <Select
-                value={authMode}
-                onValueChange={(value) =>
-                  setAuthMode(
-                    defaultAuthMode(
-                      provider,
-                      effectiveSelectedApiTypes,
-                      overrides,
-                      value as AuthMode,
-                    ),
-                  )
-                }
-              >
-                <SelectTrigger size="sm" className="h-8 w-full text-[13px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {authModeOptions.map((auth) => (
-                    <SelectItem
-                      key={auth.mode}
-                      value={auth.mode}
-                      className="text-xs"
-                    >
-                      {t(auth.label ?? auth.mode)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FieldRow>
-          )}
-
-          {googleAccountsSelected && (
-            <GoogleOAuthField
-              status={googleStatus}
-              loading={googleLoading}
-              error={googleError}
-              onLogin={handleGoogleOAuthLogin}
-            />
-          )}
-
           {configurableApiTypes.length > 0 && (
             <div className="space-y-2">
               {configurableApiTypes.map((apiType) => {
@@ -688,19 +700,6 @@ export function FormBody({
               })}
             </div>
           )}
-
-          {fieldDefs.map((f) => (
-            <CredentialField
-              key={f.name}
-              field={f}
-              value={credentials[f.name] ?? ""}
-              reveal={revealKeys[f.name] ?? false}
-              onChange={(v) => setCredentials({ ...credentials, [f.name]: v })}
-              onToggleReveal={() =>
-                setRevealKeys({ ...revealKeys, [f.name]: !revealKeys[f.name] })
-              }
-            />
-          ))}
 
           <ProxyField
             checked={useSettingsProxy}
