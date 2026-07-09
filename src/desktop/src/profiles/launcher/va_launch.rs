@@ -288,6 +288,7 @@ mod tests {
             api_types: vec!["openai_responses".to_string()],
             credentials: Default::default(),
             overrides: Default::default(),
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
