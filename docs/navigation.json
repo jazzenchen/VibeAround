@@ -1,0 +1,431 @@
+{
+  "title": {
+    "en": "VibeAround Docs",
+    "zh": "VibeAround 文档"
+  },
+  "tree": [
+    {
+      "type": "page",
+      "slug": "index",
+      "source": "README.md"
+    },
+    {
+      "type": "category",
+      "slug": "getting-started",
+      "title": {
+        "en": "Getting Started",
+        "zh": "开始"
+      },
+      "defaultOpen": true,
+      "children": [
+        {
+          "type": "page",
+          "slug": "what-is-vibearound",
+          "source": "product/what-is-vibearound.md"
+        },
+        {
+          "type": "page",
+          "slug": "supported-agents",
+          "source": "product/supported-matrix.md"
+        },
+        {
+          "type": "page",
+          "slug": "download",
+          "source": "guides/download.md"
+        },
+        {
+          "type": "page",
+          "slug": "installation",
+          "source": "guides/install-and-onboarding.md"
+        },
+        {
+          "type": "category",
+          "slug": "quick-start",
+          "title": {
+            "en": "Quick Start",
+            "zh": "快速开始"
+          },
+          "children": [
+            {
+              "type": "page",
+              "slug": "desktop",
+              "source": "guides/quick-tour.md"
+            },
+            {
+              "type": "page",
+              "slug": "cli",
+              "source": "guides/cli-quick-start.md"
+            }
+          ]
+        },
+        {
+          "type": "page",
+          "slug": "desktop-app",
+          "source": "guides/desktop-app.md"
+        }
+      ]
+    },
+    {
+      "type": "category",
+      "slug": "use-cases",
+      "title": {
+        "en": "Use Cases",
+        "zh": "使用场景"
+      },
+      "children": [
+        {
+          "type": "page",
+          "slug": "remote-coding",
+          "source": "use-cases/remote-coding.md"
+        },
+        {
+          "type": "page",
+          "slug": "codex-mobile",
+          "source": "use-cases/codex-mobile.md"
+        },
+        {
+          "type": "page",
+          "slug": "codex-remote",
+          "source": "use-cases/codex-remote.md"
+        },
+        {
+          "type": "page",
+          "slug": "claude-remote",
+          "source": "use-cases/claude-remote.md"
+        },
+        {
+          "type": "page",
+          "slug": "gemini-remote",
+          "source": "use-cases/gemini-remote.md"
+        },
+        {
+          "type": "page",
+          "slug": "opencode-remote",
+          "source": "use-cases/opencode-remote.md"
+        },
+        {
+          "type": "page",
+          "slug": "claude-code-switcher",
+          "source": "use-cases/claude-code-switcher.md"
+        }
+      ]
+    },
+    {
+      "type": "category",
+      "slug": "workflows",
+      "title": {
+        "en": "Core Workflows",
+        "zh": "核心流程"
+      },
+      "children": [
+        {
+          "type": "page",
+          "slug": "agent-launch",
+          "source": "guides/agent-launch.md"
+        },
+        {
+          "type": "page",
+          "slug": "messaging",
+          "source": "guides/im-usage.md"
+        },
+        {
+          "type": "page",
+          "slug": "dashboard",
+          "source": "guides/web-dashboard.md"
+        },
+        {
+          "type": "page",
+          "slug": "tunnels",
+          "source": "guides/tunnels-and-remote-access.md"
+        },
+        {
+          "type": "page",
+          "slug": "session-lifecycle",
+          "source": "architecture/session-lifecycle.md"
+        }
+      ]
+    },
+    {
+      "type": "category",
+      "slug": "configure",
+      "title": {
+        "en": "Configure",
+        "zh": "配置"
+      },
+      "children": [
+        {
+          "type": "page",
+          "slug": "model-profiles",
+          "source": "guides/model-profiles.md"
+        },
+        {
+          "type": "page",
+          "slug": "provider-endpoints",
+          "source": "reference/provider-endpoints.md"
+        },
+        {
+          "type": "page",
+          "slug": "web-search",
+          "source": "guides/web-search.md"
+        },
+        {
+          "type": "category",
+          "slug": "channels",
+          "source": "guides/connect-channels.md",
+          "title": {
+            "en": "Channels",
+            "zh": "渠道"
+          },
+          "children": [
+            {
+              "type": "page",
+              "slug": "telegram",
+              "source": "guides/channels/telegram.md"
+            },
+            {
+              "type": "page",
+              "slug": "feishu",
+              "source": "guides/channels/feishu.md"
+            },
+            {
+              "type": "page",
+              "slug": "slack",
+              "source": "guides/channels/slack.md"
+            },
+            {
+              "type": "page",
+              "slug": "discord",
+              "source": "guides/channels/discord.md"
+            },
+            {
+              "type": "page",
+              "slug": "dingtalk",
+              "source": "guides/channels/dingtalk.md"
+            },
+            {
+              "type": "page",
+              "slug": "wecom",
+              "source": "guides/channels/wecom.md"
+            },
+            {
+              "type": "page",
+              "slug": "qqbot",
+              "source": "guides/channels/qqbot.md"
+            },
+            {
+              "type": "page",
+              "slug": "wechat",
+              "source": "guides/channels/wechat.md"
+            },
+            {
+              "type": "page",
+              "slug": "whatsapp",
+              "source": "guides/channels/whatsapp.md"
+            }
+          ]
+        },
+        {
+          "type": "page",
+          "slug": "security",
+          "source": "architecture/security-model.md"
+        }
+      ]
+    },
+    {
+      "type": "category",
+      "slug": "architecture",
+      "title": {
+        "en": "Architecture",
+        "zh": "架构"
+      },
+      "children": [
+        {
+          "type": "page",
+          "slug": "concepts",
+          "source": "architecture/concepts.md"
+        },
+        {
+          "type": "page",
+          "slug": "overview",
+          "source": "architecture/overview.md"
+        },
+        {
+          "type": "page",
+          "slug": "local-api-bridge",
+          "source": "architecture/local-api-and-bridge.md"
+        },
+        {
+          "type": "page",
+          "slug": "channel-plugin-system",
+          "source": "architecture/channel-plugin-system.md"
+        }
+      ]
+    },
+    {
+      "type": "category",
+      "slug": "reference",
+      "title": {
+        "en": "Reference",
+        "zh": "参考"
+      },
+      "children": [
+        {
+          "type": "page",
+          "slug": "configuration",
+          "source": "reference/configuration.md"
+        },
+        {
+          "type": "page",
+          "slug": "cli",
+          "source": "reference/cli.md"
+        },
+        {
+          "type": "page",
+          "slug": "api-surfaces",
+          "source": "reference/api-surfaces.md"
+        },
+        {
+          "type": "page",
+          "slug": "timers-limits",
+          "source": "reference/timers-and-limits.md"
+        },
+        {
+          "type": "page",
+          "slug": "build-from-source",
+          "source": "guides/build-from-source.md"
+        },
+        {
+          "type": "page",
+          "slug": "build-channel-plugin",
+          "source": "guides/build-a-channel-plugin.md"
+        },
+        {
+          "type": "page",
+          "slug": "troubleshooting",
+          "source": "guides/troubleshooting-and-faq.md"
+        }
+      ]
+    },
+    {
+      "type": "category",
+      "slug": "internals",
+      "source": "internals/README.md",
+      "title": {
+        "en": "Internals",
+        "zh": "Internals"
+      },
+      "children": [
+        {
+          "type": "page",
+          "slug": "launch",
+          "source": "internals/launch.md"
+        },
+        {
+          "type": "category",
+          "slug": "flows",
+          "title": {
+            "en": "Flows",
+            "zh": "Flows"
+          },
+          "children": [
+            {
+              "type": "page",
+              "slug": "im-message",
+              "source": "internals/flows/im-message.md"
+            },
+            {
+              "type": "page",
+              "slug": "web-chat",
+              "source": "internals/flows/web-chat.md"
+            },
+            {
+              "type": "page",
+              "slug": "web-terminal",
+              "source": "internals/flows/web-terminal.md"
+            },
+            {
+              "type": "page",
+              "slug": "permission",
+              "source": "internals/flows/permission.md"
+            },
+            {
+              "type": "page",
+              "slug": "bridge-request",
+              "source": "internals/flows/bridge-request.md"
+            },
+            {
+              "type": "page",
+              "slug": "handover",
+              "source": "internals/flows/handover.md"
+            },
+            {
+              "type": "page",
+              "slug": "native-launch",
+              "source": "internals/flows/native-launch.md"
+            }
+          ]
+        },
+        {
+          "type": "category",
+          "slug": "modules",
+          "title": {
+            "en": "Modules",
+            "zh": "Modules"
+          },
+          "children": [
+            {
+              "type": "page",
+              "slug": "agent",
+              "source": "internals/modules/agent.md"
+            },
+            {
+              "type": "page",
+              "slug": "auth",
+              "source": "internals/modules/auth.md"
+            },
+            {
+              "type": "page",
+              "slug": "channels",
+              "source": "internals/modules/channels.md"
+            },
+            {
+              "type": "page",
+              "slug": "previews",
+              "source": "internals/modules/previews.md"
+            },
+            {
+              "type": "page",
+              "slug": "process",
+              "source": "internals/modules/process.md"
+            },
+            {
+              "type": "page",
+              "slug": "profiles",
+              "source": "internals/modules/profiles.md"
+            },
+            {
+              "type": "page",
+              "slug": "pty",
+              "source": "internals/modules/pty.md"
+            },
+            {
+              "type": "page",
+              "slug": "server",
+              "source": "internals/modules/server.md"
+            },
+            {
+              "type": "page",
+              "slug": "tunnels",
+              "source": "internals/modules/tunnels.md"
+            },
+            {
+              "type": "page",
+              "slug": "workspace",
+              "source": "internals/modules/workspace.md"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
