@@ -345,13 +345,13 @@ Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki
 
 ### Desktop App
 
-Latest desktop release: [VibeAround v0.7.12](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.12).
+Latest desktop release: [VibeAround v0.7.13](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.13).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.12.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-macOS-arm64-0.7.12.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Windows-x64-Setup-0.7.12.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Windows-x64-MSI-0.7.12.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Windows-x64-Portable-0.7.12.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Linux-x64-AppImage-0.7.12.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.12/VibeAround-Linux-x64-DEB-0.7.12.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.13.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-macOS-arm64-0.7.13.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-Setup-0.7.13.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-MSI-0.7.13.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-Portable-0.7.13.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Linux-x64-AppImage-0.7.13.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Linux-x64-DEB-0.7.13.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
 
@@ -371,7 +371,7 @@ va launch --profile codex-work
 
 After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
 
-Latest CLI package: [`@vibearound/cli@0.0.2`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.2](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.2).
+Latest CLI package: [`@vibearound/cli@0.0.3`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.3](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.3).
 
 ## Upgrade Notes
 
