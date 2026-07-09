@@ -10,7 +10,9 @@ import {
   ListChecks,
   Loader2,
   LogIn,
+  Plus,
   Star,
+  Trash2,
 } from "lucide-react";
 import { useI18n } from "@va/i18n";
 
@@ -43,7 +45,7 @@ import {
 } from "./api";
 import {
   arraysEqual,
-  canOverrideInputSupport,
+  apiConfigForEndpoint,
   collectFields,
   defaultAuthMode,
   endpointId,
@@ -65,7 +67,8 @@ import type {
   AuthMode,
   CatalogEntry,
   FieldDef,
-  ModelDef,
+  ProfileApiConfig,
+  ProfileModelConfig,
 } from "./types";
 import type { ProviderSettings } from "./types";
 import { apiTypeLabel, apiTypeShort } from "./types";
@@ -89,6 +92,8 @@ interface FormBodyProps {
   setCredentials: (v: Record<string, string>) => void;
   overrides: Record<string, ApiTypeOverrides>;
   setOverrides: (v: Record<string, ApiTypeOverrides>) => void;
+  apiConfigs: Record<string, ProfileApiConfig>;
+  setApiConfigs: (v: Record<string, ProfileApiConfig>) => void;
   useSettingsProxy: boolean;
   setUseSettingsProxy: (v: boolean) => void;
   providerSettings: ProviderSettings;
@@ -111,6 +116,8 @@ export function FormBody({
   setCredentials,
   overrides,
   setOverrides,
+  apiConfigs,
+  setApiConfigs,
   useSettingsProxy,
   setUseSettingsProxy,
   providerSettings,
@@ -160,15 +167,7 @@ export function FormBody({
   const apiKindsEditable = providerApiKindsEditable(provider);
   const configurableApiTypes = effectiveSelectedApiTypes.filter((apiType) => {
     const ep = selectedEndpoint(provider, apiType, overrides);
-    if (!ep) return false;
-    const endpointOptions = endpointsForApiType(provider, apiType);
-    const ov = overrides[apiType] ?? {};
-    return (
-      (!usesEndpointGroups && endpointOptions.length > 1) ||
-      shouldShowBaseUrl(provider, ep, ov) ||
-      requiresProfileModel(provider, ep) ||
-      canOverrideInputSupport(provider, ep)
-    );
+    return !!ep;
   });
 
   useEffect(() => {
@@ -248,8 +247,31 @@ export function FormBody({
       )[endpoint.api_type];
     }
     setOverrides(nextOverrides);
+    const nextApiConfigs = { ...apiConfigs };
+    for (const endpoint of visibleApiKindEndpoints) {
+      const currentConfig = nextApiConfigs[endpoint.api_type] ?? {};
+      nextApiConfigs[endpoint.api_type] = {
+        ...apiConfigForEndpoint(
+          endpoint,
+          currentConfig,
+          nextOverrides[endpoint.api_type],
+        ),
+        enabled: apiTypes.includes(endpoint.api_type),
+      };
+    }
+    setApiConfigs(nextApiConfigs);
     setSelectedApiTypes(apiTypes);
     setAuthMode(defaultAuthMode(provider, apiTypes, nextOverrides, authMode));
+  }
+
+  function updateApiConfig(
+    apiType: string,
+    updater: (config: ProfileApiConfig) => ProfileApiConfig,
+  ) {
+    setApiConfigs({
+      ...apiConfigs,
+      [apiType]: updater(apiConfigs[apiType] ?? { enabled: true }),
+    });
   }
 
   function modelDialogKey(apiType: string, endpoint: CatalogEntry["endpoints"][number]) {
@@ -272,11 +294,22 @@ export function FormBody({
     const key = modelDialogKey(apiType, endpoint);
     setSelectedTestModels((current) => {
       if (current[key]?.length) return current;
+      const config = apiConfigForEndpoint(
+        endpoint,
+        apiConfigs[apiType],
+        overrides[apiType],
+      );
+      const enabledModels = (config.models ?? [])
+        .filter((model) => model.enabled !== false)
+        .map((model) => model.id.trim())
+        .filter(Boolean);
       const initialModels = selectedModel
-        ? [selectedModel]
-        : endpoint.models[0]?.id
-          ? [endpoint.models[0].id]
-          : [];
+        ? Array.from(new Set([selectedModel, ...enabledModels]))
+        : enabledModels.length > 0
+          ? enabledModels
+          : endpoint.models[0]?.id
+            ? [endpoint.models[0].id]
+            : [];
       return { ...current, [key]: initialModels };
     });
     setModelsDialogApiType(apiType);
@@ -310,15 +343,78 @@ export function FormBody({
   const modelsDialogOverride = modelsDialogApiType
     ? (overrides[modelsDialogApiType] ?? {})
     : {};
+  const modelsDialogConfig =
+    modelsDialogApiType && modelsDialogEndpoint
+      ? apiConfigForEndpoint(
+          modelsDialogEndpoint,
+          apiConfigs[modelsDialogApiType],
+          modelsDialogOverride,
+        )
+      : null;
   const modelsDialogSelectedModel =
     modelsDialogApiType && modelsDialogEndpoint
-      ? modelsDialogOverride.model?.trim() || modelsDialogEndpoint.models[0]?.id || ""
+      ? modelsDialogOverride.model?.trim() ||
+        modelsDialogConfig?.model?.trim() ||
+        modelsDialogEndpoint.models[0]?.id ||
+        ""
       : "";
+
+  function updateModelsDialogConfig(
+    nextModels: ProfileModelConfig[],
+    preferredDefaultModel?: string,
+  ) {
+    if (!modelsDialogApiType || !modelsDialogEndpoint) return;
+    const enabledIds = enabledProfileModelIds(nextModels);
+    const preferred = preferredDefaultModel?.trim() || modelsDialogSelectedModel.trim();
+    const defaultModel =
+      preferred && enabledIds.includes(preferred)
+        ? preferred
+        : enabledIds[0] || preferred;
+    const nextOverride: ApiTypeOverrides = {
+      ...(overrides[modelsDialogApiType] ?? {}),
+    };
+    const catalogDefaultModel = modelsDialogEndpoint.models[0]?.id ?? "";
+    if (!defaultModel) {
+      delete nextOverride.model;
+    } else if (
+      !requiresProfileModel(provider, modelsDialogEndpoint) &&
+      defaultModel === catalogDefaultModel
+    ) {
+      delete nextOverride.model;
+    } else {
+      nextOverride.model = defaultModel;
+    }
+    setOverrides({
+      ...overrides,
+      [modelsDialogApiType]: nextOverride,
+    });
+    updateApiConfig(modelsDialogApiType, (config) => ({
+      ...apiConfigForEndpoint(modelsDialogEndpoint, config, nextOverride),
+      model: defaultModel || undefined,
+      models: nextModels,
+    }));
+    setSelectedTestModels((current) => ({
+      ...current,
+      [modelDialogKey(modelsDialogApiType, modelsDialogEndpoint)]: enabledIds,
+    }));
+  }
+
+  function updateModelsDialogDefault(model: string) {
+    if (!modelsDialogConfig) return;
+    updateModelsDialogConfig(ensureProfileModel(modelsDialogConfig.models ?? [], model), model);
+  }
+
+  function updateModelsDialogEnabled(modelIds: string[]) {
+    if (!modelsDialogConfig) return;
+    updateModelsDialogConfig(
+      setProfileModelsEnabled(modelsDialogConfig.models ?? [], modelIds),
+    );
+  }
 
   return (
     <div className="space-y-3">
       <FormSection title={t("Profile")}>
-        <FieldRow label={t("Label")} hint={t("Visible name for this profile.")}>
+        <FieldRow label={t("Label")}>
           <Input
             type="text"
             value={label}
@@ -327,66 +423,100 @@ export function FormBody({
             className={INPUT_CLASS}
           />
         </FieldRow>
+
+        {usesEndpointGroups && selectedGroup && (
+          <EndpointGroupField
+            groups={endpointGroups}
+            selectedGroupId={selectedGroup.id}
+            onChange={applyEndpointGroup}
+          />
+        )}
+
+        <ApiKindsField
+          endpoints={visibleApiKindEndpoints}
+          editable={apiKindsEditable}
+          selectedApiTypes={effectiveSelectedApiTypes}
+          setSelectedApiTypes={applySelectedApiTypes}
+          onOpenModels={(endpoint) => {
+            const selectedModel =
+              overrides[endpoint.api_type]?.model?.trim() ||
+              apiConfigs[endpoint.api_type]?.model?.trim() ||
+              endpoint.models[0]?.id ||
+              "";
+            openModelsDialog(endpoint.api_type, endpoint, selectedModel);
+          }}
+        />
+
+        {effectiveSelectedApiTypes.length > 0 && authModeOptions.length > 1 && (
+          <FieldRow label={t("Auth method")}>
+            <Select
+              value={authMode}
+              onValueChange={(value) =>
+                setAuthMode(
+                  defaultAuthMode(
+                    provider,
+                    effectiveSelectedApiTypes,
+                    overrides,
+                    value as AuthMode,
+                  ),
+                )
+              }
+            >
+              <SelectTrigger size="sm" className="h-8 w-full text-[13px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {authModeOptions.map((auth) => (
+                  <SelectItem
+                    key={auth.mode}
+                    value={auth.mode}
+                    className="text-xs"
+                  >
+                    {t(auth.label ?? auth.mode)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FieldRow>
+        )}
+
+        {effectiveSelectedApiTypes.length > 0 && googleAccountsSelected && (
+          <GoogleOAuthField
+            status={googleStatus}
+            loading={googleLoading}
+            error={googleError}
+            onLogin={handleGoogleOAuthLogin}
+          />
+        )}
+
+        {effectiveSelectedApiTypes.length > 0 &&
+          fieldDefs.map((f) => (
+            <CredentialField
+              key={f.name}
+              field={f}
+              value={credentials[f.name] ?? ""}
+              reveal={revealKeys[f.name] ?? false}
+              onChange={(v) => setCredentials({ ...credentials, [f.name]: v })}
+              onToggleReveal={() =>
+                setRevealKeys({ ...revealKeys, [f.name]: !revealKeys[f.name] })
+              }
+            />
+          ))}
       </FormSection>
 
       {effectiveSelectedApiTypes.length > 0 && (
         <FormSection title={t("Endpoint settings")}>
-          {usesEndpointGroups && selectedGroup && (
-            <EndpointGroupField
-              groups={endpointGroups}
-              selectedGroupId={selectedGroup.id}
-              onChange={applyEndpointGroup}
-            />
-          )}
-
-          {authModeOptions.length > 1 && (
-            <FieldRow label={t("Auth method")}>
-              <Select
-                value={authMode}
-                onValueChange={(value) =>
-                  setAuthMode(
-                    defaultAuthMode(
-                      provider,
-                      effectiveSelectedApiTypes,
-                      overrides,
-                      value as AuthMode,
-                    ),
-                  )
-                }
-              >
-                <SelectTrigger size="sm" className="h-8 w-full text-[13px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {authModeOptions.map((auth) => (
-                    <SelectItem
-                      key={auth.mode}
-                      value={auth.mode}
-                      className="text-xs"
-                    >
-                      {t(auth.label ?? auth.mode)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FieldRow>
-          )}
-
-          {googleAccountsSelected && (
-            <GoogleOAuthField
-              status={googleStatus}
-              loading={googleLoading}
-              error={googleError}
-              onLogin={handleGoogleOAuthLogin}
-            />
-          )}
-
           {configurableApiTypes.length > 0 && (
             <div className="space-y-2">
               {configurableApiTypes.map((apiType) => {
                 const ep = selectedEndpoint(provider, apiType, overrides);
                 if (!ep) return null;
                 const ov = overrides[apiType] ?? {};
+                const apiConfig = apiConfigForEndpoint(
+                  ep,
+                  apiConfigs[apiType],
+                  ov,
+                );
                 const endpointOptions = endpointsForApiType(provider, apiType);
                 return (
                   <div
@@ -426,6 +556,9 @@ export function FormBody({
                               ...overrides,
                               [apiType]: nextOverride,
                             });
+                            updateApiConfig(apiType, (config) => ({
+                              ...apiConfigForEndpoint(nextEndpoint, config, nextOverride),
+                            }));
                           }}
                         >
                           <SelectTrigger
@@ -456,25 +589,21 @@ export function FormBody({
                             : "Base URL"
                         }
                         required={ep.default_base_url === ""}
-                        hint={
-                          ep.default_base_url
-                            ? t("Leave blank to use the catalog default.")
-                            : provider.id === "custom"
-                              ? t("Required for custom endpoints.")
-                              : provider.id === "gemini"
-                                ? t("Required for Vertex AI; use the endpoint root ending in /endpoints/openapi.")
-                              : t("Endpoint URL from the provider dashboard.")
-                        }
                       >
                         <Input
                           type="text"
-                          value={ov.base_url ?? ""}
-                          onChange={(e) =>
+                          value={ov.base_url ?? apiConfig.base_url ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
                             setOverrides({
                               ...overrides,
-                              [apiType]: { ...ov, base_url: e.target.value },
-                            })
-                          }
+                              [apiType]: { ...ov, base_url: value },
+                            });
+                            updateApiConfig(apiType, (config) => ({
+                              ...config,
+                              base_url: value,
+                            }));
+                          }}
                           placeholder={
                             ep.default_base_url ||
                             (provider.id === "azure"
@@ -487,116 +616,11 @@ export function FormBody({
                         />
                       </FieldRow>
                     )}
-                    {requiresProfileModel(provider, ep) && (
-                      <FieldRow
-                        label={
-                          provider.id === "azure" ? "Deployment name" : "Model"
-                        }
-                      >
-                        <Input
-                          type="text"
-                          value={ov.model ?? ""}
-                          onChange={(e) =>
-                            setOverrides({
-                              ...overrides,
-                              [apiType]: { ...ov, model: e.target.value },
-                            })
-                          }
-                          placeholder={t("model id (e.g. gpt-4o, claude-sonnet-4-6)")}
-                          className={MONO_INPUT_CLASS}
-                        />
-                      </FieldRow>
-                    )}
-                    {canOverrideInputSupport(provider, ep) && (
-                      <FieldRow label={t("Input support")}>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <CheckRow
-                            label="Images"
-                            checked={!!ov.capabilities?.image_input}
-                            onChange={(checked) =>
-                              setOverrides({
-                                ...overrides,
-                                [apiType]: {
-                                  ...ov,
-                                  capabilities: {
-                                    ...(ov.capabilities ?? {}),
-                                    image_input: checked,
-                                  },
-                                },
-                              })
-                            }
-                          />
-                          <CheckRow
-                            label="Files"
-                            checked={!!ov.capabilities?.file_input}
-                            onChange={(checked) =>
-                              setOverrides({
-                                ...overrides,
-                                [apiType]: {
-                                  ...ov,
-                                  capabilities: {
-                                    ...(ov.capabilities ?? {}),
-                                    file_input: checked,
-                                  },
-                                },
-                              })
-                            }
-                          />
-                          <CheckRow
-                            label="Web search"
-                            checked={!!ov.capabilities?.web_search}
-                            onChange={(checked) =>
-                              setOverrides({
-                                ...overrides,
-                                [apiType]: {
-                                  ...ov,
-                                  capabilities: {
-                                    ...(ov.capabilities ?? {}),
-                                    web_search: checked,
-                                  },
-                                },
-                              })
-                            }
-                          />
-                        </div>
-                      </FieldRow>
-                    )}
                   </div>
                 );
               })}
             </div>
           )}
-
-          {fieldDefs.map((f) => (
-            <CredentialField
-              key={f.name}
-              field={f}
-              value={credentials[f.name] ?? ""}
-              reveal={revealKeys[f.name] ?? false}
-              onChange={(v) => setCredentials({ ...credentials, [f.name]: v })}
-              onToggleReveal={() =>
-                setRevealKeys({ ...revealKeys, [f.name]: !revealKeys[f.name] })
-              }
-            />
-          ))}
-
-          <ApiKindsField
-            endpoints={visibleApiKindEndpoints}
-            editable={apiKindsEditable}
-            selectedApiTypes={effectiveSelectedApiTypes}
-            setSelectedApiTypes={applySelectedApiTypes}
-            onOpenModels={
-              provider.id === "custom"
-                ? undefined
-                : (endpoint) => {
-                    const selectedModel =
-                      overrides[endpoint.api_type]?.model?.trim() ||
-                      endpoint.models[0]?.id ||
-                      "";
-                    openModelsDialog(endpoint.api_type, endpoint, selectedModel);
-                  }
-            }
-          />
 
           <ProxyField
             checked={useSettingsProxy}
@@ -610,8 +634,10 @@ export function FormBody({
               endpoint={modelsDialogEndpoint}
               baseUrl={
                 modelsDialogOverride.base_url?.trim() ||
+                modelsDialogConfig?.base_url?.trim() ||
                 modelsDialogEndpoint.default_base_url
               }
+              models={modelsDialogConfig?.models ?? []}
               selectedModel={modelsDialogSelectedModel}
               checkedModels={
                 selectedTestModels[
@@ -623,31 +649,9 @@ export function FormBody({
                 modelStatusKey(modelsDialogApiType, modelsDialogEndpoint, model)
               }
               testingDisabled={!!testingDisabled}
-              onDefaultModelChange={(model) => {
-                const key = modelDialogKey(modelsDialogApiType, modelsDialogEndpoint);
-                const nextOverride: ApiTypeOverrides = {
-                  ...(overrides[modelsDialogApiType] ?? {}),
-                };
-                if (model === modelsDialogEndpoint.models[0]?.id) {
-                  delete nextOverride.model;
-                } else {
-                  nextOverride.model = model;
-                }
-                setOverrides({
-                  ...overrides,
-                  [modelsDialogApiType]: nextOverride,
-                });
-                setSelectedTestModels((current) => ({
-                  ...current,
-                  [key]: current[key]?.length ? current[key] : [model],
-                }));
-              }}
-              onCheckedModelsChange={(models) =>
-                setSelectedTestModels({
-                  ...selectedTestModels,
-                  [modelDialogKey(modelsDialogApiType, modelsDialogEndpoint)]: models,
-                })
-              }
+              onDefaultModelChange={updateModelsDialogDefault}
+              onCheckedModelsChange={updateModelsDialogEnabled}
+              onModelsChange={updateModelsDialogConfig}
               onTestSelected={() =>
                 void testSelectedModels(modelsDialogApiType, modelsDialogEndpoint)
               }
@@ -709,20 +713,94 @@ function EndpointGroupField({
   );
 }
 
-function mergedModelCapabilities(
+function ensureProfileModel(
+  models: ProfileModelConfig[] | null | undefined,
+  modelId: string,
+): ProfileModelConfig[] {
+  const id = modelId.trim();
+  const next = models?.length ? [...models] : [];
+  if (!id) return next;
+  const existingIndex = next.findIndex((model) => model.id === id);
+  if (existingIndex >= 0) {
+    next[existingIndex] = { ...next[existingIndex], enabled: true };
+    return next;
+  }
+  return [
+    {
+      id,
+      enabled: true,
+      capabilities: {},
+      custom: true,
+    },
+    ...next,
+  ];
+}
+
+function enabledProfileModelIds(models: ProfileModelConfig[]): string[] {
+  return models
+    .filter((model) => model.enabled !== false)
+    .map((model) => model.id.trim())
+    .filter(Boolean);
+}
+
+function setProfileModelsEnabled(
+  models: ProfileModelConfig[],
+  enabledIds: string[],
+): ProfileModelConfig[] {
+  const enabled = new Set(enabledIds.map((id) => id.trim()).filter(Boolean));
+  let next = [...models];
+  for (const id of enabled) {
+    next = ensureProfileModel(next, id);
+  }
+  return next.map((model) => ({
+    ...model,
+    enabled: enabled.has(model.id.trim()),
+  }));
+}
+
+function MiniCapabilityToggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <label
+      className={`inline-flex h-7 items-center gap-1 rounded-md border px-1.5 text-[10px] ${
+        checked
+          ? "border-primary bg-primary/10"
+          : "border-border/70 hover:bg-accent/30"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="h-3 w-3 accent-primary"
+      />
+      <span>{t(label)}</span>
+    </label>
+  );
+}
+
+function mergedProfileModelCapabilities(
   endpoint: CatalogEntry["endpoints"][number],
-  option: ModelDef | null,
+  model: ProfileModelConfig,
 ) {
   return {
     image_input:
       !!endpoint.capabilities?.content?.image_input ||
-      !!option?.capabilities?.image_input,
+      !!model.capabilities?.image_input,
     file_input:
       !!endpoint.capabilities?.content?.file_input ||
-      !!option?.capabilities?.file_input,
+      !!model.capabilities?.file_input,
     web_search:
       !!endpoint.capabilities?.content?.web_search ||
-      !!option?.capabilities?.web_search,
+      !!model.capabilities?.web_search,
   };
 }
 
@@ -737,6 +815,7 @@ function ModelCatalogDialog({
   apiType,
   endpoint,
   baseUrl,
+  models,
   selectedModel,
   checkedModels,
   statuses,
@@ -744,6 +823,7 @@ function ModelCatalogDialog({
   testingDisabled,
   onDefaultModelChange,
   onCheckedModelsChange,
+  onModelsChange,
   onTestSelected,
   onClose,
 }: {
@@ -751,6 +831,7 @@ function ModelCatalogDialog({
   apiType: string;
   endpoint: CatalogEntry["endpoints"][number];
   baseUrl: string;
+  models: ProfileModelConfig[];
   selectedModel: string;
   checkedModels: string[];
   statuses: Record<string, ModelTestStatus>;
@@ -758,11 +839,14 @@ function ModelCatalogDialog({
   testingDisabled: boolean;
   onDefaultModelChange: (model: string) => void;
   onCheckedModelsChange: (models: string[]) => void;
+  onModelsChange: (models: ProfileModelConfig[], preferredDefaultModel?: string) => void;
   onTestSelected: () => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const allModelIds = endpoint.models.map((model) => model.id);
+  const [customModel, setCustomModel] = useState("");
+  const modelRows = models;
+  const allModelIds = modelRows.map((model) => model.id);
   const allChecked =
     allModelIds.length > 0 &&
     allModelIds.every((model) => checkedModels.includes(model));
@@ -776,6 +860,29 @@ function ModelCatalogDialog({
         ? Array.from(new Set([...checkedModels, model]))
         : checkedModels.filter((candidate) => candidate !== model),
     );
+  }
+
+  function updateModel(modelId: string, patch: Partial<ProfileModelConfig>) {
+    onModelsChange(
+      modelRows.map((model) =>
+        model.id === modelId ? { ...model, ...patch } : model,
+      ),
+    );
+  }
+
+  function addCustomModel() {
+    const id = customModel.trim();
+    if (!id) return;
+    const nextModels = ensureProfileModel(modelRows, id);
+    onModelsChange(nextModels, selectedModel || id);
+    setCustomModel("");
+  }
+
+  function removeCustomModel(modelId: string) {
+    const nextModels = modelRows.filter((model) => model.id !== modelId);
+    const nextDefault =
+      selectedModel === modelId ? enabledProfileModelIds(nextModels)[0] : selectedModel;
+    onModelsChange(nextModels, nextDefault);
   }
 
   return (
@@ -800,6 +907,31 @@ function ModelCatalogDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-auto px-5 py-3 [scrollbar-gutter:stable]">
+          <div className="mb-3 flex min-w-0 gap-2">
+            <Input
+              type="text"
+              value={customModel}
+              onChange={(event) => setCustomModel(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addCustomModel();
+                }
+              }}
+              placeholder={t("custom model")}
+              className={MONO_INPUT_CLASS}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5"
+              onClick={addCustomModel}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("Add")}
+            </Button>
+          </div>
           <div className="overflow-hidden rounded-md border border-border/70">
             <div className="grid grid-cols-[44px_44px_minmax(180px,1fr)_76px_minmax(150px,1fr)_minmax(84px,120px)] items-center gap-2 border-b border-border/70 bg-muted/50 px-2 py-1.5 text-[10px] font-medium text-muted-foreground">
               <span>{t("Default")}</span>
@@ -810,17 +942,17 @@ function ModelCatalogDialog({
                   onCheckedModelsChange(event.target.checked ? allModelIds : [])
                 }
                 className="h-3.5 w-3.5 accent-primary"
-                aria-label={t("Select all")}
+                aria-label={t("Enable all models")}
               />
               <span>{t("Model")}</span>
               <span>{t("Context")}</span>
               <span>{t("Capabilities")}</span>
               <span>{t("Test")}</span>
             </div>
-            {endpoint.models.map((model) => {
+            {modelRows.map((model) => {
               const checked = checkedModels.includes(model.id);
               const status = statuses[statusKeyFor(model.id)] ?? { state: "idle" };
-              const capabilities = mergedModelCapabilities(endpoint, model);
+              const capabilities = mergedProfileModelCapabilities(endpoint, model);
               return (
                 <div
                   key={model.id}
@@ -849,34 +981,91 @@ function ModelCatalogDialog({
                     checked={checked}
                     onChange={(event) => setChecked(model.id, event.target.checked)}
                     className="h-3.5 w-3.5 accent-primary"
-                    aria-label={t("Select model for testing")}
+                    aria-label={t("Enable model")}
                   />
-                  <span
-                    className={`min-w-0 truncate ${
-                      model.label ? "text-[12px]" : "font-mono text-[12px]"
-                    }`}
-                    title={model.id}
-                  >
-                    {model.label || model.id}
-                  </span>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      className={`min-w-0 truncate ${
+                        model.label ? "text-[12px]" : "font-mono text-[12px]"
+                      }`}
+                      title={model.id}
+                    >
+                      {model.label || model.id}
+                    </span>
+                    {model.custom && (
+                      <button
+                        type="button"
+                        onClick={() => removeCustomModel(model.id)}
+                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/40 hover:text-destructive"
+                        title={t("Delete")}
+                        aria-label={t("Delete")}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                   <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                    {model.context_window
-                      ? formatContextWindow(model.context_window)
-                      : "?"}
+                    {model.context_window ? formatContextWindow(model.context_window) : "?"}
                   </span>
-                  <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-                    {capabilityText(capabilities, t)}
-                  </span>
+                  {model.custom ? (
+                    <div className="flex min-w-0 items-center gap-1">
+                      <MiniCapabilityToggle
+                        label="Img"
+                        checked={!!model.capabilities?.image_input}
+                        onChange={(checked) =>
+                          updateModel(model.id, {
+                            capabilities: {
+                              ...(model.capabilities ?? {}),
+                              image_input: checked,
+                            },
+                          })
+                        }
+                      />
+                      <MiniCapabilityToggle
+                        label="File"
+                        checked={!!model.capabilities?.file_input}
+                        onChange={(checked) =>
+                          updateModel(model.id, {
+                            capabilities: {
+                              ...(model.capabilities ?? {}),
+                              file_input: checked,
+                            },
+                          })
+                        }
+                      />
+                      <MiniCapabilityToggle
+                        label="Web"
+                        checked={!!model.capabilities?.web_search}
+                        onChange={(checked) =>
+                          updateModel(model.id, {
+                            capabilities: {
+                              ...(model.capabilities ?? {}),
+                              web_search: checked,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                      {capabilityText(capabilities, t)}
+                    </span>
+                  )}
                   <ModelTestStatusBadge status={status} />
                 </div>
               );
             })}
+            {modelRows.length === 0 && (
+              <div className="px-2 py-6 text-center text-xs text-muted-foreground">
+                {t("No models")}
+              </div>
+            )}
           </div>
         </div>
 
         <DialogFooter className="shrink-0 border-t border-border px-5 py-3 sm:justify-between">
           <div className="flex min-w-0 items-center text-xs text-muted-foreground">
-            {t("{{count}} selected", { count: checkedModels.length })}
+            {t("{{count}} enabled", { count: checkedModels.length })}
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>
@@ -903,7 +1092,7 @@ function ModelCatalogDialog({
 }
 
 function capabilityText(
-  capabilities: ReturnType<typeof mergedModelCapabilities>,
+  capabilities: ReturnType<typeof mergedProfileModelCapabilities>,
   t: (key: string, vars?: Record<string, string | number | null | undefined>) => string,
 ) {
   const items = [
@@ -1022,12 +1211,7 @@ function ProxyField({
           : "border-border hover:bg-accent/30 cursor-pointer"
       }`}
     >
-      <span className="min-w-0">
-        <span className="block font-medium">{t("Use HTTP proxy")}</span>
-        <span className="block text-[10px] text-muted-foreground/70">
-          {t("Provider requests for this profile use the configured HTTP proxy when it is enabled.")}
-        </span>
-      </span>
+      <span className="min-w-0 font-medium">{t("Use HTTP proxy")}</span>
       <input
         type="checkbox"
         checked={checked}
@@ -1151,7 +1335,7 @@ function ApiKindsField({
       <div className="flex flex-wrap gap-1.5">
         {endpoints.map((ep) => {
           const checked = selectedApiTypes.includes(ep.api_type);
-          const showModels = checked && ep.models.length > 0 && !!onOpenModels;
+          const showModels = checked && !!onOpenModels;
           if (editable) {
             return (
               <label
@@ -1216,11 +1400,6 @@ function ApiKindsField({
           );
         })}
       </div>
-      {editable && (
-        <p className="text-[10px] text-muted-foreground/60 mt-1">
-          {t("Select every API shape this endpoint supports.")}
-        </p>
-      )}
     </div>
   );
 }
@@ -1271,12 +1450,10 @@ function CredentialField({
 
 function FieldRow({
   label,
-  hint,
   required,
   children,
 }: {
   label: string;
-  hint?: string;
   required?: boolean;
   children: ReactNode;
 }) {
@@ -1289,11 +1466,6 @@ function FieldRow({
         {required && <span className="text-destructive ml-0.5">*</span>}
       </div>
       {children}
-      {hint && (
-        <div className="text-[10px] text-muted-foreground/60 mt-0.5">
-          {t(hint)}
-        </div>
-      )}
     </label>
   );
 }

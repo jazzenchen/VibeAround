@@ -252,7 +252,7 @@ async fn apply_local_agent_model(
         .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
             session.session_id.clone(),
             config_id,
-            model_id.to_string(),
+            model_id,
         ))
         .await?;
     Ok(())

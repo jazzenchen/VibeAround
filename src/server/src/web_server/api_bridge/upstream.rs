@@ -19,6 +19,7 @@ pub(super) struct UpstreamEndpoint {
     pub(super) profile: ProfileDef,
     pub(super) headers: BTreeMap<String, String>,
     pub(super) auth_header: bool,
+    pub(super) managed_auth: bool,
     pub(super) kind: UpstreamKind,
     append_v1_path: bool,
 }
@@ -115,8 +116,7 @@ pub(super) fn upstream_endpoint(
                 format!("profile '{profile_id}' not found"),
             )
         })?;
-    if !profile
-        .api_types
+    if !schema::enabled_api_types(&profile)
         .iter()
         .any(|api_type| api_type == target_api_type)
     {
@@ -134,10 +134,16 @@ pub(super) fn upstream_endpoint(
             format!("unknown provider '{}'", profile.provider),
         )
     })?;
-    let endpoint_id = profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| overrides.endpoint_id.as_deref());
+    let api_config = schema::api_config_for(&profile, provider, target_api_type);
+    let endpoint_id = api_config
+        .as_ref()
+        .and_then(|config| config.endpoint_id.as_deref())
+        .or_else(|| {
+            profile
+                .overrides
+                .get(target_api_type)
+                .and_then(|overrides| overrides.endpoint_id.as_deref())
+        });
     let endpoint =
         catalog::find_endpoint(provider, target_api_type, endpoint_id).ok_or_else(|| {
             let suffix = endpoint_id
@@ -151,10 +157,15 @@ pub(super) fn upstream_endpoint(
                 ),
             )
         })?;
-    let base_url = profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| overrides.base_url.clone())
+    let base_url = api_config
+        .as_ref()
+        .and_then(|config| config.base_url.clone())
+        .or_else(|| {
+            profile
+                .overrides
+                .get(target_api_type)
+                .and_then(|overrides| overrides.base_url.clone())
+        })
         .unwrap_or_else(|| endpoint.default_base_url.clone());
     let base_url = base_url.trim_end_matches('/');
     if base_url.is_empty() {
@@ -166,6 +177,11 @@ pub(super) fn upstream_endpoint(
             ),
         ));
     }
+    let headers = endpoint.headers.clone();
+    let append_v1_path = api_config
+        .as_ref()
+        .and_then(|config| config.append_v1_path)
+        .unwrap_or(endpoint.append_v1_path);
     let kind =
         if profile.provider == "gemini" && catalog::endpoint_id(endpoint) == "google-accounts" {
             UpstreamKind::GoogleCodeAssist
@@ -181,10 +197,11 @@ pub(super) fn upstream_endpoint(
         base_url: base_url.to_string(),
         protocol,
         profile,
-        headers: endpoint.headers.clone(),
+        headers,
         auth_header: endpoint.auth_header,
+        managed_auth: false,
         kind,
-        append_v1_path: endpoint.append_v1_path,
+        append_v1_path,
     })
 }
 
@@ -253,9 +270,13 @@ pub(super) fn apply_upstream_auth(
     request: reqwest::RequestBuilder,
     protocol: BridgeProtocol,
     auth_header: bool,
+    managed_auth: bool,
     headers: &InboundHeaderMap,
     profile_api_key: Option<&str>,
 ) -> Result<reqwest::RequestBuilder, Response> {
+    if managed_auth {
+        return append_anthropic_version(request, protocol, headers);
+    }
     let profile_api_key = profile_api_key
         .map(str::trim)
         .filter(|value| !value.is_empty());
@@ -276,11 +297,7 @@ pub(super) fn apply_upstream_auth(
         };
         let request = request.header(reqwest::header::AUTHORIZATION, auth);
         if protocol == BridgeProtocol::AnthropicMessages {
-            let anthropic_version = headers
-                .get("anthropic-version")
-                .and_then(|value| value.to_str().ok())
-                .unwrap_or("2023-06-01");
-            return Ok(request.header("anthropic-version", anthropic_version));
+            return append_anthropic_version(request, protocol, headers);
         }
         return Ok(request);
     }
@@ -302,13 +319,24 @@ pub(super) fn apply_upstream_auth(
         }
     }
     if protocol == BridgeProtocol::AnthropicMessages {
-        let anthropic_version = headers
-            .get("anthropic-version")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("2023-06-01");
-        return Ok(request.header("anthropic-version", anthropic_version));
+        return append_anthropic_version(request, protocol, headers);
     }
     Ok(request)
+}
+
+fn append_anthropic_version(
+    request: reqwest::RequestBuilder,
+    protocol: BridgeProtocol,
+    headers: &InboundHeaderMap,
+) -> Result<reqwest::RequestBuilder, Response> {
+    if protocol != BridgeProtocol::AnthropicMessages {
+        return Ok(request);
+    }
+    let anthropic_version = headers
+        .get("anthropic-version")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("2023-06-01");
+    Ok(request.header("anthropic-version", anthropic_version))
 }
 
 pub(super) async fn send_upstream_request_with_rate_limit_retry(
@@ -624,6 +652,7 @@ mod tests {
             profile: test_profile(),
             headers: BTreeMap::new(),
             auth_header: false,
+            managed_auth: false,
             kind: UpstreamKind::Standard,
             append_v1_path: true,
         };
@@ -651,6 +680,7 @@ mod tests {
         let request = apply_upstream_auth(
             reqwest::Client::new().post("http://127.0.0.1/v1/chat/completions"),
             BridgeProtocol::OpenAiChat,
+            false,
             false,
             &headers,
             Some("sk-profile"),
@@ -681,6 +711,7 @@ mod tests {
             reqwest::Client::new().post("http://127.0.0.1/v1/messages"),
             BridgeProtocol::AnthropicMessages,
             false,
+            false,
             &headers,
             Some("sk-profile"),
         )
@@ -710,6 +741,7 @@ mod tests {
             reqwest::Client::new().post("http://127.0.0.1/v1/messages"),
             BridgeProtocol::AnthropicMessages,
             true,
+            false,
             &headers,
             Some("sk-profile"),
         )
@@ -735,12 +767,49 @@ mod tests {
     }
 
     #[test]
+    fn managed_profile_auth_headers_skip_protocol_defaults() {
+        let mut headers = HeaderMap::new();
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+
+        let request = apply_upstream_auth(
+            reqwest::Client::new()
+                .post("http://127.0.0.1/v1/messages")
+                .header(reqwest::header::AUTHORIZATION, "Bearer rendered-key"),
+            BridgeProtocol::AnthropicMessages,
+            false,
+            true,
+            &headers,
+            Some("sk-profile"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer rendered-key")
+        );
+        assert!(request.headers().get("x-api-key").is_none());
+        assert_eq!(
+            request
+                .headers()
+                .get("anthropic-version")
+                .and_then(|value| value.to_str().ok()),
+            Some("2023-06-01")
+        );
+    }
+
+    #[test]
     fn gemini_auth_uses_google_api_key_header() {
         let request = apply_upstream_auth(
             reqwest::Client::new().post(
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini:generateContent",
             ),
             BridgeProtocol::GeminiGenerateContent,
+            false,
             false,
             &HeaderMap::new(),
             Some("gemini-key"),
@@ -810,6 +879,7 @@ mod tests {
             api_types: vec!["gemini".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),

@@ -1,7 +1,7 @@
 #[cfg(test)]
 use common::profiles::catalog::EndpointDef;
 use common::profiles::catalog::{self, ContentCapabilities};
-use common::profiles::schema::ProfileDef;
+use common::profiles::schema::{self, ProfileDef};
 #[cfg(test)]
 use serde_json::Value;
 use va_ai_api_bridge::{
@@ -158,6 +158,14 @@ fn resolve_content_capabilities(
     target_api_type: &str,
     model: Option<&str>,
 ) -> ContentCapabilities {
+    let api_config = api_config_for(profile, target_api_type);
+    if let Some(capabilities) = api_config
+        .as_ref()
+        .and_then(|config| config.capabilities.clone())
+    {
+        return capabilities;
+    }
+
     let overrides = profile.overrides.get(target_api_type);
     if let Some(capabilities) = overrides.and_then(|overrides| overrides.capabilities.clone()) {
         return capabilities;
@@ -167,7 +175,8 @@ fn resolve_content_capabilities(
         return ContentCapabilities::default();
     };
     let endpoint_id = selected_endpoint_id(profile, target_api_type);
-    let Some(endpoint) = catalog::find_endpoint(provider, target_api_type, endpoint_id) else {
+    let Some(endpoint) = catalog::find_endpoint(provider, target_api_type, endpoint_id.as_deref())
+    else {
         return ContentCapabilities::default();
     };
 
@@ -182,7 +191,9 @@ fn resolve_content_capabilities(
                 .and_then(|model| clean_model_id(&model.id))
         });
     if let Some(model) = model {
-        if let Some(model_def) = catalog::find_model(endpoint, &model) {
+        if let Some(model_def) = api_config_model(api_config.as_ref(), &model) {
+            capabilities = capabilities.merge(&model_def.capabilities);
+        } else if let Some(model_def) = catalog::find_model(endpoint, &model) {
             capabilities = capabilities.merge(&model_def.capabilities);
         }
     }
@@ -199,14 +210,42 @@ fn compatible_models(
     let Some(provider) = catalog::get(&profile.provider) else {
         return Vec::new();
     };
-    let Some(endpoint) = catalog::find_endpoint(
-        provider,
-        target_api_type,
-        selected_endpoint_id(profile, target_api_type),
-    ) else {
+    let api_config = api_config_for(profile, target_api_type);
+    let endpoint_id = selected_endpoint_id(profile, target_api_type);
+    let Some(endpoint) = catalog::find_endpoint(provider, target_api_type, endpoint_id.as_deref())
+    else {
         return Vec::new();
     };
     let selected_model = selected_model.and_then(clean_model_id);
+
+    if let Some(models) = api_config
+        .as_ref()
+        .map(|config| config.models.as_slice())
+        .filter(|models| models.iter().any(|model| model.enabled))
+    {
+        return models
+            .iter()
+            .filter(|model| model.enabled)
+            .filter_map(|model| {
+                let id = clean_model_id(&model.id)?;
+                if selected_model
+                    .as_deref()
+                    .map(|selected| profile_model_matches(model, selected))
+                    .unwrap_or(false)
+                {
+                    return None;
+                }
+                if !supports_required_content_caps(
+                    &endpoint.capabilities.content,
+                    &model.capabilities,
+                    required,
+                ) {
+                    return None;
+                }
+                Some(id)
+            })
+            .collect();
+    }
 
     endpoint
         .models
@@ -234,16 +273,29 @@ fn supports_required_content(
     model_capabilities: &ContentCapabilities,
     required: ContentUsage,
 ) -> bool {
-    let capabilities = endpoint.capabilities.content.merge(model_capabilities);
+    supports_required_content_caps(&endpoint.capabilities.content, model_capabilities, required)
+}
+
+#[cfg(test)]
+fn supports_required_content_caps(
+    endpoint_capabilities: &ContentCapabilities,
+    model_capabilities: &ContentCapabilities,
+    required: ContentUsage,
+) -> bool {
+    let capabilities = endpoint_capabilities.merge(model_capabilities);
     (!required.image_input || capabilities.image_input)
         && (!required.file_input || capabilities.file_input)
 }
 
-fn selected_endpoint_id<'a>(profile: &'a ProfileDef, target_api_type: &str) -> Option<&'a str> {
-    profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| overrides.endpoint_id.as_deref())
+fn selected_endpoint_id(profile: &ProfileDef, target_api_type: &str) -> Option<String> {
+    api_config_for(profile, target_api_type)
+        .and_then(|config| config.endpoint_id)
+        .or_else(|| {
+            profile
+                .overrides
+                .get(target_api_type)
+                .and_then(|overrides| overrides.endpoint_id.clone())
+        })
 }
 
 #[cfg(test)]
@@ -257,16 +309,68 @@ fn content_usage_label(usage: ContentUsage) -> &'static str {
 }
 
 fn configured_model(profile: &ProfileDef, target_api_type: &str) -> Option<String> {
-    profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| overrides.model.as_deref())
-        .and_then(clean_model_id)
+    api_config_for(profile, target_api_type)
+        .and_then(|config| {
+            clean_model_id(config.model.as_deref().unwrap_or_default()).or_else(|| {
+                config
+                    .models
+                    .iter()
+                    .filter(|model| model.enabled)
+                    .find_map(|model| clean_model_id(&model.id))
+            })
+        })
+        .or_else(|| {
+            profile
+                .overrides
+                .get(target_api_type)
+                .and_then(|overrides| overrides.model.as_deref())
+                .and_then(clean_model_id)
+        })
 }
 
 fn clean_model_id(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
+}
+
+fn api_config_for(profile: &ProfileDef, target_api_type: &str) -> Option<schema::ProfileApiConfig> {
+    let provider = catalog::get(&profile.provider)?;
+    schema::api_config_for(profile, provider, target_api_type).filter(|config| config.enabled)
+}
+
+fn api_config_model<'a>(
+    api_config: Option<&'a schema::ProfileApiConfig>,
+    model_id: &str,
+) -> Option<&'a schema::ProfileModelConfig> {
+    let model_id = model_id.trim();
+    if model_id.is_empty() {
+        return None;
+    }
+    let models = &api_config?.models;
+    if let Some(base_model) = catalog::strip_bracket_suffix(model_id) {
+        if let Some(model) = models
+            .iter()
+            .filter(|model| model.enabled)
+            .find(|model| model.id == base_model)
+        {
+            return Some(model);
+        }
+    }
+    models
+        .iter()
+        .filter(|model| model.enabled)
+        .find(|model| model.id == model_id)
+}
+
+#[cfg(test)]
+fn profile_model_matches(model: &schema::ProfileModelConfig, selected: &str) -> bool {
+    let selected = selected.trim();
+    if model.id == selected {
+        return true;
+    }
+    catalog::strip_bracket_suffix(selected)
+        .map(|base| model.id == base)
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -360,7 +464,9 @@ fn collect_value_usage(value: &Value, usage: &mut ContentUsage) {
 mod tests {
     use std::collections::BTreeMap;
 
-    use common::profiles::schema::{ApiTypeOverrides, AuthMode, ProviderSettings};
+    use common::profiles::schema::{
+        ApiTypeOverrides, AuthMode, ProfileApiConfig, ProfileModelConfig, ProviderSettings,
+    };
     use serde_json::json;
     use va_ai_api_bridge::{
         AnthropicMessagesTranslator, OpenAiChatTranslator, Role, WireTranslator,
@@ -385,6 +491,7 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
@@ -483,6 +590,63 @@ mod tests {
 
         assert!(!result.changed());
         assert!(request_content_usage(&request).image_input);
+    }
+
+    #[test]
+    fn profile_api_config_model_capabilities_allow_custom_media() {
+        let mut profile = profile("custom", "provider-text");
+        profile.api_configs.insert(
+            "openai-chat".to_string(),
+            ProfileApiConfig {
+                enabled: true,
+                model: Some("provider-text".to_string()),
+                models: vec![
+                    ProfileModelConfig {
+                        id: "provider-text".to_string(),
+                        label: None,
+                        enabled: true,
+                        context_window: None,
+                        capabilities: Default::default(),
+                        custom: true,
+                    },
+                    ProfileModelConfig {
+                        id: "provider-vision".to_string(),
+                        label: None,
+                        enabled: true,
+                        context_window: None,
+                        capabilities: ContentCapabilities {
+                            image_input: true,
+                            file_input: false,
+                            web_search: false,
+                        },
+                        custom: true,
+                    },
+                    ProfileModelConfig {
+                        id: "provider-disabled-vision".to_string(),
+                        label: None,
+                        enabled: false,
+                        context_window: None,
+                        capabilities: ContentCapabilities {
+                            image_input: true,
+                            file_input: false,
+                            web_search: false,
+                        },
+                        custom: true,
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+
+        validate_request_content(&profile, "openai-chat", &image_request("provider-vision"))
+            .unwrap();
+
+        let error =
+            validate_request_content(&profile, "openai-chat", &image_request("provider-text"))
+                .unwrap_err();
+
+        assert!(error.contains("provider-vision"));
+        assert!(!error.contains("provider-disabled-vision"));
     }
 
     #[test]

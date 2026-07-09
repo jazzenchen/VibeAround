@@ -26,7 +26,6 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@v6
         with:
-          ref: main
           submodules: recursive
 
       - name: Resolve CLI version

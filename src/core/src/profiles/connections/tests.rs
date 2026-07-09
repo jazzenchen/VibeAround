@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::profiles::schema::{AuthMode, ProviderSettings};
+use crate::profiles::schema::{AuthMode, ProfileApiConfig, ProfileModelConfig, ProviderSettings};
 
 fn profile(api_types: &[&str]) -> ProfileDef {
     ProfileDef {
@@ -12,6 +12,7 @@ fn profile(api_types: &[&str]) -> ProfileDef {
         api_types: api_types.iter().map(|value| (*value).to_string()).collect(),
         credentials: BTreeMap::new(),
         overrides: BTreeMap::new(),
+        api_configs: BTreeMap::new(),
         use_settings_proxy: false,
         provider_settings: ProviderSettings::default(),
         connections: Default::default(),
@@ -134,6 +135,23 @@ fn pi_can_launch_openai_chat_profile_natively() {
             && target.api_type == "openai-chat"
             && target.bridge_target_api_type.is_none()
     }));
+}
+
+#[test]
+fn disabled_profile_api_config_is_not_launchable() {
+    let mut profile = profile(&["openai-chat"]);
+    profile.api_configs.insert(
+        "openai-chat".to_string(),
+        ProfileApiConfig {
+            enabled: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        resolve_profile_agent_route_with_connections(&profile, "pi", &BTreeMap::new()).is_none()
+    );
+    assert!(launch_targets_for_profile_with_connections(&profile, &BTreeMap::new()).is_empty());
 }
 
 #[test]
@@ -402,6 +420,55 @@ fn bridge_route_carries_model_list() {
                 capabilities: Default::default(),
             },
         ]
+    );
+}
+
+#[test]
+fn bridge_model_routes_use_enabled_profile_api_config_models() {
+    let mut profile = profile(&["openai-chat"]);
+    profile.api_configs.insert(
+        "openai-chat".to_string(),
+        ProfileApiConfig {
+            enabled: true,
+            models: vec![
+                ProfileModelConfig {
+                    id: "provider-vision".to_string(),
+                    label: None,
+                    enabled: true,
+                    context_window: None,
+                    capabilities: catalog::ContentCapabilities {
+                        image_input: true,
+                        file_input: false,
+                        web_search: false,
+                    },
+                    custom: true,
+                },
+                ProfileModelConfig {
+                    id: "provider-disabled".to_string(),
+                    label: None,
+                    enabled: false,
+                    context_window: None,
+                    capabilities: Default::default(),
+                    custom: true,
+                },
+            ],
+            ..Default::default()
+        },
+    );
+
+    let routes = bridge_model_routes(&profile, None, "openai-chat");
+
+    assert_eq!(
+        routes,
+        vec![ProfileBridgeModelRoute {
+            upstream_model: "provider-vision".to_string(),
+            agent_model: "provider-vision".to_string(),
+            capabilities: catalog::ContentCapabilities {
+                image_input: true,
+                file_input: false,
+                web_search: false,
+            },
+        }]
     );
 }
 

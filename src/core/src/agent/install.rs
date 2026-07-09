@@ -524,17 +524,17 @@ mod tests {
     #[test]
     fn parses_scoped_npm_package_specs() {
         assert_eq!(
-            npm_package_spec("@agentclientprotocol/codex-acp@1.0.1"),
+            npm_package_spec("@agentclientprotocol/codex-acp@1.1.0"),
             NpmPackageSpec {
                 package_name: "@agentclientprotocol/codex-acp",
-                requested_version: Some("1.0.1"),
+                requested_version: Some("1.1.0"),
             }
         );
         assert_eq!(
-            npm_package_spec("@agentclientprotocol/claude-agent-acp@0.48.0"),
+            npm_package_spec("@agentclientprotocol/claude-agent-acp@0.57.0"),
             NpmPackageSpec {
                 package_name: "@agentclientprotocol/claude-agent-acp",
-                requested_version: Some("0.48.0"),
+                requested_version: Some("0.57.0"),
             }
         );
     }
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn derives_default_bin_name_from_package_name() {
         assert_eq!(
-            npm_package_bin_name("@agentclientprotocol/codex-acp@1.0.1"),
+            npm_package_bin_name("@agentclientprotocol/codex-acp@1.1.0"),
             "codex-acp"
         );
         assert_eq!(npm_package_bin_name("plain-agent@1.2.3"), "plain-agent");
