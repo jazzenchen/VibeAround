@@ -7,7 +7,7 @@ Every timeout, TTL, interval, and size limit in one table. **This page is the si
 | Value | What it governs | Defined in |
 |---|---|---|
 | 10 minutes | Host agent idle shutdown — agent process stops, thread stays open, next prompt resumes | `src/core/src/workspace/manager.rs` (`AGENT_HOST_IDLE_SHUTDOWN_DELAY`) |
-| 120 seconds | Handover pickup code TTL (4-character code, one-shot) | `src/core/src/workspace/handoff.rs` |
+| 120 seconds | Handover pickup code TTL (4-character code, one-shot) | `src/core/src/workspace/handover.rs` |
 | 60 seconds | Browser pairing code TTL (6-digit code, refreshable) | `src/core/src/auth/pair.rs` (`CODE_TTL`) |
 | 600 seconds | Preview **share** link lifetime (owner links never expire) | `src/core/src/previews/store.rs` (`SHARE_TTL_SECS`) |
 | per daemon start | Dashboard auth token rotation — every restart invalidates all previous URLs | `src/core/src/auth/token.rs` |
@@ -27,7 +27,7 @@ Every timeout, TTL, interval, and size limit in one table. **This page is the si
 |---|---|---|
 | 64 MB | Max request body on local bridge endpoints (large context payloads) | `src/server/src/web_server/mod.rs` (`LOCAL_BRIDGE_BODY_LIMIT_BYTES`) |
 | 64 | Channel input shard workers — same route strictly ordered, routes parallel | `src/server/src/lib.rs` (`CHANNEL_INPUT_WORKER_COUNT`) |
-| 4 chars / 32-char alphabet | Handover code format | `src/core/src/workspace/handoff.rs` |
+| 4 chars / 32-char alphabet | Handover code format | `src/core/src/workspace/handover.rs` |
 | 6 digits | Pairing code format | `src/core/src/auth/pair.rs` |
 
 ## Network defaults

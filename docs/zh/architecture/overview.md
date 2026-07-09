@@ -58,14 +58,14 @@
 
 ## 模块地图
 
-每项职责的归属。每个运行时模块在 [modules/](../../internals/README.md#modules) 下都有深入页面，每条端到端路径在 [flows/](../../internals/README.md#flows) 下都有走读：
+每项职责的归属。每个运行时模块在 [modules/](../internals/README.md#modules) 下都有深入页面，每条端到端路径在 [flows/](../internals/README.md#flows) 下都有走读：
 
 **`core` —— 运行时库（没有 HTTP 服务，没有 UI）：**
 
 | 模块 | 负责 |
 |---|---|
 | `channels` | 插件宿主、stdio/websocket 传输、输入分发、outbox、监控 |
-| `workspace` | Workspace、Thread、Route 附着、交接、上下文转移（事件溯源） |
+| `workspace` | Workspace、Thread、Route 附着、交接码（事件溯源状态 + 内存 pickup codes） |
 | `process` | 监督器（拉起/重启/看门狗）、子进程注册表、ACP 传输、环境增强 |
 | `agent` | ACP agent 句柄、启动渲染、MCP/技能配置注入 |
 | `profiles` | Profile schema、目录、渲染、Bridge 启动 URL、供应商连接 |

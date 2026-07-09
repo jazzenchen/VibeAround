@@ -67,7 +67,7 @@ All lifecycle timers (idle shutdown, heartbeat/watchdog, code TTLs, share-link e
 
 ---
 
-*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handoff.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (switch_host: new-thread vs preserve-session split), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
+*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handover.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (switch_host: new-thread vs preserve-session split), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
 *Last verified: v0.7.11*
 
 <sub>[◀ How it works](overview.md) · [Documentation index](../README.md) · [Channel plugin system ▶](channel-plugin-system.md)</sub>

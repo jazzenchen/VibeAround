@@ -67,7 +67,7 @@ Thread 可以运行多 Agent 回合：宿主 Agent 用 `initialize_subagents` / 
 
 ---
 
-*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handoff.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (switch_host: new-thread vs preserve-session split), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
+*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handover.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (switch_host: new-thread vs preserve-session split), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
 *Last verified: v0.7.11*
 
 <sub>[◀ 工作原理](overview.md) · [文档索引](../README.md) · [渠道插件系统 ▶](channel-plugin-system.md)</sub>

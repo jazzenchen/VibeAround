@@ -78,7 +78,7 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 
 ---
 
-*Source anchors: `src/server/src/web_server/mcp/mod.rs` (tool dispatch), `src/core/src/workspace/handoff.rs` (code TTL), `src/server/src/web_server/api_bridge/routes.rs` + `mod.rs` (route table, body limit), `src/server/src/web_server/ws_domains.rs` (state endpoints), `src/core/src/previews/store.rs` (share TTL).*
+*Source anchors: `src/server/src/web_server/mcp/mod.rs` (tool dispatch), `src/core/src/workspace/handover.rs` (code TTL), `src/server/src/web_server/api_bridge/routes.rs` + `mod.rs` (route table, body limit), `src/server/src/web_server/ws_domains.rs` (state endpoints), `src/core/src/previews/store.rs` (share TTL).*
 *Last verified: v0.7.11*
 
 <sub>[◀ CLI 参考](cli.md) · [文档索引](../README.md) · [计时器与上限 ▶](timers-and-limits.md)</sub>

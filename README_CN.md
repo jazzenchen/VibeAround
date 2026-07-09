@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="Logo.svg" alt="VibeAround logo" width="96" />
+<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/logo.svg" alt="VibeAround logo" width="96" />
 
 # VibeAround
 
@@ -203,7 +203,7 @@ IM 接入是通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plu
 VibeAround 通过 Web Dashboard 暴露本地 terminal session，让你可以从电脑或手机浏览器远程操作 AI Agent CLI，同时执行环境仍留在自己的电脑上。
 
 <p align="center">
-  <img src="assets/marketing/screenshots/en/web-terminal.png" alt="VibeAround Web Terminal 远程控制界面" width="88%" />
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/web-terminal.webp" alt="VibeAround Web Terminal 远程控制界面" width="88%" />
 </p>
 
 - 通过电脑或手机浏览器里的 Web Terminal 访问本地 AI Agent CLI。
@@ -218,8 +218,8 @@ VibeAround Web Hub 提供浏览器入口，用来选择 Agent、API Profile、Wo
 
 <table>
   <tr>
-    <td width="72%" align="center"><img src="assets/marketing/screenshots/en/cover-web-dashboard.png" alt="VibeAround 中文 Web Dashboard 封面" width="92%" /></td>
-    <td width="28%" align="center"><img src="assets/marketing/screenshots/en/web-dashboard-mobile.png" alt="VibeAround mobile web dashboard" width="220" /></td>
+    <td width="72%" align="center"><img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/cover-web-dashboard.webp" alt="VibeAround 中文 Web Dashboard 封面" width="92%" /></td>
+    <td width="28%" align="center"><img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/web-dashboard-mobile.webp" alt="VibeAround mobile web dashboard" width="220" /></td>
   </tr>
 </table>
 
@@ -248,7 +248,7 @@ Remote tunnel 会被 Web Hub、Web Terminal、Live Preview 和 Markdown preview 
 VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物变成可打开的预览链接。你可以从电脑或手机浏览器、消息应用里直接查看结果。
 
 <p align="center">
-  <img src="assets/marketing/screenshots/zh-CN/preview-in-a-row.webp" alt="从消息应用发起预览、配对浏览器、打开网页预览和 Markdown 预览" width="92%" />
+  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/preview-in-a-row-zh.webp" alt="从消息应用发起预览、配对浏览器、打开网页预览和 Markdown 预览" width="92%" />
 </p>
 
 - 生成可预览的链接和限时的分享链接。
@@ -425,7 +425,7 @@ VibeAround 还处在快速打磨阶段，目前也主要是我一个人在开发
 
 微信交流群：
 
-<img src="assets/community/wechat-group-qr-2026-07-13.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 7 月 13 日" />
+<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr-2026-07-13.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 7 月 13 日" />
 
 该微信群二维码有效期至 2026 年 7 月 13 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
 

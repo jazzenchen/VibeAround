@@ -4,7 +4,7 @@ VibeAround lets you reach your local AI coding agents (Claude Code, Codex, Gemin
 
 **New here?** Read in this order: [What is VibeAround](product/what-is-vibearound.md) → [Install](guides/install-and-onboarding.md) → [Quick tour](guides/quick-tour.md) → [Concepts](architecture/concepts.md). Everything else is lookup material.
 
-**中文文档**：[docs/zh/](zh/README.md)（internals 仅维护英文版）。
+**中文文档**：[docs/zh/](zh/README.md)。
 
 ## Sections
 
@@ -32,12 +32,15 @@ Scenario-oriented pages (also the website's landing content): [remote coding](us
 | Page | What you get done |
 |---|---|
 | [Install and onboarding](guides/install-and-onboarding.md) | Install the desktop app or npm CLI, finish first-run setup |
+| [Download](guides/download.md) | Current desktop packages, CLI release, and short download routes |
 | [Quick tour](guides/quick-tour.md) | First chat, first IM channel, first handover — in 15 minutes |
+| [CLI quick start](guides/cli-quick-start.md) | Install the npm CLI, start the daemon, and run the first terminal workflow |
 | [Desktop app](guides/desktop-app.md) | Manage profiles, launches, and services from the GUI |
 | [Web dashboard](guides/web-dashboard.md) | Web terminal, web chat, live preview |
 | [IM usage](guides/im-usage.md) | Drive an agent from chat; full slash-command reference |
 | [Connect channels](guides/connect-channels.md) | Configure Telegram, Slack, Feishu, and the others |
 | [Model profiles](guides/model-profiles.md) | Provider credentials and model routing |
+| [Host web search](guides/web-search.md) | Configure host-side web search fallback and provider search replacement |
 | [Agent launch](guides/agent-launch.md) | Launch agent CLIs in your own terminal |
 | [Tunnels and remote access](guides/tunnels-and-remote-access.md) | Reach the dashboard from outside localhost |
 | [Build a channel plugin](guides/build-a-channel-plugin.md) | A plugin for a new IM platform with the SDK |

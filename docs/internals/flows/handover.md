@@ -16,7 +16,7 @@ phone IM chat ──3─ /pickup CODE ──4─► consume ──5─► attach
 → `src/skills/vibearound/`, `src/server/src/web_server/mcp/tools.rs`
 
 **2. Code issued.** The daemon stores `{agent_kind, profile_id, session_id, cwd}` under a 4-character code (32-char alphabet, OS RNG). TTL 120 seconds, one-shot consumption, expired entries purged on access.
-→ `src/core/src/workspace/handoff.rs`
+→ `src/core/src/workspace/handover.rs`
 
 **3. Pickup typed.** `/pickup K7PQ` in any connected chat parses as a thread command on that chat's route.
 → `src/core/src/channels/prompt/handler.rs` (`ThreadCommand::Pickup`)
@@ -46,7 +46,7 @@ All three converge on `attach_external_session` — one binding path, three door
 
 ---
 
-*Source anchors: `src/core/src/workspace/handoff.rs` (codes), `src/server/src/web_server/mcp/tools.rs` (prepare_handover, get_session_id), `src/core/src/channels/prompt/handler.rs` (pickup), `src/core/src/workspace/manager.rs` (attach_external_session), `src/core/src/launch_sessions/` (session resolution).*
+*Source anchors: `src/core/src/workspace/handover.rs` (codes), `src/server/src/web_server/mcp/tools.rs` (prepare_handover, get_session_id), `src/core/src/channels/prompt/handler.rs` (pickup), `src/core/src/workspace/manager.rs` (attach_external_session), `src/core/src/launch_sessions/` (session resolution).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Flow: agent launch](native-launch.md) · [Documentation index](../../README.md) · [Flow: PTY terminal ▶](web-terminal.md)</sub>

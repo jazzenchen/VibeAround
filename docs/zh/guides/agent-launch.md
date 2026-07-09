@@ -1,6 +1,6 @@
 # Agent 启动指南
 
-Agent Launch 在你自己的终端里打开编程 Agent CLI —— 凭据就位、模型路由配置好、项目集成装好 —— 而不是托管在守护进程里。想要完整的原生 CLI 体验，又不放弃 VibeAround 的 Profile 和连续性时，用它。（好奇具体注入了什么、怎么注入的？见[启动子系统内幕](../../internals/launch.md)。）
+Agent Launch 在你自己的终端里打开编程 Agent CLI —— 凭据就位、模型路由配置好、项目集成装好 —— 而不是托管在守护进程里。想要完整的原生 CLI 体验，又不放弃 VibeAround 的 Profile 和连续性时，用它。（好奇具体注入了什么、怎么注入的？见[启动子系统内幕](../internals/launch.md)。）
 
 ## 从桌面应用启动
 

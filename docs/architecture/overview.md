@@ -65,7 +65,7 @@ Where each responsibility lives. Every runtime module also has a deep-dive page 
 | Module | Owns |
 |---|---|
 | `channels` | plugin host, stdio/websocket transports, input dispatch, outbox, monitor |
-| `workspace` | workspaces, threads, route attachments, handoff, context transfer (event-sourced) |
+| `workspace` | workspaces, threads, route attachments, handover codes (event-sourced state + in-memory pickup codes) |
 | `process` | supervisor (spawn/respawn/watchdog), child registry, ACP transport, env enrichment |
 | `agent` | ACP agent handle, launch rendering, MCP/skill config injection |
 | `profiles` | profile schema, catalog, rendering, bridge launch URLs, provider connections |

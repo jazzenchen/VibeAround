@@ -13,16 +13,16 @@ VibeAround 读写的每一个文件，可手动编辑的都附完整 schema。�
 | `launch/profiles/<name>.json` | 你、桌面（临时物化副本） | 保存的原生启动配置 —— [schema 见下](#launch-profile-json-schema-v1) | **可以**（本来就是给你编辑的） |
 | `auth.json` | 守护进程，每次启动 | 供进程外客户端使用的 `{port, token}` | 不行 —— 每次启动重写 |
 | `profiles/<profile-id>.json` | 桌面/控制台 Profile UI | 保存的模型 Profile（供应商、端点、key、模型路由） | 优先用 UI；手动改动会在重载时读取 |
-| `profile-state/<profile-id>/` | Profile 渲染 | 渲染出的按 Profile 的 Agent 配置文件（设置覆盖层）；环境指针引用这些（[启动内幕](../../internals/launch.md#environment-assembly-layer-by-layer)） | 不行 —— 每次渲染重新生成 |
+| `profile-state/<profile-id>/` | Profile 渲染 | 渲染出的按 Profile 的 Agent 配置文件（设置覆盖层）；环境指针引用这些（[启动内幕](../internals/launch.md#environment-assembly-layer-by-layer)） | 不行 —— 每次渲染重新生成 |
 | `plugins/<kind>/` | 桌面插件管理器 | 已安装的渠道插件 + 清单 | 仅插件开发期间 |
 | `workspaces/` | 守护进程 | 新建 Workspace 的默认根 | 那是你自己的文件 |
 | `.cache/` | 渠道插件 | 下载的聊天附件 | 可安全清空 |
 | `logs/runtime/` | 守护进程 | 按日滚动日志（`vibearound.log.<date>`） | 可安全清空 |
-| `*.jsonl`（workspace/thread/attachment 事件日志） | 守护进程 | 对话状态（[workspace 模块](../../internals/modules/workspace.md)） | **不行** —— 只追加的事件日志 |
+| `*.jsonl`（workspace/thread/attachment 事件日志） | 守护进程 | 对话状态（[workspace 模块](../internals/modules/workspace.md)） | **不行** —— 只追加的事件日志 |
 | `launcher.json` | 桌面 | 桌面专属启动偏好（终端选择、按 Agent 的 workspace 兼容性） | 优先用 UI |
 | `desktop-apps.detected.json` | 桌面检测 | 缓存的 Claude/Codex Desktop 应用位置 | 不行 —— 缓存 |
 
-VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server 条目 + 技能文件，路径由 Agent 注册表声明 —— 例如 `~/.claude.json` 的 `mcpServers` 和 `~/.claude/skills/vibearound/`）。这些写入带 VibeAround 管理标记，守护进程停机时会被启动期清理移除（[启动流程第 5 步](../../internals/flows/native-launch.md)）。
+VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server 条目 + 技能文件，路径由 Agent 注册表声明 —— 例如 `~/.claude.json` 的 `mcpServers` 和 `~/.claude/skills/vibearound/`）。这些写入带 VibeAround 管理标记，守护进程停机时会被启动期清理移除（[启动流程第 5 步](../internals/flows/native-launch.md)）。
 
 ## settings.json
 
@@ -116,7 +116,7 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
 }
 ```
 
-两个 `launch_args` 列表刻意分开 —— 你在自己终端里信任的参数，对 IM 驱动的托管进程不自动安全（[启动内幕](../../internals/launch.md#argument-handling)）。过期的 `executable.path` 会让启动校验失败；删掉该条目可强制重新扫描 PATH。
+两个 `launch_args` 列表刻意分开 —— 你在自己终端里信任的参数，对 IM 驱动的托管进程不自动安全（[启动内幕](../internals/launch.md#argument-handling)）。过期的 `executable.path` 会让启动校验失败；删掉该条目可强制重新扫描 PATH。
 
 ## 启动配置 JSON（schema v1）
 
@@ -143,7 +143,7 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
 }
 ```
 
-两个"profile"概念在此相遇，不可混淆：**供应商 Profile**（凭据 + 模型路由，在应用里管理）vs **启动 Profile**（这个文件 —— 一次原生启动请求）。一个解析器连接两者：桌面在启动时把供应商 Profile *渲染成*物化的启动 Profile；保存的 CLI 启动配置持有渲染后的快照（[启动内幕](../../internals/launch.md#producers-desktop-vs-cli)）。
+两个"profile"概念在此相遇，不可混淆：**供应商 Profile**（凭据 + 模型路由，在应用里管理）vs **启动 Profile**（这个文件 —— 一次原生启动请求）。一个解析器连接两者：桌面在启动时把供应商 Profile *渲染成*物化的启动 Profile；保存的 CLI 启动配置持有渲染后的快照（[启动内幕](../internals/launch.md#producers-desktop-vs-cli)）。
 
 ## 环境变量
 

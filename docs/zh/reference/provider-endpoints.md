@@ -129,4 +129,4 @@
 *Source anchors: `src/resources/profile-catalog/*.json` (endpoints, base URLs, models), `src/core/src/profiles/catalog.rs` (loader), `reports/provider-plan-api-audit-2026-06-18.md` + `reports/provider-profile-official-verification-2026-06-18.md` (official-doc verification).*
 *Last verified: v0.7.11*
 
-<sub>[◀ 计时器与上限](timers-and-limits.md) · [文档索引](../README.md) · [Internals（英文） ▶](../../internals/README.md)</sub>
+<sub>[◀ 计时器与上限](timers-and-limits.md) · [文档索引](../README.md) · [Internals ▶](../internals/README.md)</sub>
