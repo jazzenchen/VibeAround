@@ -228,10 +228,7 @@ pub async fn launcher_agent_executable_resolution(
             .is_some_and(|key| key == candidate_key(&candidate));
         candidate_views.push(candidate_view(&agent_id, candidate, selected));
     }
-    let selected = match selected {
-        Some(candidate) => Some(candidate_view(&agent_id, candidate, true)),
-        None => None,
-    };
+    let selected = selected.map(|candidate| candidate_view(&agent_id, candidate, true));
 
     Ok(AgentExecutableResolution {
         agent_id: agent_id.clone(),
@@ -813,8 +810,11 @@ fn emit_launch_config_changed(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{profiles_launch_direct, sanitize_agent_launch_args, validate_connection_agent_id};
+    #[cfg(windows)]
+    use super::profiles_launch_direct;
+    use super::{sanitize_agent_launch_args, validate_connection_agent_id};
     use common::agent_state::AgentLaunchArgs;
+    #[cfg(windows)]
     use std::path::PathBuf;
 
     #[test]
@@ -920,6 +920,7 @@ mod tests {
         assert_eq!(value["workspace"], workspace.to_string_lossy().to_string());
     }
 
+    #[cfg(windows)]
     fn unique_test_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "vibearound-profiles-{name}-{}",
@@ -927,6 +928,7 @@ mod tests {
         ))
     }
 
+    #[cfg(windows)]
     fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
         match previous {
             Some(value) => std::env::set_var(key, value),
@@ -934,9 +936,14 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     fn read_to_string_eventually(path: &std::path::Path) -> String {
         for _ in 0..50 {
             if let Ok(body) = std::fs::read_to_string(path) {
+                if body.trim().is_empty() {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    continue;
+                }
                 return body;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -944,6 +951,7 @@ mod tests {
         std::fs::read_to_string(path).expect("read captured profile")
     }
 
+    #[cfg(windows)]
     fn env_test_lock() -> &'static std::sync::Mutex<()> {
         static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         LOCK.get_or_init(|| std::sync::Mutex::new(()))

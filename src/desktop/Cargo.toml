@@ -16,15 +16,15 @@ tauri = { version = "2.10", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
-tokio = { version = "1.49", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 open = "1.7"
 tracing = "0.1"
 shell-escape = "0.1"
-uuid = { version = "1", features = ["v4"] }
+uuid = { workspace = true, features = ["v4"] }
 sha2 = "0.10"
 toml = "0.8"
 

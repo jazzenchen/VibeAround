@@ -164,7 +164,7 @@ async fn run_local_agent_turn(
     let message_id = format!("msg_{}", Uuid::new_v4().simple());
     let route = common::routing::RouteKey::new(
         LOCAL_AGENT_CHANNEL_KIND,
-        &format!("api_{}", Uuid::new_v4().simple()),
+        format!("api_{}", Uuid::new_v4().simple()),
     );
     send_events(
         &tx,

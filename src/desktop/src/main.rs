@@ -405,14 +405,14 @@ fn main() {
         .run({
             #[cfg(windows)]
             let graceful_exit_started = Arc::clone(&graceful_exit_started);
-            move |app, event| {
+            move |_app, event| {
                 #[cfg(windows)]
                 if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
                     if *code != Some(tauri::RESTART_EXIT_CODE)
                         && !graceful_exit_started.swap(true, std::sync::atomic::Ordering::SeqCst)
                     {
                         api.prevent_exit();
-                        let app_handle = app.clone();
+                        let app_handle = _app.clone();
                         let exit_code = code.unwrap_or(0);
                         tauri::async_runtime::spawn(async move {
                             if let Err(error) = stop_daemon(&app_handle).await {

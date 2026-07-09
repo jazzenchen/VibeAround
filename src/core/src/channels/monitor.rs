@@ -329,10 +329,8 @@ fn build_bridge_factory(
     let channel_kind = manifest.channel_kind.clone();
     Box::new(move || {
         let (output_tx, output_rx) = mpsc::unbounded_channel();
-        plugin_host.replace_stdio_runtime(
-            &channel_kind,
-            Arc::new(StdioPluginRuntime::new(channel_kind.clone(), output_tx)),
-        );
+        let runtime = Arc::new(StdioPluginRuntime::new(channel_kind.clone(), output_tx));
+        plugin_host.replace_stdio_runtime(&channel_kind, Arc::clone(&runtime));
         let raw_config = crate::config::ensure_loaded()
             .channel_raw_config(&channel_kind)
             .unwrap_or_else(|| serde_json::json!({}));
@@ -344,6 +342,7 @@ fn build_bridge_factory(
             output_rx,
             workspace_thread_manager: Arc::clone(&workspace_thread_manager),
             plugin_host: Arc::clone(&plugin_host),
+            runtime,
         }) as Box<dyn ProcessBridge>
     })
 }

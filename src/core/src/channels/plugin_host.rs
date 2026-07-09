@@ -23,6 +23,7 @@
 //! state machines — those are `process::Supervisor`, the bridge threads,
 //! and `ChannelMonitor` respectively.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Weak};
 
 use agent_client_protocol::schema::v1 as acp;
@@ -32,7 +33,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::proc_log;
 use crate::process::registry::ProcessKind;
-use crate::routing::ChannelKind;
+use crate::routing::{channel_traits, ChannelKind};
 
 use super::monitor::ChannelMonitor;
 use super::outbox::ChannelOutbox;
@@ -47,16 +48,10 @@ pub struct PluginHost {
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     send_locks: DashMap<ChannelKind, Arc<ParkingMutex<()>>>,
     /// Pending `requestPermission` replies keyed by a fresh request_id.
-    /// Value is `(channel_kind, sender)`: the sender is consumed by the
-    /// plugin-bridge forwarder task once the plugin's ACP response arrives
-    /// (see `transport_stdio::forwarder`), and the channel_kind lets us
-    /// drain orphaned entries when that plugin dies
-    /// (`cancel_channel_permissions`). Without the drain, a plugin crash
-    /// during approval leaves the sender alive here forever and
-    /// `request_permission`'s `rx.await` in `bridge_handler` stalls the
-    /// upstream agent turn.
-    pub pending_permissions:
-        DashMap<String, (ChannelKind, oneshot::Sender<acp::RequestPermissionResponse>)>,
+    /// Each entry records every channel kind that received the permission card.
+    /// The first valid answer consumes the sender; plugin shutdown removes only
+    /// that channel kind and drops the sender once no visible surface can answer.
+    pending_permissions: DashMap<String, PendingPermission>,
     /// Back-pointer to the ChannelMonitor. Weak to avoid a reference cycle
     /// (ChannelMonitor holds `Arc<PluginHost>`). Used by the plugin bridge
     /// to call `touch` on `_va/heartbeat`. `mark_crashed` is no longer
@@ -103,6 +98,21 @@ impl PluginHost {
         self.flush_pending(channel_kind, &plugin_runtime);
     }
 
+    pub fn remove_stdio_runtime_if_current(
+        &self,
+        channel_kind: &str,
+        runtime: &Arc<StdioPluginRuntime>,
+    ) -> bool {
+        let send_lock = self.send_lock(channel_kind);
+        let _send_guard = send_lock.lock();
+        self.runtimes
+            .remove_if(channel_kind, |_, current| match current {
+                PluginRuntime::Stdio(current) => Arc::ptr_eq(current, runtime),
+                PluginRuntime::WebSocket(_) => false,
+            })
+            .is_some()
+    }
+
     pub fn register_websocket_plugin(
         &self,
         channel_kind: impl Into<ChannelKind>,
@@ -118,7 +128,9 @@ impl PluginHost {
         let route = output.route_key().clone();
         let runtime = self.runtime_for_channel(&route.channel_kind);
 
-        if matches!(&runtime, Some(PluginRuntime::WebSocket(_))) || route.channel_kind == "web" {
+        if matches!(&runtime, Some(PluginRuntime::WebSocket(_)))
+            || !channel_traits(&route.channel_kind).durable_outbox
+        {
             self.send_direct(output, route, runtime).await;
             return;
         }
@@ -154,19 +166,8 @@ impl PluginHost {
         );
 
         if let Some(runtime) = runtime {
-            match runtime.send_output_now(output) {
-                Ok(()) if !output_id.is_empty() => {
-                    if let Err(error) = self.outbox.mark_sent_now(&output_id) {
-                        proc_log!(
-                            warn,
-                            kind = ProcessKind::ChannelPlugin,
-                            label = route.channel_kind,
-                            event = "outbox_mark_sent_failed",
-                            route = %route,
-                            error = %error
-                        );
-                    }
-                }
+            let queued_output_id = (!output_id.is_empty()).then(|| output_id.clone());
+            match runtime.send_output_with_outbox_id_now(queued_output_id, output) {
                 Ok(()) => {}
                 Err(error) if !output_id.is_empty() => {
                     if let Err(mark_error) = self.outbox.mark_nacked_now(&output_id) {
@@ -283,19 +284,31 @@ impl PluginHost {
         }
         let channel_kind = channel_kind.to_string();
         for pending in pending {
-            match runtime.send_output_now(pending.output) {
-                Ok(()) => {
-                    if let Err(error) = self.outbox.mark_sent_now(&pending.output_id) {
-                        proc_log!(
-                            warn,
-                            kind = ProcessKind::ChannelPlugin,
-                            label = channel_kind,
-                            event = "outbox_flush_mark_sent_failed",
-                            output_id = %pending.output_id,
-                            error = %error
-                        );
-                    }
+            if !self.pending_output_is_live(&pending.output) {
+                if let Err(error) = self.outbox.mark_sent_now(&pending.output_id) {
+                    proc_log!(
+                        warn,
+                        kind = ProcessKind::ChannelPlugin,
+                        label = channel_kind,
+                        event = "outbox_drop_stale_mark_sent_failed",
+                        output_id = %pending.output_id,
+                        error = %error
+                    );
+                } else {
+                    proc_log!(
+                        info,
+                        kind = ProcessKind::ChannelPlugin,
+                        label = channel_kind,
+                        event = "outbox_drop_stale_permission",
+                        output_id = %pending.output_id
+                    );
                 }
+                continue;
+            }
+            match runtime
+                .send_output_with_outbox_id_now(Some(pending.output_id.clone()), pending.output)
+            {
+                Ok(()) => {}
                 Err(error) => {
                     if let Err(mark_error) = self.outbox.mark_nacked_now(&pending.output_id) {
                         proc_log!(
@@ -319,6 +332,26 @@ impl PluginHost {
                 }
             }
         }
+    }
+
+    pub(crate) fn mark_outbox_sent(&self, output_id: &str) -> crate::storage::jsonl::Result<()> {
+        self.outbox.mark_sent_now(output_id)
+    }
+
+    pub(crate) fn mark_outbox_nacked(&self, output_id: &str) -> crate::storage::jsonl::Result<()> {
+        self.outbox.mark_nacked_now(output_id)
+    }
+
+    pub fn outbox_pending_count(&self) -> usize {
+        self.outbox.pending_count()
+    }
+
+    fn pending_output_is_live(&self, output: &ChannelOutput) -> bool {
+        !matches!(
+            output,
+            ChannelOutput::PermissionRequest { request_id, .. }
+                if !self.pending_permissions.contains_key(request_id)
+        )
     }
 
     pub async fn shutdown_all(&self) {
@@ -352,12 +385,40 @@ impl PluginHost {
         let request_ids: Vec<String> = self
             .pending_permissions
             .iter()
-            .filter(|entry| entry.value().0 == channel_kind)
+            .filter(|entry| entry.value().channel_kinds.contains(channel_kind))
             .map(|entry| entry.key().clone())
             .collect();
         for id in request_ids {
-            self.pending_permissions.remove(&id);
+            let mut should_remove = false;
+            if let Some(mut pending) = self.pending_permissions.get_mut(&id) {
+                pending.channel_kinds.remove(channel_kind);
+                should_remove = pending.channel_kinds.is_empty();
+            }
+            if should_remove {
+                self.pending_permissions.remove(&id);
+            }
         }
+    }
+
+    pub fn register_pending_permission<I>(
+        &self,
+        request_id: String,
+        channel_kinds: I,
+        tx: oneshot::Sender<acp::RequestPermissionResponse>,
+    ) where
+        I: IntoIterator<Item = ChannelKind>,
+    {
+        self.pending_permissions.insert(
+            request_id,
+            PendingPermission {
+                channel_kinds: channel_kinds.into_iter().collect(),
+                tx,
+            },
+        );
+    }
+
+    pub fn remove_pending_permission(&self, request_id: &str) {
+        self.pending_permissions.remove(request_id);
     }
 
     /// Resolve a pending permission request from an in-process client such as
@@ -370,19 +431,28 @@ impl PluginHost {
         request_id: &str,
         response: acp::RequestPermissionResponse,
     ) -> Result<(), String> {
-        let Some((_, (pending_channel, tx))) = self.pending_permissions.remove(request_id) else {
+        let Some((_, pending)) = self
+            .pending_permissions
+            .remove_if(request_id, |_, pending| {
+                pending.channel_kinds.contains(channel_kind)
+            })
+        else {
+            if self.pending_permissions.contains_key(request_id) {
+                return Err("permission request belongs to a different channel".to_string());
+            }
             return Err("permission request is no longer pending".to_string());
         };
 
-        if pending_channel != channel_kind {
-            self.pending_permissions
-                .insert(request_id.to_string(), (pending_channel, tx));
-            return Err("permission request belongs to a different channel".to_string());
-        }
-
-        tx.send(response)
+        pending
+            .tx
+            .send(response)
             .map_err(|_| "permission requester is no longer listening".to_string())
     }
+}
+
+struct PendingPermission {
+    channel_kinds: HashSet<ChannelKind>,
+    tx: oneshot::Sender<acp::RequestPermissionResponse>,
 }
 
 fn should_replay_output(output: &ChannelOutput) -> bool {
@@ -396,6 +466,10 @@ fn should_replay_output(output: &ChannelOutput) -> bool {
 mod tests {
     use super::*;
     use crate::routing::RouteKey;
+
+    fn permission_response() -> acp::RequestPermissionResponse {
+        acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled)
+    }
 
     #[test]
     fn replay_outbox_only_keeps_durable_outputs() {
@@ -419,5 +493,131 @@ mod tests {
             route,
             active: true,
         }));
+    }
+
+    #[tokio::test]
+    async fn pending_permission_accepts_any_registered_channel() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission(
+            "req-1".to_string(),
+            vec!["feishu".to_string(), "web".to_string()],
+            tx,
+        );
+
+        assert!(host
+            .respond_permission("slack", "req-1", permission_response())
+            .is_err());
+        assert!(host.pending_permissions.contains_key("req-1"));
+
+        host.respond_permission("web", "req-1", permission_response())
+            .unwrap();
+
+        assert!(!host.pending_permissions.contains_key("req-1"));
+        assert!(rx.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn outbox_pending_count_includes_outputs_waiting_for_runtime() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+
+        host.send_output(ChannelOutput::SystemText {
+            route: RouteKey::new("feishu", "chat-a"),
+            text: "hello".to_string(),
+            reply_to: None,
+        })
+        .await;
+
+        assert_eq!(host.outbox_pending_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn presentation_channels_do_not_queue_outputs_without_runtime() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+
+        host.send_output(ChannelOutput::SystemText {
+            route: RouteKey::new("tui", "chat-a"),
+            text: "hello".to_string(),
+            reply_to: None,
+        })
+        .await;
+
+        assert_eq!(host.outbox_pending_count(), 0);
+    }
+
+    #[test]
+    fn remove_stdio_runtime_only_removes_current_runtime() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let (output_tx, _output_rx) = tokio::sync::mpsc::unbounded_channel();
+        let old_runtime = Arc::new(StdioPluginRuntime::new("feishu", output_tx));
+        host.replace_stdio_runtime("feishu", Arc::clone(&old_runtime));
+
+        let (output_tx, _output_rx) = tokio::sync::mpsc::unbounded_channel();
+        let new_runtime = Arc::new(StdioPluginRuntime::new("feishu", output_tx));
+        host.replace_stdio_runtime("feishu", Arc::clone(&new_runtime));
+
+        assert!(!host.remove_stdio_runtime_if_current("feishu", &old_runtime));
+        assert!(matches!(
+            host.runtime_for_channel("feishu"),
+            Some(PluginRuntime::Stdio(runtime)) if Arc::ptr_eq(&runtime, &new_runtime)
+        ));
+
+        assert!(host.remove_stdio_runtime_if_current("feishu", &new_runtime));
+        assert!(host.runtime_for_channel("feishu").is_none());
+    }
+
+    #[test]
+    fn permission_request_replay_requires_live_pending_permission() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let output = ChannelOutput::PermissionRequest {
+            route: RouteKey::new("feishu", "chat-a"),
+            request_id: "req-1".to_string(),
+            payload: serde_json::json!({}),
+        };
+
+        assert!(!host.pending_output_is_live(&output));
+
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission("req-1".to_string(), vec!["feishu".to_string()], tx);
+        assert!(host.pending_output_is_live(&output));
+
+        host.cancel_channel_permissions("feishu");
+        assert!(!host.pending_output_is_live(&output));
+    }
+
+    #[tokio::test]
+    async fn cancel_channel_permissions_keeps_other_surfaces_alive() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission(
+            "req-1".to_string(),
+            vec!["feishu".to_string(), "web".to_string()],
+            tx,
+        );
+
+        host.cancel_channel_permissions("feishu");
+
+        assert!(host.pending_permissions.contains_key("req-1"));
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        host.respond_permission("web", "req-1", permission_response())
+            .unwrap();
+        assert!(rx.await.is_ok());
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission("req-2".to_string(), vec!["feishu".to_string()], tx);
+
+        host.cancel_channel_permissions("feishu");
+
+        assert!(!host.pending_permissions.contains_key("req-2"));
+        assert!(rx.await.is_err());
     }
 }

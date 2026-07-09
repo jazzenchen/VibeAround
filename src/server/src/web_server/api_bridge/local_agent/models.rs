@@ -86,7 +86,7 @@ async fn fetch_local_agent_models(
         common::resources::resolve_agent_id(agent_id).map_err(|error| error.to_string())?;
     let route = common::routing::RouteKey::new(
         LOCAL_AGENT_CHANNEL_KIND,
-        &format!("api_models_{}", Uuid::new_v4().simple()),
+        format!("api_models_{}", Uuid::new_v4().simple()),
     );
     let (extra_args, env_vars) = launch_args_and_env(&agent_id, profile_id, workspace, &route)?;
     let handler = Arc::new(ModelListAgentClientHandler);

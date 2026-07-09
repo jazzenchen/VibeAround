@@ -27,6 +27,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use common::auth::AuthToken;
 use common::channels::{ChannelManager, WebChannelManager};
+use common::profiles::bridge_url;
 use common::pty::{PtySessionManager, Registry};
 use common::search::SearchToolRuntime;
 use common::tunnels::TunnelManager;
@@ -75,6 +76,9 @@ pub(crate) struct AppState {
     search_runtime: Option<Arc<SearchToolRuntime>>,
     /// Live, non-persistent bridge body recorder for the launch popup.
     bridge_recorder: bridge_recording::BridgeRecorder,
+    /// Local API bridge client token. Scoped `/local-api/...` routes use this
+    /// before forwarding with the profile's real upstream credentials.
+    auth_token: Arc<AuthToken>,
 }
 
 /// Ensure web dist exists (build web first).
@@ -139,8 +143,8 @@ async fn spa_fallback_handler(
 
 fn is_dashboard_api_path(path: &str) -> bool {
     [
-        "/va/local-api/",
-        "/local-api/",
+        bridge_url::LOCAL_API_PUBLIC_PATH_PREFIX,
+        bridge_url::LOCAL_API_ROUTE_PATH_PREFIX,
         "/va/local-agent/",
         "/local-agent/",
         "/va/bridge/",
@@ -178,6 +182,7 @@ fn clear_inherit_flag(_: &tokio::net::TcpListener) -> std::io::Result<()> {
 /// Runs the Axum server (static files + WebSocket + session API). The listener is bound to
 /// 127.0.0.1 by ServerDaemon before startup returns.
 /// Call from desktop via tauri::async_runtime::spawn, or run standalone via the server binary.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_web_server(
     listener: tokio::net::TcpListener,
     dist_path: PathBuf,
@@ -219,6 +224,7 @@ pub async fn run_web_server(
         replace_provider_web_search,
         search_runtime,
         bridge_recorder: bridge_recording::BridgeRecorder::default(),
+        auth_token: Arc::clone(&auth_token),
     };
 
     let auth_state = AuthState(Arc::clone(&auth_token));
@@ -431,23 +437,23 @@ pub async fn run_web_server(
         // Stable local API base for configured clients. `scope` selects the
         // route/profile preference; it is not a bridge session identifier.
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/v1/responses",
+            bridge_url::LOCAL_API_RESPONSES_ROUTE,
             post(api_bridge::local_responses_handler),
         )
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/v1/chat/completions",
+            bridge_url::LOCAL_API_CHAT_COMPLETIONS_ROUTE,
             post(api_bridge::local_chat_completions_handler),
         )
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/v1/messages",
+            bridge_url::LOCAL_API_MESSAGES_ROUTE,
             post(api_bridge::local_messages_handler),
         )
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/v1/models",
+            bridge_url::LOCAL_API_MODELS_ROUTE,
             get(api_bridge::local_models_handler),
         )
         .route(
-            "/local-api/{profile_id}/{scope}/{target_api_type}/{version}/models/{model_action}",
+            bridge_url::LOCAL_API_GEMINI_MODELS_ACTION_ROUTE,
             post(api_bridge::local_gemini_generate_content_handler),
         )
         .route_layer(axum::middleware::from_fn(require_local_bridge))

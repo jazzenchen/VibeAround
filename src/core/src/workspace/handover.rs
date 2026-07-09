@@ -1,7 +1,7 @@
 //! Short-lived handover codes for attaching an external agent session to a
 //! workspace thread.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -19,8 +19,12 @@ struct HandoverEntry {
 
 static HANDOVER_CODES: LazyLock<Mutex<HashMap<String, HandoverEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static HANDOVER_FAILED_ATTEMPTS: LazyLock<Mutex<VecDeque<Instant>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
 
 const TTL: Duration = Duration::from_secs(120);
+const FAILED_ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
+const MAX_FAILED_ATTEMPTS: usize = 10;
 const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,10 +70,23 @@ pub fn store(payload: HandoverPayload) -> String {
 }
 
 pub fn consume(code: &str) -> Option<HandoverPayload> {
-    let mut map = HANDOVER_CODES.lock();
     let now = Instant::now();
+    if failed_attempt_limit_reached(now) {
+        tracing::warn!(
+            window_secs = FAILED_ATTEMPT_WINDOW.as_secs(),
+            max_attempts = MAX_FAILED_ATTEMPTS,
+            "handover pickup rejected after too many failed attempts"
+        );
+        return None;
+    }
+
+    let mut map = HANDOVER_CODES.lock();
     map.retain(|_, entry| entry.expires_at > now);
-    let entry = map.remove(&code.to_uppercase())?;
+    let Some(entry) = map.remove(&code.to_uppercase()) else {
+        drop(map);
+        record_failed_attempt(now);
+        return None;
+    };
     Some(HandoverPayload {
         agent_kind: entry.agent_kind,
         profile_id: entry.profile_id,
@@ -78,12 +95,42 @@ pub fn consume(code: &str) -> Option<HandoverPayload> {
     })
 }
 
+fn failed_attempt_limit_reached(now: Instant) -> bool {
+    let mut attempts = HANDOVER_FAILED_ATTEMPTS.lock();
+    prune_failed_attempts(&mut attempts, now);
+    attempts.len() >= MAX_FAILED_ATTEMPTS
+}
+
+fn record_failed_attempt(now: Instant) {
+    let mut attempts = HANDOVER_FAILED_ATTEMPTS.lock();
+    prune_failed_attempts(&mut attempts, now);
+    attempts.push_back(now);
+}
+
+fn prune_failed_attempts(attempts: &mut VecDeque<Instant>, now: Instant) {
+    while attempts
+        .front()
+        .is_some_and(|attempt| now.duration_since(*attempt) >= FAILED_ATTEMPT_WINDOW)
+    {
+        attempts.pop_front();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn reset_for_test() {
+        HANDOVER_CODES.lock().clear();
+        HANDOVER_FAILED_ATTEMPTS.lock().clear();
+    }
+
     #[test]
     fn generated_code_is_four_chars_from_alphabet() {
+        let _guard = TEST_LOCK.lock();
+        reset_for_test();
         for _ in 0..100 {
             let code = generate_code();
             assert_eq!(code.len(), 4);
@@ -95,6 +142,8 @@ mod tests {
 
     #[test]
     fn store_and_consume_roundtrip() {
+        let _guard = TEST_LOCK.lock();
+        reset_for_test();
         let code = store(HandoverPayload {
             agent_kind: "claude".into(),
             profile_id: Some("deepseek".into()),
@@ -110,6 +159,8 @@ mod tests {
 
     #[test]
     fn consume_is_one_shot() {
+        let _guard = TEST_LOCK.lock();
+        reset_for_test();
         let code = store(HandoverPayload {
             agent_kind: "gemini".into(),
             profile_id: None,
@@ -118,5 +169,23 @@ mod tests {
         });
         assert!(consume(&code).is_some());
         assert!(consume(&code).is_none(), "second consume must fail");
+    }
+
+    #[test]
+    fn failed_pickups_are_rate_limited() {
+        let _guard = TEST_LOCK.lock();
+        reset_for_test();
+
+        for attempt in 0..MAX_FAILED_ATTEMPTS {
+            assert!(consume(&format!("MISS{attempt}")).is_none());
+        }
+        let valid_code = store(HandoverPayload {
+            agent_kind: "claude".into(),
+            profile_id: Some("default".into()),
+            session_id: "sess-1".into(),
+            cwd: "/tmp".into(),
+        });
+
+        assert!(consume(&valid_code).is_none());
     }
 }

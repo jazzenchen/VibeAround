@@ -388,9 +388,8 @@ fn has_orphaned_candidate_ancestor(
             None => true,
             Some(ppid) => {
                 let ppid = ppid.as_u32();
-                if cfg!(unix) && ppid == 1 {
-                    true
-                } else if sys.process(sysinfo::Pid::from_u32(ppid)).is_none() {
+                if (cfg!(unix) && ppid == 1) || sys.process(sysinfo::Pid::from_u32(ppid)).is_none()
+                {
                     true
                 } else if candidate_pids.contains(&ppid) {
                     has_orphaned_candidate_ancestor(ppid, sys, candidate_pids, memo)

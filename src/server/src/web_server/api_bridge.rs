@@ -54,6 +54,7 @@ use upstream::{
 use super::bridge_recording::{ActiveBridgeRecord, BridgeRecordMetadata};
 use super::AppState;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn bridge_handler(
     state: AppState,
     profile_id: String,
@@ -674,6 +675,7 @@ async fn translated_web_search_fallback_response(
     )
 }
 
+#[allow(clippy::result_large_err)]
 fn encode_fallback_upstream_request(
     upstream: &upstream::UpstreamEndpoint,
     client_protocol: BridgeProtocol,
@@ -832,6 +834,7 @@ fn retry_context(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bridge_record_metadata(
     profile_id: &str,
     route_scope: Option<&String>,
@@ -871,6 +874,7 @@ fn upstream_http_client(state: &AppState, profile: &ProfileDef) -> Result<reqwes
     proxy_http_client(&cfg.proxy)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_upstream_request(
     state: &AppState,
     upstream: &upstream::UpstreamEndpoint,
@@ -1169,6 +1173,29 @@ fn validate_manual_scope(scope: &str) -> Result<(), (StatusCode, String)> {
     Ok(())
 }
 
+fn validate_local_bridge_client(state: &AppState, headers: &HeaderMap) -> Option<Response> {
+    validate_local_bridge_client_token(&state.auth_token, headers)
+}
+
+fn validate_local_bridge_client_token(
+    auth_token: &common::auth::AuthToken,
+    headers: &HeaderMap,
+) -> Option<Response> {
+    let Some(candidate) = upstream::inbound_api_key(headers) else {
+        return Some(json_error(
+            StatusCode::UNAUTHORIZED,
+            "missing local API bridge client key",
+        ));
+    };
+    if auth_token.matches(&candidate) {
+        return None;
+    }
+    Some(json_error(
+        StatusCode::UNAUTHORIZED,
+        "invalid local API bridge client key",
+    ))
+}
+
 fn apply_wire_model(request: &mut Value, model: &str) {
     if let Some(object) = request.as_object_mut() {
         if object.contains_key("__va_model") {
@@ -1221,9 +1248,14 @@ fn json_error_body(message: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+    use common::auth::AuthToken;
     use common::config::HttpProxyConfig;
 
-    use super::{client_api_type_from_scope, proxy_http_client, validate_manual_scope};
+    use super::{
+        client_api_type_from_scope, proxy_http_client, validate_local_bridge_client_token,
+        validate_manual_scope,
+    };
 
     #[test]
     fn accepts_manual_bridge_scope() {
@@ -1248,6 +1280,48 @@ mod tests {
             client_api_type_from_scope("claude-desktop-anthropic"),
             Some("anthropic")
         );
+    }
+
+    #[test]
+    fn local_bridge_client_key_is_required() {
+        let token = AuthToken::generate();
+        let response = validate_local_bridge_client_token(&token, &HeaderMap::new()).unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn local_bridge_client_key_must_match_daemon_token() {
+        let token = AuthToken::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("wrong-key"));
+        let response = validate_local_bridge_client_token(&token, &headers).unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn local_bridge_accepts_bearer_daemon_token() {
+        let token = AuthToken::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", token.as_str())).unwrap(),
+        );
+
+        assert!(validate_local_bridge_client_token(&token, &headers).is_none());
+    }
+
+    #[test]
+    fn local_bridge_accepts_google_api_key_header() {
+        let token = AuthToken::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-goog-api-key",
+            HeaderValue::from_str(token.as_str()).unwrap(),
+        );
+
+        assert!(validate_local_bridge_client_token(&token, &headers).is_none());
     }
 
     #[test]

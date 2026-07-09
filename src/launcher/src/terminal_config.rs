@@ -110,7 +110,7 @@ fn launcher_config_mut(config: &mut Map<String, Value>) -> &mut Map<String, Valu
 fn platform_choices() -> &'static [TerminalChoice] {
     #[cfg(target_os = "macos")]
     {
-        return &[TerminalChoice::Terminal, TerminalChoice::Iterm2];
+        &[TerminalChoice::Terminal, TerminalChoice::Iterm2]
     }
     #[cfg(target_os = "windows")]
     {

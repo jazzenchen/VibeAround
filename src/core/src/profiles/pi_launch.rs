@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context};
 use serde_json::{json, Map, Value};
 
+use super::bridge_url;
 use super::catalog::ContentCapabilities;
 use super::render::{validate_rel_path, RenderedProfile, RenderedSettingsFile};
 use crate::config;
@@ -89,13 +90,12 @@ pub(super) fn bridge_base_url(
     } else {
         "/v1"
     };
-    format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}{}",
+    bridge_url::local_api_base_with_suffix(
         config::DEFAULT_PORT,
         profile_id,
         scope,
         target_api_type,
-        suffix
+        suffix,
     )
 }
 

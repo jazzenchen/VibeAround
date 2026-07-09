@@ -34,6 +34,7 @@ pub struct ServiceHealthResponse {
     pub ok: bool,
     pub service: &'static str,
     pub version: &'static str,
+    pub channel_outbox_pending: usize,
 }
 
 /// `GET /api/service/info` response.

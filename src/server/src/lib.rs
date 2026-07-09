@@ -100,7 +100,7 @@ impl RunningDaemon {
         common::previews::shutdown_kill_all_ports();
 
         let pty_manager = PtySessionManager::from_registry(Arc::clone(&pty));
-        let session_ids: Vec<SessionId> = pty.iter().map(|entry| entry.key().clone()).collect();
+        let session_ids: Vec<SessionId> = pty.iter().map(|entry| *entry.key()).collect();
         for session_id in session_ids {
             let _ = pty_manager.delete_session(session_id);
         }

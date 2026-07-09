@@ -77,6 +77,7 @@ interface SettingsDialogProps {
 export type SettingsDialogTarget = {
   tab: string;
   pluginId?: string | null;
+  pluginStatusFilter?: PluginInstallStatusFilter | null;
   nonce?: number;
 };
 
@@ -1496,6 +1497,12 @@ export function SettingsDialog({
                     installingPlugins={installingManagedPlugins}
                     checkingUpdates={checkingPluginUpdates}
                     updatesChecked={pluginUpdatesChecked}
+                    targetStatusFilter={
+                      initialTarget?.tab === "plugins"
+                        ? initialTarget.pluginStatusFilter
+                        : null
+                    }
+                    targetNonce={initialTarget?.nonce}
                     onInstallPlugin={installManagedPlugin}
                     onConfigureSearch={() => changeSettingsTab("web-search")}
                     onCheckUpdates={() => void refreshPluginInventory()}
@@ -1766,6 +1773,8 @@ function PluginsSettingsPanel({
   installingPlugins,
   checkingUpdates,
   updatesChecked,
+  targetStatusFilter,
+  targetNonce,
   onInstallPlugin,
   onConfigureSearch,
   onCheckUpdates,
@@ -1775,6 +1784,8 @@ function PluginsSettingsPanel({
   installingPlugins: Set<string>;
   checkingUpdates: boolean;
   updatesChecked: boolean;
+  targetStatusFilter?: PluginInstallStatusFilter | null;
+  targetNonce?: number;
   onInstallPlugin: (category: ManagedPluginCategory, id: string) => void;
   onConfigureSearch: () => void;
   onCheckUpdates: () => void;
@@ -1785,6 +1796,12 @@ function PluginsSettingsPanel({
     useState<PluginInstallStatusFilter>("all");
   const [categoryFilter, setCategoryFilter] =
     useState<PluginCategoryFilter>("all");
+
+  useEffect(() => {
+    if (!targetStatusFilter) return;
+    setStatusFilter(targetStatusFilter);
+    setCategoryFilter("all");
+  }, [targetStatusFilter, targetNonce]);
 
   const items = plugins;
 
@@ -1855,30 +1872,34 @@ function PluginsSettingsPanel({
           </p>
           {notice}
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={SETTINGS_BUTTON_CLASS}
-          disabled={checkingUpdates}
-          onClick={onCheckUpdates}
-        >
-          {checkingUpdates ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <RotateCw className="h-3 w-3" />
-          )}
-          {checkingUpdates ? t("Refreshing…") : t("Refresh status")}
-        </Button>
       </div>
 
       <div className="space-y-3 rounded-md border border-border px-3 py-3">
-        <PluginFilterGroup
-          label={t("Install status")}
-          options={statusFilterOptions}
-          value={statusFilter}
-          onChange={setStatusFilter}
-        />
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <PluginFilterGroup
+              label={t("Install status")}
+              options={statusFilterOptions}
+              value={statusFilter}
+              onChange={setStatusFilter}
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className={`shrink-0 ${SETTINGS_BUTTON_CLASS}`}
+            disabled={checkingUpdates}
+            onClick={onCheckUpdates}
+          >
+            {checkingUpdates ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RotateCw className="h-3 w-3" />
+            )}
+            {checkingUpdates ? t("Refreshing…") : t("Refresh status")}
+          </Button>
+        </div>
         <PluginFilterGroup
           label={t("Category")}
           options={categoryFilterOptions}
@@ -2068,7 +2089,7 @@ function PluginInventoryCard({
               onClick={onConfigureSearch}
             >
               <SlidersHorizontal className="h-3 w-3" />
-              {t("Configure")}
+              {t("Configure plugin")}
             </Button>
           )}
           <Button
