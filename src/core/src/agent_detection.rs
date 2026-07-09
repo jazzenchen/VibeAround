@@ -918,8 +918,7 @@ fn homebrew_package_name_from_command(agent_id: &str, source: &str) -> Option<St
     let command = source_command_template(agent_id, source, "upgrade")?;
     command
         .split_whitespace()
-        .filter(|word| !word.starts_with('-') && !matches!(*word, "brew" | "upgrade" | "install"))
-        .last()
+        .rfind(|word| !word.starts_with('-') && !matches!(*word, "brew" | "upgrade" | "install"))
         .map(|word| word.trim_matches(['"', '\'']).to_string())
         .filter(|word| !word.is_empty())
 }

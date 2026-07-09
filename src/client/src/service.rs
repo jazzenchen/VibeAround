@@ -8,6 +8,7 @@ pub struct ServiceHealthResponse {
     pub ok: bool,
     pub service: String,
     pub version: String,
+    pub channel_outbox_pending: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -61,6 +62,24 @@ mod tests {
         assert_eq!(request.path, "/api/service/health");
         assert_eq!(request.auth, AuthRequirement::None);
         assert!(request.body.is_none());
+    }
+
+    #[test]
+    fn decodes_service_health_outbox_metric() {
+        let response = ResponseSpec::json(
+            200,
+            json!({
+                "ok": true,
+                "service": "vibearound-server",
+                "version": "0.7.11",
+                "channel_outbox_pending": 2,
+            }),
+        );
+
+        let health = decode_health(response).expect("decode health");
+
+        assert!(health.ok);
+        assert_eq!(health.channel_outbox_pending, 2);
     }
 
     #[test]

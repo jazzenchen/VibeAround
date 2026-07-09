@@ -65,10 +65,7 @@ impl ChannelOutbox {
         Ok(())
     }
 
-    pub fn mark_nacked_now(&self, output_id: &str) -> jsonl::Result<()> {
-        self.pending
-            .lock()
-            .retain(|pending| pending.output_id != output_id);
+    pub fn mark_nacked_now(&self, _output_id: &str) -> jsonl::Result<()> {
         Ok(())
     }
 
@@ -79,6 +76,16 @@ impl ChannelOutbox {
             .filter(|pending| pending.output.route_key().channel_kind == channel_kind)
             .cloned()
             .collect()
+    }
+
+    pub fn pending_count(&self) -> usize {
+        self.pending.lock().len()
+    }
+}
+
+impl Default for ChannelOutbox {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -124,6 +131,7 @@ mod tests {
 
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].output_id, feishu_id);
+        assert_eq!(outbox.pending_count(), 2);
     }
 
     #[tokio::test]
@@ -182,7 +190,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mark_nacked_removes_pending_output() {
+    async fn mark_nacked_keeps_pending_output() {
         let outbox = ChannelOutbox::new();
         let output = ChannelOutput::SystemText {
             route: RouteKey::new("feishu", "chat-a"),
@@ -195,6 +203,6 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(outbox.pending_for_channel("feishu").is_empty());
+        assert_eq!(outbox.pending_for_channel("feishu").len(), 1);
     }
 }

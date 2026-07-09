@@ -12,7 +12,7 @@ use tokio::sync::{broadcast, Mutex};
 
 use crate::agent::launch::normalize_launch_profile_id;
 use crate::agent_state;
-use crate::routing::RouteKey;
+use crate::routing::{channel_traits, DefaultWorkspaceKind, RouteKey};
 
 use super::normalize_platform_cwd;
 use super::registry::{WorkspaceId, WorkspaceProjection, WorkspaceRecord, GENERAL_WORKSPACE_ID};
@@ -253,8 +253,14 @@ impl WorkspaceThreadManager {
             .compact()
             .await
             .context("compact route attachments")?;
+        self.remove_idle_route_lock(route);
         self.notify_change();
         Ok(())
+    }
+
+    fn remove_idle_route_lock(&self, route: &RouteKey) {
+        self.route_locks
+            .remove_if(route, |_, lock| Arc::strong_count(lock) == 1);
     }
 
     pub async fn close_thread(
@@ -726,6 +732,23 @@ impl WorkspaceThreadManager {
         self.active_runtime_for_route(route).await
     }
 
+    pub async fn cancel_route(&self, route: &RouteKey) -> anyhow::Result<bool> {
+        let Some(runtime) = self.active_runtime_for_route(route).await? else {
+            return Ok(false);
+        };
+        match runtime.cancel().await {
+            Ok(()) => Ok(true),
+            Err(error) => {
+                tracing::debug!(
+                    route = %route,
+                    error = %error.message,
+                    "ignored route cancel"
+                );
+                Ok(false)
+            }
+        }
+    }
+
     pub async fn attach_thread(
         &self,
         route: &RouteKey,
@@ -919,6 +942,14 @@ impl WorkspaceThreadManager {
         let Some(attached) = self.current_attachment(route).await? else {
             return Ok(None);
         };
+        if let Some(runtime) = self
+            .runtimes
+            .get(&attached.thread_id)
+            .map(|entry| Arc::clone(entry.value()))
+        {
+            return Ok(Some(runtime));
+        }
+
         let Some(thread) = self.thread(&attached.thread_id).await? else {
             self.detach_route(route).await?;
             return Ok(None);
@@ -928,18 +959,11 @@ impl WorkspaceThreadManager {
             self.detach_route(route).await?;
             return Ok(None);
         }
-        let Some(runtime) = self
-            .runtimes
-            .get(&attached.thread_id)
-            .map(|entry| Arc::clone(entry.value()))
-        else {
-            if route.channel_kind == "web" {
-                return self.runtime_from_thread(thread).await.map(Some);
-            }
-            self.detach_route(route).await?;
-            return Ok(None);
-        };
-        Ok(Some(runtime))
+        if route_can_rehydrate_runtime(route) {
+            return self.runtime_from_thread(thread).await.map(Some);
+        }
+        self.detach_route(route).await?;
+        Ok(None)
     }
 
     async fn attach_route(
@@ -988,10 +1012,11 @@ impl WorkspaceThreadManager {
         route: &RouteKey,
         workspace_path: PathBuf,
     ) -> anyhow::Result<WorkspaceRecord> {
-        if route.channel_kind == "web" {
-            self.ensure_general_workspace().await
-        } else {
-            self.ensure_workspace_for_cwd(workspace_path).await
+        match channel_traits(&route.channel_kind).default_workspace {
+            DefaultWorkspaceKind::General => self.ensure_general_workspace().await,
+            DefaultWorkspaceKind::ChannelDefault => {
+                self.ensure_workspace_for_cwd(workspace_path).await
+            }
         }
     }
 
@@ -1226,13 +1251,16 @@ fn launch_setting_profile_for_agent(agent_id: &str) -> Option<String> {
 }
 
 fn default_route_binding_and_workspace(route: &RouteKey) -> (HostBinding, PathBuf) {
-    if route.channel_kind == "web" {
-        let cfg = crate::config::ensure_loaded();
-        let host_binding = default_host_binding();
-        return (host_binding, cfg.resolve_workspace(""));
+    match channel_traits(&route.channel_kind).default_workspace {
+        DefaultWorkspaceKind::General => {
+            let cfg = crate::config::ensure_loaded();
+            let host_binding = default_host_binding();
+            (host_binding, cfg.resolve_workspace(""))
+        }
+        DefaultWorkspaceKind::ChannelDefault => {
+            default_channel_binding_and_workspace(&route.channel_kind)
+        }
     }
-
-    default_channel_binding_and_workspace(&route.channel_kind)
 }
 
 fn default_channel_binding_and_workspace(channel_kind: &str) -> (HostBinding, PathBuf) {
@@ -1415,6 +1443,10 @@ fn runtime_has_started_host(state: &ThreadRuntimeState) -> bool {
     state.initialize.is_some() || state.busy || state.failed.is_some()
 }
 
+fn route_can_rehydrate_runtime(route: &RouteKey) -> bool {
+    channel_traits(&route.channel_kind).rehydratable_runtime
+}
+
 fn is_legacy_channel_default_route(route: &RouteKey) -> bool {
     route.chat_id == LEGACY_CHANNEL_DEFAULT_CHAT_ID
 }
@@ -1521,6 +1553,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn active_runtime_resolve_does_not_reload_thread_store() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let route = RouteKey::new("feishu", "chat-a");
+
+        let first = manager.resolve_route_runtime(&route).await.unwrap();
+        let first_thread_id = first.state().await.thread_id;
+        tokio::fs::write(manager.thread_store.path(), b"not valid jsonl\n")
+            .await
+            .unwrap();
+
+        let second = manager.resolve_route_runtime(&route).await.unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(second.state().await.thread_id, first_thread_id);
+    }
+
+    #[tokio::test]
+    async fn cancel_unattached_route_is_noop() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let route = RouteKey::new("web", "chat-a");
+
+        let cancelled = manager.cancel_route(&route).await.unwrap();
+
+        assert!(!cancelled);
+        assert!(manager.current_attachment(&route).await.unwrap().is_none());
+        assert!(manager
+            .workspace_store
+            .read_events()
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(manager.thread_store.read_events().await.unwrap().is_empty());
+        assert!(manager
+            .attachment_store
+            .read_events()
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
     async fn channel_routes_get_route_private_threads() {
         let (workspaces, threads, attachments) = temp_paths();
         let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
@@ -1586,9 +1661,18 @@ mod tests {
 
     #[tokio::test]
     async fn web_route_attachment_rehydrates_runtime_after_host_shutdown() {
+        route_attachment_rehydrates_runtime_after_host_shutdown("web").await;
+    }
+
+    #[tokio::test]
+    async fn tui_route_attachment_rehydrates_runtime_after_host_shutdown() {
+        route_attachment_rehydrates_runtime_after_host_shutdown("tui").await;
+    }
+
+    async fn route_attachment_rehydrates_runtime_after_host_shutdown(channel_kind: &str) {
         let (workspaces, threads, attachments) = temp_paths();
         let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-        let route = RouteKey::new("web", "chat-a");
+        let route = RouteKey::new(channel_kind, "chat-a");
         let first = manager.resolve_route_runtime(&route).await.unwrap();
         let first_thread_id = first.state().await.thread_id;
 
@@ -1651,14 +1735,33 @@ mod tests {
 
         let runtime = manager.resolve_route_runtime(&route).await.unwrap();
         let thread_id = runtime.state().await.thread_id;
+        assert!(manager.route_locks.contains_key(&route));
 
         manager.detach_route(&route).await.unwrap();
 
         assert!(manager.current_attachment(&route).await.unwrap().is_none());
+        assert!(!manager.route_locks.contains_key(&route));
         assert_eq!(
             manager.thread(&thread_id).await.unwrap().unwrap().status,
             crate::workspace::threads::store::ThreadStatus::Open
         );
+    }
+
+    #[tokio::test]
+    async fn route_lock_cleanup_keeps_in_use_lock() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let route = RouteKey::new("web", "chat-a");
+
+        let route_lock = manager.route_lock(&route);
+        manager.remove_idle_route_lock(&route);
+
+        assert!(manager.route_locks.contains_key(&route));
+        drop(route_lock);
+
+        manager.remove_idle_route_lock(&route);
+
+        assert!(!manager.route_locks.contains_key(&route));
     }
 
     #[tokio::test]

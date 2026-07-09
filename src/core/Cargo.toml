@@ -7,22 +7,22 @@ rust-version = "1.82"
 
 [dependencies]
 portable-pty = "0.9"
-tokio = { version = "1.49", features = ["process", "io-util", "sync", "rt-multi-thread", "time", "fs"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-uuid = { version = "1.11", features = ["v4", "serde"] }
-dashmap = "6.0"
+tokio = { workspace = true, features = ["process", "io-util", "sync", "rt-multi-thread", "time", "fs"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+dashmap = { workspace = true }
 bytes = "1.9"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { workspace = true, features = ["rustls-tls"] }
 ngrok = "0.18"
 url = "2.5"
 async-trait = "0.1"
 rustls = "0.23"
 chrono = "0.4"
-agent-client-protocol = { version = "=1.2.0", features = ["unstable_end_turn_token_usage"] }
+agent-client-protocol = { workspace = true }
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["compat"] }
-anyhow = "1"
+anyhow = { workspace = true }
 thiserror = "1"
 toml = "0.8"
 toml_edit = "0.22"

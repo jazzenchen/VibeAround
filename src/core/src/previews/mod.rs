@@ -5,14 +5,14 @@
 //! static file previews (e.g. rendered markdown). Each session has:
 //!
 //! - `id`        — the canonical path that identifies this preview
-//!                 (workspace dir + synthetic `:port:N` segment for
-//!                 `Server`; file path for `File`).
+//!   (workspace dir + synthetic `:port:N` segment for
+//!   `Server`; file path for `File`).
 //! - `target`    — what to serve: `Server { port }` or `File`.
 //! - `slug`      — stable, readable URL segment derived from `id`.
-//!                 Full-path-based (slashes → `-`), so slugs are globally
-//!                 unique and collision-proof.
+//!   Full-path-based (slashes → `-`), so slugs are globally
+//!   unique and collision-proof.
 //! - `share_key` — ephemeral random token with 10-min TTL. Regenerated
-//!                 once the previous key expires.
+//!   once the previous key expires.
 //!
 //! URL structure (all routes under `/va/`):
 //!

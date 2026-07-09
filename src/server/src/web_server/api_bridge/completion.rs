@@ -165,11 +165,13 @@ fn collect_response_parts(events: &[UniversalEvent]) -> ResponseParts {
 }
 
 fn collect_response_parts_from_universal(response: &UniversalResponse) -> ResponseParts {
-    let mut parts = ResponseParts::default();
-    parts.id = response.id.clone();
-    parts.model = response.model.clone();
-    parts.usage = response.usage.clone();
-    parts.finish_reason = response.finish_reason;
+    let mut parts = ResponseParts {
+        id: response.id.clone(),
+        model: response.model.clone(),
+        usage: response.usage.clone(),
+        finish_reason: response.finish_reason,
+        ..ResponseParts::default()
+    };
 
     for item in &response.output {
         match item {

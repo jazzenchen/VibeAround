@@ -16,7 +16,7 @@ use agent_client_protocol::schema::v1 as acp;
 use tokio::sync::{mpsc, Mutex};
 
 use crate::agent::AgentClientHandler;
-use crate::routing::RouteKey;
+use crate::routing::{channel_traits, RouteKey};
 use crate::workspace::registry::WorkspaceId;
 use crate::workspace::threads::store::{HostBinding, WorkspaceThreadId};
 use crate::workspace::threads::{ThreadAgent, ThreadAgentId};
@@ -76,11 +76,11 @@ impl ChannelBridgeHandler {
         }
     }
 
-    async fn attached_web_routes(&self) -> Vec<RouteKey> {
+    async fn attached_rich_agent_event_routes(&self) -> Vec<RouteKey> {
         self.attached_routes()
             .await
             .into_iter()
-            .filter(|route| route.channel_kind == "web")
+            .filter(|route| channel_traits(&route.channel_kind).rich_agent_events)
             .collect()
     }
 
@@ -231,7 +231,7 @@ impl ChannelBridgeHandler {
             format!("Host assignment:\n\n{}", task.trim())
         };
         let payload = synthetic_user_message_payload(&format!("subagent:{}", agent.id), text);
-        for route in self.attached_web_routes().await {
+        for route in self.attached_rich_agent_event_routes().await {
             self.plugin_host
                 .send_output(ChannelOutput::SubagentAcp {
                     route,
@@ -268,7 +268,7 @@ impl ChannelBridgeHandler {
                 };
                 for route in routes
                     .into_iter()
-                    .filter(|route| route.channel_kind == "web")
+                    .filter(|route| channel_traits(&route.channel_kind).rich_agent_events)
                 {
                     plugin_host
                         .send_output(ChannelOutput::SubagentStatus {
@@ -283,7 +283,7 @@ impl ChannelBridgeHandler {
     }
 
     async fn send_system_text(&self, text: &str) {
-        for route in self.attached_web_routes().await {
+        for route in self.attached_rich_agent_event_routes().await {
             self.plugin_host
                 .send_output(ChannelOutput::SystemText {
                     route,
@@ -363,29 +363,25 @@ impl AgentClientHandler for ChannelBridgeHandler {
             return Err(acp::Error::method_not_found());
         }
 
-        // Register a oneshot keyed by a fresh request_id, tagged with this
-        // channel kind. The plugin-bridge forwarder task consumes it once
-        // the plugin's ACP response arrives. The tag lets
-        // `PluginHost::cancel_channel_permissions` drain orphaned entries
-        // when the plugin dies, so `rx.await` below resolves as `Cancelled`
-        // instead of stalling the agent turn.
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
         let routes = self.attached_routes().await;
-        let Some(first_route) = routes.first() else {
+        if routes.is_empty() {
             return Ok(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Cancelled,
             ));
-        };
-        self.plugin_host
-            .pending_permissions
-            .insert(request_id.clone(), (first_route.channel_kind.clone(), tx));
+        }
+        self.plugin_host.register_pending_permission(
+            request_id.clone(),
+            routes.iter().map(|route| route.channel_kind.clone()),
+            tx,
+        );
 
         let options_len = args.options.len();
         let payload = match serde_json::to_value(&args) {
             Ok(v) => v,
             Err(e) => {
-                self.plugin_host.pending_permissions.remove(&request_id);
+                self.plugin_host.remove_pending_permission(&request_id);
                 return Err(acp::Error::new(
                     -32603,
                     format!("serialize requestPermission: {}", e),
@@ -417,7 +413,7 @@ impl AgentClientHandler for ChannelBridgeHandler {
         match rx.await {
             Ok(response) => Ok(response),
             Err(_) => {
-                self.plugin_host.pending_permissions.remove(&request_id);
+                self.plugin_host.remove_pending_permission(&request_id);
                 tracing::info!(
                     "[ChannelBridgeHandler] request_permission dropped (plugin gone?) thread={} request_id={}",
                     self.thread_id, request_id

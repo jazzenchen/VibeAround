@@ -1,8 +1,9 @@
 //! Bridge handler for spawned subagents.
 //!
-//! Subagent output is web-only for now. The host thread remains the only
-//! participant in IM/stdio channels; subagents stream into the web multi-agent
-//! panel and permission requests are forwarded through the existing web queue.
+//! Subagent output is limited to rich presentation channels. The host thread
+//! remains the only participant in IM/stdio channels; subagents stream into
+//! web/tui surfaces and permission requests are forwarded through the existing
+//! presentation queue.
 
 use std::sync::{Arc, Weak};
 
@@ -10,7 +11,7 @@ use agent_client_protocol::schema::v1 as acp;
 use tokio::sync::Mutex;
 
 use crate::agent::AgentClientHandler;
-use crate::routing::RouteKey;
+use crate::routing::{channel_traits, RouteKey};
 use crate::workspace::threads::runtime::{SubagentCompletionResult, SubagentCompletionValidator};
 use crate::workspace::threads::{ThreadAgent, ThreadAgentStatus, WorkspaceThreadId};
 use crate::workspace::WorkspaceThreadManager;
@@ -47,7 +48,7 @@ impl SubagentBridgeHandler {
         }
     }
 
-    async fn attached_web_routes(&self) -> Vec<RouteKey> {
+    async fn attached_rich_agent_event_routes(&self) -> Vec<RouteKey> {
         let Some(workspace_threads) = self.workspace_threads.upgrade() else {
             return Vec::new();
         };
@@ -57,13 +58,13 @@ impl SubagentBridgeHandler {
         {
             Ok(routes) => routes
                 .into_iter()
-                .filter(|route| route.channel_kind == "web")
+                .filter(|route| channel_traits(&route.channel_kind).rich_agent_events)
                 .collect(),
             Err(error) => {
                 tracing::warn!(
                     thread_id = %self.thread_id,
                     error = %error,
-                    "failed to resolve web routes for subagent output"
+                    "failed to resolve presentation routes for subagent output"
                 );
                 Vec::new()
             }
@@ -78,7 +79,7 @@ impl AgentClientHandler for SubagentBridgeHandler {
             return Ok(());
         };
 
-        for route in self.attached_web_routes().await {
+        for route in self.attached_rich_agent_event_routes().await {
             self.plugin_host
                 .send_output(ChannelOutput::SubagentAcp {
                     route,
@@ -99,7 +100,7 @@ impl AgentClientHandler for SubagentBridgeHandler {
             return Ok(());
         }
         let payload = synthetic_agent_message_payload(&session_id, visible_tail);
-        for route in self.attached_web_routes().await {
+        for route in self.attached_rich_agent_event_routes().await {
             self.plugin_host
                 .send_output(ChannelOutput::SubagentAcp {
                     route,
@@ -119,21 +120,23 @@ impl AgentClientHandler for SubagentBridgeHandler {
             return Err(acp::Error::method_not_found());
         }
 
-        let routes = self.attached_web_routes().await;
-        let Some(first_route) = routes.first() else {
+        let routes = self.attached_rich_agent_event_routes().await;
+        if routes.is_empty() {
             return Ok(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Cancelled,
             ));
-        };
+        }
 
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
-        self.plugin_host
-            .pending_permissions
-            .insert(request_id.clone(), (first_route.channel_kind.clone(), tx));
+        self.plugin_host.register_pending_permission(
+            request_id.clone(),
+            routes.iter().map(|route| route.channel_kind.clone()),
+            tx,
+        );
 
         let mut payload = serde_json::to_value(&args).map_err(|e| {
-            self.plugin_host.pending_permissions.remove(&request_id);
+            self.plugin_host.remove_pending_permission(&request_id);
             acp::Error::new(-32603, format!("serialize requestPermission: {}", e))
         })?;
         if let Some(object) = payload.as_object_mut() {
@@ -160,7 +163,7 @@ impl AgentClientHandler for SubagentBridgeHandler {
         match rx.await {
             Ok(response) => Ok(response),
             Err(_) => {
-                self.plugin_host.pending_permissions.remove(&request_id);
+                self.plugin_host.remove_pending_permission(&request_id);
                 Ok(acp::RequestPermissionResponse::new(
                     acp::RequestPermissionOutcome::Cancelled,
                 ))

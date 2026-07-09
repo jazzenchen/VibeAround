@@ -4,13 +4,17 @@ use anyhow::{anyhow, bail};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
+use super::bridge_url;
 use super::catalog;
 use super::codex_metadata::{self, CodexModelCatalogSpec};
 use super::connections::ProfileBridgeModelRoute;
 use super::render::{ConfigEnvTarget, RenderedProfile, RenderedSettingsFile};
 use super::schema::{AuthMode, ProfileDef};
+#[cfg(not(test))]
+use crate::auth;
 use crate::config;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_bridge_launch(
     profile: &ProfileDef,
     launch_target: &str,
@@ -50,7 +54,7 @@ struct BridgeLaunchSettings {
     target_api_type: String,
     scope: String,
     provider_label: String,
-    api_key: String,
+    local_api_key: String,
     models: Vec<BridgeModelSettings>,
     reasoning_effort: String,
 }
@@ -107,19 +111,19 @@ fn resolve_bridge_settings(
                 suffix
             )
         })?;
-    let api_key = profile
+    let has_profile_key = profile
         .credentials
         .get("api_key")
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .or_else(|| {
-            matches!(
-                profile.auth_mode,
-                AuthMode::OauthViaCli | AuthMode::GoogleOauth
-            )
-            .then(|| "vibearound-local-bridge".to_string())
-        })
-        .ok_or_else(|| anyhow!("profile '{}' has no api_key credential", profile.id))?;
+        .is_some_and(|value| !value.trim().is_empty());
+    if !has_profile_key
+        && !matches!(
+            profile.auth_mode,
+            AuthMode::OauthViaCli | AuthMode::GoogleOauth
+        )
+    {
+        bail!("profile '{}' has no api_key credential", profile.id);
+    }
+    let local_api_key = local_bridge_client_key()?;
     let profile_model = profile
         .overrides
         .get(target_api_type)
@@ -172,10 +176,23 @@ fn resolve_bridge_settings(
         target_api_type: target_api_type.to_string(),
         scope: String::new(),
         provider_label: provider.label.clone(),
-        api_key,
+        local_api_key,
         models,
         reasoning_effort,
     })
+}
+
+#[cfg(not(test))]
+fn local_bridge_client_key() -> anyhow::Result<String> {
+    auth::read_token_file()
+        .map(|record| record.token.trim().to_string())
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| anyhow!("local API bridge auth token is unavailable; restart VibeAround"))
+}
+
+#[cfg(test)]
+fn local_bridge_client_key() -> anyhow::Result<String> {
+    Ok("test-local-bridge-key".to_string())
 }
 
 fn bridge_model_settings(
@@ -207,15 +224,14 @@ fn render_claude_bridge_profile(
     _launch_id: &str,
     settings: BridgeLaunchSettings,
 ) -> RenderedProfile {
-    let bridge_base_url = format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}",
+    let bridge_base_url = bridge_url::local_api_base(
         config::DEFAULT_PORT,
-        profile.id,
-        settings.scope,
-        settings.target_api_type
+        &profile.id,
+        &settings.scope,
+        &settings.target_api_type,
     );
     RenderedProfile {
-        env: claude_env(settings.api_key.clone(), bridge_base_url, &settings),
+        env: claude_env(settings.local_api_key.clone(), bridge_base_url, &settings),
         settings_files: Vec::new(),
         command_args: Vec::new(),
         config_env: None,
@@ -274,12 +290,11 @@ fn render_codex_bridge_profile(
     _launch_id: &str,
     settings: BridgeLaunchSettings,
 ) -> RenderedProfile {
-    let bridge_base_url = format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}/v1",
+    let bridge_base_url = bridge_url::local_api_v1_base(
         config::DEFAULT_PORT,
-        profile.id,
-        settings.scope,
-        settings.target_api_type
+        &profile.id,
+        &settings.scope,
+        &settings.target_api_type,
     );
     let provider_key = format!("model_providers.{}", profile.provider);
     let mut command_args = Vec::new();
@@ -373,7 +388,7 @@ fn render_codex_bridge_profile(
     );
 
     RenderedProfile {
-        env: vec![("OPENAI_API_KEY".to_string(), settings.api_key)],
+        env: vec![("OPENAI_API_KEY".to_string(), settings.local_api_key)],
         settings_files,
         command_args,
         config_env: None,
@@ -448,7 +463,10 @@ fn render_opencode_bridge_profile(
     });
 
     RenderedProfile {
-        env: vec![("VIBEAROUND_OPENCODE_API_KEY".to_string(), settings.api_key)],
+        env: vec![(
+            "VIBEAROUND_OPENCODE_API_KEY".to_string(),
+            settings.local_api_key,
+        )],
         settings_files: vec![RenderedSettingsFile {
             rel_path: "opencode.json".to_string(),
             contents: serde_json::to_string_pretty(&config).unwrap_or_else(|_| "{}".to_string()),
@@ -465,23 +483,16 @@ fn render_gemini_bridge_profile(
     profile: &ProfileDef,
     settings: BridgeLaunchSettings,
 ) -> RenderedProfile {
-    let bridge_base_url = format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}",
+    let bridge_base_url = bridge_url::local_api_base(
         config::DEFAULT_PORT,
-        profile.id,
-        settings.scope,
-        settings.target_api_type
+        &profile.id,
+        &settings.scope,
+        &settings.target_api_type,
     );
     RenderedProfile {
         env: vec![
-            (
-                "GEMINI_API_KEY".to_string(),
-                "vibearound-local-bridge".to_string(),
-            ),
-            (
-                "GOOGLE_API_KEY".to_string(),
-                "vibearound-local-bridge".to_string(),
-            ),
+            ("GEMINI_API_KEY".to_string(), settings.local_api_key.clone()),
+            ("GOOGLE_API_KEY".to_string(), settings.local_api_key.clone()),
             (
                 "GEMINI_DEFAULT_AUTH_TYPE".to_string(),
                 "gemini-api-key".to_string(),
@@ -519,7 +530,7 @@ fn render_pi_bridge_profile(
         provider_id: provider_id.clone(),
         provider_label: &settings.provider_label,
         api_type: client_api_type,
-        api_key: settings.api_key,
+        api_key: settings.local_api_key,
         base_url: bridge_base_url,
         model: default_model.agent_model,
         model_context_window: default_model.model_context_window,
@@ -541,13 +552,12 @@ fn opencode_bridge_base_url(
     } else {
         "/v1"
     };
-    format!(
-        "http://127.0.0.1:{}/va/local-api/{}/{}/{}{}",
+    bridge_url::local_api_base_with_suffix(
         config::DEFAULT_PORT,
-        profile.id,
-        settings.scope,
-        settings.target_api_type,
-        suffix
+        &profile.id,
+        &settings.scope,
+        &settings.target_api_type,
+        suffix,
     )
 }
 
@@ -889,11 +899,11 @@ mod tests {
         )));
         assert!(rendered.env.contains(&(
             "GEMINI_API_KEY".to_string(),
-            "vibearound-local-bridge".to_string()
+            "test-local-bridge-key".to_string()
         )));
         assert!(rendered.env.contains(&(
             "GOOGLE_API_KEY".to_string(),
-            "vibearound-local-bridge".to_string()
+            "test-local-bridge-key".to_string()
         )));
         assert!(rendered.env.contains(&(
             "GEMINI_DEFAULT_AUTH_TYPE".to_string(),
@@ -948,7 +958,11 @@ mod tests {
         )
         .expect("pi bridge launch renders");
 
-        assert!(rendered
+        assert!(rendered.env.contains(&(
+            "VIBEAROUND_PI_API_KEY".to_string(),
+            "test-local-bridge-key".to_string()
+        )));
+        assert!(!rendered
             .env
             .contains(&("VIBEAROUND_PI_API_KEY".to_string(), "test-key".to_string())));
         assert!(rendered
@@ -1033,7 +1047,11 @@ mod tests {
             .command_args
             .iter()
             .any(|arg| arg == "model='gemini-3.1-pro'"));
-        assert!(rendered
+        assert!(rendered.env.contains(&(
+            "OPENAI_API_KEY".to_string(),
+            "test-local-bridge-key".to_string()
+        )));
+        assert!(!rendered
             .env
             .contains(&("OPENAI_API_KEY".to_string(), "test-key".to_string())));
     }
@@ -1103,7 +1121,7 @@ mod tests {
 
         assert!(rendered.env.contains(&(
             "OPENAI_API_KEY".to_string(),
-            "vibearound-local-bridge".to_string()
+            "test-local-bridge-key".to_string()
         )));
     }
 

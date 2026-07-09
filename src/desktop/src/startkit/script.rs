@@ -33,6 +33,7 @@ pub(super) struct ScriptOutput {
     pub(super) manual_url: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_script(
     manifest: &Manifest,
     paths: &StartkitPaths,

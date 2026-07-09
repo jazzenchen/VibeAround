@@ -26,6 +26,47 @@ pub type RuntimeId = String;
 /// Logical turn identifier on a route.
 pub type TurnId = String;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultWorkspaceKind {
+    General,
+    ChannelDefault,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelTraits {
+    pub durable_outbox: bool,
+    pub rehydratable_runtime: bool,
+    pub startup_replay: bool,
+    pub default_workspace: DefaultWorkspaceKind,
+    pub rich_agent_events: bool,
+}
+
+pub fn channel_traits(channel_kind: &str) -> ChannelTraits {
+    match channel_kind {
+        "web" => ChannelTraits {
+            durable_outbox: false,
+            rehydratable_runtime: true,
+            startup_replay: true,
+            default_workspace: DefaultWorkspaceKind::General,
+            rich_agent_events: true,
+        },
+        "tui" => ChannelTraits {
+            durable_outbox: false,
+            rehydratable_runtime: true,
+            startup_replay: true,
+            default_workspace: DefaultWorkspaceKind::ChannelDefault,
+            rich_agent_events: true,
+        },
+        _ => ChannelTraits {
+            durable_outbox: true,
+            rehydratable_runtime: false,
+            startup_replay: false,
+            default_workspace: DefaultWorkspaceKind::ChannelDefault,
+            rich_agent_events: false,
+        },
+    }
+}
+
 /// Stable route key for a conversation path through a channel.
 ///
 /// The triple `(channel_kind, bot_id, chat_id)` uniquely identifies a bot
@@ -67,13 +108,27 @@ impl RouteKey {
         }
     }
 
-    /// Serialized form: `channel_kind:chat_id` (backward compat).
-    /// Does NOT include bot_id — the key format is used for display and
-    /// dashboard routing where bot_id isn't needed yet.
+    /// Lossy display/API key: `channel_kind:chat_id` (backward compat).
+    ///
+    /// This intentionally does NOT include `bot_id`. Do not use this as a
+    /// persisted identity for multi-bot routes; serialize the full `RouteKey`
+    /// instead.
     pub fn as_key(&self) -> String {
+        if self.bot_id != self.channel_kind {
+            tracing::warn!(
+                channel_kind = %self.channel_kind,
+                bot_id = %self.bot_id,
+                chat_id = %self.chat_id,
+                "RouteKey::as_key is lossy for non-default bot_id"
+            );
+        }
         format!("{}:{}", self.channel_kind, self.chat_id)
     }
 
+    /// Parse the legacy lossy `channel_kind:chat_id` key.
+    ///
+    /// `bot_id` is restored to its default (`channel_kind`) because this key
+    /// format has never carried a bot identity.
     pub fn from_key(key: &str) -> Option<Self> {
         let (channel_kind, chat_id) = key.split_once(':')?;
         Some(Self::new(channel_kind, chat_id))
@@ -130,5 +185,47 @@ mod tests {
         assert!(!is_safe_attachment_file_key("../secret"));
         assert!(!is_safe_attachment_file_key("nested/file"));
         assert!(!is_safe_attachment_file_key(r"nested\file"));
+    }
+
+    #[test]
+    fn channel_traits_capture_current_surface_capabilities() {
+        let web = channel_traits("web");
+        assert!(!web.durable_outbox);
+        assert!(web.rehydratable_runtime);
+        assert!(web.startup_replay);
+        assert_eq!(web.default_workspace, DefaultWorkspaceKind::General);
+        assert!(web.rich_agent_events);
+
+        let tui = channel_traits("tui");
+        assert!(!tui.durable_outbox);
+        assert!(tui.rehydratable_runtime);
+        assert!(tui.startup_replay);
+        assert_eq!(tui.default_workspace, DefaultWorkspaceKind::ChannelDefault);
+        assert!(tui.rich_agent_events);
+
+        let im = channel_traits("feishu");
+        assert!(im.durable_outbox);
+        assert!(!im.rehydratable_runtime);
+        assert!(!im.startup_replay);
+        assert_eq!(im.default_workspace, DefaultWorkspaceKind::ChannelDefault);
+        assert!(!im.rich_agent_events);
+    }
+
+    #[test]
+    fn route_key_legacy_key_round_trips_default_bot_id() {
+        let route = RouteKey::new("feishu", "chat-1");
+
+        assert_eq!(RouteKey::from_key(&route.as_key()), Some(route));
+    }
+
+    #[test]
+    fn route_key_legacy_key_is_lossy_for_custom_bot_id() {
+        let route = RouteKey::with_bot_id("feishu", "bot-a", "chat-1");
+        let parsed = RouteKey::from_key(&route.as_key()).expect("legacy key parses");
+
+        assert_eq!(parsed.channel_kind, "feishu");
+        assert_eq!(parsed.bot_id, "feishu");
+        assert_eq!(parsed.chat_id, "chat-1");
+        assert_ne!(parsed, route);
     }
 }

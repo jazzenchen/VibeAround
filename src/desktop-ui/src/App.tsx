@@ -159,6 +159,7 @@ function Dashboard() {
   const openPluginSettings = useCallback(() => {
     setSettingsTarget({
       tab: "plugins",
+      pluginStatusFilter: "updates",
       nonce: Date.now(),
     });
     setSettingsOpen(true);

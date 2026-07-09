@@ -8,8 +8,6 @@
 //! wrapped in a tagged [`crate::api_types::ChatEvent`] envelope so the
 //! frontend can discriminate exhaustively.
 
-use std::collections::HashSet;
-
 use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
     Query, State,
@@ -20,7 +18,6 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use agent_client_protocol::schema::v1 as acp;
 use common::channels::{ChannelEnvelope, ChannelInput, ChannelOutput};
 use common::routing::{
     is_external_attachment_uri, is_safe_attachment_file_key, Attachment, RouteKey,
@@ -32,6 +29,12 @@ use common::{agent_state, config};
 use crate::api_types::{AgentInfo, ChatEvent};
 
 use super::AppState;
+
+mod event;
+mod input;
+
+use event::{output_to_chat_event, permission_response_error_event};
+use input::{parse_web_chat_input, WebChatInput, WebChatSessionIntent};
 
 /// WebSocket upgrade handler for web chat.
 pub async fn ws_chat_handler(
@@ -96,6 +99,10 @@ fn sanitize_chat_id(value: Option<&str>) -> Option<String> {
     }
 }
 
+fn should_replay_initial_route_history(chat_id: &Option<String>) -> bool {
+    chat_id.is_some()
+}
+
 async fn handle_chat_socket(
     socket: WebSocket,
     state: AppState,
@@ -103,21 +110,25 @@ async fn handle_chat_socket(
     chat_id: Option<String>,
 ) {
     let connection_id = Uuid::new_v4().to_string();
+    let replay_history = should_replay_initial_route_history(&chat_id);
     let chat_id = chat_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let channel_id = format!("{}:{}", client.channel_kind, chat_id);
     let mut active_route = RouteKey::new(client.channel_kind, &chat_id);
 
-    // Register this connection for outbound ACP events
+    // Explicit chat_id attachments are reconnects or existing thread views, so
+    // replay the bounded route history independent of runtime lifetime.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelOutput>();
-    state
-        .web_channel
-        .register_connection(&active_route, connection_id.clone(), tx.clone(), false);
+    state.web_channel.register_connection(
+        &active_route,
+        connection_id.clone(),
+        tx.clone(),
+        replay_history,
+    );
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    // Load config for initial agent metadata. Web chat always receives the
-    // complete ACP transcript; the browser applies its own visibility filter
-    // so replay cache stays independent from the current UI settings.
+    // Load config for initial agent metadata.
     let cfg = config::ensure_loaded();
     let agent_prefs = agent_state::read_prefs();
 
@@ -136,10 +147,20 @@ async fn handle_chat_socket(
 
     // Outbound: drain ChannelOutput → ChatEvent → websocket.
     let outbound_task = tokio::spawn(async move {
-        while let Some(output) = rx.recv().await {
-            let event = output_to_chat_event(output);
-            if send_event(&mut ws_tx, &event).await.is_err() {
-                break;
+        loop {
+            tokio::select! {
+                Some(output) = rx.recv() => {
+                    let event = output_to_chat_event(output);
+                    if send_event(&mut ws_tx, &event).await.is_err() {
+                        break;
+                    }
+                }
+                Some(event) = event_rx.recv() => {
+                    if send_event(&mut ws_tx, &event).await.is_err() {
+                        break;
+                    }
+                }
+                else => break,
             }
         }
     });
@@ -272,7 +293,19 @@ async fn handle_chat_socket(
                                 &active_route,
                             )
                             .await;
-                            state.channel_hub.handle_input(input);
+                            let route = input_route(&input).unwrap_or_else(|| active_route.clone());
+                            if let Err(error) = state
+                                .channel_hub
+                                .workspace_thread_manager()
+                                .cancel_route(&route)
+                                .await
+                            {
+                                tracing::warn!(
+                                    route = %route,
+                                    error = %error,
+                                    "failed to cancel web chat route"
+                                );
+                            }
                             let deadline = state.web_channel.mark_route_idle(&active_route);
                             state.web_channel.schedule_idle_close(
                                 state.channel_hub.workspace_thread_manager(),
@@ -294,6 +327,8 @@ async fn handle_chat_socket(
                                     error = %error,
                                     "web permission response ignored"
                                 );
+                                let _ = event_tx
+                                    .send(permission_response_error_event(&request_id, &error));
                             }
                         }
                         WebChatInput::ResumeSession {
@@ -399,6 +434,7 @@ async fn handle_chat_socket(
             .workspace_thread_manager()
             .detach_route(&active_route)
             .await;
+        state.web_channel.forget_route(&active_route.chat_id);
     }
 }
 
@@ -421,6 +457,7 @@ async fn abort_direct_resume_task(
         .workspace_thread_manager()
         .detach_route(route)
         .await;
+    state.web_channel.forget_route(&route.chat_id);
 }
 
 fn input_route(input: &ChannelInput) -> Option<RouteKey> {
@@ -992,360 +1029,6 @@ where
     ws_tx.send(Message::Text(body.into())).await.map_err(|_| ())
 }
 
-enum WebChatInput {
-    Message {
-        input: ChannelInput,
-        profile: Option<String>,
-        session_intent: Option<WebChatSessionIntent>,
-        session_mode: Option<String>,
-    },
-    SetMode {
-        mode_id: String,
-    },
-    SetConfigOption {
-        config_id: String,
-        value: String,
-    },
-    Stop(ChannelInput),
-    PermissionResponse {
-        request_id: String,
-        response: acp::RequestPermissionResponse,
-    },
-    ResumeSession {
-        agent: Option<String>,
-        profile: Option<String>,
-        session_id: String,
-        cwd: Option<String>,
-    },
-}
-
-enum WebChatSessionIntent {
-    Resume {
-        agent: Option<String>,
-        session_id: String,
-        cwd: Option<String>,
-    },
-    New {
-        cwd: Option<String>,
-    },
-}
-
-fn parse_web_chat_input(route: &RouteKey, sender_id: &str, text: &str) -> Option<WebChatInput> {
-    let parsed = serde_json::from_str::<serde_json::Value>(text);
-
-    match parsed {
-        Ok(v) => {
-            let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
-            match ty {
-                "message" => {
-                    let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").trim();
-                    let message_id = v
-                        .get("messageId")
-                        .and_then(|x| x.as_str())
-                        .map(ToOwned::to_owned)
-                        .unwrap_or_else(|| Uuid::new_v4().to_string());
-                    let attachments = parse_web_attachments(&v, &message_id);
-                    if text.is_empty() && attachments.is_empty() {
-                        return None;
-                    }
-                    let agent = parse_web_agent(&v);
-                    let session_intent = parse_web_session_intent(&v, agent.clone());
-                    let profile = parse_web_profile(&v);
-                    let session_mode = parse_web_session_mode(&v);
-                    Some(WebChatInput::Message {
-                        input: ChannelInput::Message {
-                            envelope: ChannelEnvelope {
-                                route: route.clone(),
-                                message_id,
-                                turn_id: None,
-                                text: text.to_string(),
-                                sender_id: sender_id.to_string(),
-                                attachments,
-                                parent_id: None,
-                                cli_kind: agent,
-                            },
-                        },
-                        profile,
-                        session_intent,
-                        session_mode,
-                    })
-                }
-                "set_mode" => {
-                    let mode_id = string_field(&v, &["modeId", "mode_id", "permissionMode"])?;
-                    Some(WebChatInput::SetMode { mode_id })
-                }
-                "set_config_option" => {
-                    let config_id = string_field(&v, &["configId", "config_id"])?;
-                    let value = string_field(&v, &["value"])?;
-                    Some(WebChatInput::SetConfigOption { config_id, value })
-                }
-                "resume_session" => {
-                    let agent = parse_web_agent(&v);
-                    let profile = parse_web_profile(&v);
-                    let session_id = v
-                        .get("sessionId")
-                        .and_then(|x| x.as_str())
-                        .map(str::trim)
-                        .filter(|x| !x.is_empty())?
-                        .to_string();
-                    let cwd = v
-                        .get("sessionWorkspace")
-                        .and_then(|x| x.as_str())
-                        .map(str::trim)
-                        .filter(|x| !x.is_empty())
-                        .map(ToOwned::to_owned);
-
-                    Some(WebChatInput::ResumeSession {
-                        agent,
-                        profile,
-                        session_id,
-                        cwd,
-                    })
-                }
-                "stop" => Some(WebChatInput::Stop(ChannelInput::Stop {
-                    route: route.clone(),
-                })),
-                "permission_response" => {
-                    let request_id = v.get("requestId").and_then(|x| x.as_str())?.to_string();
-                    let outcome = match v.get("outcome").and_then(|x| x.as_str()) {
-                        Some("cancelled") => acp::RequestPermissionOutcome::Cancelled,
-                        _ => {
-                            let option_id = v.get("optionId").and_then(|x| x.as_str())?;
-                            acp::RequestPermissionOutcome::Selected(
-                                acp::SelectedPermissionOutcome::new(option_id.to_string()),
-                            )
-                        }
-                    };
-                    Some(WebChatInput::PermissionResponse {
-                        request_id,
-                        response: acp::RequestPermissionResponse::new(outcome),
-                    })
-                }
-                _ => None,
-            }
-        }
-        Err(_) => {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(WebChatInput::Message {
-                    input: ChannelInput::Message {
-                        envelope: ChannelEnvelope {
-                            route: route.clone(),
-                            message_id: Uuid::new_v4().to_string(),
-                            turn_id: None,
-                            text: trimmed.to_string(),
-                            sender_id: sender_id.to_string(),
-                            attachments: vec![],
-                            parent_id: None,
-                            cli_kind: None,
-                        },
-                    },
-                    profile: None,
-                    session_intent: None,
-                    session_mode: None,
-                })
-            }
-        }
-    }
-}
-
-fn parse_web_attachments(value: &serde_json::Value, message_id: &str) -> Vec<Attachment> {
-    value
-        .get("attachments")
-        .and_then(|items| items.as_array())
-        .map(|items| {
-            let mut seen = HashSet::new();
-            items
-                .iter()
-                .filter_map(|item| parse_web_attachment(item, message_id))
-                .filter(|attachment| {
-                    let key = format!(
-                        "{}\u{0}{}\u{0}{}\u{0}{}",
-                        attachment.file_key,
-                        attachment.file_name,
-                        attachment.resource_type,
-                        attachment.size.unwrap_or_default()
-                    );
-                    seen.insert(key)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_web_attachment(value: &serde_json::Value, message_id: &str) -> Option<Attachment> {
-    let file_key = string_field(value, &["fileKey", "file_key", "uri", "url"])?;
-    if !is_safe_attachment_file_key(&file_key) {
-        tracing::warn!(file_key = %file_key, "dropping web attachment with unsafe file key");
-        return None;
-    }
-    let file_name = string_field(value, &["fileName", "file_name", "name"]).unwrap_or_else(|| {
-        file_key
-            .rsplit('/')
-            .next()
-            .unwrap_or("attachment")
-            .to_string()
-    });
-    let resource_type = string_field(
-        value,
-        &["resourceType", "resource_type", "mimeType", "mime_type"],
-    )
-    .unwrap_or_else(|| "application/octet-stream".to_string());
-    let size = value
-        .get("size")
-        .and_then(|size| {
-            size.as_i64()
-                .or_else(|| size.as_u64().map(|size| size as i64))
-        })
-        .filter(|size| *size >= 0);
-
-    Some(Attachment {
-        message_id: message_id.to_string(),
-        file_key,
-        file_name,
-        resource_type,
-        size,
-    })
-}
-
-fn string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| value.get(*key).and_then(|item| item.as_str()))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn parse_web_agent(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("agent")
-        .and_then(|x| x.as_str())
-        .map(str::trim)
-        .filter(|x| !x.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn parse_web_profile(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("profileId")
-        .and_then(|x| x.as_str())
-        .map(str::trim)
-        .filter(|x| !x.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn parse_web_session_mode(value: &serde_json::Value) -> Option<String> {
-    string_field(value, &["permissionMode", "modeId", "mode_id"])
-}
-
-fn parse_web_session_intent(
-    value: &serde_json::Value,
-    agent: Option<String>,
-) -> Option<WebChatSessionIntent> {
-    match value.get("sessionAction").and_then(|x| x.as_str()) {
-        Some("new") => {
-            return Some(WebChatSessionIntent::New {
-                cwd: parse_web_session_workspace(value),
-            });
-        }
-        Some("resume") | None => {}
-        Some(_) => return None,
-    }
-
-    let session_id = value
-        .get("sessionId")
-        .and_then(|x| x.as_str())
-        .map(str::trim)
-        .filter(|x| !x.is_empty())?;
-    let cwd = parse_web_session_workspace(value);
-
-    Some(WebChatSessionIntent::Resume {
-        agent,
-        session_id: session_id.to_string(),
-        cwd,
-    })
-}
-
-fn parse_web_session_workspace(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("sessionWorkspace")
-        .and_then(|x| x.as_str())
-        .map(str::trim)
-        .filter(|x| !x.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-/// Translate a `ChannelOutput` into a wire `ChatEvent`.
-fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
-    match output {
-        ChannelOutput::ThreadReply { reply, .. } => match reply.payload {
-            common::channels::types::ThreadReplyPayload::AcpSessionNotification {
-                notification,
-            } => acp_passthrough(notification),
-        },
-        ChannelOutput::RawAcp { payload, .. } => acp_passthrough(payload),
-        ChannelOutput::SystemText { text, .. } => ChatEvent::SystemText { text },
-        ChannelOutput::AgentReady { agent, version, .. } => {
-            ChatEvent::AgentReady { agent, version }
-        }
-        ChannelOutput::SessionReady { session_id, .. } => ChatEvent::SessionReady { session_id },
-        ChannelOutput::SessionInfo { info, .. } => ChatEvent::SystemText {
-            text: format!(
-                "Workspace: {}\nAgent: {}{}\nProfile: {}\n{}: {}",
-                info.workspace_path,
-                info.agent.name,
-                if info.agent.version.is_empty() {
-                    String::new()
-                } else {
-                    format!(" v{}", info.agent.version)
-                },
-                info.agent
-                    .profile_id
-                    .unwrap_or_else(|| "Native".to_string()),
-                match info.start {
-                    common::channels::types::ChannelSessionStart::New => "New session started",
-                    common::channels::types::ChannelSessionStart::Resumed =>
-                        "Continuing from session",
-                },
-                info.session_id
-            ),
-        },
-        ChannelOutput::SessionMode { session_mode, .. } => ChatEvent::SessionMode { session_mode },
-        ChannelOutput::CommandMenu {
-            system_commands,
-            agent_commands,
-            ..
-        } => ChatEvent::CommandMenu {
-            system_commands,
-            agent_commands,
-        },
-        ChannelOutput::PermissionRequest {
-            request_id,
-            payload,
-            ..
-        } => ChatEvent::PermissionRequest {
-            request_id,
-            request: payload,
-        },
-        ChannelOutput::MultiAgentTurn { turn, agents, .. } => {
-            ChatEvent::MultiAgentTurn { turn, agents }
-        }
-        ChannelOutput::SubagentStatus { agent, .. } => ChatEvent::SubagentStatus { agent },
-        ChannelOutput::SubagentAcp { agent, payload, .. } => {
-            ChatEvent::SubagentAcpNotification { agent, payload }
-        }
-        ChannelOutput::PromptDone { message_id, .. } => ChatEvent::PromptDone { message_id },
-        ChannelOutput::TurnStatus { active, .. } => ChatEvent::TurnStatus { active },
-    }
-}
-
-/// Pass ACP session notifications through as `AcpNotification`.
-fn acp_passthrough(payload: serde_json::Value) -> ChatEvent {
-    ChatEvent::AcpNotification { payload }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1356,12 +1039,6 @@ mod tests {
 
     fn tui_client() -> ChatSocketClient {
         ChatSocketClient::from_query(Some("tui")).expect("tui client")
-    }
-
-    fn parse_web_chat_input(chat_id: &str, text: &str) -> Option<WebChatInput> {
-        let client = web_client();
-        let route = RouteKey::new(client.channel_kind, chat_id);
-        super::parse_web_chat_input(&route, client.sender_id, text)
     }
 
     #[test]
@@ -1389,340 +1066,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_tui_message_with_tui_route_identity() {
-        let input = super::parse_web_chat_input(
-            &RouteKey::new("tui", "chat-1"),
-            tui_client().sender_id,
-            r#"{"type":"message","text":"hello"}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            input:
-                ChannelInput::Message {
-                    envelope:
-                        ChannelEnvelope {
-                            route, sender_id, ..
-                        },
-                },
-            ..
-        } = input
-        else {
-            panic!("expected tui message");
-        };
-
-        assert_eq!(route, RouteKey::new("tui", "chat-1"));
-        assert_eq!(sender_id, "tui-user");
+    fn explicit_chat_id_replays_initial_route_history() {
+        assert!(!super::should_replay_initial_route_history(&None));
+        assert!(super::should_replay_initial_route_history(&Some(
+            "ws_thread".to_string()
+        )));
     }
 
     #[test]
-    fn parses_selected_permission_response() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"permission_response","requestId":"req-1","optionId":"allow-once"}"#,
-        )
-        .expect("permission response");
-
-        let WebChatInput::PermissionResponse {
-            request_id,
-            response,
-        } = input
-        else {
-            panic!("expected permission response");
-        };
-
-        assert_eq!(request_id, "req-1");
-        match response.outcome {
-            acp::RequestPermissionOutcome::Selected(selected) => {
-                assert_eq!(selected.option_id.to_string(), "allow-once");
-            }
-            acp::RequestPermissionOutcome::Cancelled => panic!("expected selected outcome"),
-            _ => panic!("expected selected outcome"),
-        }
-    }
-
-    #[test]
-    fn parses_cancelled_permission_response() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"permission_response","requestId":"req-2","outcome":"cancelled"}"#,
-        )
-        .expect("permission response");
-
-        let WebChatInput::PermissionResponse {
-            request_id,
-            response,
-        } = input
-        else {
-            panic!("expected permission response");
-        };
-
-        assert_eq!(request_id, "req-2");
-        assert!(matches!(
-            response.outcome,
-            acp::RequestPermissionOutcome::Cancelled
-        ));
-    }
-
-    #[test]
-    fn parses_stop_message() {
-        let input = parse_web_chat_input("chat-1", r#"{"type":"stop"}"#).expect("stop input");
-
-        let WebChatInput::Stop(ChannelInput::Stop { route }) = input else {
-            panic!("expected stop input");
-        };
-
-        assert_eq!(route, RouteKey::new("web", "chat-1"));
-    }
-
-    #[test]
-    fn parses_resume_session_intent() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"message","text":"continue","agent":"codex","sessionAction":"resume","sessionId":"sid-1","sessionWorkspace":"/tmp/project"}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            input:
-                ChannelInput::Message {
-                    envelope:
-                        ChannelEnvelope {
-                            cli_kind: Some(agent),
-                            ..
-                        },
-                },
-            profile: None,
-            session_intent:
-                Some(WebChatSessionIntent::Resume {
-                    agent: Some(intent_agent),
-                    session_id,
-                    cwd: Some(cwd),
-                }),
-            session_mode: None,
-        } = input
-        else {
-            panic!("expected resume message");
-        };
-
-        assert_eq!(agent, "codex");
-        assert_eq!(intent_agent, "codex");
-        assert_eq!(session_id, "sid-1");
-        assert_eq!(cwd, "/tmp/project");
-    }
-
-    #[test]
-    fn parses_direct_resume_session() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"resume_session","agent":"codex","profileId":"deepseek","sessionId":"sid-1","sessionWorkspace":"/tmp/project"}"#,
-        )
-        .expect("resume session input");
-
-        let WebChatInput::ResumeSession {
-            agent: Some(agent),
-            profile: Some(profile),
-            session_id,
-            cwd: Some(cwd),
-        } = input
-        else {
-            panic!("expected direct resume input");
-        };
-
-        assert_eq!(agent, "codex");
-        assert_eq!(profile, "deepseek");
-        assert_eq!(session_id, "sid-1");
-        assert_eq!(cwd, "/tmp/project");
-    }
-
-    #[test]
-    fn parses_new_session_intent() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"message","text":"start over","sessionAction":"new"}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            session_intent: Some(WebChatSessionIntent::New { cwd: None }),
-            session_mode: None,
-            ..
-        } = input
-        else {
-            panic!("expected new-session message");
-        };
-    }
-
-    #[test]
-    fn parses_new_session_workspace() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"message","text":"start here","sessionAction":"new","sessionWorkspace":"/tmp/new-project"}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            session_intent: Some(WebChatSessionIntent::New { cwd: Some(cwd) }),
-            session_mode: None,
-            ..
-        } = input
-        else {
-            panic!("expected new-session message with workspace");
-        };
-
-        assert_eq!(cwd, "/tmp/new-project");
-    }
-
-    #[test]
-    fn parses_profile_selection() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"message","text":"hello","agent":"claude","profileId":"deepseek"}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            profile: Some(profile),
-            session_mode: None,
-            ..
-        } = input
-        else {
-            panic!("expected profile message");
-        };
-
-        assert_eq!(profile, "deepseek");
-    }
-
-    #[test]
-    fn parses_message_permission_mode() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"message","text":"hello","permissionMode":"acceptEdits"}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            session_mode: Some(mode_id),
-            ..
-        } = input
-        else {
-            panic!("expected message mode");
-        };
-
-        assert_eq!(mode_id, "acceptEdits");
-    }
-
-    #[test]
-    fn parses_set_mode_message() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"set_mode","modeId":"bypassPermissions"}"#,
-        )
-        .expect("set mode input");
-
-        let WebChatInput::SetMode { mode_id } = input else {
-            panic!("expected set mode");
-        };
-
-        assert_eq!(mode_id, "bypassPermissions");
+    fn canonical_web_session_mode_accepts_dash_alias() {
         assert_eq!(
             canonical_web_session_mode("bypass-permissions"),
             Some("bypassPermissions"),
         );
-    }
-
-    #[test]
-    fn parses_set_config_option_message() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"set_config_option","configId":"permissions","value":"fullAccess"}"#,
-        )
-        .expect("set config option input");
-
-        let WebChatInput::SetConfigOption { config_id, value } = input else {
-            panic!("expected set config option");
-        };
-
-        assert_eq!(config_id, "permissions");
-        assert_eq!(value, "fullAccess");
-    }
-
-    #[test]
-    fn parses_message_attachments() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"message","messageId":"msg-1","agent":"codex","attachments":[{"uri":"file:///tmp/report.md","name":"report.md","mimeType":"text/markdown","size":42}]}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            input:
-                ChannelInput::Message {
-                    envelope:
-                        ChannelEnvelope {
-                            message_id,
-                            attachments,
-                            ..
-                        },
-                },
-            session_mode: None,
-            ..
-        } = input
-        else {
-            panic!("expected attachment message");
-        };
-
-        assert_eq!(message_id, "msg-1");
-        assert_eq!(attachments.len(), 1);
-        assert_eq!(attachments[0].message_id, "msg-1");
-        assert_eq!(attachments[0].file_key, "file:///tmp/report.md");
-        assert_eq!(attachments[0].file_name, "report.md");
-        assert_eq!(attachments[0].resource_type, "text/markdown");
-        assert_eq!(attachments[0].size, Some(42));
-    }
-
-    #[test]
-    fn dedupes_message_attachments() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"message","messageId":"msg-1","attachments":[{"uri":"file:///tmp/logo.png","name":"Logo.png","mimeType":"image/png","size":42},{"uri":"file:///tmp/logo.png","name":"Logo.png","mimeType":"image/png","size":42}]}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            input:
-                ChannelInput::Message {
-                    envelope: ChannelEnvelope { attachments, .. },
-                },
-            ..
-        } = input
-        else {
-            panic!("expected attachment message");
-        };
-
-        assert_eq!(attachments.len(), 1);
-        assert_eq!(attachments[0].file_key, "file:///tmp/logo.png");
-    }
-
-    #[test]
-    fn rejects_unsafe_relative_attachment_keys() {
-        let input = parse_web_chat_input(
-            "chat-1",
-            r#"{"type":"message","messageId":"msg-1","text":"see file","attachments":[{"fileKey":"../secret","name":"secret.txt"}]}"#,
-        )
-        .expect("message input");
-
-        let WebChatInput::Message {
-            input:
-                ChannelInput::Message {
-                    envelope: ChannelEnvelope { attachments, .. },
-                },
-            ..
-        } = input
-        else {
-            panic!("expected attachment message");
-        };
-
-        assert!(attachments.is_empty());
     }
 }

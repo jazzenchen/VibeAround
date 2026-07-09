@@ -92,6 +92,7 @@ fn add_with_deps(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn visit(
     id: &str,
     by_id: &HashMap<&str, &StartkitItem>,

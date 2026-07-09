@@ -39,7 +39,7 @@ pub fn resolve_agent_launch_command(agent: &str, command: &str) -> anyhow::Resul
                 format!("configured executable for agent '{}' is invalid", agent)
             })?;
             if executable_matches_program(&configured, &program) {
-                return Ok(replace_first_command_word(command, &configured)?);
+                return replace_first_command_word(command, &configured);
             }
         }
     }
@@ -48,7 +48,7 @@ pub fn resolve_agent_launch_command(agent: &str, command: &str) -> anyhow::Resul
         if command_uses_agent_executable {
             write_scanned_agent_executable(agent, &scanned)?;
         }
-        return Ok(replace_first_command_word(command, &scanned)?);
+        return replace_first_command_word(command, &scanned);
     }
 
     bail!("agent executable '{}' was not found in PATH", program)
