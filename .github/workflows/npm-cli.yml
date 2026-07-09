@@ -26,7 +26,6 @@ jobs:
       - name: Checkout release source
         uses: actions/checkout@v6
         with:
-          ref: main
           submodules: recursive
 
       - name: Resolve CLI version
@@ -110,4 +109,16 @@ jobs:
       - name: Publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish npm-dist/vibearound-cli-*.tgz --access public
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is not configured" >&2
+            exit 1
+          fi
+          tarball="$(find npm-dist -type f -name 'vibearound-cli-*.tgz' | sort | head -1)"
+          if [ -z "${tarball}" ]; then
+            echo "npm tarball not found under npm-dist" >&2
+            find npm-dist -maxdepth 3 -type f -print >&2
+            exit 1
+          fi
+          npm publish "${tarball}" --access public

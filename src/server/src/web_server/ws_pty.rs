@@ -15,7 +15,7 @@ use futures_util::stream::StreamExt;
 use futures_util::SinkExt;
 use std::io::Write;
 
-use common::pty::{PtySessionManager, SessionId};
+use common::pty::{CircularBuffer, PtySessionManager, SessionId};
 
 use super::{AppState, WsQuery};
 
@@ -63,6 +63,7 @@ async fn handle_socket_attach(
     let writer = handles.writer;
     let resize_tx = handles.resize_tx;
     let (mut ws_tx, mut ws_rx) = socket.split();
+    let mut live_rx = live_tx.subscribe();
     let dump = buffer.dump();
     if !dump.is_empty() {
         let _ = ws_tx.send(Message::Binary(Bytes::from(dump))).await;
@@ -74,10 +75,9 @@ async fn handle_socket_attach(
     if let Some(json) = state_json {
         let _ = ws_tx.send(Message::Text(json.into())).await;
     }
-    let mut live_rx = live_tx.subscribe();
 
     let live_to_ws = async {
-        while let Ok(bytes) = live_rx.recv().await {
+        while let Some(bytes) = recv_live_frame(&mut live_rx, &buffer, session_id).await {
             if ws_tx.send(Message::Binary(bytes)).await.is_err() {
                 break;
             }
@@ -121,5 +121,50 @@ async fn handle_socket_attach(
     tokio::select! {
         _ = live_to_ws => {}
         _ = ws_to_pty => {}
+    }
+}
+
+async fn recv_live_frame(
+    live_rx: &mut tokio::sync::broadcast::Receiver<Bytes>,
+    buffer: &CircularBuffer,
+    session_id: SessionId,
+) -> Option<Bytes> {
+    loop {
+        match live_rx.recv().await {
+            Ok(bytes) => return Some(bytes),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    skipped,
+                    "pty websocket lagged; replaying scrollback"
+                );
+                let dump = buffer.dump();
+                if !dump.is_empty() {
+                    return Some(Bytes::from(dump));
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn recv_live_frame_replays_scrollback_after_lag() {
+        let buffer = CircularBuffer::new();
+        buffer.push(b"one");
+        buffer.push(b"two");
+        let (tx, mut rx) = tokio::sync::broadcast::channel(1);
+        tx.send(Bytes::from_static(b"one")).unwrap();
+        tx.send(Bytes::from_static(b"two")).unwrap();
+
+        let frame = recv_live_frame(&mut rx, &buffer, SessionId::new())
+            .await
+            .unwrap();
+
+        assert_eq!(&frame[..], b"onetwo");
     }
 }

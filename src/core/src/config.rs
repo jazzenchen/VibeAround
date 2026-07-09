@@ -218,18 +218,18 @@ pub struct AgentIntegrationsConfig {
     pub skill_auto_install: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ApiBridgeConfig {
     pub retry_429: Retry429Config,
     pub replace_provider_web_search: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalAgentApiConfig {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SearchToolConfig {
     pub stdio_path: Option<PathBuf>,
     pub max_results: Option<usize>,
@@ -248,7 +248,7 @@ pub struct RemoteChannelDefaults {
     pub profile_id: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SearchSourceConfig {
     pub enabled: bool,
     pub api_key: Option<String>,
@@ -268,43 +268,6 @@ impl Default for AgentIntegrationsConfig {
         Self {
             mcp_auto_install: true,
             skill_auto_install: true,
-        }
-    }
-}
-
-impl Default for ApiBridgeConfig {
-    fn default() -> Self {
-        Self {
-            retry_429: Retry429Config::default(),
-            replace_provider_web_search: false,
-        }
-    }
-}
-
-impl Default for LocalAgentApiConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
-}
-
-impl Default for SearchToolConfig {
-    fn default() -> Self {
-        Self {
-            stdio_path: None,
-            max_results: None,
-            search_context_size: None,
-            sources: BTreeMap::new(),
-        }
-    }
-}
-
-impl Default for SearchSourceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_key: None,
-            api_key_env: None,
-            base_url: None,
         }
     }
 }
@@ -937,7 +900,8 @@ fn remove_workspace_from_settings_root(root: &mut serde_json::Value, path: &Path
         removed |= arr.len() != before_len;
     }
 
-    for key in ["working_dir"] {
+    {
+        let key = "working_dir";
         let should_remove = obj
             .get(key)
             .and_then(|value| value.as_str())

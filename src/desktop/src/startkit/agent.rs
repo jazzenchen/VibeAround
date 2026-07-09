@@ -5,7 +5,7 @@ use crate::agent_detection;
 
 use super::{
     base_report, is_managed_mode, StartkitChoices, StartkitItem, StartkitItemReport,
-    StartkitItemStatus,
+    StartkitItemStatus, StartkitProgress,
 };
 
 pub(in crate::startkit) async fn execute_agent_cli_item(
@@ -13,7 +13,7 @@ pub(in crate::startkit) async fn execute_agent_cli_item(
     agent_id: &str,
     choices: &StartkitChoices,
     cancelled: Option<&Arc<AtomicBool>>,
-    progress: Option<&(dyn Fn(&StartkitItem, StartkitItemStatus, Option<String>) + Sync)>,
+    progress: StartkitProgress<'_>,
 ) -> anyhow::Result<StartkitItemReport> {
     let before = scan_agent_cli_item(item, agent_id, choices).await;
     if !before.status.needs_install() {

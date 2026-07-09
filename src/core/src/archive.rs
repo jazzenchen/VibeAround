@@ -123,7 +123,7 @@ fn extract_zip_strip_root(bytes: &[u8], target_dir: &Path) -> anyhow::Result<()>
     let mut archive = zip::ZipArchive::new(reader).context("reading zip archive")?;
     for index in 0..archive.len() {
         let mut file = archive.by_index(index).context("reading zip entry")?;
-        let Some(enclosed) = file.enclosed_name().map(PathBuf::from) else {
+        let Some(enclosed) = file.enclosed_name() else {
             continue;
         };
         let Some(relative) = relative_after_archive_root(&enclosed) else {

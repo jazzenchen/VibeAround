@@ -118,6 +118,17 @@ impl WebChannelManager {
         }
     }
 
+    pub fn forget_route(&self, route_chat_id: &str) {
+        self.route_history.write().remove(route_chat_id);
+        self.route_agents.write().remove(route_chat_id);
+        if let Some(session_key) = self.route_sessions.write().remove(route_chat_id) {
+            self.session_routes.write().remove(&session_key);
+        }
+        self.clear_route_pending_permissions(route_chat_id);
+        self.clear_route_pending_user_messages(route_chat_id);
+        self.route_activity.write().remove(route_chat_id);
+    }
+
     pub fn set_route_agent(&self, route_chat_id: &str, agent_id: String) {
         self.route_agents
             .write()
@@ -574,6 +585,43 @@ mod tests {
             ChannelOutput::SessionReady { .. }
         ));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn forget_route_drops_replay_and_session_state() {
+        let manager = WebChannelManager::new();
+        let route = RouteKey::new("web", "chat-1");
+        manager.set_route_agent("chat-1", "codex".to_string());
+        manager.mark_route_active(&route);
+        manager.dispatch_output(ChannelOutput::SessionReady {
+            route: route.clone(),
+            session_id: "sid-1".to_string(),
+        });
+        manager.dispatch_output(ChannelOutput::SystemText {
+            route: route.clone(),
+            text: "hello".to_string(),
+            reply_to: None,
+        });
+
+        let (tx, mut replay_rx) = manager.sender();
+        manager.register_connection(&route, "conn-1".to_string(), tx, true);
+        assert!(matches!(
+            replay_rx.try_recv().expect("replayed session ready"),
+            ChannelOutput::SessionReady { .. }
+        ));
+        assert!(matches!(
+            replay_rx.try_recv().expect("replayed system text"),
+            ChannelOutput::SystemText { .. }
+        ));
+
+        manager.forget_route(&route.chat_id);
+        assert!(!manager.route_has_session(&route.chat_id));
+        assert_eq!(manager.route_for_session("codex", "sid-1"), None);
+        assert!(!manager.route_is_active(&route.chat_id));
+
+        let (tx, mut replay_rx) = manager.sender();
+        manager.register_connection(&route, "conn-2".to_string(), tx, true);
+        assert!(replay_rx.try_recv().is_err());
     }
 }
 

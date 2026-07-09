@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use common::agent_state;
-use common::profiles::schema::{ApiTypeOverrides, ProviderSettings};
+use common::profiles::schema::{ApiTypeOverrides, ProfileApiConfig, ProviderSettings};
 use common::profiles::{catalog, normalize_legacy_profile_and_persist, schema};
 use common::{config, profiles::AuthMode};
 use serde::Deserialize;
@@ -18,6 +18,8 @@ pub struct ProfileDraft {
     pub credentials: BTreeMap<String, String>,
     #[serde(default)]
     pub overrides: BTreeMap<String, ApiTypeOverrides>,
+    #[serde(default)]
+    pub api_configs: BTreeMap<String, ProfileApiConfig>,
     #[serde(default)]
     pub use_settings_proxy: bool,
     #[serde(default)]
@@ -36,6 +38,7 @@ impl ProfileDraft {
             api_types: self.api_types,
             credentials: self.credentials,
             overrides: self.overrides,
+            api_configs: self.api_configs,
             use_settings_proxy: self.use_settings_proxy,
             provider_settings: self.provider_settings,
             connections: self.connections,

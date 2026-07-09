@@ -141,12 +141,14 @@ async fn handle_local_agent_request(
     }
 }
 
+pub(super) type LaunchArgsAndEnv = (Vec<String>, Vec<(String, String)>);
+
 pub(super) fn launch_args_and_env(
     agent_id: &str,
     profile_id: &str,
     workspace: &StdPath,
     route: &common::routing::RouteKey,
-) -> Result<(Vec<String>, Vec<(String, String)>), String> {
+) -> Result<LaunchArgsAndEnv, String> {
     let profile_id = common::agent::launch::normalize_launch_profile_id(Some(profile_id));
     let mut env_vars = vec![
         (

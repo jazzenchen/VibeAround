@@ -615,10 +615,7 @@ fn command_activity_field(update: &Value) -> Option<String> {
         }
     }
     for container_key in ["rawInput", "raw_input", "input", "arguments", "params"] {
-        if let Some(text) = update
-            .get(container_key)
-            .and_then(|container| command_detail_field_any(container))
-        {
+        if let Some(text) = update.get(container_key).and_then(command_detail_field_any) {
             return Some(text);
         }
         if let Some(text) = update

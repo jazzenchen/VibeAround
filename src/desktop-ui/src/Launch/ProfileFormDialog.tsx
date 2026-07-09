@@ -36,11 +36,13 @@ import {
   selectedEndpointGroup,
   selectedEndpoint,
   stripEmpty,
+  syncApiConfigsForProvider,
 } from "./profileFormHelpers";
 import type {
   ApiTypeOverrides,
   AuthMode,
   CatalogEntry,
+  ProfileApiConfig,
   ProfileDef,
   ProfileDraft,
   ProviderSettings,
@@ -89,7 +91,7 @@ export function ProfileFormDialog({
   );
   const [label, setLabel] = useState(initial?.label ?? "");
   const [selectedApiTypes, setSelectedApiTypes] = useState<string[]>(
-    Array.from(new Set((initial?.api_types ?? []).filter(isProviderApiKind))),
+    initialSelectedApiTypes(initial),
   );
   const [authMode, setAuthMode] = useState<AuthMode>(
     initial?.auth_mode ?? "api_key",
@@ -99,6 +101,9 @@ export function ProfileFormDialog({
   );
   const [overrides, setOverrides] = useState<Record<string, ApiTypeOverrides>>(
     initial?.overrides ?? {},
+  );
+  const [apiConfigs, setApiConfigs] = useState<Record<string, ProfileApiConfig>>(
+    initial?.api_configs ?? {},
   );
   const [useSettingsProxy, setUseSettingsProxy] = useState(
     !!initial?.use_settings_proxy,
@@ -112,11 +117,20 @@ export function ProfileFormDialog({
 
   useEffect(() => {
     if (!provider || editing) return;
+    if (provider.id === "custom") {
+      setSelectedApiTypes([]);
+      setOverrides({});
+      setApiConfigs(syncApiConfigsForProvider(provider, [], {}, {}));
+      setAuthMode(defaultAuthMode(provider, [], {}));
+      setProviderSettings({});
+      return;
+    }
     const apiKindEndpoints = defaultApiKindEndpoints(provider);
     const apiTypes = apiKindEndpoints.map((e) => e.api_type);
     const nextOverrides = overridesForEndpoints(apiKindEndpoints);
     setSelectedApiTypes(apiTypes);
     setOverrides(nextOverrides);
+    setApiConfigs(syncApiConfigsForProvider(provider, apiTypes, nextOverrides, {}));
     setAuthMode(defaultAuthMode(provider, apiTypes, nextOverrides));
     setProviderSettings(
       provider.id === "deepseek"
@@ -139,6 +153,9 @@ export function ProfileFormDialog({
     const apiKinds = endpoints.map((e) => e.api_type);
     setSelectedApiTypes((current) =>
       arraysEqual(current, apiKinds) ? current : apiKinds,
+    );
+    setApiConfigs((current) =>
+      syncApiConfigsForProvider(provider, apiKinds, overrides, current),
     );
     setAuthMode((current) =>
       defaultAuthMode(provider, apiKinds, overrides, current),
@@ -170,6 +187,13 @@ export function ProfileFormDialog({
       ),
     );
 
+    const nextApiConfigs = syncApiConfigsForProvider(
+      selectedProvider,
+      selectedApiTypes,
+      overrides,
+      apiConfigs,
+    );
+
     return {
       label: formLabel,
       provider: selectedProvider.id,
@@ -177,9 +201,23 @@ export function ProfileFormDialog({
       api_types: selectedApiTypes,
       credentials: stripEmpty(selectedCredentials),
       overrides: pruneOverrides(overrides, selectedApiTypes, selectedProvider),
+      api_configs: nextApiConfigs,
       use_settings_proxy: useSettingsProxy,
       provider_settings: pruneProviderSettings(selectedProvider.id, providerSettings),
     };
+  }
+
+  function selectedProfileModel(apiType: string): string {
+    const overrideModel = overrides[apiType]?.model?.trim();
+    if (overrideModel) return overrideModel;
+    const config = apiConfigs[apiType];
+    const configModel = config?.model?.trim();
+    if (configModel) return configModel;
+    return (
+      config?.models
+        ?.find((model) => model.enabled !== false)
+        ?.id.trim() ?? ""
+    );
   }
 
   function validateProfileDraft({
@@ -212,7 +250,7 @@ export function ProfileFormDialog({
       const ep = selectedEndpoint(provider, apiType, overrides);
       if (!ep) continue;
       const ov = overrides[apiType];
-      if (requiresProfileModel(provider, ep) && !ov?.model?.trim()) {
+      if (requiresProfileModel(provider, ep) && !selectedProfileModel(apiType)) {
         return { error: t("Model is required for {{apiType}}", { apiType }) };
       }
       if (ep.default_base_url) continue;
@@ -263,16 +301,25 @@ export function ProfileFormDialog({
       return { ok: false, message: result.error };
     }
 
+    const testOverrides = {
+      ...result.draft.overrides,
+      [apiType]: {
+        ...(result.draft.overrides[apiType] ?? {}),
+        model,
+      },
+    };
     const testDraft: ProfileDraft = {
       ...result.draft,
       api_types: [apiType],
-      overrides: {
-        ...result.draft.overrides,
-        [apiType]: {
-          ...(result.draft.overrides[apiType] ?? {}),
-          model,
-        },
-      },
+      overrides: testOverrides,
+      api_configs: provider
+        ? syncApiConfigsForProvider(
+            provider,
+            [apiType],
+            testOverrides,
+            result.draft.api_configs ?? {},
+          )
+        : result.draft.api_configs,
     };
 
     try {
@@ -323,6 +370,8 @@ export function ProfileFormDialog({
               setCredentials={setCredentials}
               overrides={overrides}
               setOverrides={setOverrides}
+              apiConfigs={apiConfigs}
+              setApiConfigs={setApiConfigs}
               useSettingsProxy={useSettingsProxy}
               setUseSettingsProxy={setUseSettingsProxy}
               providerSettings={providerSettings}
@@ -384,4 +433,16 @@ export function ProfileFormDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function initialSelectedApiTypes(initial: ProfileDef | null | undefined): string[] {
+  if (!initial) return [];
+  const configs = initial.api_configs ?? {};
+  const configEntries = Object.entries(configs);
+  if (configEntries.length > 0) {
+    return configEntries
+      .filter(([apiType, config]) => isProviderApiKind(apiType) && !!config.enabled)
+      .map(([apiType]) => apiType);
+  }
+  return Array.from(new Set((initial.api_types ?? []).filter(isProviderApiKind)));
 }

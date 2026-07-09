@@ -128,6 +128,10 @@ impl RouteAttachmentProjection {
     pub fn len(&self) -> usize {
         self.current.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.current.is_empty()
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,6 +1,9 @@
 use common::agent_state;
 use common::profiles::catalog::ContentCapabilities;
-use common::profiles::{catalog, connections, schema::ProfileDef};
+use common::profiles::{
+    catalog, connections,
+    schema::{self, ProfileDef},
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct BridgeModelMapping {
@@ -104,12 +107,46 @@ fn route_scope_agent_ids() -> &'static [(&'static str, &'static str)] {
 
 fn canonical_model(profile: &ProfileDef, target_api_type: &str, model: &str) -> Option<String> {
     let provider = catalog::get(&profile.provider)?;
-    let endpoint_id = profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| overrides.endpoint_id.as_deref());
-    let endpoint = catalog::find_endpoint(provider, target_api_type, endpoint_id)?;
+    if let Some(model_id) = schema::api_config_for(profile, provider, target_api_type)
+        .filter(|config| config.enabled)
+        .and_then(|config| canonical_api_config_model_id(&config.models, model))
+    {
+        return Some(model_id);
+    }
+    let endpoint_id = schema::api_config_for(profile, provider, target_api_type)
+        .and_then(|config| config.endpoint_id)
+        .or_else(|| {
+            profile
+                .overrides
+                .get(target_api_type)
+                .and_then(|overrides| overrides.endpoint_id.clone())
+        });
+    let endpoint = catalog::find_endpoint(provider, target_api_type, endpoint_id.as_deref())?;
     catalog::canonical_model_id(endpoint, model)
+}
+
+fn canonical_api_config_model_id(
+    models: &[schema::ProfileModelConfig],
+    model_id: &str,
+) -> Option<String> {
+    let model_id = model_id.trim();
+    if model_id.is_empty() {
+        return None;
+    }
+    if let Some(base_model) = catalog::strip_bracket_suffix(model_id) {
+        if let Some(model) = models
+            .iter()
+            .filter(|model| model.enabled)
+            .find(|model| model.id == base_model)
+        {
+            return Some(model.id.clone());
+        }
+    }
+    models
+        .iter()
+        .filter(|model| model.enabled)
+        .find(|model| model.id == model_id)
+        .map(|model| model.id.clone())
 }
 
 fn agent_model_matches(configured: &str, requested: &str) -> bool {
@@ -215,6 +252,7 @@ mod tests {
             )]
             .into_iter()
             .collect(),
+            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -245,6 +283,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -280,6 +319,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -340,6 +380,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -385,6 +426,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),

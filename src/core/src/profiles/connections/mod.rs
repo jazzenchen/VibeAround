@@ -50,6 +50,7 @@ pub fn sanitize_profile_connection_preference(
     if supported.is_empty() {
         return Err(format!("unsupported connection target: '{}'", agent_id));
     }
+    let enabled_api_types = schema::enabled_api_types(profile);
     let selected_api_type = preference
         .selected_api_type
         .as_deref()
@@ -81,7 +82,7 @@ pub fn sanitize_profile_connection_preference(
             .filter(|value| !value.is_empty());
         let target_api_type = if bridge_preference.enabled {
             let target_api_type = target_api_type.or_else(|| {
-                recommended_bridge_target(&profile.api_types, agent_id, &client_api_type)
+                recommended_bridge_target(&enabled_api_types, agent_id, &client_api_type)
             });
             let target_api_type = target_api_type.ok_or_else(|| {
                 format!(
@@ -172,8 +173,9 @@ pub fn resolve_profile_agent_route_with_connections(
     let bridge_preference =
         preference.and_then(|preference| preference.bridge.get(&client_api_type));
     if let Some(bridge_preference) = bridge_preference.filter(|bridge| bridge.enabled) {
+        let enabled_api_types = schema::enabled_api_types(profile);
         let target_api_type = bridge_preference.target_api_type.clone().or_else(|| {
-            recommended_bridge_target(&profile.api_types, agent_id, &client_api_type)
+            recommended_bridge_target(&enabled_api_types, agent_id, &client_api_type)
         })?;
         if validate_bridge_target(profile, &target_api_type).is_ok() {
             let bridge_models =
@@ -188,8 +190,7 @@ pub fn resolve_profile_agent_route_with_connections(
         }
     }
 
-    if profile
-        .api_types
+    if schema::enabled_api_types(profile)
         .iter()
         .any(|api_type| api_type == &client_api_type)
     {
@@ -262,7 +263,14 @@ pub fn bridge_model_routes(
             catalog::ContentCapabilities::default(),
         ));
     }
-    if let Some(endpoint) = endpoint_for(profile, target_api_type) {
+    if let Some(models) =
+        api_config_models(profile, target_api_type).filter(|models| !models.is_empty())
+    {
+        routes.extend(models.into_iter().filter_map(|model| {
+            clean_optional_string(Some(model.id.as_str()))
+                .map(|id| model_route(profile, target_api_type, id, None, model.capabilities))
+        }));
+    } else if let Some(endpoint) = endpoint_for(profile, target_api_type) {
         routes.extend(endpoint.models.iter().filter_map(|model| {
             clean_optional_string(Some(model.id.as_str())).map(|id| {
                 model_route(
@@ -343,15 +351,16 @@ fn model_route(
 }
 
 fn dedupe_model_routes(routes: Vec<ProfileBridgeModelRoute>) -> Vec<ProfileBridgeModelRoute> {
-    let mut out = Vec::new();
+    let mut out: Vec<ProfileBridgeModelRoute> = Vec::new();
     for route in routes {
         if route.upstream_model.is_empty() || route.agent_model.is_empty() {
             continue;
         }
-        if out
-            .iter()
-            .any(|existing: &ProfileBridgeModelRoute| existing.agent_model == route.agent_model)
+        if let Some(existing) = out
+            .iter_mut()
+            .find(|existing| existing.agent_model == route.agent_model)
         {
+            existing.capabilities = existing.capabilities.merge(&route.capabilities);
             continue;
         }
         out.push(route);
@@ -360,10 +369,22 @@ fn dedupe_model_routes(routes: Vec<ProfileBridgeModelRoute>) -> Vec<ProfileBridg
 }
 
 fn default_model(profile: &ProfileDef, target_api_type: &str) -> Option<String> {
-    profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| clean_optional_string(overrides.model.as_deref()))
+    api_config_for(profile, target_api_type)
+        .and_then(|config| {
+            clean_optional_string(config.model.as_deref()).or_else(|| {
+                config
+                    .models
+                    .iter()
+                    .filter(|model| model.enabled)
+                    .find_map(|model| clean_optional_string(Some(model.id.as_str())))
+            })
+        })
+        .or_else(|| {
+            profile
+                .overrides
+                .get(target_api_type)
+                .and_then(|overrides| clean_optional_string(overrides.model.as_deref()))
+        })
         .or_else(|| {
             endpoint_for(profile, target_api_type)?
                 .models
@@ -373,6 +394,11 @@ fn default_model(profile: &ProfileDef, target_api_type: &str) -> Option<String> 
 }
 
 fn canonical_model(profile: &ProfileDef, target_api_type: &str, model: &str) -> Option<String> {
+    if let Some(model_id) = api_config_models(profile, target_api_type)
+        .and_then(|models| canonical_api_config_model_id(&models, model))
+    {
+        return Some(model_id);
+    }
     let endpoint = endpoint_for(profile, target_api_type)?;
     catalog::canonical_model_id(endpoint, model)
 }
@@ -382,11 +408,51 @@ fn endpoint_for<'a>(
     target_api_type: &str,
 ) -> Option<&'a catalog::EndpointDef> {
     let provider = catalog::get(&profile.provider)?;
-    let endpoint_id = profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| overrides.endpoint_id.as_deref());
-    catalog::find_endpoint(provider, target_api_type, endpoint_id)
+    let endpoint_id = api_config_for(profile, target_api_type)
+        .and_then(|config| config.endpoint_id)
+        .or_else(|| {
+            profile
+                .overrides
+                .get(target_api_type)
+                .and_then(|overrides| overrides.endpoint_id.clone())
+        });
+    catalog::find_endpoint(provider, target_api_type, endpoint_id.as_deref())
+}
+
+fn api_config_for(profile: &ProfileDef, target_api_type: &str) -> Option<schema::ProfileApiConfig> {
+    let provider = catalog::get(&profile.provider)?;
+    schema::api_config_for(profile, provider, target_api_type).filter(|config| config.enabled)
+}
+
+fn api_config_models(
+    profile: &ProfileDef,
+    target_api_type: &str,
+) -> Option<Vec<schema::ProfileModelConfig>> {
+    let models: Vec<_> = api_config_for(profile, target_api_type)?
+        .models
+        .into_iter()
+        .filter(|model| model.enabled)
+        .collect();
+    Some(models)
+}
+
+fn canonical_api_config_model_id(
+    models: &[schema::ProfileModelConfig],
+    model_id: &str,
+) -> Option<String> {
+    let model_id = model_id.trim();
+    if model_id.is_empty() {
+        return None;
+    }
+    if let Some(base_model) = catalog::strip_bracket_suffix(model_id) {
+        if let Some(model) = models.iter().find(|model| model.id == base_model) {
+            return Some(model.id.clone());
+        }
+    }
+    models
+        .iter()
+        .find(|model| model.id == model_id)
+        .map(|model| model.id.clone())
 }
 
 fn clean_optional_string(value: Option<&str>) -> Option<String> {
@@ -438,8 +504,8 @@ fn client_route_available(
     preference: Option<&agent_state::ProfileConnectionPreference>,
     client_api_type: &str,
 ) -> bool {
-    if profile
-        .api_types
+    let enabled_api_types = schema::enabled_api_types(profile);
+    if enabled_api_types
         .iter()
         .any(|api_type| api_type == client_api_type)
     {
@@ -456,7 +522,7 @@ fn client_route_available(
     let Some(target_api_type) = bridge_preference
         .target_api_type
         .clone()
-        .or_else(|| recommended_bridge_target(&profile.api_types, agent_id, client_api_type))
+        .or_else(|| recommended_bridge_target(&enabled_api_types, agent_id, client_api_type))
     else {
         return false;
     };
@@ -496,8 +562,7 @@ fn recommended_bridge_target(
 }
 
 fn validate_bridge_target(profile: &ProfileDef, target_api_type: &str) -> Result<(), String> {
-    if !profile
-        .api_types
+    if !schema::enabled_api_types(profile)
         .iter()
         .any(|api_type| api_type == target_api_type)
     {
@@ -537,9 +602,10 @@ fn agent_client_api_types(agent_id: &str) -> &'static [&'static str] {
 }
 
 fn recommended_client_api_type(profile: &ProfileDef, agent_id: &str) -> Option<&'static str> {
+    let enabled_api_types = schema::enabled_api_types(profile);
     agent_client_api_types(agent_id)
         .iter()
-        .find(|api_type| profile.api_types.iter().any(|value| value == *api_type))
+        .find(|api_type| enabled_api_types.iter().any(|value| value == *api_type))
         .copied()
         .or_else(|| agent_client_api_types(agent_id).first().copied())
 }

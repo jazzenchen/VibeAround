@@ -3,7 +3,10 @@ import type {
   AuthMode,
   AuthModeDef,
   CatalogEntry,
+  ContentCapabilities,
   FieldDef,
+  ProfileApiConfig,
+  ProfileModelConfig,
   ProviderSettings,
 } from "./types";
 import { apiTypeLabel, apiTypeShort, isProviderApiKind } from "./types";
@@ -230,6 +233,103 @@ export function overridesForEndpoints(
     );
   }
   return next;
+}
+
+export function apiConfigForEndpoint(
+  endpoint: CatalogEntry["endpoints"][number],
+  current: ProfileApiConfig | undefined,
+  override: ApiTypeOverrides | undefined,
+): ProfileApiConfig {
+  const currentWithoutHeaders = current ? { ...current, headers: [] } : undefined;
+  const selectedModel =
+    cleanString(override?.model) ??
+    cleanString(current?.model) ??
+    endpoint.models[0]?.id ??
+    "";
+  const capabilities = override?.capabilities ?? current?.capabilities ?? undefined;
+  return {
+    ...currentWithoutHeaders,
+    enabled: current?.enabled ?? true,
+    endpoint_id: endpointId(endpoint),
+    base_url:
+      override?.base_url ?? current?.base_url ?? endpoint.default_base_url ?? undefined,
+    append_v1_path: current?.append_v1_path ?? endpoint.append_v1_path ?? true,
+    model: selectedModel || undefined,
+    reasoning_effort: override?.reasoning_effort ?? current?.reasoning_effort ?? undefined,
+    capabilities,
+    headers: [],
+    models: current?.models?.length
+      ? current.models
+      : defaultModelConfigs(endpoint, selectedModel, capabilities),
+  };
+}
+
+export function syncApiConfigsForProvider(
+  provider: CatalogEntry,
+  selectedApiTypes: string[],
+  overrides: Record<string, ApiTypeOverrides>,
+  current: Record<string, ProfileApiConfig> = {},
+): Record<string, ProfileApiConfig> {
+  const selected = new Set(selectedApiTypes);
+  const out: Record<string, ProfileApiConfig> = {};
+  for (const endpoint of providerApiKindEndpoints(provider)) {
+    const apiType = endpoint.api_type;
+    const selectedEndpointForType = selectedEndpoint(provider, apiType, overrides) ?? endpoint;
+    const existing = current[apiType];
+    if (!selected.has(apiType) && !existing) continue;
+    out[apiType] = {
+      ...apiConfigForEndpoint(
+        selectedEndpointForType,
+        existing,
+        overrides[apiType],
+      ),
+      enabled: selected.has(apiType),
+    };
+  }
+  return out;
+}
+
+function defaultModelConfigs(
+  endpoint: CatalogEntry["endpoints"][number],
+  selectedModel: string,
+  capabilities: ContentCapabilities | undefined,
+): ProfileModelConfig[] {
+  const models: ProfileModelConfig[] = endpoint.models.map((model) => ({
+    id: model.id,
+    label: model.label ?? undefined,
+    enabled: true,
+    context_window: model.context_window ?? undefined,
+    capabilities: model.capabilities ?? {},
+    custom: false,
+  }));
+  const model = selectedModel.trim();
+  if (model && !models.some((item) => catalogModelMatches(endpoint, item.id, model))) {
+    models.unshift({
+      id: model,
+      enabled: true,
+      capabilities: capabilities ?? {},
+      custom: true,
+    });
+  }
+  return models;
+}
+
+function catalogModelMatches(
+  endpoint: CatalogEntry["endpoints"][number],
+  modelId: string,
+  requested: string,
+): boolean {
+  const catalogModel = endpoint.models.find((model) => model.id === modelId);
+  if (!catalogModel) return modelId === requested;
+  return (
+    catalogModel.id === requested ||
+    (catalogModel.aliases ?? []).some((alias) => alias.trim() === requested)
+  );
+}
+
+function cleanString(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 export function endpointsForApiType(

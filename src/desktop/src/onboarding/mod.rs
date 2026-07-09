@@ -213,9 +213,9 @@ pub async fn scan_agent_install_status(
     settings: Value,
     choices: StartkitChoices,
 ) -> Result<Vec<StartkitItemReport>, String> {
-    Ok(agent_cli_reports(&settings, &choices, &choices.agents)
+    agent_cli_reports(&settings, &choices, &choices.agents)
         .await
-        .map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())
 }
 
 async fn agent_cli_reports(

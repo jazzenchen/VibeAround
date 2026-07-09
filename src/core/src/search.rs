@@ -468,7 +468,7 @@ fn installed_search_tool_launch_info() -> Option<SearchToolLaunchInfo> {
 fn dev_search_tool_launch_info() -> Option<SearchToolLaunchInfo> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let script = manifest_dir.join("../../../va-search-tool/dist/main.js");
-    script.exists().then(|| SearchToolLaunchInfo {
+    script.exists().then_some(SearchToolLaunchInfo {
         source: SearchToolLaunchSource::DevCheckout,
         path: script,
     })

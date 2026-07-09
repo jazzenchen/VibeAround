@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::{sleep, Duration};
 
 use crate::agent::{Agent, AgentClientHandler, StartupSession};
-use crate::routing::RouteKey;
+use crate::routing::{channel_traits, RouteKey};
 use crate::workspace::registry::WorkspaceId;
 
 use super::store::{
@@ -567,6 +567,7 @@ impl ThreadRuntime {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_subagent_prompt_task(
         self: &Arc<Self>,
         thread_agent: ThreadAgent,
@@ -593,6 +594,7 @@ impl ThreadRuntime {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_subagent_prompt_with_retries(
         self: Arc<Self>,
         thread_agent: ThreadAgent,
@@ -1206,7 +1208,7 @@ fn host_startup_session(
 }
 
 pub(crate) fn route_allows_startup_replay(route: &RouteKey) -> bool {
-    matches!(route.channel_kind.as_str(), "web" | "tui")
+    channel_traits(&route.channel_kind).startup_replay
 }
 
 fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
@@ -1231,15 +1233,9 @@ fn aggregate_turn_status(
         .iter()
         .filter_map(|agent_id| agents.get(agent_id).map(|agent| agent.status))
         .collect();
-    if statuses
-        .iter()
-        .any(|status| *status == ThreadAgentStatus::Error)
-    {
+    if statuses.contains(&ThreadAgentStatus::Error) {
         ThreadAgentStatus::Error
-    } else if statuses
-        .iter()
-        .any(|status| *status == ThreadAgentStatus::Running)
-    {
+    } else if statuses.contains(&ThreadAgentStatus::Running) {
         ThreadAgentStatus::Running
     } else if !statuses.is_empty()
         && statuses

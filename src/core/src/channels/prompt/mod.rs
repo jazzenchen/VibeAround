@@ -47,10 +47,7 @@ pub async fn handle_channel_input(
             handle_prompt_input(workspace_threads, plugin_host, envelope, action_value).await;
         }
         ChannelInput::Stop { route } => {
-            let runtime = workspace_threads.resolve_route_runtime(&route).await;
-            if let Ok(runtime) = runtime {
-                let _ = runtime.cancel().await;
-            }
+            let _ = workspace_threads.cancel_route(&route).await;
         }
         ChannelInput::Close { route, reason } => {
             let _ = workspace_threads.close_route(&route, reason).await;

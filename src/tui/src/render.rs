@@ -873,7 +873,7 @@ fn input_block(horizontal_padding: u16) -> Block<'static> {
 }
 
 fn input_horizontal_padding(width: u16) -> u16 {
-    if width >= INPUT_HORIZONTAL_PADDING.saturating_mul(2) + 1 {
+    if width > INPUT_HORIZONTAL_PADDING.saturating_mul(2) {
         INPUT_HORIZONTAL_PADDING
     } else {
         0

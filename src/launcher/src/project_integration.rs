@@ -1,9 +1,14 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
+
+const HEALTH_PROBE_ATTEMPTS: usize = 3;
+const HEALTH_PROBE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
+const HEALTH_PROBE_TOTAL_BUDGET: Duration = Duration::from_millis(750);
+const HEALTH_PROBE_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 pub fn install_for_launch(agent_id: &str, workspace: &Path) -> anyhow::Result<()> {
     let integration_agent_id = project_integration_agent_id(agent_id);
@@ -12,6 +17,9 @@ pub fn install_for_launch(agent_id: &str, workspace: &Path) -> anyhow::Result<()
             .with_context(|| format!("install project integrations for {}", integration_agent_id));
     }
 
+    eprintln!(
+        "va-launch: daemon did not respond to the health probe; removing stale project integrations for {integration_agent_id}"
+    );
     common::agent::uninstall_project_integrations(
         integration_agent_id,
         workspace,
@@ -44,8 +52,31 @@ fn server_is_running() -> bool {
 }
 
 fn server_is_running_on_port(port: u16) -> bool {
+    let deadline = Instant::now() + HEALTH_PROBE_TOTAL_BUDGET;
+    for attempt in 0..HEALTH_PROBE_ATTEMPTS {
+        let Some(timeout) = remaining_probe_timeout(deadline) else {
+            return false;
+        };
+        if probe_server_health_once(port, timeout) {
+            return true;
+        }
+        if attempt + 1 < HEALTH_PROBE_ATTEMPTS {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return false;
+            };
+            std::thread::sleep(std::cmp::min(HEALTH_PROBE_RETRY_DELAY, remaining));
+        }
+    }
+    false
+}
+
+fn remaining_probe_timeout(deadline: Instant) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    Some(std::cmp::min(HEALTH_PROBE_ATTEMPT_TIMEOUT, remaining))
+}
+
+fn probe_server_health_once(port: u16, timeout: Duration) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let timeout = Duration::from_millis(250);
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, timeout) else {
         return false;
     };
@@ -165,6 +196,30 @@ mod tests {
 
         assert!(!server_is_running_on_port(port));
         handle.join().expect("fake server thread");
+    }
+
+    #[test]
+    fn health_probe_retries_transient_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind retry health server");
+        let port = listener.local_addr().expect("local addr").port();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept first probe");
+            let mut buffer = [0u8; 1024];
+            let _ = stream.read(&mut buffer);
+            drop(stream);
+
+            let (mut stream, _) = listener.accept().expect("accept second probe");
+            let mut buffer = [0u8; 1024];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 58\r\n\r\n{\"ok\":true,\"service\":\"vibearound-server\",\"version\":\"test\"}",
+                )
+                .expect("write health response");
+        });
+
+        assert!(server_is_running_on_port(port));
+        handle.join().expect("retry health server thread");
     }
 
     fn temp_dir() -> PathBuf {

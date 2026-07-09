@@ -518,6 +518,7 @@ mod tests {
             api_types: api_types.iter().map(|value| (*value).to_string()).collect(),
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),

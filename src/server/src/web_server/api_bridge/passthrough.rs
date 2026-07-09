@@ -79,10 +79,9 @@ fn passthrough_stream(
                     record.error(&format!("upstream passthrough stream error: {error}"));
                 }
                 Some((
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("upstream passthrough stream error: {error}"),
-                    )),
+                    Err(io::Error::other(format!(
+                        "upstream passthrough stream error: {error}"
+                    ))),
                     state,
                 ))
             }

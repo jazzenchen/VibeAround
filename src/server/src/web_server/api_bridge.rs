@@ -7,6 +7,7 @@ use common::profiles::headers::merged_upstream_headers;
 use common::profiles::schema::ProfileDef;
 use common::profiles::{catalog, connections};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use va_ai_api_bridge::{
     DeepSeekBridgeSettings, ProviderBridgeAdapter, ProviderBridgeAdapterConfig, UniversalRequest,
     UniversalResponse,
@@ -54,6 +55,7 @@ use upstream::{
 use super::bridge_recording::{ActiveBridgeRecord, BridgeRecordMetadata};
 use super::AppState;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn bridge_handler(
     state: AppState,
     profile_id: String,
@@ -674,6 +676,7 @@ async fn translated_web_search_fallback_response(
     )
 }
 
+#[allow(clippy::result_large_err)]
 fn encode_fallback_upstream_request(
     upstream: &upstream::UpstreamEndpoint,
     client_protocol: BridgeProtocol,
@@ -832,6 +835,7 @@ fn retry_context(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bridge_record_metadata(
     profile_id: &str,
     route_scope: Option<&String>,
@@ -871,6 +875,7 @@ fn upstream_http_client(state: &AppState, profile: &ProfileDef) -> Result<reqwes
     proxy_http_client(&cfg.proxy)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_upstream_request(
     state: &AppState,
     upstream: &upstream::UpstreamEndpoint,
@@ -882,10 +887,13 @@ async fn build_upstream_request(
     record: Option<&ActiveBridgeRecord>,
     record_metadata: BridgeRecordMetadata,
 ) -> Result<reqwest::RequestBuilder, Response> {
-    let upstream_headers = match merged_upstream_headers(
-        &upstream.headers,
-        bridge_preference.map(|preference| &preference.headers),
-    ) {
+    let bridge_headers = bridge_preference
+        .map(|preference| render_bridge_headers(&preference.headers, &upstream.profile));
+    let bridge_managed_auth = bridge_headers
+        .as_ref()
+        .is_some_and(|headers| has_auth_header(headers));
+    let upstream_headers = match merged_upstream_headers(&upstream.headers, bridge_headers.as_ref())
+    {
         Ok(headers) => headers,
         Err(error) => {
             return Err(record_json_error(
@@ -950,9 +958,43 @@ async fn build_upstream_request(
         request,
         upstream.protocol,
         upstream.auth_header,
+        upstream.managed_auth || bridge_managed_auth,
         headers,
         manual_profile_api_key,
     )
+}
+
+fn render_bridge_headers(
+    headers: &BTreeMap<String, String>,
+    profile: &ProfileDef,
+) -> BTreeMap<String, String> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.clone(),
+                render_profile_secret_placeholders(value, profile),
+            )
+        })
+        .collect()
+}
+
+fn render_profile_secret_placeholders(value: &str, profile: &ProfileDef) -> String {
+    let api_key = profile
+        .credentials
+        .get("api_key")
+        .map(String::as_str)
+        .unwrap_or_default();
+    value.replace("$apiKey", api_key)
+}
+
+fn has_auth_header(headers: &BTreeMap<String, String>) -> bool {
+    headers.keys().any(|name| {
+        let name = name.trim();
+        name.eq_ignore_ascii_case("authorization")
+            || name.eq_ignore_ascii_case("x-api-key")
+            || name.eq_ignore_ascii_case("x-goog-api-key")
+    })
 }
 
 fn resolve_upstream_route(
@@ -1169,6 +1211,29 @@ fn validate_manual_scope(scope: &str) -> Result<(), (StatusCode, String)> {
     Ok(())
 }
 
+fn validate_local_bridge_client(state: &AppState, headers: &HeaderMap) -> Option<Response> {
+    validate_local_bridge_client_token(&state.auth_token, headers)
+}
+
+fn validate_local_bridge_client_token(
+    auth_token: &common::auth::AuthToken,
+    headers: &HeaderMap,
+) -> Option<Response> {
+    let Some(candidate) = upstream::inbound_api_key(headers) else {
+        return Some(json_error(
+            StatusCode::UNAUTHORIZED,
+            "missing local API bridge client key",
+        ));
+    };
+    if auth_token.matches(&candidate) {
+        return None;
+    }
+    Some(json_error(
+        StatusCode::UNAUTHORIZED,
+        "invalid local API bridge client key",
+    ))
+}
+
 fn apply_wire_model(request: &mut Value, model: &str) {
     if let Some(object) = request.as_object_mut() {
         if object.contains_key("__va_model") {
@@ -1221,9 +1286,17 @@ fn json_error_body(message: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use common::config::HttpProxyConfig;
+    use std::collections::BTreeMap;
 
-    use super::{client_api_type_from_scope, proxy_http_client, validate_manual_scope};
+    use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+    use common::auth::AuthToken;
+    use common::config::HttpProxyConfig;
+    use common::profiles::schema::{AuthMode, ProfileDef};
+
+    use super::{
+        client_api_type_from_scope, has_auth_header, proxy_http_client, render_bridge_headers,
+        validate_local_bridge_client_token, validate_manual_scope,
+    };
 
     #[test]
     fn accepts_manual_bridge_scope() {
@@ -1251,6 +1324,48 @@ mod tests {
     }
 
     #[test]
+    fn local_bridge_client_key_is_required() {
+        let token = AuthToken::generate();
+        let response = validate_local_bridge_client_token(&token, &HeaderMap::new()).unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn local_bridge_client_key_must_match_daemon_token() {
+        let token = AuthToken::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", HeaderValue::from_static("wrong-key"));
+        let response = validate_local_bridge_client_token(&token, &headers).unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn local_bridge_accepts_bearer_daemon_token() {
+        let token = AuthToken::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", token.as_str())).unwrap(),
+        );
+
+        assert!(validate_local_bridge_client_token(&token, &headers).is_none());
+    }
+
+    #[test]
+    fn local_bridge_accepts_google_api_key_header() {
+        let token = AuthToken::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-goog-api-key",
+            HeaderValue::from_str(token.as_str()).unwrap(),
+        );
+
+        assert!(validate_local_bridge_client_token(&token, &headers).is_none());
+    }
+
+    #[test]
     fn proxy_client_requires_configured_proxy_url() {
         let error = proxy_http_client(&HttpProxyConfig::default()).unwrap_err();
 
@@ -1265,5 +1380,42 @@ mod tests {
             no_proxy: Some("localhost,127.0.0.1".to_string()),
         })
         .expect("proxy client builds");
+    }
+
+    #[test]
+    fn bridge_headers_render_profile_secret_placeholders() {
+        let mut credentials = BTreeMap::new();
+        credentials.insert("api_key".to_string(), "key-123".to_string());
+        let profile = ProfileDef {
+            id: "custom-test".to_string(),
+            label: "Custom Test".to_string(),
+            provider: "custom".to_string(),
+            auth_mode: AuthMode::ApiKey,
+            api_types: vec!["anthropic".to_string()],
+            credentials,
+            overrides: BTreeMap::new(),
+            api_configs: BTreeMap::new(),
+            use_settings_proxy: false,
+            provider_settings: Default::default(),
+            connections: BTreeMap::new(),
+        };
+        let headers = [
+            ("Authorization".to_string(), "Bearer $apiKey".to_string()),
+            ("X-Api-Key".to_string(), "$apiKey".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let rendered = render_bridge_headers(&headers, &profile);
+
+        assert_eq!(
+            rendered.get("Authorization").map(String::as_str),
+            Some("Bearer key-123")
+        );
+        assert_eq!(
+            rendered.get("X-Api-Key").map(String::as_str),
+            Some("key-123")
+        );
+        assert!(has_auth_header(&rendered));
     }
 }

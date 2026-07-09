@@ -7,6 +7,7 @@
 //! profiles.
 
 mod bridge_launch;
+pub mod bridge_url;
 pub mod catalog;
 pub mod codex_metadata;
 pub mod connections;
@@ -243,6 +244,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides,
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
@@ -271,6 +273,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
@@ -303,6 +306,7 @@ mod tests {
             api_types: vec!["anthropic".to_string()],
             credentials: BTreeMap::new(),
             overrides,
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
@@ -341,6 +345,7 @@ mod tests {
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
             overrides,
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
@@ -367,6 +372,7 @@ mod tests {
             api_types: vec!["gemini".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),

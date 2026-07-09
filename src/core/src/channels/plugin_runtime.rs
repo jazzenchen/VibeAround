@@ -3,8 +3,8 @@
 //!
 //! - [`StdioPluginRuntime`] — a real `node` subprocess speaking ACP over
 //!   stdio (feishu, slack, telegram, discord, …). `send_output` enqueues
-//!   onto a `mpsc::UnboundedSender<ChannelOutput>`; the ACP serialization
-//!   happens inside the bridge thread.
+//!   onto the bridge channel; the ACP serialization happens inside the bridge
+//!   thread.
 //! - [`WebSocketPluginRuntime`] — the in-process web dashboard channel.
 //!   `send_output` pushes directly to the WS connection, no ACP involved.
 //!
@@ -29,8 +29,16 @@ pub enum PluginRuntime {
 
 impl PluginRuntime {
     pub fn send_output_now(&self, output: ChannelOutput) -> Result<(), String> {
+        self.send_output_with_outbox_id_now(None, output)
+    }
+
+    pub fn send_output_with_outbox_id_now(
+        &self,
+        output_id: Option<String>,
+        output: ChannelOutput,
+    ) -> Result<(), String> {
         match self {
-            Self::Stdio(runtime) => runtime.send_output_now(output),
+            Self::Stdio(runtime) => runtime.send_queued_output_now(output_id, output),
             Self::WebSocket(runtime) => runtime.send_output_now(output),
         }
     }

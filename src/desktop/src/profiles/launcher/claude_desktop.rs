@@ -127,12 +127,11 @@ fn claude_bridge_model_routes(
     route: &connections::ProfileAgentRoute,
     target_api_type: &str,
 ) -> Vec<connections::ProfileBridgeModelRoute> {
-    let routes = if route.bridge_models.is_empty() {
+    if route.bridge_models.is_empty() {
         connections::bridge_model_routes(profile, None, target_api_type)
     } else {
         route.bridge_models.clone()
-    };
-    routes
+    }
 }
 
 fn upsert_claude_bridge_agent_model_preference(
@@ -548,10 +547,10 @@ fn claude_3p_user_data_dir() -> PathBuf {
 
     #[cfg(target_os = "macos")]
     {
-        return config::home_dir()
+        config::home_dir()
             .join("Library")
             .join("Application Support")
-            .join("Claude-3p");
+            .join("Claude-3p")
     }
     #[cfg(target_os = "windows")]
     {
@@ -652,6 +651,7 @@ mod tests {
             api_types: vec!["anthropic".to_string()],
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),

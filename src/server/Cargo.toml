@@ -1,6 +1,6 @@
 [package]
 name = "server"
-version = "0.7.12"
+version = "0.7.13"
 description = "VibeAround HTTP/WebSocket server: SPA, /ws, /ws/chat, /mcp"
 edition = "2021"
 rust-version = "1.82"
@@ -11,21 +11,21 @@ path = "src/main.rs"
 
 [dependencies]
 common = { path = "../core" }
-va-ai-api-bridge = { git = "https://github.com/jazzenchen/va-ai-api-bridge", rev = "8bad207b6459505ccb2fd3794b5e18fad03cc8cc" }
+va-ai-api-bridge = "0.1.7"
 axum = { version = "0.8", features = ["json", "ws", "tokio"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
-tokio = { version = "1.49", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 bytes = "1.9"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-uuid = { version = "1.11", features = ["v4", "serde"] }
-dashmap = "6.0"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+dashmap = { workspace = true }
+reqwest = { workspace = true, features = ["rustls-tls", "stream"] }
 chrono = "0.4"
-agent-client-protocol = { version = "=0.15.0", features = ["unstable_end_turn_token_usage"] }
+agent-client-protocol = { workspace = true }
 async-trait = "0.1"
-anyhow = "1"
+anyhow = { workspace = true }
 tracing = "0.1"
 
 [target.'cfg(windows)'.dependencies]

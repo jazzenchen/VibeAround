@@ -7,7 +7,7 @@ use tauri::{AppHandle, Runtime};
 
 use super::{
     base_report, current_platform, emit_progress, portable_toolchain_enabled, Manifest,
-    StartkitChoices, StartkitItem, StartkitItemReport, StartkitItemStatus,
+    StartkitChoices, StartkitItem, StartkitItemReport, StartkitItemStatus, StartkitProgress,
 };
 
 pub(in crate::startkit) async fn execute_managed_toolchain_item(
@@ -15,7 +15,7 @@ pub(in crate::startkit) async fn execute_managed_toolchain_item(
     item: &StartkitItem,
     choices: &StartkitChoices,
     cancelled: Option<&Arc<AtomicBool>>,
-    progress: Option<&(dyn Fn(&StartkitItem, StartkitItemStatus, Option<String>) + Sync)>,
+    progress: StartkitProgress<'_>,
 ) -> anyhow::Result<Option<StartkitItemReport>> {
     if !portable_toolchain_enabled(choices) {
         return Ok(None);

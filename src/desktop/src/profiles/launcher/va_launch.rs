@@ -288,6 +288,7 @@ mod tests {
             api_types: vec!["openai_responses".to_string()],
             credentials: Default::default(),
             overrides: Default::default(),
+            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
@@ -536,6 +537,10 @@ mod tests {
     fn read_to_string_eventually(path: &std::path::Path) -> String {
         for _ in 0..50 {
             if let Ok(body) = std::fs::read_to_string(path) {
+                if body.trim().is_empty() {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    continue;
+                }
                 return body;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
