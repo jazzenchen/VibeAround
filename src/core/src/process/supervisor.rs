@@ -188,8 +188,8 @@ impl Supervisor {
         if let Some(generation) = generation {
             self.stop_generation(&proc, generation).await;
         }
-        self.finish_stop(&proc);
         self.deregister_terminal_process(&proc);
+        self.finish_stop(&proc);
         Ok(())
     }
 
