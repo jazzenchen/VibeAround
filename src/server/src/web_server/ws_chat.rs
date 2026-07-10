@@ -1,6 +1,6 @@
 //! WebSocket handler for web chat channel.
 //!
-//! - GET /ws/chat — ACP-native websocket adapter
+//! - GET /va/ws/chat — ACP-native websocket adapter
 //!
 //! Inbound user messages are dispatched to workspace threads via the channel-input
 //! task (fire-and-forget through ChannelManager). ACP events flow back
@@ -257,7 +257,7 @@ async fn handle_chat_socket(
                                 );
                             }
                             if dispatch_input {
-                                state.channel_hub.handle_input(input);
+                                enqueue_channel_input(&state.channel_hub, input);
                             }
                         }
                         WebChatInput::SetMode { mode_id } => {
@@ -293,11 +293,11 @@ async fn handle_chat_socket(
                                 &active_route,
                             )
                             .await;
-                            // Stop must enter the same route lane as prompts.
-                            // A direct runtime cancel can land after session
-                            // creation but before agent.prompt starts, letting
-                            // the queued prompt run despite the user's stop.
-                            state.channel_hub.process_input(input).await;
+                            // Message and Stop share this upstream FIFO before
+                            // ingress. Sending Stop directly to ingress could
+                            // overtake a message still waiting in input_rx and
+                            // cancel an empty route before that message runs.
+                            enqueue_channel_input(&state.channel_hub, input);
                             let deadline = state.web_channel.mark_route_idle(&active_route);
                             state.web_channel.schedule_idle_close(
                                 state.channel_hub.workspace_thread_manager(),
@@ -428,6 +428,10 @@ async fn handle_chat_socket(
             .await;
         state.web_channel.forget_route(&active_route.chat_id);
     }
+}
+
+fn enqueue_channel_input(channel_hub: &common::channels::ChannelManager, input: ChannelInput) {
+    channel_hub.handle_input(input);
 }
 
 async fn abort_direct_resume_task(
@@ -1024,6 +1028,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::channels::ChannelManager;
+    use common::workspace::WorkspaceThreadManager;
 
     fn web_client() -> ChatSocketClient {
         ChatSocketClient::from_query(None).expect("web client")
@@ -1071,5 +1077,44 @@ mod tests {
             canonical_web_session_mode("bypass-permissions"),
             Some("bypassPermissions"),
         );
+    }
+
+    #[test]
+    fn message_and_stop_share_the_same_upstream_fifo() {
+        let base = std::env::temp_dir().join(format!(
+            "vibearound-ws-input-order-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let workspace_threads = WorkspaceThreadManager::with_paths(
+            base.join("workspaces.jsonl"),
+            base.join("threads.jsonl"),
+            base.join("attachments.jsonl"),
+        );
+        let channel_hub = ChannelManager::new(workspace_threads);
+        let mut input_rx = channel_hub.take_input_rx().unwrap();
+        let route = RouteKey::new("web", "ordered-stop");
+
+        enqueue_channel_input(
+            &channel_hub,
+            ChannelInput::Message {
+                envelope: ChannelEnvelope {
+                    route: route.clone(),
+                    message_id: "ordered-message".to_string(),
+                    turn_id: None,
+                    text: "hello".to_string(),
+                    sender_id: "web-user".to_string(),
+                    attachments: Vec::new(),
+                    parent_id: None,
+                    cli_kind: None,
+                },
+            },
+        );
+        enqueue_channel_input(&channel_hub, ChannelInput::Stop { route });
+
+        assert!(matches!(
+            input_rx.try_recv(),
+            Ok(ChannelInput::Message { .. })
+        ));
+        assert!(matches!(input_rx.try_recv(), Ok(ChannelInput::Stop { .. })));
     }
 }
