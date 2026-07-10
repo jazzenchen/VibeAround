@@ -24,7 +24,7 @@ enum LaneCommand {
         content_blocks: Vec<acp::ContentBlock>,
         reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
     },
-    Dispatch(ChannelInput),
+    Dispatch(Box<ChannelInput>),
     #[cfg(test)]
     Probe {
         work: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
@@ -175,9 +175,9 @@ impl ConversationIngress {
             .expect("non-log channel input must carry a route")
             .clone();
         if let Err(LaneCommand::Dispatch(rejected)) =
-            self.enqueue(route.clone(), LaneCommand::Dispatch(input))
+            self.enqueue(route.clone(), LaneCommand::Dispatch(Box::new(input)))
         {
-            self.reject_full_lane(&route, rejected).await;
+            self.reject_full_lane(&route, *rejected).await;
         }
     }
 
@@ -294,12 +294,12 @@ impl ConversationIngress {
                 tokio::select! {
                     biased;
                     _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
-                        self.reject_stopped(route, input.clone()).await;
+                        self.reject_stopped(route, (*input).clone()).await;
                     }
                     _ = wait_for_shutdown(shutdown_rx) => {
-                        self.reject_stopped(route, input.clone()).await;
+                        self.reject_stopped(route, (*input).clone()).await;
                     }
-                    _ = self.dispatch_ordered(input.clone()) => {}
+                    _ = self.dispatch_ordered((*input).clone()) => {}
                 }
             }
             #[cfg(test)]
