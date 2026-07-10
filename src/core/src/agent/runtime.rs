@@ -70,6 +70,32 @@ pub struct AgentReady {
     pub initialize: schema::InitializeResponse,
 }
 
+/// Shared liveness token for one ACP process/connection generation.
+///
+/// The bridge owns one clone and marks it stopped when its IO future exits or
+/// is cancelled. The workspace runtime consults the same token before reusing
+/// an [`Agent`], so a dead connection cannot remain the active host forever.
+#[derive(Clone)]
+pub(crate) struct AcpSessionGeneration {
+    live: Arc<AtomicBool>,
+}
+
+impl AcpSessionGeneration {
+    pub(crate) fn running() -> Self {
+        Self {
+            live: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub(crate) fn is_live(&self) -> bool {
+        self.live.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn mark_stopped(&self) {
+        self.live.store(false, Ordering::Release);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupSession {
     Fresh,
@@ -108,6 +134,7 @@ pub struct Agent {
     /// ACP session ID obtained from new_session / load_session.
     session_id: Mutex<Option<String>>,
     suppress_startup_notifications: Arc<AtomicBool>,
+    generation: AcpSessionGeneration,
     /// Supervisor handle installed by [`Agent::spawn`] after registration.
     /// `None` until the registration returns — effectively
     /// a moment-of-initialization gap where `shutdown()` is a no-op.
@@ -215,6 +242,7 @@ impl Agent {
             initialize,
             session_id: Mutex::new(startup_session_id),
             suppress_startup_notifications,
+            generation: AcpSessionGeneration::running(),
             process_id: OnceLock::new(),
         })
     }
@@ -231,11 +259,21 @@ impl Agent {
         self.session_id.lock().await.clone()
     }
 
+    /// Whether this handle still belongs to the live ACP bridge generation.
+    pub(crate) fn is_live(&self) -> bool {
+        self.generation.is_live()
+    }
+
+    pub(crate) fn generation(&self) -> AcpSessionGeneration {
+        self.generation.clone()
+    }
+
     /// Signal the supervisor to stop the agent process. No-op if the
     /// supervisor registration hasn't completed yet (extremely short
     /// window during `spawn`).
     pub async fn shutdown(&self) {
         tracing::info!("[{}-agent] shutdown signaled", self.agent_id);
+        self.generation.mark_stopped();
         if let Some(id) = self.process_id.get() {
             if let Err(e) = Supervisor::global().force_stop(*id).await {
                 tracing::info!(
@@ -245,6 +283,21 @@ impl Agent {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::AcpSessionGeneration;
+
+    #[test]
+    fn session_generation_liveness_is_shared_across_owners() {
+        let agent_generation = AcpSessionGeneration::running();
+        let bridge_generation = agent_generation.clone();
+
+        assert!(agent_generation.is_live());
+        bridge_generation.mark_stopped();
+        assert!(!agent_generation.is_live());
     }
 }
 
