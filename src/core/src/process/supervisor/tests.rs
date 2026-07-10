@@ -1,0 +1,687 @@
+use super::*;
+use crate::process::bridge::{BridgeExit, CancelSignal, ProcessBridge, StdioPipes};
+#[cfg(unix)]
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// Bridge that waits for the cancel signal, then returns `Cancelled`.
+/// Drains stdout in the background so the child's pipe doesn't fill.
+struct WaitForCancelBridge;
+
+impl ProcessBridge for WaitForCancelBridge {
+    fn run(
+        self: Box<Self>,
+        mut pipes: StdioPipes,
+        mut cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move {
+            // Drain stdout to keep `cat` happy.
+            let drain = tokio::spawn(async move {
+                let mut buf = [0u8; 256];
+                loop {
+                    match pipes.stdout.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                }
+            });
+            // Kick one byte in so `cat` has something to echo; not essential.
+            let _ = pipes.stdin.write_all(b".\n").await;
+            let _ = cancel.wait_for(|v| *v).await;
+            drop(pipes.stdin);
+            let _ = drain.await;
+            BridgeExit::Cancelled
+        })
+    }
+}
+
+/// Bridge that immediately returns `ProtocolError` — used to exercise
+/// the crash path without waiting for a real child to die.
+struct InstantErrorBridge;
+
+impl ProcessBridge for InstantErrorBridge {
+    fn run(
+        self: Box<Self>,
+        _pipes: StdioPipes,
+        _cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move { BridgeExit::ProtocolError(anyhow::anyhow!("synthetic failure")) })
+    }
+}
+
+/// Bridge that immediately returns `Clean`.
+struct InstantCleanBridge;
+
+impl ProcessBridge for InstantCleanBridge {
+    fn run(
+        self: Box<Self>,
+        _pipes: StdioPipes,
+        _cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move { BridgeExit::Clean })
+    }
+}
+
+#[cfg(unix)]
+struct CapturePidThenCleanBridge {
+    pid: Arc<AtomicU32>,
+}
+
+#[cfg(unix)]
+impl ProcessBridge for CapturePidThenCleanBridge {
+    fn run(
+        self: Box<Self>,
+        pipes: StdioPipes,
+        _cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move {
+            use tokio::io::AsyncBufReadExt;
+
+            let mut line = String::new();
+            let mut stdout = tokio::io::BufReader::new(pipes.stdout);
+            stdout.read_line(&mut line).await.unwrap();
+            self.pid
+                .store(line.trim().parse().unwrap(), Ordering::Release);
+            BridgeExit::Clean
+        })
+    }
+}
+
+async fn wait_for_status(sup: &Arc<Supervisor>, id: ProcessId, target: ProcessStatus) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let snap = sup.snapshot();
+        if let Some(p) = snap.iter().find(|p| p.id == id) {
+            if p.status == target {
+                return;
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            let snap = sup.snapshot();
+            panic!(
+                "timeout waiting for {:?}, got: {:?}",
+                target,
+                snap.iter().find(|p| p.id == id).map(|p| p.status)
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Wait until `id` disappears from the snapshot — i.e. auto-deregistered
+/// because it hit a terminal state under `RestartPolicy::Never`.
+async fn wait_for_absent(sup: &Arc<Supervisor>, id: ProcessId) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if !sup.snapshot().iter().any(|p| p.id == id) {
+            return;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("timeout waiting for process {} to be deregistered", id);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+fn cat_spec() -> SpawnSpec {
+    SpawnSpec::new("cat")
+}
+
+async fn wait_for_count(counter: &AtomicUsize, target: usize) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while counter.load(Ordering::Acquire) < target {
+        if std::time::Instant::now() > deadline {
+            panic!(
+                "timeout waiting for factory count {}, got {}",
+                target,
+                counter.load(Ordering::Acquire)
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+fn insert_process_with_status(
+    sup: &Arc<Supervisor>,
+    id: ProcessId,
+    status: ProcessStatus,
+    factory: BridgeFactory,
+) -> Arc<SupervisedProcess> {
+    let proc = Arc::new(SupervisedProcess {
+        id,
+        kind: ProcessKind::ChannelPlugin,
+        label: format!("test-{}", status.as_str()),
+        spec: cat_spec(),
+        policy: RestartPolicy::OnCrash {
+            restart_delay: Duration::from_secs(30),
+            watchdog: None,
+        },
+        factory,
+        status: AtomicU8::new(status as u8),
+        intent: AtomicU8::new(TransitionIntent::Stop as u8),
+        reason: RwLock::new(String::new()),
+        last_heartbeat_ts: AtomicU64::new(now_secs()),
+        next_spawn_at: AtomicU64::new(now_secs() + 30),
+        cancel_tx: RwLock::new(None),
+        current_registry_id: parking_lot::Mutex::new(None),
+        transition_lock: parking_lot::Mutex::new(()),
+        spawn_task: parking_lot::Mutex::new(None),
+    });
+    sup.processes.write().insert(id, Arc::clone(&proc));
+    proc
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn register_runs_then_force_stop() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "test-echo",
+        cat_spec(),
+        RestartPolicy::Never,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+    sup.force_stop(id).await.unwrap();
+    // Never + Stopped auto-deregisters, so the snapshot entry vanishes.
+    wait_for_absent(&sup, id).await;
+    assert_eq!(registry.len(), 0, "force_stop must reap before returning");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unregister_removes_restartable_process() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "restartable-remove",
+        cat_spec(),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::from_secs(30),
+            watchdog: None,
+        },
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+    sup.unregister(id).await.unwrap();
+
+    wait_for_absent(&sup, id).await;
+    assert_eq!(registry.len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn protocol_error_with_never_policy_deregisters() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+
+    // Subscribe BEFORE register so we capture the transient Stopped
+    // event (notify_change fires before auto-deregister).
+    let mut rx = sup.subscribe();
+
+    let id = sup.register(
+        ProcessKind::AcpAgent,
+        "test-fail",
+        cat_spec(),
+        RestartPolicy::Never,
+        Box::new(|| Box::new(InstantErrorBridge)),
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut saw_stopped = false;
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
+            Ok(Ok(ev)) if ev.id == id && ev.status == ProcessStatus::Stopped => {
+                saw_stopped = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_stopped, "should have observed Stopped event");
+
+    wait_for_absent(&sup, id).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn on_crash_policy_marks_process_crashed() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "test-crasher",
+        cat_spec(),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::from_secs(30),
+            watchdog: None,
+        },
+        Box::new(|| Box::new(InstantErrorBridge)),
+    );
+
+    wait_for_status(&sup, id, ProcessStatus::Crashed).await;
+    let snap = sup.snapshot();
+    let p = snap.iter().find(|p| p.id == id).unwrap();
+    assert_eq!(p.status, ProcessStatus::Crashed);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_stop_without_bridge_stops_and_clears_pending_spawn() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let counter = Arc::new(AtomicUsize::new(0));
+
+    for (raw_id, status) in [ProcessStatus::NotStarted, ProcessStatus::Spawning]
+        .into_iter()
+        .enumerate()
+    {
+        let count = Arc::clone(&counter);
+        let proc = insert_process_with_status(
+            &sup,
+            ProcessId(100 + raw_id as u64),
+            status,
+            Box::new(move || {
+                count.fetch_add(1, Ordering::Release);
+                Box::new(InstantCleanBridge)
+            }),
+        );
+        let staged_generation = if matches!(status, ProcessStatus::Spawning) {
+            Some(sup.spawn_child(&proc).await.unwrap())
+        } else {
+            None
+        };
+
+        sup.force_stop(proc.id).await.unwrap();
+
+        assert_eq!(proc.status(), ProcessStatus::Stopped);
+        assert_eq!(
+            TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
+            TransitionIntent::None
+        );
+        assert_eq!(proc.next_spawn_at.load(Ordering::Acquire), 0);
+        assert!(proc.current_registry_id.lock().is_none());
+        assert_eq!(registry.len(), 0);
+
+        // A pending immediate-spawn task or tick must not resurrect a
+        // process after force_stop won the transition.
+        sup.begin_spawn(Arc::clone(&proc)).await;
+        assert_eq!(counter.load(Ordering::Acquire), 0);
+        drop(staged_generation);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_stop_while_crashed_prevents_respawn_and_clears_intent() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+    let counter = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&counter);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "crashed-stop",
+        cat_spec(),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::from_secs(30),
+            watchdog: None,
+        },
+        Box::new(move || {
+            count.fetch_add(1, Ordering::Release);
+            Box::new(InstantErrorBridge)
+        }),
+    );
+
+    wait_for_status(&sup, id, ProcessStatus::Crashed).await;
+    sup.force_stop(id).await.unwrap();
+    wait_for_status(&sup, id, ProcessStatus::Stopped).await;
+
+    sup.tick().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(counter.load(Ordering::Acquire), 1);
+
+    // Starting it again must not leave the old Stop intent armed for the
+    // next natural bridge exit.
+    sup.force_start(id).unwrap();
+    sup.tick().await;
+    wait_for_count(&counter, 2).await;
+    wait_for_status(&sup, id, ProcessStatus::Crashed).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_restart_without_bridge_spawns_and_clears_stale_intent() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+
+    for (raw_id, status) in [ProcessStatus::Crashed, ProcessStatus::Stopped]
+        .into_iter()
+        .enumerate()
+    {
+        let proc = insert_process_with_status(
+            &sup,
+            ProcessId(200 + raw_id as u64),
+            status,
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        );
+
+        sup.force_restart(proc.id).await.unwrap();
+        wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
+        assert_eq!(
+            TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
+            TransitionIntent::None
+        );
+
+        sup.force_stop(proc.id).await.unwrap();
+        wait_for_status(&sup, proc.id, ProcessStatus::Stopped).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_restart_while_spawning_reaps_staged_generation() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let proc = insert_process_with_status(
+        &sup,
+        ProcessId(220),
+        ProcessStatus::Spawning,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+    let staged_generation = sup.spawn_child(&proc).await.unwrap();
+
+    sup.force_restart(proc.id).await.unwrap();
+
+    assert_eq!(proc.status(), ProcessStatus::Crashed);
+    assert_eq!(
+        TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
+        TransitionIntent::None
+    );
+    assert!(proc.next_spawn_at.load(Ordering::Acquire) <= now_secs());
+    assert!(proc.current_registry_id.lock().is_none());
+    assert_eq!(registry.len(), 0);
+    drop(staged_generation);
+
+    sup.tick().await;
+    wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
+    sup.force_stop(proc.id).await.unwrap();
+    wait_for_status(&sup, proc.id, ProcessStatus::Stopped).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_start_does_not_wait_for_tick() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+    let proc = insert_process_with_status(
+        &sup,
+        ProcessId(230),
+        ProcessStatus::Stopped,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+
+    sup.force_start(proc.id).unwrap();
+    wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
+
+    sup.force_stop(proc.id).await.unwrap();
+    wait_for_status(&sup, proc.id, ProcessStatus::Stopped).await;
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bridge_exit_terminates_live_child_before_reaping() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let pid = Arc::new(AtomicU32::new(0));
+    let captured_pid = Arc::clone(&pid);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "live-child-reap",
+        SpawnSpec::new("sh").args(["-c", "echo $$; exec sleep 60"]),
+        RestartPolicy::Never,
+        Box::new(move || {
+            Box::new(CapturePidThenCleanBridge {
+                pid: Arc::clone(&captured_pid),
+            })
+        }),
+    );
+
+    wait_for_absent(&sup, id).await;
+    let child_pid = pid.load(Ordering::Acquire);
+    assert_ne!(child_pid, 0, "bridge should capture the live child pid");
+    assert_eq!(registry.len(), 0);
+
+    use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+    let mut alive = true;
+    for _ in 0..50 {
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+        );
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        alive = sys.process(Pid::from_u32(child_pid)).is_some();
+        if !alive {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    if alive {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &child_pid.to_string()])
+            .status();
+    }
+    assert!(!alive, "bridge exit left child pid {child_pid} alive");
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bridge_exit_terminates_helper_process_group() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let helper_pid = Arc::new(AtomicU32::new(0));
+    let captured_pid = Arc::clone(&helper_pid);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "helper-tree-reap",
+        SpawnSpec::new("sh").args(["-c", "sleep 60 & echo $!; wait"]),
+        RestartPolicy::Never,
+        Box::new(move || {
+            Box::new(CapturePidThenCleanBridge {
+                pid: Arc::clone(&captured_pid),
+            })
+        }),
+    );
+
+    wait_for_absent(&sup, id).await;
+    let child_pid = helper_pid.load(Ordering::Acquire);
+    assert_ne!(child_pid, 0, "bridge should capture the helper pid");
+    assert_eq!(registry.len(), 0);
+
+    use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+    let mut alive = true;
+    for _ in 0..50 {
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+        );
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        alive = sys.process(Pid::from_u32(child_pid)).is_some();
+        if !alive {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    if alive {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &child_pid.to_string()])
+            .status();
+    }
+    assert!(!alive, "bridge exit left helper pid {child_pid} alive");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subscribe_receives_events() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+    let mut rx = sup.subscribe();
+
+    let id = sup.register(
+        ProcessKind::Tunnel,
+        "test-events",
+        cat_spec(),
+        RestartPolicy::Never,
+        Box::new(|| Box::new(InstantCleanBridge)),
+    );
+
+    // Expect at least one event where status == Stopped for this id.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut saw_stopped = false;
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
+            Ok(Ok(ev)) => {
+                if ev.id == id && ev.status == ProcessStatus::Stopped {
+                    saw_stopped = true;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_stopped, "should have observed Stopped event");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_all_drains_but_keeps_loop_alive() {
+    // Regression: `shutdown_all` used to take the tick-loop shutdown
+    // sender and exit the loop, so after a daemon restart no new
+    // OnCrash restarts or watchdog checks would ever fire. The fix
+    // keeps the loop alive for the process lifetime and only drains
+    // the process table.
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+    sup.spawn_tick_loop();
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "pre-shutdown",
+        cat_spec(),
+        RestartPolicy::Never,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+
+    sup.shutdown_all().await;
+    wait_for_absent(&sup, id).await;
+
+    // Post-shutdown register: the tick loop must still be alive to
+    // drive this new process to Running.
+    let id2 = sup.register(
+        ProcessKind::ChannelPlugin,
+        "post-shutdown",
+        cat_spec(),
+        RestartPolicy::Never,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+    wait_for_status(&sup, id2, ProcessStatus::Running).await;
+    sup.force_stop(id2).await.unwrap();
+    wait_for_absent(&sup, id2).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_all_joins_spawn_before_final_reap() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let proc = insert_process_with_status(
+        &sup,
+        ProcessId(240),
+        ProcessStatus::Spawning,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+    let release_spawn = Arc::new(tokio::sync::Barrier::new(2));
+    let release_from_task = Arc::clone(&release_spawn);
+    let sup_for_task = Arc::clone(&sup);
+    let proc_for_task = Arc::clone(&proc);
+    *proc.spawn_task.lock() = Some(tokio::spawn(async move {
+        release_from_task.wait().await;
+        let _staged_generation = sup_for_task.spawn_child(&proc_for_task).await.unwrap();
+    }));
+
+    let sup_for_shutdown = Arc::clone(&sup);
+    let shutdown = tokio::spawn(async move {
+        sup_for_shutdown.shutdown_all().await;
+    });
+    wait_for_absent(&sup, proc.id).await;
+
+    // Let the already-owned spawn attempt register its child only after
+    // shutdown has drained the public process table.
+    release_spawn.wait().await;
+    shutdown.await.unwrap();
+
+    assert_eq!(proc.status(), ProcessStatus::Stopped);
+    assert!(proc.current_registry_id.lock().is_none());
+    assert_eq!(registry.len(), 0, "shutdown returned with a late child");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bridge_exit_removes_from_registry() {
+    // Regression: the supervisor used to discard the registry_id
+    // returned by ChildRegistry::register on every spawn, leaving
+    // the entry and a zombie process behind on every respawn.
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+
+    let id = sup.register(
+        ProcessKind::AcpAgent,
+        "reap-test",
+        cat_spec(),
+        RestartPolicy::Never,
+        Box::new(|| Box::new(InstantCleanBridge)),
+    );
+
+    wait_for_absent(&sup, id).await;
+
+    // Registry must be empty — otherwise every respawn leaks a Child
+    // handle (and, on Unix, an unreaped zombie). The reap happens on
+    // a background task so give it a beat to settle.
+    for _ in 0..50 {
+        if registry.len() == 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!(
+        "registry leaked {} entries after Never-policy exit",
+        registry.len()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn factory_is_called_per_spawn() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    let c = Arc::clone(&counter);
+
+    // Factory increments a counter each time it's called.
+    let factory: BridgeFactory = Box::new(move || {
+        c.fetch_add(1, Ordering::Relaxed);
+        Box::new(InstantCleanBridge)
+    });
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "test-factory",
+        cat_spec(),
+        RestartPolicy::Never,
+        factory,
+    );
+
+    // Never + Clean-exit auto-deregisters; by the time the entry is
+    // gone, the factory has run exactly once.
+    wait_for_absent(&sup, id).await;
+    assert_eq!(counter.load(Ordering::Relaxed), 1);
+}
