@@ -415,31 +415,97 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Cancel the current bridge and force an immediate respawn. No-op if
-    /// policy is `Never` and the process is already stopped.
-    pub async fn force_restart(&self, id: ProcessId) -> ProcessResult<()> {
+    /// Cancel the current generation and schedule an immediate respawn.
+    /// No-op if policy is `Never` and the process is already stopped.
+    pub async fn force_restart(self: &Arc<Self>, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
-        proc.intent
-            .store(TransitionIntent::Restart as u8, Ordering::Release);
-        self.cancel_current_bridge(&proc);
+        let mut spawn_now = false;
+        let mut terminate_current_generation = false;
+        {
+            let _transition = proc.transition_lock.lock();
+            match proc.status() {
+                ProcessStatus::Running => {
+                    proc.intent
+                        .store(TransitionIntent::Restart as u8, Ordering::Release);
+                    terminate_current_generation = !self.cancel_current_bridge(&proc);
+                    proc.set_reason("restart requested");
+                }
+                ProcessStatus::Spawning => {
+                    // Supersede the staged generation. `begin_spawn` will
+                    // observe the changed status and reap any child it has
+                    // already created; the tick loop starts the replacement
+                    // only after that cleanup path has had a chance to run.
+                    proc.set_status(ProcessStatus::Crashed);
+                    proc.intent
+                        .store(TransitionIntent::None as u8, Ordering::Release);
+                    proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
+                    proc.set_reason("restart requested while spawning");
+                    self.cancel_current_bridge(&proc);
+                    terminate_current_generation = true;
+                }
+                ProcessStatus::Crashed | ProcessStatus::NotStarted => {
+                    proc.set_status(ProcessStatus::Crashed);
+                    proc.intent
+                        .store(TransitionIntent::None as u8, Ordering::Release);
+                    proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
+                    proc.set_reason("restart requested");
+                    spawn_now = true;
+                }
+                ProcessStatus::Stopped if matches!(proc.policy, RestartPolicy::OnCrash { .. }) => {
+                    proc.set_status(ProcessStatus::Crashed);
+                    proc.intent
+                        .store(TransitionIntent::None as u8, Ordering::Release);
+                    proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
+                    proc.set_reason("restart requested");
+                    spawn_now = true;
+                }
+                ProcessStatus::Stopped => {
+                    proc.intent
+                        .store(TransitionIntent::None as u8, Ordering::Release);
+                    proc.next_spawn_at.store(0, Ordering::Relaxed);
+                }
+            }
+        }
+
+        if terminate_current_generation {
+            self.terminate_and_reap_current_child(&proc).await;
+        }
+        self.notify_change(&proc);
+        if spawn_now {
+            let sup = Arc::clone(self);
+            tokio::spawn(async move {
+                sup.begin_spawn(proc).await;
+            });
+        }
         Ok(())
     }
 
     /// If the process is `Stopped` / `Crashed` / `NotStarted`, schedule an
     /// immediate respawn. Ignored in `Running` / `Spawning`.
-    pub fn force_start(&self, id: ProcessId) -> ProcessResult<()> {
+    pub fn force_start(self: &Arc<Self>, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
-        let _transition = proc.transition_lock.lock();
-        match proc.status() {
-            ProcessStatus::Stopped | ProcessStatus::Crashed | ProcessStatus::NotStarted => {
+        let should_spawn = {
+            let _transition = proc.transition_lock.lock();
+            if matches!(
+                proc.status(),
+                ProcessStatus::Stopped | ProcessStatus::Crashed | ProcessStatus::NotStarted
+            ) {
                 proc.intent
                     .store(TransitionIntent::None as u8, Ordering::Release);
                 proc.set_status(ProcessStatus::Crashed);
                 proc.set_reason("started by user");
                 proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
-                self.notify_change(&proc);
+                true
+            } else {
+                false
             }
-            _ => {}
+        };
+        if should_spawn {
+            self.notify_change(&proc);
+            let sup = Arc::clone(self);
+            tokio::spawn(async move {
+                sup.begin_spawn(proc).await;
+            });
         }
         Ok(())
     }
@@ -1292,6 +1358,82 @@ mod tests {
         sup.tick().await;
         wait_for_count(&counter, 2).await;
         wait_for_status(&sup, id, ProcessStatus::Crashed).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn force_restart_without_bridge_spawns_and_clears_stale_intent() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(registry);
+
+        for (raw_id, status) in [ProcessStatus::Crashed, ProcessStatus::Stopped]
+            .into_iter()
+            .enumerate()
+        {
+            let proc = insert_process_with_status(
+                &sup,
+                ProcessId(200 + raw_id as u64),
+                status,
+                Box::new(|| Box::new(WaitForCancelBridge)),
+            );
+
+            sup.force_restart(proc.id).await.unwrap();
+            wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
+            assert_eq!(
+                TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
+                TransitionIntent::None
+            );
+
+            sup.force_stop(proc.id).await.unwrap();
+            wait_for_status(&sup, proc.id, ProcessStatus::Stopped).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn force_restart_while_spawning_reaps_staged_generation() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(Arc::clone(&registry));
+        let proc = insert_process_with_status(
+            &sup,
+            ProcessId(220),
+            ProcessStatus::Spawning,
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        );
+        let staged_generation = sup.spawn_child(&proc).await.unwrap();
+
+        sup.force_restart(proc.id).await.unwrap();
+
+        assert_eq!(proc.status(), ProcessStatus::Crashed);
+        assert_eq!(
+            TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
+            TransitionIntent::None
+        );
+        assert!(proc.next_spawn_at.load(Ordering::Acquire) <= now_secs());
+        assert!(proc.current_registry_id.lock().is_none());
+        assert_eq!(registry.len(), 0);
+        drop(staged_generation);
+
+        sup.tick().await;
+        wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
+        sup.force_stop(proc.id).await.unwrap();
+        wait_for_status(&sup, proc.id, ProcessStatus::Stopped).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn force_start_does_not_wait_for_tick() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(registry);
+        let proc = insert_process_with_status(
+            &sup,
+            ProcessId(230),
+            ProcessStatus::Stopped,
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        );
+
+        sup.force_start(proc.id).unwrap();
+        wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
+
+        sup.force_stop(proc.id).await.unwrap();
+        wait_for_status(&sup, proc.id, ProcessStatus::Stopped).await;
     }
 
     #[cfg(unix)]
