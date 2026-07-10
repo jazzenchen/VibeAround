@@ -19,10 +19,9 @@
 //!   once instead of polling per-module monitors.
 //!
 //! The supervisor does NOT know anything about the protocol spoken over
-//! the stdio pipes — that is entirely the bridge's concern. It also does
-//! NOT take responsibility for SIGKILLing children on abrupt daemon
-//! shutdown — that is [`ChildRegistry::kill_all`]'s job. The supervisor
-//! only drives the happy-path cancel + drop sequence.
+//! the stdio pipes — that is entirely the bridge's concern. It does own
+//! direct-child termination and reaping for normal stop/restart/shutdown;
+//! [`ChildRegistry::kill_all`] remains the abrupt-runtime safety net.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
@@ -32,6 +31,7 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use tokio::process::Command;
 use tokio::sync::{broadcast, watch};
+use tokio::task::JoinHandle;
 
 use crate::proc_log;
 use crate::process::bridge::{BridgeExit, BridgeFactory, StdioPipes};
@@ -254,6 +254,11 @@ struct SupervisedProcess {
     /// intent / restart scheduling. Process I/O and child reaping happen
     /// outside this lock.
     transition_lock: parking_lot::Mutex<()>,
+
+    /// The currently scheduled spawn attempt. Shutdown takes and awaits this
+    /// handle so a child cannot be registered after the process table has
+    /// already been drained.
+    spawn_task: parking_lot::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl SupervisedProcess {
@@ -347,16 +352,14 @@ impl Supervisor {
             cancel_tx: RwLock::new(None),
             current_registry_id: parking_lot::Mutex::new(None),
             transition_lock: parking_lot::Mutex::new(()),
+            spawn_task: parking_lot::Mutex::new(None),
         });
 
         self.processes.write().insert(id, Arc::clone(&proc));
         self.notify_change(&proc);
 
         // Immediate spawn — don't wait for the tick.
-        let sup = Arc::clone(self);
-        tokio::spawn(async move {
-            sup.begin_spawn(proc).await;
-        });
+        self.schedule_spawn(proc);
 
         id
     }
@@ -374,44 +377,23 @@ impl Supervisor {
     /// in `Stopped` — no respawn regardless of policy.
     pub async fn force_stop(&self, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
-        let mut stopped_without_bridge = false;
         {
             let _transition = proc.transition_lock.lock();
-            match proc.status() {
-                ProcessStatus::Running => {
-                    proc.intent
-                        .store(TransitionIntent::Stop as u8, Ordering::Release);
-                    if !self.cancel_current_bridge(&proc) {
-                        stopped_without_bridge = true;
-                        proc.set_status(ProcessStatus::Stopped);
-                        proc.intent
-                            .store(TransitionIntent::None as u8, Ordering::Release);
-                        proc.next_spawn_at.store(0, Ordering::Relaxed);
-                        proc.set_reason("stopped by user");
-                    }
-                }
-                ProcessStatus::Spawning | ProcessStatus::Crashed | ProcessStatus::NotStarted => {
-                    stopped_without_bridge = true;
-                    proc.set_status(ProcessStatus::Stopped);
-                    proc.intent
-                        .store(TransitionIntent::None as u8, Ordering::Release);
-                    proc.next_spawn_at.store(0, Ordering::Relaxed);
-                    proc.set_reason("stopped by user");
-                    self.cancel_current_bridge(&proc);
-                }
-                ProcessStatus::Stopped => {
-                    proc.intent
-                        .store(TransitionIntent::None as u8, Ordering::Release);
-                    proc.next_spawn_at.store(0, Ordering::Relaxed);
-                }
-            }
+            proc.set_status(ProcessStatus::Stopped);
+            proc.intent
+                .store(TransitionIntent::None as u8, Ordering::Release);
+            proc.next_spawn_at.store(0, Ordering::Relaxed);
+            proc.set_reason("stopped by user");
+            self.cancel_current_bridge(&proc);
         }
 
-        if stopped_without_bridge {
-            self.notify_change(&proc);
-            self.terminate_and_reap_current_child(&proc).await;
-            self.deregister_terminal_process(&proc);
+        self.notify_change(&proc);
+        let spawn_task = proc.spawn_task.lock().take();
+        if let Some(spawn_task) = spawn_task {
+            let _ = spawn_task.await;
         }
+        self.terminate_and_reap_current_child(&proc).await;
+        self.deregister_terminal_process(&proc);
         Ok(())
     }
 
@@ -472,10 +454,7 @@ impl Supervisor {
         }
         self.notify_change(&proc);
         if spawn_now {
-            let sup = Arc::clone(self);
-            tokio::spawn(async move {
-                sup.begin_spawn(proc).await;
-            });
+            self.schedule_spawn(proc);
         }
         Ok(())
     }
@@ -502,10 +481,7 @@ impl Supervisor {
         };
         if should_spawn {
             self.notify_change(&proc);
-            let sup = Arc::clone(self);
-            tokio::spawn(async move {
-                sup.begin_spawn(proc).await;
-            });
+            self.schedule_spawn(proc);
         }
         Ok(())
     }
@@ -555,8 +531,9 @@ impl Supervisor {
     /// Cancel every active bridge and drain the process table so a
     /// subsequent daemon start gets a clean slate. The tick loop keeps
     /// running — it's process-wide and survives daemon restart.
-    /// `ChildRegistry::kill_all()` is the hard-kill safety net from
-    /// `RunningDaemon::stop`.
+    /// Every in-flight spawn is joined and every registered child is reaped
+    /// before this method returns. `ChildRegistry::kill_all()` remains the
+    /// abrupt-runtime safety net in `RunningDaemon::stop`.
     pub async fn shutdown_all(&self) {
         let procs: Vec<Arc<SupervisedProcess>> = self
             .processes
@@ -564,10 +541,22 @@ impl Supervisor {
             .drain()
             .map(|(_, proc)| proc)
             .collect();
-        for proc in procs {
+        for proc in &procs {
+            let _transition = proc.transition_lock.lock();
+            proc.set_status(ProcessStatus::Stopped);
             proc.intent
-                .store(TransitionIntent::Stop as u8, Ordering::Release);
-            self.cancel_current_bridge(&proc);
+                .store(TransitionIntent::None as u8, Ordering::Release);
+            proc.next_spawn_at.store(0, Ordering::Relaxed);
+            proc.set_reason("supervisor shutdown");
+            self.cancel_current_bridge(proc);
+            self.notify_change(proc);
+        }
+        for proc in procs {
+            let spawn_task = proc.spawn_task.lock().take();
+            if let Some(spawn_task) = spawn_task {
+                let _ = spawn_task.await;
+            }
+            self.terminate_and_reap_current_child(&proc).await;
         }
     }
 
@@ -598,6 +587,18 @@ impl Supervisor {
             kind: proc.kind,
             status: proc.status(),
         });
+    }
+
+    fn schedule_spawn(self: &Arc<Self>, proc: Arc<SupervisedProcess>) {
+        let mut slot = proc.spawn_task.lock();
+        if slot.as_ref().is_some_and(|task| !task.is_finished()) {
+            return;
+        }
+        let sup = Arc::clone(self);
+        let proc_for_task = Arc::clone(&proc);
+        *slot = Some(tokio::spawn(async move {
+            sup.begin_spawn(proc_for_task).await;
+        }));
     }
 
     async fn run_tick_loop(self: Arc<Self>) {
@@ -654,10 +655,7 @@ impl Supervisor {
         }
 
         for proc in to_spawn {
-            let sup = Arc::clone(self);
-            tokio::spawn(async move {
-                sup.begin_spawn(proc).await;
-            });
+            self.schedule_spawn(proc);
         }
     }
 
@@ -1199,6 +1197,7 @@ mod tests {
             cancel_tx: RwLock::new(None),
             current_registry_id: parking_lot::Mutex::new(None),
             transition_lock: parking_lot::Mutex::new(()),
+            spawn_task: parking_lot::Mutex::new(None),
         });
         sup.processes.write().insert(id, Arc::clone(&proc));
         proc
@@ -1207,7 +1206,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn register_runs_then_force_stop() {
         let registry = Arc::new(ChildRegistry::new());
-        let sup = Supervisor::new(registry);
+        let sup = Supervisor::new(Arc::clone(&registry));
 
         let id = sup.register(
             ProcessKind::ChannelPlugin,
@@ -1221,6 +1220,7 @@ mod tests {
         sup.force_stop(id).await.unwrap();
         // Never + Stopped auto-deregisters, so the snapshot entry vanishes.
         wait_for_absent(&sup, id).await;
+        assert_eq!(registry.len(), 0, "force_stop must reap before returning");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1549,6 +1549,41 @@ mod tests {
         wait_for_status(&sup, id2, ProcessStatus::Running).await;
         sup.force_stop(id2).await.unwrap();
         wait_for_absent(&sup, id2).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_all_joins_spawn_before_final_reap() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(Arc::clone(&registry));
+        let proc = insert_process_with_status(
+            &sup,
+            ProcessId(240),
+            ProcessStatus::Spawning,
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        );
+        let release_spawn = Arc::new(tokio::sync::Barrier::new(2));
+        let release_from_task = Arc::clone(&release_spawn);
+        let sup_for_task = Arc::clone(&sup);
+        let proc_for_task = Arc::clone(&proc);
+        *proc.spawn_task.lock() = Some(tokio::spawn(async move {
+            release_from_task.wait().await;
+            let _staged_generation = sup_for_task.spawn_child(&proc_for_task).await.unwrap();
+        }));
+
+        let sup_for_shutdown = Arc::clone(&sup);
+        let shutdown = tokio::spawn(async move {
+            sup_for_shutdown.shutdown_all().await;
+        });
+        wait_for_absent(&sup, proc.id).await;
+
+        // Let the already-owned spawn attempt register its child only after
+        // shutdown has drained the public process table.
+        release_spawn.wait().await;
+        shutdown.await.unwrap();
+
+        assert_eq!(proc.status(), ProcessStatus::Stopped);
+        assert!(proc.current_registry_id.lock().is_none());
+        assert_eq!(registry.len(), 0, "shutdown returned with a late child");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
