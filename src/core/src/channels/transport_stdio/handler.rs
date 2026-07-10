@@ -2,8 +2,12 @@
 //! Drives the prompt lifecycle and routes extension notifications back into
 //! the host.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use tokio::sync::mpsc;
 
 use agent_client_protocol::schema::v1 as acp;
@@ -52,6 +56,39 @@ fn route_for_prompt(
     ))
 }
 
+fn route_for_callback(
+    channel_kind: &str,
+    chat_id: &str,
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> Result<RouteKey, String> {
+    let Some(context) = params
+        .get(CHANNEL_CONTEXT_META_KEY)
+        .or_else(|| params.get("context"))
+    else {
+        return Ok(RouteKey::new(channel_kind, chat_id));
+    };
+    let meta =
+        serde_json::Map::from_iter([(CHANNEL_CONTEXT_META_KEY.to_string(), context.clone())]);
+    route_for_prompt(channel_kind, chat_id, Some(&meta))
+}
+
+struct ActivePromptRoute<'a> {
+    routes: &'a DashMap<String, HashMap<u64, RouteKey>>,
+    chat_id: String,
+    token: u64,
+}
+
+impl Drop for ActivePromptRoute<'_> {
+    fn drop(&mut self) {
+        if let Entry::Occupied(mut entry) = self.routes.entry(self.chat_id.clone()) {
+            entry.get_mut().remove(&self.token);
+            if entry.get().is_empty() {
+                entry.remove();
+            }
+        }
+    }
+}
+
 /// ACP Agent handler for a channel plugin. `prompt()` calls through the
 /// shared conversation ingress — blocks until the turn completes and
 /// returns the real `PromptResponse` with `StopReason`.
@@ -62,6 +99,8 @@ pub(super) struct PluginAgentHandler {
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
+    active_prompt_routes: DashMap<String, HashMap<u64, RouteKey>>,
+    next_prompt_token: AtomicU64,
 }
 
 impl PluginAgentHandler {
@@ -78,6 +117,21 @@ impl PluginAgentHandler {
             input_tx,
             ingress,
             plugin_host,
+            active_prompt_routes: DashMap::new(),
+            next_prompt_token: AtomicU64::new(1),
+        }
+    }
+
+    fn track_active_route<'a>(&'a self, chat_id: &str, route: RouteKey) -> ActivePromptRoute<'a> {
+        let token = self.next_prompt_token.fetch_add(1, Ordering::Relaxed);
+        self.active_prompt_routes
+            .entry(chat_id.to_string())
+            .or_default()
+            .insert(token, route);
+        ActivePromptRoute {
+            routes: &self.active_prompt_routes,
+            chat_id: chat_id.to_string(),
+            token,
         }
     }
     pub(super) async fn initialize(
@@ -156,12 +210,18 @@ impl PluginAgentHandler {
         // The shared ingress blocks until the turn completes.
         // Session notifications stream to the plugin via ChannelBridgeHandler
         // → PluginHost → output_tx → output forwarder → conn.session_notification().
+        let _active_route = self.track_active_route(&chat_id, route.clone());
         self.ingress.prompt(route, content_blocks).await
     }
 
     pub(super) async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
         let chat_id = args.session_id.to_string();
-        let route = RouteKey::new(&self.channel_kind, &chat_id);
+        let routes = self
+            .active_prompt_routes
+            .get(&chat_id)
+            .map(|routes| routes.values().cloned().collect::<Vec<_>>())
+            .filter(|routes| !routes.is_empty())
+            .unwrap_or_else(|| vec![RouteKey::new(&self.channel_kind, &chat_id)]);
 
         proc_log!(
             info,
@@ -171,7 +231,9 @@ impl PluginAgentHandler {
             chat_id = %chat_id
         );
 
-        self.ingress.dispatch(ChannelInput::Stop { route }).await;
+        for route in routes {
+            self.ingress.dispatch(ChannelInput::Stop { route }).await;
+        }
         Ok(())
     }
 
@@ -204,7 +266,17 @@ impl PluginAgentHandler {
                             })
                     })
                     .unwrap_or("");
-                let route = RouteKey::new(&self.channel_kind, chat_id);
+                let route = route_for_callback(&self.channel_kind, chat_id, &params_obj).map_err(
+                    |error| {
+                        tracing::warn!(
+                            channel_kind = %self.channel_kind,
+                            chat_id,
+                            error = %error,
+                            "rejected channel callback metadata"
+                        );
+                        acp::Error::invalid_params()
+                    },
+                )?;
                 let action_value = params_obj
                     .get("data")
                     .and_then(|v| v.as_str())
@@ -340,6 +412,45 @@ mod tests {
             .expect("a callback targets the bot that created the action");
 
         assert_eq!(route.actor_id(), Some("codex-reviewer"));
+    }
+
+    #[test]
+    fn callback_metadata_preserves_extended_route() {
+        let params = serde_json::Map::from_iter([(
+            "context".to_string(),
+            json!({
+                "channelInstanceId": "feishu-primary",
+                "actorId": "codex-reviewer",
+                "chatId": "chat-1",
+                "topicId": "topic-1",
+                "scope": "group",
+                "addressedBy": "callback"
+            }),
+        )]);
+
+        let route =
+            route_for_callback("feishu", "chat-1", &params).expect("callback context should parse");
+
+        assert_eq!(route.channel_instance_id(), "feishu-primary");
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+        assert_eq!(route.topic_id(), Some("topic-1"));
+    }
+
+    #[test]
+    fn active_prompt_route_guard_prunes_finished_chat() {
+        let routes = DashMap::new();
+        routes.insert(
+            "chat-1".to_string(),
+            HashMap::from([(7, RouteKey::new("feishu", "chat-1"))]),
+        );
+        {
+            let _guard = ActivePromptRoute {
+                routes: &routes,
+                chat_id: "chat-1".to_string(),
+                token: 7,
+            };
+        }
+        assert!(!routes.contains_key("chat-1"));
     }
 
     #[test]
