@@ -1,6 +1,6 @@
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Channel kind identifier (e.g. "web", "telegram").
 pub type ChannelKind = String;
@@ -8,8 +8,14 @@ pub type ChannelKind = String;
 /// Bot identity on the IM platform (e.g. Feishu botOpenId, Telegram bot username).
 pub type BotId = String;
 
+/// Logical VibeAround actor addressed within a channel instance.
+pub type ActorId = String;
+
 /// Chat identifier within a channel.
 pub type ChatId = String;
+
+/// Optional platform topic/thread identifier within a chat.
+pub type TopicId = String;
 
 /// Platform envelope identifier.
 pub type MessageId = String;
@@ -69,13 +75,12 @@ pub fn channel_traits(channel_kind: &str) -> ChannelTraits {
 
 /// Stable route key for a conversation path through a channel.
 ///
-/// The triple `(channel_kind, bot_id, chat_id)` uniquely identifies a bot
-/// instance in a chat. This supports group chats with multiple bots — each
-/// bot has its own route.
+/// `(channel_kind, bot_id, chat_id, actor_id, topic_id)` identifies a logical
+/// actor conversation. Legacy routes omit `actor_id` and `topic_id`.
 ///
 /// `bot_id` defaults to `channel_kind` for backward compat with plugins
 /// that haven't reported their IM identity yet.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct RouteKey {
     pub channel_kind: ChannelKind,
     /// Bot identity on the IM platform. Defaults to `channel_kind`.
@@ -84,6 +89,43 @@ pub struct RouteKey {
     #[serde(default)]
     pub bot_id: BotId,
     pub chat_id: ChatId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<ActorId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_id: Option<TopicId>,
+}
+
+impl<'de> Deserialize<'de> for RouteKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RouteKeyWire {
+            channel_kind: ChannelKind,
+            #[serde(default)]
+            bot_id: Option<BotId>,
+            chat_id: ChatId,
+            #[serde(default)]
+            actor_id: Option<ActorId>,
+            #[serde(default)]
+            topic_id: Option<TopicId>,
+        }
+
+        let wire = RouteKeyWire::deserialize(deserializer)?;
+        let bot_id = wire
+            .bot_id
+            .filter(|bot_id| !bot_id.trim().is_empty())
+            .unwrap_or_else(|| wire.channel_kind.clone());
+
+        Ok(Self {
+            channel_kind: wire.channel_kind,
+            bot_id,
+            chat_id: wire.chat_id,
+            actor_id: wire.actor_id,
+            topic_id: wire.topic_id,
+        })
+    }
 }
 
 impl RouteKey {
@@ -93,6 +135,8 @@ impl RouteKey {
             bot_id: ck.clone(),
             channel_kind: ck,
             chat_id: chat_id.into(),
+            actor_id: None,
+            topic_id: None,
         }
     }
 
@@ -105,21 +149,53 @@ impl RouteKey {
             channel_kind: channel_kind.into(),
             bot_id: bot_id.into(),
             chat_id: chat_id.into(),
+            actor_id: None,
+            topic_id: None,
         }
+    }
+
+    pub fn with_actor(
+        channel_kind: impl Into<ChannelKind>,
+        channel_instance_id: impl Into<BotId>,
+        chat_id: impl Into<ChatId>,
+        actor_id: impl Into<ActorId>,
+        topic_id: Option<TopicId>,
+    ) -> Self {
+        Self {
+            channel_kind: channel_kind.into(),
+            bot_id: channel_instance_id.into(),
+            chat_id: chat_id.into(),
+            actor_id: Some(actor_id.into()),
+            topic_id,
+        }
+    }
+
+    pub fn channel_instance_id(&self) -> &str {
+        &self.bot_id
+    }
+
+    pub fn actor_id(&self) -> Option<&str> {
+        self.actor_id.as_deref()
+    }
+
+    pub fn topic_id(&self) -> Option<&str> {
+        self.topic_id.as_deref()
     }
 
     /// Lossy display/API key: `channel_kind:chat_id` (backward compat).
     ///
-    /// This intentionally does NOT include `bot_id`. Do not use this as a
-    /// persisted identity for multi-bot routes; serialize the full `RouteKey`
-    /// instead.
+    /// This intentionally does NOT include `bot_id`, `actor_id`, or `topic_id`.
+    /// Do not use this as a persisted route identity; serialize the full
+    /// `RouteKey` instead.
     pub fn as_key(&self) -> String {
-        if self.bot_id != self.channel_kind {
+        if self.bot_id != self.channel_kind || self.actor_id.is_some() || self.topic_id.is_some() {
             tracing::warn!(
                 channel_kind = %self.channel_kind,
                 bot_id = %self.bot_id,
                 chat_id = %self.chat_id,
-                "RouteKey::as_key is lossy for non-default bot_id"
+                actor_id = ?self.actor_id,
+                topic_id = ?self.topic_id,
+                "RouteKey::as_key is lossy for an extended route"
             );
         }
         format!("{}:{}", self.channel_kind, self.chat_id)
@@ -227,5 +303,54 @@ mod tests {
         assert_eq!(parsed.bot_id, "feishu");
         assert_eq!(parsed.chat_id, "chat-1");
         assert_ne!(parsed, route);
+    }
+
+    #[test]
+    fn route_key_deserialization_defaults_missing_or_empty_bot_id() {
+        let missing: RouteKey = serde_json::from_value(serde_json::json!({
+            "channel_kind": "feishu",
+            "chat_id": "chat-1"
+        }))
+        .expect("legacy route without bot_id parses");
+        let empty: RouteKey = serde_json::from_value(serde_json::json!({
+            "channel_kind": "feishu",
+            "bot_id": "",
+            "chat_id": "chat-1"
+        }))
+        .expect("legacy route with empty bot_id parses");
+
+        assert_eq!(missing.bot_id, "feishu");
+        assert_eq!(empty.bot_id, "feishu");
+    }
+
+    #[test]
+    fn route_key_distinguishes_actor_and_topic() {
+        let reviewer = RouteKey::with_actor(
+            "feishu",
+            "feishu-primary",
+            "chat-1",
+            "codex-reviewer",
+            Some("topic-1".to_string()),
+        );
+        let builder = RouteKey::with_actor(
+            "feishu",
+            "feishu-primary",
+            "chat-1",
+            "codex-builder",
+            Some("topic-1".to_string()),
+        );
+        let other_topic = RouteKey::with_actor(
+            "feishu",
+            "feishu-primary",
+            "chat-1",
+            "codex-reviewer",
+            Some("topic-2".to_string()),
+        );
+
+        assert_ne!(reviewer, builder);
+        assert_ne!(reviewer, other_topic);
+        assert_eq!(reviewer.channel_instance_id(), "feishu-primary");
+        assert_eq!(reviewer.actor_id(), Some("codex-reviewer"));
+        assert_eq!(reviewer.topic_id(), Some("topic-1"));
     }
 }

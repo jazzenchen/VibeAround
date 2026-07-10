@@ -16,7 +16,44 @@ use crate::workspace::WorkspaceThreadManager;
 
 use super::super::plugin_host::PluginHost;
 use super::super::prompt::handle_prompt;
+use super::super::types::{ChannelInboundContext, CHANNEL_CONTEXT_META_KEY};
 use super::super::{ChannelEnvelope, ChannelInput};
+
+fn route_for_prompt(
+    channel_kind: &str,
+    session_chat_id: &str,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<RouteKey, String> {
+    let Some(value) = meta.and_then(|meta| meta.get(CHANNEL_CONTEXT_META_KEY)) else {
+        return Ok(RouteKey::new(channel_kind, session_chat_id));
+    };
+
+    let context: ChannelInboundContext = serde_json::from_value(value.clone())
+        .map_err(|error| format!("invalid {CHANNEL_CONTEXT_META_KEY} metadata: {error}"))?;
+    if context.channel_instance_id.trim().is_empty() {
+        return Err("channelInstanceId must not be empty".into());
+    }
+    if context.actor_id.trim().is_empty() {
+        return Err("actorId must not be empty".into());
+    }
+    if context.chat_id.trim().is_empty() {
+        return Err("chatId must not be empty".into());
+    }
+    if context.chat_id != session_chat_id {
+        return Err("va.channel chatId must match the ACP sessionId".into());
+    }
+    if !context.is_prompt_allowed() {
+        return Err("group prompts must explicitly address the actor".into());
+    }
+
+    Ok(RouteKey::with_actor(
+        channel_kind,
+        context.channel_instance_id,
+        context.chat_id,
+        context.actor_id,
+        context.topic_id,
+    ))
+}
 
 /// ACP Agent handler for a channel plugin. `prompt()` calls through to
 /// `handle_prompt()` directly — blocks until the turn completes and
@@ -59,6 +96,8 @@ impl PluginAgentHandler {
 
         let mut meta = serde_json::Map::new();
         meta.insert("channelKind".into(), self.channel_kind.clone().into());
+        meta.insert("channelInstanceId".into(), self.channel_kind.clone().into());
+        meta.insert("actorId".into(), self.channel_kind.clone().into());
         meta.insert("config".into(), self.config.clone());
         meta.insert("hostVersion".into(), env!("CARGO_PKG_VERSION").into());
         meta.insert(
@@ -82,7 +121,17 @@ impl PluginAgentHandler {
         args: acp::PromptRequest,
     ) -> acp::Result<acp::PromptResponse> {
         let chat_id = args.session_id.to_string();
-        let route = RouteKey::new(&self.channel_kind, &chat_id);
+        let route = route_for_prompt(&self.channel_kind, &chat_id, args.meta.as_ref()).map_err(
+            |error| {
+                tracing::warn!(
+                    channel_kind = %self.channel_kind,
+                    chat_id = %chat_id,
+                    error = %error,
+                    "rejected channel prompt metadata"
+                );
+                acp::Error::invalid_params()
+            },
+        )?;
 
         let content_blocks = args.prompt;
 
@@ -217,5 +266,74 @@ impl PluginAgentHandler {
             method = %method
         );
         Err(acp::Error::method_not_found())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn channel_meta(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::Map::from_iter([(CHANNEL_CONTEXT_META_KEY.to_string(), value)])
+    }
+
+    #[test]
+    fn legacy_prompt_route_uses_session_id_and_default_bot() {
+        let route = route_for_prompt("feishu", "chat-1", None).expect("legacy route parses");
+
+        assert_eq!(route, RouteKey::new("feishu", "chat-1"));
+    }
+
+    #[test]
+    fn routed_prompt_uses_full_channel_context() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "topicId": "topic-1",
+            "scope": "group",
+            "addressedBy": "mention"
+        }));
+
+        let route = route_for_prompt("feishu", "chat-1", Some(&meta))
+            .expect("routed prompt metadata parses");
+
+        assert_eq!(route.channel_instance_id(), "feishu-primary");
+        assert_eq!(route.chat_id, "chat-1");
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+        assert_eq!(route.topic_id(), Some("topic-1"));
+    }
+
+    #[test]
+    fn routed_group_prompt_rejects_unaddressed_message() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "scope": "group",
+            "addressedBy": "unaddressed"
+        }));
+
+        let error = route_for_prompt("feishu", "chat-1", Some(&meta))
+            .expect_err("unaddressed group message must be rejected");
+
+        assert_eq!(error, "group prompts must explicitly address the actor");
+    }
+
+    #[test]
+    fn routed_dm_prompt_allows_unaddressed_message() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "scope": "dm",
+            "addressedBy": "unaddressed"
+        }));
+
+        let route = route_for_prompt("feishu", "chat-1", Some(&meta))
+            .expect("direct messages do not require an explicit mention");
+
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
     }
 }
