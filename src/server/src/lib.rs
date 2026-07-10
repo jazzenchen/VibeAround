@@ -65,6 +65,10 @@ pub struct RunningDaemon {
 
 impl RunningDaemon {
     pub async fn stop(self) {
+        self.stop_inner(false).await;
+    }
+
+    async fn stop_inner(self, web_handle_completed: bool) {
         let RunningDaemon {
             channel_hub,
             workspace_thread_manager,
@@ -115,14 +119,7 @@ impl RunningDaemon {
 
         // Let Axum close the listener cleanly, but do not let long-lived
         // websocket clients hang daemon shutdown forever.
-        let mut web_handle = web_handle;
-        if tokio::time::timeout(WEB_SHUTDOWN_TIMEOUT, &mut web_handle)
-            .await
-            .is_err()
-        {
-            web_handle.abort();
-            let _ = web_handle.await;
-        }
+        finish_web_handle(web_handle, web_handle_completed).await;
 
         // Wait for aborted tasks so their sockets and child handles are
         // dropped before a hot restart probes/binds the same port.
@@ -133,6 +130,25 @@ impl RunningDaemon {
         // across restarts.
         tunnels.clear();
         pty.clear();
+    }
+}
+
+async fn finish_web_handle(
+    mut web_handle: JoinHandle<Result<(), String>>,
+    already_completed: bool,
+) {
+    // Tokio JoinHandle panics if it is polled again after completion. The
+    // foreground start path already awaited it in select!, while desktop
+    // shutdown reaches this helper with a still-running handle.
+    if already_completed {
+        return;
+    }
+    if tokio::time::timeout(WEB_SHUTDOWN_TIMEOUT, &mut web_handle)
+        .await
+        .is_err()
+    {
+        web_handle.abort();
+        let _ = web_handle.await;
     }
 }
 
@@ -411,7 +427,7 @@ impl ServerDaemon {
     pub async fn start(&self, dist_path: PathBuf) -> anyhow::Result<()> {
         let mut running = self.start_background(dist_path).await?;
 
-        tokio::select! {
+        let web_handle_completed = tokio::select! {
             result = &mut running.web_handle => {
                 match result {
                     Ok(Ok(())) => tracing::info!("web server stopped"),
@@ -419,13 +435,28 @@ impl ServerDaemon {
                     Err(e) => tracing::error!(error = %e, "web server panic"),
                 }
                 running.tunnel_handle.abort();
+                true
             }
             _ = shutdown_signal() => {
                 tracing::info!("shutting down");
+                false
             }
-        }
+        };
 
-        running.stop().await;
+        running.stop_inner(web_handle_completed).await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn completed_web_handle_is_not_polled_twice() {
+        let mut handle = tokio::spawn(async { Ok(()) });
+        (&mut handle).await.unwrap().unwrap();
+
+        finish_web_handle(handle, true).await;
     }
 }
