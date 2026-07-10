@@ -37,6 +37,7 @@ use crate::proc_log;
 use crate::process::bridge::{BridgeExit, BridgeFactory, StdioPipes};
 use crate::process::env;
 use crate::process::error::{ProcessError, ProcessResult};
+use crate::process::kill;
 use crate::process::registry::{ChildRegistry, ProcessKind};
 
 /// Tick interval for the supervisor's scan loop.
@@ -774,6 +775,7 @@ impl Supervisor {
         for (k, v) in &proc.spec.extra_env {
             cmd.env(k, v);
         }
+        kill::prepare_tree_root(&mut cmd);
 
         let mut child = cmd.spawn().map_err(|e| ProcessError::Spawn {
             program: proc.spec.program.clone(),
@@ -956,40 +958,18 @@ impl Supervisor {
         let Some(mut child) = self.registry.remove(id) else {
             return;
         };
+        let root_pid = child.id();
 
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => {
-                if let Err(error) = child.start_kill() {
-                    proc_log!(
-                        warn,
-                        kind = proc.kind,
-                        label = proc.label,
-                        event = "child_kill_failed",
-                        error = %error
-                    );
-                }
-            }
-            Err(error) => {
-                proc_log!(
-                    warn,
-                    kind = proc.kind,
-                    label = proc.label,
-                    event = "child_status_failed",
-                    error = %error
-                );
-                let _ = child.start_kill();
-            }
-        }
-
-        if let Err(error) = child.wait().await {
+        if let Err(error) = kill::terminate_child_tree(&mut child, root_pid).await {
             proc_log!(
                 warn,
                 kind = proc.kind,
                 label = proc.label,
-                event = "child_reap_failed",
+                event = "child_tree_terminate_failed",
                 error = %error
             );
+            let _ = child.start_kill();
+            let _ = child.wait().await;
         }
     }
 
@@ -1481,6 +1461,53 @@ mod tests {
                 .status();
         }
         assert!(!alive, "bridge exit left child pid {child_pid} alive");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn bridge_exit_terminates_helper_process_group() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(Arc::clone(&registry));
+        let helper_pid = Arc::new(AtomicU32::new(0));
+        let captured_pid = Arc::clone(&helper_pid);
+
+        let id = sup.register(
+            ProcessKind::ChannelPlugin,
+            "helper-tree-reap",
+            SpawnSpec::new("sh").args(["-c", "sleep 60 & echo $!; wait"]),
+            RestartPolicy::Never,
+            Box::new(move || {
+                Box::new(CapturePidThenCleanBridge {
+                    pid: Arc::clone(&captured_pid),
+                })
+            }),
+        );
+
+        wait_for_absent(&sup, id).await;
+        let child_pid = helper_pid.load(Ordering::Acquire);
+        assert_ne!(child_pid, 0, "bridge should capture the helper pid");
+        assert_eq!(registry.len(), 0);
+
+        use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+        let mut alive = true;
+        for _ in 0..50 {
+            let mut sys = System::new_with_specifics(
+                RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+            );
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            alive = sys.process(Pid::from_u32(child_pid)).is_some();
+            if !alive {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        if alive {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &child_pid.to_string()])
+                .status();
+        }
+        assert!(!alive, "bridge exit left helper pid {child_pid} alive");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
