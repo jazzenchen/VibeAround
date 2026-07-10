@@ -117,13 +117,17 @@ impl<'de> Deserialize<'de> for RouteKey {
             .bot_id
             .filter(|bot_id| !bot_id.trim().is_empty())
             .unwrap_or_else(|| wire.channel_kind.clone());
+        let actor_id = wire
+            .actor_id
+            .filter(|actor_id| !actor_id.trim().is_empty() && actor_id != &bot_id);
+        let topic_id = wire.topic_id.filter(|topic_id| !topic_id.trim().is_empty());
 
         Ok(Self {
             channel_kind: wire.channel_kind,
             bot_id,
             chat_id: wire.chat_id,
-            actor_id: wire.actor_id,
-            topic_id: wire.topic_id,
+            actor_id,
+            topic_id,
         })
     }
 }
@@ -161,12 +165,14 @@ impl RouteKey {
         actor_id: impl Into<ActorId>,
         topic_id: Option<TopicId>,
     ) -> Self {
+        let channel_instance_id = channel_instance_id.into();
+        let actor_id = actor_id.into();
         Self {
             channel_kind: channel_kind.into(),
-            bot_id: channel_instance_id.into(),
+            bot_id: channel_instance_id.clone(),
             chat_id: chat_id.into(),
-            actor_id: Some(actor_id.into()),
-            topic_id,
+            actor_id: (actor_id != channel_instance_id).then_some(actor_id),
+            topic_id: topic_id.filter(|topic_id| !topic_id.trim().is_empty()),
         }
     }
 
@@ -352,5 +358,14 @@ mod tests {
         assert_eq!(reviewer.channel_instance_id(), "feishu-primary");
         assert_eq!(reviewer.actor_id(), Some("codex-reviewer"));
         assert_eq!(reviewer.topic_id(), Some("topic-1"));
+    }
+
+    #[test]
+    fn default_actor_context_preserves_legacy_route_identity() {
+        let legacy = RouteKey::new("feishu", "chat-1");
+        let routed = RouteKey::with_actor("feishu", "feishu", "chat-1", "feishu", None);
+
+        assert_eq!(routed, legacy);
+        assert_eq!(routed.actor_id(), None);
     }
 }
