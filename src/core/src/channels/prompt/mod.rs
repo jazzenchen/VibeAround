@@ -317,18 +317,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stop_bypasses_a_busy_route_lane() {
+    async fn stop_cancels_active_and_queued_route_work() {
         let ingress = test_ingress();
         let route = RouteKey::new("web", "chat-a");
         let (started, started_rx) = oneshot::channel();
         let (release, release_rx) = oneshot::channel();
-        let done = ingress
+        let active_done = ingress
             .enqueue_probe(route.clone(), async move {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
             .unwrap();
         started_rx.await.unwrap();
+        let queued_done = ingress.enqueue_probe(route.clone(), async {}).unwrap();
 
         tokio::time::timeout(
             std::time::Duration::from_millis(100),
@@ -337,9 +338,33 @@ mod tests {
         .await
         .expect("stop waited behind the active turn");
 
-        release.send(()).unwrap();
-        done.await.unwrap();
+        assert!(active_done.await.is_err(), "active work survived stop");
+        assert!(queued_done.await.is_err(), "queued work survived stop");
+        assert!(release.send(()).is_err(), "active work was not dropped");
         wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_lanes_and_rejects_new_work() {
+        let ingress = test_ingress();
+        let route = RouteKey::new("web", "chat-a");
+        let (started, started_rx) = oneshot::channel();
+        let (_release, release_rx) = oneshot::channel::<()>();
+        let active_done = ingress
+            .enqueue_probe(route.clone(), async move {
+                let _ = started.send(());
+                let _ = release_rx.await;
+            })
+            .unwrap();
+        started_rx.await.unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_millis(100), ingress.shutdown())
+            .await
+            .expect("ingress shutdown did not drain active lanes");
+
+        assert!(active_done.await.is_err(), "active work survived shutdown");
+        assert_eq!(ingress.active_lane_count(), 0);
+        assert!(ingress.enqueue_probe(route, async {}).is_err());
     }
 
     #[tokio::test]

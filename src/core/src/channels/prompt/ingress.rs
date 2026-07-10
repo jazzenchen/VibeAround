@@ -1,10 +1,11 @@
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use parking_lot::Mutex as ParkingMutex;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch, Notify};
 
 use crate::workspace::WorkspaceThreadManager;
 
@@ -16,6 +17,7 @@ use super::{
 pub(super) const ROUTE_LANE_CAPACITY: usize = 16;
 const ROUTE_LANE_FULL_MESSAGE: &str =
     "conversation route is busy; wait for an earlier message to finish";
+const ROUTE_STOPPED_MESSAGE: &str = "conversation route stopped";
 
 enum LaneCommand {
     Prompt {
@@ -30,24 +32,53 @@ enum LaneCommand {
     },
 }
 
+struct QueuedCommand {
+    stop_generation: u64,
+    command: LaneCommand,
+}
+
+struct RouteLaneState {
+    accepting: bool,
+    stop_generation: u64,
+}
+
 struct RouteLane {
-    tx: mpsc::Sender<LaneCommand>,
-    accepting: ParkingMutex<bool>,
+    tx: mpsc::Sender<QueuedCommand>,
+    state: ParkingMutex<RouteLaneState>,
+    stop_tx: watch::Sender<u64>,
 }
 
 impl RouteLane {
     fn try_send(&self, command: LaneCommand) -> Result<(), mpsc::error::TrySendError<LaneCommand>> {
-        let accepting = self.accepting.lock();
-        if !*accepting {
+        let state = self.state.lock();
+        if !state.accepting {
             return Err(mpsc::error::TrySendError::Closed(command));
         }
-        self.tx.try_send(command)
+        self.tx
+            .try_send(QueuedCommand {
+                stop_generation: state.stop_generation,
+                command,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(queued) => {
+                    mpsc::error::TrySendError::Full(queued.command)
+                }
+                mpsc::error::TrySendError::Closed(queued) => {
+                    mpsc::error::TrySendError::Closed(queued.command)
+                }
+            })
     }
 
-    fn close_if_empty(&self, rx: &mpsc::Receiver<LaneCommand>) -> bool {
-        let mut accepting = self.accepting.lock();
+    fn stop(&self) {
+        let mut state = self.state.lock();
+        state.stop_generation = state.stop_generation.wrapping_add(1);
+        self.stop_tx.send_replace(state.stop_generation);
+    }
+
+    fn close_if_empty(&self, rx: &mpsc::Receiver<QueuedCommand>) -> bool {
+        let mut state = self.state.lock();
         if rx.is_empty() {
-            *accepting = false;
+            state.accepting = false;
             true
         } else {
             false
@@ -61,6 +92,11 @@ pub struct ConversationIngress {
     workspace_threads: Arc<WorkspaceThreadManager>,
     plugin_host: Arc<PluginHost>,
     lanes: DashMap<RouteKey, Arc<RouteLane>>,
+    lifecycle: ParkingMutex<()>,
+    shutting_down: AtomicBool,
+    shutdown_tx: watch::Sender<bool>,
+    active_lane_tasks: AtomicUsize,
+    lanes_drained: Notify,
 }
 
 impl ConversationIngress {
@@ -68,10 +104,16 @@ impl ConversationIngress {
         workspace_threads: Arc<WorkspaceThreadManager>,
         plugin_host: Arc<PluginHost>,
     ) -> Self {
+        let (shutdown_tx, _) = watch::channel(false);
         Self {
             workspace_threads,
             plugin_host,
             lanes: DashMap::new(),
+            lifecycle: ParkingMutex::new(()),
+            shutting_down: AtomicBool::new(false),
+            shutdown_tx,
+            active_lane_tasks: AtomicUsize::new(0),
+            lanes_drained: Notify::new(),
         }
     }
 
@@ -92,7 +134,14 @@ impl ConversationIngress {
             )
             .is_err()
         {
-            return Err(acp::Error::new(-32000, ROUTE_LANE_FULL_MESSAGE));
+            return Err(acp::Error::new(
+                -32000,
+                if self.shutting_down.load(Ordering::Acquire) {
+                    ROUTE_STOPPED_MESSAGE
+                } else {
+                    ROUTE_LANE_FULL_MESSAGE
+                },
+            ));
         }
         response
             .await
@@ -104,6 +153,9 @@ impl ConversationIngress {
     pub async fn dispatch(self: &Arc<Self>, input: ChannelInput) {
         match &input {
             ChannelInput::Stop { route } => {
+                if let Some(lane) = self.lanes.get(route) {
+                    lane.stop();
+                }
                 let _ = self.workspace_threads.cancel_route(route).await;
                 return;
             }
@@ -134,15 +186,26 @@ impl ConversationIngress {
         route: RouteKey,
         mut command: LaneCommand,
     ) -> Result<(), LaneCommand> {
+        // Serialize lane creation with shutdown. Once shutdown owns this
+        // guard, no task can appear after the drain barrier observes zero.
+        let _lifecycle = self.lifecycle.lock();
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(command);
+        }
         loop {
             let mut receiver = None;
             let lane = match self.lanes.entry(route.clone()) {
                 Entry::Occupied(entry) => Arc::clone(entry.get()),
                 Entry::Vacant(entry) => {
                     let (tx, rx) = mpsc::channel(ROUTE_LANE_CAPACITY);
+                    let (stop_tx, _) = watch::channel(0);
                     let lane = Arc::new(RouteLane {
                         tx,
-                        accepting: ParkingMutex::new(true),
+                        state: ParkingMutex::new(RouteLaneState {
+                            accepting: true,
+                            stop_generation: 0,
+                        }),
+                        stop_tx,
                     });
                     entry.insert(Arc::clone(&lane));
                     receiver = Some(rx);
@@ -169,40 +232,106 @@ impl ConversationIngress {
         self: &Arc<Self>,
         route: RouteKey,
         lane: Arc<RouteLane>,
-        mut rx: mpsc::Receiver<LaneCommand>,
+        mut rx: mpsc::Receiver<QueuedCommand>,
     ) {
+        self.active_lane_tasks.fetch_add(1, Ordering::AcqRel);
         let ingress = Arc::clone(self);
         tokio::spawn(async move {
-            while let Some(command) = rx.recv().await {
-                ingress.execute_lane_command(&route, command).await;
+            let mut shutdown_rx = ingress.shutdown_tx.subscribe();
+            while let Some(queued) = rx.recv().await {
+                ingress
+                    .execute_lane_command(
+                        &route,
+                        queued,
+                        lane.stop_tx.subscribe(),
+                        &mut shutdown_rx,
+                    )
+                    .await;
+                if *shutdown_rx.borrow() {
+                    break;
+                }
                 if lane.close_if_empty(&rx) {
                     ingress
                         .lanes
                         .remove_if(&route, |_, current| Arc::ptr_eq(current, &lane));
-                    return;
+                    break;
                 }
             }
             ingress
                 .lanes
                 .remove_if(&route, |_, current| Arc::ptr_eq(current, &lane));
+            if ingress.active_lane_tasks.fetch_sub(1, Ordering::AcqRel) == 1 {
+                ingress.lanes_drained.notify_waiters();
+            }
         });
     }
 
-    async fn execute_lane_command(&self, route: &RouteKey, command: LaneCommand) {
-        match command {
+    async fn execute_lane_command(
+        &self,
+        route: &RouteKey,
+        queued: QueuedCommand,
+        mut stop_rx: watch::Receiver<u64>,
+        shutdown_rx: &mut watch::Receiver<bool>,
+    ) {
+        match queued.command {
             LaneCommand::Prompt {
                 content_blocks,
                 reply,
             } => {
-                let result = self.run_prompt(route.clone(), content_blocks).await;
+                let result = tokio::select! {
+                    biased;
+                    _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
+                        Err(acp::Error::new(-32603, ROUTE_STOPPED_MESSAGE))
+                    }
+                    _ = wait_for_shutdown(shutdown_rx) => {
+                        Err(acp::Error::new(-32603, ROUTE_STOPPED_MESSAGE))
+                    }
+                    result = self.run_prompt(route.clone(), content_blocks) => result,
+                };
                 let _ = reply.send(result);
             }
-            LaneCommand::Dispatch(input) => self.dispatch_ordered(input).await,
+            LaneCommand::Dispatch(input) => {
+                tokio::select! {
+                    biased;
+                    _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
+                        self.reject_stopped(route, input.clone()).await;
+                    }
+                    _ = wait_for_shutdown(shutdown_rx) => {
+                        self.reject_stopped(route, input.clone()).await;
+                    }
+                    _ = self.dispatch_ordered(input.clone()) => {}
+                }
+            }
             #[cfg(test)]
             LaneCommand::Probe { work, done } => {
-                work.await;
-                let _ = done.send(());
+                tokio::select! {
+                    biased;
+                    _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {}
+                    _ = wait_for_shutdown(shutdown_rx) => {}
+                    _ = work => { let _ = done.send(()); }
+                }
             }
+        }
+    }
+
+    /// Stop accepting new work, cancel every active/queued lane command, and
+    /// wait until all lane tasks have released their references.
+    pub async fn shutdown(&self) {
+        {
+            let _lifecycle = self.lifecycle.lock();
+            self.shutting_down.store(true, Ordering::Release);
+            self.shutdown_tx.send_replace(true);
+            for lane in self.lanes.iter() {
+                let mut state = lane.state.lock();
+                state.accepting = false;
+            }
+        }
+        loop {
+            let notified = self.lanes_drained.notified();
+            if self.active_lane_tasks.load(Ordering::Acquire) == 0 {
+                break;
+            }
+            notified.await;
         }
     }
 
@@ -317,6 +446,16 @@ impl ConversationIngress {
         send_prompt_done(&self.plugin_host, route, message_id).await;
     }
 
+    async fn reject_stopped(&self, route: &RouteKey, input: ChannelInput) {
+        let message_id = match input {
+            ChannelInput::Message { envelope } | ChannelInput::Callback { envelope, .. } => {
+                (!envelope.message_id.is_empty()).then_some(envelope.message_id)
+            }
+            _ => None,
+        };
+        send_prompt_done(&self.plugin_host, route, message_id).await;
+    }
+
     #[cfg(test)]
     pub(super) fn enqueue_probe<F>(
         self: &Arc<Self>,
@@ -341,5 +480,21 @@ impl ConversationIngress {
     #[cfg(test)]
     pub(super) fn active_lane_count(&self) -> usize {
         self.lanes.len()
+    }
+}
+
+async fn wait_for_stop(stop_rx: &mut watch::Receiver<u64>, generation: u64) {
+    while *stop_rx.borrow_and_update() == generation {
+        if stop_rx.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
+async fn wait_for_shutdown(shutdown_rx: &mut watch::Receiver<bool>) {
+    while !*shutdown_rx.borrow_and_update() {
+        if shutdown_rx.changed().await.is_err() {
+            return;
+        }
     }
 }

@@ -80,8 +80,16 @@ impl RunningDaemon {
             ..
         } = self;
 
-        workspace_thread_manager.shutdown_all().await;
+        // Close every ingress before tearing down the runtimes it can reach.
+        // This ordering prevents a queued route-lane command from spawning a
+        // fresh ACP host while daemon shutdown is already reaping children.
+        web_shutdown.notify_waiters();
+        channel_input_shutdown.notify_waiters();
+        channel_input_handle.abort();
+        let _ = channel_input_handle.await;
+        channel_hub.ingress().shutdown().await;
         channel_hub.shutdown_all().await;
+        workspace_thread_manager.shutdown_all().await;
         if let Some(search_runtime) = search_runtime {
             search_runtime.shutdown().await;
         }
@@ -102,14 +110,8 @@ impl RunningDaemon {
             let _ = pty_manager.delete_session(session_id);
         }
 
-        web_shutdown.notify_waiters();
         web_dispatch_handle.abort();
         tunnel_handle.abort();
-
-        // Wake the channel-input task and wait for it to exit.
-        channel_input_shutdown.notify_waiters();
-        channel_input_handle.abort();
-        let _ = channel_input_handle.await;
 
         // Let Axum close the listener cleanly, but do not let long-lived
         // websocket clients hang daemon shutdown forever.
