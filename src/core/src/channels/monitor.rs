@@ -247,11 +247,23 @@ impl ChannelMonitor {
         self.change_tx.subscribe()
     }
 
-    /// Cooperative shutdown — cancels every live bridge and stops the
-    /// supervisor tick loop. `ChildRegistry::kill_all()` is still the
-    /// authoritative SIGKILL safety net on abrupt exits.
+    /// Stop and unregister only the channel processes owned by this monitor.
+    /// The process-wide supervisor also serves ACP agents and search, so a
+    /// channel facade must never drain its global table.
     pub async fn shutdown_all(&self) {
-        self.supervisor.shutdown_all().await;
+        let ids = self
+            .kinds
+            .iter()
+            .map(|entry| (*entry.value(), entry.key().clone()))
+            .collect::<Vec<_>>();
+        for (id, kind) in ids {
+            if let Err(error) = self.supervisor.unregister(id).await {
+                tracing::warn!(channel = %kind, error = %error, "failed to stop channel plugin");
+            }
+            self.kinds.remove(&kind);
+            self.versions.remove(&kind);
+            self.plugin_dirs.remove(&kind);
+        }
     }
 
     fn lookup(&self, kind: &str) -> Option<ProcessId> {

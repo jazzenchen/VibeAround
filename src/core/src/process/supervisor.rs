@@ -398,6 +398,13 @@ impl Supervisor {
         Ok(())
     }
 
+    /// Stop, reap, and permanently remove one registered process.
+    pub async fn unregister(&self, id: ProcessId) -> ProcessResult<()> {
+        self.force_stop(id).await?;
+        self.processes.write().remove(&id);
+        Ok(())
+    }
+
     /// Cancel the current generation and schedule an immediate respawn.
     /// No-op if policy is `Never` and the process is already stopped.
     pub async fn force_restart(self: &Arc<Self>, id: ProcessId) -> ProcessResult<()> {
@@ -1201,6 +1208,28 @@ mod tests {
         // Never + Stopped auto-deregisters, so the snapshot entry vanishes.
         wait_for_absent(&sup, id).await;
         assert_eq!(registry.len(), 0, "force_stop must reap before returning");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unregister_removes_restartable_process() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(Arc::clone(&registry));
+        let id = sup.register(
+            ProcessKind::ChannelPlugin,
+            "restartable-remove",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        );
+
+        wait_for_status(&sup, id, ProcessStatus::Running).await;
+        sup.unregister(id).await.unwrap();
+
+        wait_for_absent(&sup, id).await;
+        assert_eq!(registry.len(), 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
