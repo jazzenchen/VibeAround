@@ -49,7 +49,7 @@ impl ChannelInboundContext {
         self.scope == ConversationScope::Dm
             || matches!(
                 self.addressed_by,
-                AddressedBy::Mention | AddressedBy::Command | AddressedBy::Callback
+                AddressedBy::Mention | AddressedBy::Callback
             )
     }
 }

@@ -311,6 +311,38 @@ mod tests {
     }
 
     #[test]
+    fn routed_group_prompt_rejects_bare_command() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "scope": "group",
+            "addressedBy": "command"
+        }));
+
+        let error = route_for_prompt("feishu", "chat-1", Some(&meta))
+            .expect_err("a bare group command does not identify the target bot");
+
+        assert_eq!(error, "group prompts must explicitly address the actor");
+    }
+
+    #[test]
+    fn routed_group_callback_is_an_explicit_bot_interaction() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "scope": "group",
+            "addressedBy": "callback"
+        }));
+
+        let route = route_for_prompt("feishu", "chat-1", Some(&meta))
+            .expect("a callback targets the bot that created the action");
+
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+    }
+
+    #[test]
     fn routed_dm_prompt_allows_unaddressed_message() {
         let meta = channel_meta(json!({
             "channelInstanceId": "feishu-primary",
