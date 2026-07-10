@@ -26,7 +26,7 @@ The browser sends typed JSON, not bare text. The main ones:
 | `SetMode` / `SetConfigOption` | Change agent session mode / config option |
 | `ResumeSession` | Attach a native CLI session to this web thread |
 
-`stop` enters `ConversationIngress` as a priority control operation. It increments the route lane's stop generation before calling runtime cancel, covering the race where a session exists but `agent.prompt` has not started yet.
+`message` and `stop` first enter the same `ChannelManager` FIFO, so Stop cannot overtake a prompt that is still waiting upstream. Inside `ConversationIngress`, Stop becomes a route-lane control operation: it increments the lane's stop generation before calling runtime cancel, covering both a queued prompt and the race where a session exists but `agent.prompt` has not started yet.
 
 ## The session-intent step
 
@@ -61,11 +61,12 @@ The 2026-07-11 refactor was exercised against a real standalone server and Codex
 - invalid token rejected with HTTP 401; authenticated non-upgrade request reached the WebSocket route and returned 400,
 - two sockets on one route received the same `/help` system text and `PromptDone`, then reconnect succeeded,
 - a real Codex ACP turn produced `AgentReady`, `SessionReady`, streamed `WS_ACP_OK`, `PromptDone`, and inactive turn status,
-- Stop sent immediately after `SessionReady` produced `PromptDone` and no agent text chunks.
+- Stop sent immediately after `SessionReady` produced `PromptDone` and no agent text chunks,
+- a same-socket Message followed immediately by Stop (without waiting for `SessionReady`) preserved FIFO order, produced `PromptDone`, and emitted zero agent message chunks.
 
 ---
 
 *Source anchors: `src/server/src/web_server/ws_chat.rs` (socket loop, intents, events), `src/core/src/channels/transport_websocket.rs` (WebChannelManager, idle), `src/server/src/lib.rs` (web/tui channel registration, dispatch task).*
-*Last verified: `codex/im-acp-route-refactor` at `0ba7fa2e` (2026-07-11).*
+*Last verified: `codex/im-acp-route-refactor` at `4ef19537` (2026-07-11).*
 
 <sub>[◀ Flow: IM message](im-message.md) · [Documentation index](../../README.md) · [Flow: permission request ▶](permission.md)</sub>
