@@ -143,57 +143,28 @@ pub(crate) async fn run_acp_plugin_bridge(
                     event = "forwarder_started"
                 );
                 while let Some(queued) = output_rx.recv().await {
-                    let route = queued.output.route_key().clone();
-                    let output_id = queued.output_id;
-                    let result = forward_output_to_plugin(
-                        &forward_conn,
-                        &fwd_channel,
-                        &forwarder_plugin_host,
-                        queued.output,
-                    )
-                    .await;
-                    if let Some(output_id) = output_id {
-                        match result {
-                            Ok(()) => {
-                                if let Err(error) =
-                                    forwarder_plugin_host.mark_outbox_sent(&output_id)
-                                {
-                                    proc_log!(
-                                        warn,
-                                        kind = ProcessKind::ChannelPlugin,
-                                        label = fwd_channel,
-                                        event = "outbox_forward_mark_sent_failed",
-                                        route = %route,
-                                        output_id = %output_id,
-                                        error = %error
-                                    );
-                                }
-                            }
-                            Err(error) => {
-                                if let Err(mark_error) =
-                                    forwarder_plugin_host.mark_outbox_nacked(&output_id)
-                                {
-                                    proc_log!(
-                                        warn,
-                                        kind = ProcessKind::ChannelPlugin,
-                                        label = fwd_channel,
-                                        event = "outbox_forward_mark_nacked_failed",
-                                        route = %route,
-                                        output_id = %output_id,
-                                        error = %mark_error
-                                    );
-                                }
-                                proc_log!(
-                                    warn,
-                                    kind = ProcessKind::ChannelPlugin,
-                                    label = fwd_channel,
-                                    event = "outbox_forward_failed",
-                                    route = %route,
-                                    output_id = %output_id,
-                                    error = %error
-                                );
-                            }
-                        }
+                    if requires_independent_forwarding(&queued.output) {
+                        let permission_conn = forward_conn.clone();
+                        let permission_channel = fwd_channel.clone();
+                        let permission_host = Arc::clone(&forwarder_plugin_host);
+                        forward_conn.spawn(async move {
+                            forward_queued_output(
+                                &permission_conn,
+                                &permission_channel,
+                                &permission_host,
+                                queued,
+                            )
+                            .await;
+                            Ok(())
+                        })?;
+                    } else {
+                        forward_queued_output(
+                            &forward_conn,
+                            &fwd_channel,
+                            &forwarder_plugin_host,
+                            queued,
+                        )
+                        .await;
                     }
                 }
                 proc_log!(
@@ -252,4 +223,89 @@ pub(crate) async fn run_acp_plugin_bridge(
     drain_plugin_host.cancel_channel_permissions(&channel_kind);
 
     exit
+}
+
+fn requires_independent_forwarding(output: &super::super::ChannelOutput) -> bool {
+    matches!(
+        output,
+        super::super::ChannelOutput::PermissionRequest { .. }
+    )
+}
+
+async fn forward_queued_output(
+    conn: &acp::ConnectionTo<acp::Client>,
+    channel_kind: &str,
+    plugin_host: &Arc<PluginHost>,
+    queued: QueuedChannelOutput,
+) {
+    let route = queued.output.route_key().clone();
+    let output_id = queued.output_id;
+    let result = forward_output_to_plugin(conn, channel_kind, plugin_host, queued.output).await;
+    let Some(output_id) = output_id else {
+        return;
+    };
+
+    match result {
+        Ok(()) => {
+            if let Err(error) = plugin_host.mark_outbox_sent(&output_id) {
+                proc_log!(
+                    warn,
+                    kind = ProcessKind::ChannelPlugin,
+                    label = channel_kind,
+                    event = "outbox_forward_mark_sent_failed",
+                    route = %route,
+                    output_id = %output_id,
+                    error = %error
+                );
+            }
+        }
+        Err(error) => {
+            if let Err(mark_error) = plugin_host.mark_outbox_nacked(&output_id) {
+                proc_log!(
+                    warn,
+                    kind = ProcessKind::ChannelPlugin,
+                    label = channel_kind,
+                    event = "outbox_forward_mark_nacked_failed",
+                    route = %route,
+                    output_id = %output_id,
+                    error = %mark_error
+                );
+            }
+            proc_log!(
+                warn,
+                kind = ProcessKind::ChannelPlugin,
+                label = channel_kind,
+                event = "outbox_forward_failed",
+                route = %route,
+                output_id = %output_id,
+                error = %error
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requires_independent_forwarding;
+    use crate::channels::ChannelOutput;
+    use crate::routing::RouteKey;
+
+    #[test]
+    fn permission_wait_does_not_use_the_serial_output_lane() {
+        let route = RouteKey::new("feishu", "chat-a");
+        assert!(requires_independent_forwarding(
+            &ChannelOutput::PermissionRequest {
+                route: route.clone(),
+                request_id: "permission-a".to_string(),
+                payload: serde_json::json!({}),
+            }
+        ));
+        assert!(!requires_independent_forwarding(
+            &ChannelOutput::SystemText {
+                route,
+                text: "still flows".to_string(),
+                reply_to: None,
+            }
+        ));
+    }
 }
