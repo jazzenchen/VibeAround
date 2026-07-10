@@ -64,6 +64,51 @@ impl ProcessBridge for InstantCleanBridge {
     }
 }
 
+struct DelayedCancelBridge {
+    cancel_seen: Arc<tokio::sync::Semaphore>,
+    release: Arc<tokio::sync::Semaphore>,
+}
+
+impl ProcessBridge for DelayedCancelBridge {
+    fn run(
+        self: Box<Self>,
+        _pipes: StdioPipes,
+        mut cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move {
+            let _ = cancel.wait_for(|value| *value).await;
+            self.cancel_seen.add_permits(1);
+            let _ = self.release.acquire().await;
+            BridgeExit::Cancelled
+        })
+    }
+}
+
+struct PendingBridge {
+    dropped: Arc<AtomicUsize>,
+}
+
+impl ProcessBridge for PendingBridge {
+    fn run(
+        self: Box<Self>,
+        _pipes: StdioPipes,
+        _cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        struct DropGuard(Arc<AtomicUsize>);
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Release);
+            }
+        }
+
+        Box::pin(async move {
+            let _guard = DropGuard(Arc::clone(&self.dropped));
+            std::future::pending::<()>().await;
+            BridgeExit::Cancelled
+        })
+    }
+}
+
 #[cfg(unix)]
 struct CapturePidThenCleanBridge {
     pid: Arc<AtomicU32>,
@@ -164,8 +209,11 @@ fn insert_process_with_status(
         reason: RwLock::new(String::new()),
         last_heartbeat_ts: AtomicU64::new(now_secs()),
         next_spawn_at: AtomicU64::new(now_secs() + 30),
-        cancel_tx: RwLock::new(None),
-        current_registry_id: parking_lot::Mutex::new(None),
+        next_generation: AtomicU64::new(1),
+        stopping: std::sync::atomic::AtomicBool::new(false),
+        stop_completed: tokio::sync::Notify::new(),
+        active_generation: parking_lot::Mutex::new(None),
+        pending_child: parking_lot::Mutex::new(None),
         transition_lock: parking_lot::Mutex::new(()),
         spawn_task: parking_lot::Mutex::new(None),
     });
@@ -191,6 +239,91 @@ async fn register_runs_then_force_stop() {
     // Never + Stopped auto-deregisters, so the snapshot entry vanishes.
     wait_for_absent(&sup, id).await;
     assert_eq!(registry.len(), 0, "force_stop must reap before returning");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_stop_waits_for_old_bridge_before_allowing_new_generation() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let factory_count = Arc::new(AtomicUsize::new(0));
+    let cancel_seen = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let count_for_factory = Arc::clone(&factory_count);
+    let cancel_for_factory = Arc::clone(&cancel_seen);
+    let release_for_factory = Arc::clone(&release);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "generation-stop-gate",
+        cat_spec(),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::from_secs(30),
+            watchdog: None,
+        },
+        Box::new(move || {
+            if count_for_factory.fetch_add(1, Ordering::AcqRel) == 0 {
+                Box::new(DelayedCancelBridge {
+                    cancel_seen: Arc::clone(&cancel_for_factory),
+                    release: Arc::clone(&release_for_factory),
+                })
+            } else {
+                Box::new(WaitForCancelBridge)
+            }
+        }),
+    );
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+
+    let sup_for_stop = Arc::clone(&sup);
+    let stop = tokio::spawn(async move { sup_for_stop.force_stop(id).await });
+    tokio::time::timeout(Duration::from_secs(1), cancel_seen.acquire())
+        .await
+        .expect("old bridge did not receive cancellation")
+        .unwrap()
+        .forget();
+
+    // A concurrent start during the stop barrier must not publish generation 2.
+    sup.force_start(id).unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(factory_count.load(Ordering::Acquire), 1);
+    assert_eq!(registry.len(), 0, "old child was not reaped promptly");
+
+    release.add_permits(1);
+    stop.await.unwrap().unwrap();
+    sup.force_start(id).unwrap();
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+    assert_eq!(factory_count.load(Ordering::Acquire), 2);
+    assert_eq!(registry.len(), 1, "new generation was not registered");
+
+    sup.force_stop(id).await.unwrap();
+    assert_eq!(registry.len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_stop_aborts_a_bridge_that_ignores_cancel_and_eof() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let dropped_for_factory = Arc::clone(&dropped);
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "stubborn-bridge",
+        cat_spec(),
+        RestartPolicy::Never,
+        Box::new(move || {
+            Box::new(PendingBridge {
+                dropped: Arc::clone(&dropped_for_factory),
+            })
+        }),
+    );
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+
+    tokio::time::timeout(Duration::from_secs(1), sup.force_stop(id))
+        .await
+        .expect("force_stop hung on a stubborn bridge")
+        .unwrap();
+
+    assert_eq!(dropped.load(Ordering::Acquire), 1);
+    assert_eq!(registry.len(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -304,7 +437,7 @@ async fn force_stop_without_bridge_stops_and_clears_pending_spawn() {
             TransitionIntent::None
         );
         assert_eq!(proc.next_spawn_at.load(Ordering::Acquire), 0);
-        assert!(proc.current_registry_id.lock().is_none());
+        assert!(proc.active_generation.lock().is_none());
         assert_eq!(registry.len(), 0);
 
         // A pending immediate-spawn task or tick must not resurrect a
@@ -400,7 +533,7 @@ async fn force_restart_while_spawning_reaps_staged_generation() {
         TransitionIntent::None
     );
     assert!(proc.next_spawn_at.load(Ordering::Acquire) <= now_secs());
-    assert!(proc.current_registry_id.lock().is_none());
+    assert!(proc.active_generation.lock().is_none());
     assert_eq!(registry.len(), 0);
     drop(staged_generation);
 
@@ -621,7 +754,7 @@ async fn shutdown_all_joins_spawn_before_final_reap() {
     shutdown.await.unwrap();
 
     assert_eq!(proc.status(), ProcessStatus::Stopped);
-    assert!(proc.current_registry_id.lock().is_none());
+    assert!(proc.active_generation.lock().is_none());
     assert_eq!(registry.len(), 0, "shutdown returned with a late child");
 }
 

@@ -31,7 +31,6 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use tokio::process::Command;
 use tokio::sync::{broadcast, watch};
-use tokio::task::JoinHandle;
 
 use crate::proc_log;
 use crate::process::bridge::{BridgeExit, BridgeFactory, StdioPipes};
@@ -44,6 +43,10 @@ mod generation;
 
 /// Tick interval for the supervisor's scan loop.
 pub const TICK_INTERVAL: Duration = Duration::from_secs(5);
+#[cfg(not(test))]
+const BRIDGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const BRIDGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Unique id for a supervised process within one Supervisor instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -55,232 +58,9 @@ impl std::fmt::Display for ProcessId {
     }
 }
 
-// ---------------------------------------------------------------------------
-// SpawnSpec + RestartPolicy (caller-provided)
-// ---------------------------------------------------------------------------
-
-/// Recipe for spawning the child process. The supervisor uses this on every
-/// (re)spawn — the bridge factory is invoked fresh each time.
-#[derive(Debug, Clone)]
-pub struct SpawnSpec {
-    pub program: String,
-    pub args: Vec<String>,
-    pub cwd: Option<std::path::PathBuf>,
-    pub extra_env: Vec<(String, String)>,
-    /// If `true`, the bridge receives `stderr` via [`StdioPipes`]. If
-    /// `false` (default), the supervisor spawns a task that logs each line
-    /// via [`tracing::info!`] with the process's kind+label fields.
-    pub capture_stderr: bool,
-}
-
-impl SpawnSpec {
-    pub fn new(program: impl Into<String>) -> Self {
-        Self {
-            program: program.into(),
-            args: Vec::new(),
-            cwd: None,
-            extra_env: Vec::new(),
-            capture_stderr: false,
-        }
-    }
-
-    pub fn arg(mut self, a: impl Into<String>) -> Self {
-        self.args.push(a.into());
-        self
-    }
-
-    pub fn args<I, S>(mut self, a: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.args.extend(a.into_iter().map(|s| s.into()));
-        self
-    }
-
-    pub fn cwd(mut self, p: impl Into<std::path::PathBuf>) -> Self {
-        self.cwd = Some(p.into());
-        self
-    }
-
-    pub fn env(mut self, k: impl Into<String>, v: impl Into<String>) -> Self {
-        self.extra_env.push((k.into(), v.into()));
-        self
-    }
-
-    pub fn capture_stderr(mut self, on: bool) -> Self {
-        self.capture_stderr = on;
-        self
-    }
-}
-
-/// What to do when a supervised process dies.
-#[derive(Debug, Clone, Copy)]
-pub enum RestartPolicy {
-    /// Move to `Stopped` on any exit. The owning manager decides whether
-    /// to re-register. Used by `AcpAgent` and `Pty`.
-    Never,
-    /// On unintended exit (crash / protocol error), schedule a respawn
-    /// after `restart_delay`. If `watchdog` is `Some`, the supervisor kills
-    /// processes whose `touch()` timestamp is older than the watchdog
-    /// window — this catches frozen plugins that aren't emitting
-    /// heartbeats. Used by `ChannelPlugin`.
-    OnCrash {
-        restart_delay: Duration,
-        watchdog: Option<Duration>,
-    },
-}
-
-impl RestartPolicy {
-    fn restart_delay(&self) -> Option<Duration> {
-        match self {
-            RestartPolicy::Never => None,
-            RestartPolicy::OnCrash { restart_delay, .. } => Some(*restart_delay),
-        }
-    }
-
-    fn watchdog(&self) -> Option<Duration> {
-        match self {
-            RestartPolicy::Never => None,
-            RestartPolicy::OnCrash { watchdog, .. } => *watchdog,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Status + events
-// ---------------------------------------------------------------------------
-
-/// Lifecycle status of a supervised process. Stored as an `AtomicU8`.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProcessStatus {
-    NotStarted = 0,
-    Spawning = 1,
-    Running = 2,
-    Crashed = 3,
-    Stopped = 4,
-}
-
-impl ProcessStatus {
-    fn from_u8(v: u8) -> Self {
-        match v {
-            0 => Self::NotStarted,
-            1 => Self::Spawning,
-            2 => Self::Running,
-            3 => Self::Crashed,
-            _ => Self::Stopped,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::NotStarted => "not_started",
-            Self::Spawning => "spawning",
-            Self::Running => "running",
-            Self::Crashed => "crashed",
-            Self::Stopped => "stopped",
-        }
-    }
-}
-
-/// Distinguishes a user action from an actual crash so that force_stop and
-/// force_restart survive the race with a bridge-thread `mark_exit`.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TransitionIntent {
-    None = 0,
-    Stop = 1,
-    Restart = 2,
-}
-
-impl TransitionIntent {
-    fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Self::Stop,
-            2 => Self::Restart,
-            _ => Self::None,
-        }
-    }
-}
-
-/// Public read-only snapshot of a supervised process — safe to expose via
-/// HTTP / dashboard without leaking internal state.
-#[derive(Debug, Clone)]
-pub struct ProcessSnapshot {
-    pub id: ProcessId,
-    pub kind: ProcessKind,
-    pub label: String,
-    pub status: ProcessStatus,
-    pub reason: String,
-}
-
-/// Broadcast payload for status changes. Subscribers receive which process
-/// changed and re-read via [`Supervisor::snapshot`] if they need details —
-/// matching the existing `StateSource` convention.
-#[derive(Debug, Clone)]
-pub struct ProcessEvent {
-    pub id: ProcessId,
-    pub kind: ProcessKind,
-    pub status: ProcessStatus,
-}
-
-// ---------------------------------------------------------------------------
-// Internal per-process state
-// ---------------------------------------------------------------------------
-
-struct SupervisedProcess {
-    id: ProcessId,
-    kind: ProcessKind,
-    label: String,
-    spec: SpawnSpec,
-    policy: RestartPolicy,
-    factory: BridgeFactory,
-
-    status: AtomicU8,
-    intent: AtomicU8,
-    reason: RwLock<String>,
-
-    last_heartbeat_ts: AtomicU64,
-    next_spawn_at: AtomicU64,
-
-    /// Cancel signal for the currently-running bridge. `None` between runs.
-    cancel_tx: RwLock<Option<watch::Sender<bool>>>,
-
-    /// `ChildRegistry` id for the currently-running spawn. Cleared on
-    /// exit so the `Child` gets removed from the registry and reaped by
-    /// [`Supervisor::handle_bridge_exit`] — otherwise every respawn
-    /// leaks an entry and, on Unix, an unreaped zombie.
-    current_registry_id: parking_lot::Mutex<Option<u64>>,
-
-    /// Serializes lifecycle transitions that update status together with
-    /// intent / restart scheduling. Process I/O and child reaping happen
-    /// outside this lock.
-    transition_lock: parking_lot::Mutex<()>,
-
-    /// The currently scheduled spawn attempt. Shutdown takes and awaits this
-    /// handle so a child cannot be registered after the process table has
-    /// already been drained.
-    spawn_task: parking_lot::Mutex<Option<JoinHandle<()>>>,
-}
-
-impl SupervisedProcess {
-    fn set_status(&self, s: ProcessStatus) {
-        self.status.store(s as u8, Ordering::Release);
-    }
-
-    fn status(&self) -> ProcessStatus {
-        ProcessStatus::from_u8(self.status.load(Ordering::Acquire))
-    }
-
-    fn set_reason(&self, r: impl Into<String>) {
-        *self.reason.write() = r.into();
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Supervisor
-// ---------------------------------------------------------------------------
+mod model;
+use model::{ActiveGeneration, SupervisedProcess, TransitionIntent};
+pub use model::{ProcessEvent, ProcessSnapshot, ProcessStatus, RestartPolicy, SpawnSpec};
 
 pub struct Supervisor {
     registry: Arc<ChildRegistry>,
@@ -352,8 +132,11 @@ impl Supervisor {
             reason: RwLock::new(String::new()),
             last_heartbeat_ts: AtomicU64::new(now_secs()),
             next_spawn_at: AtomicU64::new(0),
-            cancel_tx: RwLock::new(None),
-            current_registry_id: parking_lot::Mutex::new(None),
+            next_generation: AtomicU64::new(1),
+            stopping: std::sync::atomic::AtomicBool::new(false),
+            stop_completed: tokio::sync::Notify::new(),
+            active_generation: parking_lot::Mutex::new(None),
+            pending_child: parking_lot::Mutex::new(None),
             transition_lock: parking_lot::Mutex::new(()),
             spawn_task: parking_lot::Mutex::new(None),
         });
@@ -380,6 +163,9 @@ impl Supervisor {
     /// in `Stopped` — no respawn regardless of policy.
     pub async fn force_stop(&self, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
+        if !self.acquire_stop(&proc).await {
+            return Ok(());
+        }
         {
             let _transition = proc.transition_lock.lock();
             proc.set_status(ProcessStatus::Stopped);
@@ -387,7 +173,6 @@ impl Supervisor {
                 .store(TransitionIntent::None as u8, Ordering::Release);
             proc.next_spawn_at.store(0, Ordering::Relaxed);
             proc.set_reason("stopped by user");
-            self.cancel_current_bridge(&proc);
         }
 
         self.notify_change(&proc);
@@ -395,7 +180,15 @@ impl Supervisor {
         if let Some(spawn_task) = spawn_task {
             let _ = spawn_task.await;
         }
-        self.terminate_and_reap_current_child(&proc).await;
+        if let Some(registry_id) = self.take_pending_registry_id(&proc) {
+            self.terminate_and_reap_registry_id(&proc, registry_id)
+                .await;
+        }
+        let generation = proc.active_generation.lock().take();
+        if let Some(generation) = generation {
+            self.stop_generation(&proc, generation).await;
+        }
+        self.finish_stop(&proc);
         self.deregister_terminal_process(&proc);
         Ok(())
     }
@@ -411,15 +204,25 @@ impl Supervisor {
     /// No-op if policy is `Never` and the process is already stopped.
     pub async fn force_restart(self: &Arc<Self>, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
+        if proc.stopping.load(Ordering::Acquire) {
+            self.wait_for_stop(&proc).await;
+            return Ok(());
+        }
         let mut spawn_now = false;
-        let mut terminate_current_generation = false;
+        let mut terminate_current_generation = None;
+        let mut wait_for_spawn = false;
         {
             let _transition = proc.transition_lock.lock();
+            if proc.stopping.load(Ordering::Acquire) {
+                return Ok(());
+            }
             match proc.status() {
                 ProcessStatus::Running => {
                     proc.intent
                         .store(TransitionIntent::Restart as u8, Ordering::Release);
-                    terminate_current_generation = !self.cancel_current_bridge(&proc);
+                    if !self.cancel_current_bridge(&proc) {
+                        terminate_current_generation = self.current_registry_id(&proc);
+                    }
                     proc.set_reason("restart requested");
                 }
                 ProcessStatus::Spawning => {
@@ -433,7 +236,7 @@ impl Supervisor {
                     proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
                     proc.set_reason("restart requested while spawning");
                     self.cancel_current_bridge(&proc);
-                    terminate_current_generation = true;
+                    wait_for_spawn = true;
                 }
                 ProcessStatus::Crashed | ProcessStatus::NotStarted => {
                     proc.set_status(ProcessStatus::Crashed);
@@ -459,8 +262,20 @@ impl Supervisor {
             }
         }
 
-        if terminate_current_generation {
-            self.terminate_and_reap_current_child(&proc).await;
+        if wait_for_spawn {
+            let spawn_task = proc.spawn_task.lock().take();
+            if let Some(spawn_task) = spawn_task {
+                let _ = spawn_task.await;
+            }
+            if let Some(registry_id) = self.take_pending_registry_id(&proc) {
+                self.terminate_and_reap_registry_id(&proc, registry_id)
+                    .await;
+            }
+            spawn_now = true;
+        }
+        if let Some(registry_id) = terminate_current_generation {
+            self.terminate_and_reap_registry_id(&proc, registry_id)
+                .await;
         }
         self.notify_change(&proc);
         if spawn_now {
@@ -475,10 +290,13 @@ impl Supervisor {
         let proc = self.get_proc(id)?;
         let should_spawn = {
             let _transition = proc.transition_lock.lock();
-            if matches!(
-                proc.status(),
-                ProcessStatus::Stopped | ProcessStatus::Crashed | ProcessStatus::NotStarted
-            ) {
+            if !proc.stopping.load(Ordering::Acquire)
+                && proc.active_generation.lock().is_none()
+                && matches!(
+                    proc.status(),
+                    ProcessStatus::Stopped | ProcessStatus::Crashed | ProcessStatus::NotStarted
+                )
+            {
                 proc.intent
                     .store(TransitionIntent::None as u8, Ordering::Release);
                 proc.set_status(ProcessStatus::Crashed);
@@ -551,22 +369,42 @@ impl Supervisor {
             .drain()
             .map(|(_, proc)| proc)
             .collect();
+        let mut owns_stop = Vec::with_capacity(procs.len());
         for proc in &procs {
+            let owns = proc
+                .stopping
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok();
+            owns_stop.push(owns);
+            if !owns {
+                continue;
+            }
             let _transition = proc.transition_lock.lock();
             proc.set_status(ProcessStatus::Stopped);
             proc.intent
                 .store(TransitionIntent::None as u8, Ordering::Release);
             proc.next_spawn_at.store(0, Ordering::Relaxed);
             proc.set_reason("supervisor shutdown");
-            self.cancel_current_bridge(proc);
             self.notify_change(proc);
         }
-        for proc in procs {
+        for (proc, owns) in procs.into_iter().zip(owns_stop) {
+            if !owns {
+                self.wait_for_stop(&proc).await;
+                continue;
+            }
             let spawn_task = proc.spawn_task.lock().take();
             if let Some(spawn_task) = spawn_task {
                 let _ = spawn_task.await;
             }
-            self.terminate_and_reap_current_child(&proc).await;
+            if let Some(registry_id) = self.take_pending_registry_id(&proc) {
+                self.terminate_and_reap_registry_id(&proc, registry_id)
+                    .await;
+            }
+            let generation = proc.active_generation.lock().take();
+            if let Some(generation) = generation {
+                self.stop_generation(&proc, generation).await;
+            }
+            self.finish_stop(&proc);
         }
     }
 
@@ -585,10 +423,51 @@ impl Supervisor {
     }
 
     fn cancel_current_bridge(&self, proc: &SupervisedProcess) -> bool {
-        if let Some(tx) = proc.cancel_tx.read().as_ref() {
-            return tx.send(true).is_ok();
+        if let Some(generation) = proc.active_generation.lock().as_ref() {
+            return generation.cancel_tx.send(true).is_ok();
         }
         false
+    }
+
+    fn current_registry_id(&self, proc: &SupervisedProcess) -> Option<u64> {
+        proc.active_generation
+            .lock()
+            .as_ref()
+            .map(|generation| generation.registry_id)
+    }
+
+    fn take_pending_registry_id(&self, proc: &SupervisedProcess) -> Option<u64> {
+        proc.pending_child
+            .lock()
+            .take()
+            .map(|(_, registry_id)| registry_id)
+    }
+
+    async fn acquire_stop(&self, proc: &SupervisedProcess) -> bool {
+        if proc
+            .stopping
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return true;
+        }
+        self.wait_for_stop(proc).await;
+        false
+    }
+
+    async fn wait_for_stop(&self, proc: &SupervisedProcess) {
+        loop {
+            let completed = proc.stop_completed.notified();
+            if !proc.stopping.load(Ordering::Acquire) {
+                return;
+            }
+            completed.await;
+        }
+    }
+
+    fn finish_stop(&self, proc: &SupervisedProcess) {
+        proc.stopping.store(false, Ordering::Release);
+        proc.stop_completed.notify_waiters();
     }
 
     fn notify_change(&self, proc: &SupervisedProcess) {

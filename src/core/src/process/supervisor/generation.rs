@@ -1,5 +1,13 @@
 use super::*;
 
+pub(super) struct StagedGeneration {
+    pub(super) id: u64,
+    pub(super) registry_id: u64,
+    pipes: StdioPipes,
+    cancel_tx: watch::Sender<bool>,
+    cancel_rx: watch::Receiver<bool>,
+}
+
 impl Supervisor {
     pub(super) fn schedule_spawn(self: &Arc<Self>, proc: Arc<SupervisedProcess>) {
         let mut slot = proc.spawn_task.lock();
@@ -88,32 +96,66 @@ impl Supervisor {
         self.notify_change(&proc);
 
         match self.spawn_child(&proc).await {
-            Ok((pipes, cancel_rx)) => {
-                // Publish status Running unless force_* landed during the spawn.
-                let publish_running = {
+            Ok(staged) => {
+                let StagedGeneration {
+                    id: generation_id,
+                    registry_id,
+                    pipes,
+                    cancel_tx,
+                    cancel_rx,
+                } = staged;
+
+                // Install the complete active generation before allowing the
+                // bridge task to run. Even an instant bridge exit therefore
+                // observes its own generation record, never a partial slot.
+                let start_bridge = {
                     let _transition = proc.transition_lock.lock();
-                    if matches!(proc.status(), ProcessStatus::Spawning) {
+                    if !matches!(proc.status(), ProcessStatus::Spawning)
+                        || proc.stopping.load(Ordering::Acquire)
+                    {
+                        None
+                    } else {
+                        let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+                        let bridge = (proc.factory)();
+                        let sup = Arc::clone(self);
+                        let proc_for_task = Arc::clone(&proc);
+                        let bridge_task = tokio::spawn(async move {
+                            if start_rx.await.is_err() {
+                                return;
+                            }
+                            let exit = bridge.run(pipes, cancel_rx).await;
+                            sup.handle_bridge_exit(proc_for_task, generation_id, registry_id, exit)
+                                .await;
+                        });
+                        *proc.active_generation.lock() = Some(ActiveGeneration {
+                            id: generation_id,
+                            registry_id,
+                            cancel_tx,
+                            bridge_task,
+                        });
+                        proc.pending_child
+                            .lock()
+                            .take_if(|(id, _)| *id == generation_id);
                         proc.set_status(ProcessStatus::Running);
                         proc.set_reason("");
                         proc.last_heartbeat_ts.store(now_secs(), Ordering::Relaxed);
-                        true
-                    } else {
-                        false
+                        Some(start_tx)
                     }
                 };
-                if !publish_running {
+                let Some(start_tx) = start_bridge else {
                     proc_log!(
                         info,
                         kind = proc.kind,
                         label = proc.label,
                         event = "spawn_superseded"
                     );
-                    // No bridge task has been started yet, so cancellation alone
-                    // cannot clean up this staged generation.
-                    *proc.cancel_tx.write() = None;
-                    self.terminate_and_reap_current_child(&proc).await;
+                    proc.pending_child
+                        .lock()
+                        .take_if(|(id, _)| *id == generation_id);
+                    self.terminate_and_reap_registry_id(&proc, registry_id)
+                        .await;
                     return;
-                }
+                };
                 proc_log!(
                     info,
                     kind = proc.kind,
@@ -121,16 +163,7 @@ impl Supervisor {
                     event = "running"
                 );
                 self.notify_change(&proc);
-
-                // Hand pipes to the bridge in a task; when it returns, we
-                // transition based on intent.
-                let bridge = (proc.factory)();
-                let sup = Arc::clone(self);
-                let proc_for_task = Arc::clone(&proc);
-                tokio::spawn(async move {
-                    let exit = bridge.run(pipes, cancel_rx).await;
-                    sup.handle_bridge_exit(proc_for_task, exit).await;
-                });
+                let _ = start_tx.send(());
             }
             Err(e) => {
                 let reason = format!("{}", e);
@@ -173,7 +206,7 @@ impl Supervisor {
     pub(super) async fn spawn_child(
         &self,
         proc: &SupervisedProcess,
-    ) -> ProcessResult<(StdioPipes, watch::Receiver<bool>)> {
+    ) -> ProcessResult<StagedGeneration> {
         let mut cmd: Command = env::command(&proc.spec.program);
         cmd.args(&proc.spec.args)
             .stdin(std::process::Stdio::piped())
@@ -213,7 +246,8 @@ impl Supervisor {
         // `handle_bridge_exit` can remove + reap the child (otherwise
         // every respawn leaks a registry entry + zombie process).
         let registry_id = self.registry.register(proc.kind, proc.label.clone(), child);
-        *proc.current_registry_id.lock() = Some(registry_id);
+        let generation_id = proc.next_generation.fetch_add(1, Ordering::AcqRel);
+        *proc.pending_child.lock() = Some((generation_id, registry_id));
 
         proc_log!(
             info,
@@ -247,31 +281,33 @@ impl Supervisor {
         };
 
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        *proc.cancel_tx.write() = Some(cancel_tx);
 
-        Ok((
-            StdioPipes {
+        Ok(StagedGeneration {
+            id: generation_id,
+            registry_id,
+            pipes: StdioPipes {
                 stdin,
                 stdout,
                 stderr,
             },
+            cancel_tx,
             cancel_rx,
-        ))
+        })
     }
 
     pub(super) async fn handle_bridge_exit(
         self: Arc<Self>,
         proc: Arc<SupervisedProcess>,
+        generation_id: u64,
+        registry_id: u64,
         exit: BridgeExit,
     ) {
-        // Clear the cancel channel — this run is done.
-        *proc.cancel_tx.write() = None;
-
         // A bridge can finish while its child is frozen or otherwise still
         // alive. Terminate that generation before waiting so respawn cannot
         // leave a twin process behind, then reap before publishing the next
         // state transition.
-        self.terminate_and_reap_current_child(&proc).await;
+        self.terminate_and_reap_registry_id(&proc, registry_id)
+            .await;
 
         let (reason, was_crash) = match exit {
             BridgeExit::Clean => ("clean exit".to_string(), false),
@@ -280,6 +316,17 @@ impl Supervisor {
         };
 
         let transition = proc.transition_lock.lock();
+        let is_current = proc
+            .active_generation
+            .lock()
+            .as_ref()
+            .is_some_and(|generation| generation.id == generation_id);
+        if !is_current {
+            return;
+        }
+        // Dropping the JoinHandle of this currently-running task only detaches
+        // it; the task continues through the state transition below.
+        proc.active_generation.lock().take();
         if matches!(proc.status(), ProcessStatus::Stopped) {
             // `force_stop` won while this generation was being reaped.
             proc.intent
@@ -366,10 +413,7 @@ impl Supervisor {
         self.deregister_terminal_process(&proc);
     }
 
-    pub(super) async fn terminate_and_reap_current_child(&self, proc: &SupervisedProcess) {
-        let Some(id) = proc.current_registry_id.lock().take() else {
-            return;
-        };
+    pub(super) async fn terminate_and_reap_registry_id(&self, proc: &SupervisedProcess, id: u64) {
         let Some(mut child) = self.registry.remove(id) else {
             return;
         };
@@ -385,6 +429,31 @@ impl Supervisor {
             );
             let _ = child.start_kill();
             let _ = child.wait().await;
+        }
+    }
+
+    pub(super) async fn stop_generation(
+        &self,
+        proc: &SupervisedProcess,
+        mut generation: ActiveGeneration,
+    ) {
+        let _ = generation.cancel_tx.send(true);
+        self.terminate_and_reap_registry_id(proc, generation.registry_id)
+            .await;
+
+        if tokio::time::timeout(BRIDGE_SHUTDOWN_TIMEOUT, &mut generation.bridge_task)
+            .await
+            .is_err()
+        {
+            proc_log!(
+                warn,
+                kind = proc.kind,
+                label = proc.label,
+                event = "bridge_shutdown_timeout",
+                generation = generation.id
+            );
+            generation.bridge_task.abort();
+            let _ = generation.bridge_task.await;
         }
     }
 
