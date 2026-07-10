@@ -11,7 +11,7 @@ They cross-link where a flow passes through a module. The reader-level "why is i
 
 | Flow | Path it follows |
 |---|---|
-| [IM message](flows/im-message.md) | Platform event → plugin → sharded queue → thread → agent → streamed reply. **The trunk flow — read it first** |
+| [IM message](flows/im-message.md) | Platform event → plugin runner → bounded route lane → thread → agent → streamed reply. **The trunk flow — read it first** |
 | [Web chat](flows/web-chat.md) | WebSocket event → session intent → the same prompt path |
 | [Permission](flows/permission.md) | Agent request → oneshot registration → card → tap → agent resumes |
 | [Bridge request](flows/bridge-request.md) | Client dialect → decode → model mapping → upstream → streamed back |
@@ -46,7 +46,7 @@ Cross-cutting subsystems that span several modules get a dedicated page:
 
 ## Related material
 
-- Known defects and planned refactors: `reports/architecture-review-remediation-2026-07-04.md` (module pages' "known debt" sections link to its items).
+- Known defects and planned refactors are summarized in each module page's "Known debt" section and the current three-part system review under `reports/system-review-2026-07-10/`.
 - Rustdoc module headers in the source are the finest-grained authority; these pages are maps, not replacements.
 
 <sub>[◀ Provider endpoints reference](../reference/provider-endpoints.md) · [Documentation index](../README.md) · [Flow: IM message ▶](flows/im-message.md)</sub>

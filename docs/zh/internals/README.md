@@ -11,7 +11,7 @@ Flow 经过某个模块的地方会互相交叉链接。面向读者的“为什
 
 | Flow | 路径 |
 |---|---|
-| [IM 消息](flows/im-message.md) | 平台事件 → 插件 → 分片队列 → Thread → Agent → 流式回复。**主干流程，优先读这个** |
+| [IM 消息](flows/im-message.md) | 平台事件 → 插件 runner → 有界 route lane → Thread → Agent → 流式回复。**主干流程，优先读这个** |
 | [Web Chat](flows/web-chat.md) | WebSocket 事件 → 会话意图 → 同一条 prompt 路径 |
 | [权限请求](flows/permission.md) | Agent 请求 → oneshot 注册 → 卡片 → 点按 → Agent 继续 |
 | [Bridge 请求](flows/bridge-request.md) | 客户端方言 → 解码 → 模型映射 → 上游 → 流式返回 |
@@ -46,7 +46,7 @@ Flow 经过某个模块的地方会互相交叉链接。面向读者的“为什
 
 ## 相关材料
 
-- 已知缺陷与计划重构：`reports/architecture-review-remediation-2026-07-04.md`（模块页的“已知技术债”会链接到其中条目）。
+- 已知缺陷与计划重构由各模块页“已知技术债”和 `reports/system-review-2026-07-10/` 三份当前报告共同维护。
 - 源码里的 Rustdoc module header 是最细粒度的权威；这些页面是地图，不替代源码。
 
 <sub>[◀ 供应商端点参考](../reference/provider-endpoints.md) · [文档索引](../README.md) · [Flow: IM 消息 ▶](flows/im-message.md)</sub>

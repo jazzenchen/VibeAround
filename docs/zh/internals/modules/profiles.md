@@ -35,7 +35,7 @@
 
 ## 已知技术债
 
-- `127.0.0.1:{port}/va/local-api/…` URL shape 和 server route table 存在重复知识。remediation M7 计划做 shared constant + cross-layer test。
+- `127.0.0.1:{port}/va/local-api/…` URL shape 和 server route table 重复维护，需要 shared contract + cross-layer test。
 - Upstream auth 是每个 profile 静态 API key；Gemini adapter 之外的 subscription/OAuth upstreams 需要新 adapters（已知限制，也记录在 api-bridge memory 里）。
 - `bridge_launch.rs` 有 1.3k 行 per-target rendering；下一个 target 落地时可考虑拆 per-target submodules。
 

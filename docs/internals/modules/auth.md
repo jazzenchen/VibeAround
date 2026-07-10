@@ -1,10 +1,10 @@
 # Module: auth
 
-`src/core/src/auth/` — the two credentials that gate every surface: the per-boot daemon token and short-lived pairing codes. Policy discussion: [security model](../../architecture/security-model.md).
+`src/core/src/auth/` (current location) — credentials that gate server surfaces: the daemon token and short-lived pairing codes. Policy discussion: [security model](../../architecture/security-model.md).
 
 ## Responsibility
 
-Generate and persist the daemon auth token, and manage the pairing-code table that lets remote browsers earn that token. Enforcement (middleware) lives in [server](server.md); this module is the source of truth.
+Generate and persist the daemon auth token, and manage the pairing-code table that lets remote browsers earn that token. This is semantically a **server authentication capability**: middleware, pairing HTTP flow and token lifetime belong to one `AuthService`, even though the storage primitives currently live in core.
 
 ## Key types
 
@@ -23,18 +23,20 @@ Generate and persist the daemon auth token, and manage the pairing-code table th
 
 ## Invariants — do not break
 
-1. **Token rotates every daemon start** and the file is overwritten immediately — stale URLs must fail. Never persist a token across restarts.
+1. **Current lifetime is `ServerDaemon` lifetime**, not every `start_background` generation. Desktop hot restart reuses the same `ServerDaemon` token; a new daemon object/process rotates it. Clients must be able to reload the token file.
 2. **Pairing codes are one-shot-ish and 60 s** — purge-on-access keeps the table clean; a code never outlives its window.
 3. **Confirmation must come from an already-trusted surface** (local origin or a connected chat). Adding a new confirmation path means adding a new trust assumption — think twice.
 4. The token file is plaintext by design (home-directory trust level); nothing else secret goes in it.
 
 ## Known debt
 
-- None tracked in the remediation plan.
+- Split an injected server-owned `AuthService` from core primitives so HTTP middleware and IM pairing share policy without exposing the bearer to core broadly.
+- Pairing/global in-memory tables need capacity limits and collision-safe active-code uniqueness.
+- Token/settings files need secure-create permissions and atomic replacement rather than chmod after a normal write.
 
 ---
 
 *Source anchors: `src/core/src/auth/` (token, pair, mod), `src/server/src/web_server/auth.rs` (enforcement), `src/server/src/web_server/pair.rs` (HTTP flow).*
-*Last verified: v0.7.11*
+*Last verified: system review 2026-07-11.*
 
 <sub>[◀ Module: tunnels](tunnels.md) · [Documentation index](../../README.md) · [Module: server ▶](server.md)</sub>

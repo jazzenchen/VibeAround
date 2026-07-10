@@ -24,7 +24,7 @@ agent ◄──ACP response── bridge handler ◄──oneshot── forwarde
 
 **4. 点按回流。** 两条返回路径进入同一张表：
 - **Stdio plugins：** 点按作为 ACP response 通过 plugin bridge forwarder 回来，pop `pending_permissions[request_id]` 并触发 oneshot。
-- **Web chat：** 浏览器通过 `/ws/chat` 发送 typed `PermissionResponse`；handler 调 `respond_permission(channel_kind, request_id, response)`，先验证该 request 属于该 channel，再触发。
+- **Web chat：** 浏览器通过 `/va/ws/chat` 发送 typed `PermissionResponse`；handler 调 `respond_permission(channel_kind, request_id, response)`，先验证该 request 属于该 channel，再触发。
 → `src/core/src/channels/transport_stdio/` (forwarder), `plugin_host.rs` (`respond_permission`)
 
 **5. Agent 继续。** Bridge handler 的 `rx.await` 得到所选选项，并把它作为 ACP response 返回。Agent 随后继续或中止 tool call。

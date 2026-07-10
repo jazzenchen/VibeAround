@@ -5,7 +5,7 @@
 ## 逐跳
 
 ```text
-platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► shard worker
+platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► bounded RouteLane
                                                           │5
                               ┌───────────────────────────┘
                               ▼
@@ -26,8 +26,10 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► sh
 **3. Enqueue。** `ChannelManager::handle_input` 是 fire-and-forget：input 进入 unbounded mpsc queue。任何面向平台的代码都不会等待 agent 工作。
 → `src/core/src/channels/mod.rs` (`handle_input`)
 
-**4. Shard dispatch。** Input loop 把 route key hash 到 64 个 worker task 之一。同一 route → 同一 worker → 严格 FIFO；不同 route 并行运行。这是一段聊天里的顺序保证。
-→ `src/server/src/lib.rs` (`channel_input_shard`, worker loop)
+**4. Route lane。** `ConversationIngress` 以完整 `RouteKey` 建立容量 16 的有界 FIFO lane。同 route 严格串行，不同 route 独立运行，不再有 shard hash 碰撞造成的 head-of-line blocking。`Stop` 会提升 stop generation、取消当前 turn 并丢弃此前排队的 prompt；daemon shutdown 先关闭 ingress 并等待 lane drain。
+→ `src/core/src/channels/prompt/ingress.rs`
+
+群聊地址语义由插件先提取、core 再防御性校验：DM 不要求 @；group text 必须 @ 当前 bot；callback 属于显式交互。Route contract 已包含 `bot_id/actor_id/topic_id`，但官方插件尚未端到端发送扩展 metadata，因此 multi-bot/multi-actor 仍是部分落地。
 
 **5. Command parse。** 文本按 slash-command grammar 检查（`/new`、`/close`、`/switch`、`/pickup`、`/status`、resource commands、`/va` prefix forms）。命令在 workspace-thread layer 上执行，并以 system text 回复；对命令来说流程到这里结束。
 → `src/core/src/channels/prompt/handler.rs` (`parse_thread_command`, `handle_command`)
@@ -64,7 +66,7 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► sh
 
 ---
 
-*Source anchors: `src/core/src/channels/` (types, transport_stdio, plugin_host, outbox, bridge_handler, prompt/), `src/server/src/lib.rs` (sharding), `src/core/src/workspace/manager.rs` + `threads/runtime.rs` (thread resolution, agent lifecycle).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/channels/` (types, plugin_runner, transport_stdio, plugin_host, outbox, bridge_handler, prompt/), `src/server/src/lib.rs` (input dispatcher/shutdown), `src/core/src/workspace/manager.rs` + `threads/runtime.rs`。*
+*Last verified: `codex/im-acp-route-refactor` at `0ba7fa2e`（2026-07-11）。*
 
 <sub>[◀ Internals](../README.md) · [文档索引](../../README.md) · [Flow: Web Chat ▶](web-chat.md)</sub>

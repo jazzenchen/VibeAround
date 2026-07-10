@@ -11,14 +11,15 @@
 | Type | File | Role |
 |---|---|---|
 | `ChannelManager` | `mod.rs` | Daemon 生命周期 facade：input queue、plugin registration、sync、shutdown |
+| `ConversationIngress` | `prompt/ingress.rs` | stdio/Web/TUI 共用业务入口；完整 route 的有界 FIFO lane、Stop generation 与 shutdown barrier |
 | `ChannelInput` / `ChannelOutput` / `ChannelEnvelope` | `types.rs` | 每个界面都使用的 wire vocabulary |
 | `PluginHost` | `plugin_host.rs` | 路由表：channel kind → live runtime；pending-permissions table |
 | `PluginRuntime` | `plugin_runtime.rs` | stdio / websocket runtime 的 enum |
-| `ChannelPluginBridge` | `plugin_bridge.rs` | 驱动一个 stdio plugin ACP 连接的 ProcessBridge impl |
+| `ChannelPluginRunner` / factory | `plugin_runner.rs` | 一个受监管 stdio plugin generation 的协议 owner；每次 respawn 重建 |
 | `ChannelMonitor` | `monitor.rs` | Dashboard 通过 supervisor 查看 plugin lifecycle 的 facade |
 | `ChannelOutbox` | `outbox.rs` | 可 replay outputs（system texts、permission cards）的 durable queue |
 | `ChannelBridgeHandler` | `bridge_handler.rs` | 每个 thread 的 ACP client handler：notification fan-out + permission round-trip |
-| `handle_channel_input` | `prompt/` | 唯一 dispatch 入口：command parse → thread ops → prompt |
+| `ConversationIngress` | `prompt/` | 唯一 dispatch 入口：route lane → command parse → thread ops → prompt |
 
 ## 交互
 
@@ -29,21 +30,24 @@
 
 ## 不变量：不要破坏
 
-1. **Per-route ordering** 来自 server 的 shard workers；本模块里不能启动绕过它的 per-message tasks。
+1. **Per-route ordering** 属于 `ConversationIngress`；Web/TUI/stdio 的业务与控制路径都不能绕过它。
 2. **`handle_input` 绝不阻塞**，它只是 queue send；面向平台的代码绝不能等待 agent 工作。
 3. **每个 pending permission 都会终止**：注册的 oneshot 会被点按消费，被 bridge death 时的 `cancel_channel_permissions` 消费（每次 death 刚好一次），或被 `shutdown_all` 消费。给 plugin 加新退出路径时，也必须在那里 drain。
 4. **Replayable vs direct outputs**：只有 durable kinds 走 outbox（`should_replay_output`）；streaming chunks 在 plugin restart 跨越时刻意允许丢失。
 5. 一个 channel 的 outbound send 会持有该 channel 的 send lock，避免 respawn-replay 和 live sends 交错。
+6. **群聊地址必须明确**：DM 不要求 @；group text 必须 @ 当前 bot；callback 属于显式交互。
+7. `ChannelManager::shutdown_all` 只能停止 channel 自己持有的 supervised IDs，不能 drain 全局 supervisor。
 
 ## 已知技术债
 
-- `channel_kind == "web"` 字符串特判（core 中 7 处）应变成声明式 channel traits，remediation M4。
-- Web-chat session-intent side effects 早于 queue serialization 运行，remediation M6。
-- `send_locks` map entries 从不 prune（受 channel count 限制，主要是 cosmetic）。
+- 上游 `ChannelManager` input queue 与 stdio plugin output queue 仍是 unbounded。
+- Web-chat session-intent side effects 仍早于 route lane serialization。
+- SDK/Route 已定义 `bot_id/actor_id/topic_id`，官方插件仍需发送 metadata 才能形成 multi-bot/multi-actor 闭环。
+- `run_acp_plugin_bridge` 仍有十个参数，下一步应直接接收 runner context。
 
 ---
 
-*Source anchors: `src/core/src/channels/` (all files above), `src/server/src/lib.rs` (shard workers).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/channels/`，`src/server/src/lib.rs`（input dispatcher 与 ingress-first shutdown）。*
+*Last verified: `codex/im-acp-route-refactor` at `0ba7fa2e`（2026-07-11）。*
 
 <sub>[◀ Flow: PTY 终端](../flows/web-terminal.md) · [文档索引](../../README.md) · [Module: workspace ▶](workspace.md)</sub>

@@ -24,7 +24,7 @@ agent ◄──ACP response── bridge handler ◄──oneshot── forwarde
 
 **4. The tap comes back.** Two return paths into the same table:
 - **Stdio plugins:** the tap arrives as an ACP response through the plugin bridge's forwarder, which pops `pending_permissions[request_id]` and fires the oneshot.
-- **Web chat:** the browser sends a typed `PermissionResponse` over `/ws/chat`; the handler calls `respond_permission(channel_kind, request_id, response)`, which validates that the request belongs to that channel before firing.
+- **Web chat:** the browser sends a typed `PermissionResponse` over `/va/ws/chat`; the handler calls `respond_permission(channel_kind, request_id, response)`, which validates that the request belongs to that channel before firing.
 → `src/core/src/channels/transport_stdio/` (forwarder), `plugin_host.rs` (`respond_permission`)
 
 **5. Agent resumes.** The bridge handler's `rx.await` completes with the chosen option and returns it as the ACP response. The agent continues (or aborts) the tool call accordingly.
@@ -47,6 +47,6 @@ The net invariant: **every registered oneshot is consumed exactly once** — by 
 ---
 
 *Source anchors: `src/core/src/channels/bridge_handler.rs` (request_permission), `src/core/src/channels/plugin_host.rs` (pending_permissions, respond_permission, cancel_channel_permissions, shutdown_all), `src/core/src/channels/transport_stdio/` (forwarder), `src/core/src/channels/outbox.rs` (durability), `src/server/src/web_server/ws_chat.rs` (web response path).*
-*Last verified: v0.7.11*
+*Last verified: 2026-07-11.*
 
 <sub>[◀ Flow: web chat](web-chat.md) · [Documentation index](../../README.md) · [Flow: bridge request ▶](bridge-request.md)</sub>

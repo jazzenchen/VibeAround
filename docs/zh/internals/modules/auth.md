@@ -1,10 +1,10 @@
 # Module: auth
 
-`src/core/src/auth/`：守住每个界面的两种凭据：per-boot daemon token 和短寿命 pairing codes。策略讨论见[安全模型](../../architecture/security-model.md)。
+`src/core/src/auth/`（当前位置）：server surfaces 使用的 daemon token 与短寿命 pairing codes。策略讨论见[安全模型](../../architecture/security-model.md)。
 
 ## 职责
 
-生成并持久化 daemon auth token，管理让远程浏览器获得该 token 的 pairing-code table。Enforcement（middleware）在 [server](server.md)；本模块是 source of truth。
+生成并持久化 daemon auth token，管理 pairing-code table。它在语义上是 **server authentication capability**；middleware、pairing HTTP flow 和 token lifetime 最终应由同一个 injected `AuthService` 拥有。
 
 ## 关键类型
 
@@ -23,18 +23,20 @@
 
 ## 不变量：不要破坏
 
-1. **Token 每次 daemon start 都轮换**，并立即覆盖文件；stale URLs 必须失败。不要跨 restart 持久化 token。
+1. **当前 token 生命周期是 `ServerDaemon` 生命周期**，不是每次 `start_background` generation；Desktop hot restart 会复用同一个 daemon 对象的 token，新对象/进程才轮换。
 2. **Pairing codes 近似一次性且 60 秒**：purge-on-access 让表保持干净；code 不能活过自己的窗口。
 3. **Confirmation 必须来自已经 trusted 的 surface**（local origin 或 connected chat）。新增 confirmation path 等于新增 trust assumption，要想清楚。
 4. Token file 设计上是 plaintext（home-directory trust level）；不要往里放其它 secret。
 
 ## 已知技术债
 
-- remediation plan 中无跟踪项。
+- 将策略收敛为 server-owned `AuthService`，core 只保留最小 primitive。
+- Pairing/global memory tables 需要容量限制和 active-code 唯一性。
+- Token/settings 文件需要 secure-create + atomic replace。
 
 ---
 
 *Source anchors: `src/core/src/auth/` (token, pair, mod), `src/server/src/web_server/auth.rs` (enforcement), `src/server/src/web_server/pair.rs` (HTTP flow).*
-*Last verified: v0.7.11*
+*Last verified: system review 2026-07-11.*
 
 <sub>[◀ Module: tunnels](tunnels.md) · [文档索引](../../README.md) · [Module: server ▶](server.md)</sub>

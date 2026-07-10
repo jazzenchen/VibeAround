@@ -10,9 +10,9 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 
 | Type | File | Role |
 |---|---|---|
-| `Supervisor` | `supervisor.rs` | Owns process lifecycles: state machine (NotStarted→Spawning→Running→Crashed→…), 5 s tick loop, restart policies, status broadcast |
-| `SpawnSpec` | `supervisor.rs` | Program + args + cwd + env recipe, re-used on every respawn |
-| `RestartPolicy` | `supervisor.rs` | `Never` (agents, PTY) or `OnCrash { delay, watchdog }` (plugins — 90 s heartbeat watchdog) |
+| `Supervisor` | `supervisor.rs` | Public lifecycle API, process table, desired transitions, scoped unregister/shutdown |
+| process model | `supervisor/model.rs` | `SpawnSpec`, status/policy, pending child and generation ownership state |
+| generation engine | `supervisor/generation.rs` | One spawn/bridge/reap generation, tagged exit handling, process-tree termination |
 | `ProcessBridge` / `BridgeFactory` | `bridge.rs` | The protocol driver contract: factory invoked fresh per (re)spawn, handed the stdio pipes |
 | `ChildRegistry` | `registry.rs` | Global table of live children; `kill_all()` safety net + startup `orphan_sweep()` |
 | `AcpTransport` wrapper | `acp_transport.rs` | ACP line transport + explicit EOF signal so the supervisor observes child death |
@@ -29,17 +29,20 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 
 1. **Fresh bridge per spawn**: one-shot state lives in the bridge, never in the factory closure; a respawned process must not see its predecessor's state.
 2. **The supervisor never interprets pipe content** — protocol concerns stay in bridges.
-3. **Two-layer cleanup**: graceful path (cancel + drop) is the supervisor's; `ChildRegistry::kill_all` is the synchronous safety net when the runtime tears down first. Both must stay.
-4. **Enriched env everywhere**: children spawn through `process::env::command` so PATH matches the user's shell; bypassing it produces "works in terminal, fails in app" bugs.
-5. Heartbeat watchdog applies to plugins only; agents crash loudly by design (`Never`) so the owning thread decides.
+3. **One active generation record**: registry id, cancel sender and bridge task move together under a generation id. A stale bridge exit may reap only its own registry id and must not mutate a newer generation.
+4. **Two-layer cleanup**: normal stop cancels, tree-reaps and joins/aborts the bridge before returning; `ChildRegistry::kill_all` remains the abrupt-runtime safety net.
+5. **Enriched env everywhere**: children spawn through `process::env::command` so PATH matches the user's shell; bypassing it produces "works in terminal, fails in app" bugs.
+6. Heartbeat watchdog applies to plugins only; agents crash loudly by design (`Never`) so the owning thread decides.
 
 ## Known debt
 
-- `Supervisor::global()` and `ChildRegistry::global()` singletons impede test isolation — planned: supervisor-tree refactor absorbs the registry into the supervisor and injects `Arc<Supervisor>` (remediation M5 + the locked supervisor-tree direction; OS descendants to cascade via pgid).
+- Unix descendants are terminated through a process group; Windows still needs a Job Object rather than relying on `taskkill`.
+- `Supervisor::global()` and `ChildRegistry::global()` still impede test isolation even though each active generation now has one logical owner.
+- Restart uses a fixed delay; exponential backoff, jitter and a failure budget/circuit breaker remain open.
 
 ---
 
-*Source anchors: `src/core/src/process/` (supervisor, bridge, registry, acp_transport, env, kill, log), `reports/architecture-review-remediation-2026-07-04.md` (M5, §3).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/process/` (supervisor, supervisor/model, supervisor/generation, bridge, registry, acp_transport, env, kill, log).*
+*Last verified: `codex/im-acp-route-refactor` at `924d4c60` (2026-07-11).*
 
 <sub>[◀ Module: workspace](workspace.md) · [Documentation index](../../README.md) · [Module: agent ▶](agent.md)</sub>
