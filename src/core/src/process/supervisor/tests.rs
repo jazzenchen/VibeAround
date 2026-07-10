@@ -673,14 +673,13 @@ async fn subscribe_receives_events() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut saw_stopped = false;
     while std::time::Instant::now() < deadline {
-        match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
-            Ok(Ok(ev)) => {
-                if ev.id == id && ev.status == ProcessStatus::Stopped {
-                    saw_stopped = true;
-                    break;
-                }
+        if let Ok(Ok(ev)) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+        {
+            if ev.id == id && ev.status == ProcessStatus::Stopped {
+                saw_stopped = true;
+                break;
             }
-            _ => {}
         }
     }
     assert!(saw_stopped, "should have observed Stopped event");
