@@ -293,19 +293,11 @@ async fn handle_chat_socket(
                                 &active_route,
                             )
                             .await;
-                            let route = input_route(&input).unwrap_or_else(|| active_route.clone());
-                            if let Err(error) = state
-                                .channel_hub
-                                .workspace_thread_manager()
-                                .cancel_route(&route)
-                                .await
-                            {
-                                tracing::warn!(
-                                    route = %route,
-                                    error = %error,
-                                    "failed to cancel web chat route"
-                                );
-                            }
+                            // Stop must enter the same route lane as prompts.
+                            // A direct runtime cancel can land after session
+                            // creation but before agent.prompt starts, letting
+                            // the queued prompt run despite the user's stop.
+                            state.channel_hub.process_input(input).await;
                             let deadline = state.web_channel.mark_route_idle(&active_route);
                             state.web_channel.schedule_idle_close(
                                 state.channel_hub.workspace_thread_manager(),
