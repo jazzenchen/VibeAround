@@ -9,15 +9,12 @@ use tokio::sync::mpsc;
 use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::ProtocolVersion;
 
+use super::super::plugin_host::PluginHost;
+use super::super::types::{ChannelInboundContext, CHANNEL_CONTEXT_META_KEY};
+use super::super::{ChannelEnvelope, ChannelInput, ConversationIngress};
 use crate::proc_log;
 use crate::process::registry::ProcessKind;
 use crate::routing::RouteKey;
-use crate::workspace::WorkspaceThreadManager;
-
-use super::super::plugin_host::PluginHost;
-use super::super::prompt::handle_prompt;
-use super::super::types::{ChannelInboundContext, CHANNEL_CONTEXT_META_KEY};
-use super::super::{ChannelEnvelope, ChannelInput};
 
 fn route_for_prompt(
     channel_kind: &str,
@@ -55,15 +52,15 @@ fn route_for_prompt(
     ))
 }
 
-/// ACP Agent handler for a channel plugin. `prompt()` calls through to
-/// `handle_prompt()` directly — blocks until the turn completes and
+/// ACP Agent handler for a channel plugin. `prompt()` calls through the
+/// shared conversation ingress — blocks until the turn completes and
 /// returns the real `PromptResponse` with `StopReason`.
 pub(super) struct PluginAgentHandler {
     channel_kind: String,
     config: serde_json::Value,
-    /// Still used for fire-and-forget operations: cancel, callback.
+    /// Used for fire-and-forget callback notifications.
     input_tx: mpsc::UnboundedSender<ChannelInput>,
-    workspace_thread_manager: Arc<WorkspaceThreadManager>,
+    ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
 }
 
@@ -72,14 +69,14 @@ impl PluginAgentHandler {
         channel_kind: String,
         config: serde_json::Value,
         input_tx: mpsc::UnboundedSender<ChannelInput>,
-        workspace_thread_manager: Arc<WorkspaceThreadManager>,
+        ingress: Arc<ConversationIngress>,
         plugin_host: Arc<PluginHost>,
     ) -> Self {
         Self {
             channel_kind,
             config,
             input_tx,
-            workspace_thread_manager,
+            ingress,
             plugin_host,
         }
     }
@@ -156,18 +153,10 @@ impl PluginAgentHandler {
             text_preview.chars().take(80).collect::<String>()
         );
 
-        // Call through to handle_prompt — blocks until the turn completes.
+        // The shared ingress blocks until the turn completes.
         // Session notifications stream to the plugin via ChannelBridgeHandler
         // → PluginHost → output_tx → output forwarder → conn.session_notification().
-        let result = handle_prompt(
-            &self.workspace_thread_manager,
-            &self.plugin_host,
-            route.clone(),
-            content_blocks,
-        )
-        .await;
-
-        result
+        self.ingress.prompt(route, content_blocks).await
     }
 
     pub(super) async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
@@ -182,7 +171,7 @@ impl PluginAgentHandler {
             chat_id = %chat_id
         );
 
-        let _ = self.workspace_thread_manager.cancel_route(&route).await;
+        self.ingress.dispatch(ChannelInput::Stop { route }).await;
         Ok(())
     }
 

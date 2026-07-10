@@ -26,14 +26,12 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::process::registry::ProcessKind;
-use crate::process::supervisor::{ProcessEvent, ProcessId, RestartPolicy, SpawnSpec, Supervisor};
-use crate::workspace::WorkspaceThreadManager;
-
 use super::manifest::ChannelPluginManifest;
 use super::plugin_host::PluginHost;
 use super::plugin_runner::ChannelPluginRunnerFactory;
-use super::ChannelInput;
+use super::{ChannelInput, ConversationIngress};
+use crate::process::registry::ProcessKind;
+use crate::process::supervisor::{ProcessEvent, ProcessId, RestartPolicy, SpawnSpec, Supervisor};
 
 // ---------------------------------------------------------------------------
 // Tunables for channel plugin self-recovery.
@@ -98,7 +96,7 @@ pub struct ChannelMonitor {
     kinds: DashMap<String, ProcessId>,
     versions: DashMap<String, String>,
     plugin_dirs: DashMap<String, PathBuf>,
-    workspace_thread_manager: Arc<WorkspaceThreadManager>,
+    ingress: Arc<ConversationIngress>,
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     plugin_host: Arc<PluginHost>,
     /// Republished `()` stream for `StateSource::subscribe_changes`.
@@ -113,7 +111,7 @@ impl ChannelMonitor {
     ///
     /// [`StateSource::subscribe_changes`]: crate::state::StateSource::subscribe_changes
     pub fn new(
-        workspace_thread_manager: Arc<WorkspaceThreadManager>,
+        ingress: Arc<ConversationIngress>,
         input_tx: mpsc::UnboundedSender<ChannelInput>,
         plugin_host: Arc<PluginHost>,
         change_tx: broadcast::Sender<()>,
@@ -129,7 +127,7 @@ impl ChannelMonitor {
             kinds: DashMap::new(),
             versions: DashMap::new(),
             plugin_dirs: DashMap::new(),
-            workspace_thread_manager,
+            ingress,
             input_tx,
             plugin_host,
             change_tx,
@@ -152,7 +150,7 @@ impl ChannelMonitor {
         let factory = ChannelPluginRunnerFactory::new(
             kind.clone(),
             self.input_tx.clone(),
-            Arc::clone(&self.workspace_thread_manager),
+            Arc::clone(&self.ingress),
             Arc::clone(&self.plugin_host),
         )
         .into_bridge_factory();

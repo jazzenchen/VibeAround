@@ -5,7 +5,7 @@
 //!
 //! Module layout:
 //! - `types`            — wire types: `ChannelEnvelope`, `ChannelInput`, `ChannelOutput`
-//! - `prompt`           — `handle_channel_input` + workspace-thread commands
+//! - `prompt`           — unified conversation ingress + workspace-thread commands
 //! - `bridge_handler`   — `ChannelBridgeHandler` (notification + permission forwarding)
 //! - `monitor`          — Dashboard-facing facade over `process::Supervisor`
 //! - `plugin_runner`    — one stdio plugin generation + concrete factory
@@ -44,7 +44,7 @@ use self::manifest::ChannelPluginManifest;
 use self::plugin_host::PluginHost;
 
 // Re-exports so the rest of the crate keeps its existing import paths.
-pub use self::prompt::handle_channel_input;
+pub use self::prompt::ConversationIngress;
 pub use self::transport_websocket::WebChannelManager;
 pub use self::types::{ChannelEnvelope, ChannelInput, ChannelOutput};
 
@@ -67,6 +67,7 @@ pub struct ChannelManager {
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     input_rx: StdMutex<Option<mpsc::UnboundedReceiver<ChannelInput>>>,
     workspace_thread_manager: Arc<WorkspaceThreadManager>,
+    ingress: Arc<ConversationIngress>,
     /// Lazy-initialised on first `register_plugin` call. The monitor is
     /// a thin facade over `process::Supervisor` — it owns the supervisor
     /// and its tick loop internally.
@@ -76,11 +77,17 @@ pub struct ChannelManager {
 impl ChannelManager {
     pub fn new(workspace_thread_manager: Arc<WorkspaceThreadManager>) -> Self {
         let (input_tx, input_rx) = mpsc::unbounded_channel();
+        let plugin_host = Arc::new(PluginHost::new(input_tx.clone()));
+        let ingress = Arc::new(ConversationIngress::new(
+            Arc::clone(&workspace_thread_manager),
+            Arc::clone(&plugin_host),
+        ));
         Self {
-            plugin_host: Arc::new(PluginHost::new(input_tx.clone())),
+            plugin_host,
             input_tx,
             input_rx: StdMutex::new(Some(input_rx)),
             workspace_thread_manager,
+            ingress,
             monitor: StdMutex::new(None),
         }
     }
@@ -98,7 +105,7 @@ impl ChannelManager {
         }
         let (change_tx, _) = tokio::sync::broadcast::channel::<()>(64);
         let m = monitor::ChannelMonitor::new(
-            Arc::clone(&self.workspace_thread_manager),
+            Arc::clone(&self.ingress),
             self.input_tx.clone(),
             Arc::clone(&self.plugin_host),
             change_tx,
@@ -227,8 +234,11 @@ impl ChannelManager {
 
     /// Process a single input on the current executor.
     pub async fn process_input(&self, input: ChannelInput) {
-        prompt::handle_channel_input(&self.workspace_thread_manager, &self.plugin_host, input)
-            .await;
+        self.ingress.dispatch(input).await;
+    }
+
+    pub fn ingress(&self) -> Arc<ConversationIngress> {
+        Arc::clone(&self.ingress)
     }
 
     pub fn workspace_thread_manager(&self) -> Arc<WorkspaceThreadManager> {

@@ -9,14 +9,12 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+use super::plugin_host::PluginHost;
+use super::transport_stdio::{run_acp_plugin_bridge, QueuedChannelOutput, StdioPluginRuntime};
+use super::{ChannelInput, ConversationIngress};
 use crate::process::bridge::{
     BridgeFactory, BridgeFuture, CancelSignal, ProcessBridge, StdioPipes,
 };
-use crate::workspace::WorkspaceThreadManager;
-
-use super::plugin_host::PluginHost;
-use super::transport_stdio::{run_acp_plugin_bridge, QueuedChannelOutput, StdioPluginRuntime};
-use super::ChannelInput;
 
 /// The protocol-side owner for one stdio channel-plugin spawn.
 pub struct ChannelPluginRunner {
@@ -24,7 +22,7 @@ pub struct ChannelPluginRunner {
     pub raw_config: serde_json::Value,
     pub input_tx: mpsc::UnboundedSender<ChannelInput>,
     pub output_rx: mpsc::UnboundedReceiver<QueuedChannelOutput>,
-    pub workspace_thread_manager: Arc<WorkspaceThreadManager>,
+    pub ingress: Arc<ConversationIngress>,
     pub plugin_host: Arc<PluginHost>,
     pub runtime: Arc<StdioPluginRuntime>,
 }
@@ -40,7 +38,7 @@ impl ProcessBridge for ChannelPluginRunner {
                 pipes.stdout,
                 this.input_tx,
                 this.output_rx,
-                this.workspace_thread_manager,
+                this.ingress,
                 this.plugin_host,
                 this.runtime,
                 cancel,
@@ -54,7 +52,7 @@ impl ProcessBridge for ChannelPluginRunner {
 pub struct ChannelPluginRunnerFactory {
     channel_kind: String,
     input_tx: mpsc::UnboundedSender<ChannelInput>,
-    workspace_thread_manager: Arc<WorkspaceThreadManager>,
+    ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
 }
 
@@ -62,13 +60,13 @@ impl ChannelPluginRunnerFactory {
     pub fn new(
         channel_kind: impl Into<String>,
         input_tx: mpsc::UnboundedSender<ChannelInput>,
-        workspace_thread_manager: Arc<WorkspaceThreadManager>,
+        ingress: Arc<ConversationIngress>,
         plugin_host: Arc<PluginHost>,
     ) -> Self {
         Self {
             channel_kind: channel_kind.into(),
             input_tx,
-            workspace_thread_manager,
+            ingress,
             plugin_host,
         }
     }
@@ -94,7 +92,7 @@ impl ChannelPluginRunnerFactory {
             raw_config,
             input_tx: self.input_tx.clone(),
             output_rx,
-            workspace_thread_manager: Arc::clone(&self.workspace_thread_manager),
+            ingress: Arc::clone(&self.ingress),
             plugin_host: Arc::clone(&self.plugin_host),
             runtime,
         }

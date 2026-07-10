@@ -1,8 +1,9 @@
 //! Channel-input dispatch.
 //!
-//! `handle_channel_input` is the single entry point for every inbound
-//! `ChannelInput` from stdio plugins or the web chat. It routes by
-//! variant:
+//! [`ConversationIngress`] is the single business-logic entry point for
+//! inbound prompts. Stdio plugins use its request/response [`prompt`](ConversationIngress::prompt)
+//! method, while web/TUI inputs use fire-and-forget [`dispatch`](ConversationIngress::dispatch).
+//! `dispatch` routes by variant:
 //!
 //! - `Message` / `Callback` → [`handler::handle_prompt`] (workspace thread
 //!   slash command parse → thread runtime prompt).
@@ -26,109 +27,132 @@ use crate::workspace::WorkspaceThreadManager;
 use super::plugin_host::PluginHost;
 use super::types::{ChannelEnvelope, ChannelInput, ChannelOutput};
 
-pub(crate) use handler::handle_prompt;
 pub use handler::{send_runtime_multi_agent_state_and_replay, start_runtime_and_notify};
 
-/// Dispatch a single `ChannelInput` to the right subsystem. Used by both the
-/// stdio plugin transport and the legacy web-chat channel-input thread.
-pub async fn handle_channel_input(
-    workspace_threads: &Arc<WorkspaceThreadManager>,
-    plugin_host: &Arc<PluginHost>,
-    input: ChannelInput,
-) {
-    match input {
-        ChannelInput::Message { envelope } => {
-            handle_prompt_input(workspace_threads, plugin_host, envelope, None).await;
-        }
-        ChannelInput::Callback {
-            envelope,
-            action_value,
-        } => {
-            handle_prompt_input(workspace_threads, plugin_host, envelope, action_value).await;
-        }
-        ChannelInput::Stop { route } => {
-            let _ = workspace_threads.cancel_route(&route).await;
-        }
-        ChannelInput::Close { route, reason } => {
-            let _ = workspace_threads.close_route(&route, reason).await;
-        }
-        ChannelInput::SwitchAgent { route, agent_kind } => {
-            send_system_text(
-                plugin_host,
-                &route,
-                &format!("Use /switch host {} with workspace threads.", agent_kind),
-            )
-            .await;
-        }
-        ChannelInput::Log { level, message } => {
-            tracing::info!(
-                level = %level.unwrap_or_else(|| "info".to_string()),
-                message = %message,
-                "channel log"
-            );
-        }
-    }
+/// Concrete conversation entry point shared by every channel transport.
+///
+/// This type deliberately owns no queue or lifecycle state. The server keeps
+/// responsibility for per-route dispatch ordering, while the stdio transport
+/// can await the real ACP [`PromptResponse`](acp::PromptResponse).
+pub struct ConversationIngress {
+    workspace_threads: Arc<WorkspaceThreadManager>,
+    plugin_host: Arc<PluginHost>,
 }
 
-async fn handle_prompt_input(
-    workspace_threads: &Arc<WorkspaceThreadManager>,
-    plugin_host: &Arc<PluginHost>,
-    envelope: ChannelEnvelope,
-    action_value: Option<String>,
-) {
-    let route = envelope.route.clone();
-    let cli_kind = envelope.cli_kind.clone();
-    let text = effective_input_text(&envelope, action_value);
-    let message_id = if envelope.message_id.is_empty() {
-        None
-    } else {
-        Some(envelope.message_id.clone())
-    };
-    tracing::debug!(
-        route = %route,
-        cli_kind = ?cli_kind,
-        text = %text,
-        "channel input"
-    );
-
-    let content_blocks = envelope_content_blocks(&text, &envelope.attachments);
-
-    match handle_prompt(
-        workspace_threads,
-        plugin_host,
-        route.clone(),
-        content_blocks,
-    )
-    .await
-    {
-        Ok(_resp) => {
-            tracing::debug!(route = %route, "prompt ok");
+impl ConversationIngress {
+    pub(crate) fn new(
+        workspace_threads: Arc<WorkspaceThreadManager>,
+        plugin_host: Arc<PluginHost>,
+    ) -> Self {
+        Self {
+            workspace_threads,
+            plugin_host,
         }
-        Err(e) => {
-            tracing::warn!(route = %route, error = %e, "prompt failed");
-            send_system_text(plugin_host, &route, &format!("❌ {}", e)).await;
-            if let Some(reason) = auto_close_reason_for_prompt_error(&e) {
-                if let Err(close_error) = workspace_threads.close_route(&route, Some(reason)).await
-                {
-                    tracing::warn!(
-                        route = %route,
-                        error = %close_error,
-                        "failed to auto-close failed workspace thread"
-                    );
-                }
+    }
+
+    /// Run one prompt to completion and return its actual ACP stop reason.
+    pub async fn prompt(
+        &self,
+        route: RouteKey,
+        content_blocks: Vec<acp::ContentBlock>,
+    ) -> acp::Result<acp::PromptResponse> {
+        handler::handle_prompt(
+            &self.workspace_threads,
+            &self.plugin_host,
+            route,
+            content_blocks,
+        )
+        .await
+    }
+
+    /// Dispatch a fire-and-forget channel command on the caller's route lane.
+    pub async fn dispatch(&self, input: ChannelInput) {
+        match input {
+            ChannelInput::Message { envelope } => {
+                self.handle_prompt_input(envelope, None).await;
+            }
+            ChannelInput::Callback {
+                envelope,
+                action_value,
+            } => {
+                self.handle_prompt_input(envelope, action_value).await;
+            }
+            ChannelInput::Stop { route } => {
+                let _ = self.workspace_threads.cancel_route(&route).await;
+            }
+            ChannelInput::Close { route, reason } => {
+                let _ = self.workspace_threads.close_route(&route, reason).await;
+            }
+            ChannelInput::SwitchAgent { route, agent_kind } => {
+                send_system_text(
+                    &self.plugin_host,
+                    &route,
+                    &format!("Use /switch host {} with workspace threads.", agent_kind),
+                )
+                .await;
+            }
+            ChannelInput::Log { level, message } => {
+                tracing::info!(
+                    level = %level.unwrap_or_else(|| "info".to_string()),
+                    message = %message,
+                    "channel log"
+                );
             }
         }
     }
-    send_prompt_done(plugin_host, &route, message_id).await;
-    if let Err(error) = workspace_threads
-        .schedule_route_host_idle_shutdown(&route)
-        .await
-    {
+
+    async fn handle_prompt_input(&self, envelope: ChannelEnvelope, action_value: Option<String>) {
+        let route = envelope.route.clone();
+        let cli_kind = envelope.cli_kind.clone();
+        let text = effective_input_text(&envelope, action_value);
+        let message_id = if envelope.message_id.is_empty() {
+            None
+        } else {
+            Some(envelope.message_id.clone())
+        };
         tracing::debug!(
             route = %route,
-            error = %error,
-            "failed to schedule agent host idle shutdown"
+            cli_kind = ?cli_kind,
+            text = %text,
+            "channel input"
         );
+
+        let content_blocks = envelope_content_blocks(&text, &envelope.attachments);
+
+        match self.prompt(route.clone(), content_blocks).await {
+            Ok(_resp) => {
+                tracing::debug!(route = %route, "prompt ok");
+            }
+            Err(e) => {
+                tracing::warn!(route = %route, error = %e, "prompt failed");
+                send_system_text(&self.plugin_host, &route, &format!("❌ {}", e)).await;
+                if let Some(reason) = auto_close_reason_for_prompt_error(&e) {
+                    if let Err(close_error) = self
+                        .workspace_threads
+                        .close_route(&route, Some(reason))
+                        .await
+                    {
+                        tracing::warn!(
+                            route = %route,
+                            error = %close_error,
+                            "failed to auto-close failed workspace thread"
+                        );
+                    }
+                }
+            }
+        }
+        send_prompt_done(&self.plugin_host, &route, message_id).await;
+        if let Err(error) = self
+            .workspace_threads
+            .schedule_route_host_idle_shutdown(&route)
+            .await
+        {
+            tracing::debug!(
+                route = %route,
+                error = %error,
+                "failed to schedule agent host idle shutdown"
+            );
+        }
     }
 }
 
@@ -260,6 +284,26 @@ mod tests {
             effective_input_text(&envelope, Some("button".to_string())),
             "typed text"
         );
+    }
+
+    #[test]
+    fn channel_envelope_builds_shared_prompt_content() {
+        let attachments = vec![Attachment {
+            message_id: "message-a".to_string(),
+            file_key: "https://example.com/report.md".to_string(),
+            file_name: "report.md".to_string(),
+            resource_type: "text/markdown".to_string(),
+            size: Some(42),
+        }];
+
+        let blocks = envelope_content_blocks("review this", &attachments);
+
+        assert_eq!(blocks.len(), 2);
+        let acp::ContentBlock::Text(text) = &blocks[0] else {
+            panic!("first block must preserve the message text");
+        };
+        assert_eq!(text.text, "review this");
+        assert!(matches!(blocks[1], acp::ContentBlock::ResourceLink(_)));
     }
 
     #[test]

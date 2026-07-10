@@ -17,17 +17,15 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use acp::schema::v1 as schema;
 use agent_client_protocol as acp;
 
+use super::super::plugin_host::PluginHost;
+use super::super::{ChannelInput, ConversationIngress};
+use super::forwarder::forward_output_to_plugin;
+use super::handler::PluginAgentHandler;
+use super::runtime::{QueuedChannelOutput, StdioPluginRuntime};
 use crate::proc_log;
 use crate::process::acp_transport::notifying_stdio_transport;
 use crate::process::bridge::{BridgeExit, CancelSignal};
 use crate::process::registry::ProcessKind;
-use crate::workspace::WorkspaceThreadManager;
-
-use super::super::plugin_host::PluginHost;
-use super::super::ChannelInput;
-use super::forwarder::forward_output_to_plugin;
-use super::handler::PluginAgentHandler;
-use super::runtime::{QueuedChannelOutput, StdioPluginRuntime};
 
 /// Run the ACP agent-side connection for a plugin to completion. Returns
 /// when the child closes stdout or the cancel signal fires.
@@ -39,7 +37,7 @@ pub(crate) async fn run_acp_plugin_bridge(
     stdout: tokio::process::ChildStdout,
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     mut output_rx: mpsc::UnboundedReceiver<QueuedChannelOutput>,
-    workspace_thread_manager: Arc<WorkspaceThreadManager>,
+    ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
     runtime: Arc<StdioPluginRuntime>,
     mut cancel: CancelSignal,
@@ -53,7 +51,7 @@ pub(crate) async fn run_acp_plugin_bridge(
         channel_kind.clone(),
         config.clone(),
         input_tx.clone(),
-        workspace_thread_manager,
+        ingress,
         plugin_host,
     ));
     let (transport, mut stdio_closed) =

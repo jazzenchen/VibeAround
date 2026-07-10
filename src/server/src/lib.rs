@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, Notify};
 use tokio::task::{JoinHandle, JoinSet};
 
 use common::auth::{self, AuthToken};
-use common::channels::{handle_channel_input, ChannelInput, ChannelManager, WebChannelManager};
+use common::channels::{ChannelInput, ChannelManager, WebChannelManager};
 use common::config;
 use common::plugins;
 use common::process::registry::{self as child_registry, ChildRegistry};
@@ -311,8 +311,7 @@ impl ServerDaemon {
         let mut input_rx = channel_hub
             .take_input_rx()
             .context("input_rx already taken")?;
-        let manager_for_input = Arc::clone(&workspace_thread_manager);
-        let plugin_host_for_input = channel_hub.plugin_host();
+        let conversation_ingress = channel_hub.ingress();
         let channel_input_shutdown = Arc::new(Notify::new());
         let input_shutdown_for_task = Arc::clone(&channel_input_shutdown);
         let channel_input_handle = tokio::spawn(async move {
@@ -320,11 +319,10 @@ impl ServerDaemon {
             let mut input_shards = Vec::with_capacity(CHANNEL_INPUT_WORKER_COUNT);
             for _ in 0..CHANNEL_INPUT_WORKER_COUNT {
                 let (tx, mut rx) = mpsc::unbounded_channel::<ChannelInput>();
-                let workspace_thread_manager = Arc::clone(&manager_for_input);
-                let plugin_host = Arc::clone(&plugin_host_for_input);
+                let ingress = Arc::clone(&conversation_ingress);
                 workers.spawn(async move {
                     while let Some(input) = rx.recv().await {
-                        handle_channel_input(&workspace_thread_manager, &plugin_host, input).await;
+                        ingress.dispatch(input).await;
                     }
                 });
                 input_shards.push(tx);
