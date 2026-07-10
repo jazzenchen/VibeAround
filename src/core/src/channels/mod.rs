@@ -8,7 +8,8 @@
 //! - `prompt`           — `handle_channel_input` + workspace-thread commands
 //! - `bridge_handler`   — `ChannelBridgeHandler` (notification + permission forwarding)
 //! - `monitor`          — Dashboard-facing facade over `process::Supervisor`
-//! - `plugin_bridge`    — `ChannelPluginBridge` (`ProcessBridge` impl for stdio plugins)
+//! - `plugin_runner`    — one stdio plugin generation + concrete factory
+//! - `plugin_bridge`    — compatibility alias for `ChannelPluginRunner`
 //! - `manifest`         — `ChannelPluginManifest`
 //! - `plugin_host`      — runtime registry + pending permissions map
 //! - `plugin_runtime`   — enum wrapper around Stdio / WebSocket runtimes
@@ -22,6 +23,7 @@ pub mod monitor;
 pub mod outbox;
 pub mod plugin_bridge;
 pub mod plugin_host;
+pub mod plugin_runner;
 pub mod plugin_runtime;
 pub mod prompt;
 pub mod subagent_handler;

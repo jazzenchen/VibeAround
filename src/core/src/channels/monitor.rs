@@ -26,15 +26,13 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::process::bridge::{BridgeFactory, ProcessBridge};
 use crate::process::registry::ProcessKind;
 use crate::process::supervisor::{ProcessEvent, ProcessId, RestartPolicy, SpawnSpec, Supervisor};
 use crate::workspace::WorkspaceThreadManager;
 
 use super::manifest::ChannelPluginManifest;
-use super::plugin_bridge::ChannelPluginBridge;
 use super::plugin_host::PluginHost;
-use super::transport_stdio::StdioPluginRuntime;
+use super::plugin_runner::ChannelPluginRunnerFactory;
 use super::ChannelInput;
 
 // ---------------------------------------------------------------------------
@@ -151,12 +149,13 @@ impl ChannelMonitor {
             .arg(manifest.entry_path.to_string_lossy().to_string())
             .cwd(manifest.plugin_dir.clone());
 
-        let factory = build_bridge_factory(
-            manifest,
-            Arc::clone(&self.input_tx_owned()),
+        let factory = ChannelPluginRunnerFactory::new(
+            kind.clone(),
+            self.input_tx.clone(),
             Arc::clone(&self.workspace_thread_manager),
             Arc::clone(&self.plugin_host),
-        );
+        )
+        .into_bridge_factory();
 
         let id = self.supervisor.register(
             ProcessKind::ChannelPlugin,
@@ -260,12 +259,6 @@ impl ChannelMonitor {
     fn lookup(&self, kind: &str) -> Option<ProcessId> {
         self.kinds.get(kind).map(|entry| *entry.value())
     }
-
-    /// Borrow the input sender as a per-call `Arc` for the factory. We
-    /// wrap it so the factory closure stays `Fn` (not `FnOnce`).
-    fn input_tx_owned(&self) -> Arc<mpsc::UnboundedSender<ChannelInput>> {
-        Arc::new(self.input_tx.clone())
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -314,35 +307,4 @@ async fn forward_events(mut rx: broadcast::Receiver<ProcessEvent>, tx: broadcast
             Err(broadcast::error::RecvError::Closed) => break,
         }
     }
-}
-
-/// Build the per-respawn bridge factory. The factory is invoked once per
-/// spawn attempt — it allocates a fresh output channel pair, registers a
-/// new `StdioPluginRuntime` with the `PluginHost` so `send_output` routes
-/// to the new bridge, and hands the bridge the receiving half.
-fn build_bridge_factory(
-    manifest: ChannelPluginManifest,
-    input_tx: Arc<mpsc::UnboundedSender<ChannelInput>>,
-    workspace_thread_manager: Arc<WorkspaceThreadManager>,
-    plugin_host: Arc<PluginHost>,
-) -> BridgeFactory {
-    let channel_kind = manifest.channel_kind.clone();
-    Box::new(move || {
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
-        let runtime = Arc::new(StdioPluginRuntime::new(channel_kind.clone(), output_tx));
-        plugin_host.replace_stdio_runtime(&channel_kind, Arc::clone(&runtime));
-        let raw_config = crate::config::ensure_loaded()
-            .channel_raw_config(&channel_kind)
-            .unwrap_or_else(|| serde_json::json!({}));
-
-        Box::new(ChannelPluginBridge {
-            channel_kind: channel_kind.clone(),
-            raw_config,
-            input_tx: (*input_tx).clone(),
-            output_rx,
-            workspace_thread_manager: Arc::clone(&workspace_thread_manager),
-            plugin_host: Arc::clone(&plugin_host),
-            runtime,
-        }) as Box<dyn ProcessBridge>
-    })
 }
