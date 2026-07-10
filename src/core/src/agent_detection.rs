@@ -637,8 +637,7 @@ done"#,
 }
 
 fn windows_path_env_paths(program: &str) -> Vec<PathBuf> {
-    let env = crate::process::env::enriched_env();
-    let Some(path_value) = crate::process::env::path_value(env) else {
+    let Some(path_value) = crate::process::env::detection_path_value() else {
         return Vec::new();
     };
     let paths = std::env::split_paths(&path_value)

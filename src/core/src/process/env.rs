@@ -6,8 +6,10 @@
 //! their full environment, caches it, and exposes helpers that create
 //! child process Commands with the enriched environment.
 //!
-//! On Windows, GUI apps already inherit the full registry-based environment,
-//! so only well-known PATH directories are appended as a safety net.
+//! On Windows, the cached process environment is supplemented with well-known
+//! PATH directories. Agent detection separately reloads the Machine and User
+//! registry environments on every scan so newly installed tools are visible
+//! without restarting VibeAround.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -526,6 +528,24 @@ pub fn path_value(env: &HashMap<String, String>) -> Option<String> {
         .map(|(_, value)| value.clone())
 }
 
+/// Return the PATH that agent detection should scan.
+///
+/// Windows reloads the Machine and User registry environments on every call so
+/// a rescan sees PATH changes made after VibeAround started. Process-only PATH
+/// entries are retained after the fresh registry entries. Other platforms keep
+/// using the cached enriched shell environment.
+pub fn detection_path_value() -> Option<String> {
+    #[cfg(windows)]
+    {
+        windows_registry_path_value().or_else(|| path_value(enriched_env()))
+    }
+
+    #[cfg(not(windows))]
+    {
+        path_value(enriched_env())
+    }
+}
+
 #[cfg(not(windows))]
 pub fn path_value(env: &HashMap<String, String>) -> Option<String> {
     env.get("PATH").cloned()
@@ -699,6 +719,145 @@ fn enrich_windows_path(env: &mut HashMap<String, String>) {
     set_path_value(env, parts.join(sep));
 }
 
+#[cfg(windows)]
+fn windows_registry_path_value() -> Option<String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+
+    const MACHINE_ENV_KEY: &str = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment";
+    const USER_ENV_KEY: &str = r"Environment";
+
+    let machine =
+        read_windows_registry_environment(&RegKey::predef(HKEY_LOCAL_MACHINE), MACHINE_ENV_KEY);
+    let user = read_windows_registry_environment(&RegKey::predef(HKEY_CURRENT_USER), USER_ENV_KEY);
+
+    if machine.is_empty() && user.is_empty() {
+        return None;
+    }
+
+    let process = normalize_windows_environment(std::env::vars());
+    let machine = normalize_windows_environment(machine);
+    let user = normalize_windows_environment(user);
+
+    let mut expansion_env = process.clone();
+    expansion_env.remove("PATH");
+    for (key, value) in machine.iter().chain(user.iter()) {
+        if key != "PATH" {
+            expansion_env.insert(key.clone(), value.clone());
+        }
+    }
+
+    let machine_path = machine
+        .get("PATH")
+        .map(|value| expand_windows_env_vars(value, &expansion_env));
+    if let Some(path) = machine_path.as_ref() {
+        expansion_env.insert("PATH".to_string(), path.clone());
+    }
+    let user_path = user
+        .get("PATH")
+        .map(|value| expand_windows_env_vars(value, &expansion_env));
+    let process_path = process.get("PATH").cloned();
+
+    merge_windows_path_values([
+        machine_path.as_deref(),
+        user_path.as_deref(),
+        process_path.as_deref(),
+    ])
+}
+
+#[cfg(windows)]
+fn read_windows_registry_environment(
+    root: &winreg::RegKey,
+    subkey: &str,
+) -> HashMap<String, String> {
+    let Ok(key) = root.open_subkey(subkey) else {
+        return HashMap::new();
+    };
+
+    key.enum_values()
+        .filter_map(Result::ok)
+        .filter_map(|(name, _)| {
+            key.get_value::<String, _>(&name)
+                .ok()
+                .map(|value| (name, value))
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn normalize_windows_environment(
+    values: impl IntoIterator<Item = (String, String)>,
+) -> HashMap<String, String> {
+    values
+        .into_iter()
+        .map(|(key, value)| (key.to_ascii_uppercase(), value))
+        .collect()
+}
+
+#[cfg(windows)]
+fn expand_windows_env_vars(value: &str, env: &HashMap<String, String>) -> String {
+    let mut expanded = value.to_string();
+    for _ in 0..8 {
+        let next = expand_windows_env_vars_once(&expanded, env);
+        if next == expanded {
+            break;
+        }
+        expanded = next;
+    }
+    expanded
+}
+
+#[cfg(windows)]
+fn expand_windows_env_vars_once(value: &str, env: &HashMap<String, String>) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut remaining = value;
+
+    while let Some(start) = remaining.find('%') {
+        output.push_str(&remaining[..start]);
+        let after_start = &remaining[start + 1..];
+        let Some(end) = after_start.find('%') else {
+            output.push_str(&remaining[start..]);
+            return output;
+        };
+
+        let name = &after_start[..end];
+        if let Some(replacement) = env.get(&name.to_ascii_uppercase()) {
+            output.push_str(replacement);
+        } else {
+            output.push('%');
+            output.push_str(name);
+            output.push('%');
+        }
+        remaining = &after_start[end + 1..];
+    }
+
+    output.push_str(remaining);
+    output
+}
+
+#[cfg(windows)]
+fn merge_windows_path_values<'a>(
+    values: impl IntoIterator<Item = Option<&'a str>>,
+) -> Option<String> {
+    let mut paths = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for value in values.into_iter().flatten() {
+        for path in value
+            .split(';')
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            let key = path.trim_end_matches(['\\', '/']).to_ascii_lowercase();
+            if seen.insert(key) {
+                paths.push(path.to_string());
+            }
+        }
+    }
+
+    (!paths.is_empty()).then(|| paths.join(";"))
+}
+
 #[cfg(test)]
 mod registry_tests {
     use super::*;
@@ -737,6 +896,36 @@ mod windows_path_tests {
 
         assert_eq!(env.len(), 1);
         assert_eq!(env.get("Path").map(String::as_str), Some("new"));
+    }
+
+    #[test]
+    fn expands_fresh_registry_variables_case_insensitively() {
+        let env = normalize_windows_environment([
+            ("SystemDrive".to_string(), "D:".to_string()),
+            (
+                "AgentHome".to_string(),
+                r"%SYSTEMDRIVE%\Tools\Agent".to_string(),
+            ),
+        ]);
+
+        assert_eq!(
+            expand_windows_env_vars(r"%agenthome%\bin", &env),
+            r"D:\Tools\Agent\bin"
+        );
+    }
+
+    #[test]
+    fn merges_registry_paths_before_unique_process_paths() {
+        let merged = merge_windows_path_values([
+            Some(r"D:\System\bin;C:\Windows"),
+            Some(r"E:\User\bin;d:\system\bin\"),
+            Some(r"C:\Windows;F:\Process\bin"),
+        ]);
+
+        assert_eq!(
+            merged.as_deref(),
+            Some(r"D:\System\bin;C:\Windows;E:\User\bin;F:\Process\bin")
+        );
     }
 }
 
