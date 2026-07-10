@@ -249,6 +249,11 @@ struct SupervisedProcess {
     /// [`Supervisor::handle_bridge_exit`] — otherwise every respawn
     /// leaks an entry and, on Unix, an unreaped zombie.
     current_registry_id: parking_lot::Mutex<Option<u64>>,
+
+    /// Serializes lifecycle transitions that update status together with
+    /// intent / restart scheduling. Process I/O and child reaping happen
+    /// outside this lock.
+    transition_lock: parking_lot::Mutex<()>,
 }
 
 impl SupervisedProcess {
@@ -341,6 +346,7 @@ impl Supervisor {
             next_spawn_at: AtomicU64::new(0),
             cancel_tx: RwLock::new(None),
             current_registry_id: parking_lot::Mutex::new(None),
+            transition_lock: parking_lot::Mutex::new(()),
         });
 
         self.processes.write().insert(id, Arc::clone(&proc));
@@ -368,9 +374,44 @@ impl Supervisor {
     /// in `Stopped` — no respawn regardless of policy.
     pub async fn force_stop(&self, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
-        proc.intent
-            .store(TransitionIntent::Stop as u8, Ordering::Release);
-        self.cancel_current_bridge(&proc);
+        let mut stopped_without_bridge = false;
+        {
+            let _transition = proc.transition_lock.lock();
+            match proc.status() {
+                ProcessStatus::Running => {
+                    proc.intent
+                        .store(TransitionIntent::Stop as u8, Ordering::Release);
+                    if !self.cancel_current_bridge(&proc) {
+                        stopped_without_bridge = true;
+                        proc.set_status(ProcessStatus::Stopped);
+                        proc.intent
+                            .store(TransitionIntent::None as u8, Ordering::Release);
+                        proc.next_spawn_at.store(0, Ordering::Relaxed);
+                        proc.set_reason("stopped by user");
+                    }
+                }
+                ProcessStatus::Spawning | ProcessStatus::Crashed | ProcessStatus::NotStarted => {
+                    stopped_without_bridge = true;
+                    proc.set_status(ProcessStatus::Stopped);
+                    proc.intent
+                        .store(TransitionIntent::None as u8, Ordering::Release);
+                    proc.next_spawn_at.store(0, Ordering::Relaxed);
+                    proc.set_reason("stopped by user");
+                    self.cancel_current_bridge(&proc);
+                }
+                ProcessStatus::Stopped => {
+                    proc.intent
+                        .store(TransitionIntent::None as u8, Ordering::Release);
+                    proc.next_spawn_at.store(0, Ordering::Relaxed);
+                }
+            }
+        }
+
+        if stopped_without_bridge {
+            self.notify_change(&proc);
+            self.terminate_and_reap_current_child(&proc).await;
+            self.deregister_terminal_process(&proc);
+        }
         Ok(())
     }
 
@@ -388,8 +429,11 @@ impl Supervisor {
     /// immediate respawn. Ignored in `Running` / `Spawning`.
     pub fn force_start(&self, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
+        let _transition = proc.transition_lock.lock();
         match proc.status() {
             ProcessStatus::Stopped | ProcessStatus::Crashed | ProcessStatus::NotStarted => {
+                proc.intent
+                    .store(TransitionIntent::None as u8, Ordering::Release);
                 proc.set_status(ProcessStatus::Crashed);
                 proc.set_reason("started by user");
                 proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
@@ -475,10 +519,11 @@ impl Supervisor {
             })
     }
 
-    fn cancel_current_bridge(&self, proc: &SupervisedProcess) {
+    fn cancel_current_bridge(&self, proc: &SupervisedProcess) -> bool {
         if let Some(tx) = proc.cancel_tx.read().as_ref() {
-            let _ = tx.send(true);
+            return tx.send(true).is_ok();
         }
+        false
     }
 
     fn notify_change(&self, proc: &SupervisedProcess) {
@@ -552,42 +597,47 @@ impl Supervisor {
 
     async fn begin_spawn(self: &Arc<Self>, proc: Arc<SupervisedProcess>) {
         // Guard against racing tickers / immediate-spawn.
-        let prev = proc
-            .status
-            .swap(ProcessStatus::Spawning as u8, Ordering::AcqRel);
-        if matches!(ProcessStatus::from_u8(prev), ProcessStatus::Spawning) {
-            return;
+        {
+            let _transition = proc.transition_lock.lock();
+            if !matches!(
+                proc.status(),
+                ProcessStatus::NotStarted | ProcessStatus::Crashed
+            ) {
+                return;
+            }
+            proc.set_status(ProcessStatus::Spawning);
+            proc.next_spawn_at.store(0, Ordering::Relaxed);
+            proc.set_reason("spawning");
         }
-        proc.next_spawn_at.store(0, Ordering::Relaxed);
-        proc.set_reason("spawning");
         self.notify_change(&proc);
 
         match self.spawn_child(&proc).await {
             Ok((pipes, cancel_rx)) => {
                 // Publish status Running unless force_* landed during the spawn.
-                if proc
-                    .status
-                    .compare_exchange(
-                        ProcessStatus::Spawning as u8,
-                        ProcessStatus::Running as u8,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_err()
-                {
+                let publish_running = {
+                    let _transition = proc.transition_lock.lock();
+                    if matches!(proc.status(), ProcessStatus::Spawning) {
+                        proc.set_status(ProcessStatus::Running);
+                        proc.set_reason("");
+                        proc.last_heartbeat_ts.store(now_secs(), Ordering::Relaxed);
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if !publish_running {
                     proc_log!(
                         info,
                         kind = proc.kind,
                         label = proc.label,
                         event = "spawn_superseded"
                     );
-                    // Cancel the bridge we just staged; the task spawned below
-                    // will observe Cancelled and clean up.
-                    self.cancel_current_bridge(&proc);
+                    // No bridge task has been started yet, so cancellation alone
+                    // cannot clean up this staged generation.
+                    *proc.cancel_tx.write() = None;
+                    self.terminate_and_reap_current_child(&proc).await;
                     return;
                 }
-                proc.set_reason("");
-                proc.last_heartbeat_ts.store(now_secs(), Ordering::Relaxed);
                 proc_log!(
                     info,
                     kind = proc.kind,
@@ -608,16 +658,21 @@ impl Supervisor {
             }
             Err(e) => {
                 let reason = format!("{}", e);
-                if proc
-                    .status
-                    .compare_exchange(
-                        ProcessStatus::Spawning as u8,
-                        ProcessStatus::Crashed as u8,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_err()
-                {
+                let publish_crash = {
+                    let _transition = proc.transition_lock.lock();
+                    if matches!(proc.status(), ProcessStatus::Spawning) {
+                        proc.set_status(ProcessStatus::Crashed);
+                        proc.set_reason(format!("spawn failed: {}", reason));
+                        if let Some(delay) = proc.policy.restart_delay() {
+                            proc.next_spawn_at
+                                .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if !publish_crash {
                     proc_log!(
                         error,
                         kind = proc.kind,
@@ -626,11 +681,6 @@ impl Supervisor {
                         error = %reason
                     );
                     return;
-                }
-                proc.set_reason(format!("spawn failed: {}", reason));
-                if let Some(delay) = proc.policy.restart_delay() {
-                    proc.next_spawn_at
-                        .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
                 }
                 proc_log!(
                     error,
@@ -736,18 +786,27 @@ impl Supervisor {
         // Clear the cancel channel — this run is done.
         *proc.cancel_tx.write() = None;
 
-        // Pull the Child back out of the registry and reap it. Without
-        // this, the registry accumulates an entry per respawn and the
-        // process stays as a zombie on Unix until the daemon exits.
-        // `kill_on_drop(true)` sends SIGKILL if the child is somehow
-        // still alive; `wait()` then reaps. Reap on a background task so
-        // the bridge-exit hot path isn't gated on a dying process.
-        if let Some(id) = proc.current_registry_id.lock().take() {
-            if let Some(mut child) = self.registry.remove(id) {
-                tokio::spawn(async move {
-                    let _ = child.wait().await;
-                });
-            }
+        // A bridge can finish while its child is frozen or otherwise still
+        // alive. Terminate that generation before waiting so respawn cannot
+        // leave a twin process behind, then reap before publishing the next
+        // state transition.
+        self.terminate_and_reap_current_child(&proc).await;
+
+        let (reason, was_crash) = match exit {
+            BridgeExit::Clean => ("clean exit".to_string(), false),
+            BridgeExit::Cancelled => ("cancelled".to_string(), false),
+            BridgeExit::ProtocolError(e) => (format!("protocol error: {}", e), true),
+        };
+
+        let transition = proc.transition_lock.lock();
+        if matches!(proc.status(), ProcessStatus::Stopped) {
+            // `force_stop` won while this generation was being reaped.
+            proc.intent
+                .store(TransitionIntent::None as u8, Ordering::Release);
+            proc.next_spawn_at.store(0, Ordering::Relaxed);
+            drop(transition);
+            self.deregister_terminal_process(&proc);
+            return;
         }
 
         // Atomically consume intent so two callers don't both observe Stop.
@@ -755,12 +814,6 @@ impl Supervisor {
             proc.intent
                 .swap(TransitionIntent::None as u8, Ordering::AcqRel),
         );
-
-        let (reason, was_crash) = match exit {
-            BridgeExit::Clean => ("clean exit".to_string(), false),
-            BridgeExit::Cancelled => ("cancelled".to_string(), false),
-            BridgeExit::ProtocolError(e) => (format!("protocol error: {}", e), true),
-        };
 
         match intent {
             TransitionIntent::Stop => {
@@ -827,8 +880,56 @@ impl Supervisor {
                 }
             },
         }
+        drop(transition);
         self.notify_change(&proc);
+        self.deregister_terminal_process(&proc);
+    }
 
+    async fn terminate_and_reap_current_child(&self, proc: &SupervisedProcess) {
+        let Some(id) = proc.current_registry_id.lock().take() else {
+            return;
+        };
+        let Some(mut child) = self.registry.remove(id) else {
+            return;
+        };
+
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {
+                if let Err(error) = child.start_kill() {
+                    proc_log!(
+                        warn,
+                        kind = proc.kind,
+                        label = proc.label,
+                        event = "child_kill_failed",
+                        error = %error
+                    );
+                }
+            }
+            Err(error) => {
+                proc_log!(
+                    warn,
+                    kind = proc.kind,
+                    label = proc.label,
+                    event = "child_status_failed",
+                    error = %error
+                );
+                let _ = child.start_kill();
+            }
+        }
+
+        if let Err(error) = child.wait().await {
+            proc_log!(
+                warn,
+                kind = proc.kind,
+                label = proc.label,
+                event = "child_reap_failed",
+                error = %error
+            );
+        }
+    }
+
+    fn deregister_terminal_process(&self, proc: &SupervisedProcess) {
         // Auto-deregister terminal one-shot processes. Without this the
         // `processes` map grows unbounded over daemon lifetime as
         // `RestartPolicy::Never` workloads (chiefly `AcpAgent` spawns
@@ -837,8 +938,8 @@ impl Supervisor {
         // channel plugin can still be resurrected via `force_start`.
         if matches!(proc.policy, RestartPolicy::Never)
             && matches!(proc.status(), ProcessStatus::Stopped)
+            && self.processes.write().remove(&proc.id).is_some()
         {
-            self.processes.write().remove(&proc.id);
             proc_log!(
                 info,
                 kind = proc.kind,
@@ -865,6 +966,8 @@ fn now_secs() -> u64 {
 mod tests {
     use super::*;
     use crate::process::bridge::{BridgeExit, CancelSignal, ProcessBridge, StdioPipes};
+    #[cfg(unix)]
+    use std::sync::atomic::AtomicU32;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -927,6 +1030,31 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    struct CapturePidThenCleanBridge {
+        pid: Arc<AtomicU32>,
+    }
+
+    #[cfg(unix)]
+    impl ProcessBridge for CapturePidThenCleanBridge {
+        fn run(
+            self: Box<Self>,
+            pipes: StdioPipes,
+            _cancel: CancelSignal,
+        ) -> super::super::bridge::BridgeFuture {
+            Box::pin(async move {
+                use tokio::io::AsyncBufReadExt;
+
+                let mut line = String::new();
+                let mut stdout = tokio::io::BufReader::new(pipes.stdout);
+                stdout.read_line(&mut line).await.unwrap();
+                self.pid
+                    .store(line.trim().parse().unwrap(), Ordering::Release);
+                BridgeExit::Clean
+            })
+        }
+    }
+
     async fn wait_for_status(sup: &Arc<Supervisor>, id: ProcessId, target: ProcessStatus) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
@@ -965,6 +1093,49 @@ mod tests {
 
     fn cat_spec() -> SpawnSpec {
         SpawnSpec::new("cat")
+    }
+
+    async fn wait_for_count(counter: &AtomicUsize, target: usize) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while counter.load(Ordering::Acquire) < target {
+            if std::time::Instant::now() > deadline {
+                panic!(
+                    "timeout waiting for factory count {}, got {}",
+                    target,
+                    counter.load(Ordering::Acquire)
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
+    fn insert_process_with_status(
+        sup: &Arc<Supervisor>,
+        id: ProcessId,
+        status: ProcessStatus,
+        factory: BridgeFactory,
+    ) -> Arc<SupervisedProcess> {
+        let proc = Arc::new(SupervisedProcess {
+            id,
+            kind: ProcessKind::ChannelPlugin,
+            label: format!("test-{}", status.as_str()),
+            spec: cat_spec(),
+            policy: RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            factory,
+            status: AtomicU8::new(status as u8),
+            intent: AtomicU8::new(TransitionIntent::Stop as u8),
+            reason: RwLock::new(String::new()),
+            last_heartbeat_ts: AtomicU64::new(now_secs()),
+            next_spawn_at: AtomicU64::new(now_secs() + 30),
+            cancel_tx: RwLock::new(None),
+            current_registry_id: parking_lot::Mutex::new(None),
+            transition_lock: parking_lot::Mutex::new(()),
+        });
+        sup.processes.write().insert(id, Arc::clone(&proc));
+        proc
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1039,6 +1210,135 @@ mod tests {
         let snap = sup.snapshot();
         let p = snap.iter().find(|p| p.id == id).unwrap();
         assert_eq!(p.status, ProcessStatus::Crashed);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn force_stop_without_bridge_stops_and_clears_pending_spawn() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(Arc::clone(&registry));
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        for (raw_id, status) in [ProcessStatus::NotStarted, ProcessStatus::Spawning]
+            .into_iter()
+            .enumerate()
+        {
+            let count = Arc::clone(&counter);
+            let proc = insert_process_with_status(
+                &sup,
+                ProcessId(100 + raw_id as u64),
+                status,
+                Box::new(move || {
+                    count.fetch_add(1, Ordering::Release);
+                    Box::new(InstantCleanBridge)
+                }),
+            );
+            let staged_generation = if matches!(status, ProcessStatus::Spawning) {
+                Some(sup.spawn_child(&proc).await.unwrap())
+            } else {
+                None
+            };
+
+            sup.force_stop(proc.id).await.unwrap();
+
+            assert_eq!(proc.status(), ProcessStatus::Stopped);
+            assert_eq!(
+                TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
+                TransitionIntent::None
+            );
+            assert_eq!(proc.next_spawn_at.load(Ordering::Acquire), 0);
+            assert!(proc.current_registry_id.lock().is_none());
+            assert_eq!(registry.len(), 0);
+
+            // A pending immediate-spawn task or tick must not resurrect a
+            // process after force_stop won the transition.
+            sup.begin_spawn(Arc::clone(&proc)).await;
+            assert_eq!(counter.load(Ordering::Acquire), 0);
+            drop(staged_generation);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn force_stop_while_crashed_prevents_respawn_and_clears_intent() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(registry);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&counter);
+
+        let id = sup.register(
+            ProcessKind::ChannelPlugin,
+            "crashed-stop",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            Box::new(move || {
+                count.fetch_add(1, Ordering::Release);
+                Box::new(InstantErrorBridge)
+            }),
+        );
+
+        wait_for_status(&sup, id, ProcessStatus::Crashed).await;
+        sup.force_stop(id).await.unwrap();
+        wait_for_status(&sup, id, ProcessStatus::Stopped).await;
+
+        sup.tick().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(counter.load(Ordering::Acquire), 1);
+
+        // Starting it again must not leave the old Stop intent armed for the
+        // next natural bridge exit.
+        sup.force_start(id).unwrap();
+        sup.tick().await;
+        wait_for_count(&counter, 2).await;
+        wait_for_status(&sup, id, ProcessStatus::Crashed).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn bridge_exit_terminates_live_child_before_reaping() {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(Arc::clone(&registry));
+        let pid = Arc::new(AtomicU32::new(0));
+        let captured_pid = Arc::clone(&pid);
+
+        let id = sup.register(
+            ProcessKind::ChannelPlugin,
+            "live-child-reap",
+            SpawnSpec::new("sh").args(["-c", "echo $$; exec sleep 60"]),
+            RestartPolicy::Never,
+            Box::new(move || {
+                Box::new(CapturePidThenCleanBridge {
+                    pid: Arc::clone(&captured_pid),
+                })
+            }),
+        );
+
+        wait_for_absent(&sup, id).await;
+        let child_pid = pid.load(Ordering::Acquire);
+        assert_ne!(child_pid, 0, "bridge should capture the live child pid");
+        assert_eq!(registry.len(), 0);
+
+        use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+        let mut alive = true;
+        for _ in 0..50 {
+            let mut sys = System::new_with_specifics(
+                RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+            );
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+            alive = sys.process(Pid::from_u32(child_pid)).is_some();
+            if !alive {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        if alive {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &child_pid.to_string()])
+                .status();
+        }
+        assert!(!alive, "bridge exit left child pid {child_pid} alive");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
