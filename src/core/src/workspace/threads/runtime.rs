@@ -212,6 +212,13 @@ impl ThreadRuntime {
 
     pub async fn cancel(&self) -> acp::Result<()> {
         self.mark_activity();
+        self.active_turn_target.cancel_current();
+        {
+            let subagents = self.subagents.lock().await;
+            for subagent in subagents.values() {
+                subagent.active_turn_target.cancel_current();
+            }
+        }
         let agent = self
             .host
             .lock()
@@ -1527,6 +1534,28 @@ mod tests {
         let state = futures::executor::block_on(runtime.state());
 
         assert_eq!(state.session_id.as_deref(), Some("session-old"));
+    }
+
+    #[tokio::test]
+    async fn cancel_signals_active_turn_before_agent_lookup() {
+        let runtime = ThreadRuntime::new(
+            thread_with_sessions(),
+            PathBuf::from("/tmp/project"),
+            ThreadEventStore::new("/tmp/unused.jsonl"),
+        );
+        let _target_guard = runtime
+            .active_turn_target
+            .install(ChannelTarget::for_route(RouteKey::new("web", "chat-1")));
+        let (_, mut cancelled) = runtime
+            .active_turn_target
+            .current_with_cancellation()
+            .expect("active target");
+
+        assert!(runtime.cancel().await.is_err(), "runtime has no live agent");
+        cancelled
+            .wait_for(|is_cancelled| *is_cancelled)
+            .await
+            .expect("active turn cancellation sender remains live");
     }
 
     #[test]

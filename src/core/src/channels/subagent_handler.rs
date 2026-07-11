@@ -123,7 +123,9 @@ impl AgentClientHandler for SubagentBridgeHandler {
             return Err(acp::Error::method_not_found());
         }
 
-        let Some(target) = self.active_turn_target.current() else {
+        let Some((target, mut turn_cancelled)) =
+            self.active_turn_target.current_with_cancellation()
+        else {
             return Ok(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Cancelled,
             ));
@@ -162,11 +164,19 @@ impl AgentClientHandler for SubagentBridgeHandler {
             })
             .await;
 
-        match rx.await {
-            Ok(response) => Ok(response),
-            Err(_) => Ok(acp::RequestPermissionResponse::new(
-                acp::RequestPermissionOutcome::Cancelled,
-            )),
+        tokio::select! {
+            biased;
+            _ = turn_cancelled.wait_for(|cancelled| *cancelled) => {
+                Ok(acp::RequestPermissionResponse::new(
+                    acp::RequestPermissionOutcome::Cancelled,
+                ))
+            }
+            response = rx => match response {
+                Ok(response) => Ok(response),
+                Err(_) => Ok(acp::RequestPermissionResponse::new(
+                    acp::RequestPermissionOutcome::Cancelled,
+                )),
+            }
         }
     }
 }
@@ -431,7 +441,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelling_subagent_permission_removes_the_pending_entry() {
+    async fn cancelling_subagent_turn_clears_permission_and_rejects_late_response() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx));
         let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -441,7 +451,7 @@ mod tests {
             active_turn_target.install(ChannelTarget::for_route(RouteKey::new("web", "chat-1")));
         let handler = Arc::new(permission_handler(
             Arc::clone(&plugin_host),
-            active_turn_target,
+            active_turn_target.clone(),
         ));
 
         let permission_task = tokio::spawn({
@@ -453,8 +463,10 @@ mod tests {
             panic!("expected permission request");
         };
 
-        permission_task.abort();
-        let _ = permission_task.await;
+        active_turn_target.cancel_current();
+
+        let response = permission_task.await.unwrap().unwrap();
+        assert_eq!(response.outcome, acp::RequestPermissionOutcome::Cancelled);
 
         assert!(plugin_host
             .respond_permission(

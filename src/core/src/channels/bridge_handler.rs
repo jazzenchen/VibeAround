@@ -410,7 +410,9 @@ impl AgentClientHandler for ChannelBridgeHandler {
 
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
-        let Some(target) = self.active_turn_target() else {
+        let Some((target, mut turn_cancelled)) =
+            self.active_turn_target.current_with_cancellation()
+        else {
             return Ok(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Cancelled,
             ));
@@ -453,16 +455,26 @@ impl AgentClientHandler for ChannelBridgeHandler {
         // Wait for plugin response — no timeout by design. If the plugin
         // crashes, `tx` is dropped and `rx.await` errors, which we treat as
         // cancelled so the upstream agent turn gracefully ends.
-        match rx.await {
-            Ok(response) => Ok(response),
-            Err(_) => {
-                tracing::info!(
-                    "[ChannelBridgeHandler] request_permission dropped (plugin gone?) thread={} request_id={}",
-                    self.thread_id, request_id
-                );
+        tokio::select! {
+            biased;
+            _ = turn_cancelled.wait_for(|cancelled| *cancelled) => {
                 Ok(acp::RequestPermissionResponse::new(
                     acp::RequestPermissionOutcome::Cancelled,
                 ))
+            }
+            response = rx => {
+                match response {
+                    Ok(response) => Ok(response),
+                    Err(_) => {
+                        tracing::info!(
+                            "[ChannelBridgeHandler] request_permission dropped (plugin gone?) thread={} request_id={}",
+                            self.thread_id, request_id
+                        );
+                        Ok(acp::RequestPermissionResponse::new(
+                            acp::RequestPermissionOutcome::Cancelled,
+                        ))
+                    }
+                }
             }
         }
     }
@@ -529,6 +541,33 @@ fn string_field(
 mod tests {
     use super::*;
 
+    fn permission_request() -> acp::RequestPermissionRequest {
+        acp::RequestPermissionRequest::new(
+            "session-1",
+            acp::ToolCallUpdate::new("tool-1", acp::ToolCallUpdateFields::new()),
+            vec![acp::PermissionOption::new(
+                "allow-once",
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            )],
+        )
+    }
+
+    fn permission_handler(
+        plugin_host: Arc<PluginHost>,
+        active_turn_target: ActiveTurnTarget,
+    ) -> ChannelBridgeHandler {
+        ChannelBridgeHandler {
+            plugin_host,
+            workspace_threads: Weak::new(),
+            workspace_id: WorkspaceId::general(),
+            thread_id: WorkspaceThreadId::from("thread-1"),
+            host_binding: HostBinding::new("codex", None),
+            active_turn_target,
+            host_protocol: Mutex::new(HostProtocolState::default()),
+        }
+    }
+
     fn target_for(route: RouteKey, reply_to: &str) -> ChannelTarget {
         ChannelTarget::new(route, Some(reply_to.to_string()))
     }
@@ -589,6 +628,42 @@ mod tests {
             .respond_permission(
                 "slack-work",
                 "request-1",
+                acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
+            )
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn cancelling_host_turn_clears_permission_and_rejects_late_response() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let plugin_host = Arc::new(PluginHost::new(input_tx));
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
+        plugin_host.register_websocket_plugin("web", output_tx);
+        let active_turn_target = ActiveTurnTarget::default();
+        let _target_guard =
+            active_turn_target.install(ChannelTarget::for_route(RouteKey::new("web", "chat-1")));
+        let handler = Arc::new(permission_handler(
+            Arc::clone(&plugin_host),
+            active_turn_target.clone(),
+        ));
+
+        let permission_task = tokio::spawn({
+            let handler = Arc::clone(&handler);
+            async move { handler.request_permission(permission_request()).await }
+        });
+        let output = output_rx.recv().await.expect("permission output");
+        let ChannelOutput::PermissionRequest { request_id, .. } = output else {
+            panic!("expected permission request");
+        };
+
+        active_turn_target.cancel_current();
+
+        let response = permission_task.await.unwrap().unwrap();
+        assert_eq!(response.outcome, acp::RequestPermissionOutcome::Cancelled);
+        assert!(plugin_host
+            .respond_permission(
+                "web",
+                &request_id,
                 acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
             )
             .is_err());

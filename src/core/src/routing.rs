@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Deserializer, Serialize};
+use tokio::sync::watch;
 
 /// Channel kind identifier (e.g. "web", "telegram").
 pub type ChannelKind = String;
@@ -260,16 +261,22 @@ pub struct ActiveTurnTarget {
 #[derive(Default)]
 struct ActiveTurnTargetState {
     next_generation: AtomicU64,
-    current: RwLock<Option<(u64, ChannelTarget)>>,
+    current: RwLock<Option<(u64, ChannelTarget, watch::Sender<bool>)>>,
 }
 
 impl ActiveTurnTarget {
     pub fn install(&self, target: ChannelTarget) -> ActiveTurnTargetGuard {
         let generation = self.state.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        *self.state.current.write() = Some((generation, target));
+        let (cancel_tx, _) = watch::channel(false);
+        let mut current = self.state.current.write();
+        if let Some((_, _, previous_cancel_tx)) = current.take() {
+            previous_cancel_tx.send_replace(true);
+        }
+        *current = Some((generation, target, cancel_tx.clone()));
         ActiveTurnTargetGuard {
             owner: self.clone(),
             generation,
+            cancel_tx,
         }
     }
 
@@ -278,21 +285,39 @@ impl ActiveTurnTarget {
             .current
             .read()
             .as_ref()
-            .map(|(_, target)| target.clone())
+            .map(|(_, target, _)| target.clone())
+    }
+
+    pub(crate) fn current_with_cancellation(
+        &self,
+    ) -> Option<(ChannelTarget, watch::Receiver<bool>)> {
+        self.state
+            .current
+            .read()
+            .as_ref()
+            .map(|(_, target, cancel_tx)| (target.clone(), cancel_tx.subscribe()))
+    }
+
+    pub(crate) fn cancel_current(&self) {
+        if let Some((_, _, cancel_tx)) = self.state.current.read().as_ref() {
+            cancel_tx.send_replace(true);
+        }
     }
 }
 
 pub struct ActiveTurnTargetGuard {
     owner: ActiveTurnTarget,
     generation: u64,
+    cancel_tx: watch::Sender<bool>,
 }
 
 impl Drop for ActiveTurnTargetGuard {
     fn drop(&mut self) {
+        self.cancel_tx.send_replace(true);
         let mut current = self.owner.state.current.write();
         if current
             .as_ref()
-            .is_some_and(|(generation, _)| *generation == self.generation)
+            .is_some_and(|(generation, _, _)| *generation == self.generation)
         {
             *current = None;
         }
@@ -391,13 +416,31 @@ mod tests {
     fn older_active_turn_guard_cannot_clear_a_new_generation() {
         let active = ActiveTurnTarget::default();
         let first = active.install(ChannelTarget::for_route(RouteKey::new("web", "one")));
+        let (_, first_cancelled) = active
+            .current_with_cancellation()
+            .expect("first active target");
         let second_target = ChannelTarget::for_route(RouteKey::new("web", "two"));
         let second = active.install(second_target.clone());
 
+        assert!(*first_cancelled.borrow());
         drop(first);
         assert_eq!(active.current(), Some(second_target));
         drop(second);
         assert_eq!(active.current(), None);
+    }
+
+    #[tokio::test]
+    async fn active_turn_cancel_signal_survives_until_waiters_observe_it() {
+        let active = ActiveTurnTarget::default();
+        let _guard = active.install(ChannelTarget::for_route(RouteKey::new("web", "one")));
+        let (_, mut cancelled) = active.current_with_cancellation().expect("active target");
+
+        active.cancel_current();
+
+        cancelled
+            .wait_for(|is_cancelled| *is_cancelled)
+            .await
+            .expect("turn cancellation sender remains live");
     }
 
     #[test]
