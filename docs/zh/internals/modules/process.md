@@ -37,7 +37,9 @@
 ## 已知技术债
 
 - Unix descendants 已通过 process group 终止；Windows 仍需 Job Object。
-- global Supervisor/Registry 仍妨碍测试隔离；restart 仍是固定 delay，缺 backoff/jitter/failure budget。
+- global Supervisor/Registry 仍妨碍测试隔离与 scoped dependency ownership，下一步应注入 scoped supervisor handle。
+- Restart 已有有界指数退避，但仍缺 jitter、failure-window budget 与显式 circuit breaker/manual reset 状态。
+- `Running` 目前只代表 child 与 bridge generation 已发布；channel protocol/platform readiness 仍需要独立 handshake/ready signal。
 
 ---
 

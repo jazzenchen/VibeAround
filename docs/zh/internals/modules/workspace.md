@@ -38,7 +38,7 @@
 
 - Active route 先命中 runtime/attachment cache，但 thread/workspace projection 仍全量 replay JSONL，需要 benchmark 后再决定 snapshot。
 - `ThreadRuntime` 仍有多把独立 mutex 和手工维护的 `busy`/`failed` shadows，应渐进收拢所有权。
-- `RouteKey::as_key()/from_key()` 有意 lossy，无法表达 actor/topic；Dashboard control 需要 versioned `runtime_id`。
+- `RouteKey::as_key()/from_key()` 有意 lossy，无法表达 actor/topic；runtime control 已改用 workspace thread id，在定义 versioned persistent route key 前，该形式只能用于 legacy/display。
 
 ---
 

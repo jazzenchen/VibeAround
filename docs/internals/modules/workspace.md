@@ -38,7 +38,7 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 
 - Active routes hit runtime/attachment caches first, but thread/workspace projections still replay their full JSONL stores and need measurement before snapshotting.
 - `ThreadRuntime` still has many independent mutexes with manually maintained `busy`/`failed` shadows; ownership should be consolidated incrementally.
-- `RouteKey::as_key()`/`from_key()` are intentionally lossy and cannot represent actor/topic identity; Dashboard runtime control still collides until it gets a versioned `runtime_id`.
+- `RouteKey::as_key()`/`from_key()` are intentionally lossy and cannot represent actor/topic identity; runtime control now uses workspace thread ids, and the lossy form must remain legacy/display-only until a versioned persistent route key is defined.
 
 ---
 

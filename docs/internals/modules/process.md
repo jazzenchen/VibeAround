@@ -40,7 +40,7 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 ## Known debt
 
 - Unix descendants are terminated through a process group; Windows still needs a Job Object rather than relying on `taskkill`.
-- `Supervisor::global()` and `ChildRegistry::global()` still impede test isolation even though each active generation now has one logical owner.
+- `Supervisor::global()` and `ChildRegistry::global()` still impede test isolation and scoped dependency ownership even though each active generation now has one logical owner; the next boundary is injected, scoped supervisor handles.
 - Restart has bounded exponential backoff, but still lacks jitter, a failure-window budget and an explicit circuit-breaker/manual-reset state.
 - `Running` currently means the child and bridge generation were published; channel protocol/platform readiness still needs a separate handshaking/ready signal.
 

@@ -35,7 +35,6 @@ Define the profile schema, ship the provider catalog, persist user profiles, and
 
 ## Known debt
 
-- The `127.0.0.1:{port}/va/local-api/…` URL shape is duplicated knowledge with the server route table and needs one shared contract plus a cross-layer test.
 - Upstream auth is static API key per profile; subscription/OAuth upstreams beyond the Gemini adapter need new adapters (known limitation, noted in the api-bridge memory).
 - `bridge_launch.rs` is 1.3k lines of per-target rendering — candidate for per-target submodules when the next target lands.
 
