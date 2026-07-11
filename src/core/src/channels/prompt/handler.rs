@@ -633,12 +633,14 @@ async fn replay_subagent_sessions(
         let Some(session_id) = latest_subagent_session_id(agent) else {
             continue;
         };
+        let active_turn_target = crate::routing::ActiveTurnTarget::default();
         let tracker = Arc::new(SubagentReportTracker::new(agent.clone()));
         let handler = Arc::new(SubagentBridgeHandler::for_thread(
             Arc::clone(plugin_host),
             workspace_threads,
             state.thread_id.clone(),
             agent.clone(),
+            active_turn_target,
             tracker,
         ));
         if let Err(error) = runtime

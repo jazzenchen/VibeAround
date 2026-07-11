@@ -38,6 +38,7 @@ struct SubagentRuntime {
     agent: Arc<Agent>,
     session_id: String,
     client_handler: Arc<dyn AgentClientHandler>,
+    active_turn_target: ActiveTurnTarget,
     completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
 }
 
@@ -422,9 +423,10 @@ impl ThreadRuntime {
 
     pub async fn start_subagent_assignment(
         self: &Arc<Self>,
-        route: &RouteKey,
+        target: ChannelTarget,
         thread_agent: ThreadAgent,
         handler: Arc<dyn AgentClientHandler>,
+        active_turn_target: ActiveTurnTarget,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
         completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
     ) -> acp::Result<()> {
@@ -435,7 +437,7 @@ impl ThreadRuntime {
 
         let runtime_handler = Arc::clone(&handler);
         let (agent, session_id) = match self
-            .spawn_subagent_session_with_retries(route, &thread_agent, handler)
+            .spawn_subagent_session_with_retries(&target.route, &thread_agent, handler)
             .await
         {
             Ok(session) => session,
@@ -461,6 +463,7 @@ impl ThreadRuntime {
                 agent: Arc::clone(&agent),
                 session_id: session_id.clone(),
                 client_handler: Arc::clone(&runtime_handler),
+                active_turn_target: active_turn_target.clone(),
                 completion_validator: completion_validator_for_runtime,
             },
         );
@@ -484,6 +487,8 @@ impl ThreadRuntime {
             agent,
             session_id,
             prompt,
+            target,
+            active_turn_target,
             status_tx,
             runtime_handler,
             completion_validator,
@@ -496,6 +501,7 @@ impl ThreadRuntime {
         self: &Arc<Self>,
         agent_id: &ThreadAgentId,
         assignment: serde_json::Value,
+        target: ChannelTarget,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
     ) -> acp::Result<()> {
         self.mark_activity();
@@ -547,6 +553,8 @@ impl ThreadRuntime {
             subagent.agent,
             subagent.session_id,
             prompt,
+            target,
+            subagent.active_turn_target,
             status_tx,
             subagent.client_handler,
             subagent.completion_validator,
@@ -606,6 +614,8 @@ impl ThreadRuntime {
         agent: Arc<Agent>,
         session_id: String,
         prompt: String,
+        target: ChannelTarget,
+        active_turn_target: ActiveTurnTarget,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
         prompt_finish_handler: Arc<dyn AgentClientHandler>,
         completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
@@ -618,6 +628,8 @@ impl ThreadRuntime {
                     agent,
                     session_id,
                     prompt,
+                    target,
+                    active_turn_target,
                     status_tx,
                     prompt_finish_handler,
                     completion_validator,
@@ -633,10 +645,13 @@ impl ThreadRuntime {
         agent: Arc<Agent>,
         session_id: String,
         mut prompt: String,
+        target: ChannelTarget,
+        active_turn_target: ActiveTurnTarget,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
         prompt_finish_handler: Arc<dyn AgentClientHandler>,
         completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
     ) {
+        let _target_guard = active_turn_target.install(target);
         let agent_id = thread_agent.id.clone();
         for attempt in 1..=SUBAGENT_PROMPT_MAX_ATTEMPTS {
             if let Some(validator) = completion_validator.as_ref() {

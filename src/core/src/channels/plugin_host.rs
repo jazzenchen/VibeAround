@@ -56,6 +56,36 @@ pub struct PluginHost {
     monitor: RwLock<Weak<ChannelMonitor>>,
 }
 
+/// Cancellation-safe ownership of one pending permission entry.
+///
+/// Dropping the waiting prompt task removes the entry and drops its oneshot
+/// sender, so neither host nor subagent turns can leave stale approvals.
+pub(crate) struct PendingPermissionRegistration {
+    plugin_host: Arc<PluginHost>,
+    request_id: String,
+}
+
+impl PendingPermissionRegistration {
+    pub(crate) fn register(
+        plugin_host: &Arc<PluginHost>,
+        request_id: String,
+        channel_instance_id: String,
+        tx: oneshot::Sender<acp::RequestPermissionResponse>,
+    ) -> Self {
+        plugin_host.register_pending_permission(request_id.clone(), [channel_instance_id], tx);
+        Self {
+            plugin_host: Arc::clone(plugin_host),
+            request_id,
+        }
+    }
+}
+
+impl Drop for PendingPermissionRegistration {
+    fn drop(&mut self) {
+        self.plugin_host.remove_pending_permission(&self.request_id);
+    }
+}
+
 impl PluginHost {
     pub fn new(input_tx: mpsc::UnboundedSender<ChannelInput>) -> Self {
         Self {

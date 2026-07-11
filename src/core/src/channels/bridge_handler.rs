@@ -26,34 +26,8 @@ use super::agent_protocol::{
     notification_payload, notification_payload_with_text, session_update_text,
     synthetic_agent_message_payload, synthetic_user_message_payload, AgentProtocolFilter,
 };
-use super::plugin_host::PluginHost;
+use super::plugin_host::{PendingPermissionRegistration, PluginHost};
 use super::types::{ChannelOutput, ThreadReply, ThreadReplyAgent, ThreadReplyPayload};
-
-struct PendingPermissionRegistration {
-    plugin_host: Arc<PluginHost>,
-    request_id: String,
-}
-
-impl PendingPermissionRegistration {
-    fn register(
-        plugin_host: &Arc<PluginHost>,
-        request_id: String,
-        channel_instance_id: String,
-        tx: tokio::sync::oneshot::Sender<acp::RequestPermissionResponse>,
-    ) -> Self {
-        plugin_host.register_pending_permission(request_id.clone(), [channel_instance_id], tx);
-        Self {
-            plugin_host: Arc::clone(plugin_host),
-            request_id,
-        }
-    }
-}
-
-impl Drop for PendingPermissionRegistration {
-    fn drop(&mut self) {
-        self.plugin_host.remove_pending_permission(&self.request_id);
-    }
-}
 
 pub(crate) struct ChannelBridgeHandler {
     plugin_host: Arc<PluginHost>,
@@ -201,8 +175,13 @@ impl ChannelBridgeHandler {
         let status_tx = self.spawn_subagent_status_forwarder();
         let to_agent_id = assignment.to_agent_id.clone();
         let task = assignment.task.clone();
+        let Some(target) = self.active_turn_target() else {
+            self.send_system_text("Subagent assignment ignored: host turn is no longer active.")
+                .await;
+            return;
+        };
         if let Err(error) = runtime
-            .prompt_subagent_assignment(&to_agent_id, assignment.payload, status_tx)
+            .prompt_subagent_assignment(&to_agent_id, assignment.payload, target, status_tx)
             .await
         {
             self.send_system_text(&format!(

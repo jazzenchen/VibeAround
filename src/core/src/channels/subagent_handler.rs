@@ -1,9 +1,9 @@
 //! Bridge handler for spawned subagents.
 //!
 //! Subagent output is limited to rich presentation channels. The host thread
-//! remains the only participant in IM/stdio channels; subagents stream into
-//! web/tui surfaces and permission requests are forwarded through the existing
-//! presentation queue.
+//! remains the only visible participant in IM/stdio channels; subagents stream
+//! into web/tui surfaces. A subagent permission request returns to the host
+//! target that triggered that subagent turn.
 
 use std::sync::{Arc, Weak};
 
@@ -11,7 +11,7 @@ use agent_client_protocol::schema::v1 as acp;
 use tokio::sync::Mutex;
 
 use crate::agent::AgentClientHandler;
-use crate::routing::{channel_traits, RouteKey};
+use crate::routing::{channel_traits, ActiveTurnTarget, RouteKey};
 use crate::workspace::threads::runtime::{SubagentCompletionResult, SubagentCompletionValidator};
 use crate::workspace::threads::{ThreadAgent, ThreadAgentStatus, WorkspaceThreadId};
 use crate::workspace::WorkspaceThreadManager;
@@ -20,7 +20,7 @@ use super::agent_protocol::{
     notification_payload, notification_payload_with_text, session_update_text,
     synthetic_agent_message_payload, AgentProtocolFilter,
 };
-use super::plugin_host::PluginHost;
+use super::plugin_host::{PendingPermissionRegistration, PluginHost};
 use super::types::ChannelOutput;
 
 pub struct SubagentBridgeHandler {
@@ -28,6 +28,7 @@ pub struct SubagentBridgeHandler {
     workspace_threads: Weak<WorkspaceThreadManager>,
     thread_id: WorkspaceThreadId,
     thread_agent: ThreadAgent,
+    active_turn_target: ActiveTurnTarget,
     report_tracker: Arc<SubagentReportTracker>,
 }
 
@@ -37,6 +38,7 @@ impl SubagentBridgeHandler {
         workspace_threads: &Arc<WorkspaceThreadManager>,
         thread_id: WorkspaceThreadId,
         thread_agent: ThreadAgent,
+        active_turn_target: ActiveTurnTarget,
         report_tracker: Arc<SubagentReportTracker>,
     ) -> Self {
         Self {
@@ -44,6 +46,7 @@ impl SubagentBridgeHandler {
             workspace_threads: Arc::downgrade(workspace_threads),
             thread_id,
             thread_agent,
+            active_turn_target,
             report_tracker,
         }
     }
@@ -120,20 +123,18 @@ impl AgentClientHandler for SubagentBridgeHandler {
             return Err(acp::Error::method_not_found());
         }
 
-        let routes = self.attached_rich_agent_event_routes().await;
-        if routes.is_empty() {
+        let Some(target) = self.active_turn_target.current() else {
             return Ok(acp::RequestPermissionResponse::new(
                 acp::RequestPermissionOutcome::Cancelled,
             ));
-        }
+        };
 
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
-        self.plugin_host.register_pending_permission(
+        let _pending_permission = PendingPermissionRegistration::register(
+            &self.plugin_host,
             request_id.clone(),
-            routes
-                .iter()
-                .map(|route| route.channel_instance_id().to_string()),
+            target.route.channel_instance_id().to_string(),
             tx,
         );
 
@@ -152,25 +153,20 @@ impl AgentClientHandler for SubagentBridgeHandler {
             );
         }
 
-        for route in routes {
-            self.plugin_host
-                .send_output(ChannelOutput::PermissionRequest {
-                    route,
-                    reply_to: None,
-                    request_id: request_id.clone(),
-                    payload: payload.clone(),
-                })
-                .await;
-        }
+        self.plugin_host
+            .send_output(ChannelOutput::PermissionRequest {
+                route: target.route,
+                reply_to: target.reply_to,
+                request_id: request_id.clone(),
+                payload,
+            })
+            .await;
 
         match rx.await {
             Ok(response) => Ok(response),
-            Err(_) => {
-                self.plugin_host.remove_pending_permission(&request_id);
-                Ok(acp::RequestPermissionResponse::new(
-                    acp::RequestPermissionOutcome::Cancelled,
-                ))
-            }
+            Err(_) => Ok(acp::RequestPermissionResponse::new(
+                acp::RequestPermissionOutcome::Cancelled,
+            )),
         }
     }
 }
@@ -349,6 +345,7 @@ fn require_field(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::{ActiveTurnTarget, ChannelTarget, RouteKey};
     use crate::workspace::threads::{MultiAgentTurnId, ThreadAgentId};
 
     fn test_agent() -> ThreadAgent {
@@ -362,6 +359,110 @@ mod tests {
             "/tmp/john-planner",
             Some("plan".to_string()),
         )
+    }
+
+    fn permission_request() -> acp::RequestPermissionRequest {
+        acp::RequestPermissionRequest::new(
+            "session-1",
+            acp::ToolCallUpdate::new("tool-1", acp::ToolCallUpdateFields::new()),
+            vec![acp::PermissionOption::new(
+                "allow-once",
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            )],
+        )
+    }
+
+    fn permission_handler(
+        plugin_host: Arc<PluginHost>,
+        active_turn_target: ActiveTurnTarget,
+    ) -> SubagentBridgeHandler {
+        let agent = test_agent();
+        SubagentBridgeHandler {
+            plugin_host,
+            workspace_threads: Weak::new(),
+            thread_id: WorkspaceThreadId::from("thread-1"),
+            thread_agent: agent.clone(),
+            active_turn_target,
+            report_tracker: Arc::new(SubagentReportTracker::new(agent)),
+        }
+    }
+
+    #[tokio::test]
+    async fn subagent_permission_uses_the_host_turn_target() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let plugin_host = Arc::new(PluginHost::new(input_tx));
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
+        plugin_host.register_websocket_plugin("web", output_tx);
+        let active_turn_target = ActiveTurnTarget::default();
+        let target = ChannelTarget::new(
+            RouteKey::new("web", "chat-1"),
+            Some("message-1".to_string()),
+        );
+        let _target_guard = active_turn_target.install(target.clone());
+        let handler = Arc::new(permission_handler(
+            Arc::clone(&plugin_host),
+            active_turn_target,
+        ));
+
+        let permission_task = tokio::spawn({
+            let handler = Arc::clone(&handler);
+            async move { handler.request_permission(permission_request()).await }
+        });
+        let output = output_rx.recv().await.expect("permission output");
+        let ChannelOutput::PermissionRequest {
+            route,
+            reply_to,
+            request_id,
+            ..
+        } = output
+        else {
+            panic!("expected permission request");
+        };
+        assert_eq!(route, target.route);
+        assert_eq!(reply_to, target.reply_to);
+
+        let response =
+            acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled);
+        plugin_host
+            .respond_permission("web", &request_id, response.clone())
+            .unwrap();
+        assert_eq!(permission_task.await.unwrap().unwrap(), response);
+    }
+
+    #[tokio::test]
+    async fn cancelling_subagent_permission_removes_the_pending_entry() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let plugin_host = Arc::new(PluginHost::new(input_tx));
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
+        plugin_host.register_websocket_plugin("web", output_tx);
+        let active_turn_target = ActiveTurnTarget::default();
+        let _target_guard =
+            active_turn_target.install(ChannelTarget::for_route(RouteKey::new("web", "chat-1")));
+        let handler = Arc::new(permission_handler(
+            Arc::clone(&plugin_host),
+            active_turn_target,
+        ));
+
+        let permission_task = tokio::spawn({
+            let handler = Arc::clone(&handler);
+            async move { handler.request_permission(permission_request()).await }
+        });
+        let output = output_rx.recv().await.expect("permission output");
+        let ChannelOutput::PermissionRequest { request_id, .. } = output else {
+            panic!("expected permission request");
+        };
+
+        permission_task.abort();
+        let _ = permission_task.await;
+
+        assert!(plugin_host
+            .respond_permission(
+                "web",
+                &request_id,
+                acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
+            )
+            .is_err());
     }
 
     #[test]
