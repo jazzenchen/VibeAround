@@ -127,7 +127,9 @@ impl WorkspaceThreadManager {
     async fn adopt_legacy_route_attachment(&self, route: &RouteKey) -> anyhow::Result<()> {
         let legacy_route = RouteKey::new(&route.channel_kind, &route.chat_id);
         if route == &legacy_route
-            || route.topic_id().is_some()
+            || route
+                .topic_id()
+                .is_some_and(|topic_id| topic_id != route.chat_id)
             || self.current_attachment(route).await?.is_some()
         {
             return Ok(());
@@ -1721,6 +1723,34 @@ mod tests {
                 .thread_id,
             legacy_thread_id
         );
+    }
+
+    #[tokio::test]
+    async fn discord_thread_route_adopts_its_same_id_legacy_attachment() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let legacy_route = RouteKey::new("discord", "thread-channel-a");
+        let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
+        let legacy_thread_id = legacy_runtime.state().await.thread_id;
+        let extended_route = RouteKey::with_actor(
+            "discord",
+            "REAL_BOT_ID",
+            "thread-channel-a",
+            "discord",
+            Some("thread-channel-a".to_string()),
+        );
+
+        let adopted = manager
+            .resolve_route_runtime(&extended_route)
+            .await
+            .unwrap();
+
+        assert_eq!(adopted.state().await.thread_id, legacy_thread_id);
+        assert!(manager
+            .current_attachment(&legacy_route)
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
