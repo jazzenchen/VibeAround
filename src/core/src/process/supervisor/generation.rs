@@ -71,7 +71,19 @@ impl Supervisor {
                 event = "watchdog_fired",
                 heartbeat_age_secs = age
             );
-            self.cancel_current_bridge(&proc);
+            // A watchdog is a lifecycle decision, not a best-effort protocol
+            // notification. Reuse the full restart path so a bridge that
+            // ignores cancellation is terminated, reaped, and bounded-aborted
+            // before the replacement generation is published.
+            if let Err(error) = self.force_restart(proc.id).await {
+                proc_log!(
+                    warn,
+                    kind = proc.kind,
+                    label = proc.label,
+                    event = "watchdog_restart_failed",
+                    error = %error
+                );
+            }
         }
 
         for proc in to_spawn {
@@ -306,11 +318,18 @@ impl Supervisor {
         // alive. Terminate that generation before waiting so respawn cannot
         // leave a twin process behind, then reap before publishing the next
         // state transition.
-        self.terminate_and_reap_registry_id(&proc, registry_id)
+        let child_status = self
+            .terminate_and_reap_registry_id(&proc, registry_id)
             .await;
 
         let (reason, was_crash) = match exit {
-            BridgeExit::Clean => ("clean exit".to_string(), false),
+            BridgeExit::Clean => match child_status {
+                Some(status) if status.success() => {
+                    (format!("process exited successfully ({status})"), false)
+                }
+                Some(status) => (format!("process exited with {status}"), true),
+                None => ("clean bridge exit".to_string(), false),
+            },
             BridgeExit::Cancelled => ("cancelled".to_string(), false),
             BridgeExit::ProtocolError(e) => (format!("protocol error: {}", e), true),
         };
@@ -413,11 +432,28 @@ impl Supervisor {
         self.deregister_terminal_process(&proc);
     }
 
-    pub(super) async fn terminate_and_reap_registry_id(&self, proc: &SupervisedProcess, id: u64) {
+    pub(super) async fn terminate_and_reap_registry_id(
+        &self,
+        proc: &SupervisedProcess,
+        id: u64,
+    ) -> Option<std::process::ExitStatus> {
         let Some(mut child) = self.registry.remove(id) else {
-            return;
+            return None;
         };
         let root_pid = child.id();
+        let observed_status = match child.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                proc_log!(
+                    warn,
+                    kind = proc.kind,
+                    label = proc.label,
+                    event = "child_status_read_failed",
+                    error = %error
+                );
+                None
+            }
+        };
 
         if let Err(error) = kill::terminate_child_tree(&mut child, root_pid).await {
             proc_log!(
@@ -430,6 +466,7 @@ impl Supervisor {
             let _ = child.start_kill();
             let _ = child.wait().await;
         }
+        observed_status
     }
 
     pub(super) async fn stop_generation(

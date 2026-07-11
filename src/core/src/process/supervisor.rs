@@ -204,81 +204,47 @@ impl Supervisor {
     /// No-op if policy is `Never` and the process is already stopped.
     pub async fn force_restart(self: &Arc<Self>, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
-        if proc.stopping.load(Ordering::Acquire) {
-            self.wait_for_stop(&proc).await;
+        if !self.acquire_stop(&proc).await {
             return Ok(());
         }
-        let mut spawn_now = false;
-        let mut terminate_current_generation = None;
-        let mut wait_for_spawn = false;
-        {
-            let _transition = proc.transition_lock.lock();
-            if proc.stopping.load(Ordering::Acquire) {
-                return Ok(());
-            }
-            match proc.status() {
-                ProcessStatus::Running => {
-                    proc.intent
-                        .store(TransitionIntent::Restart as u8, Ordering::Release);
-                    if !self.cancel_current_bridge(&proc) {
-                        terminate_current_generation = self.current_registry_id(&proc);
-                    }
-                    proc.set_reason("restart requested");
-                }
-                ProcessStatus::Spawning => {
-                    // Supersede the staged generation. `begin_spawn` will
-                    // observe the changed status and reap any child it has
-                    // already created; the tick loop starts the replacement
-                    // only after that cleanup path has had a chance to run.
-                    proc.set_status(ProcessStatus::Crashed);
-                    proc.intent
-                        .store(TransitionIntent::None as u8, Ordering::Release);
-                    proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
-                    proc.set_reason("restart requested while spawning");
-                    self.cancel_current_bridge(&proc);
-                    wait_for_spawn = true;
-                }
-                ProcessStatus::Crashed | ProcessStatus::NotStarted => {
-                    proc.set_status(ProcessStatus::Crashed);
-                    proc.intent
-                        .store(TransitionIntent::None as u8, Ordering::Release);
-                    proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
-                    proc.set_reason("restart requested");
-                    spawn_now = true;
-                }
-                ProcessStatus::Stopped if matches!(proc.policy, RestartPolicy::OnCrash { .. }) => {
-                    proc.set_status(ProcessStatus::Crashed);
-                    proc.intent
-                        .store(TransitionIntent::None as u8, Ordering::Release);
-                    proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
-                    proc.set_reason("restart requested");
-                    spawn_now = true;
-                }
-                ProcessStatus::Stopped => {
-                    proc.intent
-                        .store(TransitionIntent::None as u8, Ordering::Release);
-                    proc.next_spawn_at.store(0, Ordering::Relaxed);
-                }
-            }
-        }
 
-        if wait_for_spawn {
-            let spawn_task = proc.spawn_task.lock().take();
-            if let Some(spawn_task) = spawn_task {
-                let _ = spawn_task.await;
+        let should_restart = {
+            let _transition = proc.transition_lock.lock();
+            if matches!(proc.status(), ProcessStatus::Stopped)
+                && matches!(proc.policy, RestartPolicy::Never)
+            {
+                proc.intent
+                    .store(TransitionIntent::None as u8, Ordering::Release);
+                proc.next_spawn_at.store(0, Ordering::Relaxed);
+                false
+            } else {
+                proc.set_status(ProcessStatus::Crashed);
+                proc.intent
+                    .store(TransitionIntent::None as u8, Ordering::Release);
+                proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
+                proc.set_reason("restart requested");
+                true
             }
-            if let Some(registry_id) = self.take_pending_registry_id(&proc) {
-                self.terminate_and_reap_registry_id(&proc, registry_id)
-                    .await;
-            }
-            spawn_now = true;
+        };
+        self.notify_change(&proc);
+
+        // Join publication before inspecting pending/active ownership. This
+        // closes the same staged-child race as force_stop/shutdown_all.
+        let spawn_task = proc.spawn_task.lock().take();
+        if let Some(spawn_task) = spawn_task {
+            let _ = spawn_task.await;
         }
-        if let Some(registry_id) = terminate_current_generation {
+        if let Some(registry_id) = self.take_pending_registry_id(&proc) {
             self.terminate_and_reap_registry_id(&proc, registry_id)
                 .await;
         }
-        self.notify_change(&proc);
-        if spawn_now {
+        let generation = proc.active_generation.lock().take();
+        if let Some(generation) = generation {
+            self.stop_generation(&proc, generation).await;
+        }
+
+        self.finish_stop(&proc);
+        if should_restart {
             self.schedule_spawn(proc);
         }
         Ok(())
@@ -420,20 +386,6 @@ impl Supervisor {
             .ok_or_else(|| ProcessError::UnknownProcess {
                 label: format!("#{}", id.0),
             })
-    }
-
-    fn cancel_current_bridge(&self, proc: &SupervisedProcess) -> bool {
-        if let Some(generation) = proc.active_generation.lock().as_ref() {
-            return generation.cancel_tx.send(true).is_ok();
-        }
-        false
-    }
-
-    fn current_registry_id(&self, proc: &SupervisedProcess) -> Option<u64> {
-        proc.active_generation
-            .lock()
-            .as_ref()
-            .map(|generation| generation.registry_id)
     }
 
     fn take_pending_registry_id(&self, proc: &SupervisedProcess) -> Option<u64> {

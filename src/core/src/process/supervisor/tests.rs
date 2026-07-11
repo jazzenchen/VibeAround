@@ -64,6 +64,24 @@ impl ProcessBridge for InstantCleanBridge {
     }
 }
 
+/// Bridge that treats child stdout EOF as a clean protocol exit. This lets
+/// tests exercise real OS exit statuses instead of synthesizing BridgeExit.
+struct WaitForEofBridge;
+
+impl ProcessBridge for WaitForEofBridge {
+    fn run(
+        self: Box<Self>,
+        mut pipes: StdioPipes,
+        _cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move {
+            let mut sink = Vec::new();
+            let _ = pipes.stdout.read_to_end(&mut sink).await;
+            BridgeExit::Clean
+        })
+    }
+}
+
 struct DelayedCancelBridge {
     cancel_seen: Arc<tokio::sync::Semaphore>,
     release: Arc<tokio::sync::Semaphore>,
@@ -541,6 +559,154 @@ async fn force_restart_while_spawning_reaps_staged_generation() {
     wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
     sup.force_stop(proc.id).await.unwrap();
     wait_for_status(&sup, proc.id, ProcessStatus::Stopped).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_restart_aborts_stubborn_bridge_before_publishing_replacement() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let factory_count = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let count_for_factory = Arc::clone(&factory_count);
+    let dropped_for_factory = Arc::clone(&dropped);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "stubborn-restart",
+        cat_spec(),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::ZERO,
+            watchdog: None,
+        },
+        Box::new(move || {
+            if count_for_factory.fetch_add(1, Ordering::AcqRel) == 0 {
+                Box::new(PendingBridge {
+                    dropped: Arc::clone(&dropped_for_factory),
+                })
+            } else {
+                Box::new(WaitForCancelBridge)
+            }
+        }),
+    );
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+
+    tokio::time::timeout(Duration::from_secs(1), sup.force_restart(id))
+        .await
+        .expect("force_restart hung on a stubborn bridge")
+        .unwrap();
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+
+    assert_eq!(factory_count.load(Ordering::Acquire), 2);
+    assert_eq!(dropped.load(Ordering::Acquire), 1);
+    assert_eq!(registry.len(), 1, "only the replacement child may remain");
+
+    sup.force_stop(id).await.unwrap();
+    assert_eq!(registry.len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watchdog_escalates_stubborn_bridge_and_restarts_generation() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let factory_count = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let count_for_factory = Arc::clone(&factory_count);
+    let dropped_for_factory = Arc::clone(&dropped);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "watchdog-stubborn",
+        cat_spec(),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::ZERO,
+            watchdog: Some(Duration::ZERO),
+        },
+        Box::new(move || {
+            if count_for_factory.fetch_add(1, Ordering::AcqRel) == 0 {
+                Box::new(PendingBridge {
+                    dropped: Arc::clone(&dropped_for_factory),
+                })
+            } else {
+                Box::new(WaitForCancelBridge)
+            }
+        }),
+    );
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+    sup.get_proc(id)
+        .unwrap()
+        .last_heartbeat_ts
+        .store(0, Ordering::Release);
+
+    tokio::time::timeout(Duration::from_secs(1), sup.tick())
+        .await
+        .expect("watchdog restart hung");
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+
+    assert_eq!(factory_count.load(Ordering::Acquire), 2);
+    assert_eq!(dropped.load(Ordering::Acquire), 1);
+    assert_eq!(registry.len(), 1);
+
+    sup.force_stop(id).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_zero_and_nonzero_exits_are_classified_and_respawned() {
+    for (exit_code, expected_reason) in [(0, "process exited successfully"), (7, "exit status: 7")]
+    {
+        let registry = Arc::new(ChildRegistry::new());
+        let sup = Supervisor::new(Arc::clone(&registry));
+        let factory_count = Arc::new(AtomicUsize::new(0));
+        let count_for_factory = Arc::clone(&factory_count);
+        let marker = std::env::temp_dir().join(format!(
+            "vibearound-supervisor-exit-{exit_code}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let script = format!(
+            "if [ -f '{}' ]; then exec cat; else : > '{}'; exit {exit_code}; fi",
+            marker.display(),
+            marker.display()
+        );
+
+        let id = sup.register(
+            ProcessKind::ChannelPlugin,
+            format!("real-exit-{exit_code}"),
+            SpawnSpec::new("sh").args(["-c", script.as_str()]),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: None,
+            },
+            Box::new(move || {
+                if count_for_factory.fetch_add(1, Ordering::AcqRel) == 0 {
+                    Box::new(WaitForEofBridge)
+                } else {
+                    Box::new(WaitForCancelBridge)
+                }
+            }),
+        );
+
+        wait_for_status(&sup, id, ProcessStatus::Crashed).await;
+        let crashed = sup
+            .snapshot()
+            .into_iter()
+            .find(|process| process.id == id)
+            .unwrap();
+        assert!(
+            crashed.reason.contains(expected_reason),
+            "unexpected reason for exit {exit_code}: {}",
+            crashed.reason
+        );
+        assert_eq!(registry.len(), 0, "exited child was not reaped");
+
+        sup.tick().await;
+        wait_for_status(&sup, id, ProcessStatus::Running).await;
+        assert_eq!(factory_count.load(Ordering::Acquire), 2);
+        assert_eq!(registry.len(), 1);
+
+        sup.force_stop(id).await.unwrap();
+        let _ = std::fs::remove_file(marker);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
