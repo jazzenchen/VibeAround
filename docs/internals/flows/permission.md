@@ -16,7 +16,7 @@ agent ◄──ACP response── bridge handler ◄──oneshot── forwarde
 **1. Agent asks.** Mid-turn, the agent CLI sends ACP `session/request_permission` with the options (allow once, always, reject…). The agent's turn is now blocked on the reply.
 → `src/core/src/agent/runtime.rs` (client handler trait)
 
-**2. Bridge handler registers a oneshot.** The thread's `ChannelBridgeHandler` generates a fresh `request_id`, stores the set of eligible channel instance ids plus a `oneshot::Sender` in `PluginHost::pending_permissions`, and emits `ChannelOutput::PermissionRequest { request_id, payload }` to the routes attached to the thread. There is deliberately **no human-response timeout** while a card is live.
+**2. Bridge handler captures the active origin and registers a oneshot.** The thread's `ChannelBridgeHandler` reads the current turn's `ChannelTarget`. With no active target it returns ACP **Cancelled** immediately. Otherwise it generates a fresh `request_id`, stores the origin channel instance plus a `oneshot::Sender` in `PluginHost::pending_permissions`, and emits one target-aware `ChannelOutput::PermissionRequest { request_id, payload }` only to that origin. There is deliberately **no human-response timeout** while a live card is waiting for a person.
 → `src/core/src/channels/bridge_handler.rs` (`request_permission`), `plugin_host.rs` (`pending_permissions`)
 
 **3. Card renders.** The plugin turns the payload into a platform-native interactive card (Feishu V2 card, Slack block actions, Telegram inline keyboard). IM delivery is live-only: if the target runtime is absent or cannot accept the output, that surface is removed immediately and the waiter is cancelled when no eligible surface remains. On the web, the chat renders the card component and tracks it as pending.
@@ -36,19 +36,19 @@ The no-timeout design needs cleanup guarantees instead:
 | Situation | Guarantee |
 |---|---|
 | No live runtime accepts the card | That instance is removed immediately; when none remain, `rx.await` errors and the agent receives **Cancelled** |
-| Plugin process dies while a card is pending | The dying bridge calls `cancel_channel_permissions(instance_id)` exactly once — pending senders are dropped when no other eligible surface remains |
-| User sends channel `/stop` while a card is pending | The prompt completes with ACP `Cancelled`; the SDK resolves the stale permission through its safest reject option and removes both callback indexes, so the next text cannot be swallowed as an answer to an old card |
+| Plugin process dies or its bridge task is force-aborted while a card is pending | A generation-scoped Drop guard removes only that runtime and calls `cancel_channel_permissions(instance_id)`; the pending sender is dropped |
+| User sends channel `/stop` while a card is pending | Dropping the blocked prompt drops its RAII registration, so the core entry is removed; the SDK also resolves the stale platform-side permission through its safest reject option and removes both callback indexes, so the next text cannot be swallowed as an answer to an old card |
 | Daemon shutdown | `PluginHost::shutdown_all` clears the whole table first, same cancellation path |
 | Tap for an already-resolved request | `respond_permission` finds nothing and returns "no longer pending" — the second tap is a no-op, not a double-approve |
 | Tap from the wrong instance | Instance membership check leaves the entry untouched and rejects the response |
 
-The net invariant: **every registered oneshot is consumed exactly once** — by the tap, by channel cancellation, or by shutdown. An agent turn can wait indefinitely on a human, but never on a dead process.
+The net invariant for the host turn is: **every registered oneshot is consumed or dropped exactly once** — by the tap, prompt cancellation/drop, channel death, or daemon shutdown. An agent turn can wait indefinitely on a live human surface, but never on a dead process, and a different route attached to the same thread cannot approve the request.
 
-> Remaining safety gap: the request still fans out to every route attached to the workspace thread, and the first eligible response wins. The next target-aware turn refactor will restrict permission delivery to the active turn's origin target.
+> Remaining scope: subagent permission handling still uses its separate fan-out path. It is not governed by the host turn's `ActiveTurnTarget`, and its pending core registration does not yet have the same cancellation-safe RAII guard. Both origin selection and cleanup must be addressed when subagent session ownership is refactored.
 
 ---
 
 *Source anchors: `src/core/src/channels/bridge_handler.rs` (request_permission), `src/core/src/channels/plugin_host.rs` (pending_permissions, respond_permission, cancel_channel_permissions, shutdown_all), `src/core/src/channels/transport_stdio/` (forwarder), `src/server/src/web_server/ws_chat.rs` (web response path).*
-*Last verified: 2026-07-11.*
+*Last verified: `codex/im-acp-route-refactor` at `ed12aa02` (2026-07-11).*
 
 <sub>[◀ Flow: web chat](web-chat.md) · [Documentation index](../../README.md) · [Flow: bridge request ▶](bridge-request.md)</sub>
