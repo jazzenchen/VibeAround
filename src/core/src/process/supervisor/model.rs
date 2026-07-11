@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::time::Duration;
 
 use parking_lot::RwLock;
@@ -132,14 +132,12 @@ impl ProcessStatus {
 pub(super) enum TransitionIntent {
     None = 0,
     Stop = 1,
-    Restart = 2,
 }
 
 impl TransitionIntent {
     pub(super) fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Stop,
-            2 => Self::Restart,
             _ => Self::None,
         }
     }
@@ -179,6 +177,7 @@ pub(super) struct SupervisedProcess {
     pub(super) last_heartbeat_ts: AtomicU64,
     pub(super) next_spawn_at: AtomicU64,
     pub(super) next_generation: AtomicU64,
+    pub(super) consecutive_failures: AtomicU32,
     pub(super) stopping: std::sync::atomic::AtomicBool,
     pub(super) stop_completed: tokio::sync::Notify,
 
@@ -208,5 +207,19 @@ impl SupervisedProcess {
 
     pub(super) fn set_reason(&self, reason: impl Into<String>) {
         *self.reason.write() = reason.into();
+    }
+
+    pub(super) fn next_restart_delay(&self) -> Duration {
+        let Some(base) = self.policy.restart_delay() else {
+            return Duration::ZERO;
+        };
+        let failure = self.consecutive_failures.fetch_add(1, Ordering::AcqRel) + 1;
+        let exponent = failure.saturating_sub(1).min(16);
+        base.saturating_mul(1_u32 << exponent)
+            .min(super::MAX_RESTART_DELAY)
+    }
+
+    pub(super) fn reset_restart_backoff(&self) {
+        self.consecutive_failures.store(0, Ordering::Release);
     }
 }

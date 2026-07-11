@@ -24,7 +24,7 @@
 //! [`ChildRegistry::kill_all`] remains the abrupt-runtime safety net.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -47,6 +47,8 @@ pub const TICK_INTERVAL: Duration = Duration::from_secs(5);
 const BRIDGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const BRIDGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+const CHILD_EXIT_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(50);
+const MAX_RESTART_DELAY: Duration = Duration::from_secs(300);
 
 /// Unique id for a supervised process within one Supervisor instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -133,6 +135,7 @@ impl Supervisor {
             last_heartbeat_ts: AtomicU64::new(now_secs()),
             next_spawn_at: AtomicU64::new(0),
             next_generation: AtomicU64::new(1),
+            consecutive_failures: AtomicU32::new(0),
             stopping: std::sync::atomic::AtomicBool::new(false),
             stop_completed: tokio::sync::Notify::new(),
             active_generation: parking_lot::Mutex::new(None),
@@ -156,6 +159,7 @@ impl Supervisor {
     pub fn touch(&self, id: ProcessId) {
         if let Some(proc) = self.processes.read().get(&id).cloned() {
             proc.last_heartbeat_ts.store(now_secs(), Ordering::Relaxed);
+            proc.reset_restart_backoff();
         }
     }
 
@@ -203,12 +207,23 @@ impl Supervisor {
     /// Cancel the current generation and schedule an immediate respawn.
     /// No-op if policy is `Never` and the process is already stopped.
     pub async fn force_restart(self: &Arc<Self>, id: ProcessId) -> ProcessResult<()> {
+        self.restart(id, false).await
+    }
+
+    pub(super) async fn restart_after_failure(
+        self: &Arc<Self>,
+        id: ProcessId,
+    ) -> ProcessResult<()> {
+        self.restart(id, true).await
+    }
+
+    async fn restart(self: &Arc<Self>, id: ProcessId, apply_backoff: bool) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
         if !self.acquire_stop(&proc).await {
             return Ok(());
         }
 
-        let should_restart = {
+        let (should_restart, restart_delay) = {
             let _transition = proc.transition_lock.lock();
             if matches!(proc.status(), ProcessStatus::Stopped)
                 && matches!(proc.policy, RestartPolicy::Never)
@@ -216,14 +231,25 @@ impl Supervisor {
                 proc.intent
                     .store(TransitionIntent::None as u8, Ordering::Release);
                 proc.next_spawn_at.store(0, Ordering::Relaxed);
-                false
+                (false, Duration::ZERO)
             } else {
+                let delay = if apply_backoff {
+                    proc.next_restart_delay()
+                } else {
+                    proc.reset_restart_backoff();
+                    Duration::ZERO
+                };
                 proc.set_status(ProcessStatus::Crashed);
                 proc.intent
                     .store(TransitionIntent::None as u8, Ordering::Release);
-                proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
-                proc.set_reason("restart requested");
-                true
+                proc.next_spawn_at
+                    .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
+                proc.set_reason(if apply_backoff {
+                    "watchdog restart requested"
+                } else {
+                    "restart requested"
+                });
+                (true, delay)
             }
         };
         self.notify_change(&proc);
@@ -244,7 +270,7 @@ impl Supervisor {
         }
 
         self.finish_stop(&proc);
-        if should_restart {
+        if should_restart && restart_delay.is_zero() {
             self.schedule_spawn(proc);
         }
         Ok(())
@@ -265,6 +291,7 @@ impl Supervisor {
             {
                 proc.intent
                     .store(TransitionIntent::None as u8, Ordering::Release);
+                proc.reset_restart_backoff();
                 proc.set_status(ProcessStatus::Crashed);
                 proc.set_reason("started by user");
                 proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);

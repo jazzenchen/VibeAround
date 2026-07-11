@@ -228,6 +228,7 @@ fn insert_process_with_status(
         last_heartbeat_ts: AtomicU64::new(now_secs()),
         next_spawn_at: AtomicU64::new(now_secs() + 30),
         next_generation: AtomicU64::new(1),
+        consecutive_failures: AtomicU32::new(0),
         stopping: std::sync::atomic::AtomicBool::new(false),
         stop_completed: tokio::sync::Notify::new(),
         active_generation: parking_lot::Mutex::new(None),
@@ -419,6 +420,28 @@ async fn on_crash_policy_marks_process_crashed() {
     let snap = sup.snapshot();
     let p = snap.iter().find(|p| p.id == id).unwrap();
     assert_eq!(p.status, ProcessStatus::Crashed);
+}
+
+#[test]
+fn restart_delay_backs_off_and_heartbeat_resets_the_budget() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+    let proc = insert_process_with_status(
+        &sup,
+        ProcessId(90),
+        ProcessStatus::Crashed,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+
+    assert_eq!(proc.next_restart_delay(), Duration::from_secs(30));
+    assert_eq!(proc.next_restart_delay(), Duration::from_secs(60));
+    assert_eq!(proc.next_restart_delay(), Duration::from_secs(120));
+    assert_eq!(proc.next_restart_delay(), Duration::from_secs(240));
+    assert_eq!(proc.next_restart_delay(), MAX_RESTART_DELAY);
+    assert_eq!(proc.next_restart_delay(), MAX_RESTART_DELAY);
+
+    sup.touch(proc.id);
+    assert_eq!(proc.next_restart_delay(), Duration::from_secs(30));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

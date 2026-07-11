@@ -75,7 +75,7 @@ impl Supervisor {
             // notification. Reuse the full restart path so a bridge that
             // ignores cancellation is terminated, reaped, and bounded-aborted
             // before the replacement generation is published.
-            if let Err(error) = self.force_restart(proc.id).await {
+            if let Err(error) = self.restart_after_failure(proc.id).await {
                 proc_log!(
                     warn,
                     kind = proc.kind,
@@ -184,7 +184,8 @@ impl Supervisor {
                     if matches!(proc.status(), ProcessStatus::Spawning) {
                         proc.set_status(ProcessStatus::Crashed);
                         proc.set_reason(format!("spawn failed: {}", reason));
-                        if let Some(delay) = proc.policy.restart_delay() {
+                        if proc.policy.restart_delay().is_some() {
+                            let delay = proc.next_restart_delay();
                             proc.next_spawn_at
                                 .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
                         }
@@ -375,18 +376,6 @@ impl Supervisor {
                     reason = %reason
                 );
             }
-            TransitionIntent::Restart => {
-                proc.set_status(ProcessStatus::Crashed);
-                proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
-                proc.set_reason(&reason);
-                proc_log!(
-                    info,
-                    kind = proc.kind,
-                    label = proc.label,
-                    event = "restart_requested",
-                    reason = %reason
-                );
-            }
             TransitionIntent::None => match proc.policy {
                 RestartPolicy::Never => {
                     proc.set_status(ProcessStatus::Stopped);
@@ -412,7 +401,7 @@ impl Supervisor {
                 }
                 RestartPolicy::OnCrash { .. } => {
                     proc.set_status(ProcessStatus::Crashed);
-                    let delay = proc.policy.restart_delay().unwrap_or(Duration::ZERO);
+                    let delay = proc.next_restart_delay();
                     proc.next_spawn_at
                         .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
                     proc.set_reason(&reason);
@@ -441,7 +430,7 @@ impl Supervisor {
             return None;
         };
         let root_pid = child.id();
-        let observed_status = match child.try_wait() {
+        let mut observed_status = match child.try_wait() {
             Ok(status) => status,
             Err(error) => {
                 proc_log!(
@@ -454,6 +443,34 @@ impl Supervisor {
                 None
             }
         };
+
+        // stdout/stderr can reach EOF a few scheduler turns before the child
+        // status becomes observable. Give a naturally exiting process a small,
+        // bounded window so diagnostics retain its real exit code. A frozen
+        // child still falls through to the tree-kill path below.
+        if observed_status.is_none() {
+            let deadline = tokio::time::Instant::now() + CHILD_EXIT_OBSERVATION_TIMEOUT;
+            while tokio::time::Instant::now() < deadline {
+                tokio::task::yield_now().await;
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        observed_status = Some(status);
+                        break;
+                    }
+                    Ok(None) => tokio::time::sleep(Duration::from_millis(5)).await,
+                    Err(error) => {
+                        proc_log!(
+                            warn,
+                            kind = proc.kind,
+                            label = proc.label,
+                            event = "child_status_read_failed",
+                            error = %error
+                        );
+                        break;
+                    }
+                }
+            }
+        }
 
         if let Err(error) = kill::terminate_child_tree(&mut child, root_pid).await {
             proc_log!(
