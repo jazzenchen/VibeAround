@@ -63,6 +63,7 @@ The 2026-07-11 refactor was exercised against a real standalone server and Codex
 - a real Codex ACP turn produced `AgentReady`, `SessionReady`, streamed `WS_ACP_OK`, `PromptDone`, and inactive turn status,
 - Stop sent immediately after `SessionReady` produced `PromptDone` and no agent text chunks,
 - a same-socket Message followed immediately by Stop (without waiting for `SessionReady`) preserved FIFO order, produced `PromptDone`, and emitted zero agent message chunks.
+- a real two-turn Codex conversation reused one ACP session and recalled a token supplied only in the first turn.
 
 ---
 

@@ -33,16 +33,19 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 4. **Two-layer cleanup**: normal stop cancels, tree-reaps and joins/aborts the bridge before returning; `ChildRegistry::kill_all` remains the abrupt-runtime safety net.
 5. **Enriched env everywhere**: children spawn through `process::env::command` so PATH matches the user's shell; bypassing it produces "works in terminal, fails in app" bugs.
 6. Heartbeat watchdog applies to plugins only; agents crash loudly by design (`Never`) so the owning thread decides.
+7. A watchdog restart uses the same bounded stop path as a manual restart: cancel, tree-reap, wait, then abort a stubborn bridge before the replacement generation can publish.
+8. Repeated `OnCrash` failures back off exponentially from the configured delay to five minutes. A heartbeat or manual start/restart resets the failure budget.
 
 ## Known debt
 
 - Unix descendants are terminated through a process group; Windows still needs a Job Object rather than relying on `taskkill`.
 - `Supervisor::global()` and `ChildRegistry::global()` still impede test isolation even though each active generation now has one logical owner.
-- Restart uses a fixed delay; exponential backoff, jitter and a failure budget/circuit breaker remain open.
+- Restart has bounded exponential backoff, but still lacks jitter, a failure-window budget and an explicit circuit-breaker/manual-reset state.
+- `Running` currently means the child and bridge generation were published; channel protocol/platform readiness still needs a separate handshaking/ready signal.
 
 ---
 
 *Source anchors: `src/core/src/process/` (supervisor, supervisor/model, supervisor/generation, bridge, registry, acp_transport, env, kill, log).*
-*Last verified: `codex/im-acp-route-refactor` at `924d4c60` (2026-07-11).*
+*Last verified: `codex/im-acp-route-refactor` at `2c84f501` (2026-07-11).*
 
 <sub>[◀ Module: workspace](workspace.md) · [Documentation index](../../README.md) · [Module: agent ▶](agent.md)</sub>
