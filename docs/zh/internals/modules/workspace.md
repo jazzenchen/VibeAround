@@ -35,14 +35,13 @@
 
 ## 已知技术债
 
-- Projections 在 hot path 上重读并 replay 整个 JSONL 文件；thread/workspace stores 从不 compact（attachments 会）。remediation H1，最高优先级。
-- `ThreadRuntime` 是 10 个独立 mutex，加手工维护的 `busy`/`failed` shadows；计划改成 actor model（remediation H2，随 supervisor-tree 里程碑）。
-- `route_locks` map 从不 prune entries（remediation L8）。
-- `RouteKey::as_key()` 丢弃 `bot_id`，对未来 multi-bot 是潜在问题（remediation L9）。
+- 活跃 route 现在会优先命中 runtime/attachment cache，但 thread/workspace projection 仍会 replay 完整 JSONL；是否引入 snapshot 应先测量。
+- `ThreadRuntime` 仍有 10 个独立 mutex，并手工维护 `busy`/`failed` shadows；应渐进收口所有权，不再与一次性 actor rewrite 强绑定。
+- `RouteKey::as_key()` 有意采用有损展示格式并丢弃 `bot_id`；在 multi-bot 定义版本化 key 前，不能把它升级为持久 identity。
 
 ---
 
-*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store), `reports/architecture-review-remediation-2026-07-04.md` (H1, H2, L8, L9).*
+*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: channels](channels.md) · [文档索引](../../README.md) · [Module: process ▶](process.md)</sub>

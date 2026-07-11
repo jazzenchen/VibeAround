@@ -35,14 +35,13 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 
 ## Known debt
 
-- Projections re-read and replay whole JSONL files on the hot path; thread/workspace stores never compact (attachments do). Remediation H1 — the top-priority fix.
-- `ThreadRuntime` is 10 independent mutexes with manually maintained `busy`/`failed` shadows; planned actor-model rewrite (remediation H2, with the supervisor-tree milestone).
-- `route_locks` map never prunes entries (remediation L8).
-- `RouteKey::as_key()` drops `bot_id` — latent for multi-bot futures (remediation L9).
+- Active routes now hit the runtime/attachment cache first, but thread/workspace projections still replay their full JSONL stores and need measurement before snapshotting.
+- `ThreadRuntime` still has 10 independent mutexes with manually maintained `busy`/`failed` shadows; ownership should be consolidated incrementally rather than coupled to a wholesale actor rewrite.
+- `RouteKey::as_key()` is intentionally lossy and drops `bot_id`; it must not become a persistent identity before multi-bot support defines a versioned key.
 
 ---
 
-*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store), `reports/architecture-review-remediation-2026-07-04.md` (H1, H2, L8, L9).*
+*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: channels](channels.md) · [Documentation index](../../README.md) · [Module: process ▶](process.md)</sub>

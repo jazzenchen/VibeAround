@@ -46,7 +46,7 @@ Flow 经过某个模块的地方会互相交叉链接。面向读者的“为什
 
 ## 相关材料
 
-- 已知缺陷与计划重构：`reports/architecture-review-remediation-2026-07-04.md`（模块页的“已知技术债”会链接到其中条目）。
+- 已知缺陷与计划重构汇总在各模块页的“已知技术债”中，并且必须以当前源码和测试重新核实。
 - 源码里的 Rustdoc module header 是最细粒度的权威；这些页面是地图，不替代源码。
 
 <sub>[◀ 供应商端点参考](../reference/provider-endpoints.md) · [文档索引](../README.md) · [Flow: IM 消息 ▶](flows/im-message.md)</sub>

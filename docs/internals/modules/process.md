@@ -35,11 +35,11 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 
 ## Known debt
 
-- `Supervisor::global()` and `ChildRegistry::global()` singletons impede test isolation — planned: supervisor-tree refactor absorbs the registry into the supervisor and injects `Arc<Supervisor>` (remediation M5 + the locked supervisor-tree direction; OS descendants to cascade via pgid).
+- `Supervisor::global()` and `ChildRegistry::global()` impede test isolation and split child ownership. The replacement must give each process generation one owner, inject scoped supervisor handles and terminate OS descendants through process groups or Job Objects.
 
 ---
 
-*Source anchors: `src/core/src/process/` (supervisor, bridge, registry, acp_transport, env, kill, log), `reports/architecture-review-remediation-2026-07-04.md` (M5, §3).*
+*Source anchors: `src/core/src/process/` (supervisor, bridge, registry, acp_transport, env, kill, log).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: workspace](workspace.md) · [Documentation index](../../README.md) · [Module: agent ▶](agent.md)</sub>

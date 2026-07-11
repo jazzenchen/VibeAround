@@ -38,13 +38,13 @@
 
 ## 已知技术债
 
-- `ws_chat.rs`（1.7k 行）混合 codec 和绕过 queue ordering 的 session-intent side effects，remediation M6。
-- REST handlers + Tauri IPC + va-client + client-ts 是同一 contract 的四份手工镜像，remediation H3（desktop → HTTP，schemars type generation）。
-- Server-side test density 相对 core 偏薄，remediation L11。
+- `ws_chat.rs` 拆出 parser/event 后已经缩小，但 session-intent side effects 仍绕过 per-route queue ordering，多条 WebSocket 连接之间可能交错。
+- REST handlers + Tauri IPC + va-client + client-ts 仍是同一 control-plane contract 的多份手工镜像。
+- Server tests 已覆盖不少 handler，但跨入口 contract fixture、生命周期故障和并发 session-intent 场景仍然偏薄。
 
 ---
 
-*Source anchors: `src/server/src/lib.rs`, `src/server/src/web_server/` (all submodules above), `reports/architecture-review-remediation-2026-07-04.md` (M6, H3, L11).*
+*Source anchors: `src/server/src/lib.rs`, `src/server/src/web_server/` (all submodules above).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: auth](auth.md) · [文档索引](../../README.md) · [Launch 子系统 ▶](../launch.md)</sub>

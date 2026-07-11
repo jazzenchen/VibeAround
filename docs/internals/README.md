@@ -46,7 +46,7 @@ Cross-cutting subsystems that span several modules get a dedicated page:
 
 ## Related material
 
-- Known defects and planned refactors: `reports/architecture-review-remediation-2026-07-04.md` (module pages' "known debt" sections link to its items).
+- Known defects and planned refactors are summarized in each module page's "Known debt" section and must be verified against the current source and tests.
 - Rustdoc module headers in the source are the finest-grained authority; these pages are maps, not replacements.
 
 <sub>[◀ Provider endpoints reference](../reference/provider-endpoints.md) · [Documentation index](../README.md) · [Flow: IM message ▶](flows/im-message.md)</sub>

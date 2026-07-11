@@ -37,9 +37,7 @@ Host channel plugins (out-of-process stdio and in-process websocket), normalize 
 
 ## Known debt
 
-- `channel_kind == "web"` string special-cases (7 sites across core) should become declared channel traits — remediation M4.
-- Web-chat session-intent side effects run before queue serialization — remediation M6.
-- `send_locks` map entries are never pruned (bounded by channel count; cosmetic).
+- Web-chat session-intent side effects still run before per-route queue serialization and can interleave across WebSocket connections.
 
 ---
 

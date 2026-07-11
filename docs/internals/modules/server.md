@@ -38,13 +38,13 @@ Expose core's managers over the wire and own daemon composition: `ServerDaemon::
 
 ## Known debt
 
-- `ws_chat.rs` (1.7k lines) mixes codec with session-intent side effects that bypass queue ordering — remediation M6.
-- REST handlers + Tauri IPC + va-client + client-ts are four hand-maintained mirrors of one contract — remediation H3 (desktop → HTTP, schemars type generation).
-- Server-side test density is thin relative to core — tracked as remediation L11.
+- `ws_chat.rs` is smaller after parser/event extraction, but session-intent side effects still bypass per-route queue ordering and can interleave across WebSocket connections.
+- REST handlers + Tauri IPC + va-client + client-ts remain hand-maintained mirrors of one control-plane contract.
+- Server tests cover many handlers, but cross-surface contract fixtures, lifecycle faults and concurrent session-intent cases remain thin.
 
 ---
 
-*Source anchors: `src/server/src/lib.rs`, `src/server/src/web_server/` (all submodules above), `reports/architecture-review-remediation-2026-07-04.md` (M6, H3, L11).*
+*Source anchors: `src/server/src/lib.rs`, `src/server/src/web_server/` (all submodules above).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: auth](auth.md) · [Documentation index](../../README.md) · [Launch subsystem ▶](../launch.md)</sub>

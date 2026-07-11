@@ -37,9 +37,7 @@
 
 ## 已知技术债
 
-- `channel_kind == "web"` 字符串特判（core 中 7 处）应变成声明式 channel traits，remediation M4。
-- Web-chat session-intent side effects 早于 queue serialization 运行，remediation M6。
-- `send_locks` map entries 从不 prune（受 channel count 限制，主要是 cosmetic）。
+- Web-chat session-intent side effects 仍早于 per-route queue serialization 运行，多条 WebSocket 连接之间可能交错。
 
 ---
 

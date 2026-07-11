@@ -35,11 +35,11 @@
 
 ## 已知技术债
 
-- `Supervisor::global()` 和 `ChildRegistry::global()` 单例妨碍测试隔离。计划：supervisor-tree 重构把 registry 吸收到 supervisor，并注入 `Arc<Supervisor>`（remediation M5 + 已锁定的 supervisor-tree 方向；OS descendants 通过 pgid cascade）。
+- `Supervisor::global()` 和 `ChildRegistry::global()` 妨碍测试隔离，也拆散了 child ownership。替代方案必须让每个 process generation 只有一个 owner，注入 scoped supervisor handle，并通过 process group 或 Job Object 终止 OS descendants。
 
 ---
 
-*Source anchors: `src/core/src/process/` (supervisor, bridge, registry, acp_transport, env, kill, log), `reports/architecture-review-remediation-2026-07-04.md` (M5, §3).*
+*Source anchors: `src/core/src/process/` (supervisor, bridge, registry, acp_transport, env, kill, log).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: workspace](workspace.md) · [文档索引](../../README.md) · [Module: agent ▶](agent.md)</sub>
