@@ -493,7 +493,7 @@ pub enum ChatEvent {
 /// # Wire format (JSON)
 /// ```json
 /// {
-///   "route_key": "telegram:chat_42",
+///   "route_key": "wt_0123456789abcdef",
 ///   "channel_kind": "telegram",
 ///   "chat_id": "chat_42",
 ///   "cli_kind": "claude",
