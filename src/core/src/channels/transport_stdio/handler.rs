@@ -72,6 +72,17 @@ fn route_for_callback(
     route_for_prompt(channel_kind, chat_id, Some(&meta))
 }
 
+fn route_for_cancel(
+    channel_kind: &str,
+    session_chat_id: &str,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<Option<RouteKey>, String> {
+    if meta.is_some_and(|meta| meta.contains_key(CHANNEL_CONTEXT_META_KEY)) {
+        return route_for_prompt(channel_kind, session_chat_id, meta).map(Some);
+    }
+    Ok(None)
+}
+
 struct ActivePromptRoute<'a> {
     routes: &'a DashMap<String, HashMap<u64, RouteKey>>,
     chat_id: String,
@@ -216,12 +227,26 @@ impl PluginAgentHandler {
 
     pub(super) async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
         let chat_id = args.session_id.to_string();
-        let routes = self
-            .active_prompt_routes
-            .get(&chat_id)
-            .map(|routes| routes.values().cloned().collect::<Vec<_>>())
-            .filter(|routes| !routes.is_empty())
-            .unwrap_or_else(|| vec![RouteKey::new(&self.channel_kind, &chat_id)]);
+        let targeted_route = route_for_cancel(&self.channel_kind, &chat_id, args.meta.as_ref())
+            .map_err(|error| {
+                tracing::warn!(
+                    channel_kind = %self.channel_kind,
+                    chat_id = %chat_id,
+                    error = %error,
+                    "rejected channel cancel metadata"
+                );
+                acp::Error::invalid_params()
+            })?;
+        let routes = targeted_route.map_or_else(
+            || {
+                self.active_prompt_routes
+                    .get(&chat_id)
+                    .map(|routes| routes.values().cloned().collect::<Vec<_>>())
+                    .filter(|routes| !routes.is_empty())
+                    .unwrap_or_else(|| vec![RouteKey::new(&self.channel_kind, &chat_id)])
+            },
+            |route| vec![route],
+        );
 
         proc_log!(
             info,
@@ -434,6 +459,34 @@ mod tests {
         assert_eq!(route.channel_instance_id(), "feishu-primary");
         assert_eq!(route.actor_id(), Some("codex-reviewer"));
         assert_eq!(route.topic_id(), Some("topic-1"));
+    }
+
+    #[test]
+    fn cancel_metadata_targets_only_the_addressed_actor_route() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "slack-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "group-1",
+            "topicId": "thread-1",
+            "scope": "group",
+            "addressedBy": "mention"
+        }));
+
+        let route = route_for_cancel("slack", "group-1", Some(&meta))
+            .expect("targeted cancel metadata parses")
+            .expect("targeted cancel carries a route");
+
+        assert_eq!(route.channel_instance_id(), "slack-primary");
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+        assert_eq!(route.topic_id(), Some("thread-1"));
+    }
+
+    #[test]
+    fn legacy_cancel_keeps_chat_wide_compatibility_fallback() {
+        assert_eq!(
+            route_for_cancel("slack", "group-1", None).expect("legacy cancel parses"),
+            None
+        );
     }
 
     #[test]
