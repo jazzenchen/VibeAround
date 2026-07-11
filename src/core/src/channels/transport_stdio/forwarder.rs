@@ -76,11 +76,11 @@ pub(super) async fn forward_output_to_plugin(
         }
         ChannelOutput::AgentReady {
             route,
+            reply_to,
             agent,
             version,
-            ..
         } => {
-            let target = route_target(&route, None);
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -95,9 +95,11 @@ pub(super) async fn forward_output_to_plugin(
             .await?;
         }
         ChannelOutput::SessionReady {
-            route, session_id, ..
+            route,
+            reply_to,
+            session_id,
         } => {
-            let target = route_target(&route, None);
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -110,8 +112,12 @@ pub(super) async fn forward_output_to_plugin(
             )
             .await?;
         }
-        ChannelOutput::SessionInfo { route, info } => {
-            let target = route_target(&route, None);
+        ChannelOutput::SessionInfo {
+            route,
+            reply_to,
+            info,
+        } => {
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,

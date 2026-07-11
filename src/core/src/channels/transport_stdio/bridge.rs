@@ -44,11 +44,15 @@ pub(crate) async fn run_acp_plugin_bridge(
         plugin_host,
         runtime,
     } = runner;
-    // Two clones: one moved into the handler, one moved into the
-    // forwarder task, one kept here for `cancel_channel_permissions` at
-    // the end of the bridge.
+    // This guard must outlive every bridge await. Supervisor shutdown may
+    // abort this task after its timeout, so function-tail cleanup alone is
+    // insufficient.
+    let _cleanup = BridgeCleanup::new(
+        Arc::clone(&plugin_host),
+        instance_id.clone(),
+        Arc::clone(&runtime),
+    );
     let forwarder_plugin_host = Arc::clone(&plugin_host);
-    let drain_plugin_host = Arc::clone(&plugin_host);
     let handler = Arc::new(PluginAgentHandler::new(
         channel_kind.clone(),
         instance_id.clone(),
@@ -213,15 +217,36 @@ pub(crate) async fn run_acp_plugin_bridge(
         }
     };
 
-    // Drain pending permission senders for this channel — otherwise any
-    // `ChannelBridgeHandler::request_permission` caller blocked on a
-    // reply from the dying plugin stalls forever. Previously invoked by
-    // the old `ChannelMonitor::mark_crashed`; now lives here because the
-    // supervisor is protocol-agnostic.
-    drain_plugin_host.remove_stdio_runtime_if_current(&instance_id, &runtime);
-    drain_plugin_host.cancel_channel_permissions(&instance_id);
-
     exit
+}
+
+struct BridgeCleanup {
+    plugin_host: Arc<PluginHost>,
+    instance_id: String,
+    runtime: Arc<super::StdioPluginRuntime>,
+}
+
+impl BridgeCleanup {
+    fn new(
+        plugin_host: Arc<PluginHost>,
+        instance_id: String,
+        runtime: Arc<super::StdioPluginRuntime>,
+    ) -> Self {
+        Self {
+            plugin_host,
+            instance_id,
+            runtime,
+        }
+    }
+}
+
+impl Drop for BridgeCleanup {
+    fn drop(&mut self) {
+        self.plugin_host
+            .remove_stdio_runtime_if_current(&self.instance_id, &self.runtime);
+        self.plugin_host
+            .cancel_channel_permissions(&self.instance_id);
+    }
 }
 
 fn requires_independent_forwarding(output: &super::super::ChannelOutput) -> bool {
@@ -252,7 +277,13 @@ async fn forward_output(
 
 #[cfg(test)]
 mod tests {
-    use super::requires_independent_forwarding;
+    use std::sync::Arc;
+
+    use tokio::sync::{mpsc, oneshot};
+
+    use super::{requires_independent_forwarding, BridgeCleanup};
+    use crate::channels::plugin_host::PluginHost;
+    use crate::channels::transport_stdio::StdioPluginRuntime;
     use crate::channels::ChannelOutput;
     use crate::routing::RouteKey;
 
@@ -274,5 +305,40 @@ mod tests {
                 reply_to: None,
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn bridge_cleanup_drains_permissions_without_removing_replacement_runtime() {
+        let (input_tx, _input_rx) = mpsc::unbounded_channel();
+        let host = Arc::new(PluginHost::new(input_tx));
+        let (old_tx, _old_rx) = mpsc::channel(1);
+        let old_runtime = Arc::new(StdioPluginRuntime::new("slack-work", old_tx));
+        host.replace_stdio_runtime("slack-work", Arc::clone(&old_runtime));
+        let cleanup = BridgeCleanup::new(Arc::clone(&host), "slack-work".to_string(), old_runtime);
+
+        let (permission_tx, mut permission_rx) = oneshot::channel();
+        host.register_pending_permission(
+            "permission-1".to_string(),
+            ["slack-work".to_string()],
+            permission_tx,
+        );
+
+        let (new_tx, mut new_rx) = mpsc::channel(1);
+        let new_runtime = Arc::new(StdioPluginRuntime::new("slack-work", new_tx));
+        host.replace_stdio_runtime("slack-work", new_runtime);
+
+        drop(cleanup);
+
+        assert!(matches!(
+            permission_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Closed)
+        ));
+        let output = ChannelOutput::SystemText {
+            route: RouteKey::with_bot_id("slack", "slack-work", "chat-1"),
+            text: "still routed".to_string(),
+            reply_to: None,
+        };
+        host.send_output(output.clone()).await;
+        assert_eq!(new_rx.recv().await, Some(output));
     }
 }

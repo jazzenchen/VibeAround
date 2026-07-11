@@ -141,15 +141,21 @@ pub enum ChannelOutput {
     },
     AgentReady {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         agent: String,
         version: String,
     },
     SessionReady {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         session_id: String,
     },
     SessionInfo {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         info: ChannelSessionInfo,
     },
     SessionMode {

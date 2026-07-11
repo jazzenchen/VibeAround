@@ -529,6 +529,7 @@ pub async fn start_runtime_and_notify(
         plugin_host
             .send_output(ChannelOutput::AgentReady {
                 route: route.clone(),
+                reply_to: target.reply_to.clone(),
                 agent: agent.clone(),
                 version: version.clone(),
             })
@@ -542,12 +543,14 @@ pub async fn start_runtime_and_notify(
         plugin_host
             .send_output(ChannelOutput::SessionReady {
                 route: route.clone(),
+                reply_to: target.reply_to.clone(),
                 session_id: session_id.clone(),
             })
             .await;
         plugin_host
             .send_output(ChannelOutput::SessionInfo {
                 route: route.clone(),
+                reply_to: target.reply_to.clone(),
                 info: ChannelSessionInfo {
                     workspace_id: after.workspace_id.to_string(),
                     workspace_path: after.workspace.to_string_lossy().into_owned(),

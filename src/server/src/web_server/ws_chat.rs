@@ -355,6 +355,7 @@ async fn handle_chat_socket(
                                     );
                                     let _ = tx.send(ChannelOutput::SessionReady {
                                         route: active_route.clone(),
+                                        reply_to: None,
                                         session_id,
                                     });
                                     if let Ok(runtime) = state

@@ -426,9 +426,7 @@ impl Supervisor {
         proc: &SupervisedProcess,
         id: u64,
     ) -> Option<std::process::ExitStatus> {
-        let Some(mut child) = self.registry.remove(id) else {
-            return None;
-        };
+        let mut child = self.registry.remove(id)?;
         let root_pid = child.id();
         let mut observed_status = match child.try_wait() {
             Ok(status) => status,
