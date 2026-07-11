@@ -859,6 +859,7 @@ fn command_help_text() -> &'static str {
 /pair <code>
 /pickup <code>
 /new
+/stop
 /close
 
 Bare /workspace, /agent, /profile, and /session default to --list. Prefix with /va, /vibearound, va, or vibearound when a channel cannot send slash commands. Legacy /switch commands still work."
