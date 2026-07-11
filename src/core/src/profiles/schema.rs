@@ -225,7 +225,8 @@ pub fn enabled_api_types(profile: &ProfileDef) -> Vec<String> {
     profile
         .api_configs
         .iter()
-        .filter_map(|(api_type, config)| config.enabled.then(|| api_type.clone()))
+        .filter(|(_, config)| config.enabled)
+        .map(|(api_type, _)| api_type.clone())
         .collect()
 }
 

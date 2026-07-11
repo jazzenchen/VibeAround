@@ -275,7 +275,7 @@ pub(super) fn apply_upstream_auth(
     profile_api_key: Option<&str>,
 ) -> Result<reqwest::RequestBuilder, Response> {
     if managed_auth {
-        return append_anthropic_version(request, protocol, headers);
+        return Ok(append_anthropic_version(request, protocol, headers));
     }
     let profile_api_key = profile_api_key
         .map(str::trim)
@@ -297,7 +297,7 @@ pub(super) fn apply_upstream_auth(
         };
         let request = request.header(reqwest::header::AUTHORIZATION, auth);
         if protocol == BridgeProtocol::AnthropicMessages {
-            return append_anthropic_version(request, protocol, headers);
+            return Ok(append_anthropic_version(request, protocol, headers));
         }
         return Ok(request);
     }
@@ -319,7 +319,7 @@ pub(super) fn apply_upstream_auth(
         }
     }
     if protocol == BridgeProtocol::AnthropicMessages {
-        return append_anthropic_version(request, protocol, headers);
+        return Ok(append_anthropic_version(request, protocol, headers));
     }
     Ok(request)
 }
@@ -328,15 +328,15 @@ fn append_anthropic_version(
     request: reqwest::RequestBuilder,
     protocol: BridgeProtocol,
     headers: &InboundHeaderMap,
-) -> Result<reqwest::RequestBuilder, Response> {
+) -> reqwest::RequestBuilder {
     if protocol != BridgeProtocol::AnthropicMessages {
-        return Ok(request);
+        return request;
     }
     let anthropic_version = headers
         .get("anthropic-version")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("2023-06-01");
-    Ok(request.header("anthropic-version", anthropic_version))
+    request.header("anthropic-version", anthropic_version)
 }
 
 pub(super) async fn send_upstream_request_with_rate_limit_retry(

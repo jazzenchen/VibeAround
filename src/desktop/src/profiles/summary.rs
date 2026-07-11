@@ -83,24 +83,6 @@ pub(super) fn catalog_entries() -> Vec<CatalogEntry> {
     entries
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_entries_are_sorted_by_label() {
-        let entries = catalog_entries();
-        let labels: Vec<_> = entries
-            .iter()
-            .map(|entry| entry.label.to_ascii_lowercase())
-            .collect();
-        let mut sorted = labels.clone();
-        sorted.sort();
-
-        assert_eq!(labels, sorted);
-    }
-}
-
 fn profile_summary(profile: ProfileDef) -> ProfileSummary {
     let provider = catalog::get(&profile.provider);
     let enabled_api_types = schema::enabled_api_types(&profile);
@@ -325,4 +307,22 @@ fn clean_string(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_entries_are_sorted_by_label() {
+        let entries = catalog_entries();
+        let labels: Vec<_> = entries
+            .iter()
+            .map(|entry| entry.label.to_ascii_lowercase())
+            .collect();
+        let mut sorted = labels.clone();
+        sorted.sort();
+
+        assert_eq!(labels, sorted);
+    }
 }

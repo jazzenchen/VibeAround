@@ -244,6 +244,36 @@ fn pi_api_type_for(api_types: &[String]) -> Option<&'static str> {
         .find(|candidate| api_types.iter().any(|api_type| api_type == candidate))
 }
 
+pub fn profile_state_dir(id: &str) -> PathBuf {
+    config::data_dir().join("profile-state").join(id)
+}
+
+fn materialize_settings_file(dir: &Path, rel_path: &str, contents: &str) -> anyhow::Result<()> {
+    let target = dir.join(rel_path);
+
+    // Defense in depth: render::validate_rel_path rejects `..`, but this
+    // catches catalog paths whose parent resolves through a symlink.
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {:?}", parent))?;
+        let canonical_parent =
+            std::fs::canonicalize(parent).with_context(|| format!("canonicalize {:?}", parent))?;
+        let canonical_root =
+            std::fs::canonicalize(dir).with_context(|| format!("canonicalize {:?}", dir))?;
+        if !canonical_parent.starts_with(&canonical_root) {
+            bail!(
+                "rendered settings_file escapes profile-state dir: {:?}",
+                target
+            );
+        }
+    }
+
+    let tmp = target.with_extension("tmp");
+    std::fs::write(&tmp, contents).with_context(|| format!("write {:?}", tmp))?;
+    auth::set_owner_only(&tmp).ok();
+    std::fs::rename(&tmp, &target).with_context(|| format!("rename to {:?}", target))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,34 +359,4 @@ mod tests {
 
         assert!(error.to_string().contains("HTTP proxy URL is empty"));
     }
-}
-
-pub fn profile_state_dir(id: &str) -> PathBuf {
-    config::data_dir().join("profile-state").join(id)
-}
-
-fn materialize_settings_file(dir: &Path, rel_path: &str, contents: &str) -> anyhow::Result<()> {
-    let target = dir.join(rel_path);
-
-    // Defense in depth: render::validate_rel_path rejects `..`, but this
-    // catches catalog paths whose parent resolves through a symlink.
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {:?}", parent))?;
-        let canonical_parent =
-            std::fs::canonicalize(parent).with_context(|| format!("canonicalize {:?}", parent))?;
-        let canonical_root =
-            std::fs::canonicalize(dir).with_context(|| format!("canonicalize {:?}", dir))?;
-        if !canonical_parent.starts_with(&canonical_root) {
-            bail!(
-                "rendered settings_file escapes profile-state dir: {:?}",
-                target
-            );
-        }
-    }
-
-    let tmp = target.with_extension("tmp");
-    std::fs::write(&tmp, contents).with_context(|| format!("write {:?}", tmp))?;
-    auth::set_owner_only(&tmp).ok();
-    std::fs::rename(&tmp, &target).with_context(|| format!("rename to {:?}", target))?;
-    Ok(())
 }
