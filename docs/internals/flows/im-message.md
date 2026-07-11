@@ -1,6 +1,6 @@
 # Flow: IM message
 
-One message in a Telegram/Feishu/Slack chat, followed from platform event to streamed reply. This is the trunk flow — [web chat](web-chat.md) and [permission](permission.md) branch off it. File references are repo-relative; line-level detail lives in the anchored files' module docs.
+One direct message in Telegram/Feishu/Slack, followed from platform event to streamed reply. This is the current product trunk — [web chat](web-chat.md) and [permission](permission.md) branch off it. Group addressing support remains implemented in adapters but is not part of the current release acceptance scope. File references are repo-relative; line-level detail lives in the anchored files' module docs.
 
 ## Hop by hop
 
@@ -17,19 +17,19 @@ platform ─1─► plugin ─2─► ChannelPluginRunner ─3─► Conversatio
                  chat ◄─10─ plugin ◄─ ChannelOutput ◄─9─ notifications
 ```
 
-**1. Platform → plugin.** The channel plugin (its own Node.js process) receives the webhook/long-poll event, applies platform semantics, downloads attachments into `~/.vibearound/.cache/`, and builds an SDK prompt. Direct messages may address the bot implicitly; group text must mention the current bot, while an explicit callback remains addressable without a text mention. The logical route is `(channel_kind, channel_instance_id, chat_id, actor_id?, topic_id?)`; the persisted Rust field name `bot_id` is retained only for compatibility.
+**1. Platform → plugin.** The channel plugin (its own Node.js process) receives the webhook/long-poll event, applies platform semantics, downloads attachments into `~/.vibearound/.cache/`, and builds an SDK prompt. Direct messages address the bot implicitly. Dormant group handling requires a mention of the current bot, but group behavior is deferred from current product acceptance. The logical route is `(channel_kind, channel_instance_id, chat_id, actor_id?, topic_id?)`; the persisted Rust field name `bot_id` is retained only for compatibility.
 → plugin repo; envelope type in `src/core/src/channels/types.rs`
 
 **2. Plugin → daemon.** The SDK sends stdio JSON-RPC/ACP. `ChannelPluginRunner` owns one protocol generation; the transport decodes `agent/prompt` and `va.channel` metadata into a `ChannelInput`. The maintained plugin branches use `sendChannelPrompt` rather than raw `agent.prompt`, including available sender/message/topic identity. Legacy third-party plugins without metadata still work, but default `bot_id/actor_id` values do **not** constitute multi-bot support.
 → `src/core/src/channels/plugin_runner.rs`, `transport_stdio/`, `types.rs`
 
-**3. Enqueue.** `ChannelManager::handle_input` is fire-and-forget: the input goes onto an unbounded mpsc queue. Nothing platform-facing ever blocks on agent work.
+**3. Enqueue.** `ChannelManager::handle_input` is fire-and-forget: the input crosses an in-process async handoff buffer before route dispatch. This is an implementation mailbox, not a durable/retrying product message queue. Nothing platform-facing waits on agent work.
 → `src/core/src/channels/mod.rs` (`handle_input`)
 
 **4. Route lane.** `ConversationIngress` places prompt-bearing work into a bounded FIFO lane keyed by the complete `RouteKey` (capacity 16). Same route is serialized; different routes run independently without hash-collision head-of-line blocking. `Stop` increments the lane's stop generation, cancels the active runtime and discards older queued work. SDK stop aliases (`/stop`, `/cancel`, `va stop`) use ACP cancel metadata so the host cancels only the addressed actor/topic route; metadata-free plugins retain the old chat-wide fallback. Daemon shutdown closes ingress first and waits for all lane tasks to drain.
 → `src/core/src/channels/prompt/ingress.rs`
 
-**5. Command parse.** The text is checked against the slash-command grammar (`/new`, `/close`, `/switch`, `/pickup`, `/status`, resource commands, `/va` prefix forms). The core address policy is a defense-in-depth check: group text must be `Mention`-addressed and a callback is an explicit interaction; bare group commands are rejected. Commands execute against the workspace-thread layer and answer with system texts.
+**5. Command parse.** The text is checked against the slash-command grammar (`/new`, `/close`, `/switch`, `/pickup`, `/status`, resource commands, `/va` prefix forms). Commands execute against the workspace-thread layer and answer with system texts. The dormant group path retains a defense-in-depth mention check, but DM/Web are the current supported conversation surfaces.
 → `src/core/src/channels/prompt/handler.rs` (`parse_thread_command`, `handle_command`)
 
 **6. Route → thread runtime.** `resolve_route_runtime` looks up the route's attachment: attached open thread → its runtime; no attachment → create a default workspace, persist a new thread event, attach the route. On the first extended-route message after upgrading an old plugin, a per-legacy-route migration lock lets the base route adopt and then detach `(kind, kind, chat)` so existing thread/session continuity is preserved. A distinct Slack-style topic may not steal the base attachment; a Discord thread whose `chatId == topicId` may adopt its own same-id legacy route. Because instance, actor and topic are part of the route, later addressed actors in one group can map to distinct threads. The host lifecycle/runtime registry and SDK renderer state are keyed by the extended route/target; settings and UI still expose only one configured instance per channel kind.
@@ -74,6 +74,6 @@ The 2026-07-11 branch was exercised through a real isolated daemon and the signe
 ---
 
 *Source anchors: `src/core/src/channels/` (types, plugin_runner, transport_stdio, plugin_host, bridge_handler, prompt/), `src/server/src/lib.rs` (input dispatcher and shutdown), `src/core/src/workspace/manager.rs` + `threads/runtime.rs` (thread resolution, agent lifecycle).*
-*Last verified: `codex/im-acp-route-refactor` at `ed12aa02`; Channel SDK `ae322ed`; Slack `f86cd5b`; Discord `97755f9`; Feishu `f3186ae`; Telegram `b61475d` (2026-07-11).*
+*Last verified: `codex/im-acp-route-refactor` at `ea7741bd`; Channel SDK `ae322ed`; Slack `f86cd5b`; Discord `97755f9`; Feishu `f3186ae`; Telegram `b61475d` (2026-07-11).*
 
 <sub>[◀ Internals](../README.md) · [Documentation index](../../README.md) · [Flow: web chat ▶](web-chat.md)</sub>

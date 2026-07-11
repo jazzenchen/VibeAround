@@ -44,11 +44,11 @@ agent ◄──ACP response── bridge handler ◄──oneshot── forwarde
 
 Host turn 的最终不变量是：**每个注册的 oneshot 都会刚好被消费或 drop 一次**，来源是点按、prompt cancel/drop、channel death 或 shutdown。Agent turn 可以无限等一个 live human surface，但不能等已死进程，同 thread 的其它 route 也不能代为批准。
 
-> 剩余范围：subagent permission handling 仍走独立 fan-out 路径，尚未由 host turn 的 `ActiveTurnTarget` 约束，其 core pending registration 也没有同等的 cancellation-safe RAII guard。应在 subagent session ownership 重构时一并解决 origin 与 cleanup。
+Subagent turn 会继承触发它的 host target。权限请求回到同一个 host DM/Web target；subagent turn 完成、失败或取消时，同样由 scope-owned cleanup 自动移除 pending approval。
 
 ---
 
 *Source anchors: `src/core/src/channels/bridge_handler.rs` (request_permission), `src/core/src/channels/plugin_host.rs` (pending_permissions, respond_permission, cancel_channel_permissions, shutdown_all), `src/core/src/channels/transport_stdio/` (forwarder), `src/server/src/web_server/ws_chat.rs` (web response path).*
-*Last verified: `codex/im-acp-route-refactor` at `ed12aa02`（2026-07-11）。*
+*Last verified: `codex/im-acp-route-refactor` at `ea7741bd`（2026-07-11）。*
 
 <sub>[◀ Flow: Web Chat](web-chat.md) · [文档索引](../../README.md) · [Flow: Bridge 请求 ▶](bridge-request.md)</sub>

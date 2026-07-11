@@ -1,6 +1,6 @@
 # Flow: IM 消息
 
-跟踪 Telegram/飞书/Slack 聊天里的一条消息，从平台事件一直到流式回复。这是主干流程，[Web Chat](web-chat.md) 和 [权限请求](permission.md) 都从它分叉。文件引用均为仓库相对路径；行级细节在锚定文件的 module docs 里。
+跟踪 Telegram/飞书/Slack 的一条私聊消息，从平台事件一直到流式回复。这是当前产品主干，[Web Chat](web-chat.md) 和 [权限请求](permission.md) 都从它分叉。群聊寻址逻辑仍保留在 adapter 中，但不属于当前 release 验收范围。文件引用均为仓库相对路径；行级细节在锚定文件的 module docs 里。
 
 ## 逐跳
 
@@ -17,19 +17,19 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► bo
               chat ◄─10─ plugin ◄─ ChannelOutput ◄─9─ notifications
 ```
 
-**1. Platform → plugin。** Channel plugin（独立 Node.js 进程）收到 webhook/long-poll event，应用平台语义，把附件下载到 `~/.vibearound/.cache/` 并构建 SDK prompt。DM 可以隐式寻址；群聊文本必须 @ 当前 bot；明确的 callback 不需要再附带文本 mention。逻辑 route 是 `(channel_kind, channel_instance_id, chat_id, actor_id?, topic_id?)`。
+**1. Platform → plugin。** Channel plugin（独立 Node.js 进程）收到 webhook/long-poll event，应用平台语义，把附件下载到 `~/.vibearound/.cache/` 并构建 SDK prompt。DM 隐式寻址当前 bot。Dormant 群聊路径仍要求 @ 当前 bot，但群聊行为延后验收。逻辑 route 是 `(channel_kind, channel_instance_id, chat_id, actor_id?, topic_id?)`。
 → plugin repo；envelope type 在 `src/core/src/channels/types.rs`
 
 **2. Plugin → daemon。** SDK 通过 stdio JSON-RPC/ACP 发送数据。`ChannelPluginRunner` 拥有一个 protocol generation；transport 把 `agent/prompt` 与 `va.channel` metadata 解码成 `ChannelInput`。官方插件均使用 `sendChannelPrompt` 并携带可获得的 sender/message/topic identity。Legacy 第三方插件仍可运行，但默认 `bot_id/actor_id` 不等于 multi-bot 支持。
 → `src/core/src/channels/plugin_runner.rs`, `transport_stdio/`, `types.rs`
 
-**3. Enqueue。** `ChannelManager::handle_input` 是 fire-and-forget：input 进入 unbounded mpsc queue。任何面向平台的代码都不会等待 agent 工作。
+**3. Enqueue。** `ChannelManager::handle_input` 是 fire-and-forget：input 先经过进程内 async handoff buffer，再进入 route dispatch。它只是实现层 mailbox，不是带持久化、重试或 replay 的业务消息队列；平台代码不会等待 agent 工作。
 → `src/core/src/channels/mod.rs` (`handle_input`)
 
 **4. Route lane。** `ConversationIngress` 以完整 `RouteKey` 建立容量 16 的有界 FIFO lane。同 route 严格串行，不同 route 独立运行，不再有 shard hash 碰撞造成的 head-of-line blocking。`Stop` 会提升 stop generation、取消当前 turn 并丢弃此前排队的 prompt；daemon shutdown 先关闭 ingress 并等待 lane drain。
 → `src/core/src/channels/prompt/ingress.rs`
 
-**5. Command parse。** 文本按 slash-command grammar 检查（`/new`、`/close`、`/switch`、`/pickup`、`/status`、resource commands、`/va` prefix forms）。命令在 workspace-thread layer 上执行，并以 system text 回复；对命令来说流程到这里结束。
+**5. Command parse。** 文本按 slash-command grammar 检查（`/new`、`/close`、`/switch`、`/pickup`、`/status`、resource commands、`/va` prefix forms）。命令在 workspace-thread layer 上执行，并以 system text 回复。Dormant 群聊路径保留 mention 防御检查；当前支持面是 DM/Web。
 → `src/core/src/channels/prompt/handler.rs` (`parse_thread_command`, `handle_command`)
 
 **6. Route → thread runtime。** `resolve_route_runtime` 查 route 的 attachment：已附着的 open thread → 对应 runtime；没有 attachment → 创建 default workspace、持久化一个新 thread event、把 route 附着上去。升级旧插件后的第一条 extended-route 消息会在 migration lock 下接管并分离 legacy `(kind, kind, chat)` attachment。不同 instance、actor 与 topic 可映射到不同 thread；host runtime registry 与 SDK renderer 已按扩展 route/target 隔离，但 settings/UI 仍只暴露每种 channel kind 一个配置实例。
@@ -73,6 +73,6 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► bo
 ---
 
 *Source anchors: `src/core/src/channels/` (types, plugin_runner, transport_stdio, plugin_host, bridge_handler, prompt/), `src/server/src/lib.rs` (input dispatcher/shutdown), `src/core/src/workspace/manager.rs` + `threads/runtime.rs`。*
-*Last verified: `codex/im-acp-route-refactor` at `ed12aa02`; Channel SDK `ae322ed`; Slack `f86cd5b`; Discord `97755f9`; Feishu `f3186ae`; Telegram `b61475d`（2026-07-11）。*
+*Last verified: `codex/im-acp-route-refactor` at `ea7741bd`; Channel SDK `ae322ed`; Slack `f86cd5b`; Discord `97755f9`; Feishu `f3186ae`; Telegram `b61475d`（2026-07-11）。*
 
 <sub>[◀ Internals](../README.md) · [文档索引](../../README.md) · [Flow: Web Chat ▶](web-chat.md)</sub>

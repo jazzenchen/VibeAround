@@ -2,6 +2,8 @@
 
 每个官方 IM 集成 —— Slack、Discord、Telegram、飞书、QQ 机器人、企业微信、钉钉、WhatsApp、微信/OpenClaw bridge —— 都是一个**渠道插件**：一个独立的 Node.js 进程，一侧说平台的 API，另一侧用基于 ACP 的小协议和 VibeAround 守护进程通信。本页解释这套系统如何工作。要配置现有渠道，见[连接渠道](../guides/connect-channels.md)；要写新插件，见[开发渠道插件](../guides/build-a-channel-plugin.md)。
 
+当前支持的对话契约是“私聊 → workspace thread host”。群聊解析/路由能力仍静默保留在内部，但有意延后产品与 release 验收。
+
 ## 为什么用进程外插件
 
 - **隔离：** 平台 SDK 崩溃或内存泄漏只杀死一个插件进程，不伤守护进程。监督器会重新拉起它。

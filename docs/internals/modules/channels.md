@@ -31,26 +31,26 @@ Host channel plugins (out-of-process stdio and in-process websocket), normalize 
 ## Invariants — do not break
 
 1. **Per-route ordering** belongs to `ConversationIngress`: the complete `RouteKey` selects one bounded lane. Web/TUI/stdio control paths must not bypass it.
-2. **`handle_input` never blocks** — it is a queue send; platform-facing code must never wait on agent work.
+2. **`handle_input` never waits on agent work** — it crosses an in-process async mailbox before route dispatch. This mailbox is not a durable product message queue and has no replay/attempt semantics.
 3. **Every host-turn permission terminates**: the request is sent only to the active origin. Its RAII registration is removed by the tap, prompt cancellation/drop, `cancel_channel_permissions` on bridge death, or `shutdown_all`. Add a new exit path for a plugin or prompt and it must preserve this invariant.
 4. **IM output is live-only**: the stdio transport has a bounded in-memory buffer, but no durable queue. Disconnected delivery is dropped and never replayed after restart.
 5. **Runtime ownership is instance-scoped**: heartbeat, output, permission cleanup, stop, and restart use `channel_instance_id`, while discovery and platform traits continue to use `channel_kind`.
-6. **Addressing is explicit in groups:** direct messages need no mention; group text must mention the current bot. Callbacks count as explicit interaction. Platform plugins extract that semantic, and core enforces the normalized policy again.
+6. **Current product scope is DM/Web:** direct messages need no mention. Group mention/callback parsing remains dormant in adapters and core, but is deferred from release acceptance.
 7. `ChannelManager::shutdown_all` may stop only channel-owned supervised IDs; it must never drain the global supervisor.
 8. **`replyTo` is ephemeral**: it may select a platform reply target and SDK renderer lane, but it must never enter `RouteKey`, persisted attachments, or workspace-thread selection.
 
 ## Known debt
 
-- The upstream `ChannelManager` input queue remains unbounded even though route lanes and stdio plugin output are bounded.
+- The upstream `ChannelManager` async mailbox remains unbounded even though route lanes and stdio plugin output are bounded. This is a capacity observation, not a proposal for a durable message queue; defer until measurements justify a cap.
 - Web-chat session-intent side effects still run before route-lane serialization and can interleave across WebSocket connections.
 - The route/target contract and SDK renderer now carry instance, actor, topic and per-message `replyTo`, but settings/UI still expose one configured instance per channel kind.
 - `RouteKey::as_key()` remains a deliberately lossy legacy/display key and must not be reused as extended route identity.
 - Runtime control lists and stops hosts by workspace thread id. Legacy `kind:chat` control keys are accepted only when they uniquely identify one live extended route.
-- Host-turn permissions are origin-scoped and cancellation-safe; subagent permission handling still fans out and lacks the same RAII pending-registration cleanup.
+- Host and subagent permissions are origin-scoped to the triggering host target and cancellation-safe.
 
 ---
 
 *Source anchors: `src/core/src/channels/` (all files above), `src/server/src/lib.rs` (input dispatcher and ingress-first shutdown).*
-*Last verified: `codex/im-acp-route-refactor` at `ed12aa02` (2026-07-11).*
+*Last verified: `codex/im-acp-route-refactor` at `ea7741bd` (2026-07-11).*
 
 <sub>[◀ Flow: PTY terminal](../flows/web-terminal.md) · [Documentation index](../../README.md) · [Module: workspace ▶](workspace.md)</sub>

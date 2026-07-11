@@ -31,26 +31,26 @@
 ## 不变量：不要破坏
 
 1. **Per-route ordering** 属于 `ConversationIngress`；Web/TUI/stdio 的业务与控制路径都不能绕过它。
-2. **`handle_input` 绝不阻塞**，它只是 queue send；面向平台的代码绝不能等待 agent 工作。
+2. **`handle_input` 不等待 agent 工作**：它先经过进程内 async mailbox，再进入 route dispatch。这个 mailbox 不是 durable product message queue，没有 replay/attempt 语义。
 3. **每个 host-turn permission 都会终止**：请求只发送给 active origin；RAII registration 会被点按、prompt cancel/drop、bridge death 的 `cancel_channel_permissions` 或 `shutdown_all` 移除。
 4. **IM output 只做实时投递**：stdio transport 有有界内存缓冲，但没有 durable queue；连接断开后的 output 不会在重启后 replay。
 5. **Runtime ownership 按 instance 隔离**：heartbeat、output、permission cleanup、stop、restart 使用 `channel_instance_id`；discovery 和 platform traits 继续使用 `channel_kind`。
-6. **群聊地址必须明确**：DM 不要求 @；group text 必须 @ 当前 bot；callback 属于显式交互。
+6. **当前产品范围是 DM/Web**：DM 不要求 @。群聊 mention/callback 解析保留在 adapter/core 内，但延后 release 验收。
 7. `ChannelManager::shutdown_all` 只能停止 channel 自己持有的 supervised IDs，不能 drain 全局 supervisor。
 8. **`replyTo` 只属于临时投递**：它可以选择平台回复目标和 SDK renderer lane，但不能进入 `RouteKey`、持久 attachment 或 workspace-thread 选择。
 
 ## 已知技术债
 
-- 上游 `ChannelManager` input queue 仍是 unbounded；route lane 与 stdio plugin output 已有界。
+- 上游 `ChannelManager` async mailbox 仍是 unbounded；route lane 与 stdio plugin output 已有界。这是容量观察，不是 durable MQ 方案；没有数据证明前先不改。
 - Web-chat session-intent side effects 仍早于 route lane serialization。
 - Route/target contract 与 SDK renderer 已携带 instance/actor/topic 和单消息 `replyTo`，但 settings/UI 仍只暴露每种 channel kind 一个配置实例。
 - `RouteKey::as_key()` 仍是有意保持兼容的有损 display/API key，不能作为 extended route identity。
 - Runtime control 以 workspace thread id 列出和停止 host；legacy `kind:chat` 只有在唯一命中一个 live extended route 时才兼容接受。
-- Host-turn permission 已限制到 origin 且 cancellation-safe；subagent permission 仍 fan-out，且缺少同等 RAII pending-registration cleanup。
+- Host 与 subagent permission 都跟随触发它的 host target，并具备 cancellation-safe cleanup。
 
 ---
 
 *Source anchors: `src/core/src/channels/`，`src/server/src/lib.rs`（input dispatcher 与 ingress-first shutdown）。*
-*Last verified: `codex/im-acp-route-refactor` at `ed12aa02`（2026-07-11）。*
+*Last verified: `codex/im-acp-route-refactor` at `ea7741bd`（2026-07-11）。*
 
 <sub>[◀ Flow: PTY 终端](../flows/web-terminal.md) · [文档索引](../../README.md) · [Module: workspace ▶](workspace.md)</sub>

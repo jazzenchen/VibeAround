@@ -2,6 +2,8 @@
 
 Every official IM integration — Slack, Discord, Telegram, Feishu, QQ Bot, WeCom, DingTalk, WhatsApp, and the Weixin/OpenClaw bridge — is a **channel plugin**: a separate Node.js process that speaks the platform's API on one side and a small ACP-based protocol to the VibeAround daemon on the other. This page explains how that system works. To configure an existing channel, see [Connect channels](../guides/connect-channels.md); to write a new plugin, see [Build a channel plugin](../guides/build-a-channel-plugin.md).
 
+The current supported conversation contract is direct message → workspace thread host. Group parsing/routing remains available internally but is intentionally deferred from product and release acceptance.
+
 ## Why out-of-process plugins
 
 - **Isolation:** a platform SDK crash or memory leak kills one plugin process, not the daemon. The supervisor respawns it.

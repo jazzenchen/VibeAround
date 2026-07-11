@@ -44,11 +44,11 @@ The no-timeout design needs cleanup guarantees instead:
 
 The net invariant for the host turn is: **every registered oneshot is consumed or dropped exactly once** — by the tap, prompt cancellation/drop, channel death, or daemon shutdown. An agent turn can wait indefinitely on a live human surface, but never on a dead process, and a different route attached to the same thread cannot approve the request.
 
-> Remaining scope: subagent permission handling still uses its separate fan-out path. It is not governed by the host turn's `ActiveTurnTarget`, and its pending core registration does not yet have the same cancellation-safe RAII guard. Both origin selection and cleanup must be addressed when subagent session ownership is refactored.
+Subagent turns inherit the target that triggered them. Their permission request returns to that same host DM/Web target, and the same scope-owned cleanup removes a pending approval when the subagent turn completes, fails, or is cancelled.
 
 ---
 
 *Source anchors: `src/core/src/channels/bridge_handler.rs` (request_permission), `src/core/src/channels/plugin_host.rs` (pending_permissions, respond_permission, cancel_channel_permissions, shutdown_all), `src/core/src/channels/transport_stdio/` (forwarder), `src/server/src/web_server/ws_chat.rs` (web response path).*
-*Last verified: `codex/im-acp-route-refactor` at `ed12aa02` (2026-07-11).*
+*Last verified: `codex/im-acp-route-refactor` at `ea7741bd` (2026-07-11).*
 
 <sub>[◀ Flow: web chat](web-chat.md) · [Documentation index](../../README.md) · [Flow: bridge request ▶](bridge-request.md)</sub>
