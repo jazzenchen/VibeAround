@@ -10,18 +10,23 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use super::plugin_host::PluginHost;
-use super::transport_stdio::{run_acp_plugin_bridge, QueuedChannelOutput, StdioPluginRuntime};
+use super::transport_stdio::{run_acp_plugin_bridge, StdioPluginRuntime};
 use super::{ChannelInput, ConversationIngress};
 use crate::process::bridge::{
     BridgeFactory, BridgeFuture, CancelSignal, ProcessBridge, StdioPipes,
 };
 
+/// Small transport buffer only; it is not replayed across bridge/process loss.
+const CHANNEL_OUTPUT_BUFFER: usize = 256;
+
 /// The protocol-side owner for one stdio channel-plugin spawn.
 pub struct ChannelPluginRunner {
     pub channel_kind: String,
+    pub instance_id: String,
+    pub actor_id: String,
     pub raw_config: serde_json::Value,
     pub input_tx: mpsc::UnboundedSender<ChannelInput>,
-    pub output_rx: mpsc::UnboundedReceiver<QueuedChannelOutput>,
+    pub output_rx: mpsc::Receiver<super::ChannelOutput>,
     pub ingress: Arc<ConversationIngress>,
     pub plugin_host: Arc<PluginHost>,
     pub runtime: Arc<StdioPluginRuntime>,
@@ -30,27 +35,18 @@ pub struct ChannelPluginRunner {
 impl ProcessBridge for ChannelPluginRunner {
     fn run(self: Box<Self>, pipes: StdioPipes, cancel: CancelSignal) -> BridgeFuture {
         let this = *self;
-        Box::pin(async move {
-            run_acp_plugin_bridge(
-                this.channel_kind,
-                this.raw_config,
-                pipes.stdin,
-                pipes.stdout,
-                this.input_tx,
-                this.output_rx,
-                this.ingress,
-                this.plugin_host,
-                this.runtime,
-                cancel,
-            )
-            .await
-        })
+        Box::pin(
+            async move { run_acp_plugin_bridge(this, pipes.stdin, pipes.stdout, cancel).await },
+        )
     }
 }
 
 /// Builds a fresh [`ChannelPluginRunner`] for every supervised spawn.
 pub struct ChannelPluginRunnerFactory {
     channel_kind: String,
+    instance_id: String,
+    actor_id: String,
+    raw_config: serde_json::Value,
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
@@ -59,12 +55,18 @@ pub struct ChannelPluginRunnerFactory {
 impl ChannelPluginRunnerFactory {
     pub fn new(
         channel_kind: impl Into<String>,
+        instance_id: impl Into<String>,
+        actor_id: impl Into<String>,
+        raw_config: serde_json::Value,
         input_tx: mpsc::UnboundedSender<ChannelInput>,
         ingress: Arc<ConversationIngress>,
         plugin_host: Arc<PluginHost>,
     ) -> Self {
         Self {
             channel_kind: channel_kind.into(),
+            instance_id: instance_id.into(),
+            actor_id: actor_id.into(),
+            raw_config,
             input_tx,
             ingress,
             plugin_host,
@@ -76,20 +78,16 @@ impl ChannelPluginRunnerFactory {
     }
 
     fn create(&self) -> ChannelPluginRunner {
-        let (output_tx, output_rx) = mpsc::unbounded_channel();
-        let runtime = Arc::new(StdioPluginRuntime::new(
-            self.channel_kind.clone(),
-            output_tx,
-        ));
+        let (output_tx, output_rx) = mpsc::channel(CHANNEL_OUTPUT_BUFFER);
+        let runtime = Arc::new(StdioPluginRuntime::new(self.instance_id.clone(), output_tx));
         self.plugin_host
-            .replace_stdio_runtime(&self.channel_kind, Arc::clone(&runtime));
-        let raw_config = crate::config::ensure_loaded()
-            .channel_raw_config(&self.channel_kind)
-            .unwrap_or_else(|| serde_json::json!({}));
+            .replace_stdio_runtime(&self.instance_id, Arc::clone(&runtime));
 
         ChannelPluginRunner {
             channel_kind: self.channel_kind.clone(),
-            raw_config,
+            instance_id: self.instance_id.clone(),
+            actor_id: self.actor_id.clone(),
+            raw_config: self.raw_config.clone(),
             input_tx: self.input_tx.clone(),
             output_rx,
             ingress: Arc::clone(&self.ingress),

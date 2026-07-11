@@ -22,6 +22,7 @@ use va_client::workspaces::WorkspaceItem;
 
 fn channel(kind: &str) -> ChannelRuntime {
     ChannelRuntime {
+        instance_id: kind.into(),
         kind: kind.into(),
         version: Some("0.1.0".into()),
         plugin_dir: None,

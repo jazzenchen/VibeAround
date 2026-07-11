@@ -20,7 +20,6 @@ pub(crate) mod agent_protocol;
 pub mod bridge_handler;
 pub mod manifest;
 pub mod monitor;
-pub mod outbox;
 pub mod plugin_bridge;
 pub mod plugin_host;
 pub mod plugin_runner;
@@ -130,7 +129,7 @@ impl ChannelManager {
     ///
     /// Returns `true` if the manifest was built and registered, `false` if
     /// the channel lacks config (plugin disabled).
-    pub fn register_plugin(&self, channel_name: &str, plugin: &DiscoveredPlugin) -> bool {
+    pub async fn register_plugin(&self, channel_name: &str, plugin: &DiscoveredPlugin) -> bool {
         let manifest =
             match ChannelPluginManifest::from_discovered(channel_name.to_string(), plugin) {
                 Some(manifest) => manifest,
@@ -143,63 +142,63 @@ impl ChannelManager {
                     return false;
                 }
             };
-        self.monitor().register(manifest);
-        true
+        self.monitor().register(manifest).await
     }
 
     pub async fn sync_configured_plugins(&self) -> ChannelSyncReport {
         let cfg = crate::config::reload();
         let discovered_plugins = crate::plugins::channel::discover();
         let desired = cfg.channel_names();
-        let desired_set = desired
+        let desired_instances = desired
             .iter()
+            .cloned()
+            .map(|kind| (kind.clone(), kind))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let desired_set = desired_instances
+            .keys()
             .cloned()
             .collect::<std::collections::HashSet<_>>();
         let monitor = self.monitor();
-        let registered = monitor.registered_kinds();
+        let registered = monitor.registered_instances();
         let registered_set = registered
             .iter()
             .cloned()
             .collect::<std::collections::HashSet<_>>();
         let mut report = ChannelSyncReport::default();
 
-        for name in registered {
-            if desired_set.contains(&name) {
+        for instance_id in registered {
+            if desired_set.contains(&instance_id) {
                 continue;
             }
-            if monitor.force_stop(&name).await.is_ok() {
-                report.stopped.push(name);
+            if monitor.unregister(&instance_id).await.is_ok() {
+                report.stopped.push(instance_id);
             }
         }
 
-        for name in desired {
-            let Some(plugin) = discovered_plugins.get(&name) else {
-                if registered_set.contains(&name) && monitor.force_stop(&name).await.is_ok() {
-                    report.stopped.push(name.clone());
+        for (instance_id, kind) in desired_instances {
+            let Some(plugin) = discovered_plugins.get(&kind) else {
+                if registered_set.contains(&instance_id)
+                    && monitor.unregister(&instance_id).await.is_ok()
+                {
+                    report.stopped.push(instance_id.clone());
                 }
-                report.missing.push(name);
+                report.missing.push(instance_id);
                 continue;
             };
-            if !registered_set.contains(&name) {
-                if self.register_plugin(&name, plugin) {
-                    report.registered.push(name);
+            if !registered_set.contains(&instance_id) {
+                if self.register_plugin(&kind, plugin).await {
+                    report.registered.push(instance_id);
                 }
                 continue;
             }
 
-            match monitor.status(&name) {
-                Some(monitor::ChannelRunStatus::Stopped)
-                | Some(monitor::ChannelRunStatus::Crashed)
-                | Some(monitor::ChannelRunStatus::NotStarted) => {
-                    if monitor.force_start(&name).is_ok() {
-                        report.started.push(name);
-                    }
-                }
-                _ => {
-                    if monitor.force_restart(&name).await.is_ok() {
-                        report.restarted.push(name);
-                    }
-                }
+            // Re-register so the new generation captures changed credentials,
+            // plugin paths, versions, and future per-instance config. A plain
+            // supervisor restart would reuse the old factory snapshot.
+            if monitor.unregister(&instance_id).await.is_ok()
+                && self.register_plugin(&kind, plugin).await
+            {
+                report.restarted.push(instance_id);
             }
         }
 
@@ -249,18 +248,14 @@ impl ChannelManager {
         self.plugin_host.send_output(output).await;
     }
 
-    pub fn outbox_pending_count(&self) -> usize {
-        self.plugin_host.outbox_pending_count()
-    }
-
     pub fn respond_permission(
         &self,
-        channel_kind: &str,
+        channel_instance_id: &str,
         request_id: &str,
         response: acp::RequestPermissionResponse,
     ) -> Result<(), String> {
         self.plugin_host
-            .respond_permission(channel_kind, request_id, response)
+            .respond_permission(channel_instance_id, request_id, response)
     }
 
     pub async fn shutdown_all(&self) {

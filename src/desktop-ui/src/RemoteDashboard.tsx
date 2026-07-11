@@ -115,13 +115,13 @@ export function RemoteDashboard({
   const remoteSettings = useMemo(() => parseRemoteSettings(settings), [settings]);
   const configuredChannelIds = useMemo(() => {
     const ids = new Set<string>();
-    channels.channels.forEach((channel) => ids.add(channel.kind));
+    channels.channels.forEach((channel) => ids.add(channel.instance_id));
     configuredChannelIdsFromSettings(settings, remoteSettings).forEach((id) => ids.add(id));
     return orderChannelIds([...ids].filter((id) => id !== "web"), readImChannelOrder(settings));
   }, [channels.channels, remoteSettings.channels, settings]);
 
   const channelById = useMemo(
-    () => new Map(channels.channels.map((channel) => [channel.kind, channel])),
+    () => new Map(channels.channels.map((channel) => [channel.instance_id, channel])),
     [channels.channels],
   );
   const tunnelById = useMemo(
@@ -487,7 +487,9 @@ export function RemoteDashboard({
                     updateSelectedChannel({ profileId })
                   }
                   onSave={() => void saveSelectedChannel()}
-                  onConfigure={() => onConfigureChannel(selectedChannelId)}
+                  onConfigure={() =>
+                    onConfigureChannel(selectedChannel?.kind ?? selectedChannelId)
+                  }
                   onRefreshAgents={() => void agents.refresh()}
                   onStart={() => channels.start(selectedChannelId)}
                   onStop={() => channels.stop(selectedChannelId)}

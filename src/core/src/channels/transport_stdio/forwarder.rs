@@ -162,6 +162,7 @@ pub(super) async fn forward_output_to_plugin(
             request_id,
             payload,
         } => {
+            let channel_instance_id = route.channel_instance_id().to_string();
             // Forward as a VibeAround ext method so the transport envelope can
             // carry the IM chat target while the ACP request keeps its real
             // agent sessionId.
@@ -175,7 +176,7 @@ pub(super) async fn forward_output_to_plugin(
                     );
                         complete_permission_request(
                             plugin_host,
-                            channel_kind,
+                            &channel_instance_id,
                             &route.to_string(),
                             &request_id,
                             schema::RequestPermissionResponse::new(
@@ -193,7 +194,7 @@ pub(super) async fn forward_output_to_plugin(
             let Some(raw_params) = raw_json_params(channel_kind, &params) else {
                 complete_permission_request(
                     plugin_host,
-                    channel_kind,
+                    &channel_instance_id,
                     &route.to_string(),
                     &request_id,
                     schema::RequestPermissionResponse::new(
@@ -214,7 +215,7 @@ pub(super) async fn forward_output_to_plugin(
                         Ok(resp) => {
                             complete_permission_request(
                                 plugin_host,
-                                channel_kind,
+                                &channel_instance_id,
                                 &route.to_string(),
                                 &request_id,
                                 resp,
@@ -230,7 +231,7 @@ pub(super) async fn forward_output_to_plugin(
                             );
                             complete_permission_request(
                                 plugin_host,
-                                channel_kind,
+                                &channel_instance_id,
                                 &route.to_string(),
                                 &request_id,
                                 schema::RequestPermissionResponse::new(
@@ -251,7 +252,7 @@ pub(super) async fn forward_output_to_plugin(
                     );
                     complete_permission_request(
                         plugin_host,
-                        channel_kind,
+                        &channel_instance_id,
                         &route.to_string(),
                         &request_id,
                         schema::RequestPermissionResponse::new(
@@ -289,15 +290,15 @@ fn route_target(route: &crate::routing::RouteKey) -> serde_json::Value {
 
 fn complete_permission_request(
     plugin_host: &PluginHost,
-    channel_kind: &str,
+    channel_instance_id: &str,
     route: &str,
     request_id: &str,
     response: schema::RequestPermissionResponse,
 ) {
-    if let Err(error) = plugin_host.respond_permission(channel_kind, request_id, response) {
+    if let Err(error) = plugin_host.respond_permission(channel_instance_id, request_id, response) {
         tracing::info!(
             "[{}] PermissionRequest response dropped route={} request_id={}: {}",
-            channel_kind,
+            channel_instance_id,
             route,
             request_id,
             error

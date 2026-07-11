@@ -11,17 +11,15 @@
 
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use acp::schema::v1 as schema;
 use agent_client_protocol as acp;
 
 use super::super::plugin_host::PluginHost;
-use super::super::{ChannelInput, ConversationIngress};
+use super::super::plugin_runner::ChannelPluginRunner;
 use super::forwarder::forward_output_to_plugin;
 use super::handler::PluginAgentHandler;
-use super::runtime::{QueuedChannelOutput, StdioPluginRuntime};
 use crate::proc_log;
 use crate::process::acp_transport::notifying_stdio_transport;
 use crate::process::bridge::{BridgeExit, CancelSignal};
@@ -29,19 +27,23 @@ use crate::process::registry::ProcessKind;
 
 /// Run the ACP agent-side connection for a plugin to completion. Returns
 /// when the child closes stdout or the cancel signal fires.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_acp_plugin_bridge(
-    channel_kind: String,
-    config: serde_json::Value,
+    runner: ChannelPluginRunner,
     stdin: tokio::process::ChildStdin,
     stdout: tokio::process::ChildStdout,
-    input_tx: mpsc::UnboundedSender<ChannelInput>,
-    mut output_rx: mpsc::UnboundedReceiver<QueuedChannelOutput>,
-    ingress: Arc<ConversationIngress>,
-    plugin_host: Arc<PluginHost>,
-    runtime: Arc<StdioPluginRuntime>,
     mut cancel: CancelSignal,
 ) -> BridgeExit {
+    let ChannelPluginRunner {
+        channel_kind,
+        instance_id,
+        actor_id,
+        raw_config: config,
+        input_tx,
+        mut output_rx,
+        ingress,
+        plugin_host,
+        runtime,
+    } = runner;
     // Two clones: one moved into the handler, one moved into the
     // forwarder task, one kept here for `cancel_channel_permissions` at
     // the end of the bridge.
@@ -49,6 +51,8 @@ pub(crate) async fn run_acp_plugin_bridge(
     let drain_plugin_host = Arc::clone(&plugin_host);
     let handler = Arc::new(PluginAgentHandler::new(
         channel_kind.clone(),
+        instance_id.clone(),
+        actor_id,
         config.clone(),
         input_tx.clone(),
         ingress,
@@ -142,29 +146,24 @@ pub(crate) async fn run_acp_plugin_bridge(
                     label = fwd_channel,
                     event = "forwarder_started"
                 );
-                while let Some(queued) = output_rx.recv().await {
-                    if requires_independent_forwarding(&queued.output) {
+                while let Some(output) = output_rx.recv().await {
+                    if requires_independent_forwarding(&output) {
                         let permission_conn = forward_conn.clone();
                         let permission_channel = fwd_channel.clone();
                         let permission_host = Arc::clone(&forwarder_plugin_host);
                         forward_conn.spawn(async move {
-                            forward_queued_output(
+                            forward_output(
                                 &permission_conn,
                                 &permission_channel,
                                 &permission_host,
-                                queued,
+                                output,
                             )
                             .await;
                             Ok(())
                         })?;
                     } else {
-                        forward_queued_output(
-                            &forward_conn,
-                            &fwd_channel,
-                            &forwarder_plugin_host,
-                            queued,
-                        )
-                        .await;
+                        forward_output(&forward_conn, &fwd_channel, &forwarder_plugin_host, output)
+                            .await;
                     }
                 }
                 proc_log!(
@@ -219,8 +218,8 @@ pub(crate) async fn run_acp_plugin_bridge(
     // reply from the dying plugin stalls forever. Previously invoked by
     // the old `ChannelMonitor::mark_crashed`; now lives here because the
     // supervisor is protocol-agnostic.
-    drain_plugin_host.remove_stdio_runtime_if_current(&channel_kind, &runtime);
-    drain_plugin_host.cancel_channel_permissions(&channel_kind);
+    drain_plugin_host.remove_stdio_runtime_if_current(&instance_id, &runtime);
+    drain_plugin_host.cancel_channel_permissions(&instance_id);
 
     exit
 }
@@ -232,55 +231,22 @@ fn requires_independent_forwarding(output: &super::super::ChannelOutput) -> bool
     )
 }
 
-async fn forward_queued_output(
+async fn forward_output(
     conn: &acp::ConnectionTo<acp::Client>,
     channel_kind: &str,
     plugin_host: &Arc<PluginHost>,
-    queued: QueuedChannelOutput,
+    output: super::super::ChannelOutput,
 ) {
-    let route = queued.output.route_key().clone();
-    let output_id = queued.output_id;
-    let result = forward_output_to_plugin(conn, channel_kind, plugin_host, queued.output).await;
-    let Some(output_id) = output_id else {
-        return;
-    };
-
-    match result {
-        Ok(()) => {
-            if let Err(error) = plugin_host.mark_outbox_sent(&output_id) {
-                proc_log!(
-                    warn,
-                    kind = ProcessKind::ChannelPlugin,
-                    label = channel_kind,
-                    event = "outbox_forward_mark_sent_failed",
-                    route = %route,
-                    output_id = %output_id,
-                    error = %error
-                );
-            }
-        }
-        Err(error) => {
-            if let Err(mark_error) = plugin_host.mark_outbox_nacked(&output_id) {
-                proc_log!(
-                    warn,
-                    kind = ProcessKind::ChannelPlugin,
-                    label = channel_kind,
-                    event = "outbox_forward_mark_nacked_failed",
-                    route = %route,
-                    output_id = %output_id,
-                    error = %mark_error
-                );
-            }
-            proc_log!(
-                warn,
-                kind = ProcessKind::ChannelPlugin,
-                label = channel_kind,
-                event = "outbox_forward_failed",
-                route = %route,
-                output_id = %output_id,
-                error = %error
-            );
-        }
+    let route = output.route_key().clone();
+    if let Err(error) = forward_output_to_plugin(conn, channel_kind, plugin_host, output).await {
+        proc_log!(
+            warn,
+            kind = ProcessKind::ChannelPlugin,
+            label = channel_kind,
+            event = "forward_output_failed",
+            route = %route,
+            error = %error
+        );
     }
 }
 

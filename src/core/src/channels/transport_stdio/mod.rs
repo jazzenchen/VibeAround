@@ -37,4 +37,4 @@ mod handler;
 mod runtime;
 
 pub(crate) use bridge::run_acp_plugin_bridge;
-pub use runtime::{QueuedChannelOutput, StdioPluginRuntime};
+pub use runtime::StdioPluginRuntime;

@@ -343,7 +343,7 @@ impl ServerDaemon {
                 tracing::warn!(channel = %name, "no plugin found, skipping");
                 continue;
             };
-            channel_hub.register_plugin(&name, plugin);
+            channel_hub.register_plugin(&name, plugin).await;
         }
 
         // 4. Search provider runtime — supervised like ACP providers. It

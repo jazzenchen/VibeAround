@@ -373,7 +373,9 @@ impl AgentClientHandler for ChannelBridgeHandler {
         }
         self.plugin_host.register_pending_permission(
             request_id.clone(),
-            routes.iter().map(|route| route.channel_kind.clone()),
+            routes
+                .iter()
+                .map(|route| route.channel_instance_id().to_string()),
             tx,
         );
 

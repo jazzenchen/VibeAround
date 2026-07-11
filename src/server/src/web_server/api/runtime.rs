@@ -31,6 +31,7 @@ pub async fn list_channels_handler(
         entries
             .into_iter()
             .map(|s| crate::api_types::ChannelRuntime {
+                instance_id: s.instance_id,
                 kind: s.kind,
                 version: s.version,
                 plugin_dir: s.plugin_dir.map(|path| path.to_string_lossy().into_owned()),
@@ -137,38 +138,43 @@ pub async fn list_agents_runtime_handler(
     Json(out)
 }
 
-/// POST /api/channels/:kind/stop -- user-initiated stop of a channel
+/// POST /api/channels/:instance_id/stop -- user-initiated stop of a channel
 /// plugin (no auto-respawn).
 pub async fn stop_channel_handler(
     State(state): State<AppState>,
-    Path(kind): Path<String>,
+    Path(instance_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.channel_hub.monitor().force_stop(&kind).await {
-        Ok(()) => (StatusCode::OK, format!("Stopped {}", kind)),
+    match state.channel_hub.monitor().force_stop(&instance_id).await {
+        Ok(()) => (StatusCode::OK, format!("Stopped {}", instance_id)),
         Err(e) => (StatusCode::NOT_FOUND, e),
     }
 }
 
-/// POST /api/channels/:kind/restart -- user-initiated restart (kill +
+/// POST /api/channels/:instance_id/restart -- user-initiated restart (kill +
 /// immediate respawn).
 pub async fn restart_channel_handler(
     State(state): State<AppState>,
-    Path(kind): Path<String>,
+    Path(instance_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.channel_hub.monitor().force_restart(&kind).await {
-        Ok(()) => (StatusCode::OK, format!("Restarting {}", kind)),
+    match state
+        .channel_hub
+        .monitor()
+        .force_restart(&instance_id)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, format!("Restarting {}", instance_id)),
         Err(e) => (StatusCode::NOT_FOUND, e),
     }
 }
 
-/// POST /api/channels/:kind/start -- transition a Stopped channel
+/// POST /api/channels/:instance_id/start -- transition a Stopped channel
 /// back to Crashed(restart_at=now) so the next monitor tick respawns it.
 pub async fn start_channel_handler(
     State(state): State<AppState>,
-    Path(kind): Path<String>,
+    Path(instance_id): Path<String>,
 ) -> impl IntoResponse {
-    match state.channel_hub.monitor().force_start(&kind) {
-        Ok(()) => (StatusCode::OK, format!("Starting {}", kind)),
+    match state.channel_hub.monitor().force_start(&instance_id).await {
+        Ok(()) => (StatusCode::OK, format!("Starting {}", instance_id)),
         Err(e) => (StatusCode::NOT_FOUND, e),
     }
 }

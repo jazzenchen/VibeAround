@@ -58,6 +58,7 @@ async fn build_channels(
         .await
         .into_iter()
         .map(|s| crate::api_types::ChannelRuntime {
+            instance_id: s.instance_id,
             kind: s.kind,
             version: s.version,
             plugin_dir: s.plugin_dir.map(|path| path.to_string_lossy().into_owned()),

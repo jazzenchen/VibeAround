@@ -18,7 +18,7 @@ pub(super) async fn channels(options: &Options) -> Result<(), CliError> {
             .filter(|value| !value.is_empty())
             .map(|value| format!(" ({value})"))
             .unwrap_or_default();
-        println!("{}\t{:?}{}", channel.kind, channel.status, reason);
+        println!("{}\t{:?}{}", channel.instance_id, channel.status, reason);
     }
     Ok(())
 }

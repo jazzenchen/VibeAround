@@ -46,6 +46,7 @@ mod tests {
     #[test]
     fn decodes_domain_snapshot_events() {
         let channels = decode_channels_event(json!([{
+            "instance_id": "feishu",
             "kind": "feishu",
             "version": "1.0.0",
             "plugin_dir": null,

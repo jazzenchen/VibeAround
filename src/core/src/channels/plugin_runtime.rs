@@ -28,28 +28,18 @@ pub enum PluginRuntime {
 }
 
 impl PluginRuntime {
-    pub fn send_output_now(&self, output: ChannelOutput) -> Result<(), String> {
-        self.send_output_with_outbox_id_now(None, output)
-    }
-
-    pub fn send_output_with_outbox_id_now(
-        &self,
-        output_id: Option<String>,
-        output: ChannelOutput,
-    ) -> Result<(), String> {
+    pub async fn send_output(&self, output: ChannelOutput) -> Result<(), String> {
         match self {
-            Self::Stdio(runtime) => runtime.send_queued_output_now(output_id, output),
+            Self::Stdio(runtime) => runtime.send_output(output).await,
             Self::WebSocket(runtime) => runtime.send_output_now(output),
         }
     }
 
-    pub async fn send_output(&self, output: ChannelOutput) -> Result<(), String> {
-        self.send_output_now(output)
-    }
-
     pub async fn shutdown(&self) {
         match self {
-            Self::Stdio(runtime) => runtime.shutdown().await,
+            // The process supervisor owns stdio lifecycle and has already
+            // cancelled/reaped these bridges before PluginHost shutdown.
+            Self::Stdio(_) => {}
             Self::WebSocket(runtime) => runtime.shutdown().await,
         }
     }
