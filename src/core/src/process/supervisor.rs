@@ -167,8 +167,15 @@ impl Supervisor {
     /// in `Stopped` — no respawn regardless of policy.
     pub async fn force_stop(&self, id: ProcessId) -> ProcessResult<()> {
         let proc = self.get_proc(id)?;
-        if !self.acquire_stop(&proc).await {
-            return Ok(());
+        self.stop_process(proc, "stopped by user").await;
+        Ok(())
+    }
+
+    async fn stop_process(&self, proc: Arc<SupervisedProcess>, reason: &str) {
+        while !self.acquire_stop(&proc).await {
+            // Stop has priority over a concurrent restart. Once the current
+            // lifecycle owner finishes, acquire the barrier and apply Stop
+            // instead of treating the wait itself as success.
         }
         {
             let _transition = proc.transition_lock.lock();
@@ -176,7 +183,7 @@ impl Supervisor {
             proc.intent
                 .store(TransitionIntent::None as u8, Ordering::Release);
             proc.next_spawn_at.store(0, Ordering::Relaxed);
-            proc.set_reason("stopped by user");
+            proc.set_reason(reason);
         }
 
         self.notify_change(&proc);
@@ -194,7 +201,6 @@ impl Supervisor {
         }
         self.deregister_terminal_process(&proc);
         self.finish_stop(&proc);
-        Ok(())
     }
 
     /// Stop, reap, and permanently remove one registered process.
@@ -362,42 +368,12 @@ impl Supervisor {
             .drain()
             .map(|(_, proc)| proc)
             .collect();
-        let mut owns_stop = Vec::with_capacity(procs.len());
-        for proc in &procs {
-            let owns = proc
-                .stopping
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok();
-            owns_stop.push(owns);
-            if !owns {
-                continue;
-            }
-            let _transition = proc.transition_lock.lock();
-            proc.set_status(ProcessStatus::Stopped);
-            proc.intent
-                .store(TransitionIntent::None as u8, Ordering::Release);
-            proc.next_spawn_at.store(0, Ordering::Relaxed);
-            proc.set_reason("supervisor shutdown");
-            self.notify_change(proc);
-        }
-        for (proc, owns) in procs.into_iter().zip(owns_stop) {
-            if !owns {
-                self.wait_for_stop(&proc).await;
-                continue;
-            }
-            let spawn_task = proc.spawn_task.lock().take();
-            if let Some(spawn_task) = spawn_task {
-                let _ = spawn_task.await;
-            }
-            if let Some(registry_id) = self.take_pending_registry_id(&proc) {
-                self.terminate_and_reap_registry_id(&proc, registry_id)
-                    .await;
-            }
-            let generation = proc.active_generation.lock().take();
-            if let Some(generation) = generation {
-                self.stop_generation(&proc, generation).await;
-            }
-            self.finish_stop(&proc);
+        for proc in procs {
+            // Re-acquire after any concurrent lifecycle owner completes and
+            // apply terminal state again. Waiting alone is not a stop: a
+            // restart may publish Crashed or schedule a replacement before
+            // releasing its barrier.
+            self.stop_process(proc, "supervisor shutdown").await;
         }
     }
 

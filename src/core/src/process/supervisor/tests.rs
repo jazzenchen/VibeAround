@@ -628,6 +628,96 @@ async fn force_restart_aborts_stubborn_bridge_before_publishing_replacement() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn force_stop_retries_after_a_concurrent_restart_owner() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let cancel_seen = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let cancel_for_factory = Arc::clone(&cancel_seen);
+    let release_for_factory = Arc::clone(&release);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "restart-then-stop",
+        cat_spec(),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::ZERO,
+            watchdog: None,
+        },
+        Box::new(move || {
+            Box::new(DelayedCancelBridge {
+                cancel_seen: Arc::clone(&cancel_for_factory),
+                release: Arc::clone(&release_for_factory),
+            })
+        }),
+    );
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+
+    let restart_sup = Arc::clone(&sup);
+    let restart = tokio::spawn(async move { restart_sup.force_restart(id).await });
+    cancel_seen.acquire().await.unwrap().forget();
+
+    let stop_sup = Arc::clone(&sup);
+    let stop = tokio::spawn(async move { stop_sup.force_stop(id).await });
+    tokio::task::yield_now().await;
+    assert!(
+        !stop.is_finished(),
+        "stop returned while restart owned cleanup"
+    );
+
+    release.add_permits(1);
+    restart.await.unwrap().unwrap();
+    stop.await.unwrap().unwrap();
+
+    wait_for_status(&sup, id, ProcessStatus::Stopped).await;
+    assert!(sup.get_proc(id).unwrap().active_generation.lock().is_none());
+    assert_eq!(registry.len(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_publishes_stopped_while_restart_owns_cleanup() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let cancel_seen = Arc::new(tokio::sync::Semaphore::new(0));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let cancel_for_factory = Arc::clone(&cancel_seen);
+    let release_for_factory = Arc::clone(&release);
+
+    let id = sup.register(
+        ProcessKind::ChannelPlugin,
+        "restart-then-shutdown",
+        cat_spec(),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::ZERO,
+            watchdog: None,
+        },
+        Box::new(move || {
+            Box::new(DelayedCancelBridge {
+                cancel_seen: Arc::clone(&cancel_for_factory),
+                release: Arc::clone(&release_for_factory),
+            })
+        }),
+    );
+    wait_for_status(&sup, id, ProcessStatus::Running).await;
+
+    let restart_sup = Arc::clone(&sup);
+    let restart = tokio::spawn(async move { restart_sup.force_restart(id).await });
+    cancel_seen.acquire().await.unwrap().forget();
+
+    let shutdown_sup = Arc::clone(&sup);
+    let shutdown = tokio::spawn(async move { shutdown_sup.shutdown_all().await });
+    tokio::task::yield_now().await;
+    release.add_permits(1);
+
+    restart.await.unwrap().unwrap();
+    shutdown.await.unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    assert!(sup.snapshot().is_empty());
+    assert_eq!(registry.len(), 0, "restart spawned after supervisor drain");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn watchdog_escalates_stubborn_bridge_and_restarts_generation() {
     let registry = Arc::new(ChildRegistry::new());
     let sup = Supervisor::new(Arc::clone(&registry));
