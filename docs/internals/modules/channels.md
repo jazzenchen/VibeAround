@@ -13,11 +13,10 @@ Host channel plugins (out-of-process stdio and in-process websocket), normalize 
 | `ChannelManager` | `mod.rs` | Daemon-lifetime facade: input queue, plugin registration, sync, shutdown |
 | `ConversationIngress` | `prompt/ingress.rs` | Shared business entry for stdio/Web/TUI; bounded full-route FIFO lanes, Stop generations and shutdown barrier |
 | `ChannelInput` / `ChannelOutput` / `ChannelEnvelope` | `types.rs` | The wire vocabulary every surface speaks |
-| `PluginHost` | `plugin_host.rs` | Routing table: channel kind → live runtime; pending-permissions table |
+| `PluginHost` | `plugin_host.rs` | Routing table: channel instance → live runtime; pending-permissions table |
 | `PluginRuntime` | `plugin_runtime.rs` | Enum over stdio / websocket runtimes |
 | `ChannelPluginRunner` / factory | `plugin_runner.rs` | Protocol owner for one supervised stdio plugin generation; rebuilt on every respawn |
 | `ChannelMonitor` | `monitor.rs` | Dashboard facade over the supervisor for plugin lifecycle |
-| `ChannelOutbox` | `outbox.rs` | Durable queue for replayable outputs (system texts, permission cards) |
 | `ChannelBridgeHandler` | `bridge_handler.rs` | Per-thread ACP client handler: notification fan-out + permission round-trip |
 | `ConversationIngress` | `prompt/` | The single dispatch entry: route lane → command parse → thread ops → prompt |
 
@@ -33,17 +32,16 @@ Host channel plugins (out-of-process stdio and in-process websocket), normalize 
 1. **Per-route ordering** belongs to `ConversationIngress`: the complete `RouteKey` selects one bounded lane. Web/TUI/stdio control paths must not bypass it.
 2. **`handle_input` never blocks** — it is a queue send; platform-facing code must never wait on agent work.
 3. **Every pending permission terminates**: registered oneshots are consumed by the tap, by `cancel_channel_permissions` on bridge death (exactly once per death), or by `shutdown_all`. Add a new exit path for a plugin and you must drain there too.
-4. **Replayable vs direct outputs**: only durable kinds go through the outbox (`should_replay_output`); streaming chunks are intentionally lossy across plugin restarts.
-5. Outbound sends for one channel hold that channel's send lock so respawn-replay and live sends cannot interleave.
+4. **IM output is live-only**: the stdio transport has a bounded in-memory buffer, but no durable queue. Disconnected delivery is dropped and never replayed after restart.
+5. **Runtime ownership is instance-scoped**: heartbeat, output, permission cleanup, stop, and restart use `channel_instance_id`, while discovery and platform traits continue to use `channel_kind`.
 6. **Addressing is explicit in groups:** direct messages need no mention; group text must mention the current bot. Callbacks count as explicit interaction. Platform plugins extract that semantic, and core enforces the normalized policy again.
 7. `ChannelManager::shutdown_all` may stop only channel-owned supervised IDs; it must never drain the global supervisor.
 
 ## Known debt
 
-- The upstream `ChannelManager` input queue and stdio plugin output queue remain unbounded even though route lanes are bounded.
+- The upstream `ChannelManager` input queue remains unbounded even though route lanes and stdio plugin output are bounded.
 - Web-chat session-intent side effects still run before route-lane serialization and can interleave across WebSocket connections.
-- The route/SDK contract has `bot_id`, `actor_id` and `topic_id`, but official plugins still need to emit the metadata before multi-bot/multi-actor group routing is end to end.
-- `run_acp_plugin_bridge` still takes ten arguments; `ChannelPluginRunner` is the natural context object for the next cleanup.
+- The route contract carries instance, actor and topic, but settings/UI still expose one configured instance per channel kind and SDK output rendering remains chat-keyed.
 
 ---
 

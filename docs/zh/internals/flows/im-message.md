@@ -46,8 +46,8 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► bo
 **9. Notifications → outputs。** Agent 发出的每个 ACP `session_notification` 都包成 thread reply，再作为 `ChannelOutput` fan out 到**所有附着在该 thread 的 route**。这就是为什么交接后的另一个界面能实时看到同一个 turn。
 → `src/core/src/channels/bridge_handler.rs` (`session_notification`)
 
-**10. Output → chat。** `PluginHost` 把每个 output 路由到所属 plugin 的 live runtime。Durable 类型（system texts、permission requests）会先进入 outbox；如果 plugin 挂了，respawn 后 replay。Plugin 负责渲染成平台原生消息。
-→ `src/core/src/channels/plugin_host.rs` (`send_output`), `outbox.rs`
+**10. Output → chat。** `PluginHost` 按 `channel_instance_id` 把 output 路由到当前 live plugin runtime。有界内存缓冲负责背压，但 IM 输出不落盘、不在重启后 replay。Runtime 不存在或已断开时，当前 output 被丢弃并记录；无法投递的 permission 会被取消，避免 Agent 永久等待。
+→ `src/core/src/channels/plugin_host.rs` (`send_output`), `plugin_runner.rs`
 
 **尾声。** Turn 结束后：`PromptDone`（typing indicator 关闭），错误以 `❌` system text 发送（auth errors 会自动关闭 thread），并为 host agent 安排 10 分钟 idle shutdown。Thread 和 session id 持久保留；下一条消息会透明 respawn。
 → `src/core/src/channels/prompt/mod.rs` (`handle_prompt_input`), `manager.rs` (idle shutdown)
@@ -60,13 +60,11 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► bo
 | Daemon 在第 4 到 8 步之间重启 | 正在执行的 turn 丢失；thread + session 持久保留并可 resume |
 | 第 7 步 agent spawn 失败 | `❌` system text；需要 auth 的错误会自动关闭 thread |
 | Agent 在第 8 步 turn 中崩溃 | Turn 报错；下一次 prompt 会 fresh spawn 并 resume session |
-| 第 10 步 plugin 已死 | Durable outputs 在 outbox 等待 respawn 后的 plugin † |
-
-> † 已知缺口：这只在该 channel 没有 runtime 注册时成立。崩溃窗口里，已死 runtime 仍可被路由到，所以 durable outputs 可能被标记为已发送（排进 dead bridge）或 nacked-and-dropped，而不是继续等待。remediation plan 中以 M14 跟踪。
+| 第 10 步 plugin 已死 | 当前 output 丢弃；permission waiter 取消；重启后不 replay |
 
 ---
 
-*Source anchors: `src/core/src/channels/` (types, plugin_runner, transport_stdio, plugin_host, outbox, bridge_handler, prompt/), `src/server/src/lib.rs` (input dispatcher/shutdown), `src/core/src/workspace/manager.rs` + `threads/runtime.rs`。*
+*Source anchors: `src/core/src/channels/` (types, plugin_runner, transport_stdio, plugin_host, bridge_handler, prompt/), `src/server/src/lib.rs` (input dispatcher/shutdown), `src/core/src/workspace/manager.rs` + `threads/runtime.rs`。*
 *Last verified: `codex/im-acp-route-refactor` at `0ba7fa2e`（2026-07-11）。*
 
 <sub>[◀ Internals](../README.md) · [文档索引](../../README.md) · [Flow: Web Chat ▶](web-chat.md)</sub>

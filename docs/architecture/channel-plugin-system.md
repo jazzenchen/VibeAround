@@ -26,18 +26,18 @@ register ──► spawn (node <entry>) ──► running ──► crash / free
 
 The daemon's process supervisor owns every plugin process:
 
-- **Crash respawn.** An exited plugin is respawned after a short delay, indefinitely.
-- **Heartbeat watchdog.** Plugins emit a `_va/heartbeat` notification every 15 seconds; if none arrives for 90 seconds the plugin is presumed frozen, killed, and respawned. This catches hung platform SDKs that never exit (values: [timers and limits](../reference/timers-and-limits.md#supervision)).
-- **Outbox replay.** Durable outputs (system messages, permission requests) are queued in an outbox; if a send fails because the plugin is down, they are re-delivered after the respawn, so a permission card is not lost to a plugin restart.
+- **Crash respawn.** An exited plugin is respawned with bounded exponential backoff.
+- **Heartbeat watchdog.** Plugins emit a `_va/heartbeat` notification every 30 seconds; if none arrives for 90 seconds the plugin is presumed frozen, killed, and respawned. This catches hung platform SDKs that never exit (values: [timers and limits](../reference/timers-and-limits.md#supervision)).
+- **Live-only output.** IM output uses a small bounded in-memory transport buffer. It is never persisted or replayed after a plugin or daemon restart; a disconnected delivery is dropped and logged.
 - **Pending-permission drain.** If a plugin dies while a permission request is waiting for a tap, the pending request is cancelled so the agent's turn fails fast instead of hanging forever.
 
-You can manage the lifecycle manually: `va channels` (list), `va channel start|stop|restart <kind>`, `va channel sync` (reconcile running plugins against `settings.json`), or the equivalent desktop UI controls.
+You can manage the lifecycle manually: `va channels` (list), `va channel start|stop|restart <instance_id>`, `va channel sync` (reconcile running plugins against `settings.json`), or the equivalent desktop UI controls. Legacy single-instance settings currently use the channel kind as the instance id.
 
 ## The wire protocol, briefly
 
 Plugin ↔ daemon communication is JSON-RPC over stdio using ACP framing. The important message shapes:
 
-**Inbound (plugin → daemon):** a channel envelope — route key (channel kind, bot id, chat id), message id, sender, text, attachments — or a callback (button tap with an action value), or control inputs (stop, close).
+**Inbound (plugin → daemon):** a channel envelope — route key (channel kind, stable channel instance id, actor id, chat id, optional topic id), message id, sender, text, attachments — or a callback (button tap with an action value), or control inputs (stop, close).
 
 **Outbound (daemon → plugin):** agent output chunks, system texts, turn status (for typing indicators), prompt-done markers, and **permission requests** carrying a request id plus a payload the plugin renders as platform-native interactive cards (Feishu cards use the V2 schema; Slack uses block actions, and so on). The plugin answers a permission request by sending the user's choice back with the same request id.
 
@@ -45,7 +45,7 @@ Attachments flow by reference: the plugin downloads platform files into the shar
 
 ## Identity and routing
 
-Each plugin process represents one bot identity on one platform. The route key `(channel_kind, bot_id, chat_id)` isolates conversations per chat — group chats and DMs get independent threads, and two different chats never share agent state. Message ordering is guaranteed per route, not globally, so one busy group cannot stall another.
+`channel_kind` selects the plugin implementation; `channel_instance_id` is the stable host-owned lifecycle/runtime key; `actor_id` identifies the addressed bot/actor on the platform. The complete route also includes `chat_id` and optional `topic_id`, so addressed actors and topics can attach to distinct workspace threads. Message ordering is FIFO per complete route, not global.
 
 ## Relationship to the plugin repositories
 
@@ -53,7 +53,7 @@ The main repository contains the plugin *host* (discovery, supervision, transpor
 
 ---
 
-*Source anchors: `src/core/src/plugins/` (discovery, manifest), `src/core/src/channels/` (transport_stdio, plugin_host, outbox, monitor), `src/core/src/process/supervisor.rs` (respawn, watchdog), `src/core/src/routing.rs` (RouteKey).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/plugins/` (discovery, manifest), `src/core/src/channels/` (transport_stdio, plugin_host, monitor), `src/core/src/process/supervisor.rs` (respawn, watchdog), `src/core/src/routing.rs` (RouteKey).*
+*Last verified: `codex/im-acp-route-refactor` (2026-07-11).*
 
 <sub>[◀ Session lifecycle](session-lifecycle.md) · [Documentation index](../README.md) · [Local API and bridge ▶](local-api-and-bridge.md)</sub>

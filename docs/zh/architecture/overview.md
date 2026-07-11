@@ -64,7 +64,7 @@
 
 | 模块 | 负责 |
 |---|---|
-| `channels` | 插件宿主、stdio/websocket 传输、输入分发、outbox、监控 |
+| `channels` | 插件宿主、stdio/websocket 传输、输入分发、route lanes、监控 |
 | `workspace` | Workspace、Thread、Route 附着、交接码（事件溯源状态 + 内存 pickup codes） |
 | `process` | 监督器（拉起/重启/看门狗）、子进程注册表、ACP 传输、环境增强 |
 | `agent` | ACP agent 句柄、启动渲染、MCP/技能配置注入 |

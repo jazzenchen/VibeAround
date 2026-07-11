@@ -26,18 +26,18 @@
 
 守护进程的进程监督器掌管每个插件进程：
 
-- **崩溃重启。** 退出的插件在短暂延迟后被重新拉起，无限次。
-- **心跳看门狗。** 插件每 15 秒发一次 `_va/heartbeat` 通知；90 秒没收到就认定插件冻结，杀掉并重启。这抓住了那些挂死但不退出的平台 SDK（数值见[计时器与上限](../reference/timers-and-limits.md#supervision)）。
-- **Outbox 重放。** 持久化输出（系统消息、权限请求）在 outbox 里排队；插件宕机导致发送失败时，会在重启后重新投递 —— 权限卡片不会因为插件重启而丢失。
+- **崩溃重启。** 退出的插件按有上限的指数退避重新拉起。
+- **心跳看门狗。** 插件每 30 秒发一次 `_va/heartbeat` 通知；90 秒没收到就认定插件冻结，杀掉并重启。这抓住了那些挂死但不退出的平台 SDK（数值见[计时器与上限](../reference/timers-and-limits.md#supervision)）。
+- **只做实时输出。** IM 输出只经过一个小型有界内存缓冲；不会落盘，也不会在 plugin 或 daemon 重启后重放。连接已断开的投递会被丢弃并记录日志。
 - **待决权限清理。** 插件在权限请求等待点按时死掉，待决请求会被取消，让 Agent 的回合快速失败而不是永远挂着。
 
-生命周期也可以手动管理：`va channels`（列出）、`va channel start|stop|restart <kind>`、`va channel sync`（把运行中的插件与 `settings.json` 对齐），或桌面 UI 的等价控制。
+生命周期也可以手动管理：`va channels`（列出）、`va channel start|stop|restart <instance_id>`、`va channel sync`（把运行中的插件与 `settings.json` 对齐），或桌面 UI 的等价控制。当前 legacy 单实例配置中，instance id 与 channel kind 相同。
 
 ## 线上协议，简述
 
 插件 ↔ 守护进程的通信是 stdio 上的 JSON-RPC，使用 ACP 帧。重要的消息形状：
 
-**入站（插件 → 守护进程）：** 渠道信封 —— route key（channel kind、bot id、chat id）、消息 id、发送者、文本、附件 —— 或回调（带 action value 的按钮点按），或控制输入（stop、close）。
+**入站（插件 → 守护进程）：** 渠道信封 —— route key（channel kind、稳定 channel instance id、actor id、chat id、可选 topic id）、消息 id、发送者、文本、附件 —— 或回调（带 action value 的按钮点按），或控制输入（stop、close）。
 
 **出站（守护进程 → 插件）：** Agent 输出块、系统文本、回合状态（用于输入中指示）、prompt-done 标记，以及**权限请求** —— 携带 request id 和一个负载，由插件渲染成平台原生的交互卡片（飞书卡片用 V2 schema；Slack 用 block actions，等等）。插件用同一个 request id 把用户的选择发回来，回答权限请求。
 
@@ -45,7 +45,7 @@
 
 ## 身份与路由
 
-每个插件进程代表一个平台上的一个 bot 身份。Route key `(channel_kind, bot_id, chat_id)` 按聊天隔离对话 —— 群聊和私聊各有独立 Thread，两个不同聊天永不共享 Agent 状态。消息顺序按 Route 保证，不是全局保证，所以一个繁忙的群不会拖住另一个。
+`channel_kind` 决定使用哪一种 plugin 实现；`channel_instance_id` 是 host 持有的稳定生命周期/runtime 主键；`actor_id` 是平台上被点名的 bot/actor。完整 route 还包含 `chat_id` 与可选 `topic_id`，所以不同 actor/topic 可以附着到不同 workspace thread。消息只保证完整 route 内 FIFO，不保证平台全局顺序。
 
 ## 与插件仓库的关系
 
@@ -53,7 +53,7 @@
 
 ---
 
-*Source anchors: `src/core/src/plugins/` (discovery, manifest), `src/core/src/channels/` (transport_stdio, plugin_host, outbox, monitor), `src/core/src/process/supervisor.rs` (respawn, watchdog), `src/core/src/routing.rs` (RouteKey).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/plugins/` (discovery, manifest), `src/core/src/channels/` (transport_stdio, plugin_host, monitor), `src/core/src/process/supervisor.rs` (respawn, watchdog), `src/core/src/routing.rs` (RouteKey).*
+*Last verified: `codex/im-acp-route-refactor`（2026-07-11）。*
 
 <sub>[◀ 会话生命周期](session-lifecycle.md) · [文档索引](../README.md) · [本地 API 与 Bridge ▶](local-api-and-bridge.md)</sub>
