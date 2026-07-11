@@ -324,6 +324,9 @@ impl ThreadRuntime {
                     "profile switch cannot change agent",
                 ));
             }
+            if thread.host_binding == host_binding {
+                return Ok(());
+            }
         }
 
         let preserved_session_id = self.session_id.lock().await.clone();
@@ -1577,6 +1580,37 @@ mod tests {
         let startup_session = host_startup_session(&route, None, &thread);
 
         assert_eq!(startup_session, StartupSession::Fresh);
+    }
+
+    #[tokio::test]
+    async fn selecting_the_current_profile_is_a_noop() {
+        let path = std::env::temp_dir().join(format!(
+            "vibearound-runtime-noop-profile-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let runtime = ThreadRuntime::new(
+            thread_with_sessions(),
+            PathBuf::from("/tmp/project"),
+            ThreadEventStore::new(&path),
+        );
+
+        runtime
+            .switch_profile_preserving_session(HostBinding::new(
+                "codex",
+                Some("profile_a".to_string()),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            runtime.state().await.session_id.as_deref(),
+            Some("session-old")
+        );
+        assert!(
+            !path.exists(),
+            "a no-op profile selection persisted a host change"
+        );
     }
 
     #[test]

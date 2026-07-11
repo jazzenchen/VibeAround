@@ -65,7 +65,11 @@ pub fn channel_traits(channel_kind: &str) -> ChannelTraits {
         },
         _ => ChannelTraits {
             durable_outbox: true,
-            rehydratable_runtime: false,
+            // IM routes keep their WorkspaceThread attachment across host
+            // idle shutdown. Rehydrate the runtime on the next message so
+            // agent/profile/session continuity is preserved without replaying
+            // old output into the chat.
+            rehydratable_runtime: true,
             startup_replay: false,
             default_workspace: DefaultWorkspaceKind::ChannelDefault,
             rich_agent_events: false,
@@ -287,7 +291,7 @@ mod tests {
 
         let im = channel_traits("feishu");
         assert!(im.durable_outbox);
-        assert!(!im.rehydratable_runtime);
+        assert!(im.rehydratable_runtime);
         assert!(!im.startup_replay);
         assert_eq!(im.default_workspace, DefaultWorkspaceKind::ChannelDefault);
         assert!(!im.rich_agent_events);

@@ -1637,26 +1637,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_route_attachment_starts_new_thread() {
-        let (workspaces, threads, attachments) = temp_paths();
-        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-        let route = RouteKey::new("feishu", "chat-a");
-        let first = manager.resolve_route_runtime(&route).await.unwrap();
-        let first_thread_id = first.state().await.thread_id;
-
-        manager.runtimes.remove(&first_thread_id);
-        let second = manager.resolve_route_runtime(&route).await.unwrap();
-
-        assert_ne!(second.state().await.thread_id, first_thread_id);
-        assert_eq!(
-            manager
-                .current_attachment(&route)
-                .await
-                .unwrap()
-                .unwrap()
-                .thread_id,
-            second.state().await.thread_id
-        );
+    async fn im_route_attachment_rehydrates_runtime_after_host_shutdown() {
+        route_attachment_rehydrates_runtime_after_host_shutdown("feishu").await;
     }
 
     #[tokio::test]

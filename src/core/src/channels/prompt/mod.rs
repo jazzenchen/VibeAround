@@ -152,6 +152,61 @@ mod tests {
         Arc::new(ConversationIngress::new(workspace_threads, plugin_host))
     }
 
+    fn test_ingress_with_output() -> (
+        Arc<ConversationIngress>,
+        mpsc::UnboundedReceiver<ChannelOutput>,
+    ) {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(10_000);
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!(
+            "vibearound-command-contract-{}-{id}",
+            std::process::id()
+        ));
+        let workspace_threads = WorkspaceThreadManager::with_paths(
+            base.join("workspaces.jsonl"),
+            base.join("threads.jsonl"),
+            base.join("attachments.jsonl"),
+        );
+        let (input_tx, _input_rx) = mpsc::unbounded_channel();
+        let plugin_host = Arc::new(PluginHost::new(input_tx));
+        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        plugin_host.register_websocket_plugin("web", output_tx);
+        (
+            Arc::new(ConversationIngress::new(workspace_threads, plugin_host)),
+            output_rx,
+        )
+    }
+
+    async fn run_command(
+        ingress: &Arc<ConversationIngress>,
+        output_rx: &mut mpsc::UnboundedReceiver<ChannelOutput>,
+        route: &RouteKey,
+        command: &str,
+    ) -> String {
+        let response = ingress
+            .prompt(
+                route.clone(),
+                vec![acp::ContentBlock::Text(acp::TextContent::new(command))],
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+        let output = tokio::time::timeout(std::time::Duration::from_secs(1), output_rx.recv())
+            .await
+            .expect("command produced no output")
+            .expect("command output channel closed");
+        let ChannelOutput::SystemText {
+            route: output_route,
+            text,
+            ..
+        } = output
+        else {
+            panic!("command produced non-system output");
+        };
+        assert_eq!(&output_route, route);
+        text
+    }
+
     async fn wait_for_lanes_to_drain(ingress: &ConversationIngress) {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
         while ingress.active_lane_count() != 0 && tokio::time::Instant::now() < deadline {
@@ -254,6 +309,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn system_commands_run_end_to_end_through_the_route_lane() {
+        let (ingress, mut output_rx) = test_ingress_with_output();
+        let route = RouteKey::new("web", "command-chat");
+
+        for (command, expected) in [
+            ("/help", "Commands:"),
+            ("/status", "Status:"),
+            ("/workspace", "Workspaces:"),
+            ("/agent", "Agents:"),
+            ("/profile", "Profiles for"),
+            ("/session", "Sessions for"),
+            ("/definitely-unknown", "Unknown command:"),
+            ("/close", "Thread closed."),
+        ] {
+            let text = run_command(&ingress, &mut output_rx, &route, command).await;
+            assert!(
+                text.contains(expected),
+                "{command} returned unexpected output: {text}"
+            );
+        }
+
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
     async fn same_route_lane_is_fifo_and_removed_when_drained() {
         let ingress = test_ingress();
         let route = RouteKey::new("web", "chat-a");
@@ -341,6 +421,41 @@ mod tests {
         assert!(active_done.await.is_err(), "active work survived stop");
         assert!(queued_done.await.is_err(), "queued work survived stop");
         assert!(release.send(()).is_err(), "active work was not dropped");
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
+    async fn work_enqueued_after_stop_uses_the_new_route_generation() {
+        let ingress = test_ingress();
+        let route = RouteKey::new("web", "chat-a");
+        let (started, started_rx) = oneshot::channel();
+        let (_release, release_rx) = oneshot::channel::<()>();
+        let old_done = ingress
+            .enqueue_probe(route.clone(), async move {
+                let _ = started.send(());
+                let _ = release_rx.await;
+            })
+            .unwrap();
+        started_rx.await.unwrap();
+
+        ingress
+            .dispatch(ChannelInput::Stop {
+                route: route.clone(),
+            })
+            .await;
+        assert!(old_done.await.is_err(), "old generation survived stop");
+
+        let (new_started, new_started_rx) = oneshot::channel();
+        let new_done = ingress
+            .enqueue_probe(route, async move {
+                let _ = new_started.send(());
+            })
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_millis(100), new_started_rx)
+            .await
+            .expect("new generation was cancelled by the old stop")
+            .unwrap();
+        new_done.await.unwrap();
         wait_for_lanes_to_drain(&ingress).await;
     }
 
