@@ -18,7 +18,7 @@ use super::super::types::{ChannelInboundContext, CHANNEL_CONTEXT_META_KEY};
 use super::super::{ChannelEnvelope, ChannelInput, ConversationIngress};
 use crate::proc_log;
 use crate::process::registry::ProcessKind;
-use crate::routing::RouteKey;
+use crate::routing::{ChannelTarget, RouteKey};
 
 fn route_for_prompt(
     channel_kind: &str,
@@ -65,6 +65,30 @@ fn route_for_prompt(
         context.actor_id,
         context.topic_id,
     ))
+}
+
+fn target_for_prompt(
+    channel_kind: &str,
+    channel_instance_id: &str,
+    default_actor_id: &str,
+    session_chat_id: &str,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<ChannelTarget, String> {
+    let route = route_for_prompt(
+        channel_kind,
+        channel_instance_id,
+        default_actor_id,
+        session_chat_id,
+        meta,
+    )?;
+    let reply_to = meta
+        .and_then(|meta| meta.get(CHANNEL_CONTEXT_META_KEY))
+        .and_then(|context| context.get("platformMessageId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|message_id| !message_id.is_empty())
+        .map(ToOwned::to_owned);
+    Ok(ChannelTarget::new(route, reply_to))
 }
 
 fn route_for_callback(
@@ -226,7 +250,7 @@ impl PluginAgentHandler {
         args: acp::PromptRequest,
     ) -> acp::Result<acp::PromptResponse> {
         let chat_id = args.session_id.to_string();
-        let route = route_for_prompt(
+        let target = target_for_prompt(
             &self.channel_kind,
             &self.channel_instance_id,
             &self.default_actor_id,
@@ -269,8 +293,8 @@ impl PluginAgentHandler {
         // The shared ingress blocks until the turn completes.
         // Session notifications stream to the plugin via ChannelBridgeHandler
         // → PluginHost → output_tx → output forwarder → conn.session_notification().
-        let _active_route = self.track_active_route(&chat_id, route.clone());
-        self.ingress.prompt(route, content_blocks).await
+        let _active_route = self.track_active_route(&chat_id, target.route.clone());
+        self.ingress.prompt(target, content_blocks).await
     }
 
     pub(super) async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
@@ -446,11 +470,40 @@ mod tests {
             "actorId": "codex-reviewer",
             "chatId": "chat-1",
             "topicId": "topic-1",
+            "platformMessageId": "message-1",
             "scope": "group",
             "addressedBy": "mention"
         }));
 
-        let route = route_for_prompt(
+        let target = target_for_prompt(
+            "feishu",
+            "feishu-primary",
+            "feishu-primary",
+            "chat-1",
+            Some(&meta),
+        )
+        .expect("routed prompt metadata parses");
+        let route = target.route;
+
+        assert_eq!(route.channel_instance_id(), "feishu-primary");
+        assert_eq!(route.chat_id, "chat-1");
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+        assert_eq!(route.topic_id(), Some("topic-1"));
+        assert_eq!(target.reply_to.as_deref(), Some("message-1"));
+    }
+
+    #[test]
+    fn routed_prompt_ignores_an_empty_platform_message_id() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "platformMessageId": "  ",
+            "scope": "dm",
+            "addressedBy": "dm"
+        }));
+
+        let target = target_for_prompt(
             "feishu",
             "feishu-primary",
             "feishu-primary",
@@ -459,10 +512,7 @@ mod tests {
         )
         .expect("routed prompt metadata parses");
 
-        assert_eq!(route.channel_instance_id(), "feishu-primary");
-        assert_eq!(route.chat_id, "chat-1");
-        assert_eq!(route.actor_id(), Some("codex-reviewer"));
-        assert_eq!(route.topic_id(), Some("topic-1"));
+        assert_eq!(target.reply_to, None);
     }
 
     #[test]

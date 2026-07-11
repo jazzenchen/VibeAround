@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::{sleep, Duration};
 
 use crate::agent::{Agent, AgentClientHandler, StartupSession};
-use crate::routing::{channel_traits, RouteKey};
+use crate::routing::{channel_traits, ActiveTurnTarget, ChannelTarget, RouteKey};
 use crate::workspace::registry::WorkspaceId;
 
 use super::store::{
@@ -87,6 +87,7 @@ pub struct ThreadRuntime {
     subagents: Mutex<BTreeMap<ThreadAgentId, SubagentRuntime>>,
     session_id: Mutex<Option<String>>,
     prompt_lock: Mutex<()>,
+    active_turn_target: ActiveTurnTarget,
     busy: Mutex<bool>,
     failed: Mutex<Option<String>>,
     activity_generation: AtomicU64,
@@ -114,6 +115,7 @@ impl ThreadRuntime {
             subagents: Mutex::new(BTreeMap::new()),
             session_id: Mutex::new(session_id),
             prompt_lock: Mutex::new(()),
+            active_turn_target: ActiveTurnTarget::default(),
             busy: Mutex::new(false),
             failed: Mutex::new(None),
             activity_generation: AtomicU64::new(0),
@@ -145,6 +147,10 @@ impl ThreadRuntime {
         }
     }
 
+    pub fn active_turn_target(&self) -> ActiveTurnTarget {
+        self.active_turn_target.clone()
+    }
+
     /// Start the host agent and ensure a session exists, without sending a
     /// user prompt. This backs `/new` and route attachment warmup.
     pub async fn start(
@@ -159,11 +165,12 @@ impl ThreadRuntime {
 
     pub async fn prompt(
         &self,
-        route: &RouteKey,
+        target: &ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
         handler: Arc<dyn AgentClientHandler>,
     ) -> acp::Result<acp::PromptResponse> {
         let _prompt_guard = self.prompt_lock.lock().await;
+        let _target_guard = self.active_turn_target.install(target.clone());
         self.mark_activity();
         *self.busy.lock().await = true;
         *self.failed.lock().await = None;
@@ -172,7 +179,7 @@ impl ThreadRuntime {
 
         let result = async {
             self.maybe_record_first_prompt(&content_blocks).await?;
-            let agent = self.ensure_agent(route, handler).await?;
+            let agent = self.ensure_agent(&target.route, handler).await?;
             let session_id = self.ensure_session(&agent).await?;
             agent
                 .prompt(acp::PromptRequest::new(session_id, content_blocks))
@@ -194,7 +201,6 @@ impl ThreadRuntime {
                 "host prompt_finished hook failed"
             );
         }
-
         *self.busy.lock().await = false;
         if let Err(error) = &result {
             *self.failed.lock().await = Some(error.message.to_string());

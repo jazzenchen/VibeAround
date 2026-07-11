@@ -1,5 +1,8 @@
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
+use parking_lot::RwLock;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Channel kind identifier (e.g. "web", "telegram").
@@ -227,6 +230,75 @@ impl fmt::Display for RouteKey {
     }
 }
 
+/// Ephemeral delivery target for one inbound turn.
+///
+/// `reply_to` belongs to one platform message and must never be persisted in
+/// [`RouteKey`] or used to select a workspace thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelTarget {
+    pub route: RouteKey,
+    pub reply_to: Option<MessageId>,
+}
+
+impl ChannelTarget {
+    pub fn new(route: RouteKey, reply_to: Option<MessageId>) -> Self {
+        Self { route, reply_to }
+    }
+
+    pub fn for_route(route: RouteKey) -> Self {
+        Self::new(route, None)
+    }
+}
+
+/// Shared, cancellation-safe pointer to the target of the currently running
+/// turn on one workspace thread.
+#[derive(Clone, Default)]
+pub struct ActiveTurnTarget {
+    state: Arc<ActiveTurnTargetState>,
+}
+
+#[derive(Default)]
+struct ActiveTurnTargetState {
+    next_generation: AtomicU64,
+    current: RwLock<Option<(u64, ChannelTarget)>>,
+}
+
+impl ActiveTurnTarget {
+    pub fn install(&self, target: ChannelTarget) -> ActiveTurnTargetGuard {
+        let generation = self.state.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        *self.state.current.write() = Some((generation, target));
+        ActiveTurnTargetGuard {
+            owner: self.clone(),
+            generation,
+        }
+    }
+
+    pub fn current(&self) -> Option<ChannelTarget> {
+        self.state
+            .current
+            .read()
+            .as_ref()
+            .map(|(_, target)| target.clone())
+    }
+}
+
+pub struct ActiveTurnTargetGuard {
+    owner: ActiveTurnTarget,
+    generation: u64,
+}
+
+impl Drop for ActiveTurnTargetGuard {
+    fn drop(&mut self) {
+        let mut current = self.owner.state.current.write();
+        if current
+            .as_ref()
+            .is_some_and(|(generation, _)| *generation == self.generation)
+        {
+            *current = None;
+        }
+    }
+}
+
 /// Attachment metadata carried on channel envelopes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attachment {
@@ -299,6 +371,33 @@ mod tests {
         let route = RouteKey::new("feishu", "chat-1");
 
         assert_eq!(RouteKey::from_key(&route.as_key()), Some(route));
+    }
+
+    #[test]
+    fn active_turn_target_guard_clears_on_drop() {
+        let active = ActiveTurnTarget::default();
+        let target = ChannelTarget::new(
+            RouteKey::with_actor("slack", "slack-work", "chat-1", "U1", None),
+            Some("message-1".to_string()),
+        );
+        {
+            let _guard = active.install(target.clone());
+            assert_eq!(active.current(), Some(target));
+        }
+        assert_eq!(active.current(), None);
+    }
+
+    #[test]
+    fn older_active_turn_guard_cannot_clear_a_new_generation() {
+        let active = ActiveTurnTarget::default();
+        let first = active.install(ChannelTarget::for_route(RouteKey::new("web", "one")));
+        let second_target = ChannelTarget::for_route(RouteKey::new("web", "two"));
+        let second = active.install(second_target.clone());
+
+        drop(first);
+        assert_eq!(active.current(), Some(second_target));
+        drop(second);
+        assert_eq!(active.current(), None);
     }
 
     #[test]

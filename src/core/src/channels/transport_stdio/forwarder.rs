@@ -32,8 +32,12 @@ pub(super) async fn forward_output_to_plugin(
     output: ChannelOutput,
 ) -> Result<(), String> {
     match output {
-        ChannelOutput::ThreadReply { route, reply } => {
-            let target = route_target(&route);
+        ChannelOutput::ThreadReply {
+            route,
+            reply_to,
+            reply,
+        } => {
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -52,8 +56,12 @@ pub(super) async fn forward_output_to_plugin(
                 route
             );
         }
-        ChannelOutput::SystemText { route, text, .. } => {
-            let target = route_target(&route);
+        ChannelOutput::SystemText {
+            route,
+            text,
+            reply_to,
+        } => {
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -72,7 +80,7 @@ pub(super) async fn forward_output_to_plugin(
             version,
             ..
         } => {
-            let target = route_target(&route);
+            let target = route_target(&route, None);
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -89,7 +97,7 @@ pub(super) async fn forward_output_to_plugin(
         ChannelOutput::SessionReady {
             route, session_id, ..
         } => {
-            let target = route_target(&route);
+            let target = route_target(&route, None);
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -103,7 +111,7 @@ pub(super) async fn forward_output_to_plugin(
             .await?;
         }
         ChannelOutput::SessionInfo { route, info } => {
-            let target = route_target(&route);
+            let target = route_target(&route, None);
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -120,7 +128,7 @@ pub(super) async fn forward_output_to_plugin(
             route,
             session_mode,
         } => {
-            let target = route_target(&route);
+            let target = route_target(&route, None);
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -138,7 +146,7 @@ pub(super) async fn forward_output_to_plugin(
             system_commands,
             agent_commands,
         } => {
-            let target = route_target(&route);
+            let target = route_target(&route, None);
             send_ext_notification(
                 conn,
                 channel_kind,
@@ -159,6 +167,7 @@ pub(super) async fn forward_output_to_plugin(
         | ChannelOutput::SubagentAcp { .. } => {}
         ChannelOutput::PermissionRequest {
             route,
+            reply_to,
             request_id,
             payload,
         } => {
@@ -187,7 +196,7 @@ pub(super) async fn forward_output_to_plugin(
                     }
                 };
             let params = serde_json::json!({
-                "target": route_target(&route),
+                "target": route_target(&route, reply_to.as_deref()),
                 "requestId": request_id.clone(),
                 "request": request,
             });
@@ -267,7 +276,7 @@ pub(super) async fn forward_output_to_plugin(
     Ok(())
 }
 
-fn route_target(route: &crate::routing::RouteKey) -> serde_json::Value {
+fn route_target(route: &crate::routing::RouteKey, reply_to: Option<&str>) -> serde_json::Value {
     let mut target = serde_json::Map::from_iter([
         (
             "channelInstanceId".to_string(),
@@ -284,6 +293,9 @@ fn route_target(route: &crate::routing::RouteKey) -> serde_json::Value {
     ]);
     if let Some(topic_id) = route.topic_id() {
         target.insert("topicId".to_string(), topic_id.into());
+    }
+    if let Some(reply_to) = reply_to.filter(|reply_to| !reply_to.is_empty()) {
+        target.insert("replyTo".to_string(), reply_to.into());
     }
     serde_json::Value::Object(target)
 }
@@ -364,13 +376,17 @@ mod tests {
         );
 
         assert_eq!(
-            route_target(&route),
+            route_target(&route, None),
             serde_json::json!({
                 "channelInstanceId": "feishu-primary",
                 "actorId": "codex-reviewer",
                 "chatId": "chat-1",
                 "topicId": "topic-1"
             })
+        );
+        assert_eq!(
+            route_target(&route, Some("message-1"))["replyTo"],
+            "message-1"
         );
     }
 }

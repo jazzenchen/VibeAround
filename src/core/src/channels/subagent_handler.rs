@@ -156,6 +156,7 @@ impl AgentClientHandler for SubagentBridgeHandler {
             self.plugin_host
                 .send_output(ChannelOutput::PermissionRequest {
                     route,
+                    reply_to: None,
                     request_id: request_id.clone(),
                     payload: payload.clone(),
                 })

@@ -126,6 +126,8 @@ impl ChannelInput {
 pub enum ChannelOutput {
     ThreadReply {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         reply: ThreadReply,
     },
     RawAcp {
@@ -177,6 +179,8 @@ pub enum ChannelOutput {
     /// `payload` is a JSON-serialized `acp::RequestPermissionRequest`.
     PermissionRequest {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         request_id: String,
         payload: serde_json::Value,
     },

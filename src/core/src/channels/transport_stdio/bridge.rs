@@ -262,6 +262,7 @@ mod tests {
         assert!(requires_independent_forwarding(
             &ChannelOutput::PermissionRequest {
                 route: route.clone(),
+                reply_to: None,
                 request_id: "permission-a".to_string(),
                 payload: serde_json::json!({}),
             }

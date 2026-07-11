@@ -338,6 +338,7 @@ mod tests {
 
         host.send_output(ChannelOutput::PermissionRequest {
             route: RouteKey::new("feishu", "chat-a"),
+            reply_to: None,
             request_id: "req-1".to_string(),
             payload: serde_json::json!({}),
         })

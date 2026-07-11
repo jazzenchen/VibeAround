@@ -26,7 +26,7 @@ use agent_client_protocol::schema::v1 as acp;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::routing::{
-    is_external_attachment_uri, is_safe_attachment_file_key, Attachment, RouteKey,
+    is_external_attachment_uri, is_safe_attachment_file_key, Attachment, ChannelTarget, RouteKey,
 };
 #[cfg(test)]
 use crate::workspace::WorkspaceThreadManager;
@@ -99,6 +99,21 @@ pub(super) async fn send_system_text(plugin_host: &Arc<PluginHost>, route: &Rout
             route: route.clone(),
             text: text.to_string(),
             reply_to: None,
+        })
+        .await;
+}
+
+/// Emit system text for one inbound turn, preserving its platform reply target.
+pub(super) async fn send_system_text_to_target(
+    plugin_host: &Arc<PluginHost>,
+    target: &ChannelTarget,
+    text: &str,
+) {
+    plugin_host
+        .send_output(ChannelOutput::SystemText {
+            route: target.route.clone(),
+            text: text.to_string(),
+            reply_to: target.reply_to.clone(),
         })
         .await;
 }
@@ -183,9 +198,10 @@ mod tests {
         route: &RouteKey,
         command: &str,
     ) -> String {
+        let reply_to = format!("{command}-message");
         let response = ingress
             .prompt(
-                route.clone(),
+                ChannelTarget::new(route.clone(), Some(reply_to.clone())),
                 vec![acp::ContentBlock::Text(acp::TextContent::new(command))],
             )
             .await
@@ -198,12 +214,13 @@ mod tests {
         let ChannelOutput::SystemText {
             route: output_route,
             text,
-            ..
+            reply_to: output_reply_to,
         } = output
         else {
             panic!("command produced non-system output");
         };
         assert_eq!(&output_route, route);
+        assert_eq!(output_reply_to.as_deref(), Some(reply_to.as_str()));
         text
     }
 

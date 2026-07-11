@@ -7,11 +7,13 @@ use dashmap::DashMap;
 use parking_lot::Mutex as ParkingMutex;
 use tokio::sync::{mpsc, oneshot, watch, Notify};
 
+use crate::routing::ChannelTarget;
 use crate::workspace::WorkspaceThreadManager;
 
 use super::{
     auto_close_reason_for_prompt_error, effective_input_text, envelope_content_blocks, handler,
-    send_prompt_done, send_system_text, ChannelEnvelope, ChannelInput, PluginHost, RouteKey,
+    send_prompt_done, send_system_text, send_system_text_to_target, ChannelEnvelope, ChannelInput,
+    PluginHost, RouteKey,
 };
 
 pub(super) const ROUTE_LANE_CAPACITY: usize = 16;
@@ -21,6 +23,7 @@ const ROUTE_STOPPED_MESSAGE: &str = "conversation route stopped";
 
 enum LaneCommand {
     Prompt {
+        reply_to: Option<String>,
         content_blocks: Vec<acp::ContentBlock>,
         reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
     },
@@ -120,14 +123,15 @@ impl ConversationIngress {
     /// Run one prompt to completion and return its actual ACP stop reason.
     pub async fn prompt(
         self: &Arc<Self>,
-        route: RouteKey,
+        target: ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
     ) -> acp::Result<acp::PromptResponse> {
         let (reply, response) = oneshot::channel();
         if self
             .enqueue(
-                route,
+                target.route.clone(),
                 LaneCommand::Prompt {
+                    reply_to: target.reply_to,
                     content_blocks,
                     reply,
                 },
@@ -275,6 +279,7 @@ impl ConversationIngress {
     ) {
         match queued.command {
             LaneCommand::Prompt {
+                reply_to,
                 content_blocks,
                 reply,
             } => {
@@ -286,7 +291,10 @@ impl ConversationIngress {
                     _ = wait_for_shutdown(shutdown_rx) => {
                         Err(acp::Error::new(-32603, ROUTE_STOPPED_MESSAGE))
                     }
-                    result = self.run_prompt(route.clone(), content_blocks) => result,
+                    result = self.run_prompt(
+                        ChannelTarget::new(route.clone(), reply_to),
+                        content_blocks,
+                    ) => result,
                 };
                 let _ = reply.send(result);
             }
@@ -366,13 +374,13 @@ impl ConversationIngress {
 
     async fn run_prompt(
         &self,
-        route: RouteKey,
+        target: ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
     ) -> acp::Result<acp::PromptResponse> {
         let result = handler::handle_prompt(
             &self.workspace_threads,
             &self.plugin_host,
-            route.clone(),
+            target.clone(),
             content_blocks,
         )
         .await;
@@ -380,11 +388,11 @@ impl ConversationIngress {
             if let Some(reason) = auto_close_reason_for_prompt_error(error) {
                 if let Err(close_error) = self
                     .workspace_threads
-                    .close_route(&route, Some(reason))
+                    .close_route(&target.route, Some(reason))
                     .await
                 {
                     tracing::warn!(
-                        route = %route,
+                        route = %target.route,
                         error = %close_error,
                         "failed to auto-close failed workspace thread"
                     );
@@ -393,11 +401,11 @@ impl ConversationIngress {
         }
         if let Err(error) = self
             .workspace_threads
-            .schedule_route_host_idle_shutdown(&route)
+            .schedule_route_host_idle_shutdown(&target.route)
             .await
         {
             tracing::debug!(
-                route = %route,
+                route = %target.route,
                 error = %error,
                 "failed to schedule agent host idle shutdown"
             );
@@ -423,13 +431,14 @@ impl ConversationIngress {
 
         let content_blocks = envelope_content_blocks(&text, &envelope.attachments);
 
-        match self.run_prompt(route.clone(), content_blocks).await {
+        let target = ChannelTarget::new(route.clone(), message_id.clone());
+        match self.run_prompt(target.clone(), content_blocks).await {
             Ok(_resp) => {
                 tracing::debug!(route = %route, "prompt ok");
             }
             Err(e) => {
                 tracing::warn!(route = %route, error = %e, "prompt failed");
-                send_system_text(&self.plugin_host, &route, &format!("❌ {}", e)).await;
+                send_system_text_to_target(&self.plugin_host, &target, &format!("❌ {}", e)).await;
             }
         }
         send_prompt_done(&self.plugin_host, &route, message_id).await;
@@ -442,7 +451,8 @@ impl ConversationIngress {
             }
             _ => None,
         };
-        send_system_text(&self.plugin_host, route, ROUTE_LANE_FULL_MESSAGE).await;
+        let target = ChannelTarget::new(route.clone(), message_id.clone());
+        send_system_text_to_target(&self.plugin_host, &target, ROUTE_LANE_FULL_MESSAGE).await;
         send_prompt_done(&self.plugin_host, route, message_id).await;
     }
 

@@ -790,11 +790,12 @@ async fn apply_web_session_resume_now(
         .session_id
         .unwrap_or_else(|| requested_session_id.clone());
     let workspace_threads = state.channel_hub.workspace_thread_manager();
+    let target = common::routing::ChannelTarget::for_route(route.clone());
     let started = match common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
         &runtime,
         &state.channel_hub.plugin_host(),
-        route,
+        &target,
         true,
     )
     .await
@@ -847,11 +848,12 @@ async fn replay_current_route_session_if_matching(
     drop(runtime_state);
 
     let workspace_threads = state.channel_hub.workspace_thread_manager();
+    let target = common::routing::ChannelTarget::for_route(route.clone());
     match common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
         &runtime,
         &state.channel_hub.plugin_host(),
-        route,
+        &target,
         true,
     )
     .await
