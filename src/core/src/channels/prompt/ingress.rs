@@ -281,7 +281,7 @@ impl ConversationIngress {
                 let result = tokio::select! {
                     biased;
                     _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
-                        Err(acp::Error::new(-32603, ROUTE_STOPPED_MESSAGE))
+                        cancelled_prompt_response()
                     }
                     _ = wait_for_shutdown(shutdown_rx) => {
                         Err(acp::Error::new(-32603, ROUTE_STOPPED_MESSAGE))
@@ -496,5 +496,20 @@ async fn wait_for_shutdown(shutdown_rx: &mut watch::Receiver<bool>) {
         if shutdown_rx.changed().await.is_err() {
             return;
         }
+    }
+}
+
+fn cancelled_prompt_response() -> acp::Result<acp::PromptResponse> {
+    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_cancel_completes_the_prompt_with_cancelled_stop_reason() {
+        let response = cancelled_prompt_response().expect("cancel is a successful ACP result");
+        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
     }
 }
