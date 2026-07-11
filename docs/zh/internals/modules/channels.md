@@ -32,7 +32,7 @@
 
 1. **Per-route ordering** 属于 `ConversationIngress`；Web/TUI/stdio 的业务与控制路径都不能绕过它。
 2. **`handle_input` 不等待 agent 工作**：它先经过进程内 async mailbox，再进入 route dispatch。这个 mailbox 不是 durable product message queue，没有 replay/attempt 语义。
-3. **每个 host-turn permission 都会终止**：请求只发送给 active origin；RAII registration 会被点按、prompt cancel/drop、bridge death 的 `cancel_channel_permissions` 或 `shutdown_all` 移除。
+3. **每个 host/subagent-turn permission 都会终止**：请求只发送给 active host target；点按、active-turn cancel、generation replacement、bridge death 与 shutdown 都会完成请求并 drop RAII registration，迟到 response 会被拒绝。
 4. **IM output 只做实时投递**：stdio transport 有有界内存缓冲，但没有 durable queue；连接断开后的 output 不会在重启后 replay。
 5. **Runtime ownership 按 instance 隔离**：heartbeat、output、permission cleanup、stop、restart 使用 `channel_instance_id`；discovery 和 platform traits 继续使用 `channel_kind`。
 6. **当前产品范围是 DM/Web**：DM 不要求 @。群聊 mention/callback 解析保留在 adapter/core 内，但延后 release 验收。
@@ -51,6 +51,6 @@
 ---
 
 *Source anchors: `src/core/src/channels/`，`src/server/src/lib.rs`（input dispatcher 与 ingress-first shutdown）。*
-*Last verified: `codex/im-acp-route-refactor` at `ea7741bd`（2026-07-11）。*
+*Last verified: `codex/im-acp-route-refactor` at `4a27a1c0`（2026-07-12）。*
 
 <sub>[◀ Flow: PTY 终端](../flows/web-terminal.md) · [文档索引](../../README.md) · [Module: workspace ▶](workspace.md)</sub>

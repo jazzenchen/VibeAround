@@ -37,7 +37,7 @@ The no-timeout design needs cleanup guarantees instead:
 |---|---|
 | No live runtime accepts the card | That instance is removed immediately; when none remain, `rx.await` errors and the agent receives **Cancelled** |
 | Plugin process dies or its bridge task is force-aborted while a card is pending | A generation-scoped Drop guard removes only that runtime and calls `cancel_channel_permissions(instance_id)`; the pending sender is dropped |
-| User sends channel `/stop` while a card is pending | Dropping the blocked prompt drops its RAII registration, so the core entry is removed; the SDK also resolves the stale platform-side permission through its safest reject option and removes both callback indexes, so the next text cannot be swallowed as an answer to an old card |
+| User sends channel `/stop` while a card is pending | `ThreadRuntime::cancel` signals the active host turn and every active subagent turn; both permission waits return **Cancelled**, their RAII registrations remove the core entries, and late responses are rejected. The SDK also clears the platform-side callback indexes, so the next text cannot be swallowed as an answer to an old card |
 | Daemon shutdown | `PluginHost::shutdown_all` clears the whole table first, same cancellation path |
 | Tap for an already-resolved request | `respond_permission` finds nothing and returns "no longer pending" — the second tap is a no-op, not a double-approve |
 | Tap from the wrong instance | Instance membership check leaves the entry untouched and rejects the response |
@@ -49,6 +49,6 @@ Subagent turns inherit the target that triggered them. Their permission request 
 ---
 
 *Source anchors: `src/core/src/channels/bridge_handler.rs` (request_permission), `src/core/src/channels/plugin_host.rs` (pending_permissions, respond_permission, cancel_channel_permissions, shutdown_all), `src/core/src/channels/transport_stdio/` (forwarder), `src/server/src/web_server/ws_chat.rs` (web response path).*
-*Last verified: `codex/im-acp-route-refactor` at `ea7741bd` (2026-07-11).*
+*Last verified: `codex/im-acp-route-refactor` at `4a27a1c0` (2026-07-12).*
 
 <sub>[◀ Flow: web chat](web-chat.md) · [Documentation index](../../README.md) · [Flow: bridge request ▶](bridge-request.md)</sub>

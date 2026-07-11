@@ -37,7 +37,7 @@ agent ◄──ACP response── bridge handler ◄──oneshot── forwarde
 |---|---|
 | 没有 live runtime 接收 card | 立即移除该 instance；没有其它 surface 时，`rx.await` 报错并以 **Cancelled** 回复 agent |
 | Card pending 时 plugin 进程死亡或 bridge task 被强制 abort | Generation-scoped Drop guard 仅移除本代 runtime，并调用 `cancel_channel_permissions(instance_id)`，pending sender 随即 drop |
-| Card pending 时用户发送 `/stop` | 被取消的 prompt drop 其 RAII registration，core entry 随即删除；SDK 同时用最安全 reject option 完成旧 permission 并移除两个 callback index，下一条文本不会被旧卡片吞掉 |
+| Card pending 时用户发送 `/stop` | `ThreadRuntime::cancel` 向 active host turn 与全部 active subagent turn 发出取消信号；两类 permission wait 都返回 **Cancelled**，RAII registration 删除 core entry，迟到 response 被拒绝。SDK 同时清理平台侧 callback index，下一条文本不会被旧卡片吞掉 |
 | Daemon shutdown | `PluginHost::shutdown_all` 先清空整张表，走同一个 cancellation path |
 | 对已经 resolved 的 request 再次点按 | `respond_permission` 找不到 entry，返回“不再 pending”，第二次点按是 no-op，不会 double-approve |
 | 来自错误 instance 的点按 | Instance membership check 保留 entry 并拒绝 response |
@@ -49,6 +49,6 @@ Subagent turn 会继承触发它的 host target。权限请求回到同一个 ho
 ---
 
 *Source anchors: `src/core/src/channels/bridge_handler.rs` (request_permission), `src/core/src/channels/plugin_host.rs` (pending_permissions, respond_permission, cancel_channel_permissions, shutdown_all), `src/core/src/channels/transport_stdio/` (forwarder), `src/server/src/web_server/ws_chat.rs` (web response path).*
-*Last verified: `codex/im-acp-route-refactor` at `ea7741bd`（2026-07-11）。*
+*Last verified: `codex/im-acp-route-refactor` at `4a27a1c0`（2026-07-12）。*
 
 <sub>[◀ Flow: Web Chat](web-chat.md) · [文档索引](../../README.md) · [Flow: Bridge 请求 ▶](bridge-request.md)</sub>

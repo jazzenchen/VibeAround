@@ -34,6 +34,7 @@ The daemon's process supervisor owns every plugin process:
 - **Heartbeat watchdog.** Plugins emit a `_va/heartbeat` notification every 30 seconds; if none arrives for 90 seconds the plugin is presumed frozen, killed, and respawned. This catches hung platform SDKs that never exit (values: [timers and limits](../reference/timers-and-limits.md#supervision)).
 - **Live-only output.** IM output uses a small bounded in-memory transport buffer. It is never persisted or replayed after a plugin or daemon restart; a disconnected delivery is dropped and logged.
 - **Abort-safe runtime and permission drain.** A generation-scoped cleanup guard removes only its own runtime and cancels pending permission waiters on normal exit, cancellation, panic, or supervisor task abort. A dead plugin therefore cannot leave a stale sender or hang an agent turn.
+- **Current conversation scope is DM/Web.** Group parsing remains dormant behind current-bot mention checks, but is not a release acceptance surface. A plugin without reliable group/mention identity must fail closed; the Weixin bridge currently rejects `group_id` events instead of routing them as DMs.
 - **Platform health lease.** The SDK emits heartbeats only while the plugin's `healthCheck` succeeds. All official plugins implement a platform-aware check; real disconnect/auth-revoke fault injection and a typed `Starting/Ready/Degraded` status remain follow-up work.
 
 You can manage the lifecycle manually: `va channels` (list), `va channel start|stop|restart <instance_id>`, `va channel sync` (reconcile running plugins against `settings.json`), or the equivalent desktop UI controls. Legacy single-instance settings currently use the channel kind as the instance id.
@@ -61,6 +62,6 @@ The main repository contains the plugin *host* (discovery, supervision, transpor
 ---
 
 *Source anchors: `src/core/src/plugins/` (discovery, manifest), `src/core/src/channels/` (transport_stdio, plugin_host, monitor), `src/core/src/process/supervisor.rs` (respawn, watchdog), `src/core/src/routing.rs` (RouteKey).*
-*Last verified: `codex/im-acp-route-refactor` (2026-07-11).*
+*Last verified: `codex/im-acp-route-refactor` at `4a27a1c0` (2026-07-12).*
 
 <sub>[◀ Session lifecycle](session-lifecycle.md) · [Documentation index](../README.md) · [Local API and bridge ▶](local-api-and-bridge.md)</sub>
