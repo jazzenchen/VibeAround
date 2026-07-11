@@ -100,6 +100,8 @@ impl WorkspaceThreadManager {
         let route_lock = self.route_lock(route);
         let _route_guard = route_lock.lock().await;
 
+        self.adopt_legacy_route_attachment(route).await?;
+
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
             return Ok(runtime);
         }
@@ -120,6 +122,41 @@ impl WorkspaceThreadManager {
             .entry(route.clone())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+
+    async fn adopt_legacy_route_attachment(&self, route: &RouteKey) -> anyhow::Result<()> {
+        let legacy_route = RouteKey::new(&route.channel_kind, &route.chat_id);
+        if route == &legacy_route || self.current_attachment(route).await?.is_some() {
+            return Ok(());
+        }
+
+        // All extended routes for one legacy chat contend on this lock. The
+        // first route to arrive adopts the old attachment; later Bot/topic
+        // routes start independently instead of all inheriting one session.
+        let legacy_lock = self.route_lock(&legacy_route);
+        let _legacy_guard = legacy_lock.lock().await;
+        if self.current_attachment(route).await?.is_some() {
+            return Ok(());
+        }
+        let Some(legacy_attachment) = self.current_attachment(&legacy_route).await? else {
+            return Ok(());
+        };
+
+        self.attach_route(
+            route.clone(),
+            legacy_attachment.workspace_id,
+            legacy_attachment.thread_id,
+        )
+        .await?;
+        if let Err(error) = self.detach_route(&legacy_route).await {
+            tracing::warn!(
+                route = %route,
+                legacy_route = %legacy_route,
+                error = %error,
+                "extended route adopted legacy attachment but legacy detach failed"
+            );
+        }
+        Ok(())
     }
 
     pub async fn create_thread_for_route(
@@ -1617,6 +1654,37 @@ mod tests {
                 .unwrap()
                 .thread_id,
             first.state().await.thread_id
+        );
+    }
+
+    #[tokio::test]
+    async fn extended_channel_route_adopts_the_legacy_attachment_once() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let legacy_route = RouteKey::new("slack", "chat-a");
+        let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
+        let legacy_thread_id = legacy_runtime.state().await.thread_id;
+        let extended_route = RouteKey::with_actor("slack", "U_REAL_BOT", "chat-a", "slack", None);
+
+        let adopted = manager
+            .resolve_route_runtime(&extended_route)
+            .await
+            .unwrap();
+
+        assert_eq!(adopted.state().await.thread_id, legacy_thread_id);
+        assert!(manager
+            .current_attachment(&legacy_route)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            manager
+                .current_attachment(&extended_route)
+                .await
+                .unwrap()
+                .unwrap()
+                .thread_id,
+            legacy_thread_id
         );
     }
 
