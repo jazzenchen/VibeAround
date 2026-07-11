@@ -126,7 +126,10 @@ impl WorkspaceThreadManager {
 
     async fn adopt_legacy_route_attachment(&self, route: &RouteKey) -> anyhow::Result<()> {
         let legacy_route = RouteKey::new(&route.channel_kind, &route.chat_id);
-        if route == &legacy_route || self.current_attachment(route).await?.is_some() {
+        if route == &legacy_route
+            || route.topic_id().is_some()
+            || self.current_attachment(route).await?.is_some()
+        {
             return Ok(());
         }
 
@@ -156,6 +159,9 @@ impl WorkspaceThreadManager {
                 "extended route adopted legacy attachment but legacy detach failed"
             );
         }
+        drop(_legacy_guard);
+        drop(legacy_lock);
+        self.remove_idle_route_lock(&legacy_route);
         Ok(())
     }
 
@@ -1680,6 +1686,35 @@ mod tests {
         assert_eq!(
             manager
                 .current_attachment(&extended_route)
+                .await
+                .unwrap()
+                .unwrap()
+                .thread_id,
+            legacy_thread_id
+        );
+    }
+
+    #[tokio::test]
+    async fn extended_topic_route_does_not_steal_the_legacy_base_attachment() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let legacy_route = RouteKey::new("slack", "chat-a");
+        let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
+        let legacy_thread_id = legacy_runtime.state().await.thread_id;
+        let topic_route = RouteKey::with_actor(
+            "slack",
+            "U_REAL_BOT",
+            "chat-a",
+            "slack",
+            Some("thread-1".to_string()),
+        );
+
+        let topic_runtime = manager.resolve_route_runtime(&topic_route).await.unwrap();
+
+        assert_ne!(topic_runtime.state().await.thread_id, legacy_thread_id);
+        assert_eq!(
+            manager
+                .current_attachment(&legacy_route)
                 .await
                 .unwrap()
                 .unwrap()
