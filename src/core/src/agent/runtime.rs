@@ -141,6 +141,53 @@ pub struct Agent {
     process_id: OnceLock<ProcessId>,
 }
 
+/// Owns a supervisor registration until it is transferred to [`Agent`].
+///
+/// `Agent::spawn` can be cancelled while the child is still initializing.
+/// Dropping this guard unregisters that otherwise-unreachable process.
+struct PendingProcessRegistration {
+    supervisor: Arc<Supervisor>,
+    process_id: Option<ProcessId>,
+}
+
+impl PendingProcessRegistration {
+    fn new(supervisor: Arc<Supervisor>, process_id: ProcessId) -> Self {
+        Self {
+            supervisor,
+            process_id: Some(process_id),
+        }
+    }
+
+    fn transfer_to(mut self, agent: &Agent) {
+        let process_id = self
+            .process_id
+            .take()
+            .expect("pending process registration already transferred");
+        agent
+            .process_id
+            .set(process_id)
+            .expect("agent process registration already installed");
+    }
+}
+
+impl Drop for PendingProcessRegistration {
+    fn drop(&mut self) {
+        let Some(process_id) = self.process_id.take() else {
+            return;
+        };
+        let supervisor = Arc::clone(&self.supervisor);
+        tokio::spawn(async move {
+            if let Err(error) = supervisor.unregister(process_id).await {
+                tracing::warn!(
+                    process_id = %process_id,
+                    error = %error,
+                    "failed to clean cancelled agent registration"
+                );
+            }
+        });
+    }
+}
+
 impl Agent {
     /// Spawn a new agent through the process supervisor.
     ///
@@ -208,21 +255,23 @@ impl Agent {
             Box::new(b) as Box<dyn ProcessBridge>
         });
 
-        let id = Supervisor::global().register(
+        let supervisor = Supervisor::global();
+        let id = supervisor.register(
             ProcessKind::AcpAgent,
             label,
             spec,
             RestartPolicy::Never,
             factory,
         );
+        let registration = PendingProcessRegistration::new(supervisor, id);
 
         let err_label = agent_id.clone();
         let ready = ready_rx
             .await
             .map_err(|_| anyhow!("Agent bridge for {} died during init", err_label))??;
 
-        // Stash the id back onto the Agent so shutdown() can reach it.
-        let _ = ready.agent.process_id.set(id);
+        // Transfer the only process owner after initialization succeeds.
+        registration.transfer_to(&ready.agent);
 
         Ok(ready)
     }
@@ -288,7 +337,37 @@ impl Agent {
 
 #[cfg(test)]
 mod lifecycle_tests {
-    use super::AcpSessionGeneration;
+    use std::sync::Arc;
+
+    use super::{AcpSessionGeneration, PendingProcessRegistration};
+    use crate::process::bridge::{BridgeExit, BridgeFuture, ProcessBridge, StdioPipes};
+    use crate::process::registry::{ChildRegistry, ProcessKind};
+    use crate::process::supervisor::{RestartPolicy, SpawnSpec, Supervisor};
+
+    struct HangingInitializeBridge;
+
+    impl ProcessBridge for HangingInitializeBridge {
+        fn run(
+            self: Box<Self>,
+            _pipes: StdioPipes,
+            _cancel: crate::process::bridge::CancelSignal,
+        ) -> BridgeFuture {
+            Box::pin(async move {
+                std::future::pending::<()>().await;
+                BridgeExit::Cancelled
+            })
+        }
+    }
+
+    #[cfg(unix)]
+    fn hanging_child_spec() -> SpawnSpec {
+        SpawnSpec::new("sh").args(["-c", "while :; do sleep 1; done"])
+    }
+
+    #[cfg(windows)]
+    fn hanging_child_spec() -> SpawnSpec {
+        SpawnSpec::new("cmd").args(["/C", "ping -t 127.0.0.1 >NUL"])
+    }
 
     #[test]
     fn session_generation_liveness_is_shared_across_owners() {
@@ -298,6 +377,56 @@ mod lifecycle_tests {
         assert!(agent_generation.is_live());
         bridge_generation.mark_stopped();
         assert!(!agent_generation.is_live());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[tokio::test]
+    async fn aborted_initialize_owner_unregisters_and_reaps_child() {
+        let registry = Arc::new(ChildRegistry::new());
+        let supervisor = Supervisor::new(Arc::clone(&registry));
+        let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
+        let task_supervisor = Arc::clone(&supervisor);
+        let owner = tokio::spawn(async move {
+            let process_id = task_supervisor.register(
+                ProcessKind::AcpAgent,
+                "hanging-agent-init",
+                hanging_child_spec(),
+                RestartPolicy::Never,
+                Box::new(|| Box::new(HangingInitializeBridge)),
+            );
+            let _registration =
+                PendingProcessRegistration::new(Arc::clone(&task_supervisor), process_id);
+            let _ = registered_tx.send(process_id);
+            std::future::pending::<()>().await;
+        });
+        let process_id = registered_rx.await.expect("registration published");
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while registry.len() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("child was not registered");
+
+        owner.abort();
+        let _ = owner.await;
+
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if registry.len() == 0
+                    && !supervisor
+                        .snapshot()
+                        .iter()
+                        .any(|process| process.id == process_id)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled initialization leaked its process registration");
     }
 }
 
