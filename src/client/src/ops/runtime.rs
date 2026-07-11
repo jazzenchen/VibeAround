@@ -82,6 +82,7 @@ mod tests {
             ))
             .expect("channels");
         assert_eq!(channels[0].kind, "feishu");
+        assert_eq!(channels[0].instance_id, "feishu");
     }
 
     #[test]

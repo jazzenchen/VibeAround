@@ -14,7 +14,7 @@ use crate::channels::types::{
     ChannelOutput, ChannelSessionAgent, ChannelSessionInfo, ChannelSessionStart,
 };
 use crate::profiles::{self, connections};
-use crate::routing::RouteKey;
+use crate::routing::{ChannelTarget, RouteKey};
 use crate::workspace::manager::ExternalSessionAttachMode;
 use crate::workspace::threads::runtime::{
     route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
@@ -22,21 +22,22 @@ use crate::workspace::threads::runtime::{
 use crate::workspace::threads::store::HostBinding;
 use crate::workspace::WorkspaceThreadManager;
 
-use super::send_system_text;
+use super::send_system_text_to_target;
 
 const SESSION_LIST_LIMIT: usize = 5;
 
 pub(crate) async fn handle_prompt(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     plugin_host: &Arc<PluginHost>,
-    route: RouteKey,
+    target: ChannelTarget,
     mut content_blocks: Vec<acp::ContentBlock>,
 ) -> acp::Result<acp::PromptResponse> {
     let text = first_text(&content_blocks).unwrap_or_default();
 
-    if commands_enabled_for_route(&route) {
+    let route = &target.route;
+    if commands_enabled_for_route(route) {
         if let Some(command) = parse_thread_command(&text) {
-            return handle_command(workspace_threads, plugin_host, &route, command).await;
+            return handle_command(workspace_threads, plugin_host, &target, command).await;
         }
     }
 
@@ -45,39 +46,40 @@ pub(crate) async fn handle_prompt(
     }
 
     let runtime = workspace_threads
-        .resolve_route_runtime(&route)
+        .resolve_route_runtime(route)
         .await
         .map_err(internal_error)?;
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, &route, false).await? {
+    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, &target, false).await? {
         return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
     }
     let state = runtime.state().await;
-    let handler = bridge_handler(workspace_threads, plugin_host, &state);
+    let handler = bridge_handler(workspace_threads, plugin_host, &runtime, &state);
     runtime
-        .prompt(&route, std::mem::take(&mut content_blocks), handler)
+        .prompt(&target, std::mem::take(&mut content_blocks), handler)
         .await
 }
 
 async fn handle_command(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     plugin_host: &Arc<PluginHost>,
-    route: &RouteKey,
+    target: &ChannelTarget,
     command: ThreadCommand,
 ) -> acp::Result<acp::PromptResponse> {
+    let route = &target.route;
     match command {
         ThreadCommand::New => {
             let runtime = workspace_threads
                 .close_route_and_create_thread(route, Some("user started a new thread".to_string()))
                 .await
                 .map_err(internal_error)?;
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true)
+            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true)
                 .await?
             {
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
-            send_system_text(
+            send_system_text_to_target(
                 plugin_host,
-                route,
+                target,
                 &format!("Started new thread {}.", runtime.state().await.thread_id),
             )
             .await;
@@ -87,23 +89,33 @@ async fn handle_command(
                 .close_route(route, Some("user closed".to_string()))
                 .await
                 .map_err(internal_error)?;
-            send_system_text(
+            send_system_text_to_target(
                 plugin_host,
-                route,
+                target,
                 "Thread closed. Use /new to start again.",
             )
             .await;
         }
         ThreadCommand::Pair(code) => {
             if crate::auth::pair::validate(&code).is_some() {
-                send_system_text(plugin_host, route, "Session paired.").await;
+                send_system_text_to_target(plugin_host, target, "Session paired.").await;
             } else {
-                send_system_text(plugin_host, route, "Pairing code is invalid or expired.").await;
+                send_system_text_to_target(
+                    plugin_host,
+                    target,
+                    "Pairing code is invalid or expired.",
+                )
+                .await;
             }
         }
         ThreadCommand::Pickup(code) => {
             let Some(handover) = crate::workspace::handover::consume(&code) else {
-                send_system_text(plugin_host, route, "Handover code is invalid or expired.").await;
+                send_system_text_to_target(
+                    plugin_host,
+                    target,
+                    "Handover code is invalid or expired.",
+                )
+                .await;
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             };
             let agent_id =
@@ -122,23 +134,23 @@ async fn handle_command(
             {
                 Ok(runtime) => runtime,
                 Err(error) => {
-                    send_system_text(
+                    send_system_text_to_target(
                         plugin_host,
-                        route,
+                        target,
                         &format!("Could not pickup session: {:#}", error),
                     )
                     .await;
                     return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
                 }
             };
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true)
+            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true)
                 .await?
             {
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
-            send_system_text(
+            send_system_text_to_target(
                 plugin_host,
-                route,
+                target,
                 &format!("Picked up session {} with {}.", session_id, agent_id),
             )
             .await;
@@ -148,7 +160,8 @@ async fn handle_command(
                 .resolve_route_runtime(route)
                 .await
                 .map_err(internal_error)?;
-            send_system_text(plugin_host, route, &format_status(&runtime.state().await)).await;
+            send_system_text_to_target(plugin_host, target, &format_status(&runtime.state().await))
+                .await;
         }
         ThreadCommand::Resource { kind, action } => match (kind, action) {
             (ResourceKind::Workspace, ResourceAction::List) => {
@@ -161,9 +174,9 @@ async fn handle_command(
                     .list_workspaces()
                     .await
                     .map_err(internal_error)?;
-                send_system_text(
+                send_system_text_to_target(
                     plugin_host,
-                    route,
+                    target,
                     &format_workspace_list(&workspaces, current.as_str()),
                 )
                 .await;
@@ -172,7 +185,7 @@ async fn handle_command(
                 switch_workspace(
                     workspace_threads,
                     plugin_host,
-                    route,
+                    target,
                     &id,
                     WorkspaceTokenMode::IdOnly,
                 )
@@ -184,10 +197,10 @@ async fn handle_command(
                     .await
                     .map_err(internal_error)?;
                 let current = runtime.state().await.host_binding.agent_id;
-                send_system_text(plugin_host, route, &format_agent_list(&current)).await;
+                send_system_text_to_target(plugin_host, target, &format_agent_list(&current)).await;
             }
             (ResourceKind::Agent, ResourceAction::Switch(id)) => {
-                switch_host(workspace_threads, plugin_host, route, &id, None).await?;
+                switch_host(workspace_threads, plugin_host, target, &id, None).await?;
             }
             (ResourceKind::Profile, ResourceAction::List) => {
                 let runtime = workspace_threads
@@ -195,7 +208,7 @@ async fn handle_command(
                     .await
                     .map_err(internal_error)?;
                 let state = runtime.state().await;
-                send_system_text(plugin_host, route, &format_profile_list(&state)).await;
+                send_system_text_to_target(plugin_host, target, &format_profile_list(&state)).await;
             }
             (ResourceKind::Profile, ResourceAction::Switch(id)) => {
                 let runtime = workspace_threads
@@ -204,7 +217,7 @@ async fn handle_command(
                     .map_err(internal_error)?;
                 let agent = runtime.state().await.host_binding.agent_id;
                 validate_profile_for_agent(&id, &agent).map_err(invalid_params)?;
-                switch_host(workspace_threads, plugin_host, route, &agent, Some(id)).await?;
+                switch_host(workspace_threads, plugin_host, target, &agent, Some(id)).await?;
             }
             (ResourceKind::Session, ResourceAction::List) => {
                 let runtime = workspace_threads
@@ -213,33 +226,43 @@ async fn handle_command(
                     .map_err(internal_error)?;
                 let state = runtime.state().await;
                 let sessions = list_sessions_for_state(workspace_threads, &state).await;
-                send_system_text(plugin_host, route, &format_session_list(&state, &sessions)).await;
+                send_system_text_to_target(
+                    plugin_host,
+                    target,
+                    &format_session_list(&state, &sessions),
+                )
+                .await;
             }
             (ResourceKind::Session, ResourceAction::Switch(id)) => {
-                switch_session(workspace_threads, plugin_host, route, &id).await?;
+                switch_session(workspace_threads, plugin_host, target, &id).await?;
             }
         },
         ThreadCommand::SwitchWorkspace(token) => {
             switch_workspace(
                 workspace_threads,
                 plugin_host,
-                route,
+                target,
                 &token,
                 WorkspaceTokenMode::Legacy,
             )
             .await?;
         }
         ThreadCommand::SwitchHost { agent, profile } => {
-            switch_host(workspace_threads, plugin_host, route, &agent, profile).await?;
+            switch_host(workspace_threads, plugin_host, target, &agent, profile).await?;
         }
         ThreadCommand::AgentPassThrough(command) => {
-            return send_agent_command(workspace_threads, plugin_host, route, &command).await;
+            return send_agent_command(workspace_threads, plugin_host, target, &command).await;
         }
         ThreadCommand::Help => {
-            send_system_text(plugin_host, route, command_help_text()).await;
+            send_system_text_to_target(plugin_host, target, command_help_text()).await;
         }
         ThreadCommand::Unknown(command) => {
-            send_system_text(plugin_host, route, &format!("Unknown command: {}", command)).await;
+            send_system_text_to_target(
+                plugin_host,
+                target,
+                &format!("Unknown command: {}", command),
+            )
+            .await;
         }
     }
     Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
@@ -254,22 +277,23 @@ enum WorkspaceTokenMode {
 async fn switch_workspace(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     plugin_host: &Arc<PluginHost>,
-    route: &RouteKey,
+    target: &ChannelTarget,
     token: &str,
     mode: WorkspaceTokenMode,
 ) -> acp::Result<()> {
+    let route = &target.route;
     let runtime = match mode {
         WorkspaceTokenMode::IdOnly => workspace_threads.switch_workspace_id(route, token).await,
         WorkspaceTokenMode::Legacy => workspace_threads.switch_workspace(route, token).await,
     }
     .map_err(internal_error)?;
 
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await? {
+    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true).await? {
         return Ok(());
     }
-    send_system_text(
+    send_system_text_to_target(
         plugin_host,
-        route,
+        target,
         &format!(
             "Entered workspace and started thread {}.",
             runtime.state().await.thread_id
@@ -282,31 +306,41 @@ async fn switch_workspace(
 async fn switch_host(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     plugin_host: &Arc<PluginHost>,
-    route: &RouteKey,
+    channel_target: &ChannelTarget,
     agent: &str,
     profile: Option<String>,
 ) -> acp::Result<()> {
-    let target = resolve_host_binding(agent, profile.as_deref()).map_err(invalid_params)?;
+    let route = &channel_target.route;
+    let host_binding = resolve_host_binding(agent, profile.as_deref()).map_err(invalid_params)?;
     let active_runtime = workspace_threads
         .active_route_runtime(route)
         .await
         .map_err(internal_error)?;
     if let Some(runtime) = active_runtime {
-        if runtime.state().await.host_binding.agent_id == target.agent_id {
+        if runtime.state().await.host_binding.agent_id == host_binding.agent_id {
             runtime
-                .switch_profile_preserving_session(target.clone())
+                .switch_profile_preserving_session(host_binding.clone())
                 .await?;
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true)
-                .await?
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                channel_target,
+                true,
+            )
+            .await?
             {
                 return Ok(());
             }
-            send_system_text(
+            send_system_text_to_target(
                 plugin_host,
-                route,
+                channel_target,
                 &format!(
                     "Switched profile to {}.",
-                    target.profile_id.as_deref().unwrap_or(DIRECT_PROFILE_ID)
+                    host_binding
+                        .profile_id
+                        .as_deref()
+                        .unwrap_or(DIRECT_PROFILE_ID)
                 ),
             )
             .await;
@@ -315,18 +349,26 @@ async fn switch_host(
     }
 
     let runtime = workspace_threads
-        .create_thread_in_current_workspace_with_host(route, target.clone())
+        .create_thread_in_current_workspace_with_host(route, host_binding.clone())
         .await
         .map_err(internal_error)?;
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, true).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &runtime,
+        plugin_host,
+        channel_target,
+        true,
+    )
+    .await?
+    {
         return Ok(());
     }
-    send_system_text(
+    send_system_text_to_target(
         plugin_host,
-        route,
+        channel_target,
         &format!(
             "Switched agent to {} in new thread {}.",
-            target.agent_id,
+            host_binding.agent_id,
             runtime.state().await.thread_id
         ),
     )
@@ -337,21 +379,22 @@ async fn switch_host(
 async fn send_agent_command(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     plugin_host: &Arc<PluginHost>,
-    route: &RouteKey,
+    target: &ChannelTarget,
     command: &str,
 ) -> acp::Result<acp::PromptResponse> {
+    let route = &target.route;
     let runtime = workspace_threads
         .resolve_route_runtime(route)
         .await
         .map_err(internal_error)?;
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, route, false).await? {
+    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, false).await? {
         return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
     }
     let state = runtime.state().await;
-    let handler = bridge_handler(workspace_threads, plugin_host, &state);
+    let handler = bridge_handler(workspace_threads, plugin_host, &runtime, &state);
     runtime
         .prompt(
-            route,
+            target,
             vec![acp::ContentBlock::Text(acp::TextContent::new(
                 command.to_string(),
             ))],
@@ -363,9 +406,10 @@ async fn send_agent_command(
 async fn switch_session(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     plugin_host: &Arc<PluginHost>,
-    route: &RouteKey,
+    target: &ChannelTarget,
     id: &str,
 ) -> acp::Result<()> {
+    let route = &target.route;
     let runtime = workspace_threads
         .resolve_route_runtime(route)
         .await
@@ -380,9 +424,9 @@ async fn switch_session(
         .collect();
     let session = match matches.as_slice() {
         [] => {
-            send_system_text(
+            send_system_text_to_target(
                 plugin_host,
-                route,
+                target,
                 &format!(
                     "Session '{}' was not found for the current agent/workspace.",
                     id
@@ -393,9 +437,9 @@ async fn switch_session(
         }
         [session] => session.clone(),
         _ => {
-            send_system_text(
+            send_system_text_to_target(
                 plugin_host,
-                route,
+                target,
                 &format!("Session '{}' is ambiguous; use the full session id.", id),
             )
             .await;
@@ -415,21 +459,21 @@ async fn switch_session(
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            send_system_text(
+            send_system_text_to_target(
                 plugin_host,
-                route,
+                target,
                 &format!("Could not switch session: {:#}", error),
             )
             .await;
             return Ok(());
         }
     };
-    if !start_runtime_and_notify(workspace_threads, &resumed, plugin_host, route, true).await? {
+    if !start_runtime_and_notify(workspace_threads, &resumed, plugin_host, target, true).await? {
         return Ok(());
     }
-    send_system_text(
+    send_system_text_to_target(
         plugin_host,
-        route,
+        target,
         &format!(
             "Resumed session {} in thread {}.",
             session.session_id,
@@ -444,9 +488,10 @@ pub async fn start_runtime_and_notify(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     runtime: &Arc<ThreadRuntime>,
     plugin_host: &Arc<PluginHost>,
-    route: &RouteKey,
+    target: &ChannelTarget,
     force_session_ready: bool,
 ) -> acp::Result<bool> {
+    let route = &target.route;
     let before = runtime.state().await;
     if let Err(message) =
         crate::resources::validate_acp_runtime_agent(&before.host_binding.agent_id)
@@ -456,7 +501,7 @@ pub async fn start_runtime_and_notify(
             route = %route,
             "rejected non-ACP runtime agent for channel route"
         );
-        send_system_text(plugin_host, route, &message).await;
+        send_system_text_to_target(plugin_host, target, &message).await;
         return Ok(false);
     }
     if before.initialize.is_none() {
@@ -465,7 +510,7 @@ pub async fn start_runtime_and_notify(
             .await
             .map_err(internal_error)?;
     }
-    let handler = bridge_handler(workspace_threads, plugin_host, &before);
+    let handler = bridge_handler(workspace_threads, plugin_host, runtime, &before);
     let session_id = runtime.start(route, handler).await?;
     let after = runtime.state().await;
     let session_was_resumed = before.session_id.as_deref() == Some(session_id.as_str());
@@ -484,6 +529,7 @@ pub async fn start_runtime_and_notify(
         plugin_host
             .send_output(ChannelOutput::AgentReady {
                 route: route.clone(),
+                reply_to: target.reply_to.clone(),
                 agent: agent.clone(),
                 version: version.clone(),
             })
@@ -497,12 +543,14 @@ pub async fn start_runtime_and_notify(
         plugin_host
             .send_output(ChannelOutput::SessionReady {
                 route: route.clone(),
+                reply_to: target.reply_to.clone(),
                 session_id: session_id.clone(),
             })
             .await;
         plugin_host
             .send_output(ChannelOutput::SessionInfo {
                 route: route.clone(),
+                reply_to: target.reply_to.clone(),
                 info: ChannelSessionInfo {
                     workspace_id: after.workspace_id.to_string(),
                     workspace_path: after.workspace.to_string_lossy().into_owned(),
@@ -585,12 +633,14 @@ async fn replay_subagent_sessions(
         let Some(session_id) = latest_subagent_session_id(agent) else {
             continue;
         };
+        let active_turn_target = crate::routing::ActiveTurnTarget::default();
         let tracker = Arc::new(SubagentReportTracker::new(agent.clone()));
         let handler = Arc::new(SubagentBridgeHandler::for_thread(
             Arc::clone(plugin_host),
             workspace_threads,
             state.thread_id.clone(),
             agent.clone(),
+            active_turn_target,
             tracker,
         ));
         if let Err(error) = runtime
@@ -614,6 +664,7 @@ fn latest_subagent_session_id(agent: &crate::workspace::threads::ThreadAgent) ->
 fn bridge_handler(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     plugin_host: &Arc<PluginHost>,
+    runtime: &Arc<ThreadRuntime>,
     state: &ThreadRuntimeState,
 ) -> Arc<dyn AgentClientHandler> {
     Arc::new(ChannelBridgeHandler::for_thread(
@@ -622,6 +673,7 @@ fn bridge_handler(
         state.workspace_id.clone(),
         state.thread_id.clone(),
         state.host_binding.clone(),
+        runtime.active_turn_target(),
     ))
 }
 
@@ -859,6 +911,7 @@ fn command_help_text() -> &'static str {
 /pair <code>
 /pickup <code>
 /new
+/stop
 /close
 
 Bare /workspace, /agent, /profile, and /session default to --list. Prefix with /va, /vibearound, va, or vibearound when a channel cannot send slash commands. Legacy /switch commands still work."

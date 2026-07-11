@@ -8,6 +8,7 @@ pub struct ServiceHealthResponse {
     pub ok: bool,
     pub service: String,
     pub version: String,
+    #[serde(default)]
     pub channel_outbox_pending: usize,
 }
 
@@ -65,21 +66,20 @@ mod tests {
     }
 
     #[test]
-    fn decodes_service_health_outbox_metric() {
+    fn decodes_service_health() {
         let response = ResponseSpec::json(
             200,
             json!({
                 "ok": true,
                 "service": "vibearound-server",
                 "version": "0.7.11",
-                "channel_outbox_pending": 2,
             }),
         );
 
         let health = decode_health(response).expect("decode health");
 
         assert!(health.ok);
-        assert_eq!(health.channel_outbox_pending, 2);
+        assert_eq!(health.channel_outbox_pending, 0);
     }
 
     #[test]

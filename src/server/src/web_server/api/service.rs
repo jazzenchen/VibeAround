@@ -5,14 +5,12 @@ use axum::{extract::State, Json};
 use crate::web_server::AppState;
 
 /// GET /api/service/health -- tiny unauthenticated liveness check.
-pub async fn health_handler(
-    State(state): State<AppState>,
-) -> Json<crate::api_types::ServiceHealthResponse> {
+pub async fn health_handler() -> Json<crate::api_types::ServiceHealthResponse> {
     Json(crate::api_types::ServiceHealthResponse {
         ok: true,
         service: "vibearound-server",
         version: env!("CARGO_PKG_VERSION"),
-        channel_outbox_pending: state.channel_hub.outbox_pending_count(),
+        channel_outbox_pending: 0,
     })
 }
 

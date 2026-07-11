@@ -22,6 +22,7 @@ use va_client::workspaces::WorkspaceItem;
 
 fn channel(kind: &str) -> ChannelRuntime {
     ChannelRuntime {
+        instance_id: kind.into(),
         kind: kind.into(),
         version: Some("0.1.0".into()),
         plugin_dir: None,
@@ -1206,7 +1207,7 @@ async fn slash_resume_sends_direct_resume_with_context() {
     assert_eq!(app.work_status, None);
     assert_eq!(app.turn_started_at, None);
     assert_eq!(app.chat_state.session_id, None);
-    assert_eq!(app.chat_state.turn_active, false);
+    assert!(!app.chat_state.turn_active);
     assert_eq!(app.chat_state.pending_permission_request_id, None);
     assert_eq!(app.chat_state.pending_permission, None);
     assert!(app.chat_state.system_messages.is_empty());

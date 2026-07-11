@@ -10,7 +10,7 @@ Expose core's managers over the wire and own daemon composition: `ServerDaemon::
 
 | Submodule | Role |
 |---|---|
-| `lib.rs` (`ServerDaemon`, `RunningDaemon`) | Boot sequence, 64 sharded input workers, orphan sweep, graceful shutdown, Windows bind retry |
+| `lib.rs` (`ServerDaemon`, `RunningDaemon`) | Boot sequence, channel input dispatcher, orphan sweep, ingress-first graceful shutdown, Windows bind retry |
 | `web_server/mod.rs` | Router assembly: protected vs open routes, body limits, SPA fallback |
 | `web_server/api/` | REST handlers per domain (sessions, workspaces, profiles, launcher, previews, settings, files, runtime) |
 | `ws_pty` / `ws_chat` / `ws_domains` | The three WebSocket families: terminal bytes, chat events, live-state snapshots |
@@ -32,19 +32,19 @@ Expose core's managers over the wire and own daemon composition: `ServerDaemon::
 
 1. **Route protection layout**: everything is token-gated except the deliberate open set (SPA shell/assets, share previews, pairing entry). New routes default to protected; adding an open route is a security-model change.
 2. **Local-bridge gate on model surfaces**: local-api / local-agent / legacy bridge routes must stay loopback-only and outside the tunnel's reach.
-3. **Shutdown order matters** (`RunningDaemon::stop`): threads → channel hub → search → `kill_all` → previews → PTYs → listeners with timeout. New subsystems must slot into this sequence, not bolt on.
+3. **Shutdown order matters** (`RunningDaemon::stop`): stop accepting Web/input → drain `ConversationIngress` → stop channel-owned processes → stop workspace hosts/search → safety-net registry kill → previews/PTY/listeners. A queued prompt must never run after workspace teardown.
 4. **`ws_domains` protocol is snapshot-replace** — clients treat the last message as the state; do not introduce incremental diffs on these endpoints (that is what the design rejects to avoid schema drift).
 5. Handlers stay thin: parse, call core, serialize. Business rules belong in core.
 
 ## Known debt
 
-- `ws_chat.rs` (1.7k lines) mixes codec with session-intent side effects that bypass queue ordering — remediation M6.
-- REST handlers + Tauri IPC + va-client + client-ts are four hand-maintained mirrors of one contract — remediation H3 (desktop → HTTP, schemars type generation).
-- Server-side test density is thin relative to core — tracked as remediation L11.
+- `ws_chat.rs` is smaller after parser/event extraction, but session-intent side effects still happen before route-lane ordering and can interleave across WebSocket connections.
+- REST handlers + Tauri IPC + va-client + client-ts remain hand-maintained mirrors of one control-plane contract.
+- Server unit tests are broad; cross-surface contract fixtures and concurrent lifecycle fault tests remain thin.
 
 ---
 
-*Source anchors: `src/server/src/lib.rs`, `src/server/src/web_server/` (all submodules above), `reports/architecture-review-remediation-2026-07-04.md` (M6, H3, L11).*
-*Last verified: v0.7.11*
+*Source anchors: `src/server/src/lib.rs`, `src/server/src/web_server/` (all submodules above).*
+*Last verified: `codex/im-acp-route-refactor` at `0ba7fa2e` (2026-07-11).*
 
 <sub>[◀ Module: auth](auth.md) · [Documentation index](../../README.md) · [Launch subsystem ▶](../launch.md)</sub>

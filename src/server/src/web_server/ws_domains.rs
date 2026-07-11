@@ -58,6 +58,7 @@ async fn build_channels(
         .await
         .into_iter()
         .map(|s| crate::api_types::ChannelRuntime {
+            instance_id: s.instance_id,
             kind: s.kind,
             version: s.version,
             plugin_dir: s.plugin_dir.map(|path| path.to_string_lossy().into_owned()),
@@ -199,17 +200,10 @@ async fn build_agents_runtime(
                 )
             })
             .unwrap_or((None, None, None));
-        let (route_key, channel_kind, chat_id) = match entry.route {
-            Some(route) => (
-                route.as_key(),
-                route.channel_kind.clone(),
-                route.chat_id.clone(),
-            ),
-            None => (
-                st.thread_id.to_string(),
-                "workspace".to_string(),
-                st.thread_id.to_string(),
-            ),
+        let route_key = st.thread_id.to_string();
+        let (channel_kind, chat_id) = match entry.route {
+            Some(route) => (route.channel_kind.clone(), route.chat_id.clone()),
+            None => ("workspace".to_string(), st.thread_id.to_string()),
         };
         let profile = st.host_binding.profile_id.clone();
         let profile_label = crate::api_types::agent_profile_label(profile.as_deref());

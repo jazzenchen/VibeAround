@@ -13,7 +13,7 @@ use crate::theme::{muted_style, ACTION, ERROR, NEUTRAL, OK, WARN};
 pub(super) fn channel_row(channel: &ChannelRuntime) -> Vec<Span<'static>> {
     let mut spans = vec![
         Span::styled(
-            fixed(&channel.kind, 14),
+            fixed(&channel.instance_id, 14),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         status_span(
@@ -197,6 +197,7 @@ mod tests {
 
     fn channel(kind: &str) -> ChannelRuntime {
         ChannelRuntime {
+            instance_id: kind.into(),
             kind: kind.into(),
             version: Some("0.1.0".into()),
             plugin_dir: None,

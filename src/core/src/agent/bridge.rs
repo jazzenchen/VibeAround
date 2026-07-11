@@ -30,7 +30,15 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use crate::process::acp_transport::notifying_stdio_transport;
 use crate::process::bridge::{BridgeExit, BridgeFuture, CancelSignal, ProcessBridge, StdioPipes};
 
-use super::runtime::{Agent, AgentClientHandler, AgentReady, StartupSession};
+use super::runtime::{AcpSessionGeneration, Agent, AgentClientHandler, AgentReady, StartupSession};
+
+struct GenerationGuard(AcpSessionGeneration);
+
+impl Drop for GenerationGuard {
+    fn drop(&mut self) {
+        self.0.mark_stopped();
+    }
+}
 
 /// Single-shot bridge that initializes an ACP connection on its own
 /// thread, then runs the IO loop until cancelled or the child exits.
@@ -253,6 +261,9 @@ async fn drive_agent_bridge(
                 startup_session_id.clone(),
                 suppress_startup_notifications,
             );
+            // This guard also runs if the ACP driver cancels this callback,
+            // so liveness cannot remain stuck at `true` on abnormal exit.
+            let _generation_guard = GenerationGuard(agent.generation());
             let ready = AgentReady {
                 agent,
                 startup_session_id,
@@ -279,5 +290,20 @@ async fn drive_agent_bridge(
         Err(error) => BridgeExit::ProtocolError(
             anyhow!(error).context(format!("ACP IO terminated for {}", agent_id)),
         ),
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{AcpSessionGeneration, GenerationGuard};
+
+    #[test]
+    fn dropping_bridge_guard_stops_the_shared_generation() {
+        let generation = AcpSessionGeneration::running();
+        {
+            let _guard = GenerationGuard(generation.clone());
+            assert!(generation.is_live());
+        }
+        assert!(!generation.is_live());
     }
 }

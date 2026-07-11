@@ -69,6 +69,7 @@ demo*/
 .docs/
 .cursorindexingignore
 .superpowers/
+.auth/
 
 # Plugins (managed separately, not committed to main repo)
 src/plugins/

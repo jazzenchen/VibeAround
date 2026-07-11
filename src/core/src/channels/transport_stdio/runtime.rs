@@ -13,56 +13,28 @@ use tokio::sync::mpsc;
 use super::super::ChannelOutput;
 
 #[derive(Debug)]
-pub struct QueuedChannelOutput {
-    pub output_id: Option<String>,
-    pub output: ChannelOutput,
-}
-
-#[derive(Debug)]
 pub struct StdioPluginRuntime {
-    channel_kind: String,
-    output_tx: mpsc::UnboundedSender<QueuedChannelOutput>,
+    instance_id: String,
+    output_tx: mpsc::Sender<ChannelOutput>,
 }
 
 impl StdioPluginRuntime {
-    pub fn new(
-        channel_kind: impl Into<String>,
-        output_tx: mpsc::UnboundedSender<QueuedChannelOutput>,
-    ) -> Self {
+    pub fn new(instance_id: impl Into<String>, output_tx: mpsc::Sender<ChannelOutput>) -> Self {
         Self {
-            channel_kind: channel_kind.into(),
+            instance_id: instance_id.into(),
             output_tx,
         }
     }
 
-    pub fn channel_kind(&self) -> &str {
-        &self.channel_kind
-    }
-
-    pub fn send_output_now(&self, output: ChannelOutput) -> Result<(), String> {
-        self.send_queued_output_now(None, output)
-    }
-
-    pub fn send_queued_output_now(
-        &self,
-        output_id: Option<String>,
-        output: ChannelOutput,
-    ) -> Result<(), String> {
-        self.output_tx
-            .send(QueuedChannelOutput { output_id, output })
-            .map_err(|error| {
-                let message = format!("failed to send output to ACP plugin bridge: {error}");
-                tracing::info!("[{}] {}", self.channel_kind, message);
-                message
-            })
+    pub fn instance_id(&self) -> &str {
+        &self.instance_id
     }
 
     pub async fn send_output(&self, output: ChannelOutput) -> Result<(), String> {
-        self.send_output_now(output)
+        self.output_tx.send(output).await.map_err(|error| {
+            let message = format!("failed to send output to ACP plugin bridge: {error}");
+            tracing::info!("[{}] {}", self.instance_id, message);
+            message
+        })
     }
-
-    /// No-op — lifecycle (cancel + reap) is the supervisor's job now.
-    /// Kept so call sites that iterate `PluginRuntime` variants compile;
-    /// will be removed once `PluginRuntime` is cleaned up.
-    pub async fn shutdown(&self) {}
 }

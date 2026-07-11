@@ -4,7 +4,7 @@ Dashboard 的 Web Chat 里输入的一条消息如何到达 agent。后半段和
 
 ## 连接建立
 
-打开 Web Chat 会建立 `/ws/chat`（token-authenticated）。连接时 server 会：
+打开 Web Chat 会建立 `/va/ws/chat`（token-authenticated）。连接时 server 会：
 
 1. 在 `WebChannelManager` 下以 route 的 chat id 注册连接（一个 thread 多个 tab = 多个 connection，都会收到同样的 fan-out），
 2. 发送 `Config` event（enabled agents、default agent），
@@ -21,12 +21,12 @@ Web channel 是**进程内**的：它不是 stdio plugin，而是在同一个 `P
 | Type | 含义 |
 |---|---|
 | message（可带 `session_intent`、`profile`、`session_mode`） | 一条 prompt，可能附带 launch selection |
-| `stop` | 取消正在执行的 turn † |
+| `stop` | 取消当前 turn，并使同 route 上更早排队的 prompt 失效 |
 | `PermissionResponse` | 点按后的权限卡片（[权限流程](permission.md)） |
 | `SetMode` / `SetConfigOption` | 修改 agent session mode / config option |
 | `ResumeSession` | 把一个原生 CLI session 附着到这个 web thread |
 
-> † 已知缺口：`stop` 目前和 message 走同一个 per-route FIFO queue，所以它只能在正在执行的 turn 结束后才处理。remediation plan 中以 H12 跟踪。
+`stop` 作为优先控制操作进入 `ConversationIngress`：先提升 route lane 的 stop generation，再取消 runtime，因此覆盖“session 已建但 `agent.prompt` 尚未开始”的竞态窗口。
 
 ## Session-intent 步骤
 
@@ -36,7 +36,7 @@ Web channel 是**进程内**的：它不是 stdio plugin，而是在同一个 `P
 - **`Resume { agent, session_id, cwd }`**：把一个已有的原生 CLI session 绑定进 web thread（和 handover pickup 使用同一机制）。
 - **none**：如果 agent/profile selection 有变化，就应用到 route 当前 thread。
 
-随后 message 作为普通 `ChannelInput::Message` 进入所有 channel 共用的 sharded queue；从那里开始，[IM 消息流程](im-message.md) 第 4 到 10 步完全复用，包括同样的 command grammar、thread resolution 和 agent path。
+随后 message 作为普通 `ChannelInput::Message` 进入所有 channel 共用的 `ConversationIngress`；从那里开始，[IM 消息流程](im-message.md) 第 4 到 10 步完全复用。
 
 → `ws_chat.rs` (`WebChatSessionIntent`, `apply_web_launch_selection`), then `src/core/src/channels/prompt/`
 
@@ -52,11 +52,13 @@ Web thread 参与 idle 管理：活动会刷新 route 的 idle deadline；deadli
 
 ## TUI
 
-TUI chat 作为自己的进程内 channel kind（`tui`）注册，使用同一套 WebSocket plugin runtime 机制和 `/ws/chat` contract。本页内容都适用于 TUI，除了浏览器专属的 replay UI。
+TUI chat 作为自己的进程内 channel kind（`tui`）注册，使用同一套 WebSocket plugin runtime 机制和 `/va/ws/chat` contract。Web/TUI 都注册在 channel hub/PluginHost 路由边界，但不是 stdio plugin child，也不由 channel plugin supervisor 纳管。
+
+2026-07-11 已对真实 server + Codex ACP 做 smoke：鉴权负例、同 route 双连接 fan-out、reconnect、`WS_ACP_OK` 流式返回和 session-ready 后立即 Stop 均通过；Stop 用例未泄漏 agent text chunk。
 
 ---
 
 *Source anchors: `src/server/src/web_server/ws_chat.rs` (socket loop, intents, events), `src/core/src/channels/transport_websocket.rs` (WebChannelManager, idle), `src/server/src/lib.rs` (web/tui channel registration, dispatch task).*
-*Last verified: v0.7.11*
+*Last verified: `codex/im-acp-route-refactor` at `0ba7fa2e`（2026-07-11）。*
 
 <sub>[◀ Flow: IM 消息](im-message.md) · [文档索引](../../README.md) · [Flow: 权限请求 ▶](permission.md)</sub>

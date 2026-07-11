@@ -249,12 +249,16 @@ export const ChannelStatusSchema = z.enum(CHANNEL_STATUS_VALUES);
 export type ChannelStatus = z.infer<typeof ChannelStatusSchema>;
 
 export const ChannelRuntimeSchema = z.object({
+  instance_id: z.string().optional(),
   kind: z.string(),
   version: z.string().nullable().optional().default(null),
   plugin_dir: z.string().nullable().optional().default(null),
   status: ChannelStatusSchema,
   reason: z.string().nullable(),
-});
+}).transform((runtime) => ({
+  ...runtime,
+  instance_id: runtime.instance_id ?? runtime.kind,
+}));
 export type ChannelRuntime = z.infer<typeof ChannelRuntimeSchema>;
 export const ChannelRuntimeListSchema = z.array(ChannelRuntimeSchema);
 

@@ -34,7 +34,7 @@ phone IM chat ──3─ /pickup CODE ──4─► consume ──5─► attach
 |---|---|
 | Web → phone | Dashboard 为 web thread 的 session 签发 code；pickup 完全相同 |
 | 聊天里的 `/session --switch <id>` | 跳过 code：直接把发现到的 native session 绑定到聊天 route |
-| Web chat “Resume” picker | 同样的 binding，但由 `/ws/chat` 上的 `ResumeSession` intent 驱动，而不是命令 |
+| Web chat “Resume” picker | 同样的 binding，但由 `/va/ws/chat` 上的 `ResumeSession` intent 驱动，而不是命令 |
 
 三者最终都汇到 `attach_external_session`：同一条 binding 路径，三个入口。
 

@@ -888,7 +888,7 @@ mod tests {
             render.env.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str),
             Some("{{api_key}}")
         );
-        assert!(render.env.get("ANTHROPIC_API_KEY").is_none());
+        assert!(!render.env.contains_key("ANTHROPIC_API_KEY"));
         assert_eq!(
             token_global.auth_modes[0].fields[0].label.as_str(),
             "MiniMax Subscription Key"
@@ -955,14 +955,14 @@ mod tests {
         assert!(!payg.append_v1_path);
         assert_eq!(payg.default_base_url, "https://api.xiaomimimo.com/v1");
         assert!(payg.capabilities.content.web_search);
-        for (endpoint_id, base_url) in
-            [("token-plan-cn", "https://token-plan-cn.xiaomimimo.com/v1")]
-        {
-            let endpoint = find_endpoint(provider, "openai-chat", Some(endpoint_id))
-                .unwrap_or_else(|| panic!("mimo token-plan endpoint {endpoint_id}"));
-            assert_eq!(endpoint.default_base_url, base_url);
-            assert!(!endpoint.append_v1_path);
-        }
+        let endpoint_id = "token-plan-cn";
+        let endpoint = find_endpoint(provider, "openai-chat", Some(endpoint_id))
+            .unwrap_or_else(|| panic!("mimo token-plan endpoint {endpoint_id}"));
+        assert_eq!(
+            endpoint.default_base_url,
+            "https://token-plan-cn.xiaomimimo.com/v1"
+        );
+        assert!(!endpoint.append_v1_path);
         assert!(find_endpoint(provider, "openai-chat", Some("token-plan-sgp")).is_none());
         assert!(find_endpoint(provider, "openai-chat", Some("token-plan-ams")).is_none());
         assert_eq!(

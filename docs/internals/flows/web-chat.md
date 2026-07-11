@@ -4,7 +4,7 @@ How a message typed in the dashboard's Web Chat reaches an agent. The back half 
 
 ## Connection setup
 
-Opening Web Chat establishes `/ws/chat` (token-authenticated). On connect the server:
+Opening Web Chat establishes `/va/ws/chat` (token-authenticated). On connect the server:
 
 1. registers the connection with the `WebChannelManager` under the route's chat id (multiple tabs on one thread = multiple connections, all receiving the same fan-out),
 2. sends a `Config` event (enabled agents, default agent),
@@ -12,7 +12,7 @@ Opening Web Chat establishes `/ws/chat` (token-authenticated). On connect the se
 
 → `src/server/src/web_server/ws_chat.rs`, `src/core/src/channels/transport_websocket.rs`
 
-The web channel is **in-process**: instead of a stdio plugin there is a `WebSocketPluginRuntime` registered in the same `PluginHost` table the stdio plugins use — one outbound routing mechanism for all surfaces.
+The web channel is **in-process**: instead of a stdio plugin there is a `WebSocketPluginRuntime` registered in the same `PluginHost` table the stdio plugins use — one outbound routing mechanism for all surfaces. Web and TUI are therefore registered at the channel-hub/host boundary for routing, but they are not `ChannelPluginRunner` children and are not managed as channel plugin processes.
 
 ## Inbound message shapes
 
@@ -21,12 +21,12 @@ The browser sends typed JSON, not bare text. The main ones:
 | Type | Meaning |
 |---|---|
 | message (+ optional `session_intent`, `profile`, `session_mode`) | A prompt, possibly with launch selection attached |
-| `stop` | Cancel the in-flight turn † |
+| `stop` | Cancel the active turn and invalidate older queued prompts on the route |
 | `PermissionResponse` | A tapped permission card ([permission flow](permission.md)) |
 | `SetMode` / `SetConfigOption` | Change agent session mode / config option |
 | `ResumeSession` | Attach a native CLI session to this web thread |
 
-> † Known gap: `stop` currently travels through the same per-route FIFO queue as messages, so it is only processed after the in-flight turn finishes. Tracked as H12 in the remediation plan.
+`message` and `stop` first enter the same `ChannelManager` FIFO, so Stop cannot overtake a prompt that is still waiting upstream. Inside `ConversationIngress`, Stop becomes a route-lane control operation: it increments the lane's stop generation before calling runtime cancel, covering both a queued prompt and the race where a session exists but `agent.prompt` has not started yet.
 
 ## The session-intent step
 
@@ -36,7 +36,7 @@ This is the web-specific part. Before dispatching the prompt, the socket handler
 - **`Resume { agent, session_id, cwd }`** — bind an existing native CLI session into the web thread (same mechanism as handover pickup).
 - **none** — apply agent/profile selection to the route's current thread if it changed.
 
-Then the message is enqueued as a normal `ChannelInput::Message` into the same sharded queue every channel uses, and from there the [IM message flow](im-message.md) steps 4–10 apply unchanged — same command grammar, same thread resolution, same agent path.
+Then the message is enqueued as a normal `ChannelInput::Message` into the same `ConversationIngress` every channel uses, and from there the [IM message flow](im-message.md) steps 4–10 apply unchanged — same route lane, command grammar, thread resolution and agent path.
 
 → `ws_chat.rs` (`WebChatSessionIntent`, `apply_web_launch_selection`), then `src/core/src/channels/prompt/`
 
@@ -52,11 +52,22 @@ Web threads participate in idle management: activity bumps the route's idle dead
 
 ## TUI
 
-The TUI chat registers as its own in-process channel kind (`tui`) over the same WebSocket plugin runtime mechanism and `/ws/chat` contract — everything on this page applies to it except the browser-specific replay UI.
+The TUI chat registers as its own in-process channel kind (`tui`) over the same WebSocket plugin runtime mechanism and `/va/ws/chat` contract — everything on this page applies to it except the browser-specific replay UI.
+
+## Verified smoke path
+
+The 2026-07-11 refactor was exercised against a real standalone server and Codex ACP adapter:
+
+- invalid token rejected with HTTP 401; authenticated non-upgrade request reached the WebSocket route and returned 400,
+- two sockets on one route received the same `/help` system text and `PromptDone`, then reconnect succeeded,
+- a real Codex ACP turn produced `AgentReady`, `SessionReady`, streamed `WS_ACP_OK`, `PromptDone`, and inactive turn status,
+- Stop sent immediately after `SessionReady` produced `PromptDone` and no agent text chunks,
+- a same-socket Message followed immediately by Stop (without waiting for `SessionReady`) preserved FIFO order, produced `PromptDone`, and emitted zero agent message chunks.
+- a real two-turn Codex conversation reused one ACP session and recalled a token supplied only in the first turn.
 
 ---
 
 *Source anchors: `src/server/src/web_server/ws_chat.rs` (socket loop, intents, events), `src/core/src/channels/transport_websocket.rs` (WebChannelManager, idle), `src/server/src/lib.rs` (web/tui channel registration, dispatch task).*
-*Last verified: v0.7.11*
+*Last verified: `codex/im-acp-route-refactor` at `4ef19537` (2026-07-11).*
 
 <sub>[◀ Flow: IM message](im-message.md) · [Documentation index](../../README.md) · [Flow: permission request ▶](permission.md)</sub>
