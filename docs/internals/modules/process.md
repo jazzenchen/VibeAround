@@ -35,6 +35,7 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 6. Heartbeat watchdog applies to plugins only; agents crash loudly by design (`Never`) so the owning thread decides.
 7. A watchdog restart uses the same bounded stop path as a manual restart: cancel, tree-reap, wait, then abort a stubborn bridge before the replacement generation can publish.
 8. Repeated `OnCrash` failures back off exponentially from the configured delay to five minutes. A heartbeat or manual start/restart resets the failure budget.
+9. Stop is higher priority than restart: if another lifecycle operation owns cleanup, Stop/shutdown waits, re-acquires the barrier, publishes `Stopped`, and reaps any replacement that raced publication. Waiting alone is never treated as a successful stop.
 
 ## Known debt
 
@@ -46,6 +47,6 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 ---
 
 *Source anchors: `src/core/src/process/` (supervisor, supervisor/model, supervisor/generation, bridge, registry, acp_transport, env, kill, log).*
-*Last verified: `codex/im-acp-route-refactor` at `2c84f501` (2026-07-11).*
+*Last verified: `codex/im-acp-route-refactor` at `de10c0e0` (2026-07-11).*
 
 <sub>[◀ Module: workspace](workspace.md) · [Documentation index](../../README.md) · [Module: agent ▶](agent.md)</sub>

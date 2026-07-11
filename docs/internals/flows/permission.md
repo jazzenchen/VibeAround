@@ -36,6 +36,7 @@ The no-timeout design needs cleanup guarantees instead:
 | Situation | Guarantee |
 |---|---|
 | Plugin process dies while a card is pending | The dying bridge calls `cancel_channel_permissions(kind)` exactly once — pending senders are dropped, `rx.await` errors, the handler answers the agent with **Cancelled** |
+| User sends channel `/stop` while a card is pending | The prompt completes with ACP `Cancelled`; the SDK resolves the stale permission through its safest reject option and removes both callback indexes, so the next text cannot be swallowed as an answer to an old card |
 | Daemon shutdown | `PluginHost::shutdown_all` clears the whole table first, same cancellation path |
 | Tap for an already-resolved request | `respond_permission` finds nothing and returns "no longer pending" — the second tap is a no-op, not a double-approve |
 | Tap from the wrong channel | Channel-kind check re-inserts the entry and rejects the response |
