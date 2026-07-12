@@ -151,7 +151,7 @@ pub(super) enum ProcessCommand {
     },
     Restart {
         apply_backoff: bool,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<super::ProcessResult<()>>,
     },
     BridgeExited {
         generation_id: u64,

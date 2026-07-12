@@ -65,7 +65,7 @@ impl ProcessOwner {
 
     pub(super) async fn run(mut self, start_immediately: bool) {
         if start_immediately {
-            self.spawn_generation();
+            let _ = self.spawn_generation();
         }
         while let Some(command) = self.command_rx.recv().await {
             match command {
@@ -91,8 +91,8 @@ impl ProcessOwner {
                     apply_backoff,
                     reply,
                 } => {
-                    self.restart(apply_backoff).await;
-                    let _ = reply.send(());
+                    let result = self.restart(apply_backoff).await;
+                    let _ = reply.send(result);
                 }
                 ProcessCommand::BridgeExited {
                     generation_id,
@@ -113,9 +113,11 @@ impl ProcessOwner {
 
     async fn tick(&mut self, now: u64) {
         match self.state.status {
-            ProcessStatus::NotStarted => self.spawn_generation(),
+            ProcessStatus::NotStarted => {
+                let _ = self.spawn_generation();
+            }
             ProcessStatus::Crashed if self.next_spawn_at != 0 && now >= self.next_spawn_at => {
-                self.spawn_generation();
+                let _ = self.spawn_generation();
             }
             ProcessStatus::Running => {
                 if let Some(watchdog) = self.policy.watchdog() {
@@ -127,7 +129,7 @@ impl ProcessOwner {
                             event = "watchdog_fired",
                             heartbeat_age_secs = now.saturating_sub(self.last_heartbeat_ts)
                         );
-                        self.restart(true).await;
+                        let _ = self.restart(true).await;
                     }
                 }
             }
@@ -147,7 +149,7 @@ impl ProcessOwner {
         self.consecutive_failures = 0;
         self.next_spawn_at = 0;
         self.set_state(ProcessStatus::Crashed, "started by user");
-        self.spawn_generation();
+        let _ = self.spawn_generation();
     }
 
     async fn stop(&mut self, reason: &str) {
@@ -157,11 +159,11 @@ impl ProcessOwner {
         self.remove_if_terminal();
     }
 
-    async fn restart(&mut self, apply_backoff: bool) {
+    async fn restart(&mut self, apply_backoff: bool) -> ProcessResult<()> {
         if self.state.status == ProcessStatus::Stopped
             && matches!(self.policy, RestartPolicy::Never)
         {
-            return;
+            return Ok(());
         }
         self.stop_active().await;
         let delay = if apply_backoff {
@@ -180,18 +182,20 @@ impl ProcessOwner {
             },
         );
         if delay.is_zero() {
-            self.spawn_generation();
+            self.spawn_generation()
+        } else {
+            Ok(())
         }
     }
 
-    fn spawn_generation(&mut self) {
+    fn spawn_generation(&mut self) -> ProcessResult<()> {
         if self.active.is_some()
             || !matches!(
                 self.state.status,
                 ProcessStatus::NotStarted | ProcessStatus::Crashed
             )
         {
-            return;
+            return Ok(());
         }
         self.next_spawn_at = 0;
         self.set_state(ProcessStatus::Spawning, "spawning");
@@ -229,6 +233,7 @@ impl ProcessOwner {
                     label = self.process.label,
                     event = "running"
                 );
+                Ok(())
             }
             Err(error) => {
                 let reason = format!("spawn failed: {error}");
@@ -245,6 +250,7 @@ impl ProcessOwner {
                     event = "spawn_failed",
                     error = %reason
                 );
+                Err(error)
             }
         }
     }

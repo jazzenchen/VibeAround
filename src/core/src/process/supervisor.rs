@@ -317,8 +317,8 @@ impl ProcessManager {
                         let _ = reply.send(Err(unknown_process(id)));
                     } else {
                         tokio::spawn(async move {
-                            let _ = done.await;
-                            let _ = reply.send(Ok(()));
+                            let result = done.await.unwrap_or_else(|_| Err(unknown_process(id)));
+                            let _ = reply.send(result);
                         });
                     }
                 }

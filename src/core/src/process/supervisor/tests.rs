@@ -102,6 +102,27 @@ fn cat_spec() -> SpawnSpec {
     SpawnSpec::new("cat")
 }
 
+#[tokio::test]
+async fn force_restart_reports_spawn_failure() {
+    let registry = Arc::new(ChildRegistry::new());
+    let supervisor = Supervisor::new(registry);
+    let id = supervisor.register(
+        ProcessKind::ChannelPlugin,
+        "missing-program",
+        SpawnSpec::new("vibearound-program-that-does-not-exist"),
+        RestartPolicy::OnCrash {
+            restart_delay: Duration::from_secs(30),
+            watchdog: None,
+        },
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+    wait_for_status(&supervisor, id, ProcessStatus::Crashed).await;
+
+    let error = supervisor.force_restart(id).await.unwrap_err();
+
+    assert!(error.to_string().contains("failed to spawn"));
+}
+
 async fn wait_for_status(supervisor: &Supervisor, id: ProcessId, expected: ProcessStatus) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
