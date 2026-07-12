@@ -1,6 +1,6 @@
 use super::*;
 use crate::process::bridge::{BridgeExit, CancelSignal, ProcessBridge, StdioPipes};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -78,6 +78,31 @@ struct PendingBridge {
     dropped: Arc<AtomicUsize>,
 }
 
+#[cfg(unix)]
+struct CapturePidThenCleanBridge {
+    pid: Arc<AtomicU32>,
+}
+
+#[cfg(unix)]
+impl ProcessBridge for CapturePidThenCleanBridge {
+    fn run(
+        self: Box<Self>,
+        pipes: StdioPipes,
+        _cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move {
+            use tokio::io::AsyncBufReadExt;
+
+            let mut line = String::new();
+            let mut stdout = tokio::io::BufReader::new(pipes.stdout);
+            stdout.read_line(&mut line).await.unwrap();
+            self.pid
+                .store(line.trim().parse().unwrap(), Ordering::Release);
+            BridgeExit::Clean
+        })
+    }
+}
+
 impl ProcessBridge for PendingBridge {
     fn run(
         self: Box<Self>,
@@ -102,6 +127,31 @@ fn cat_spec() -> SpawnSpec {
     SpawnSpec::new("cat")
 }
 
+#[test]
+fn restart_delay_backs_off_and_caps() {
+    let base = Duration::from_secs(30);
+    assert_eq!(
+        generation::restart_delay_for_failure(base, 1),
+        Duration::from_secs(30)
+    );
+    assert_eq!(
+        generation::restart_delay_for_failure(base, 2),
+        Duration::from_secs(60)
+    );
+    assert_eq!(
+        generation::restart_delay_for_failure(base, 4),
+        Duration::from_secs(240)
+    );
+    assert_eq!(
+        generation::restart_delay_for_failure(base, 5),
+        MAX_RESTART_DELAY
+    );
+    assert_eq!(
+        generation::restart_delay_for_failure(base, u32::MAX),
+        MAX_RESTART_DELAY
+    );
+}
+
 #[tokio::test]
 async fn force_restart_reports_spawn_failure() {
     let registry = Arc::new(ChildRegistry::new());
@@ -121,6 +171,62 @@ async fn force_restart_reports_spawn_failure() {
     let error = supervisor.force_restart(id).await.unwrap_err();
 
     assert!(error.to_string().contains("failed to spawn"));
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bridge_exit_terminates_helper_process_group() {
+    let registry = Arc::new(ChildRegistry::new());
+    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let helper_pid = Arc::new(AtomicU32::new(0));
+    let captured_pid = Arc::clone(&helper_pid);
+    let id = supervisor.register(
+        ProcessKind::ChannelPlugin,
+        "helper-tree-reap",
+        SpawnSpec::new("sh").args(["-c", "sleep 60 & echo $!; wait"]),
+        RestartPolicy::Never,
+        Box::new(move || {
+            Box::new(CapturePidThenCleanBridge {
+                pid: Arc::clone(&captured_pid),
+            })
+        }),
+    );
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let child_pid = loop {
+        let child_pid = helper_pid.load(Ordering::Acquire);
+        if child_pid != 0 {
+            break child_pid;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "bridge did not report the helper pid"
+        );
+        tokio::task::yield_now().await;
+    };
+    wait_for_absent(&supervisor, id).await;
+    assert_ne!(child_pid, 0, "bridge should capture the helper pid");
+    assert_eq!(registry.len(), 0);
+
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+    let mut alive = true;
+    for _ in 0..50 {
+        let mut system = System::new_with_specifics(
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+        );
+        system.refresh_processes(ProcessesToUpdate::All, true);
+        alive = system.process(Pid::from_u32(child_pid)).is_some();
+        if !alive {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    if alive {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &child_pid.to_string()])
+            .status();
+    }
+    assert!(!alive, "bridge exit left helper pid {child_pid} alive");
 }
 
 async fn wait_for_status(supervisor: &Supervisor, id: ProcessId, expected: ProcessStatus) {

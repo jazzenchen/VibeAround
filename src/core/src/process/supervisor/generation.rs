@@ -440,9 +440,7 @@ impl ProcessOwner {
             return Duration::ZERO;
         };
         self.consecutive_failures = self.consecutive_failures.saturating_add(1);
-        let exponent = self.consecutive_failures.saturating_sub(1).min(16);
-        base.saturating_mul(1_u32 << exponent)
-            .min(MAX_RESTART_DELAY)
+        restart_delay_for_failure(base, self.consecutive_failures)
     }
 
     fn set_state(&mut self, status: ProcessStatus, reason: impl Into<String>) {
@@ -465,4 +463,10 @@ impl ProcessOwner {
                 .send(ManagerCommand::Remove(Arc::clone(&self.process)));
         }
     }
+}
+
+pub(super) fn restart_delay_for_failure(base: Duration, failure: u32) -> Duration {
+    let exponent = failure.saturating_sub(1).min(16);
+    base.saturating_mul(1_u32 << exponent)
+        .min(MAX_RESTART_DELAY)
 }
