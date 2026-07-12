@@ -401,19 +401,20 @@ impl ProcessOwner {
     async fn terminate_and_reap(&self, registry_id: u64) -> Option<std::process::ExitStatus> {
         let mut child = self.registry.remove(registry_id)?;
         let root_pid = child.id();
-        let observed_status = match child.try_wait() {
-            Ok(status) => status,
-            Err(error) => {
-                proc_log!(
-                    warn,
-                    kind = self.process.kind,
-                    label = self.process.label,
-                    event = "child_status_read_failed",
-                    error = %error
-                );
-                None
-            }
-        };
+        let observed_status =
+            match kill::wait_for_exit_within(&mut child, CHILD_EXIT_OBSERVATION_TIMEOUT).await {
+                Ok(status) => status,
+                Err(error) => {
+                    proc_log!(
+                        warn,
+                        kind = self.process.kind,
+                        label = self.process.label,
+                        event = "child_status_read_failed",
+                        error = %error
+                    );
+                    None
+                }
+            };
         if let Err(error) = kill::terminate_child_tree(&mut child, root_pid).await {
             proc_log!(
                 warn,

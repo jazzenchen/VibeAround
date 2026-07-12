@@ -28,6 +28,7 @@ pub const TICK_INTERVAL: Duration = Duration::from_secs(5);
 const BRIDGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const BRIDGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
+const CHILD_EXIT_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(50);
 const MAX_RESTART_DELAY: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
