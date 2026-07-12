@@ -233,9 +233,8 @@ pub async fn kill_agent_handler(
         AgentControlResolution::Ambiguous => {
             return (
                 StatusCode::CONFLICT,
-                format!(
-                    "Agent route matches multiple runtimes; use the workspace thread id from /api/agents/runtime"
-                ),
+                "Agent route matches multiple runtimes; use the workspace thread id from /api/agents/runtime"
+                    .to_string(),
             );
         }
     };
