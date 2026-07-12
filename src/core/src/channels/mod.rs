@@ -249,7 +249,7 @@ impl ChannelManager {
         self.plugin_host.send_output(output);
     }
 
-    pub fn respond_permission(
+    pub async fn respond_permission(
         &self,
         channel_instance_id: &str,
         request_id: &str,
@@ -257,6 +257,7 @@ impl ChannelManager {
     ) -> Result<(), String> {
         self.plugin_host
             .respond_permission(channel_instance_id, request_id, response)
+            .await
     }
 
     pub async fn shutdown_all(&self) {
@@ -266,6 +267,6 @@ impl ChannelManager {
         if let Some(monitor) = monitor {
             monitor.shutdown_all().await;
         }
-        self.plugin_host.shutdown_all();
+        self.plugin_host.shutdown_all().await;
     }
 }

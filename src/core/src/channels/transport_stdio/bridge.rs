@@ -316,7 +316,7 @@ mod tests {
         host.replace_stdio_runtime("slack-work", Arc::clone(&old_runtime));
         let cleanup = BridgeCleanup::new(Arc::clone(&host), "slack-work".to_string(), old_runtime);
 
-        let (permission_tx, mut permission_rx) = oneshot::channel();
+        let (permission_tx, permission_rx) = oneshot::channel();
         host.register_pending_permission(
             "permission-1".to_string(),
             ["slack-work".to_string()],
@@ -329,10 +329,7 @@ mod tests {
 
         drop(cleanup);
 
-        assert!(matches!(
-            permission_rx.try_recv(),
-            Err(oneshot::error::TryRecvError::Closed)
-        ));
+        assert!(permission_rx.await.is_err());
         let output = ChannelOutput::SystemText {
             route: RouteKey::with_bot_id("slack", "slack-work", "chat-1"),
             text: "still routed".to_string(),

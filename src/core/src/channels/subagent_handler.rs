@@ -380,6 +380,7 @@ mod tests {
             acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled);
         plugin_host
             .respond_permission("web", &request_id, response.clone())
+            .await
             .unwrap();
         assert_eq!(permission_task.await.unwrap().unwrap(), response);
     }
@@ -422,6 +423,7 @@ mod tests {
                 &request_id,
                 acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
             )
+            .await
             .is_err());
     }
 

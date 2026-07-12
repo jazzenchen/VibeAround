@@ -308,11 +308,15 @@ async fn handle_chat_socket(
                             response,
                         } => {
                             state.web_channel.clear_pending_permission(&request_id);
-                            if let Err(error) = state.channel_hub.respond_permission(
-                                &active_route.channel_kind,
-                                &request_id,
-                                response,
-                            ) {
+                            if let Err(error) = state
+                                .channel_hub
+                                .respond_permission(
+                                    &active_route.channel_kind,
+                                    &request_id,
+                                    response,
+                                )
+                                .await
+                            {
                                 tracing::warn!(
                                     request_id = %request_id,
                                     error = %error,

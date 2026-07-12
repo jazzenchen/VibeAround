@@ -544,6 +544,7 @@ mod tests {
                 "request-1",
                 acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
             )
+            .await
             .is_err());
     }
 
@@ -584,6 +585,7 @@ mod tests {
                 &request_id,
                 acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
             )
+            .await
             .is_err());
     }
 
