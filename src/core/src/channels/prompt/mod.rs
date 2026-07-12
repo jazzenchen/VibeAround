@@ -142,7 +142,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn test_ingress() -> Arc<ConversationIngress> {
+    fn test_ingress_with_manager() -> (Arc<ConversationIngress>, Arc<WorkspaceThreadManager>) {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let base =
@@ -154,7 +154,17 @@ mod tests {
         );
         let (input_tx, _input_rx) = mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx));
-        Arc::new(ConversationIngress::new(workspace_threads, plugin_host))
+        (
+            Arc::new(ConversationIngress::new(
+                Arc::clone(&workspace_threads),
+                plugin_host,
+            )),
+            workspace_threads,
+        )
+    }
+
+    fn test_ingress() -> Arc<ConversationIngress> {
+        test_ingress_with_manager().0
     }
 
     fn test_ingress_with_output() -> (
@@ -423,6 +433,76 @@ mod tests {
         assert!(active_done.await.is_err(), "active work survived stop");
         assert!(queued_done.await.is_err(), "queued work survived stop");
         assert!(release.send(()).is_err(), "active work was not dropped");
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
+    async fn stop_without_a_lane_cancels_the_attached_runtime() {
+        let (ingress, workspace_threads) = test_ingress_with_manager();
+        let route = RouteKey::new("web", "attached-chat");
+        let runtime = workspace_threads
+            .resolve_route_runtime(&route)
+            .await
+            .unwrap();
+        let active_turn = runtime.active_turn_target();
+        let _target_guard = active_turn.install(ChannelTarget::for_route(route.clone()));
+        let (_, mut cancelled) = active_turn
+            .current_with_cancellation()
+            .expect("active turn target");
+
+        assert_eq!(ingress.active_lane_count(), 0);
+        ingress.dispatch(ChannelInput::Stop { route });
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            cancelled.wait_for(|cancelled| *cancelled),
+        )
+        .await
+        .expect("no-lane stop did not reach the attached runtime")
+        .expect("active turn cancellation sender closed");
+    }
+
+    #[tokio::test]
+    async fn close_bypasses_an_occupied_route_lane() {
+        let (ingress, workspace_threads) = test_ingress_with_manager();
+        let route = RouteKey::new("web", "close-chat");
+        workspace_threads
+            .resolve_route_runtime(&route)
+            .await
+            .unwrap();
+        let (started, started_rx) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let active_done = ingress
+            .enqueue_probe(route.clone(), async move {
+                let _ = started.send(());
+                let _ = release_rx.await;
+            })
+            .unwrap();
+        started_rx.await.unwrap();
+
+        ingress.dispatch(ChannelInput::Close {
+            route: route.clone(),
+            reason: Some("user closed".to_string()),
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if workspace_threads
+                    .current_attachment(&route)
+                    .await
+                    .unwrap()
+                    .is_none()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("close waited behind the occupied route lane");
+
+        release.send(()).unwrap();
+        active_done.await.unwrap();
         wait_for_lanes_to_drain(&ingress).await;
     }
 

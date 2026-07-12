@@ -152,7 +152,7 @@ impl ConversationIngress {
             .unwrap_or_else(|_| Err(acp::Error::new(-32603, "conversation route stopped")))
     }
 
-    /// Dispatch a channel command. Stop and log records bypass route queues;
+    /// Dispatch a channel command. Stop, Close, and log records bypass route queues;
     /// every other command is accepted into the route's bounded FIFO lane.
     pub fn dispatch(self: &Arc<Self>, input: ChannelInput) {
         match &input {
@@ -161,7 +161,22 @@ impl ConversationIngress {
                     // The active lane performs the actual runtime cancel before
                     // it can run a command from the next route generation.
                     lane.stop();
+                } else {
+                    let workspace_threads = Arc::clone(&self.workspace_threads);
+                    let route = route.clone();
+                    tokio::spawn(async move {
+                        let _ = workspace_threads.cancel_route(&route).await;
+                    });
                 }
+                return;
+            }
+            ChannelInput::Close { route, reason } => {
+                let workspace_threads = Arc::clone(&self.workspace_threads);
+                let route = route.clone();
+                let reason = reason.clone();
+                tokio::spawn(async move {
+                    let _ = workspace_threads.close_route(&route, reason).await;
+                });
                 return;
             }
             ChannelInput::Log { level, message } => {
@@ -365,9 +380,6 @@ impl ConversationIngress {
             } => {
                 self.handle_prompt_input(envelope, action_value).await;
             }
-            ChannelInput::Close { route, reason } => {
-                let _ = self.workspace_threads.close_route(&route, reason).await;
-            }
             ChannelInput::SwitchAgent { route, agent_kind } => {
                 send_system_text(
                     &self.plugin_host,
@@ -375,10 +387,7 @@ impl ConversationIngress {
                     &format!("Use /switch host {} with workspace threads.", agent_kind),
                 );
             }
-            ChannelInput::Stop { route } => {
-                let _ = self.workspace_threads.cancel_route(&route).await;
-            }
-            ChannelInput::Log { .. } => {}
+            ChannelInput::Stop { .. } | ChannelInput::Close { .. } | ChannelInput::Log { .. } => {}
         }
     }
 
