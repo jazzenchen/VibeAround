@@ -158,15 +158,10 @@ impl ConversationIngress {
         match &input {
             ChannelInput::Stop { route } => {
                 if let Some(lane) = self.lanes.get(route) {
+                    // The active lane performs the actual runtime cancel before
+                    // it can run a command from the next route generation.
                     lane.stop();
                 }
-                let workspace_threads = Arc::clone(&self.workspace_threads);
-                let route = route.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = workspace_threads.cancel_route(&route).await {
-                        tracing::debug!(%route, %error, "failed to cancel route");
-                    }
-                });
                 return;
             }
             ChannelInput::Log { level, message } => {
@@ -292,6 +287,7 @@ impl ConversationIngress {
                 let result = tokio::select! {
                     biased;
                     _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
+                        let _ = self.workspace_threads.cancel_route(route).await;
                         cancelled_prompt_response()
                     }
                     _ = wait_for_shutdown(shutdown_rx) => {
@@ -308,6 +304,7 @@ impl ConversationIngress {
                 tokio::select! {
                     biased;
                     _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
+                        let _ = self.workspace_threads.cancel_route(route).await;
                         self.reject_stopped(route, (*input).clone());
                     }
                     _ = wait_for_shutdown(shutdown_rx) => {

@@ -443,7 +443,6 @@ mod tests {
         ingress.dispatch(ChannelInput::Stop {
             route: route.clone(),
         });
-        assert!(old_done.await.is_err(), "old generation survived stop");
 
         let (new_started, new_started_rx) = oneshot::channel();
         let new_done = ingress
@@ -451,6 +450,7 @@ mod tests {
                 let _ = new_started.send(());
             })
             .unwrap();
+        assert!(old_done.await.is_err(), "old generation survived stop");
         tokio::time::timeout(std::time::Duration::from_millis(100), new_started_rx)
             .await
             .expect("new generation was cancelled by the old stop")
