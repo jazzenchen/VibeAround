@@ -277,18 +277,7 @@ impl ThreadOwner {
             let session_id = self.ensure_session(&runtime, &agent).await?;
             Ok::<_, acp::Error>((agent, session_id))
         };
-        let setup_result = tokio::select! {
-            biased;
-            _ = wait_for_signal(&mut turn_cancellation) => None,
-            _ = wait_for_prompt_cancellation(&mut cancellation) => None,
-            result = setup => Some(result),
-        };
-        let Some(setup_result) = setup_result else {
-            let result = Ok(acp::PromptResponse::new(acp::StopReason::Cancelled));
-            self.finish_prompt_inline(handler, result, reply).await;
-            return false;
-        };
-        let (agent, session_id) = match setup_result {
+        let (agent, session_id) = match setup.await {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.finish_prompt_inline(handler, Err(error), reply).await;
