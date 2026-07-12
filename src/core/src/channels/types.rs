@@ -75,6 +75,12 @@ pub struct ChannelEnvelope {
     pub cli_kind: Option<String>,
 }
 
+impl ChannelEnvelope {
+    pub fn reply_to(&self) -> Option<MessageId> {
+        (!self.message_id.is_empty()).then(|| self.message_id.clone())
+    }
+}
+
 /// Legacy stdio plugin input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]

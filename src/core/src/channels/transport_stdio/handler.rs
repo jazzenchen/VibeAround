@@ -27,14 +27,31 @@ fn route_for_prompt(
     session_chat_id: &str,
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Result<RouteKey, String> {
+    target_for_prompt(
+        channel_kind,
+        channel_instance_id,
+        default_actor_id,
+        session_chat_id,
+        meta,
+    )
+    .map(|target| target.route)
+}
+
+fn target_for_prompt(
+    channel_kind: &str,
+    channel_instance_id: &str,
+    default_actor_id: &str,
+    session_chat_id: &str,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<ChannelTarget, String> {
     let Some(value) = meta.and_then(|meta| meta.get(CHANNEL_CONTEXT_META_KEY)) else {
-        return Ok(RouteKey::with_actor(
+        return Ok(ChannelTarget::for_route(RouteKey::with_actor(
             channel_kind,
             channel_instance_id,
             session_chat_id,
             default_actor_id,
             None,
-        ));
+        )));
     };
 
     let context: ChannelInboundContext = serde_json::from_value(value.clone())
@@ -58,37 +75,22 @@ fn route_for_prompt(
         return Err("group prompts must explicitly address the actor".into());
     }
 
-    Ok(RouteKey::with_actor(
-        channel_kind,
-        context.channel_instance_id,
-        context.chat_id,
-        context.actor_id,
-        context.topic_id,
-    ))
-}
-
-fn target_for_prompt(
-    channel_kind: &str,
-    channel_instance_id: &str,
-    default_actor_id: &str,
-    session_chat_id: &str,
-    meta: Option<&serde_json::Map<String, serde_json::Value>>,
-) -> Result<ChannelTarget, String> {
-    let route = route_for_prompt(
-        channel_kind,
-        channel_instance_id,
-        default_actor_id,
-        session_chat_id,
-        meta,
-    )?;
-    let reply_to = meta
-        .and_then(|meta| meta.get(CHANNEL_CONTEXT_META_KEY))
-        .and_then(|context| context.get("platformMessageId"))
-        .and_then(serde_json::Value::as_str)
+    let reply_to = context
+        .platform_message_id
+        .as_deref()
         .map(str::trim)
         .filter(|message_id| !message_id.is_empty())
         .map(ToOwned::to_owned);
-    Ok(ChannelTarget::new(route, reply_to))
+    Ok(ChannelTarget::new(
+        RouteKey::with_actor(
+            channel_kind,
+            context.channel_instance_id,
+            context.chat_id,
+            context.actor_id,
+            context.topic_id,
+        ),
+        reply_to,
+    ))
 }
 
 fn route_for_callback(

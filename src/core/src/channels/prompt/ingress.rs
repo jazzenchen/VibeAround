@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
@@ -27,12 +27,43 @@ enum LaneCommand {
         content_blocks: Vec<acp::ContentBlock>,
         reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
     },
-    Dispatch(Box<ChannelInput>),
+    Dispatch(Box<OrderedInput>),
     #[cfg(test)]
     Probe {
         work: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
         done: oneshot::Sender<()>,
     },
+}
+
+#[derive(Clone)]
+enum OrderedInput {
+    Message {
+        envelope: ChannelEnvelope,
+    },
+    Callback {
+        envelope: ChannelEnvelope,
+        action_value: Option<String>,
+    },
+    SwitchAgent {
+        route: RouteKey,
+        agent_kind: String,
+    },
+}
+
+impl OrderedInput {
+    fn route_key(&self) -> &RouteKey {
+        match self {
+            Self::Message { envelope } | Self::Callback { envelope, .. } => &envelope.route,
+            Self::SwitchAgent { route, .. } => route,
+        }
+    }
+
+    fn reply_to(&self) -> Option<String> {
+        match self {
+            Self::Message { envelope } | Self::Callback { envelope, .. } => envelope.reply_to(),
+            Self::SwitchAgent { .. } => None,
+        }
+    }
 }
 
 struct QueuedCommand {
@@ -96,7 +127,6 @@ pub struct ConversationIngress {
     plugin_host: Arc<PluginHost>,
     lanes: DashMap<RouteKey, Arc<RouteLane>>,
     lifecycle: ParkingMutex<()>,
-    shutting_down: AtomicBool,
     shutdown_tx: watch::Sender<bool>,
     active_lane_tasks: AtomicUsize,
     lanes_drained: Notify,
@@ -113,7 +143,6 @@ impl ConversationIngress {
             plugin_host,
             lanes: DashMap::new(),
             lifecycle: ParkingMutex::new(()),
-            shutting_down: AtomicBool::new(false),
             shutdown_tx,
             active_lane_tasks: AtomicUsize::new(0),
             lanes_drained: Notify::new(),
@@ -140,7 +169,7 @@ impl ConversationIngress {
         {
             return Err(acp::Error::new(
                 -32000,
-                if self.shutting_down.load(Ordering::Acquire) {
+                if *self.shutdown_tx.borrow() {
                     ROUTE_STOPPED_MESSAGE
                 } else {
                     ROUTE_LANE_FULL_MESSAGE
@@ -155,9 +184,9 @@ impl ConversationIngress {
     /// Dispatch a channel command. Stop, Close, and log records bypass route queues;
     /// every other command is accepted into the route's bounded FIFO lane.
     pub fn dispatch(self: &Arc<Self>, input: ChannelInput) {
-        match &input {
+        let input = match input {
             ChannelInput::Stop { route } => {
-                if let Some(lane) = self.lanes.get(route) {
+                if let Some(lane) = self.lanes.get(&route) {
                     // The active lane performs the actual runtime cancel before
                     // it can run a command from the next route generation.
                     lane.stop();
@@ -172,8 +201,6 @@ impl ConversationIngress {
             }
             ChannelInput::Close { route, reason } => {
                 let workspace_threads = Arc::clone(&self.workspace_threads);
-                let route = route.clone();
-                let reason = reason.clone();
                 tokio::spawn(async move {
                     let _ = workspace_threads.close_route(&route, reason).await;
                 });
@@ -181,19 +208,26 @@ impl ConversationIngress {
             }
             ChannelInput::Log { level, message } => {
                 tracing::info!(
-                    level = %level.clone().unwrap_or_else(|| "info".to_string()),
+                    level = %level.unwrap_or_else(|| "info".to_string()),
                     message = %message,
                     "channel log"
                 );
                 return;
             }
-            _ => {}
-        }
+            ChannelInput::Message { envelope } => OrderedInput::Message { envelope },
+            ChannelInput::Callback {
+                envelope,
+                action_value,
+            } => OrderedInput::Callback {
+                envelope,
+                action_value,
+            },
+            ChannelInput::SwitchAgent { route, agent_kind } => {
+                OrderedInput::SwitchAgent { route, agent_kind }
+            }
+        };
 
-        let route = input
-            .route_key()
-            .expect("non-log channel input must carry a route")
-            .clone();
+        let route = input.route_key().clone();
         if let Err(LaneCommand::Dispatch(rejected)) =
             self.enqueue(route.clone(), LaneCommand::Dispatch(Box::new(input)))
         {
@@ -209,7 +243,7 @@ impl ConversationIngress {
         // Serialize lane creation with shutdown. Once shutdown owns this
         // guard, no task can appear after the drain barrier observes zero.
         let _lifecycle = self.lifecycle.lock();
-        if self.shutting_down.load(Ordering::Acquire) {
+        if *self.shutdown_tx.borrow() {
             return Err(command);
         }
         loop {
@@ -319,7 +353,7 @@ impl ConversationIngress {
             LaneCommand::Dispatch(input) => {
                 let ran_prompt = matches!(
                     input.as_ref(),
-                    ChannelInput::Message { .. } | ChannelInput::Callback { .. }
+                    OrderedInput::Message { .. } | OrderedInput::Callback { .. }
                 );
                 tokio::select! {
                     biased;
@@ -353,7 +387,6 @@ impl ConversationIngress {
     pub async fn shutdown(&self) {
         {
             let _lifecycle = self.lifecycle.lock();
-            self.shutting_down.store(true, Ordering::Release);
             self.shutdown_tx.send_replace(true);
             for lane in self.lanes.iter() {
                 let mut state = lane.state.lock();
@@ -369,25 +402,24 @@ impl ConversationIngress {
         }
     }
 
-    async fn dispatch_ordered(&self, input: ChannelInput) {
+    async fn dispatch_ordered(&self, input: OrderedInput) {
         match input {
-            ChannelInput::Message { envelope } => {
+            OrderedInput::Message { envelope } => {
                 self.handle_prompt_input(envelope, None).await;
             }
-            ChannelInput::Callback {
+            OrderedInput::Callback {
                 envelope,
                 action_value,
             } => {
                 self.handle_prompt_input(envelope, action_value).await;
             }
-            ChannelInput::SwitchAgent { route, agent_kind } => {
+            OrderedInput::SwitchAgent { route, agent_kind } => {
                 send_system_text(
                     &self.plugin_host,
                     &route,
                     &format!("Use /switch host {} with workspace threads.", agent_kind),
                 );
             }
-            ChannelInput::Stop { .. } | ChannelInput::Close { .. } | ChannelInput::Log { .. } => {}
         }
     }
 
@@ -439,11 +471,7 @@ impl ConversationIngress {
         let route = envelope.route.clone();
         let cli_kind = envelope.cli_kind.clone();
         let text = effective_input_text(&envelope, action_value);
-        let message_id = if envelope.message_id.is_empty() {
-            None
-        } else {
-            Some(envelope.message_id.clone())
-        };
+        let message_id = envelope.reply_to();
         tracing::debug!(
             route = %route,
             cli_kind = ?cli_kind,
@@ -466,25 +494,15 @@ impl ConversationIngress {
         send_prompt_done(&self.plugin_host, &route, message_id);
     }
 
-    fn reject_full_lane(&self, route: &RouteKey, input: ChannelInput) {
-        let message_id = match input {
-            ChannelInput::Message { envelope } | ChannelInput::Callback { envelope, .. } => {
-                (!envelope.message_id.is_empty()).then_some(envelope.message_id)
-            }
-            _ => None,
-        };
+    fn reject_full_lane(&self, route: &RouteKey, input: OrderedInput) {
+        let message_id = input.reply_to();
         let target = ChannelTarget::new(route.clone(), message_id.clone());
         send_system_text_to_target(&self.plugin_host, &target, ROUTE_LANE_FULL_MESSAGE);
         send_prompt_done(&self.plugin_host, route, message_id);
     }
 
-    fn reject_stopped(&self, route: &RouteKey, input: ChannelInput) {
-        let message_id = match input {
-            ChannelInput::Message { envelope } | ChannelInput::Callback { envelope, .. } => {
-                (!envelope.message_id.is_empty()).then_some(envelope.message_id)
-            }
-            _ => None,
-        };
+    fn reject_stopped(&self, route: &RouteKey, input: OrderedInput) {
+        let message_id = input.reply_to();
         send_prompt_done(&self.plugin_host, route, message_id);
     }
 
