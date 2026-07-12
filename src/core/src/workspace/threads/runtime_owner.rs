@@ -33,6 +33,11 @@ pub(super) struct RuntimeCommand<T> {
     pub(super) reply: oneshot::Sender<T>,
 }
 
+pub(super) struct CancelCommand {
+    pub(super) host_turn_active: bool,
+    pub(super) reply: oneshot::Sender<acp::Result<()>>,
+}
+
 pub(super) struct CloseCommand {
     pub(super) runtime: Arc<ThreadRuntime>,
     pub(super) reason: Option<String>,
@@ -54,7 +59,7 @@ pub(super) struct RegisterSubagentCommand {
 pub(super) enum ThreadOwnerCommand {
     Prompt(Box<PromptCommand>),
     Start(Box<StartCommand>),
-    Cancel(oneshot::Sender<acp::Result<()>>),
+    Cancel(CancelCommand),
     Close(Box<CloseCommand>),
     ShutdownHost(RuntimeCommand<()>),
     ShutdownHostIfIdle {
@@ -159,9 +164,9 @@ impl ThreadOwner {
                     let result = self.start(&runtime, &route, handler).await;
                     let _ = reply.send(result);
                 }
-                ThreadOwnerCommand::Cancel(reply) => {
-                    let result = self.cancel().await;
-                    let _ = reply.send(result);
+                ThreadOwnerCommand::Cancel(command) => {
+                    let result = self.cancel(command.host_turn_active);
+                    let _ = command.reply.send(result);
                 }
                 ThreadOwnerCommand::Close(command) => {
                     let CloseCommand {
@@ -297,15 +302,19 @@ impl ThreadOwner {
         let command_tx = self.command_tx.clone();
         let thread_id = self.thread.id.clone();
         tokio::spawn(async move {
+            let prompt = agent.prompt(acp::PromptRequest::new(session_id.clone(), content_blocks));
+            tokio::pin!(prompt);
             let result = tokio::select! {
                 biased;
                 _ = wait_for_signal(&mut turn_cancellation) => {
+                    let _ = agent.cancel(acp::CancelNotification::new(session_id.clone())).await;
                     Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
                 }
                 _ = wait_for_prompt_cancellation(&mut cancellation) => {
+                    let _ = agent.cancel(acp::CancelNotification::new(session_id.clone())).await;
                     Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
                 }
-                result = agent.prompt(acp::PromptRequest::new(session_id, content_blocks)) => result,
+                result = &mut prompt => result,
             };
             if let Err(error) = finish_handler.prompt_finished(result.is_ok()).await {
                 tracing::warn!(
@@ -353,21 +362,16 @@ impl ThreadOwner {
         self.ensure_session(runtime, &agent).await
     }
 
-    async fn cancel(&mut self) -> acp::Result<()> {
+    fn cancel(&mut self, host_turn_active: bool) -> acp::Result<()> {
+        let subagents_active = !self.subagents.is_empty();
         for subagent in self.subagents.values() {
             subagent.active_turn_target.cancel_current();
         }
-        let agent = self
-            .host
-            .as_ref()
-            .filter(|host| host.is_live())
-            .map(|host| Arc::clone(&host.agent))
-            .ok_or_else(acp::Error::method_not_found)?;
-        let session_id = self
-            .session_id
-            .clone()
-            .ok_or_else(acp::Error::method_not_found)?;
-        agent.cancel(acp::CancelNotification::new(session_id)).await
+        if host_turn_active || subagents_active {
+            Ok(())
+        } else {
+            Err(acp::Error::method_not_found())
+        }
     }
 
     async fn close(&mut self, runtime: &ThreadRuntime, reason: Option<String>) -> acp::Result<()> {

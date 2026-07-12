@@ -7,7 +7,9 @@ use dashmap::DashMap;
 use parking_lot::Mutex as ParkingMutex;
 use tokio::sync::{mpsc, oneshot, watch, Notify};
 
-use crate::routing::{wait_for_signal, ChannelTarget};
+#[cfg(test)]
+use crate::routing::wait_for_signal;
+use crate::routing::ChannelTarget;
 use crate::workspace::threads::runtime::PromptCancellation;
 use crate::workspace::WorkspaceThreadManager;
 
@@ -320,7 +322,7 @@ impl ConversationIngress {
         queued: QueuedCommand,
         shutdown_rx: &mut watch::Receiver<bool>,
     ) {
-        let mut cancellation = queued.cancellation;
+        let cancellation = queued.cancellation;
         match queued.command {
             LaneCommand::Prompt {
                 reply_to,
@@ -336,20 +338,7 @@ impl ConversationIngress {
                     content_blocks,
                     PromptCancellation::new(cancellation.clone(), shutdown_rx.clone()),
                 );
-                tokio::pin!(prompt);
-                let result = tokio::select! {
-                    biased;
-                    _ = wait_for_signal(&mut cancellation) => {
-                        let _ = self.workspace_threads.cancel_route(route).await;
-                        prompt.await
-                    }
-                    _ = wait_for_signal(shutdown_rx) => {
-                        let _ = self.workspace_threads.cancel_route(route).await;
-                        let _ = prompt.await;
-                        Err(acp::Error::new(-32603, ROUTE_STOPPED_MESSAGE))
-                    }
-                    result = &mut prompt => result,
-                };
+                let result = prompt.await;
                 self.schedule_route_host_idle_shutdown(route).await;
                 let _ = reply.send(result);
             }
@@ -362,29 +351,18 @@ impl ConversationIngress {
                     self.reject_stopped(route, *input);
                     return;
                 }
-                let dispatch = self.dispatch_ordered(
+                self.dispatch_ordered(
                     (*input).clone(),
                     PromptCancellation::new(cancellation.clone(), shutdown_rx.clone()),
-                );
-                tokio::pin!(dispatch);
-                tokio::select! {
-                    biased;
-                    _ = wait_for_signal(&mut cancellation) => {
-                        let _ = self.workspace_threads.cancel_route(route).await;
-                        dispatch.await;
-                    }
-                    _ = wait_for_signal(shutdown_rx) => {
-                        let _ = self.workspace_threads.cancel_route(route).await;
-                        dispatch.await;
-                    }
-                    _ = &mut dispatch => {}
-                }
+                )
+                .await;
                 if ran_prompt {
                     self.schedule_route_host_idle_shutdown(route).await;
                 }
             }
             #[cfg(test)]
             LaneCommand::Probe { work, done } => {
+                let mut cancellation = cancellation;
                 tokio::select! {
                     biased;
                     _ = wait_for_signal(&mut cancellation) => {}

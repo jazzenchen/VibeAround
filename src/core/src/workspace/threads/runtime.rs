@@ -246,10 +246,14 @@ impl ThreadRuntime {
 
     pub async fn cancel(self: &Arc<Self>) -> acp::Result<()> {
         self.mark_activity();
+        let host_turn_active = self.active_turn_target.current().is_some();
         self.active_turn_target.cancel_current();
         let (reply, done) = oneshot::channel();
         self.owner_tx
-            .send(ThreadOwnerCommand::Cancel(reply))
+            .send(ThreadOwnerCommand::Cancel(CancelCommand {
+                host_turn_active,
+                reply,
+            }))
             .map_err(|_| runtime_stopped_error())?;
         done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
     }
@@ -711,7 +715,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_signals_active_turn_before_agent_lookup() {
+    async fn cancel_signals_active_turn_without_agent_lookup() {
         let runtime = Arc::new(ThreadRuntime::new(
             thread_with_sessions(),
             PathBuf::from("/tmp/project"),
@@ -725,7 +729,7 @@ mod tests {
             .current_with_cancellation()
             .expect("active target");
 
-        assert!(runtime.cancel().await.is_err(), "runtime has no live agent");
+        runtime.cancel().await.unwrap();
         cancelled
             .wait_for(|is_cancelled| *is_cancelled)
             .await

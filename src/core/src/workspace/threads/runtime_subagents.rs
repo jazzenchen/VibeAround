@@ -302,21 +302,33 @@ impl ThreadRuntime {
         prompt_finish_handler: Arc<dyn AgentClientHandler>,
         completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
     ) {
-        let _target_guard = active_turn_target.install(target);
+        let target_guard = active_turn_target.install(target);
+        let mut cancellation = target_guard.cancellation();
         let agent_id = thread_agent.id.clone();
         for attempt in 1..=SUBAGENT_PROMPT_MAX_ATTEMPTS {
             if let Some(validator) = completion_validator.as_ref() {
                 validator.reset_completion().await;
             }
 
-            let result = agent
-                .prompt(acp::PromptRequest::new(
-                    session_id.clone(),
-                    vec![acp::ContentBlock::Text(acp::TextContent::new(
-                        prompt.clone(),
-                    ))],
-                ))
-                .await;
+            let prompt_request = acp::PromptRequest::new(
+                session_id.clone(),
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    prompt.clone(),
+                ))],
+            );
+            let prompt_call = agent.prompt(prompt_request);
+            tokio::pin!(prompt_call);
+            let mut cancelled = false;
+            let result = tokio::select! {
+                _ = wait_for_signal(&mut cancellation) => {
+                    cancelled = true;
+                    let _ = agent
+                        .cancel(acp::CancelNotification::new(session_id.clone()))
+                        .await;
+                    Err(acp::Error::new(-32800, "subagent prompt cancelled"))
+                }
+                result = &mut prompt_call => result,
+            };
             if let Err(error) = prompt_finish_handler.prompt_finished(result.is_ok()).await {
                 tracing::warn!(
                     agent_id = %agent_id,
@@ -365,6 +377,11 @@ impl ThreadRuntime {
                 },
                 Err(error) => {
                     let message = error.message.to_string();
+                    if cancelled {
+                        self.set_subagent_error(&agent_id, message, &status_tx)
+                            .await;
+                        return;
+                    }
                     if attempt < SUBAGENT_PROMPT_MAX_ATTEMPTS {
                         tracing::info!(
                             agent_id = %agent_id,
