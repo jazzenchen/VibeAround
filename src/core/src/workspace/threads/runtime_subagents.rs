@@ -89,7 +89,7 @@ impl ThreadRuntime {
             }
         };
         let completion_validator_for_runtime = completion_validator.clone();
-        self.subagents.lock().await.insert(
+        self.register_subagent(
             thread_agent.id.clone(),
             SubagentRuntime {
                 agent: Arc::clone(&agent),
@@ -98,7 +98,8 @@ impl ThreadRuntime {
                 active_turn_target: active_turn_target.clone(),
                 completion_validator: completion_validator_for_runtime,
             },
-        );
+        )
+        .await?;
 
         if let Some(updated) = self
             .set_thread_agent_status_with_session(
@@ -154,7 +155,7 @@ impl ThreadRuntime {
         };
         validate_subagent_assignment(&thread_agent, agent_id, &assignment)?;
 
-        let Some(subagent) = self.subagents.lock().await.get(agent_id).cloned() else {
+        let Some(subagent) = self.turn_state.borrow().subagents.get(agent_id).cloned() else {
             if let Ok(Some(updated)) = self
                 .set_thread_agent_status(
                     agent_id,
@@ -237,6 +238,24 @@ impl ThreadRuntime {
             -32603,
             last_error.unwrap_or_else(|| "failed to start subagent session".to_string()),
         ))
+    }
+
+    async fn register_subagent(
+        &self,
+        agent_id: ThreadAgentId,
+        subagent: SubagentRuntime,
+    ) -> acp::Result<()> {
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::RegisterSubagent(Box::new(
+                RegisterSubagentCommand {
+                    agent_id,
+                    subagent,
+                    reply,
+                },
+            )))
+            .map_err(|_| runtime_stopped_error())?;
+        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
     }
 
     #[allow(clippy::too_many_arguments)]

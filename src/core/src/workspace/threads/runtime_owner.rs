@@ -8,6 +8,8 @@ pub(super) struct TurnState {
     pub(super) failed: Option<String>,
     pub(super) session_id: Option<String>,
     pub(super) host_agent: Option<Arc<Agent>>,
+    pub(super) subagents: BTreeMap<ThreadAgentId, SubagentRuntime>,
+    pub(super) activity_generation: u64,
 }
 
 pub(super) struct PromptCommand {
@@ -43,6 +45,12 @@ pub(super) struct SwitchProfileCommand {
     pub(super) reply: oneshot::Sender<acp::Result<()>>,
 }
 
+pub(super) struct RegisterSubagentCommand {
+    pub(super) agent_id: ThreadAgentId,
+    pub(super) subagent: SubagentRuntime,
+    pub(super) reply: oneshot::Sender<acp::Result<()>>,
+}
+
 pub(super) enum ThreadOwnerCommand {
     Prompt(Box<PromptCommand>),
     Start(Box<StartCommand>),
@@ -63,6 +71,8 @@ pub(super) enum ThreadOwnerCommand {
         event: Box<ThreadEvent>,
         reply: oneshot::Sender<acp::Result<()>>,
     },
+    RegisterSubagent(Box<RegisterSubagentCommand>),
+    Touch,
     #[cfg(test)]
     Probe {
         started: oneshot::Sender<()>,
@@ -82,6 +92,8 @@ pub(super) struct ThreadOwner {
     pub(super) host: Option<AcpSessionRunner>,
     pub(super) session_id: Option<String>,
     pub(super) thread: WorkspaceThread,
+    pub(super) subagents: BTreeMap<ThreadAgentId, SubagentRuntime>,
+    pub(super) activity_generation: u64,
 }
 
 impl PromptCancellation {
@@ -194,6 +206,28 @@ impl ThreadOwner {
                     apply_thread_event_to(&mut self.thread, &event);
                     self.publish_runtime_state();
                     let _ = reply.send(Ok(()));
+                }
+                ThreadOwnerCommand::RegisterSubagent(command) => {
+                    let RegisterSubagentCommand {
+                        agent_id,
+                        subagent,
+                        reply,
+                    } = *command;
+                    if self.thread.status == ThreadStatus::Closed {
+                        subagent.agent.shutdown().await;
+                        let _ =
+                            reply.send(Err(acp::Error::new(-32603, "workspace thread is closed")));
+                    } else {
+                        self.subagents.insert(agent_id, subagent);
+                        self.publish_runtime_state();
+                        let _ = reply.send(Ok(()));
+                    }
+                }
+                ThreadOwnerCommand::Touch => {
+                    self.activity_generation = self.activity_generation.wrapping_add(1);
+                    let mut state = self.state_tx.borrow().clone();
+                    state.activity_generation = self.activity_generation;
+                    self.state_tx.send_replace(state);
                 }
                 #[cfg(test)]
                 ThreadOwnerCommand::Probe { started, release } => {
@@ -320,6 +354,9 @@ impl ThreadOwner {
     }
 
     async fn cancel(&mut self) -> acp::Result<()> {
+        for subagent in self.subagents.values() {
+            subagent.active_turn_target.cancel_current();
+        }
         let agent = self
             .host
             .as_ref()
@@ -351,7 +388,7 @@ impl ThreadOwner {
         if let Some(host) = self.host.take() {
             host.shutdown().await;
         }
-        for (_, subagent) in std::mem::take(&mut *runtime.subagents.lock().await) {
+        for (_, subagent) in std::mem::take(&mut self.subagents) {
             crate::previews::kill_by_session(&subagent.session_id);
             subagent.agent.shutdown().await;
         }
@@ -363,11 +400,10 @@ impl ThreadOwner {
     }
 
     async fn shutdown_host_if_idle(&mut self, runtime: &ThreadRuntime, generation: u64) -> bool {
-        if runtime.idle_generation() != generation
+        if self.activity_generation != generation
             || self.state_tx.borrow().busy
             || self.host.is_none()
-            || !runtime.subagents.lock().await.is_empty()
-            || runtime.idle_generation() != generation
+            || !self.subagents.is_empty()
         {
             return false;
         }
@@ -626,6 +662,8 @@ impl ThreadOwner {
         state.thread = self.thread.clone();
         state.session_id = self.session_id.clone();
         state.host_agent = self.host.as_ref().map(|host| Arc::clone(&host.agent));
+        state.subagents = self.subagents.clone();
+        state.activity_generation = self.activity_generation;
         self.set_state(state);
     }
 }

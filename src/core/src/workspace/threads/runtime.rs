@@ -2,12 +2,11 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Context;
-use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::time::{sleep, Duration};
 
 use crate::agent::{Agent, AgentClientHandler, StartupSession};
@@ -98,11 +97,9 @@ const SUBAGENT_RETRY_DELAY: Duration = Duration::from_millis(750);
 
 pub struct ThreadRuntime {
     workspace: PathBuf,
-    subagents: Mutex<BTreeMap<ThreadAgentId, SubagentRuntime>>,
     active_turn_target: ActiveTurnTarget,
     owner_tx: mpsc::UnboundedSender<ThreadOwnerCommand>,
     turn_state: watch::Receiver<TurnState>,
-    activity_generation: AtomicU64,
     store: ThreadEventStore,
     change_tx: Option<broadcast::Sender<()>>,
 }
@@ -126,6 +123,8 @@ impl ThreadRuntime {
             failed: None,
             session_id: session_id.clone(),
             host_agent: None,
+            subagents: BTreeMap::new(),
+            activity_generation: 0,
         });
         tokio::spawn(
             ThreadOwner {
@@ -136,16 +135,16 @@ impl ThreadRuntime {
                 host: None,
                 session_id,
                 thread,
+                subagents: BTreeMap::new(),
+                activity_generation: 0,
             }
             .run(),
         );
         Self {
             workspace,
-            subagents: Mutex::new(BTreeMap::new()),
             active_turn_target: ActiveTurnTarget::default(),
             owner_tx,
             turn_state,
-            activity_generation: AtomicU64::new(0),
             store,
             change_tx,
         }
@@ -248,12 +247,6 @@ impl ThreadRuntime {
     pub async fn cancel(self: &Arc<Self>) -> acp::Result<()> {
         self.mark_activity();
         self.active_turn_target.cancel_current();
-        {
-            let subagents = self.subagents.lock().await;
-            for subagent in subagents.values() {
-                subagent.active_turn_target.cancel_current();
-            }
-        }
         let (reply, done) = oneshot::channel();
         self.owner_tx
             .send(ThreadOwnerCommand::Cancel(reply))
@@ -292,7 +285,7 @@ impl ThreadRuntime {
     }
 
     pub fn idle_generation(&self) -> u64 {
-        self.activity_generation.load(Ordering::Relaxed)
+        self.turn_state.borrow().activity_generation
     }
 
     pub async fn shutdown_host_if_idle(self: &Arc<Self>, generation: u64) -> bool {
@@ -336,7 +329,7 @@ impl ThreadRuntime {
     }
 
     fn mark_activity(&self) {
-        self.activity_generation.fetch_add(1, Ordering::Relaxed);
+        let _ = self.owner_tx.send(ThreadOwnerCommand::Touch);
     }
 }
 
