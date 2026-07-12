@@ -30,11 +30,35 @@ impl StdioPluginRuntime {
         &self.instance_id
     }
 
-    pub async fn send_output(&self, output: ChannelOutput) -> Result<(), String> {
-        self.output_tx.send(output).await.map_err(|error| {
-            let message = format!("failed to send output to ACP plugin bridge: {error}");
-            tracing::info!("[{}] {}", self.instance_id, message);
-            message
+    pub fn send_output_now(&self, output: ChannelOutput) -> Result<(), String> {
+        self.output_tx.try_send(output).map_err(|error| {
+            format!("failed to enqueue realtime output for ACP plugin bridge: {error}")
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routing::RouteKey;
+
+    fn output(text: &str) -> ChannelOutput {
+        ChannelOutput::SystemText {
+            route: RouteKey::new("slack", "chat-1"),
+            text: text.to_string(),
+            reply_to: None,
+        }
+    }
+
+    #[test]
+    fn full_transport_buffer_rejects_without_waiting() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let runtime = StdioPluginRuntime::new("slack-work", tx);
+
+        runtime.send_output_now(output("first")).unwrap();
+        let error = runtime.send_output_now(output("second")).unwrap_err();
+
+        assert!(error.contains("no available capacity"));
+        assert_eq!(rx.try_recv().unwrap(), output("first"));
     }
 }

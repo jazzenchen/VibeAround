@@ -143,7 +143,9 @@ impl PluginHost {
             .insert(channel_kind.clone(), PluginRuntime::WebSocket(runtime));
     }
 
-    pub async fn send_output(&self, output: ChannelOutput) {
+    /// Best-effort realtime delivery. This method never waits for a plugin:
+    /// a full per-generation transport buffer drops the output and logs it.
+    pub fn send_output(&self, output: ChannelOutput) {
         let route = output.route_key().clone();
         let instance_id = route.channel_instance_id().to_string();
         let permission_request_id = match &output {
@@ -160,7 +162,7 @@ impl PluginHost {
         );
 
         if let Some(runtime) = runtime {
-            if let Err(error) = runtime.send_output(output).await {
+            if let Err(error) = runtime.send_output_now(output) {
                 if let Some(request_id) = permission_request_id.as_deref() {
                     self.cancel_permission_surface(request_id, &instance_id);
                 }
@@ -202,25 +204,12 @@ impl PluginHost {
             })
     }
 
-    pub async fn shutdown_all(&self) {
-        let runtimes: Vec<PluginRuntime> = self
-            .runtimes
-            .iter()
-            .map(|entry| match entry.value() {
-                PluginRuntime::Stdio(runtime) => PluginRuntime::Stdio(Arc::clone(runtime)),
-                PluginRuntime::WebSocket(runtime) => PluginRuntime::WebSocket(Arc::clone(runtime)),
-            })
-            .collect();
-
+    pub fn shutdown_all(&self) {
         self.runtimes.clear();
         // Drop every pending oneshot sender so waiting `request_permission`
         // callers in `ChannelBridgeHandler` see `rx.await -> Err` and fall
         // through to `Cancelled` instead of stalling forever.
         self.pending_permissions.clear();
-
-        for runtime in runtimes {
-            runtime.shutdown().await;
-        }
     }
 
     /// Drop every pending permission request belonging to `instance_id`.
@@ -346,8 +335,8 @@ mod tests {
         assert!(rx.await.is_ok());
     }
 
-    #[tokio::test]
-    async fn disconnected_outputs_are_not_queued_for_replay() {
+    #[test]
+    fn disconnected_outputs_are_not_queued_for_replay() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = PluginHost::new(input_tx);
 
@@ -355,8 +344,7 @@ mod tests {
             route: RouteKey::new("feishu", "chat-a"),
             text: "hello".to_string(),
             reply_to: None,
-        })
-        .await;
+        });
     }
 
     #[tokio::test]
@@ -371,11 +359,55 @@ mod tests {
             reply_to: None,
             request_id: "req-1".to_string(),
             payload: serde_json::json!({}),
-        })
-        .await;
+        });
 
         assert!(!host.pending_permissions.contains_key("req-1"));
         assert!(rx.await.is_err());
+    }
+
+    #[tokio::test]
+    async fn full_plugin_buffer_cancels_permission_without_blocking_other_instances() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = PluginHost::new(input_tx);
+        let (blocked_tx, mut blocked_rx) = tokio::sync::mpsc::channel(1);
+        let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(1);
+        host.replace_stdio_runtime(
+            "slack-blocked",
+            Arc::new(StdioPluginRuntime::new("slack-blocked", blocked_tx)),
+        );
+        host.replace_stdio_runtime(
+            "slack-live",
+            Arc::new(StdioPluginRuntime::new("slack-live", live_tx)),
+        );
+
+        host.send_output(ChannelOutput::SystemText {
+            route: RouteKey::with_actor("slack", "slack-blocked", "chat-a", "bot-a", None),
+            text: "fills buffer".to_string(),
+            reply_to: None,
+        });
+        let (permission_tx, permission_rx) = tokio::sync::oneshot::channel();
+        host.register_pending_permission(
+            "req-full".to_string(),
+            vec!["slack-blocked".to_string()],
+            permission_tx,
+        );
+        host.send_output(ChannelOutput::PermissionRequest {
+            route: RouteKey::with_actor("slack", "slack-blocked", "chat-a", "bot-a", None),
+            reply_to: None,
+            request_id: "req-full".to_string(),
+            payload: serde_json::json!({}),
+        });
+
+        let live_route = RouteKey::with_actor("slack", "slack-live", "chat-b", "bot-b", None);
+        host.send_output(ChannelOutput::SystemText {
+            route: live_route.clone(),
+            text: "still delivered".to_string(),
+            reply_to: None,
+        });
+
+        assert!(permission_rx.await.is_err());
+        assert!(blocked_rx.try_recv().is_ok());
+        assert_eq!(live_rx.try_recv().unwrap().route_key(), &live_route);
     }
 
     #[test]
@@ -420,8 +452,7 @@ mod tests {
             route: work_route.clone(),
             text: "hello work".to_string(),
             reply_to: None,
-        })
-        .await;
+        });
 
         assert_eq!(work_rx.recv().await.unwrap().route_key(), &work_route);
         assert!(personal_rx.try_recv().is_err());

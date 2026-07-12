@@ -83,13 +83,11 @@ impl AgentClientHandler for SubagentBridgeHandler {
         };
 
         for route in self.attached_rich_agent_event_routes().await {
-            self.plugin_host
-                .send_output(ChannelOutput::SubagentAcp {
-                    route,
-                    agent: self.thread_agent.clone(),
-                    payload: payload.clone(),
-                })
-                .await;
+            self.plugin_host.send_output(ChannelOutput::SubagentAcp {
+                route,
+                agent: self.thread_agent.clone(),
+                payload: payload.clone(),
+            });
         }
         Ok(())
     }
@@ -104,13 +102,11 @@ impl AgentClientHandler for SubagentBridgeHandler {
         }
         let payload = synthetic_agent_message_payload(&session_id, visible_tail);
         for route in self.attached_rich_agent_event_routes().await {
-            self.plugin_host
-                .send_output(ChannelOutput::SubagentAcp {
-                    route,
-                    agent: self.thread_agent.clone(),
-                    payload: payload.clone(),
-                })
-                .await;
+            self.plugin_host.send_output(ChannelOutput::SubagentAcp {
+                route,
+                agent: self.thread_agent.clone(),
+                payload: payload.clone(),
+            });
         }
         Ok(())
     }
@@ -161,8 +157,7 @@ impl AgentClientHandler for SubagentBridgeHandler {
                 reply_to: target.reply_to,
                 request_id: request_id.clone(),
                 payload,
-            })
-            .await;
+            });
 
         tokio::select! {
             biased;

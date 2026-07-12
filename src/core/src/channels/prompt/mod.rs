@@ -93,42 +93,32 @@ fn attachment_uri(file_key: &str) -> Option<String> {
 
 /// Fire-and-forget helper: emit a `SystemText` to the plugin for this route.
 /// Shared by every sub-module in this folder.
-pub(super) async fn send_system_text(plugin_host: &Arc<PluginHost>, route: &RouteKey, text: &str) {
-    plugin_host
-        .send_output(ChannelOutput::SystemText {
-            route: route.clone(),
-            text: text.to_string(),
-            reply_to: None,
-        })
-        .await;
+pub(super) fn send_system_text(plugin_host: &Arc<PluginHost>, route: &RouteKey, text: &str) {
+    plugin_host.send_output(ChannelOutput::SystemText {
+        route: route.clone(),
+        text: text.to_string(),
+        reply_to: None,
+    });
 }
 
 /// Emit system text for one inbound turn, preserving its platform reply target.
-pub(super) async fn send_system_text_to_target(
+pub(super) fn send_system_text_to_target(
     plugin_host: &Arc<PluginHost>,
     target: &ChannelTarget,
     text: &str,
 ) {
-    plugin_host
-        .send_output(ChannelOutput::SystemText {
-            route: target.route.clone(),
-            text: text.to_string(),
-            reply_to: target.reply_to.clone(),
-        })
-        .await;
+    plugin_host.send_output(ChannelOutput::SystemText {
+        route: target.route.clone(),
+        text: text.to_string(),
+        reply_to: target.reply_to.clone(),
+    });
 }
 
-async fn send_prompt_done(
-    plugin_host: &Arc<PluginHost>,
-    route: &RouteKey,
-    message_id: Option<String>,
-) {
-    plugin_host
-        .send_output(ChannelOutput::PromptDone {
-            route: route.clone(),
-            message_id,
-        })
-        .await;
+fn send_prompt_done(plugin_host: &Arc<PluginHost>, route: &RouteKey, message_id: Option<String>) {
+    plugin_host.send_output(ChannelOutput::PromptDone {
+        route: route.clone(),
+        message_id,
+    });
 }
 
 fn auto_close_reason_for_prompt_error(error: &acp::Error) -> Option<String> {
@@ -428,12 +418,7 @@ mod tests {
         started_rx.await.unwrap();
         let queued_done = ingress.enqueue_probe(route.clone(), async {}).unwrap();
 
-        tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            ingress.dispatch(ChannelInput::Stop { route }),
-        )
-        .await
-        .expect("stop waited behind the active turn");
+        ingress.dispatch(ChannelInput::Stop { route });
 
         assert!(active_done.await.is_err(), "active work survived stop");
         assert!(queued_done.await.is_err(), "queued work survived stop");
@@ -455,12 +440,9 @@ mod tests {
             .unwrap();
         started_rx.await.unwrap();
 
-        ingress
-            .dispatch(ChannelInput::Stop {
-                route: route.clone(),
-            })
-            .await;
-        assert!(old_done.await.is_err(), "old generation survived stop");
+        ingress.dispatch(ChannelInput::Stop {
+            route: route.clone(),
+        });
 
         let (new_started, new_started_rx) = oneshot::channel();
         let new_done = ingress
@@ -468,6 +450,7 @@ mod tests {
                 let _ = new_started.send(());
             })
             .unwrap();
+        assert!(old_done.await.is_err(), "old generation survived stop");
         tokio::time::timeout(std::time::Duration::from_millis(100), new_started_rx)
             .await
             .expect("new generation was cancelled by the old stop")

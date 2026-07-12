@@ -61,7 +61,7 @@ impl std::fmt::Display for ProcessId {
 }
 
 mod model;
-use model::{ActiveGeneration, SupervisedProcess, TransitionIntent};
+use model::{ActiveGeneration, SupervisedProcess};
 pub use model::{ProcessEvent, ProcessSnapshot, ProcessStatus, RestartPolicy, SpawnSpec};
 
 pub struct Supervisor {
@@ -130,7 +130,6 @@ impl Supervisor {
             policy,
             factory,
             status: AtomicU8::new(ProcessStatus::NotStarted as u8),
-            intent: AtomicU8::new(TransitionIntent::None as u8),
             reason: RwLock::new(String::new()),
             last_heartbeat_ts: AtomicU64::new(now_secs()),
             next_spawn_at: AtomicU64::new(0),
@@ -180,8 +179,6 @@ impl Supervisor {
         {
             let _transition = proc.transition_lock.lock();
             proc.set_status(ProcessStatus::Stopped);
-            proc.intent
-                .store(TransitionIntent::None as u8, Ordering::Release);
             proc.next_spawn_at.store(0, Ordering::Relaxed);
             proc.set_reason(reason);
         }
@@ -234,8 +231,6 @@ impl Supervisor {
             if matches!(proc.status(), ProcessStatus::Stopped)
                 && matches!(proc.policy, RestartPolicy::Never)
             {
-                proc.intent
-                    .store(TransitionIntent::None as u8, Ordering::Release);
                 proc.next_spawn_at.store(0, Ordering::Relaxed);
                 (false, Duration::ZERO)
             } else {
@@ -246,8 +241,6 @@ impl Supervisor {
                     Duration::ZERO
                 };
                 proc.set_status(ProcessStatus::Crashed);
-                proc.intent
-                    .store(TransitionIntent::None as u8, Ordering::Release);
                 proc.next_spawn_at
                     .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
                 proc.set_reason(if apply_backoff {
@@ -295,8 +288,6 @@ impl Supervisor {
                     ProcessStatus::Stopped | ProcessStatus::Crashed | ProcessStatus::NotStarted
                 )
             {
-                proc.intent
-                    .store(TransitionIntent::None as u8, Ordering::Release);
                 proc.reset_restart_backoff();
                 proc.set_status(ProcessStatus::Crashed);
                 proc.set_reason("started by user");

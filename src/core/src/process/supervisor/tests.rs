@@ -223,7 +223,6 @@ fn insert_process_with_status(
         },
         factory,
         status: AtomicU8::new(status as u8),
-        intent: AtomicU8::new(TransitionIntent::Stop as u8),
         reason: RwLock::new(String::new()),
         last_heartbeat_ts: AtomicU64::new(now_secs()),
         next_spawn_at: AtomicU64::new(now_secs() + 30),
@@ -473,10 +472,6 @@ async fn force_stop_without_bridge_stops_and_clears_pending_spawn() {
         sup.force_stop(proc.id).await.unwrap();
 
         assert_eq!(proc.status(), ProcessStatus::Stopped);
-        assert_eq!(
-            TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
-            TransitionIntent::None
-        );
         assert_eq!(proc.next_spawn_at.load(Ordering::Acquire), 0);
         assert!(proc.active_generation.lock().is_none());
         assert_eq!(registry.len(), 0);
@@ -490,7 +485,7 @@ async fn force_stop_without_bridge_stops_and_clears_pending_spawn() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn force_stop_while_crashed_prevents_respawn_and_clears_intent() {
+async fn force_stop_while_crashed_prevents_respawn() {
     let registry = Arc::new(ChildRegistry::new());
     let sup = Supervisor::new(registry);
     let counter = Arc::new(AtomicUsize::new(0));
@@ -518,8 +513,8 @@ async fn force_stop_while_crashed_prevents_respawn_and_clears_intent() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(counter.load(Ordering::Acquire), 1);
 
-    // Starting it again must not leave the old Stop intent armed for the
-    // next natural bridge exit.
+    // Starting it again must create a fresh generation that follows the
+    // normal crash policy.
     sup.force_start(id).unwrap();
     sup.tick().await;
     wait_for_count(&counter, 2).await;
@@ -527,7 +522,7 @@ async fn force_stop_while_crashed_prevents_respawn_and_clears_intent() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn force_restart_without_bridge_spawns_and_clears_stale_intent() {
+async fn force_restart_without_bridge_spawns_fresh_generation() {
     let registry = Arc::new(ChildRegistry::new());
     let sup = Supervisor::new(registry);
 
@@ -544,14 +539,35 @@ async fn force_restart_without_bridge_spawns_and_clears_stale_intent() {
 
         sup.force_restart(proc.id).await.unwrap();
         wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
-        assert_eq!(
-            TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
-            TransitionIntent::None
-        );
 
         sup.force_stop(proc.id).await.unwrap();
         wait_for_status(&sup, proc.id, ProcessStatus::Stopped).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn late_tick_spawn_is_ignored_while_restart_owns_stop_barrier() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+    let proc = insert_process_with_status(
+        &sup,
+        ProcessId(210),
+        ProcessStatus::Crashed,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+
+    // Model a tick that retained this Crashed process immediately before a
+    // concurrent restart acquired the lifecycle stop barrier.
+    proc.stopping.store(true, Ordering::Release);
+    sup.schedule_spawn(Arc::clone(&proc));
+
+    assert!(proc.spawn_task.lock().is_none());
+    assert_eq!(proc.status(), ProcessStatus::Crashed);
+
+    sup.finish_stop(&proc);
+    sup.schedule_spawn(Arc::clone(&proc));
+    wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
+    sup.force_stop(proc.id).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -569,10 +585,6 @@ async fn force_restart_while_spawning_reaps_staged_generation() {
     sup.force_restart(proc.id).await.unwrap();
 
     assert_eq!(proc.status(), ProcessStatus::Crashed);
-    assert_eq!(
-        TransitionIntent::from_u8(proc.intent.load(Ordering::Acquire)),
-        TransitionIntent::None
-    );
     assert!(proc.next_spawn_at.load(Ordering::Acquire) <= now_secs());
     assert!(proc.active_generation.lock().is_none());
     assert_eq!(registry.len(), 0);

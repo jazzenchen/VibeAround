@@ -231,9 +231,9 @@ impl ChannelManager {
         let _ = self.input_tx.send(input);
     }
 
-    /// Process a single input on the current executor.
-    pub async fn process_input(&self, input: ChannelInput) {
-        self.ingress.dispatch(input).await;
+    /// Route a single input without waiting for route work or plugin output.
+    pub fn process_input(&self, input: ChannelInput) {
+        self.ingress.dispatch(input);
     }
 
     pub fn ingress(&self) -> Arc<ConversationIngress> {
@@ -244,8 +244,8 @@ impl ChannelManager {
         Arc::clone(&self.workspace_thread_manager)
     }
 
-    pub async fn send_output(&self, output: ChannelOutput) {
-        self.plugin_host.send_output(output).await;
+    pub fn send_output(&self, output: ChannelOutput) {
+        self.plugin_host.send_output(output);
     }
 
     pub fn respond_permission(
@@ -265,6 +265,6 @@ impl ChannelManager {
         if let Some(monitor) = monitor {
             monitor.shutdown_all().await;
         }
-        self.plugin_host.shutdown_all().await;
+        self.plugin_host.shutdown_all();
     }
 }

@@ -234,8 +234,7 @@ async fn handle_chat_socket(
                                                     &state,
                                                     &route,
                                                     &format!("❌ {}", error),
-                                                )
-                                                .await;
+                                                );
                                             }
                                         }
                                     }
@@ -648,12 +647,12 @@ async fn apply_web_launch_selection(
             .switch_workspace(route, &workspace)
             .await
         {
-            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            send_web_system_text(state, route, &format!("❌ {}", error));
         }
     }
     if let Some(profile) = profile {
         let Ok(agent_id) = common::resources::resolve_agent_id(&agent) else {
-            send_web_system_text(state, route, &format!("❌ Unknown agent `{}`.", agent)).await;
+            send_web_system_text(state, route, &format!("❌ Unknown agent `{}`.", agent));
             return;
         };
         let target = HostBinding::new(agent_id.clone(), Some(profile));
@@ -662,7 +661,7 @@ async fn apply_web_launch_selection(
             Ok(Some(runtime)) => {
                 if runtime.state().await.host_binding.agent_id == agent_id {
                     if let Err(error) = runtime.switch_profile_preserving_session(target).await {
-                        send_web_system_text(state, route, &format!("❌ {}", error)).await;
+                        send_web_system_text(state, route, &format!("❌ {}", error));
                         return;
                     }
                     state.web_channel.set_route_agent(&route.chat_id, agent_id);
@@ -675,7 +674,7 @@ async fn apply_web_launch_selection(
                             state.web_channel.set_route_agent(&route.chat_id, agent_id);
                         }
                         Err(error) => {
-                            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+                            send_web_system_text(state, route, &format!("❌ {}", error));
                         }
                     }
                 }
@@ -688,11 +687,11 @@ async fn apply_web_launch_selection(
                     state.web_channel.set_route_agent(&route.chat_id, agent_id);
                 }
                 Err(error) => {
-                    send_web_system_text(state, route, &format!("❌ {}", error)).await;
+                    send_web_system_text(state, route, &format!("❌ {}", error));
                 }
             },
             Err(error) => {
-                send_web_system_text(state, route, &format!("❌ {}", error)).await;
+                send_web_system_text(state, route, &format!("❌ {}", error));
             }
         }
     }
@@ -728,7 +727,7 @@ async fn apply_web_session_resume(
         )
         .await
     {
-        send_web_system_text(state, route, &format!("❌ {}", error)).await;
+        send_web_system_text(state, route, &format!("❌ {}", error));
     }
 }
 
@@ -781,7 +780,7 @@ async fn apply_web_session_resume_now(
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            send_web_system_text(state, route, &format!("❌ {}", error));
             return;
         }
     };
@@ -803,7 +802,7 @@ async fn apply_web_session_resume_now(
     {
         Ok(started) => started,
         Err(error) => {
-            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            send_web_system_text(state, route, &format!("❌ {}", error));
             return;
         }
     };
@@ -819,8 +818,7 @@ async fn apply_web_session_resume_now(
             &format!(
                 "Could not resume session {requested_session_id}; agent started {actual} instead."
             ),
-        )
-        .await;
+        );
     }
 }
 
@@ -861,7 +859,7 @@ async fn replay_current_route_session_if_matching(
     {
         Ok(started) => started,
         Err(error) => {
-            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            send_web_system_text(state, route, &format!("❌ {}", error));
             false
         }
     }
@@ -905,7 +903,7 @@ async fn resolve_web_session_resume(
     let canonical_agent = match common::resources::resolve_agent_id(&agent) {
         Ok(agent_id) => agent_id,
         Err(error) => {
-            send_web_system_text(state, route, &format!("❌ {}", error)).await;
+            send_web_system_text(state, route, &format!("❌ {}", error));
             return None;
         }
     };
@@ -949,15 +947,12 @@ async fn resolve_web_session_resume(
     })
 }
 
-async fn send_web_system_text(state: &AppState, route: &RouteKey, text: &str) {
-    state
-        .channel_hub
-        .send_output(ChannelOutput::SystemText {
-            route: route.clone(),
-            text: text.to_string(),
-            reply_to: None,
-        })
-        .await;
+fn send_web_system_text(state: &AppState, route: &RouteKey, text: &str) {
+    state.channel_hub.send_output(ChannelOutput::SystemText {
+        route: route.clone(),
+        text: text.to_string(),
+        reply_to: None,
+    });
 }
 
 fn canonical_web_session_mode(mode_id: &str) -> Option<&'static str> {
@@ -983,7 +978,7 @@ async fn apply_web_session_mode(state: &AppState, route: &RouteKey, mode_id: &st
                 mode_id
             ),
         )
-        .await;
+        ;
         return;
     };
     send_web_system_text(
@@ -993,8 +988,7 @@ async fn apply_web_session_mode(state: &AppState, route: &RouteKey, mode_id: &st
             "Session mode `{}` is no longer a route-level setting; switch host/profile instead.",
             canonical
         ),
-    )
-    .await;
+    );
 }
 
 async fn apply_web_session_config_option(
@@ -1011,7 +1005,7 @@ async fn apply_web_session_config_option(
             config_id, value
         ),
     )
-    .await;
+    ;
 }
 
 async fn send_event<S>(ws_tx: &mut S, event: &ChatEvent) -> Result<(), ()>

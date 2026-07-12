@@ -10,6 +10,18 @@ pub(super) struct StagedGeneration {
 
 impl Supervisor {
     pub(super) fn schedule_spawn(self: &Arc<Self>, proc: Arc<SupervisedProcess>) {
+        // Serialize task publication with lifecycle state changes. A tick may
+        // hold a stale `Crashed` snapshot while restart already owns the stop
+        // barrier; it must not publish a late spawn task into that window.
+        let _transition = proc.transition_lock.lock();
+        if proc.stopping.load(Ordering::Acquire)
+            || !matches!(
+                proc.status(),
+                ProcessStatus::NotStarted | ProcessStatus::Crashed
+            )
+        {
+            return;
+        }
         let mut slot = proc.spawn_task.lock();
         if slot.as_ref().is_some_and(|task| !task.is_finished()) {
             return;
@@ -349,72 +361,50 @@ impl Supervisor {
         proc.active_generation.lock().take();
         if matches!(proc.status(), ProcessStatus::Stopped) {
             // `force_stop` won while this generation was being reaped.
-            proc.intent
-                .store(TransitionIntent::None as u8, Ordering::Release);
             proc.next_spawn_at.store(0, Ordering::Relaxed);
             drop(transition);
             self.deregister_terminal_process(&proc);
             return;
         }
 
-        // Atomically consume intent so two callers don't both observe Stop.
-        let intent = TransitionIntent::from_u8(
-            proc.intent
-                .swap(TransitionIntent::None as u8, Ordering::AcqRel),
-        );
-
-        match intent {
-            TransitionIntent::Stop => {
+        match proc.policy {
+            RestartPolicy::Never => {
                 proc.set_status(ProcessStatus::Stopped);
                 proc.next_spawn_at.store(0, Ordering::Relaxed);
                 proc.set_reason(&reason);
-                proc_log!(
-                    info,
-                    kind = proc.kind,
-                    label = proc.label,
-                    event = "stopped",
-                    reason = %reason
-                );
-            }
-            TransitionIntent::None => match proc.policy {
-                RestartPolicy::Never => {
-                    proc.set_status(ProcessStatus::Stopped);
-                    proc.next_spawn_at.store(0, Ordering::Relaxed);
-                    proc.set_reason(&reason);
-                    if was_crash {
-                        proc_log!(
-                            warn,
-                            kind = proc.kind,
-                            label = proc.label,
-                            event = "exited_no_restart",
-                            reason = %reason
-                        );
-                    } else {
-                        proc_log!(
-                            info,
-                            kind = proc.kind,
-                            label = proc.label,
-                            event = "exited",
-                            reason = %reason
-                        );
-                    }
-                }
-                RestartPolicy::OnCrash { .. } => {
-                    proc.set_status(ProcessStatus::Crashed);
-                    let delay = proc.next_restart_delay();
-                    proc.next_spawn_at
-                        .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
-                    proc.set_reason(&reason);
+                if was_crash {
                     proc_log!(
                         warn,
                         kind = proc.kind,
                         label = proc.label,
-                        event = "crashed",
-                        reason = %reason,
-                        respawn_in_secs = delay.as_secs()
+                        event = "exited_no_restart",
+                        reason = %reason
+                    );
+                } else {
+                    proc_log!(
+                        info,
+                        kind = proc.kind,
+                        label = proc.label,
+                        event = "exited",
+                        reason = %reason
                     );
                 }
-            },
+            }
+            RestartPolicy::OnCrash { .. } => {
+                proc.set_status(ProcessStatus::Crashed);
+                let delay = proc.next_restart_delay();
+                proc.next_spawn_at
+                    .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
+                proc.set_reason(&reason);
+                proc_log!(
+                    warn,
+                    kind = proc.kind,
+                    label = proc.label,
+                    event = "crashed",
+                    reason = %reason,
+                    respawn_in_secs = delay.as_secs()
+                );
+            }
         }
         drop(transition);
         self.notify_change(&proc);

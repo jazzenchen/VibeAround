@@ -425,9 +425,9 @@ VibeAround 还处在快速打磨阶段，目前也主要是我一个人在开发
 
 微信交流群：
 
-<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr-2026-07-13.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 7 月 13 日" />
+<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr-2026-07-19.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 7 月 19 日" />
 
-该微信群二维码有效期至 2026 年 7 月 13 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
+该微信群二维码有效期至 2026 年 7 月 19 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
 
 ## 许可证
 

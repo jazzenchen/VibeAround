@@ -343,7 +343,7 @@ impl PluginAgentHandler {
         );
 
         for route in routes {
-            self.ingress.dispatch(ChannelInput::Stop { route }).await;
+            self.ingress.dispatch(ChannelInput::Stop { route });
         }
         Ok(())
     }
