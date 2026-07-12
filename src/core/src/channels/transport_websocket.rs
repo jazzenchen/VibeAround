@@ -14,7 +14,6 @@ use super::ChannelOutput;
 pub type WebChatSink = mpsc::UnboundedSender<ChannelOutput>;
 
 const MAX_ROUTE_HISTORY: usize = 4000;
-const SESSION_KEY_SEPARATOR: char = '\u{1f}';
 const WEB_ROUTE_IDLE_CLOSE_DELAY: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
@@ -35,6 +34,12 @@ struct PendingUserMessage {
     content: Vec<serde_json::Value>,
 }
 
+struct RouteSession {
+    agent_id: String,
+    session_id: String,
+    route: RouteKey,
+}
+
 /// Internal websocket-backed channel manager used by the browser chat UI.
 pub struct WebChannelManager {
     command_tx: mpsc::UnboundedSender<WebChannelCommand>,
@@ -46,8 +51,7 @@ type WebChannelCommand = Box<dyn FnOnce(&mut WebChannelState) + Send>;
 struct WebChannelState {
     connections: HashMap<String, HashMap<String, WebChatSink>>,
     route_agents: HashMap<String, String>,
-    route_sessions: HashMap<String, String>,
-    session_routes: HashMap<String, RouteKey>,
+    route_sessions: HashMap<String, RouteSession>,
     route_history: HashMap<String, Vec<ChannelOutput>>,
     route_pending_permissions: HashMap<String, HashMap<String, ChannelOutput>>,
     route_pending_user_messages: HashMap<String, Vec<PendingUserMessage>>,
@@ -274,9 +278,7 @@ impl WebChannelState {
     pub fn forget_route(&mut self, route_chat_id: &str) {
         self.route_history.remove(route_chat_id);
         self.route_agents.remove(route_chat_id);
-        if let Some(session_key) = self.route_sessions.remove(route_chat_id) {
-            self.session_routes.remove(&session_key);
-        }
+        self.route_sessions.remove(route_chat_id);
         self.clear_route_pending_permissions(route_chat_id);
         self.clear_route_pending_user_messages(route_chat_id);
         self.route_activity.remove(route_chat_id);
@@ -288,9 +290,10 @@ impl WebChannelState {
     }
 
     pub fn route_for_session(&self, agent_id: &str, session_id: &str) -> Option<RouteKey> {
-        self.session_routes
-            .get(&session_key(agent_id, session_id))
-            .cloned()
+        self.route_sessions
+            .values()
+            .find(|session| session.agent_id == agent_id && session.session_id == session_id)
+            .map(|session| session.route.clone())
     }
 
     pub fn route_has_session(&self, route_chat_id: &str) -> bool {
@@ -300,8 +303,7 @@ impl WebChannelState {
     pub fn route_session_id(&self, route_chat_id: &str) -> Option<String> {
         self.route_sessions
             .get(route_chat_id)
-            .and_then(|key| key.split_once(SESSION_KEY_SEPARATOR))
-            .map(|(_, session_id)| session_id.to_string())
+            .map(|session| session.session_id.clone())
     }
 
     pub fn route_is_active(&self, route_chat_id: &str) -> bool {
@@ -433,10 +435,14 @@ impl WebChannelState {
         let Some(agent_id) = self.route_agents.get(&route.chat_id).cloned() else {
             return;
         };
-        let key = session_key(&agent_id, session_id);
-        self.route_sessions
-            .insert(route.chat_id.clone(), key.clone());
-        self.session_routes.insert(key, route.clone());
+        self.route_sessions.insert(
+            route.chat_id.clone(),
+            RouteSession {
+                agent_id,
+                session_id: session_id.to_string(),
+                route: route.clone(),
+            },
+        );
     }
 
     fn broadcast_output(&mut self, route_chat_id: &str, output: ChannelOutput) {
@@ -534,10 +540,6 @@ impl WebChannelState {
             let _ = sink.send(output.clone());
         }
     }
-}
-
-fn session_key(agent_id: &str, session_id: &str) -> String {
-    format!("{agent_id}{SESSION_KEY_SEPARATOR}{session_id}")
 }
 
 fn user_message_outputs(
