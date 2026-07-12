@@ -20,7 +20,7 @@ use super::agent_protocol::{
     notification_payload, notification_payload_with_text, session_update_text,
     synthetic_agent_message_payload, AgentProtocolFilter,
 };
-use super::plugin_host::{PendingPermissionRegistration, PluginHost};
+use super::plugin_host::PluginHost;
 use super::types::ChannelOutput;
 
 pub struct SubagentBridgeHandler {
@@ -115,64 +115,20 @@ impl AgentClientHandler for SubagentBridgeHandler {
         &self,
         args: acp::RequestPermissionRequest,
     ) -> acp::Result<acp::RequestPermissionResponse> {
-        if args.options.is_empty() {
-            return Err(acp::Error::method_not_found());
-        }
-
-        let Some((target, mut turn_cancelled)) =
-            self.active_turn_target.current_with_cancellation()
-        else {
-            return Ok(acp::RequestPermissionResponse::new(
-                acp::RequestPermissionOutcome::Cancelled,
-            ));
-        };
-
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
-        let _pending_permission = PendingPermissionRegistration::register(
+        super::permission::forward_permission_request(
             &self.plugin_host,
-            request_id.clone(),
-            target.route.channel_instance_id().to_string(),
-            tx,
-        );
-
-        let mut payload = serde_json::to_value(&args).map_err(|e| {
-            self.plugin_host.remove_pending_permission(&request_id);
-            acp::Error::new(-32603, format!("serialize requestPermission: {}", e))
-        })?;
-        if let Some(object) = payload.as_object_mut() {
-            object.insert(
-                "subagent".to_string(),
+            &self.active_turn_target,
+            args,
+            Some((
+                "subagent",
                 serde_json::json!({
                     "id": self.thread_agent.id.to_string(),
                     "name": self.thread_agent.name.clone(),
                     "turn_id": self.thread_agent.turn_id.to_string(),
                 }),
-            );
-        }
-
-        self.plugin_host
-            .send_output(ChannelOutput::PermissionRequest {
-                route: target.route,
-                reply_to: target.reply_to,
-                request_id: request_id.clone(),
-                payload,
-            });
-
-        tokio::select! {
-            biased;
-            _ = turn_cancelled.wait_for(|cancelled| *cancelled) => {
-                Ok(acp::RequestPermissionResponse::new(
-                    acp::RequestPermissionOutcome::Cancelled,
-                ))
-            }
-            response = rx => match response {
-                Ok(response) => Ok(response),
-                Err(_) => Ok(acp::RequestPermissionResponse::new(
-                    acp::RequestPermissionOutcome::Cancelled,
-                )),
-            }
-        }
+            )),
+        )
+        .await
     }
 }
 
@@ -366,18 +322,6 @@ mod tests {
         )
     }
 
-    fn permission_request() -> acp::RequestPermissionRequest {
-        acp::RequestPermissionRequest::new(
-            "session-1",
-            acp::ToolCallUpdate::new("tool-1", acp::ToolCallUpdateFields::new()),
-            vec![acp::PermissionOption::new(
-                "allow-once",
-                "Allow once",
-                acp::PermissionOptionKind::AllowOnce,
-            )],
-        )
-    }
-
     fn permission_handler(
         plugin_host: Arc<PluginHost>,
         active_turn_target: ActiveTurnTarget,
@@ -412,20 +356,25 @@ mod tests {
 
         let permission_task = tokio::spawn({
             let handler = Arc::clone(&handler);
-            async move { handler.request_permission(permission_request()).await }
+            async move {
+                handler
+                    .request_permission(super::super::permission::test_permission_request())
+                    .await
+            }
         });
         let output = output_rx.recv().await.expect("permission output");
         let ChannelOutput::PermissionRequest {
             route,
             reply_to,
             request_id,
-            ..
+            payload,
         } = output
         else {
             panic!("expected permission request");
         };
         assert_eq!(route, target.route);
         assert_eq!(reply_to, target.reply_to);
+        assert_eq!(payload["subagent"]["id"], self::test_agent().id.to_string());
 
         let response =
             acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled);
@@ -451,7 +400,11 @@ mod tests {
 
         let permission_task = tokio::spawn({
             let handler = Arc::clone(&handler);
-            async move { handler.request_permission(permission_request()).await }
+            async move {
+                handler
+                    .request_permission(super::super::permission::test_permission_request())
+                    .await
+            }
         });
         let output = output_rx.recv().await.expect("permission output");
         let ChannelOutput::PermissionRequest { request_id, .. } = output else {

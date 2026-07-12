@@ -26,7 +26,9 @@ use super::agent_protocol::{
     notification_payload, notification_payload_with_text, session_update_text,
     synthetic_agent_message_payload, synthetic_user_message_payload, AgentProtocolFilter,
 };
-use super::plugin_host::{PendingPermissionRegistration, PluginHost};
+#[cfg(test)]
+use super::plugin_host::PendingPermissionRegistration;
+use super::plugin_host::PluginHost;
 use super::types::{ChannelOutput, ThreadReply, ThreadReplyAgent, ThreadReplyPayload};
 
 pub(crate) struct ChannelBridgeHandler {
@@ -394,78 +396,13 @@ impl AgentClientHandler for ChannelBridgeHandler {
         &self,
         args: acp::RequestPermissionRequest,
     ) -> acp::Result<acp::RequestPermissionResponse> {
-        if args.options.is_empty() {
-            return Err(acp::Error::method_not_found());
-        }
-
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
-        let Some((target, mut turn_cancelled)) =
-            self.active_turn_target.current_with_cancellation()
-        else {
-            return Ok(acp::RequestPermissionResponse::new(
-                acp::RequestPermissionOutcome::Cancelled,
-            ));
-        };
-        let _pending_permission = PendingPermissionRegistration::register(
+        super::permission::forward_permission_request(
             &self.plugin_host,
-            request_id.clone(),
-            target.route.channel_instance_id().to_string(),
-            tx,
-        );
-
-        let options_len = args.options.len();
-        let payload = match serde_json::to_value(&args) {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(acp::Error::new(
-                    -32603,
-                    format!("serialize requestPermission: {}", e),
-                ));
-            }
-        };
-
-        tracing::info!(
-            "[ChannelBridgeHandler] request_permission forwarding thread={} origin={} request_id={} options={}",
-            self.thread_id,
-            target.route,
-            request_id,
-            options_len
-        );
-
-        self.plugin_host
-            .send_output(ChannelOutput::PermissionRequest {
-                route: target.route,
-                reply_to: target.reply_to,
-                request_id: request_id.clone(),
-                payload,
-            });
-
-        // Wait for plugin response — no timeout by design. If the plugin
-        // crashes, `tx` is dropped and `rx.await` errors, which we treat as
-        // cancelled so the upstream agent turn gracefully ends.
-        tokio::select! {
-            biased;
-            _ = turn_cancelled.wait_for(|cancelled| *cancelled) => {
-                Ok(acp::RequestPermissionResponse::new(
-                    acp::RequestPermissionOutcome::Cancelled,
-                ))
-            }
-            response = rx => {
-                match response {
-                    Ok(response) => Ok(response),
-                    Err(_) => {
-                        tracing::info!(
-                            "[ChannelBridgeHandler] request_permission dropped (plugin gone?) thread={} request_id={}",
-                            self.thread_id, request_id
-                        );
-                        Ok(acp::RequestPermissionResponse::new(
-                            acp::RequestPermissionOutcome::Cancelled,
-                        ))
-                    }
-                }
-            }
-        }
+            &self.active_turn_target,
+            args,
+            None,
+        )
+        .await
     }
 }
 
@@ -529,18 +466,6 @@ fn string_field(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn permission_request() -> acp::RequestPermissionRequest {
-        acp::RequestPermissionRequest::new(
-            "session-1",
-            acp::ToolCallUpdate::new("tool-1", acp::ToolCallUpdateFields::new()),
-            vec![acp::PermissionOption::new(
-                "allow-once",
-                "Allow once",
-                acp::PermissionOptionKind::AllowOnce,
-            )],
-        )
-    }
 
     fn permission_handler(
         plugin_host: Arc<PluginHost>,
@@ -638,7 +563,11 @@ mod tests {
 
         let permission_task = tokio::spawn({
             let handler = Arc::clone(&handler);
-            async move { handler.request_permission(permission_request()).await }
+            async move {
+                handler
+                    .request_permission(super::super::permission::test_permission_request())
+                    .await
+            }
         });
         let output = output_rx.recv().await.expect("permission output");
         let ChannelOutput::PermissionRequest { request_id, .. } = output else {

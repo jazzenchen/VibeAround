@@ -20,6 +20,7 @@ pub(crate) mod agent_protocol;
 pub mod bridge_handler;
 pub mod manifest;
 pub mod monitor;
+mod permission;
 pub mod plugin_bridge;
 pub mod plugin_host;
 pub mod plugin_runner;
