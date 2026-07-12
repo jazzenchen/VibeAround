@@ -93,7 +93,7 @@ impl WorkspaceThreadManager {
             .await?
             .all()
             .filter(|attachment| &attachment.thread_id == thread_id)
-            .filter(|attachment| !is_legacy_channel_default_route(&attachment.route))
+            .filter(|attachment| attachment.visibility == RouteAttachmentVisibility::Visible)
             .map(|attachment| attachment.route.clone())
             .collect())
     }
@@ -103,16 +103,17 @@ impl WorkspaceThreadManager {
         thread_id: &WorkspaceThreadId,
         current_route: Option<&RouteKey>,
     ) -> anyhow::Result<()> {
-        let Some(route) = current_route.filter(|route| !is_legacy_channel_default_route(route))
-        else {
+        let Some(route) = current_route else {
             return Ok(());
         };
         let projection = self.attachment_projection().await?;
-        if projection
-            .get(route)
-            .is_some_and(|attachment| &attachment.thread_id == thread_id)
-        {
-            return Ok(());
+        if let Some(attachment) = projection.get(route) {
+            if attachment.visibility == RouteAttachmentVisibility::Hidden {
+                return Ok(());
+            }
+            if &attachment.thread_id == thread_id {
+                return Ok(());
+            }
         }
         let thread = self
             .thread(thread_id)
@@ -138,12 +139,12 @@ impl WorkspaceThreadManager {
     pub async fn runtime_entries(&self) -> anyhow::Result<Vec<WorkspaceThreadRuntimeEntry>> {
         let thread_projection = self.thread_projection().await?;
         let attachment_projection = self.attachment_projection().await?;
-        let mut routes_by_thread: HashMap<WorkspaceThreadId, Vec<RouteKey>> = HashMap::new();
+        let mut routes_by_thread: HashMap<WorkspaceThreadId, Vec<_>> = HashMap::new();
         for attachment in attachment_projection.all() {
             routes_by_thread
                 .entry(attachment.thread_id.clone())
                 .or_default()
-                .push(attachment.route.clone());
+                .push(attachment.clone());
         }
 
         let mut entries = Vec::new();
@@ -167,17 +168,18 @@ impl WorkspaceThreadManager {
                 .get(&thread.id)
                 .cloned()
                 .unwrap_or_default();
-            attached_routes.sort_by_key(|route| route.as_key());
+            attached_routes.sort_by_key(|attachment| attachment.route.as_key());
             let visible_routes = attached_routes
                 .iter()
-                .filter(|route| !is_legacy_channel_default_route(route))
-                .cloned()
+                .filter(|attachment| attachment.visibility == RouteAttachmentVisibility::Visible)
+                .map(|attachment| attachment.route.clone())
                 .collect::<Vec<_>>();
             entries.push(WorkspaceThreadRuntimeEntry {
-                route: visible_routes
-                    .first()
-                    .cloned()
-                    .or_else(|| attached_routes.first().cloned()),
+                route: visible_routes.first().cloned().or_else(|| {
+                    attached_routes
+                        .first()
+                        .map(|attachment| attachment.route.clone())
+                }),
                 attached_routes: visible_routes,
                 first_user_prompt: thread.first_user_prompt.clone(),
                 created_at: thread.created_at.clone(),

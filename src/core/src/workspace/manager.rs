@@ -19,6 +19,7 @@ use super::registry::{WorkspaceId, WorkspaceProjection, WorkspaceRecord, GENERAL
 use super::store::{WorkspaceEvent, WorkspaceEventStore};
 use super::threads::attachment::{
     RouteAttachmentEvent, RouteAttachmentEventStore, RouteAttachmentProjection,
+    RouteAttachmentVisibility,
 };
 use super::threads::runtime::ThreadRuntime;
 use super::threads::runtime::ThreadRuntimeState;
@@ -34,7 +35,6 @@ mod sessions;
 mod routes;
 
 pub const AGENT_HOST_IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(10 * 60);
-const LEGACY_CHANNEL_DEFAULT_CHAT_ID: &str = "__channel_default__";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExternalSessionAttachMode {
@@ -812,10 +812,6 @@ fn runtime_has_started_host(state: &ThreadRuntimeState) -> bool {
 
 fn route_can_rehydrate_runtime(route: &RouteKey) -> bool {
     channel_traits(&route.channel_kind).rehydratable_runtime
-}
-
-fn is_legacy_channel_default_route(route: &RouteKey) -> bool {
-    route.chat_id == LEGACY_CHANNEL_DEFAULT_CHAT_ID
 }
 
 #[allow(dead_code)]
