@@ -172,7 +172,7 @@ impl ChannelManager {
             .cloned()
             .collect::<std::collections::HashSet<_>>();
         let monitor = self.monitor();
-        let registered = monitor.registered_instances();
+        let registered = monitor.registered_instances().await;
         let registered_set = registered
             .iter()
             .cloned()

@@ -19,12 +19,12 @@
 //!
 //! [`StateSource::subscribe_changes`]: crate::state::StateSource::subscribe_changes
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use dashmap::DashMap;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::manifest::ChannelPluginManifest;
 use super::plugin_host::PluginHost;
@@ -94,14 +94,45 @@ pub struct ChannelStatusSnapshot {
 // ---------------------------------------------------------------------------
 
 pub struct ChannelMonitor {
+    command_tx: mpsc::UnboundedSender<ChannelMonitorCommand>,
+    /// Republished `()` stream for `StateSource::subscribe_changes`.
+    change_tx: broadcast::Sender<()>,
+}
+
+struct ChannelMonitorOwner {
     supervisor: Arc<Supervisor>,
-    lifecycle: Mutex<()>,
-    registrations: DashMap<ChannelInstanceId, ChannelRegistration>,
+    registrations: HashMap<ChannelInstanceId, ChannelRegistration>,
     ingress: Arc<ConversationIngress>,
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     plugin_host: Arc<PluginHost>,
-    /// Republished `()` stream for `StateSource::subscribe_changes`.
     change_tx: broadcast::Sender<()>,
+}
+
+enum ChannelMonitorCommand {
+    Register {
+        manifest: Box<ChannelPluginManifest>,
+        reply: oneshot::Sender<bool>,
+    },
+    Touch(ChannelInstanceId),
+    ForceStop {
+        instance_id: ChannelInstanceId,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    Unregister {
+        instance_id: ChannelInstanceId,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    ForceRestart {
+        instance_id: ChannelInstanceId,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    ForceStart {
+        instance_id: ChannelInstanceId,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    Snapshot(oneshot::Sender<Vec<ChannelStatusSnapshot>>),
+    RegisteredInstances(oneshot::Sender<Vec<ChannelInstanceId>>),
+    Shutdown(oneshot::Sender<()>),
 }
 
 #[derive(Debug, Clone)]
@@ -131,13 +162,20 @@ impl ChannelMonitor {
         let forwarder_tx = change_tx.clone();
         tokio::spawn(forward_events(forwarder_rx, forwarder_tx));
 
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        tokio::spawn(
+            ChannelMonitorOwner {
+                supervisor,
+                registrations: HashMap::new(),
+                ingress,
+                input_tx,
+                plugin_host,
+                change_tx: change_tx.clone(),
+            }
+            .run(command_rx),
+        );
         Arc::new(Self {
-            supervisor,
-            lifecycle: Mutex::new(()),
-            registrations: DashMap::new(),
-            ingress,
-            input_tx,
-            plugin_host,
+            command_tx,
             change_tx,
         })
     }
@@ -147,7 +185,187 @@ impl ChannelMonitor {
     /// `OnCrash` policy with a short fixed restart delay and a 90-second
     /// heartbeat watchdog.
     pub async fn register(self: &Arc<Self>, manifest: ChannelPluginManifest) -> bool {
-        let _lifecycle_guard = self.lifecycle.lock().await;
+        let (reply, registered) = oneshot::channel();
+        if self
+            .command_tx
+            .send(ChannelMonitorCommand::Register {
+                manifest: Box::new(manifest),
+                reply,
+            })
+            .is_err()
+        {
+            return false;
+        }
+        registered.await.unwrap_or(false)
+    }
+
+    /// Bump the liveness timestamp — called on every `_va/heartbeat`
+    /// from the plugin. No-op if the channel was deregistered mid-flight.
+    pub fn touch(&self, instance_id: &str) {
+        let _ = self
+            .command_tx
+            .send(ChannelMonitorCommand::Touch(instance_id.to_string()));
+    }
+
+    pub async fn force_stop(self: &Arc<Self>, instance_id: &str) -> Result<(), String> {
+        self.lifecycle_request(instance_id, |instance_id, reply| {
+            ChannelMonitorCommand::ForceStop { instance_id, reply }
+        })
+        .await
+    }
+
+    /// Stop and remove a configured instance from both the supervisor and
+    /// the monitor registry. Used when settings delete or rename an instance.
+    pub async fn unregister(&self, instance_id: &str) -> Result<(), String> {
+        self.lifecycle_request(instance_id, |instance_id, reply| {
+            ChannelMonitorCommand::Unregister { instance_id, reply }
+        })
+        .await
+    }
+
+    pub async fn force_restart(self: &Arc<Self>, instance_id: &str) -> Result<(), String> {
+        self.lifecycle_request(instance_id, |instance_id, reply| {
+            ChannelMonitorCommand::ForceRestart { instance_id, reply }
+        })
+        .await
+    }
+
+    pub async fn force_start(self: &Arc<Self>, instance_id: &str) -> Result<(), String> {
+        self.lifecycle_request(instance_id, |instance_id, reply| {
+            ChannelMonitorCommand::ForceStart { instance_id, reply }
+        })
+        .await
+    }
+
+    pub async fn snapshot(&self) -> Vec<ChannelStatusSnapshot> {
+        let (reply, snapshot) = oneshot::channel();
+        if self
+            .command_tx
+            .send(ChannelMonitorCommand::Snapshot(reply))
+            .is_err()
+        {
+            return Vec::new();
+        }
+        snapshot.await.unwrap_or_default()
+    }
+
+    pub async fn registered_instances(&self) -> Vec<ChannelInstanceId> {
+        let (reply, instances) = oneshot::channel();
+        if self
+            .command_tx
+            .send(ChannelMonitorCommand::RegisteredInstances(reply))
+            .is_err()
+        {
+            return Vec::new();
+        }
+        instances.await.unwrap_or_default()
+    }
+
+    pub async fn status(&self, instance_id: &str) -> Option<ChannelRunStatus> {
+        self.snapshot()
+            .await
+            .into_iter()
+            .find(|snapshot| snapshot.instance_id == instance_id)
+            .map(|snapshot| snapshot.status)
+    }
+
+    pub fn subscribe_changes(&self) -> broadcast::Receiver<()> {
+        self.change_tx.subscribe()
+    }
+
+    /// Stop and unregister only the channel processes owned by this monitor.
+    /// The process-wide supervisor also serves ACP agents and search, so a
+    /// channel facade must never drain its global table.
+    pub async fn shutdown_all(&self) {
+        let (reply, done) = oneshot::channel();
+        if self
+            .command_tx
+            .send(ChannelMonitorCommand::Shutdown(reply))
+            .is_ok()
+        {
+            let _ = done.await;
+        }
+    }
+
+    async fn lifecycle_request(
+        &self,
+        instance_id: &str,
+        command: impl FnOnce(
+            ChannelInstanceId,
+            oneshot::Sender<Result<(), String>>,
+        ) -> ChannelMonitorCommand,
+    ) -> Result<(), String> {
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(command(instance_id.to_string(), reply))
+            .map_err(|_| "channel monitor stopped".to_string())?;
+        result
+            .await
+            .map_err(|_| "channel monitor stopped".to_string())?
+    }
+}
+
+impl ChannelMonitorOwner {
+    async fn run(mut self, mut command_rx: mpsc::UnboundedReceiver<ChannelMonitorCommand>) {
+        while let Some(command) = command_rx.recv().await {
+            match command {
+                ChannelMonitorCommand::Register { manifest, reply } => {
+                    let _ = reply.send(self.register(*manifest));
+                }
+                ChannelMonitorCommand::Touch(instance_id) => self.touch(&instance_id),
+                ChannelMonitorCommand::ForceStop { instance_id, reply } => {
+                    let result = match self.process_id(&instance_id) {
+                        Ok(id) => self
+                            .supervisor
+                            .force_stop(id)
+                            .await
+                            .map_err(|error| error.to_string()),
+                        Err(error) => Err(error),
+                    };
+                    let _ = reply.send(result);
+                }
+                ChannelMonitorCommand::Unregister { instance_id, reply } => {
+                    let _ = reply.send(self.unregister(&instance_id).await);
+                }
+                ChannelMonitorCommand::ForceRestart { instance_id, reply } => {
+                    let result = match self.process_id(&instance_id) {
+                        Ok(id) => self
+                            .supervisor
+                            .force_restart(id)
+                            .await
+                            .map_err(|error| error.to_string()),
+                        Err(error) => Err(error),
+                    };
+                    let _ = reply.send(result);
+                }
+                ChannelMonitorCommand::ForceStart { instance_id, reply } => {
+                    let result = match self.process_id(&instance_id) {
+                        Ok(id) => self
+                            .supervisor
+                            .force_start(id)
+                            .await
+                            .map_err(|error| error.to_string()),
+                        Err(error) => Err(error),
+                    };
+                    let _ = reply.send(result);
+                }
+                ChannelMonitorCommand::Snapshot(reply) => {
+                    let _ = reply.send(self.snapshot());
+                }
+                ChannelMonitorCommand::RegisteredInstances(reply) => {
+                    let mut instances = self.registrations.keys().cloned().collect::<Vec<_>>();
+                    instances.sort();
+                    let _ = reply.send(instances);
+                }
+                ChannelMonitorCommand::Shutdown(reply) => {
+                    self.shutdown_all().await;
+                    let _ = reply.send(());
+                }
+            }
+        }
+    }
+
+    fn register(&mut self, manifest: ChannelPluginManifest) -> bool {
         let kind = manifest.channel_kind.clone();
         let instance_id = manifest.instance_id.clone();
         if self.registrations.contains_key(&instance_id) {
@@ -162,7 +380,6 @@ impl ChannelMonitor {
         let spec = SpawnSpec::new("node")
             .arg(manifest.entry_path.to_string_lossy().to_string())
             .cwd(manifest.plugin_dir.clone());
-
         let factory = ChannelPluginRunnerFactory::new(
             manifest.clone(),
             self.input_tx.clone(),
@@ -170,8 +387,7 @@ impl ChannelMonitor {
             Arc::clone(&self.plugin_host),
         )
         .into_bridge_factory();
-
-        let id = self.supervisor.register(
+        let process_id = self.supervisor.register(
             ProcessKind::ChannelPlugin,
             instance_id.clone(),
             spec,
@@ -181,147 +397,71 @@ impl ChannelMonitor {
             },
             factory,
         );
-        let replaced = self.registrations.insert(
+        self.registrations.insert(
             instance_id,
             ChannelRegistration {
-                process_id: id,
+                process_id,
                 channel_kind: kind,
                 version: manifest.version,
                 plugin_dir: manifest.plugin_dir,
             },
         );
-        debug_assert!(replaced.is_none());
         let _ = self.change_tx.send(());
         true
     }
 
-    /// Bump the liveness timestamp — called on every `_va/heartbeat`
-    /// from the plugin. No-op if the channel was deregistered mid-flight.
-    pub fn touch(&self, instance_id: &str) {
-        if let Some(id) = self.lookup(instance_id) {
-            self.supervisor.touch(id);
+    fn touch(&self, instance_id: &str) {
+        if let Ok(process_id) = self.process_id(instance_id) {
+            self.supervisor.touch(process_id);
         }
     }
 
-    pub async fn force_stop(self: &Arc<Self>, instance_id: &str) -> Result<(), String> {
-        let _lifecycle_guard = self.lifecycle.lock().await;
-        let id = self
-            .lookup(instance_id)
-            .ok_or_else(|| format!("unknown channel instance: {}", instance_id))?;
+    async fn unregister(&mut self, instance_id: &str) -> Result<(), String> {
+        let process_id = self.process_id(instance_id)?;
         self.supervisor
-            .force_stop(id)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    /// Stop and remove a configured instance from both the supervisor and
-    /// the monitor registry. Used when settings delete or rename an instance.
-    pub async fn unregister(&self, instance_id: &str) -> Result<(), String> {
-        let _lifecycle_guard = self.lifecycle.lock().await;
-        let registration = self
-            .registrations
-            .get(instance_id)
-            .map(|entry| entry.value().clone())
-            .ok_or_else(|| format!("unknown channel instance: {}", instance_id))?;
-        self.supervisor
-            .unregister(registration.process_id)
+            .unregister(process_id)
             .await
             .map_err(|error| error.to_string())?;
-        let removed = self.registrations.remove_if(instance_id, |_, current| {
-            current.process_id == registration.process_id
-        });
-        if removed.is_some() {
-            // The supervisor publishes Stopped before this facade removes its
-            // metadata. Notify again so WS snapshots drop the deleted row.
-            let _ = self.change_tx.send(());
-        }
+        self.registrations.remove(instance_id);
+        // The supervisor publishes Stopped before this facade removes its
+        // metadata. Notify again so WS snapshots drop the deleted row.
+        let _ = self.change_tx.send(());
         Ok(())
     }
 
-    pub async fn force_restart(self: &Arc<Self>, instance_id: &str) -> Result<(), String> {
-        let _lifecycle_guard = self.lifecycle.lock().await;
-        let id = self
-            .lookup(instance_id)
-            .ok_or_else(|| format!("unknown channel instance: {}", instance_id))?;
-        self.supervisor
-            .force_restart(id)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    pub async fn force_start(self: &Arc<Self>, instance_id: &str) -> Result<(), String> {
-        let _lifecycle_guard = self.lifecycle.lock().await;
-        let id = self
-            .lookup(instance_id)
-            .ok_or_else(|| format!("unknown channel instance: {}", instance_id))?;
-        self.supervisor
-            .force_start(id)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    pub fn snapshot(&self) -> Vec<ChannelStatusSnapshot> {
+    fn snapshot(&self) -> Vec<ChannelStatusSnapshot> {
         self.supervisor
             .snapshot()
             .into_iter()
-            .filter(|p| p.kind == ProcessKind::ChannelPlugin)
-            .filter_map(|p| {
-                let registration = self.registrations.get(&p.label)?;
+            .filter(|process| process.kind == ProcessKind::ChannelPlugin)
+            .filter_map(|process| {
+                let registration = self.registrations.get(&process.label)?;
                 Some(ChannelStatusSnapshot {
-                    instance_id: p.label,
+                    instance_id: process.label,
                     kind: registration.channel_kind.clone(),
                     version: Some(registration.version.clone()),
                     plugin_dir: Some(registration.plugin_dir.clone()),
-                    status: ChannelRunStatus::from_process(p.status),
-                    reason: p.reason,
+                    status: ChannelRunStatus::from_process(process.status),
+                    reason: process.reason,
                 })
             })
             .collect()
     }
 
-    pub fn registered_instances(&self) -> Vec<ChannelInstanceId> {
-        let mut instances = self
-            .registrations
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect::<Vec<_>>();
-        instances.sort();
-        instances
-    }
-
-    pub fn status(&self, instance_id: &str) -> Option<ChannelRunStatus> {
-        self.snapshot()
-            .into_iter()
-            .find(|snapshot| snapshot.instance_id == instance_id)
-            .map(|snapshot| snapshot.status)
-    }
-
-    pub fn subscribe_changes(&self) -> broadcast::Receiver<()> {
-        self.change_tx.subscribe()
-    }
-
-    /// Stop and unregister only the channel processes owned by this monitor.
-    /// The process-wide supervisor also serves ACP agents and search, so a
-    /// channel facade must never drain its global table.
-    pub async fn shutdown_all(&self) {
-        let _lifecycle_guard = self.lifecycle.lock().await;
-        let ids = self
-            .registrations
-            .iter()
-            .map(|entry| (entry.value().process_id, entry.key().clone()))
-            .collect::<Vec<_>>();
-        for (id, instance_id) in ids {
-            if let Err(error) = self.supervisor.unregister(id).await {
+    async fn shutdown_all(&mut self) {
+        let registrations = std::mem::take(&mut self.registrations);
+        for (instance_id, registration) in registrations {
+            if let Err(error) = self.supervisor.unregister(registration.process_id).await {
                 tracing::warn!(channel_instance = %instance_id, error = %error, "failed to stop channel plugin");
             }
-            self.registrations.remove(&instance_id);
         }
     }
 
-    fn lookup(&self, instance_id: &str) -> Option<ProcessId> {
+    fn process_id(&self, instance_id: &str) -> Result<ProcessId, String> {
         self.registrations
             .get(instance_id)
-            .map(|entry| entry.process_id)
+            .map(|registration| registration.process_id)
+            .ok_or_else(|| format!("unknown channel instance: {instance_id}"))
     }
 }
 
@@ -333,7 +473,7 @@ impl crate::state::StateSource for ChannelMonitor {
     type Entry = ChannelStatusSnapshot;
 
     async fn list(&self) -> Vec<Self::Entry> {
-        self.snapshot()
+        self.snapshot().await
     }
 
     fn subscribe_changes(&self) -> broadcast::Receiver<()> {
