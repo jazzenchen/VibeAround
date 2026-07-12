@@ -128,7 +128,7 @@ impl ThreadRuntime {
         });
         tokio::spawn(
             ThreadOwner {
-                command_tx: owner_tx.clone(),
+                command_tx: owner_tx.downgrade(),
                 command_rx: owner_rx,
                 state_tx: turn_state_tx,
                 change_tx: change_tx.clone(),
@@ -634,6 +634,20 @@ mod tests {
         let state = runtime.state().await;
 
         assert_eq!(state.session_id.as_deref(), Some("session-old"));
+    }
+
+    #[tokio::test]
+    async fn dropping_runtime_closes_the_owner_command_channel() {
+        let runtime = Arc::new(ThreadRuntime::new(
+            thread_with_sessions(),
+            PathBuf::from("/tmp/project"),
+            ThreadEventStore::new("/tmp/unused.jsonl"),
+        ));
+        let owner = runtime.owner_tx.downgrade();
+
+        drop(runtime);
+
+        assert!(owner.upgrade().is_none());
     }
 
     #[tokio::test]

@@ -90,7 +90,7 @@ pub(super) enum ThreadOwnerCommand {
 }
 
 pub(super) struct ThreadOwner {
-    pub(super) command_tx: mpsc::UnboundedSender<ThreadOwnerCommand>,
+    pub(super) command_tx: mpsc::WeakUnboundedSender<ThreadOwnerCommand>,
     pub(super) command_rx: mpsc::UnboundedReceiver<ThreadOwnerCommand>,
     pub(super) state_tx: watch::Sender<TurnState>,
     pub(super) change_tx: Option<broadcast::Sender<()>>,
@@ -238,11 +238,12 @@ impl ThreadOwner {
                 ThreadOwnerCommand::Probe { started, release } => {
                     self.set_turn_state(true, None);
                     let _ = started.send(());
-                    let command_tx = self.command_tx.clone();
-                    tokio::spawn(async move {
-                        let _ = release.await;
-                        let _ = command_tx.send(ThreadOwnerCommand::ProbeFinished);
-                    });
+                    if let Some(command_tx) = self.command_tx.upgrade() {
+                        tokio::spawn(async move {
+                            let _ = release.await;
+                            let _ = command_tx.send(ThreadOwnerCommand::ProbeFinished);
+                        });
+                    }
                 }
                 #[cfg(test)]
                 ThreadOwnerCommand::ProbeFinished => {
@@ -299,9 +300,14 @@ impl ThreadOwner {
             .as_ref()
             .map(|host| Arc::clone(&host.client_handler))
             .unwrap_or(handler);
-        let command_tx = self.command_tx.clone();
+        let Some(command_tx) = self.command_tx.upgrade() else {
+            self.finish_prompt_inline(finish_handler, Err(runtime_stopped_error()), reply)
+                .await;
+            return false;
+        };
         let thread_id = self.thread.id.clone();
         tokio::spawn(async move {
+            let _target_guard = target_guard;
             let prompt = agent.prompt(acp::PromptRequest::new(session_id.clone(), content_blocks));
             tokio::pin!(prompt);
             let result = tokio::select! {

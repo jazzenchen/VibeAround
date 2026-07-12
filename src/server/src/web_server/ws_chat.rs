@@ -1080,8 +1080,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn message_and_stop_share_the_same_upstream_fifo() {
+    #[tokio::test]
+    async fn message_and_stop_share_the_same_upstream_fifo() {
         let base = std::env::temp_dir().join(format!(
             "vibearound-ws-input-order-{}",
             uuid::Uuid::new_v4()
