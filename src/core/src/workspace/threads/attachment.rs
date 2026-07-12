@@ -1,9 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
 
 use crate::routing::RouteKey;
 use crate::storage::jsonl;
@@ -158,7 +155,6 @@ impl RouteAttachmentProjection {
 #[derive(Debug, Clone)]
 pub struct RouteAttachmentEventStore {
     path: PathBuf,
-    cache: Arc<Mutex<Option<RouteAttachmentProjection>>>,
 }
 
 impl RouteAttachmentEventStore {
@@ -167,10 +163,7 @@ impl RouteAttachmentEventStore {
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            cache: Arc::new(Mutex::new(None)),
-        }
+        Self { path: path.into() }
     }
 
     pub fn path(&self) -> &Path {
@@ -178,11 +171,7 @@ impl RouteAttachmentEventStore {
     }
 
     pub async fn append(&self, event: &RouteAttachmentEvent) -> jsonl::Result<()> {
-        jsonl::append(&self.path, event).await?;
-        if let Some(projection) = self.cache.lock().as_mut() {
-            projection.apply(event);
-        }
-        Ok(())
+        jsonl::append(&self.path, event).await
     }
 
     pub async fn read_events(&self) -> jsonl::Result<Vec<RouteAttachmentEvent>> {
@@ -190,17 +179,8 @@ impl RouteAttachmentEventStore {
     }
 
     pub async fn load_projection(&self) -> jsonl::Result<RouteAttachmentProjection> {
-        if let Some(projection) = self.cache.lock().clone() {
-            return Ok(projection);
-        }
         let events = self.read_events().await?;
-        let projection = RouteAttachmentProjection::from_events(&events);
-        if events.len() > projection.len().saturating_add(16) {
-            self.replace_with_projection(&projection).await?;
-        } else {
-            *self.cache.lock() = Some(projection.clone());
-        }
-        Ok(projection)
+        Ok(RouteAttachmentProjection::from_events(&events))
     }
 
     pub async fn compact(&self) -> jsonl::Result<()> {
@@ -217,7 +197,6 @@ impl RouteAttachmentEventStore {
             .map(RouteAttachmentEvent::snapshot)
             .collect::<Vec<_>>();
         jsonl::replace_all(&self.path, &events).await?;
-        *self.cache.lock() = Some(projection.clone());
         Ok(())
     }
 }
@@ -304,7 +283,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn append_updates_cached_projection() {
+    async fn append_is_visible_in_the_next_projection() {
         let path = std::env::temp_dir()
             .join(format!("vibearound-attachments-{}", uuid::Uuid::new_v4()))
             .join("attachments.jsonl");

@@ -128,10 +128,6 @@ impl WorkspaceThreadManager {
             .await
             .context("append route attach for host start")?;
 
-        self.attachment_store
-            .compact()
-            .await
-            .context("compact route attachments after host start")?;
         self.notify_change();
         Ok(())
     }
