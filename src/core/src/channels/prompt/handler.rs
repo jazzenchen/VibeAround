@@ -558,7 +558,9 @@ pub async fn start_runtime_and_notify(
         send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
             .await;
     }
-    workspace_threads.schedule_host_idle_shutdown(after.thread_id);
+    workspace_threads
+        .schedule_host_idle_shutdown(after.thread_id)
+        .await;
     Ok(true)
 }
 

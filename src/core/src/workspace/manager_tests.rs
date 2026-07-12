@@ -299,7 +299,7 @@ async fn route_attachment_rehydrates_runtime_after_host_shutdown(channel_kind: &
     let first_thread_id = first.state().await.thread_id;
 
     manager.shutdown_route_host(&route).await.unwrap();
-    assert!(!manager.runtimes.contains_key(&first_thread_id));
+    assert!(manager.runtimes.get(&first_thread_id).await.is_none());
     assert_eq!(
         manager
             .current_attachment(&route)
@@ -313,7 +313,7 @@ async fn route_attachment_rehydrates_runtime_after_host_shutdown(channel_kind: &
     let second = manager.resolve_route_runtime(&route).await.unwrap();
 
     assert_eq!(second.state().await.thread_id, first_thread_id);
-    assert!(manager.runtimes.contains_key(&first_thread_id));
+    assert!(manager.runtimes.get(&first_thread_id).await.is_some());
 }
 
 #[tokio::test]

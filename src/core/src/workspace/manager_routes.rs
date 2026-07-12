@@ -144,11 +144,7 @@ impl WorkspaceThreadManager {
         }
 
         let mut entries = Vec::new();
-        let runtimes: Vec<(WorkspaceThreadId, Arc<ThreadRuntime>)> = self
-            .runtimes
-            .iter()
-            .map(|entry| (entry.key().clone(), Arc::clone(entry.value())))
-            .collect();
+        let runtimes = self.runtimes.entries().await;
         for (thread_id, runtime) in runtimes {
             let Some(thread) = thread_projection.get(&thread_id) else {
                 continue;
@@ -192,25 +188,23 @@ impl WorkspaceThreadManager {
         route: &RouteKey,
     ) -> anyhow::Result<()> {
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
-            self.schedule_host_idle_shutdown(runtime.state().await.thread_id);
+            self.schedule_host_idle_shutdown(runtime.state().await.thread_id)
+                .await;
         }
         Ok(())
     }
 
-    pub fn schedule_host_idle_shutdown(self: &Arc<Self>, thread_id: WorkspaceThreadId) {
-        self.schedule_host_idle_shutdown_after(thread_id, AGENT_HOST_IDLE_SHUTDOWN_DELAY);
+    pub async fn schedule_host_idle_shutdown(self: &Arc<Self>, thread_id: WorkspaceThreadId) {
+        self.schedule_host_idle_shutdown_after(thread_id, AGENT_HOST_IDLE_SHUTDOWN_DELAY)
+            .await;
     }
 
-    pub fn schedule_host_idle_shutdown_after(
+    pub async fn schedule_host_idle_shutdown_after(
         self: &Arc<Self>,
         thread_id: WorkspaceThreadId,
         delay: Duration,
     ) {
-        let Some(runtime) = self
-            .runtimes
-            .get(&thread_id)
-            .map(|entry| Arc::clone(entry.value()))
-        else {
+        let Some(runtime) = self.runtimes.get(&thread_id).await else {
             return;
         };
         let generation = runtime.idle_generation();
@@ -220,24 +214,15 @@ impl WorkspaceThreadManager {
             if !runtime.shutdown_host_if_idle(generation).await {
                 return;
             }
-            let should_remove = manager
+            manager
                 .runtimes
-                .get(&thread_id)
-                .map(|entry| Arc::ptr_eq(entry.value(), &runtime))
-                .unwrap_or(false);
-            if should_remove {
-                manager.runtimes.remove(&thread_id);
-            }
+                .remove_if_current(thread_id, Arc::clone(&runtime));
             manager.notify_change();
         });
     }
 
     pub async fn shutdown_all(&self) {
-        let runtimes: Vec<Arc<ThreadRuntime>> = self
-            .runtimes
-            .iter()
-            .map(|entry| Arc::clone(entry.value()))
-            .collect();
+        let runtimes = self.runtimes.values().await;
         for runtime in runtimes {
             runtime.shutdown_host().await;
         }
@@ -250,11 +235,7 @@ impl WorkspaceThreadManager {
         let Some(attached) = self.current_attachment(route).await? else {
             return Ok(None);
         };
-        if let Some(runtime) = self
-            .runtimes
-            .get(&attached.thread_id)
-            .map(|entry| Arc::clone(entry.value()))
-        {
+        if let Some(runtime) = self.runtimes.get(&attached.thread_id).await {
             return Ok(Some(runtime));
         }
 
@@ -263,7 +244,7 @@ impl WorkspaceThreadManager {
             return Ok(None);
         };
         if thread.status != ThreadStatus::Open {
-            self.runtimes.remove(&attached.thread_id);
+            self.runtimes.remove(attached.thread_id.clone());
             self.detach_route(route).await?;
             return Ok(None);
         }

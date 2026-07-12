@@ -6,8 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
-use dashmap::mapref::entry::Entry;
-use dashmap::DashMap;
 use tokio::sync::broadcast;
 
 use crate::agent::launch::normalize_launch_profile_id;
@@ -16,6 +14,7 @@ use crate::routing::{channel_traits, DefaultWorkspaceKind, RouteKey};
 
 use super::normalize_platform_cwd;
 use super::registry::{WorkspaceId, WorkspaceProjection, WorkspaceRecord, GENERAL_WORKSPACE_ID};
+use super::runtime_registry::RuntimeRegistry;
 use super::store::{WorkspaceEvent, WorkspaceEventStore};
 use super::threads::attachment::{
     RouteAttachmentEvent, RouteAttachmentEventStore, RouteAttachmentProjection,
@@ -63,7 +62,7 @@ pub struct WorkspaceThreadManager {
     workspace_store: WorkspaceEventStore,
     thread_store: ThreadEventStore,
     attachment_store: RouteAttachmentEventStore,
-    runtimes: DashMap<WorkspaceThreadId, Arc<ThreadRuntime>>,
+    runtimes: RuntimeRegistry,
     change_tx: broadcast::Sender<()>,
 }
 
@@ -76,7 +75,7 @@ impl WorkspaceThreadManager {
             attachment_store: RouteAttachmentEventStore::new(
                 RouteAttachmentEventStore::default_path(),
             ),
-            runtimes: DashMap::new(),
+            runtimes: RuntimeRegistry::new(),
             change_tx,
         })
     }
@@ -91,7 +90,7 @@ impl WorkspaceThreadManager {
             workspace_store: WorkspaceEventStore::new(workspace_path),
             thread_store: ThreadEventStore::new(thread_path),
             attachment_store: RouteAttachmentEventStore::new(attachment_path),
-            runtimes: DashMap::new(),
+            runtimes: RuntimeRegistry::new(),
             change_tx,
         })
     }
@@ -207,7 +206,7 @@ impl WorkspaceThreadManager {
                     .close(reason)
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
-                self.runtimes.remove(&state.thread_id);
+                self.runtimes.remove(state.thread_id.clone());
                 self.detach_route(route).await?;
                 Some((state.workspace_id, state.host_binding))
             }
@@ -244,7 +243,7 @@ impl WorkspaceThreadManager {
             .close(reason)
             .await
             .map_err(|error| anyhow!(error.to_string()))?;
-        self.runtimes.remove(&thread_id);
+        self.runtimes.remove(thread_id);
         self.detach_route(route).await
     }
 
@@ -267,7 +266,7 @@ impl WorkspaceThreadManager {
             .close(reason)
             .await
             .map_err(|error| anyhow!(error.to_string()))?;
-        self.runtimes.remove(thread_id);
+        self.runtimes.remove(thread_id.clone());
         self.notify_change();
         Ok(())
     }
@@ -281,15 +280,11 @@ impl WorkspaceThreadManager {
     }
 
     pub async fn shutdown_thread_host(&self, thread_id: &WorkspaceThreadId) -> anyhow::Result<()> {
-        let Some(runtime) = self
-            .runtimes
-            .get(thread_id)
-            .map(|entry| Arc::clone(entry.value()))
-        else {
+        let Some(runtime) = self.runtimes.get(thread_id).await else {
             return Ok(());
         };
         runtime.shutdown_host().await;
-        self.runtimes.remove(thread_id);
+        self.runtimes.remove(thread_id.clone());
         self.notify_change();
         Ok(())
     }
@@ -435,8 +430,8 @@ impl WorkspaceThreadManager {
         &self,
         thread_id: &WorkspaceThreadId,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        if let Some(runtime) = self.runtimes.get(thread_id) {
-            return Ok(Arc::clone(runtime.value()));
+        if let Some(runtime) = self.runtimes.get(thread_id).await {
+            return Ok(runtime);
         }
         let thread = self
             .thread(thread_id)
@@ -449,8 +444,8 @@ impl WorkspaceThreadManager {
         &self,
         thread: WorkspaceThread,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        if let Some(runtime) = self.runtimes.get(&thread.id) {
-            return Ok(Arc::clone(runtime.value()));
+        if let Some(runtime) = self.runtimes.get(&thread.id).await {
+            return Ok(runtime);
         }
         let workspace = self
             .workspace(&thread.workspace_id)
@@ -462,11 +457,12 @@ impl WorkspaceThreadManager {
             self.thread_store.clone(),
             Some(self.change_tx.clone()),
         ));
-        match self.runtimes.entry(thread.id.clone()) {
-            Entry::Occupied(entry) => return Ok(Arc::clone(entry.get())),
-            Entry::Vacant(entry) => {
-                entry.insert(Arc::clone(&runtime));
-            }
+        let registered = self
+            .runtimes
+            .get_or_insert(thread.id.clone(), Arc::clone(&runtime))
+            .await;
+        if !Arc::ptr_eq(&registered, &runtime) {
+            return Ok(registered);
         }
         let recovered = runtime
             .recover_interrupted_subagents()
