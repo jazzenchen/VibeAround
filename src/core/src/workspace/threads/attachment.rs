@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::routing::RouteKey;
 use crate::storage::jsonl;
@@ -155,6 +156,17 @@ impl RouteAttachmentProjection {
 #[derive(Debug, Clone)]
 pub struct RouteAttachmentEventStore {
     path: PathBuf,
+    command_tx: mpsc::UnboundedSender<RouteAttachmentStoreCommand>,
+}
+
+enum RouteAttachmentStoreCommand {
+    Load(oneshot::Sender<jsonl::Result<RouteAttachmentProjection>>),
+    Apply(RouteAttachmentEvent, oneshot::Sender<jsonl::Result<()>>),
+    Migrate {
+        channel_kind: String,
+        instance_id: String,
+        reply: oneshot::Sender<jsonl::Result<usize>>,
+    },
 }
 
 impl RouteAttachmentEventStore {
@@ -163,7 +175,10 @@ impl RouteAttachmentEventStore {
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        let path = path.into();
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        tokio::spawn(run_attachment_store(path.clone(), command_rx));
+        Self { path, command_tx }
     }
 
     pub fn path(&self) -> &Path {
@@ -171,21 +186,28 @@ impl RouteAttachmentEventStore {
     }
 
     pub async fn append(&self, event: &RouteAttachmentEvent) -> jsonl::Result<()> {
-        jsonl::append(&self.path, event).await
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(RouteAttachmentStoreCommand::Apply(event.clone(), reply))
+            .expect("attachment store owner must outlive its handle");
+        result
+            .await
+            .expect("attachment store owner must reply while its handle is alive")
     }
 
+    #[cfg(test)]
     pub async fn read_events(&self) -> jsonl::Result<Vec<RouteAttachmentEvent>> {
         jsonl::read_all(&self.path).await
     }
 
     pub async fn load_projection(&self) -> jsonl::Result<RouteAttachmentProjection> {
-        let events = self.read_events().await?;
-        Ok(RouteAttachmentProjection::from_events(&events))
-    }
-
-    pub async fn compact(&self) -> jsonl::Result<()> {
-        let projection = self.load_projection().await?;
-        self.replace_with_projection(&projection).await
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(RouteAttachmentStoreCommand::Load(reply))
+            .expect("attachment store owner must outlive its handle");
+        result
+            .await
+            .expect("attachment store owner must reply while its handle is alive")
     }
 
     pub async fn migrate_channel_instance(
@@ -193,55 +215,136 @@ impl RouteAttachmentEventStore {
         channel_kind: &str,
         instance_id: &str,
     ) -> jsonl::Result<usize> {
-        if channel_kind == instance_id {
-            return Ok(0);
-        }
-        let mut projection = self.load_projection().await?;
-        let migrations = projection
-            .current
-            .values()
-            .filter(|attachment| {
-                attachment.route.channel_kind == channel_kind
-                    && attachment.route.channel_instance_id() == channel_kind
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(RouteAttachmentStoreCommand::Migrate {
+                channel_kind: channel_kind.to_string(),
+                instance_id: instance_id.to_string(),
+                reply,
             })
-            .map(|attachment| {
-                let route = &attachment.route;
-                let migrated_route = RouteKey::with_actor(
-                    channel_kind,
-                    instance_id,
-                    route.chat_id.clone(),
-                    route.actor_id().unwrap_or(instance_id),
-                    route.topic_id.clone(),
-                );
-                (route.clone(), migrated_route, attachment.clone())
-            })
-            .collect::<Vec<_>>();
-        for (legacy_route, migrated_route, attachment) in &migrations {
-            projection.current.remove(legacy_route);
-            let mut attachment = attachment.clone();
-            attachment.route = migrated_route.clone();
-            projection
-                .current
-                .entry(migrated_route.clone())
-                .or_insert_with(|| attachment.clone());
-        }
-        if !migrations.is_empty() {
-            self.replace_with_projection(&projection).await?;
-        }
-        Ok(migrations.len())
+            .expect("attachment store owner must outlive its handle");
+        result
+            .await
+            .expect("attachment store owner must reply while its handle is alive")
     }
+}
 
-    async fn replace_with_projection(
-        &self,
-        projection: &RouteAttachmentProjection,
-    ) -> jsonl::Result<()> {
-        let events = projection
-            .all()
-            .map(RouteAttachmentEvent::snapshot)
-            .collect::<Vec<_>>();
-        jsonl::replace_all(&self.path, &events).await?;
-        Ok(())
+async fn run_attachment_store(
+    path: PathBuf,
+    mut command_rx: mpsc::UnboundedReceiver<RouteAttachmentStoreCommand>,
+) {
+    let mut projection = None;
+    while let Some(command) = command_rx.recv().await {
+        let loaded = ensure_attachment_projection_loaded(&path, &mut projection).await;
+        match command {
+            RouteAttachmentStoreCommand::Load(reply) => {
+                let _ = reply.send(
+                    loaded.map(|()| projection.as_ref().expect("projection was loaded").clone()),
+                );
+            }
+            RouteAttachmentStoreCommand::Apply(event, reply) => {
+                let result = match loaded {
+                    Ok(()) => {
+                        let mut next = projection.as_ref().expect("projection was loaded").clone();
+                        next.apply(&event);
+                        let result = replace_attachment_projection(&path, &next).await;
+                        if result.is_ok() {
+                            projection = Some(next);
+                        }
+                        result
+                    }
+                    Err(error) => Err(error),
+                };
+                let _ = reply.send(result);
+            }
+            RouteAttachmentStoreCommand::Migrate {
+                channel_kind,
+                instance_id,
+                reply,
+            } => {
+                let result = match loaded {
+                    Ok(()) => {
+                        let mut next = projection.as_ref().expect("projection was loaded").clone();
+                        let count = migrate_projection(&mut next, &channel_kind, &instance_id);
+                        if count == 0 {
+                            Ok(0)
+                        } else {
+                            let result = replace_attachment_projection(&path, &next)
+                                .await
+                                .map(|()| count);
+                            if result.is_ok() {
+                                projection = Some(next);
+                            }
+                            result
+                        }
+                    }
+                    Err(error) => Err(error),
+                };
+                let _ = reply.send(result);
+            }
+        }
     }
+}
+
+async fn ensure_attachment_projection_loaded(
+    path: &Path,
+    projection: &mut Option<RouteAttachmentProjection>,
+) -> jsonl::Result<()> {
+    if projection.is_none() {
+        let events = jsonl::read_all(path).await?;
+        *projection = Some(RouteAttachmentProjection::from_events(&events));
+    }
+    Ok(())
+}
+
+fn migrate_projection(
+    projection: &mut RouteAttachmentProjection,
+    channel_kind: &str,
+    instance_id: &str,
+) -> usize {
+    if channel_kind == instance_id {
+        return 0;
+    }
+    let migrations = projection
+        .current
+        .values()
+        .filter(|attachment| {
+            attachment.route.channel_kind == channel_kind
+                && attachment.route.channel_instance_id() == channel_kind
+        })
+        .map(|attachment| {
+            let route = &attachment.route;
+            let migrated_route = RouteKey::with_actor(
+                channel_kind,
+                instance_id,
+                route.chat_id.clone(),
+                route.actor_id().unwrap_or(instance_id),
+                route.topic_id.clone(),
+            );
+            (route.clone(), migrated_route, attachment.clone())
+        })
+        .collect::<Vec<_>>();
+    for (legacy_route, migrated_route, attachment) in &migrations {
+        projection.current.remove(legacy_route);
+        let mut attachment = attachment.clone();
+        attachment.route = migrated_route.clone();
+        projection
+            .current
+            .entry(migrated_route.clone())
+            .or_insert(attachment);
+    }
+    migrations.len()
+}
+
+async fn replace_attachment_projection(
+    path: &Path,
+    projection: &RouteAttachmentProjection,
+) -> jsonl::Result<()> {
+    let events = projection
+        .all()
+        .map(RouteAttachmentEvent::snapshot)
+        .collect::<Vec<_>>();
+    jsonl::replace_all(path, &events).await
 }
 
 #[cfg(test)]
@@ -298,7 +401,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compact_removes_detached_attachment_history() {
+    async fn attachment_writes_replace_superseded_history() {
         let path = std::env::temp_dir()
             .join(format!("vibearound-attachments-{}", uuid::Uuid::new_v4()))
             .join("attachments.jsonl");
@@ -317,7 +420,6 @@ mod tests {
             .await
             .unwrap();
 
-        store.compact().await.unwrap();
         let events = store.read_events().await.unwrap();
 
         assert!(events.is_empty());
@@ -348,6 +450,26 @@ mod tests {
             .unwrap();
 
         assert!(store.load_projection().await.unwrap().get(&route).is_none());
+
+        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_route_writes_are_serialized_without_lost_updates() {
+        let path = std::env::temp_dir()
+            .join(format!("vibearound-attachments-{}", uuid::Uuid::new_v4()))
+            .join("attachments.jsonl");
+        let store = RouteAttachmentEventStore::new(path.clone());
+        let first = RouteAttachmentEvent::attached(RouteKey::new("web", "a"), "ws", "wt-a");
+        let second = RouteAttachmentEvent::attached(RouteKey::new("web", "b"), "ws", "wt-b");
+
+        let (first_result, second_result) =
+            tokio::join!(store.append(&first), store.append(&second));
+        first_result.unwrap();
+        second_result.unwrap();
+
+        let projection = store.load_projection().await.unwrap();
+        assert_eq!(projection.len(), 2);
 
         let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
     }
