@@ -1,7 +1,7 @@
 //! Process supervision with one lifecycle owner task per child process.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,7 +44,6 @@ pub struct Supervisor {
     snapshots: watch::Receiver<Vec<ProcessSnapshot>>,
     next_id: AtomicU64,
     change_tx: broadcast::Sender<ProcessEvent>,
-    tick_loop_started: AtomicBool,
 }
 
 struct ProcessRegistration {
@@ -105,7 +104,6 @@ impl Supervisor {
             snapshots,
             next_id: AtomicU64::new(1),
             change_tx: change_tx.clone(),
-            tick_loop_started: AtomicBool::new(false),
         });
         tokio::spawn(
             ProcessManager {
@@ -209,14 +207,7 @@ impl Supervisor {
         self.change_tx.subscribe()
     }
 
-    pub fn spawn_tick_loop(self: &Arc<Self>) {
-        if self
-            .tick_loop_started
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return;
-        }
+    fn spawn_tick_loop(self: &Arc<Self>) {
         let supervisor = Arc::clone(self);
         tokio::spawn(async move { supervisor.run_tick_loop().await });
     }
