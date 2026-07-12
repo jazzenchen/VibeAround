@@ -2,12 +2,12 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Context;
-use tokio::sync::{broadcast, mpsc, watch, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 use tokio::time::{sleep, Duration};
 
 use crate::agent::{Agent, AgentClientHandler, StartupSession};
@@ -38,6 +38,37 @@ pub(crate) struct PromptCancellation {
     shutdown_rx: watch::Receiver<bool>,
 }
 
+#[derive(Clone, Default)]
+struct TurnState {
+    busy: bool,
+    failed: Option<String>,
+}
+
+struct PromptCommand {
+    runtime: Arc<ThreadRuntime>,
+    target: ChannelTarget,
+    content_blocks: Vec<acp::ContentBlock>,
+    handler: Arc<dyn AgentClientHandler>,
+    cancellation: Option<PromptCancellation>,
+    reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
+}
+
+enum ThreadOwnerCommand {
+    Prompt(Box<PromptCommand>),
+    ClearFailure,
+    #[cfg(test)]
+    Probe {
+        started: oneshot::Sender<()>,
+        release: oneshot::Receiver<()>,
+    },
+}
+
+struct ThreadOwner {
+    command_rx: mpsc::UnboundedReceiver<ThreadOwnerCommand>,
+    state_tx: watch::Sender<TurnState>,
+    change_tx: Option<broadcast::Sender<()>>,
+}
+
 impl PromptCancellation {
     pub(crate) fn new(
         cancel_rx: watch::Receiver<bool>,
@@ -53,6 +84,59 @@ impl PromptCancellation {
         tokio::select! {
             _ = wait_for_signal(&mut self.cancel_rx) => {}
             _ = wait_for_signal(&mut self.shutdown_rx) => {}
+        }
+    }
+}
+
+impl ThreadOwner {
+    async fn run(mut self) {
+        while let Some(command) = self.command_rx.recv().await {
+            match command {
+                ThreadOwnerCommand::Prompt(command) => {
+                    self.set_state(TurnState {
+                        busy: true,
+                        failed: None,
+                    });
+                    let PromptCommand {
+                        runtime,
+                        target,
+                        content_blocks,
+                        handler,
+                        cancellation,
+                        reply,
+                    } = *command;
+                    let result = runtime
+                        .run_prompt(&target, content_blocks, handler, cancellation)
+                        .await;
+                    self.set_state(TurnState {
+                        busy: false,
+                        failed: result.as_ref().err().map(|error| error.message.to_string()),
+                    });
+                    let _ = reply.send(result);
+                }
+                ThreadOwnerCommand::ClearFailure => {
+                    let mut state = self.state_tx.borrow().clone();
+                    state.failed = None;
+                    self.set_state(state);
+                }
+                #[cfg(test)]
+                ThreadOwnerCommand::Probe { started, release } => {
+                    self.set_state(TurnState {
+                        busy: true,
+                        failed: None,
+                    });
+                    let _ = started.send(());
+                    let _ = release.await;
+                    self.set_state(TurnState::default());
+                }
+            }
+        }
+    }
+
+    fn set_state(&self, state: TurnState) {
+        self.state_tx.send_replace(state);
+        if let Some(change_tx) = &self.change_tx {
+            let _ = change_tx.send(());
         }
     }
 }
@@ -111,31 +195,12 @@ pub struct ThreadRuntime {
     spawn_lock: Mutex<()>,
     subagents: Mutex<BTreeMap<ThreadAgentId, SubagentRuntime>>,
     session_id: Mutex<Option<String>>,
-    prompt_lock: Mutex<()>,
     active_turn_target: ActiveTurnTarget,
-    busy: AtomicBool,
-    failed: Mutex<Option<String>>,
+    owner_tx: mpsc::UnboundedSender<ThreadOwnerCommand>,
+    turn_state: watch::Receiver<TurnState>,
     activity_generation: AtomicU64,
     store: ThreadEventStore,
     change_tx: Option<broadcast::Sender<()>>,
-}
-
-struct PromptBusyGuard<'a> {
-    runtime: &'a ThreadRuntime,
-}
-
-impl<'a> PromptBusyGuard<'a> {
-    fn enter(runtime: &'a ThreadRuntime) -> Self {
-        runtime.busy.store(true, Ordering::Release);
-        Self { runtime }
-    }
-}
-
-impl Drop for PromptBusyGuard<'_> {
-    fn drop(&mut self) {
-        self.runtime.busy.store(false, Ordering::Release);
-        self.runtime.notify_change();
-    }
 }
 
 impl ThreadRuntime {
@@ -150,6 +215,16 @@ impl ThreadRuntime {
         change_tx: Option<broadcast::Sender<()>>,
     ) -> Self {
         let session_id = latest_session_for_host(&thread);
+        let (owner_tx, owner_rx) = mpsc::unbounded_channel();
+        let (turn_state_tx, turn_state) = watch::channel(TurnState::default());
+        tokio::spawn(
+            ThreadOwner {
+                command_rx: owner_rx,
+                state_tx: turn_state_tx,
+                change_tx: change_tx.clone(),
+            }
+            .run(),
+        );
         Self {
             thread: Mutex::new(thread),
             workspace,
@@ -157,10 +232,9 @@ impl ThreadRuntime {
             spawn_lock: Mutex::new(()),
             subagents: Mutex::new(BTreeMap::new()),
             session_id: Mutex::new(session_id),
-            prompt_lock: Mutex::new(()),
             active_turn_target: ActiveTurnTarget::default(),
-            busy: AtomicBool::new(false),
-            failed: Mutex::new(None),
+            owner_tx,
+            turn_state,
             activity_generation: AtomicU64::new(0),
             store,
             change_tx,
@@ -169,6 +243,7 @@ impl ThreadRuntime {
 
     pub async fn state(&self) -> ThreadRuntimeState {
         let thread = self.thread.lock().await.clone();
+        let turn_state = self.turn_state.borrow().clone();
         let initialize = self
             .host
             .lock()
@@ -182,8 +257,8 @@ impl ThreadRuntime {
             host_binding: thread.host_binding.clone(),
             session_id: self.session_id.lock().await.clone(),
             workspace: self.workspace.clone(),
-            busy: self.busy.load(Ordering::Acquire),
-            failed: self.failed.lock().await.clone(),
+            busy: turn_state.busy,
+            failed: turn_state.failed,
             initialize,
             agents: thread.agents.values().cloned().collect(),
             multi_agent_turns: thread.multi_agent_turns.values().cloned().collect(),
@@ -207,40 +282,58 @@ impl ThreadRuntime {
     }
 
     pub async fn prompt(
-        &self,
+        self: &Arc<Self>,
         target: &ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
         handler: Arc<dyn AgentClientHandler>,
     ) -> acp::Result<acp::PromptResponse> {
-        self.prompt_inner(target, content_blocks, handler, None)
+        self.enqueue_prompt(target, content_blocks, handler, None)
             .await
     }
 
     pub(crate) async fn prompt_cancellable(
-        &self,
+        self: &Arc<Self>,
         target: &ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
         handler: Arc<dyn AgentClientHandler>,
         cancellation: PromptCancellation,
     ) -> acp::Result<acp::PromptResponse> {
-        self.prompt_inner(target, content_blocks, handler, Some(cancellation))
+        self.enqueue_prompt(target, content_blocks, handler, Some(cancellation))
             .await
     }
 
-    async fn prompt_inner(
+    async fn enqueue_prompt(
+        self: &Arc<Self>,
+        target: &ChannelTarget,
+        content_blocks: Vec<acp::ContentBlock>,
+        handler: Arc<dyn AgentClientHandler>,
+        cancellation: Option<PromptCancellation>,
+    ) -> acp::Result<acp::PromptResponse> {
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::Prompt(Box::new(PromptCommand {
+                runtime: Arc::clone(self),
+                target: target.clone(),
+                content_blocks,
+                handler,
+                cancellation,
+                reply,
+            })))
+            .map_err(|_| acp::Error::new(-32603, "thread runtime stopped"))?;
+        done.await
+            .unwrap_or_else(|_| Err(acp::Error::new(-32603, "thread runtime stopped")))
+    }
+
+    async fn run_prompt(
         &self,
         target: &ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
         handler: Arc<dyn AgentClientHandler>,
         mut route_cancellation: Option<PromptCancellation>,
     ) -> acp::Result<acp::PromptResponse> {
-        let _prompt_guard = self.prompt_lock.lock().await;
         let target_guard = self.active_turn_target.install(target.clone());
         let mut cancellation = target_guard.cancellation();
         self.mark_activity();
-        let busy_guard = PromptBusyGuard::enter(self);
-        *self.failed.lock().await = None;
-        self.notify_change();
         let fallback_finish_handler = Arc::clone(&handler);
 
         let result = tokio::select! {
@@ -275,10 +368,6 @@ impl ThreadRuntime {
                 "host prompt_finished hook failed"
             );
         }
-        if let Err(error) = &result {
-            *self.failed.lock().await = Some(error.message.to_string());
-        }
-        drop(busy_guard);
         result
     }
 
@@ -349,8 +438,7 @@ impl ThreadRuntime {
             crate::previews::kill_by_session(&subagent.session_id);
             subagent.agent.shutdown().await;
         }
-        self.busy.store(false, Ordering::Release);
-        *self.failed.lock().await = None;
+        self.clear_failure();
         self.notify_change();
     }
 
@@ -362,7 +450,7 @@ impl ThreadRuntime {
         if self.idle_generation() != generation {
             return false;
         }
-        if self.busy.load(Ordering::Acquire) {
+        if self.turn_state.borrow().busy {
             return false;
         }
         if !self.subagents.lock().await.is_empty() {
@@ -382,7 +470,7 @@ impl ThreadRuntime {
         if self.idle_generation() != generation {
             return false;
         }
-        if self.busy.load(Ordering::Acquire) {
+        if self.turn_state.borrow().busy {
             return false;
         }
         if !self.subagents.lock().await.is_empty() {
@@ -420,7 +508,7 @@ impl ThreadRuntime {
         if let Some(host) = host {
             host.shutdown().await;
         }
-        *self.failed.lock().await = None;
+        self.clear_failure();
 
         let thread_id = self.thread.lock().await.id.clone();
         let event = ThreadEvent::host_changed(thread_id.clone(), host_binding.clone());
@@ -972,7 +1060,7 @@ impl ThreadRuntime {
             agent: Arc::clone(&ready.agent),
             client_handler: spawned_handler,
         });
-        *self.failed.lock().await = None;
+        self.clear_failure();
         self.notify_change();
 
         if let Some(session_id) = ready.startup_session_id {
@@ -1318,6 +1406,12 @@ impl ThreadRuntime {
     fn mark_activity(&self) {
         self.activity_generation.fetch_add(1, Ordering::Relaxed);
     }
+
+    fn clear_failure(&self) {
+        if !self.turn_state.borrow().busy {
+            let _ = self.owner_tx.send(ThreadOwnerCommand::ClearFailure);
+        }
+    }
 }
 
 async fn wait_for_prompt_cancellation(cancellation: &mut Option<PromptCancellation>) {
@@ -1602,39 +1696,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn runtime_initial_state_uses_latest_host_session() {
+    #[tokio::test]
+    async fn runtime_initial_state_uses_latest_host_session() {
         let runtime = ThreadRuntime::new(
             thread_with_sessions(),
             PathBuf::from("/tmp/project"),
             ThreadEventStore::new("/tmp/unused.jsonl"),
         );
 
-        let state = futures::executor::block_on(runtime.state());
+        let state = runtime.state().await;
 
         assert_eq!(state.session_id.as_deref(), Some("session-old"));
     }
 
     #[tokio::test]
-    async fn dropped_prompt_scope_clears_busy_state() {
+    async fn turn_owner_serializes_busy_state() {
         let runtime = Arc::new(ThreadRuntime::new(
             thread_with_sessions(),
             PathBuf::from("/tmp/project"),
             ThreadEventStore::new("/tmp/unused.jsonl"),
         ));
-        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
-        let runtime_for_task = Arc::clone(&runtime);
-        let prompt = tokio::spawn(async move {
-            let _busy_guard = PromptBusyGuard::enter(&runtime_for_task);
-            let _ = started_tx.send(());
-            std::future::pending::<()>().await;
-        });
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        runtime
+            .owner_tx
+            .send(ThreadOwnerCommand::Probe {
+                started: started_tx,
+                release: release_rx,
+            })
+            .unwrap();
 
         started_rx.await.expect("prompt scope started");
         assert!(runtime.state().await.busy);
 
-        prompt.abort();
-        let _ = prompt.await;
+        let mut turn_state = runtime.turn_state.clone();
+        assert!(turn_state.borrow_and_update().busy);
+        release_tx.send(()).unwrap();
+        turn_state.changed().await.unwrap();
 
         assert!(!runtime.state().await.busy);
     }
