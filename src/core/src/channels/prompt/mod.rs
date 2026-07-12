@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn work_enqueued_after_stop_uses_the_new_route_generation() {
+    async fn work_enqueued_after_stop_is_not_cancelled_by_the_previous_stop() {
         let ingress = test_ingress();
         let route = RouteKey::new("web", "chat-a");
         let (started, started_rx) = oneshot::channel();
@@ -526,10 +526,10 @@ mod tests {
                 let _ = new_started.send(());
             })
             .unwrap();
-        assert!(old_done.await.is_err(), "old generation survived stop");
+        assert!(old_done.await.is_err(), "pre-stop work survived stop");
         tokio::time::timeout(std::time::Duration::from_millis(100), new_started_rx)
             .await
-            .expect("new generation was cancelled by the old stop")
+            .expect("post-stop work was cancelled by the previous stop")
             .unwrap();
         new_done.await.unwrap();
         wait_for_lanes_to_drain(&ingress).await;

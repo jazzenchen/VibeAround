@@ -7,7 +7,8 @@ use dashmap::DashMap;
 use parking_lot::Mutex as ParkingMutex;
 use tokio::sync::{mpsc, oneshot, watch, Notify};
 
-use crate::routing::ChannelTarget;
+use crate::routing::{wait_for_signal, ChannelTarget};
+use crate::workspace::threads::runtime::PromptCancellation;
 use crate::workspace::WorkspaceThreadManager;
 
 use super::{
@@ -67,19 +68,18 @@ impl OrderedInput {
 }
 
 struct QueuedCommand {
-    stop_generation: u64,
+    cancellation: watch::Receiver<bool>,
     command: LaneCommand,
 }
 
 struct RouteLaneState {
     accepting: bool,
-    stop_generation: u64,
+    cancel_tx: watch::Sender<bool>,
 }
 
 struct RouteLane {
     tx: mpsc::Sender<QueuedCommand>,
     state: ParkingMutex<RouteLaneState>,
-    stop_tx: watch::Sender<u64>,
 }
 
 impl RouteLane {
@@ -90,7 +90,7 @@ impl RouteLane {
         }
         self.tx
             .try_send(QueuedCommand {
-                stop_generation: state.stop_generation,
+                cancellation: state.cancel_tx.subscribe(),
                 command,
             })
             .map_err(|error| match error {
@@ -105,8 +105,8 @@ impl RouteLane {
 
     fn stop(&self) {
         let mut state = self.state.lock();
-        state.stop_generation = state.stop_generation.wrapping_add(1);
-        self.stop_tx.send_replace(state.stop_generation);
+        state.cancel_tx.send_replace(true);
+        state.cancel_tx = watch::channel(false).0;
     }
 
     fn close_if_empty(&self, rx: &mpsc::Receiver<QueuedCommand>) -> bool {
@@ -188,7 +188,7 @@ impl ConversationIngress {
             ChannelInput::Stop { route } => {
                 if let Some(lane) = self.lanes.get(&route) {
                     // The active lane performs the actual runtime cancel before
-                    // it can run a command from the next route generation.
+                    // it can run work created after this Stop.
                     lane.stop();
                 } else {
                     let workspace_threads = Arc::clone(&self.workspace_threads);
@@ -252,14 +252,13 @@ impl ConversationIngress {
                 Entry::Occupied(entry) => Arc::clone(entry.get()),
                 Entry::Vacant(entry) => {
                     let (tx, rx) = mpsc::channel(ROUTE_LANE_CAPACITY);
-                    let (stop_tx, _) = watch::channel(0);
+                    let (cancel_tx, _) = watch::channel(false);
                     let lane = Arc::new(RouteLane {
                         tx,
                         state: ParkingMutex::new(RouteLaneState {
                             accepting: true,
-                            stop_generation: 0,
+                            cancel_tx,
                         }),
-                        stop_tx,
                     });
                     entry.insert(Arc::clone(&lane));
                     receiver = Some(rx);
@@ -294,12 +293,7 @@ impl ConversationIngress {
             let mut shutdown_rx = ingress.shutdown_tx.subscribe();
             while let Some(queued) = rx.recv().await {
                 ingress
-                    .execute_lane_command(
-                        &route,
-                        queued,
-                        lane.stop_tx.subscribe(),
-                        &mut shutdown_rx,
-                    )
+                    .execute_lane_command(&route, queued, &mut shutdown_rx)
                     .await;
                 if *shutdown_rx.borrow() {
                     break;
@@ -324,28 +318,37 @@ impl ConversationIngress {
         &self,
         route: &RouteKey,
         queued: QueuedCommand,
-        mut stop_rx: watch::Receiver<u64>,
         shutdown_rx: &mut watch::Receiver<bool>,
     ) {
+        let mut cancellation = queued.cancellation;
         match queued.command {
             LaneCommand::Prompt {
                 reply_to,
                 content_blocks,
                 reply,
             } => {
+                if *cancellation.borrow() {
+                    let _ = reply.send(cancelled_prompt_response());
+                    return;
+                }
+                let prompt = self.run_prompt(
+                    ChannelTarget::new(route.clone(), reply_to),
+                    content_blocks,
+                    PromptCancellation::new(cancellation.clone(), shutdown_rx.clone()),
+                );
+                tokio::pin!(prompt);
                 let result = tokio::select! {
                     biased;
-                    _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
+                    _ = wait_for_signal(&mut cancellation) => {
                         let _ = self.workspace_threads.cancel_route(route).await;
-                        cancelled_prompt_response()
+                        prompt.await
                     }
-                    _ = wait_for_shutdown(shutdown_rx) => {
+                    _ = wait_for_signal(shutdown_rx) => {
+                        let _ = self.workspace_threads.cancel_route(route).await;
+                        let _ = prompt.await;
                         Err(acp::Error::new(-32603, ROUTE_STOPPED_MESSAGE))
                     }
-                    result = self.run_prompt(
-                        ChannelTarget::new(route.clone(), reply_to),
-                        content_blocks,
-                    ) => result,
+                    result = &mut prompt => result,
                 };
                 self.schedule_route_host_idle_shutdown(route).await;
                 let _ = reply.send(result);
@@ -355,16 +358,26 @@ impl ConversationIngress {
                     input.as_ref(),
                     OrderedInput::Message { .. } | OrderedInput::Callback { .. }
                 );
+                if *cancellation.borrow() {
+                    self.reject_stopped(route, *input);
+                    return;
+                }
+                let dispatch = self.dispatch_ordered(
+                    (*input).clone(),
+                    PromptCancellation::new(cancellation.clone(), shutdown_rx.clone()),
+                );
+                tokio::pin!(dispatch);
                 tokio::select! {
                     biased;
-                    _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
+                    _ = wait_for_signal(&mut cancellation) => {
                         let _ = self.workspace_threads.cancel_route(route).await;
-                        self.reject_stopped(route, (*input).clone());
+                        dispatch.await;
                     }
-                    _ = wait_for_shutdown(shutdown_rx) => {
-                        self.reject_stopped(route, (*input).clone());
+                    _ = wait_for_signal(shutdown_rx) => {
+                        let _ = self.workspace_threads.cancel_route(route).await;
+                        dispatch.await;
                     }
-                    _ = self.dispatch_ordered((*input).clone()) => {}
+                    _ = &mut dispatch => {}
                 }
                 if ran_prompt {
                     self.schedule_route_host_idle_shutdown(route).await;
@@ -374,8 +387,8 @@ impl ConversationIngress {
             LaneCommand::Probe { work, done } => {
                 tokio::select! {
                     biased;
-                    _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {}
-                    _ = wait_for_shutdown(shutdown_rx) => {}
+                    _ = wait_for_signal(&mut cancellation) => {}
+                    _ = wait_for_signal(shutdown_rx) => {}
                     _ = work => { let _ = done.send(()); }
                 }
             }
@@ -402,16 +415,17 @@ impl ConversationIngress {
         }
     }
 
-    async fn dispatch_ordered(&self, input: OrderedInput) {
+    async fn dispatch_ordered(&self, input: OrderedInput, cancellation: PromptCancellation) {
         match input {
             OrderedInput::Message { envelope } => {
-                self.handle_prompt_input(envelope, None).await;
+                self.handle_prompt_input(envelope, None, cancellation).await;
             }
             OrderedInput::Callback {
                 envelope,
                 action_value,
             } => {
-                self.handle_prompt_input(envelope, action_value).await;
+                self.handle_prompt_input(envelope, action_value, cancellation)
+                    .await;
             }
             OrderedInput::SwitchAgent { route, agent_kind } => {
                 send_system_text(
@@ -427,12 +441,14 @@ impl ConversationIngress {
         &self,
         target: ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
+        cancellation: PromptCancellation,
     ) -> acp::Result<acp::PromptResponse> {
         let result = handler::handle_prompt(
             &self.workspace_threads,
             &self.plugin_host,
             target.clone(),
             content_blocks,
+            cancellation,
         )
         .await;
         if let Err(error) = &result {
@@ -467,7 +483,12 @@ impl ConversationIngress {
         }
     }
 
-    async fn handle_prompt_input(&self, envelope: ChannelEnvelope, action_value: Option<String>) {
+    async fn handle_prompt_input(
+        &self,
+        envelope: ChannelEnvelope,
+        action_value: Option<String>,
+        cancellation: PromptCancellation,
+    ) {
         let route = envelope.route.clone();
         let cli_kind = envelope.cli_kind.clone();
         let text = effective_input_text(&envelope, action_value);
@@ -482,7 +503,10 @@ impl ConversationIngress {
         let content_blocks = envelope_content_blocks(&text, &envelope.attachments);
 
         let target = ChannelTarget::new(route.clone(), message_id.clone());
-        match self.run_prompt(target.clone(), content_blocks).await {
+        match self
+            .run_prompt(target.clone(), content_blocks, cancellation)
+            .await
+        {
             Ok(_resp) => {
                 tracing::debug!(route = %route, "prompt ok");
             }
@@ -530,22 +554,6 @@ impl ConversationIngress {
     #[cfg(test)]
     pub(super) fn active_lane_count(&self) -> usize {
         self.lanes.len()
-    }
-}
-
-async fn wait_for_stop(stop_rx: &mut watch::Receiver<u64>, generation: u64) {
-    while *stop_rx.borrow_and_update() == generation {
-        if stop_rx.changed().await.is_err() {
-            return;
-        }
-    }
-}
-
-async fn wait_for_shutdown(shutdown_rx: &mut watch::Receiver<bool>) {
-    while !*shutdown_rx.borrow_and_update() {
-        if shutdown_rx.changed().await.is_err() {
-            return;
-        }
     }
 }
 

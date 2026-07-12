@@ -17,7 +17,7 @@ use crate::profiles::{self, connections};
 use crate::routing::{ChannelTarget, RouteKey};
 use crate::workspace::manager::ExternalSessionAttachMode;
 use crate::workspace::threads::runtime::{
-    route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
+    route_allows_startup_replay, PromptCancellation, ThreadRuntime, ThreadRuntimeState,
 };
 use crate::workspace::threads::store::HostBinding;
 use crate::workspace::WorkspaceThreadManager;
@@ -31,6 +31,7 @@ pub(crate) async fn handle_prompt(
     plugin_host: &Arc<PluginHost>,
     target: ChannelTarget,
     mut content_blocks: Vec<acp::ContentBlock>,
+    cancellation: PromptCancellation,
 ) -> acp::Result<acp::PromptResponse> {
     let text = first_text(&content_blocks).unwrap_or_default();
 
@@ -55,7 +56,12 @@ pub(crate) async fn handle_prompt(
     let state = runtime.state().await;
     let handler = bridge_handler(workspace_threads, plugin_host, &runtime, &state);
     runtime
-        .prompt(&target, std::mem::take(&mut content_blocks), handler)
+        .prompt_cancellable(
+            &target,
+            std::mem::take(&mut content_blocks),
+            handler,
+            cancellation,
+        )
         .await
 }
 

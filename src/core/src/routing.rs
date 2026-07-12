@@ -311,6 +311,20 @@ pub struct ActiveTurnTargetGuard {
     cancel_tx: watch::Sender<bool>,
 }
 
+impl ActiveTurnTargetGuard {
+    pub(crate) fn cancellation(&self) -> watch::Receiver<bool> {
+        self.cancel_tx.subscribe()
+    }
+}
+
+pub(crate) async fn wait_for_signal(signal: &mut watch::Receiver<bool>) {
+    while !*signal.borrow_and_update() {
+        if signal.changed().await.is_err() {
+            return;
+        }
+    }
+}
+
 impl Drop for ActiveTurnTargetGuard {
     fn drop(&mut self) {
         self.cancel_tx.send_replace(true);

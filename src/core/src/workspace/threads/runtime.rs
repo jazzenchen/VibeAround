@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Context;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio::time::{sleep, Duration};
 
 use crate::agent::{Agent, AgentClientHandler, StartupSession};
-use crate::routing::{channel_traits, ActiveTurnTarget, ChannelTarget, RouteKey};
+use crate::routing::{channel_traits, wait_for_signal, ActiveTurnTarget, ChannelTarget, RouteKey};
 use crate::workspace::registry::WorkspaceId;
 
 use super::store::{
@@ -31,6 +31,30 @@ pub struct ThreadRuntimeState {
     pub initialize: Option<acp::InitializeResponse>,
     pub agents: Vec<ThreadAgent>,
     pub multi_agent_turns: Vec<MultiAgentTurn>,
+}
+
+pub(crate) struct PromptCancellation {
+    cancel_rx: watch::Receiver<bool>,
+    shutdown_rx: watch::Receiver<bool>,
+}
+
+impl PromptCancellation {
+    pub(crate) fn new(
+        cancel_rx: watch::Receiver<bool>,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> Self {
+        Self {
+            cancel_rx,
+            shutdown_rx,
+        }
+    }
+
+    async fn cancelled(&mut self) {
+        tokio::select! {
+            _ = wait_for_signal(&mut self.cancel_rx) => {}
+            _ = wait_for_signal(&mut self.shutdown_rx) => {}
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -188,23 +212,54 @@ impl ThreadRuntime {
         content_blocks: Vec<acp::ContentBlock>,
         handler: Arc<dyn AgentClientHandler>,
     ) -> acp::Result<acp::PromptResponse> {
+        self.prompt_inner(target, content_blocks, handler, None)
+            .await
+    }
+
+    pub(crate) async fn prompt_cancellable(
+        &self,
+        target: &ChannelTarget,
+        content_blocks: Vec<acp::ContentBlock>,
+        handler: Arc<dyn AgentClientHandler>,
+        cancellation: PromptCancellation,
+    ) -> acp::Result<acp::PromptResponse> {
+        self.prompt_inner(target, content_blocks, handler, Some(cancellation))
+            .await
+    }
+
+    async fn prompt_inner(
+        &self,
+        target: &ChannelTarget,
+        content_blocks: Vec<acp::ContentBlock>,
+        handler: Arc<dyn AgentClientHandler>,
+        mut route_cancellation: Option<PromptCancellation>,
+    ) -> acp::Result<acp::PromptResponse> {
         let _prompt_guard = self.prompt_lock.lock().await;
-        let _target_guard = self.active_turn_target.install(target.clone());
+        let target_guard = self.active_turn_target.install(target.clone());
+        let mut cancellation = target_guard.cancellation();
         self.mark_activity();
         let busy_guard = PromptBusyGuard::enter(self);
         *self.failed.lock().await = None;
         self.notify_change();
         let fallback_finish_handler = Arc::clone(&handler);
 
-        let result = async {
-            self.maybe_record_first_prompt(&content_blocks).await?;
-            let agent = self.ensure_agent(&target.route, handler).await?;
-            let session_id = self.ensure_session(&agent).await?;
-            agent
-                .prompt(acp::PromptRequest::new(session_id, content_blocks))
-                .await
-        }
-        .await;
+        let result = tokio::select! {
+            biased;
+            _ = wait_for_signal(&mut cancellation) => {
+                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+            }
+            _ = wait_for_prompt_cancellation(&mut route_cancellation) => {
+                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+            }
+            result = async {
+                self.maybe_record_first_prompt(&content_blocks).await?;
+                let agent = self.ensure_agent(&target.route, handler).await?;
+                let session_id = self.ensure_session(&agent).await?;
+                agent
+                    .prompt(acp::PromptRequest::new(session_id, content_blocks))
+                    .await
+            } => result,
+        };
         let finish_handler = self
             .host
             .lock()
@@ -1262,6 +1317,13 @@ impl ThreadRuntime {
 
     fn mark_activity(&self) {
         self.activity_generation.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+async fn wait_for_prompt_cancellation(cancellation: &mut Option<PromptCancellation>) {
+    match cancellation {
+        Some(cancellation) => cancellation.cancelled().await,
+        None => std::future::pending().await,
     }
 }
 
