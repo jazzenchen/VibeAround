@@ -151,10 +151,7 @@ mod tests {
         let (input_tx, _input_rx) = mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx));
         (
-            Arc::new(ConversationIngress::new(
-                Arc::clone(&workspace_threads),
-                plugin_host,
-            )),
+            ConversationIngress::new(Arc::clone(&workspace_threads), plugin_host),
             workspace_threads,
         )
     }
@@ -183,7 +180,7 @@ mod tests {
         let (output_tx, output_rx) = mpsc::unbounded_channel();
         plugin_host.register_websocket_plugin("web", output_tx);
         (
-            Arc::new(ConversationIngress::new(workspace_threads, plugin_host)),
+            ConversationIngress::new(workspace_threads, plugin_host),
             output_rx,
         )
     }
@@ -222,10 +219,10 @@ mod tests {
 
     async fn wait_for_lanes_to_drain(ingress: &ConversationIngress) {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-        while ingress.active_lane_count() != 0 && tokio::time::Instant::now() < deadline {
+        while ingress.active_lane_count().await != 0 && tokio::time::Instant::now() < deadline {
             tokio::task::yield_now().await;
         }
-        assert_eq!(ingress.active_lane_count(), 0);
+        assert_eq!(ingress.active_lane_count().await, 0);
     }
 
     fn envelope_with_text(text: &str) -> ChannelEnvelope {
@@ -359,11 +356,13 @@ mod tests {
                 let _ = first_started.send(());
                 let _ = release_first_rx.await;
             })
+            .await
             .unwrap();
         let second_done = ingress
             .enqueue_probe(route, async move {
                 let _ = second_started.send(());
             })
+            .await
             .unwrap();
 
         first_started_rx.await.unwrap();
@@ -391,12 +390,14 @@ mod tests {
                 let _ = first_started.send(());
                 let _ = release_first_rx.await;
             })
+            .await
             .unwrap();
         first_started_rx.await.unwrap();
         let second_done = ingress
             .enqueue_probe(RouteKey::new("web", "chat-b"), async move {
                 let _ = second_started.send(());
             })
+            .await
             .unwrap();
 
         tokio::time::timeout(std::time::Duration::from_millis(100), second_started_rx)
@@ -420,9 +421,13 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
-        let queued_done = ingress.enqueue_probe(route.clone(), async {}).unwrap();
+        let queued_done = ingress
+            .enqueue_probe(route.clone(), async {})
+            .await
+            .unwrap();
 
         ingress.dispatch(ChannelInput::Stop { route });
 
@@ -446,7 +451,7 @@ mod tests {
             .current_with_cancellation()
             .expect("active turn target");
 
-        assert_eq!(ingress.active_lane_count(), 0);
+        assert_eq!(ingress.active_lane_count().await, 0);
         ingress.dispatch(ChannelInput::Stop { route });
 
         tokio::time::timeout(
@@ -473,6 +478,7 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
 
@@ -513,6 +519,7 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
 
@@ -525,6 +532,7 @@ mod tests {
             .enqueue_probe(route, async move {
                 let _ = new_started.send(());
             })
+            .await
             .unwrap();
         assert!(old_done.await.is_err(), "pre-stop work survived stop");
         tokio::time::timeout(std::time::Duration::from_millis(100), new_started_rx)
@@ -546,6 +554,7 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
 
@@ -554,8 +563,8 @@ mod tests {
             .expect("ingress shutdown did not drain active lanes");
 
         assert!(active_done.await.is_err(), "active work survived shutdown");
-        assert_eq!(ingress.active_lane_count(), 0);
-        assert!(ingress.enqueue_probe(route, async {}).is_err());
+        assert_eq!(ingress.active_lane_count().await, 0);
+        assert!(ingress.enqueue_probe(route, async {}).await.is_err());
     }
 
     #[tokio::test]
@@ -569,14 +578,20 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
 
         let mut queued = Vec::new();
         for _ in 0..ROUTE_LANE_CAPACITY {
-            queued.push(ingress.enqueue_probe(route.clone(), async {}).unwrap());
+            queued.push(
+                ingress
+                    .enqueue_probe(route.clone(), async {})
+                    .await
+                    .unwrap(),
+            );
         }
-        assert!(ingress.enqueue_probe(route, async {}).is_err());
+        assert!(ingress.enqueue_probe(route, async {}).await.is_err());
 
         release.send(()).unwrap();
         first_done.await.unwrap();

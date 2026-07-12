@@ -78,10 +78,10 @@ impl ChannelManager {
     pub fn new(workspace_thread_manager: Arc<WorkspaceThreadManager>) -> Self {
         let (input_tx, input_rx) = mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx.clone()));
-        let ingress = Arc::new(ConversationIngress::new(
+        let ingress = ConversationIngress::new(
             Arc::clone(&workspace_thread_manager),
             Arc::clone(&plugin_host),
-        ));
+        );
         Self {
             plugin_host,
             input_tx,
