@@ -105,10 +105,14 @@ impl RouteLane {
             })
     }
 
-    fn stop(&self) {
+    fn stop(&self) -> bool {
         let mut state = self.state.lock();
+        if !state.accepting {
+            return false;
+        }
         state.cancel_tx.send_replace(true);
         state.cancel_tx = watch::channel(false).0;
+        true
     }
 
     fn close_if_empty(&self, rx: &mpsc::Receiver<QueuedCommand>) -> bool {
@@ -188,11 +192,8 @@ impl ConversationIngress {
     pub fn dispatch(self: &Arc<Self>, input: ChannelInput) {
         let input = match input {
             ChannelInput::Stop { route } => {
-                if let Some(lane) = self.lanes.get(&route) {
-                    // The active lane performs the actual runtime cancel before
-                    // it can run work created after this Stop.
-                    lane.stop();
-                } else {
+                let stopped_lane = self.lanes.get(&route).is_some_and(|lane| lane.stop());
+                if !stopped_lane {
                     let workspace_threads = Arc::clone(&self.workspace_threads);
                     let route = route.clone();
                     tokio::spawn(async move {
@@ -542,6 +543,21 @@ fn cancelled_prompt_response() -> acp::Result<acp::PromptResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopped_lane_does_not_claim_a_stop() {
+        let (tx, _rx) = mpsc::channel(1);
+        let (cancel_tx, _) = watch::channel(false);
+        let lane = RouteLane {
+            tx,
+            state: ParkingMutex::new(RouteLaneState {
+                accepting: false,
+                cancel_tx,
+            }),
+        };
+
+        assert!(!lane.stop());
+    }
 
     #[test]
     fn session_cancel_completes_the_prompt_with_cancelled_stop_reason() {
