@@ -509,6 +509,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn switch_agent_bypasses_an_occupied_route_lane() {
+        let (ingress, mut output_rx) = test_ingress_with_output();
+        let route = RouteKey::new("web", "switch-chat");
+        let (started, started_rx) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let active_done = ingress
+            .enqueue_probe(route.clone(), async move {
+                let _ = started.send(());
+                let _ = release_rx.await;
+            })
+            .await
+            .unwrap();
+        started_rx.await.unwrap();
+
+        ingress.dispatch(ChannelInput::SwitchAgent {
+            route,
+            agent_kind: "claude".to_string(),
+        });
+
+        let output = tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv())
+            .await
+            .expect("switch agent waited behind the occupied route lane")
+            .expect("output channel closed");
+        assert!(matches!(output, ChannelOutput::SystemText { .. }));
+
+        release.send(()).unwrap();
+        active_done.await.unwrap();
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
     async fn work_enqueued_after_stop_is_not_cancelled_by_the_previous_stop() {
         let ingress = test_ingress();
         let route = RouteKey::new("web", "chat-a");

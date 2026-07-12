@@ -44,24 +44,18 @@ enum OrderedInput {
         envelope: ChannelEnvelope,
         action_value: Option<String>,
     },
-    SwitchAgent {
-        route: RouteKey,
-        agent_kind: String,
-    },
 }
 
 impl OrderedInput {
     fn route_key(&self) -> &RouteKey {
         match self {
             Self::Message { envelope } | Self::Callback { envelope, .. } => &envelope.route,
-            Self::SwitchAgent { route, .. } => route,
         }
     }
 
     fn reply_to(&self) -> Option<String> {
         match self {
             Self::Message { envelope } | Self::Callback { envelope, .. } => envelope.reply_to(),
-            Self::SwitchAgent { .. } => None,
         }
     }
 }
@@ -289,6 +283,14 @@ impl ConversationIngress {
                 );
                 return;
             }
+            ChannelInput::SwitchAgent { route, agent_kind } => {
+                send_system_text(
+                    &self.plugin_host,
+                    &route,
+                    &format!("Use /switch host {} with workspace threads.", agent_kind),
+                );
+                return;
+            }
             ChannelInput::Message { envelope } => OrderedInput::Message { envelope },
             ChannelInput::Callback {
                 envelope,
@@ -297,9 +299,6 @@ impl ConversationIngress {
                 envelope,
                 action_value,
             },
-            ChannelInput::SwitchAgent { route, agent_kind } => {
-                OrderedInput::SwitchAgent { route, agent_kind }
-            }
         };
 
         let route = input.route_key().clone();
@@ -477,13 +476,6 @@ impl ConversationIngress {
             } => {
                 self.handle_prompt_input(envelope, action_value, cancellation)
                     .await;
-            }
-            OrderedInput::SwitchAgent { route, agent_kind } => {
-                send_system_text(
-                    &self.plugin_host,
-                    &route,
-                    &format!("Use /switch host {} with workspace threads.", agent_kind),
-                );
             }
         }
     }
