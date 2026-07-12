@@ -188,6 +188,49 @@ impl RouteAttachmentEventStore {
         self.replace_with_projection(&projection).await
     }
 
+    pub async fn migrate_channel_instance(
+        &self,
+        channel_kind: &str,
+        instance_id: &str,
+    ) -> jsonl::Result<usize> {
+        if channel_kind == instance_id {
+            return Ok(0);
+        }
+        let mut projection = self.load_projection().await?;
+        let migrations = projection
+            .current
+            .values()
+            .filter(|attachment| {
+                attachment.route.channel_kind == channel_kind
+                    && attachment.route.channel_instance_id() == channel_kind
+            })
+            .map(|attachment| {
+                let route = &attachment.route;
+                let migrated_route = RouteKey::with_actor(
+                    channel_kind,
+                    instance_id,
+                    route.chat_id.clone(),
+                    route.actor_id().unwrap_or(instance_id),
+                    route.topic_id.clone(),
+                );
+                (route.clone(), migrated_route, attachment.clone())
+            })
+            .collect::<Vec<_>>();
+        for (legacy_route, migrated_route, attachment) in &migrations {
+            projection.current.remove(legacy_route);
+            let mut attachment = attachment.clone();
+            attachment.route = migrated_route.clone();
+            projection
+                .current
+                .entry(migrated_route.clone())
+                .or_insert_with(|| attachment.clone());
+        }
+        if !migrations.is_empty() {
+            self.replace_with_projection(&projection).await?;
+        }
+        Ok(migrations.len())
+    }
+
     async fn replace_with_projection(
         &self,
         projection: &RouteAttachmentProjection,
@@ -305,6 +348,48 @@ mod tests {
             .unwrap();
 
         assert!(store.load_projection().await.unwrap().get(&route).is_none());
+
+        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn channel_instance_migration_rewrites_legacy_route_once() {
+        let path = std::env::temp_dir()
+            .join(format!("vibearound-attachments-{}", uuid::Uuid::new_v4()))
+            .join("attachments.jsonl");
+        let store = RouteAttachmentEventStore::new(path.clone());
+        let legacy_route = RouteKey::new("slack", "chat-a");
+        store
+            .append(&RouteAttachmentEvent::attached(
+                legacy_route.clone(),
+                "ws_a",
+                "wt_a",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store
+                .migrate_channel_instance("slack", "slack-primary")
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .migrate_channel_instance("slack", "slack-primary")
+                .await
+                .unwrap(),
+            0
+        );
+        let projection = store.load_projection().await.unwrap();
+        let migrated =
+            RouteKey::with_actor("slack", "slack-primary", "chat-a", "slack-primary", None);
+        assert!(projection.get(&legacy_route).is_none());
+        assert_eq!(
+            projection.get(&migrated).unwrap().thread_id,
+            WorkspaceThreadId::from("wt_a")
+        );
 
         let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
     }

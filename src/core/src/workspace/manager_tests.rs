@@ -157,13 +157,21 @@ async fn channel_routes_get_route_private_threads() {
 }
 
 #[tokio::test]
-async fn extended_channel_route_adopts_the_legacy_attachment_once() {
+async fn channel_registration_migrates_the_legacy_attachment_once() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let legacy_route = RouteKey::new("slack", "chat-a");
     let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
     let legacy_thread_id = legacy_runtime.state().await.thread_id;
-    let extended_route = RouteKey::with_actor("slack", "U_REAL_BOT", "chat-a", "slack", None);
+    let extended_route = RouteKey::with_actor("slack", "U_REAL_BOT", "chat-a", "U_REAL_BOT", None);
+
+    assert_eq!(
+        manager
+            .migrate_legacy_channel_routes("slack", "U_REAL_BOT")
+            .await
+            .unwrap(),
+        1
+    );
 
     let adopted = manager
         .resolve_route_runtime(&extended_route)
@@ -217,7 +225,7 @@ async fn extended_topic_route_does_not_steal_the_legacy_base_attachment() {
 }
 
 #[tokio::test]
-async fn discord_thread_route_adopts_its_same_id_legacy_attachment() {
+async fn channel_registration_migrates_discord_attachment() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let legacy_route = RouteKey::new("discord", "thread-channel-a");
@@ -227,8 +235,16 @@ async fn discord_thread_route_adopts_its_same_id_legacy_attachment() {
         "discord",
         "REAL_BOT_ID",
         "thread-channel-a",
-        "discord",
-        Some("thread-channel-a".to_string()),
+        "REAL_BOT_ID",
+        None,
+    );
+
+    assert_eq!(
+        manager
+            .migrate_legacy_channel_routes("discord", "REAL_BOT_ID")
+            .await
+            .unwrap(),
+        1
     );
 
     let adopted = manager

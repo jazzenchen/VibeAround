@@ -100,8 +100,6 @@ impl WorkspaceThreadManager {
         &self,
         route: &RouteKey,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        self.adopt_legacy_route_attachment(route).await?;
-
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
             return Ok(runtime);
         }
@@ -117,36 +115,15 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(thread).await
     }
 
-    async fn adopt_legacy_route_attachment(&self, route: &RouteKey) -> anyhow::Result<()> {
-        let legacy_route = RouteKey::new(&route.channel_kind, &route.chat_id);
-        if route == &legacy_route
-            || route
-                .topic_id()
-                .is_some_and(|topic_id| topic_id != route.chat_id)
-            || self.current_attachment(route).await?.is_some()
-        {
-            return Ok(());
-        }
-
-        let Some(legacy_attachment) = self.current_attachment(&legacy_route).await? else {
-            return Ok(());
-        };
-
-        self.attach_route(
-            route.clone(),
-            legacy_attachment.workspace_id,
-            legacy_attachment.thread_id,
-        )
-        .await?;
-        if let Err(error) = self.detach_route(&legacy_route).await {
-            tracing::warn!(
-                route = %route,
-                legacy_route = %legacy_route,
-                error = %error,
-                "extended route adopted legacy attachment but legacy detach failed"
-            );
-        }
-        Ok(())
+    pub async fn migrate_legacy_channel_routes(
+        &self,
+        channel_kind: &str,
+        instance_id: &str,
+    ) -> anyhow::Result<usize> {
+        self.attachment_store
+            .migrate_channel_instance(channel_kind, instance_id)
+            .await
+            .context("migrate legacy channel route attachments")
     }
 
     pub async fn create_thread_for_route(
