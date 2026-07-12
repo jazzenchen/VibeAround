@@ -127,22 +127,6 @@ impl ProcessStatus {
     }
 }
 
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TransitionIntent {
-    None = 0,
-    Stop = 1,
-}
-
-impl TransitionIntent {
-    pub(super) fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Self::Stop,
-            _ => Self::None,
-        }
-    }
-}
-
 /// Public read-only snapshot safe to expose via HTTP and dashboards.
 #[derive(Debug, Clone)]
 pub struct ProcessSnapshot {
@@ -171,7 +155,6 @@ pub(super) struct SupervisedProcess {
     pub(super) factory: BridgeFactory,
 
     pub(super) status: AtomicU8,
-    pub(super) intent: AtomicU8,
     pub(super) reason: RwLock<String>,
 
     pub(super) last_heartbeat_ts: AtomicU64,
