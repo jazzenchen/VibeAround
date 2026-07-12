@@ -298,9 +298,14 @@ impl ConversationIngress {
                         content_blocks,
                     ) => result,
                 };
+                self.schedule_route_host_idle_shutdown(route).await;
                 let _ = reply.send(result);
             }
             LaneCommand::Dispatch(input) => {
+                let ran_prompt = matches!(
+                    input.as_ref(),
+                    ChannelInput::Message { .. } | ChannelInput::Callback { .. }
+                );
                 tokio::select! {
                     biased;
                     _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
@@ -311,6 +316,9 @@ impl ConversationIngress {
                         self.reject_stopped(route, (*input).clone());
                     }
                     _ = self.dispatch_ordered((*input).clone()) => {}
+                }
+                if ran_prompt {
+                    self.schedule_route_host_idle_shutdown(route).await;
                 }
             }
             #[cfg(test)]
@@ -401,18 +409,21 @@ impl ConversationIngress {
                 }
             }
         }
+        result
+    }
+
+    async fn schedule_route_host_idle_shutdown(&self, route: &RouteKey) {
         if let Err(error) = self
             .workspace_threads
-            .schedule_route_host_idle_shutdown(&target.route)
+            .schedule_route_host_idle_shutdown(route)
             .await
         {
             tracing::debug!(
-                route = %target.route,
+                route = %route,
                 error = %error,
                 "failed to schedule agent host idle shutdown"
             );
         }
-        result
     }
 
     async fn handle_prompt_input(&self, envelope: ChannelEnvelope, action_value: Option<String>) {

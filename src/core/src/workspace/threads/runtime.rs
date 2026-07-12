@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
@@ -89,11 +89,29 @@ pub struct ThreadRuntime {
     session_id: Mutex<Option<String>>,
     prompt_lock: Mutex<()>,
     active_turn_target: ActiveTurnTarget,
-    busy: Mutex<bool>,
+    busy: AtomicBool,
     failed: Mutex<Option<String>>,
     activity_generation: AtomicU64,
     store: ThreadEventStore,
     change_tx: Option<broadcast::Sender<()>>,
+}
+
+struct PromptBusyGuard<'a> {
+    runtime: &'a ThreadRuntime,
+}
+
+impl<'a> PromptBusyGuard<'a> {
+    fn enter(runtime: &'a ThreadRuntime) -> Self {
+        runtime.busy.store(true, Ordering::Release);
+        Self { runtime }
+    }
+}
+
+impl Drop for PromptBusyGuard<'_> {
+    fn drop(&mut self) {
+        self.runtime.busy.store(false, Ordering::Release);
+        self.runtime.notify_change();
+    }
 }
 
 impl ThreadRuntime {
@@ -117,7 +135,7 @@ impl ThreadRuntime {
             session_id: Mutex::new(session_id),
             prompt_lock: Mutex::new(()),
             active_turn_target: ActiveTurnTarget::default(),
-            busy: Mutex::new(false),
+            busy: AtomicBool::new(false),
             failed: Mutex::new(None),
             activity_generation: AtomicU64::new(0),
             store,
@@ -140,7 +158,7 @@ impl ThreadRuntime {
             host_binding: thread.host_binding.clone(),
             session_id: self.session_id.lock().await.clone(),
             workspace: self.workspace.clone(),
-            busy: *self.busy.lock().await,
+            busy: self.busy.load(Ordering::Acquire),
             failed: self.failed.lock().await.clone(),
             initialize,
             agents: thread.agents.values().cloned().collect(),
@@ -173,7 +191,7 @@ impl ThreadRuntime {
         let _prompt_guard = self.prompt_lock.lock().await;
         let _target_guard = self.active_turn_target.install(target.clone());
         self.mark_activity();
-        *self.busy.lock().await = true;
+        let busy_guard = PromptBusyGuard::enter(self);
         *self.failed.lock().await = None;
         self.notify_change();
         let fallback_finish_handler = Arc::clone(&handler);
@@ -202,11 +220,10 @@ impl ThreadRuntime {
                 "host prompt_finished hook failed"
             );
         }
-        *self.busy.lock().await = false;
         if let Err(error) = &result {
             *self.failed.lock().await = Some(error.message.to_string());
         }
-        self.notify_change();
+        drop(busy_guard);
         result
     }
 
@@ -277,7 +294,7 @@ impl ThreadRuntime {
             crate::previews::kill_by_session(&subagent.session_id);
             subagent.agent.shutdown().await;
         }
-        *self.busy.lock().await = false;
+        self.busy.store(false, Ordering::Release);
         *self.failed.lock().await = None;
         self.notify_change();
     }
@@ -290,7 +307,7 @@ impl ThreadRuntime {
         if self.idle_generation() != generation {
             return false;
         }
-        if *self.busy.lock().await {
+        if self.busy.load(Ordering::Acquire) {
             return false;
         }
         if !self.subagents.lock().await.is_empty() {
@@ -310,7 +327,7 @@ impl ThreadRuntime {
         if self.idle_generation() != generation {
             return false;
         }
-        if *self.busy.lock().await {
+        if self.busy.load(Ordering::Acquire) {
             return false;
         }
         if !self.subagents.lock().await.is_empty() {
@@ -1534,6 +1551,30 @@ mod tests {
         let state = futures::executor::block_on(runtime.state());
 
         assert_eq!(state.session_id.as_deref(), Some("session-old"));
+    }
+
+    #[tokio::test]
+    async fn dropped_prompt_scope_clears_busy_state() {
+        let runtime = Arc::new(ThreadRuntime::new(
+            thread_with_sessions(),
+            PathBuf::from("/tmp/project"),
+            ThreadEventStore::new("/tmp/unused.jsonl"),
+        ));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let runtime_for_task = Arc::clone(&runtime);
+        let prompt = tokio::spawn(async move {
+            let _busy_guard = PromptBusyGuard::enter(&runtime_for_task);
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+
+        started_rx.await.expect("prompt scope started");
+        assert!(runtime.state().await.busy);
+
+        prompt.abort();
+        let _ = prompt.await;
+
+        assert!(!runtime.state().await.busy);
     }
 
     #[tokio::test]
