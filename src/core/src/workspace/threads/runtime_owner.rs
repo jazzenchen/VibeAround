@@ -400,7 +400,6 @@ impl ThreadOwner {
 
     async fn shutdown_host_if_idle(&mut self, runtime: &ThreadRuntime, generation: u64) -> bool {
         if self.activity_generation != generation
-            || self.state_tx.borrow().busy
             || self.host.is_none()
             || !self.subagents.is_empty()
         {
@@ -542,10 +541,6 @@ impl ThreadOwner {
         .await
         .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
 
-        if self.thread.status == ThreadStatus::Closed {
-            ready.agent.shutdown().await;
-            return Err(acp::Error::new(-32603, "workspace thread is closed"));
-        }
         self.host = Some(AcpSessionRunner {
             agent: Arc::clone(&ready.agent),
             client_handler: spawned_handler,
