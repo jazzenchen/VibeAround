@@ -2,12 +2,8 @@
 //! Drives the prompt lifecycle and routes extension notifications back into
 //! the host.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use dashmap::mapref::entry::Entry;
-use dashmap::DashMap;
 use tokio::sync::mpsc;
 
 use agent_client_protocol::schema::v1 as acp;
@@ -129,7 +125,7 @@ fn route_for_cancel(
     default_actor_id: &str,
     session_chat_id: &str,
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
-) -> Result<Option<RouteKey>, String> {
+) -> Result<RouteKey, String> {
     if meta.is_some_and(|meta| meta.contains_key(CHANNEL_CONTEXT_META_KEY)) {
         return route_for_prompt(
             channel_kind,
@@ -137,27 +133,15 @@ fn route_for_cancel(
             default_actor_id,
             session_chat_id,
             meta,
-        )
-        .map(Some);
+        );
     }
-    Ok(None)
-}
-
-struct ActivePromptRoute<'a> {
-    routes: &'a DashMap<String, HashMap<u64, RouteKey>>,
-    chat_id: String,
-    token: u64,
-}
-
-impl Drop for ActivePromptRoute<'_> {
-    fn drop(&mut self) {
-        if let Entry::Occupied(mut entry) = self.routes.entry(self.chat_id.clone()) {
-            entry.get_mut().remove(&self.token);
-            if entry.get().is_empty() {
-                entry.remove();
-            }
-        }
-    }
+    Ok(RouteKey::with_actor(
+        channel_kind,
+        channel_instance_id,
+        session_chat_id,
+        default_actor_id,
+        None,
+    ))
 }
 
 /// ACP Agent handler for a channel plugin. `prompt()` calls through the
@@ -172,8 +156,6 @@ pub(super) struct PluginAgentHandler {
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
-    active_prompt_routes: DashMap<String, HashMap<u64, RouteKey>>,
-    next_prompt_token: AtomicU64,
 }
 
 impl PluginAgentHandler {
@@ -194,21 +176,6 @@ impl PluginAgentHandler {
             input_tx,
             ingress,
             plugin_host,
-            active_prompt_routes: DashMap::new(),
-            next_prompt_token: AtomicU64::new(1),
-        }
-    }
-
-    fn track_active_route<'a>(&'a self, chat_id: &str, route: RouteKey) -> ActivePromptRoute<'a> {
-        let token = self.next_prompt_token.fetch_add(1, Ordering::Relaxed);
-        self.active_prompt_routes
-            .entry(chat_id.to_string())
-            .or_default()
-            .insert(token, route);
-        ActivePromptRoute {
-            routes: &self.active_prompt_routes,
-            chat_id: chat_id.to_string(),
-            token,
         }
     }
     pub(super) async fn initialize(
@@ -295,13 +262,12 @@ impl PluginAgentHandler {
         // The shared ingress blocks until the turn completes.
         // Session notifications stream to the plugin via ChannelBridgeHandler
         // → PluginHost → output_tx → output forwarder → conn.session_notification().
-        let _active_route = self.track_active_route(&chat_id, target.route.clone());
         self.ingress.prompt(target, content_blocks).await
     }
 
     pub(super) async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
         let chat_id = args.session_id.to_string();
-        let targeted_route = route_for_cancel(
+        let route = route_for_cancel(
             &self.channel_kind,
             &self.channel_instance_id,
             &self.default_actor_id,
@@ -317,24 +283,6 @@ impl PluginAgentHandler {
             );
             acp::Error::invalid_params()
         })?;
-        let routes = targeted_route.map_or_else(
-            || {
-                self.active_prompt_routes
-                    .get(&chat_id)
-                    .map(|routes| routes.values().cloned().collect::<Vec<_>>())
-                    .filter(|routes| !routes.is_empty())
-                    .unwrap_or_else(|| {
-                        vec![RouteKey::with_actor(
-                            &self.channel_kind,
-                            &self.channel_instance_id,
-                            &chat_id,
-                            &self.default_actor_id,
-                            None,
-                        )]
-                    })
-            },
-            |route| vec![route],
-        );
 
         proc_log!(
             info,
@@ -344,9 +292,7 @@ impl PluginAgentHandler {
             chat_id = %chat_id
         );
 
-        for route in routes {
-            self.ingress.dispatch(ChannelInput::Stop { route });
-        }
+        self.ingress.dispatch(ChannelInput::Stop { route });
         Ok(())
     }
 
@@ -629,8 +575,7 @@ mod tests {
             "group-1",
             Some(&meta),
         )
-        .expect("targeted cancel metadata parses")
-        .expect("targeted cancel carries a route");
+        .expect("targeted cancel metadata parses");
 
         assert_eq!(route.channel_instance_id(), "slack-primary");
         assert_eq!(route.actor_id(), Some("codex-reviewer"));
@@ -638,29 +583,12 @@ mod tests {
     }
 
     #[test]
-    fn legacy_cancel_keeps_chat_wide_compatibility_fallback() {
+    fn cancel_without_metadata_targets_the_plugin_default_route() {
         assert_eq!(
             route_for_cancel("slack", "slack", "slack", "group-1", None)
                 .expect("legacy cancel parses"),
-            None
+            RouteKey::with_actor("slack", "slack", "group-1", "slack", None)
         );
-    }
-
-    #[test]
-    fn active_prompt_route_guard_prunes_finished_chat() {
-        let routes = DashMap::new();
-        routes.insert(
-            "chat-1".to_string(),
-            HashMap::from([(7, RouteKey::new("feishu", "chat-1"))]),
-        );
-        {
-            let _guard = ActivePromptRoute {
-                routes: &routes,
-                chat_id: "chat-1".to_string(),
-                token: 7,
-            };
-        }
-        assert!(!routes.contains_key("chat-1"));
     }
 
     #[test]
