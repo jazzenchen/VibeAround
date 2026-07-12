@@ -1,9 +1,10 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
 };
+use serde::Deserialize;
 
 use common::pty::SessionId;
 use common::routing::RouteKey;
@@ -189,14 +190,20 @@ pub async fn kill_tunnel_handler(
     }
 }
 
-/// DELETE /api/agents/:route_key -- stop a live workspace thread host.
+/// DELETE /api/agents/:thread_id -- stop a live workspace thread host.
 ///
-/// `route_key` should be the workspace thread id returned by
-/// `GET /api/agents/runtime`. Legacy `channel_kind:chat_id` keys remain
-/// supported when they identify exactly one live workspace thread.
+/// `thread_id` is returned by `GET /api/agents/runtime`. Old
+/// `channel_kind:chat_id` callers must opt into compatibility explicitly with
+/// `?legacy_route=<channel_kind:chat_id>`.
+#[derive(Debug, Default, Deserialize)]
+pub struct KillAgentQuery {
+    legacy_route: Option<String>,
+}
+
 pub async fn kill_agent_handler(
     State(state): State<AppState>,
-    Path(route_key): Path<String>,
+    Path(thread_id): Path<String>,
+    Query(query): Query<KillAgentQuery>,
 ) -> impl IntoResponse {
     let workspace_threads = state.channel_hub.workspace_thread_manager();
     let entries = workspace_threads.list().await;
@@ -211,30 +218,36 @@ pub async fn kill_agent_handler(
         })
         .collect::<Vec<_>>();
 
-    let thread_id = match resolve_agent_control_target(&route_key, &candidates) {
+    let resolution = match query.legacy_route.as_deref() {
+        Some(route) => resolve_legacy_agent_route(route, &candidates),
+        None => resolve_agent_thread_id(&thread_id, &candidates),
+    };
+    let resolved_thread_id = match resolution {
         AgentControlResolution::Found(thread_id) => thread_id,
         AgentControlResolution::NotFound => {
             return (
                 StatusCode::NOT_FOUND,
-                format!("Agent runtime not found: {}", route_key),
+                format!("Agent runtime not found: {}", thread_id),
             );
         }
         AgentControlResolution::Ambiguous => {
             return (
                 StatusCode::CONFLICT,
                 format!(
-                    "Agent route {} matches multiple runtimes; use the workspace thread id from /api/agents/runtime",
-                    route_key
+                    "Agent route matches multiple runtimes; use the workspace thread id from /api/agents/runtime"
                 ),
             );
         }
     };
 
-    match workspace_threads.shutdown_thread_host(&thread_id).await {
-        Ok(()) => (StatusCode::OK, format!("Stopped agent {}", route_key)),
+    match workspace_threads
+        .shutdown_thread_host(&resolved_thread_id)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, format!("Stopped agent {}", thread_id)),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to stop agent {}: {}", route_key, error),
+            format!("Failed to stop agent {}: {}", thread_id, error),
         ),
     }
 }
@@ -246,18 +259,25 @@ enum AgentControlResolution {
     Ambiguous,
 }
 
-fn resolve_agent_control_target(
-    control_key: &str,
+fn resolve_agent_thread_id(
+    requested_thread_id: &str,
     candidates: &[(WorkspaceThreadId, Vec<RouteKey>)],
 ) -> AgentControlResolution {
     if let Some((thread_id, _)) = candidates
         .iter()
-        .find(|(thread_id, _)| thread_id.as_str() == control_key)
+        .find(|(thread_id, _)| thread_id.as_str() == requested_thread_id)
     {
         return AgentControlResolution::Found(thread_id.clone());
     }
 
-    let Some(legacy_route) = RouteKey::from_key(control_key) else {
+    AgentControlResolution::NotFound
+}
+
+fn resolve_legacy_agent_route(
+    route_key: &str,
+    candidates: &[(WorkspaceThreadId, Vec<RouteKey>)],
+) -> AgentControlResolution {
+    let Some(legacy_route) = RouteKey::from_key(route_key) else {
         return AgentControlResolution::NotFound;
     };
     let route_matches = |route: &RouteKey| {
@@ -330,7 +350,7 @@ mod tests {
         ];
 
         assert_eq!(
-            resolve_agent_control_target("wt_second", &candidates),
+            resolve_agent_thread_id("wt_second", &candidates),
             AgentControlResolution::Found(second_id)
         );
     }
@@ -348,7 +368,7 @@ mod tests {
         let candidates = [(thread_id.clone(), vec![route])];
 
         assert_eq!(
-            resolve_agent_control_target("slack:chat-1", &candidates),
+            resolve_legacy_agent_route("slack:chat-1", &candidates),
             AgentControlResolution::Found(thread_id)
         );
     }
@@ -366,7 +386,7 @@ mod tests {
         ];
 
         assert_eq!(
-            resolve_agent_control_target("slack:chat-1", &candidates),
+            resolve_legacy_agent_route("slack:chat-1", &candidates),
             AgentControlResolution::Ambiguous
         );
     }
@@ -376,11 +396,11 @@ mod tests {
         let candidates = [];
 
         assert_eq!(
-            resolve_agent_control_target("wt_missing", &candidates),
+            resolve_agent_thread_id("wt_missing", &candidates),
             AgentControlResolution::NotFound
         );
         assert_eq!(
-            resolve_agent_control_target("slack:chat-1", &candidates),
+            resolve_legacy_agent_route("slack:chat-1", &candidates),
             AgentControlResolution::NotFound
         );
     }
