@@ -9,9 +9,11 @@ use tokio::sync::mpsc;
 use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::ProtocolVersion;
 
+use super::super::manifest::ChannelPluginManifest;
 use super::super::plugin_host::PluginHost;
 use super::super::types::{ChannelInboundContext, CHANNEL_CONTEXT_META_KEY};
 use super::super::{ChannelEnvelope, ChannelInput, ConversationIngress};
+use crate::plugins::TopicConversationScope;
 use crate::proc_log;
 use crate::process::registry::ProcessKind;
 use crate::routing::{ChannelTarget, RouteKey};
@@ -151,6 +153,7 @@ pub(super) struct PluginAgentHandler {
     channel_kind: String,
     channel_instance_id: String,
     default_actor_id: String,
+    topic_scope: TopicConversationScope,
     config: serde_json::Value,
     /// Used for fire-and-forget callback notifications.
     input_tx: mpsc::UnboundedSender<ChannelInput>,
@@ -160,18 +163,24 @@ pub(super) struct PluginAgentHandler {
 
 impl PluginAgentHandler {
     pub(super) fn new(
-        channel_kind: String,
-        channel_instance_id: String,
-        default_actor_id: String,
-        config: serde_json::Value,
+        manifest: ChannelPluginManifest,
         input_tx: mpsc::UnboundedSender<ChannelInput>,
         ingress: Arc<ConversationIngress>,
         plugin_host: Arc<PluginHost>,
     ) -> Self {
+        let ChannelPluginManifest {
+            channel_kind,
+            instance_id: channel_instance_id,
+            actor_id: default_actor_id,
+            topic_scope,
+            raw_config: config,
+            ..
+        } = manifest;
         Self {
             channel_kind,
             channel_instance_id,
             default_actor_id,
+            topic_scope,
             config,
             input_tx,
             ingress,
@@ -219,7 +228,7 @@ impl PluginAgentHandler {
         args: acp::PromptRequest,
     ) -> acp::Result<acp::PromptResponse> {
         let chat_id = args.session_id.to_string();
-        let target = target_for_prompt(
+        let mut target = target_for_prompt(
             &self.channel_kind,
             &self.channel_instance_id,
             &self.default_actor_id,
@@ -235,6 +244,7 @@ impl PluginAgentHandler {
             );
             acp::Error::invalid_params()
         })?;
+        apply_topic_scope(self.topic_scope, &mut target.route);
 
         let content_blocks = args.prompt;
 
@@ -267,7 +277,7 @@ impl PluginAgentHandler {
 
     pub(super) async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
         let chat_id = args.session_id.to_string();
-        let route = route_for_cancel(
+        let mut route = route_for_cancel(
             &self.channel_kind,
             &self.channel_instance_id,
             &self.default_actor_id,
@@ -283,6 +293,7 @@ impl PluginAgentHandler {
             );
             acp::Error::invalid_params()
         })?;
+        apply_topic_scope(self.topic_scope, &mut route);
 
         proc_log!(
             info,
@@ -325,7 +336,7 @@ impl PluginAgentHandler {
                             })
                     })
                     .unwrap_or("");
-                let route = route_for_callback(
+                let mut route = route_for_callback(
                     &self.channel_kind,
                     &self.channel_instance_id,
                     &self.default_actor_id,
@@ -341,6 +352,7 @@ impl PluginAgentHandler {
                     );
                     acp::Error::invalid_params()
                 })?;
+                apply_topic_scope(self.topic_scope, &mut route);
                 let action_value = params_obj
                     .get("data")
                     .and_then(|v| v.as_str())
@@ -394,10 +406,46 @@ impl PluginAgentHandler {
     }
 }
 
+fn apply_topic_scope(scope: TopicConversationScope, route: &mut RouteKey) {
+    if scope == TopicConversationScope::Chat {
+        route.topic_id = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn chat_topic_scope_collapses_topic_identity() {
+        let mut route = RouteKey::with_actor(
+            "slack",
+            "slack-primary",
+            "chat-1",
+            "slack-primary",
+            Some("thread-1".to_string()),
+        );
+
+        apply_topic_scope(TopicConversationScope::Chat, &mut route);
+
+        assert_eq!(route.topic_id(), None);
+    }
+
+    #[test]
+    fn topic_scope_preserves_topic_identity() {
+        let mut route = RouteKey::with_actor(
+            "slack",
+            "slack-primary",
+            "chat-1",
+            "slack-primary",
+            Some("thread-1".to_string()),
+        );
+
+        apply_topic_scope(TopicConversationScope::Topic, &mut route);
+
+        assert_eq!(route.topic_id(), Some("thread-1"));
+    }
 
     fn channel_meta(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
         serde_json::Map::from_iter([(CHANNEL_CONTEXT_META_KEY.to_string(), value)])

@@ -150,7 +150,6 @@ impl ChannelMonitor {
         let _lifecycle_guard = self.lifecycle.lock().await;
         let kind = manifest.channel_kind.clone();
         let instance_id = manifest.instance_id.clone();
-        let actor_id = manifest.actor_id.clone();
         if self.registrations.contains_key(&instance_id) {
             tracing::warn!(
                 channel_instance = %instance_id,
@@ -165,10 +164,7 @@ impl ChannelMonitor {
             .cwd(manifest.plugin_dir.clone());
 
         let factory = ChannelPluginRunnerFactory::new(
-            kind.clone(),
-            instance_id.clone(),
-            actor_id.clone(),
-            manifest.raw_config.clone(),
+            manifest.clone(),
             self.input_tx.clone(),
             Arc::clone(&self.ingress),
             Arc::clone(&self.plugin_host),

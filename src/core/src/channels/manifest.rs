@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::config;
-use crate::plugins::DiscoveredPlugin;
+use crate::plugins::{DiscoveredPlugin, TopicConversationScope};
 use crate::routing::{ActorId, ChannelInstanceId, ChannelKind};
 
 #[derive(Debug, Clone)]
@@ -14,6 +14,7 @@ pub struct ChannelPluginManifest {
     pub plugin_dir: PathBuf,
     pub entry_path: PathBuf,
     pub raw_config: serde_json::Value,
+    pub topic_scope: TopicConversationScope,
 }
 
 impl ChannelPluginManifest {
@@ -37,6 +38,7 @@ impl ChannelPluginManifest {
             plugin_dir: plugin.dir.clone(),
             entry_path: plugin.entry_path(),
             raw_config,
+            topic_scope: plugin.manifest.capabilities.topic_scope,
         })
     }
 }

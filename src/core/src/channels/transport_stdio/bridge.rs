@@ -34,16 +34,15 @@ pub(crate) async fn run_acp_plugin_bridge(
     mut cancel: CancelSignal,
 ) -> BridgeExit {
     let ChannelPluginRunner {
-        channel_kind,
-        instance_id,
-        actor_id,
-        raw_config: config,
+        manifest,
         input_tx,
         mut output_rx,
         ingress,
         plugin_host,
         runtime,
     } = runner;
+    let channel_kind = manifest.channel_kind.clone();
+    let instance_id = manifest.instance_id.clone();
     // This guard must outlive every bridge await. Supervisor shutdown may
     // abort this task after its timeout, so function-tail cleanup alone is
     // insufficient.
@@ -54,10 +53,7 @@ pub(crate) async fn run_acp_plugin_bridge(
     );
     let forwarder_plugin_host = Arc::clone(&plugin_host);
     let handler = Arc::new(PluginAgentHandler::new(
-        channel_kind.clone(),
-        instance_id.clone(),
-        actor_id,
-        config.clone(),
+        manifest,
         input_tx.clone(),
         ingress,
         plugin_host,
