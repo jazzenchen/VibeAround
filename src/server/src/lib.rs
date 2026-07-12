@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
@@ -289,7 +289,9 @@ impl ServerDaemon {
 
         // 1. Initialize workspace-thread routing and channel hub.
         let workspace_thread_manager = WorkspaceThreadManager::new_default();
-        let channel_hub = Arc::new(ChannelManager::new(Arc::clone(&workspace_thread_manager)));
+        let (channel_hub, mut input_rx) =
+            ChannelManager::new(Arc::clone(&workspace_thread_manager));
+        let channel_hub = Arc::new(channel_hub);
         let web_channel = WebChannelManager::new();
 
         // Register built-in internal channels.
@@ -314,9 +316,6 @@ impl ServerDaemon {
         // holds the input_tx — so we give it an explicit shutdown `Notify`
         // and hand the join handle back to
         // `RunningDaemon` so `stop()` can unwind cleanly.
-        let mut input_rx = channel_hub
-            .take_input_rx()
-            .context("input_rx already taken")?;
         let conversation_ingress = channel_hub.ingress();
         let channel_input_shutdown = Arc::new(Notify::new());
         let input_shutdown_for_task = Arc::clone(&channel_input_shutdown);

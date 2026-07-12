@@ -1136,8 +1136,7 @@ mod tests {
             base.join("threads.jsonl"),
             base.join("attachments.jsonl"),
         );
-        let channel_hub = ChannelManager::new(workspace_threads);
-        let mut input_rx = channel_hub.take_input_rx().unwrap();
+        let (channel_hub, mut input_rx) = ChannelManager::new(workspace_threads);
         let route = RouteKey::new("web", "ordered-stop");
 
         enqueue_channel_input(
