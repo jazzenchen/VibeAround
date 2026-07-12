@@ -63,4 +63,4 @@ pub trait ProcessBridge: Send + 'static {
 
 /// Factory the supervisor invokes on each (re)spawn to build a fresh bridge.
 /// Typically a closure that captures manager-side channels / config.
-pub type BridgeFactory = Box<dyn Fn() -> Box<dyn ProcessBridge> + Send + Sync + 'static>;
+pub type BridgeFactory = Box<dyn FnMut() -> Box<dyn ProcessBridge> + Send + 'static>;

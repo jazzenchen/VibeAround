@@ -404,7 +404,7 @@ impl ProcessOwner {
         }
     }
 
-    async fn terminate_and_reap(&self, registry_id: u64) -> Option<std::process::ExitStatus> {
+    async fn terminate_and_reap(&mut self, registry_id: u64) -> Option<std::process::ExitStatus> {
         let mut child = self.registry.remove(registry_id)?;
         let root_pid = child.id();
         let observed_status =

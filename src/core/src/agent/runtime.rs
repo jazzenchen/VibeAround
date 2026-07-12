@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{anyhow, Context};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::oneshot;
 
 use acp::schema::v1 as schema;
 use agent_client_protocol as acp;
@@ -131,8 +131,6 @@ pub struct Agent {
     agent_id: String,
     /// ACP initialize response from first startup.
     initialize: schema::InitializeResponse,
-    /// ACP session ID obtained from new_session / load_session.
-    session_id: Mutex<Option<String>>,
     suppress_startup_notifications: Arc<AtomicBool>,
     generation: AcpSessionGeneration,
     /// Supervisor handle installed by [`Agent::spawn`] after registration.
@@ -234,10 +232,7 @@ impl Agent {
             spec = spec.env(k, v);
         }
 
-        // The supervisor's factory is `Fn()`, so one-shot state (the
-        // ready sender + client handler) has to go through a Mutex<Option>
-        // that the first (and only) invocation drains. RestartPolicy::Never
-        // guarantees there is no second invocation.
+        // RestartPolicy::Never guarantees this factory is invoked once.
         let (ready_tx, ready_rx) = oneshot::channel::<anyhow::Result<AgentReady>>();
         let bridge = AcpAgentBridge {
             agent_id: agent_id.clone(),
@@ -246,13 +241,12 @@ impl Agent {
             client_handler,
             ready_tx,
         };
-        let slot: Arc<parking_lot::Mutex<Option<AcpAgentBridge>>> =
-            Arc::new(parking_lot::Mutex::new(Some(bridge)));
+        let mut bridge = Some(bridge);
         let factory: BridgeFactory = Box::new(move || {
-            let b = slot.lock().take().expect(
+            let bridge = bridge.take().expect(
                 "AcpAgentBridge factory called more than once — RestartPolicy::Never guarantees single-spawn",
             );
-            Box::new(b) as Box<dyn ProcessBridge>
+            Box::new(bridge) as Box<dyn ProcessBridge>
         });
 
         let supervisor = Supervisor::global();
@@ -282,14 +276,12 @@ impl Agent {
         conn: acp::ConnectionTo<acp::Agent>,
         agent_id: String,
         initialize: schema::InitializeResponse,
-        startup_session_id: Option<String>,
         suppress_startup_notifications: Arc<AtomicBool>,
     ) -> Arc<Self> {
         Arc::new(Self {
             conn,
             agent_id,
             initialize,
-            session_id: Mutex::new(startup_session_id),
             suppress_startup_notifications,
             generation: AcpSessionGeneration::running(),
             process_id: OnceLock::new(),
@@ -302,10 +294,6 @@ impl Agent {
 
     pub fn initialize_response(&self) -> schema::InitializeResponse {
         self.initialize.clone()
-    }
-
-    pub async fn session_id(&self) -> Option<String> {
-        self.session_id.lock().await.clone()
     }
 
     /// Whether this handle still belongs to the live ACP bridge generation.
@@ -450,19 +438,14 @@ impl Agent {
         args: schema::NewSessionRequest,
     ) -> acp::Result<schema::NewSessionResponse> {
         self.allow_startup_notifications();
-        let resp = self.conn.send_request(args).block_task().await?;
-        *self.session_id.lock().await = Some(resp.session_id.to_string());
-        Ok(resp)
+        self.conn.send_request(args).block_task().await
     }
 
     pub async fn load_session(
         &self,
         args: schema::LoadSessionRequest,
     ) -> acp::Result<schema::LoadSessionResponse> {
-        let session_id = args.session_id.clone();
-        let resp = self.conn.send_request(args).block_task().await?;
-        *self.session_id.lock().await = Some(session_id.to_string());
-        Ok(resp)
+        self.conn.send_request(args).block_task().await
     }
 
     pub async fn set_session_mode(

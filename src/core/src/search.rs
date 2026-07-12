@@ -111,10 +111,9 @@ impl SearchToolRuntime {
             request_rx,
             ready_tx: Some(ready_tx),
         };
-        let slot: Arc<parking_lot::Mutex<Option<SearchToolBridge>>> =
-            Arc::new(parking_lot::Mutex::new(Some(bridge)));
+        let mut bridge = Some(bridge);
         let factory: BridgeFactory = Box::new(move || {
-            let bridge = slot.lock().take().expect(
+            let bridge = bridge.take().expect(
                 "SearchToolBridge factory called more than once; RestartPolicy::Never is used",
             );
             Box::new(bridge) as Box<dyn ProcessBridge>
