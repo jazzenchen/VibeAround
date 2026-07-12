@@ -47,6 +47,7 @@ mod subagents;
 
 #[path = "runtime_events.rs"]
 mod events;
+use events::apply_thread_event_to;
 
 #[derive(Clone)]
 struct SubagentRuntime {
@@ -96,7 +97,6 @@ const SUBAGENT_PROMPT_MAX_ATTEMPTS: usize = 2;
 const SUBAGENT_RETRY_DELAY: Duration = Duration::from_millis(750);
 
 pub struct ThreadRuntime {
-    thread: Mutex<WorkspaceThread>,
     workspace: PathBuf,
     subagents: Mutex<BTreeMap<ThreadAgentId, SubagentRuntime>>,
     active_turn_target: ActiveTurnTarget,
@@ -121,8 +121,11 @@ impl ThreadRuntime {
         let session_id = latest_session_for_host(&thread);
         let (owner_tx, owner_rx) = mpsc::unbounded_channel();
         let (turn_state_tx, turn_state) = watch::channel(TurnState {
+            thread: thread.clone(),
+            busy: false,
+            failed: None,
             session_id: session_id.clone(),
-            ..TurnState::default()
+            host_agent: None,
         });
         tokio::spawn(
             ThreadOwner {
@@ -132,11 +135,11 @@ impl ThreadRuntime {
                 change_tx: change_tx.clone(),
                 host: None,
                 session_id,
+                thread,
             }
             .run(),
         );
         Self {
-            thread: Mutex::new(thread),
             workspace,
             subagents: Mutex::new(BTreeMap::new()),
             active_turn_target: ActiveTurnTarget::default(),
@@ -149,8 +152,8 @@ impl ThreadRuntime {
     }
 
     pub async fn state(&self) -> ThreadRuntimeState {
-        let thread = self.thread.lock().await.clone();
         let turn_state = self.turn_state.borrow().clone();
+        let thread = turn_state.thread;
         let initialize = turn_state
             .host_agent
             .as_ref()
@@ -168,6 +171,10 @@ impl ThreadRuntime {
             agents: thread.agents.values().cloned().collect(),
             multi_agent_turns: thread.multi_agent_turns.values().cloned().collect(),
         }
+    }
+
+    fn thread_snapshot(&self) -> WorkspaceThread {
+        self.turn_state.borrow().thread.clone()
     }
 
     pub fn active_turn_target(&self) -> ActiveTurnTarget {
@@ -667,6 +674,47 @@ mod tests {
         turn_state.changed().await.unwrap();
 
         assert!(!runtime.state().await.busy);
+    }
+
+    #[tokio::test]
+    async fn thread_events_are_consumed_while_a_turn_is_active() {
+        let path = std::env::temp_dir().join(format!(
+            "vibearound-runtime-owner-events-{}.jsonl",
+            uuid::Uuid::new_v4()
+        ));
+        let runtime = Arc::new(ThreadRuntime::new(
+            thread_with_sessions(),
+            PathBuf::from("/tmp/project"),
+            ThreadEventStore::new(&path),
+        ));
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        runtime
+            .owner_tx
+            .send(ThreadOwnerCommand::Probe {
+                started: started_tx,
+                release: release_rx,
+            })
+            .unwrap();
+        started_rx.await.unwrap();
+
+        let agent = test_thread_agent();
+        let turn = MultiAgentTurn::new(
+            agent.turn_id.clone(),
+            super::super::store::MultiAgentTurnMode::Parallel,
+            vec![agent.id.clone()],
+        );
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            runtime.initialize_multi_agent_turn(turn, vec![agent.clone()]),
+        )
+        .await
+        .expect("thread event waited behind the active turn")
+        .unwrap();
+
+        assert_eq!(runtime.state().await.agents, vec![agent]);
+        release_tx.send(()).unwrap();
+        let _ = tokio::fs::remove_file(path).await;
     }
 
     #[tokio::test]

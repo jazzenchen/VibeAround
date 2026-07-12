@@ -7,11 +7,11 @@ impl ThreadRuntime {
         agents: Vec<ThreadAgent>,
     ) -> acp::Result<()> {
         self.mark_activity();
-        if self.thread.lock().await.status == ThreadStatus::Closed {
+        if self.thread_snapshot().status == ThreadStatus::Closed {
             return Err(acp::Error::new(-32603, "workspace thread is closed"));
         }
 
-        let thread_id = self.thread.lock().await.id.clone();
+        let thread_id = self.thread_snapshot().id;
         let event = ThreadEvent::multi_agent_turn_initialized(thread_id, turn, agents);
         append_thread_event(&self.store, &event).await?;
         self.apply_thread_event(&event).await?;
@@ -21,7 +21,7 @@ impl ThreadRuntime {
 
     pub async fn recover_interrupted_subagents(&self) -> acp::Result<Vec<ThreadAgent>> {
         let interrupted_ids = {
-            let thread = self.thread.lock().await;
+            let thread = self.thread_snapshot();
             if thread.status == ThreadStatus::Closed {
                 return Ok(Vec::new());
             }
@@ -63,7 +63,7 @@ impl ThreadRuntime {
         completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
     ) -> acp::Result<()> {
         self.mark_activity();
-        if self.thread.lock().await.status == ThreadStatus::Closed {
+        if self.thread_snapshot().status == ThreadStatus::Closed {
             return Err(acp::Error::new(-32603, "workspace thread is closed"));
         }
 
@@ -137,12 +137,12 @@ impl ThreadRuntime {
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
     ) -> acp::Result<()> {
         self.mark_activity();
-        if self.thread.lock().await.status == ThreadStatus::Closed {
+        if self.thread_snapshot().status == ThreadStatus::Closed {
             return Err(acp::Error::new(-32603, "workspace thread is closed"));
         }
 
         let thread_agent = {
-            let thread = self.thread.lock().await;
+            let thread = self.thread_snapshot();
             let agent = thread
                 .agents
                 .get(agent_id)
@@ -453,7 +453,7 @@ impl ThreadRuntime {
         handler: Arc<dyn AgentClientHandler>,
         resume_session_id: Option<String>,
     ) -> acp::Result<Arc<Agent>> {
-        let thread = self.thread.lock().await.clone();
+        let thread = self.thread_snapshot();
         let agent_id = crate::resources::resolve_agent_id(&thread_agent.agent_id)
             .map_err(|error| acp::Error::new(-32602, error))?;
         let profile = thread_agent

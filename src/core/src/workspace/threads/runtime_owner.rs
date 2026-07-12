@@ -1,8 +1,9 @@
 use super::*;
 use std::collections::VecDeque;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct TurnState {
+    pub(super) thread: WorkspaceThread,
     pub(super) busy: bool,
     pub(super) failed: Option<String>,
     pub(super) session_id: Option<String>,
@@ -58,6 +59,10 @@ pub(super) enum ThreadOwnerCommand {
         result: Box<acp::Result<acp::PromptResponse>>,
         reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
     },
+    ApplyThreadEvent {
+        event: Box<ThreadEvent>,
+        reply: oneshot::Sender<acp::Result<()>>,
+    },
     #[cfg(test)]
     Probe {
         started: oneshot::Sender<()>,
@@ -76,6 +81,7 @@ pub(super) struct ThreadOwner {
     pub(super) change_tx: Option<broadcast::Sender<()>>,
     pub(super) host: Option<AcpSessionRunner>,
     pub(super) session_id: Option<String>,
+    pub(super) thread: WorkspaceThread,
 }
 
 impl PromptCancellation {
@@ -184,6 +190,11 @@ impl ThreadOwner {
                     );
                     let _ = reply.send(result);
                 }
+                ThreadOwnerCommand::ApplyThreadEvent { event, reply } => {
+                    apply_thread_event_to(&mut self.thread, &event);
+                    self.publish_runtime_state();
+                    let _ = reply.send(Ok(()));
+                }
                 #[cfg(test)]
                 ThreadOwnerCommand::Probe { started, release } => {
                     self.set_turn_state(true, None);
@@ -218,7 +229,8 @@ impl ThreadOwner {
         let target_guard = runtime.active_turn_target.install(target.clone());
         let mut turn_cancellation = target_guard.cancellation();
         let setup = async {
-            runtime.maybe_record_first_prompt(&content_blocks).await?;
+            self.maybe_record_first_prompt(&runtime, &content_blocks)
+                .await?;
             let agent = self
                 .ensure_agent(&runtime, &target.route, Arc::clone(&handler))
                 .await?;
@@ -233,15 +245,13 @@ impl ThreadOwner {
         };
         let Some(setup_result) = setup_result else {
             let result = Ok(acp::PromptResponse::new(acp::StopReason::Cancelled));
-            self.finish_prompt_inline(&runtime, handler, result, reply)
-                .await;
+            self.finish_prompt_inline(handler, result, reply).await;
             return false;
         };
         let (agent, session_id) = match setup_result {
             Ok(prepared) => prepared,
             Err(error) => {
-                self.finish_prompt_inline(&runtime, handler, Err(error), reply)
-                    .await;
+                self.finish_prompt_inline(handler, Err(error), reply).await;
                 return false;
             }
         };
@@ -251,7 +261,7 @@ impl ThreadOwner {
             .map(|host| Arc::clone(&host.client_handler))
             .unwrap_or(handler);
         let command_tx = self.command_tx.clone();
-        let thread_id = runtime.thread.lock().await.id.clone();
+        let thread_id = self.thread.id.clone();
         tokio::spawn(async move {
             let result = tokio::select! {
                 biased;
@@ -280,13 +290,12 @@ impl ThreadOwner {
 
     async fn finish_prompt_inline(
         &self,
-        runtime: &ThreadRuntime,
         handler: Arc<dyn AgentClientHandler>,
         result: acp::Result<acp::PromptResponse>,
         reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
     ) {
         if let Err(error) = handler.prompt_finished(result.is_ok()).await {
-            let thread_id = runtime.thread.lock().await.id.clone();
+            let thread_id = self.thread.id.clone();
             tracing::warn!(
                 thread_id = %thread_id,
                 error = %error.message,
@@ -326,10 +335,9 @@ impl ThreadOwner {
 
     async fn close(&mut self, runtime: &ThreadRuntime, reason: Option<String>) -> acp::Result<()> {
         self.shutdown_host_contents(runtime).await;
-        let thread_id = runtime.thread.lock().await.id.clone();
+        let thread_id = self.thread.id.clone();
         let event = ThreadEvent::closed(thread_id, reason);
-        append_thread_event(&runtime.store, &event).await?;
-        runtime.apply_thread_event(&event).await?;
+        self.persist_thread_event(runtime, &event).await?;
         self.session_id = None;
         self.publish_runtime_state();
         runtime.notify_change();
@@ -372,17 +380,14 @@ impl ThreadOwner {
         runtime: &ThreadRuntime,
         host_binding: HostBinding,
     ) -> acp::Result<()> {
-        {
-            let thread = runtime.thread.lock().await;
-            if thread.host_binding.agent_id != host_binding.agent_id {
-                return Err(acp::Error::new(
-                    -32602,
-                    "profile switch cannot change agent",
-                ));
-            }
-            if thread.host_binding == host_binding {
-                return Ok(());
-            }
+        if self.thread.host_binding.agent_id != host_binding.agent_id {
+            return Err(acp::Error::new(
+                -32602,
+                "profile switch cannot change agent",
+            ));
+        }
+        if self.thread.host_binding == host_binding {
+            return Ok(());
         }
 
         let preserved_session_id = self.session_id.clone();
@@ -391,16 +396,12 @@ impl ThreadOwner {
         }
         self.set_turn_state(false, None);
 
-        let thread_id = runtime.thread.lock().await.id.clone();
+        let thread_id = self.thread.id.clone();
         let event = ThreadEvent::host_changed(thread_id.clone(), host_binding.clone());
-        append_thread_event(&runtime.store, &event).await?;
-        runtime.apply_thread_event(&event).await?;
+        self.persist_thread_event(runtime, &event).await?;
 
         if let Some(session_id) = preserved_session_id {
-            let needs_session_ref = {
-                let thread = runtime.thread.lock().await;
-                !thread.has_agent_session(&host_binding, &session_id)
-            };
+            let needs_session_ref = !self.thread.has_agent_session(&host_binding, &session_id);
             if needs_session_ref {
                 let event = ThreadEvent::agent_session_observed(
                     thread_id,
@@ -408,8 +409,7 @@ impl ThreadOwner {
                     host_binding.profile_id,
                     session_id.clone(),
                 );
-                append_thread_event(&runtime.store, &event).await?;
-                runtime.apply_thread_event(&event).await?;
+                self.persist_thread_event(runtime, &event).await?;
             }
             self.session_id = Some(session_id);
         }
@@ -428,7 +428,7 @@ impl ThreadOwner {
             return Ok(Arc::clone(&host.agent));
         }
         if let Some(stale) = self.host.take() {
-            let thread_id = runtime.thread.lock().await.id.clone();
+            let thread_id = self.thread.id.clone();
             tracing::info!(
                 thread_id = %thread_id,
                 agent_id = %stale.agent.id(),
@@ -437,7 +437,7 @@ impl ThreadOwner {
             stale.shutdown().await;
         }
 
-        let thread = runtime.thread.lock().await.clone();
+        let thread = self.thread.clone();
         if thread.status == ThreadStatus::Closed {
             return Err(acp::Error::new(-32603, "workspace thread is closed"));
         }
@@ -507,7 +507,7 @@ impl ThreadOwner {
         .await
         .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
 
-        if runtime.thread.lock().await.status == ThreadStatus::Closed {
+        if self.thread.status == ThreadStatus::Closed {
             ready.agent.shutdown().await;
             return Err(acp::Error::new(-32603, "workspace thread is closed"));
         }
@@ -544,7 +544,7 @@ impl ThreadOwner {
             .new_session(acp::NewSessionRequest::new(runtime.workspace.clone()))
             .await?;
         let session_id = response.session_id.to_string();
-        let host = runtime.thread.lock().await.host_binding.clone();
+        let host = self.thread.host_binding.clone();
         self.observe_session(runtime, &host.agent_id, host.profile_id, &session_id)
             .await?;
         Ok(session_id)
@@ -561,26 +561,47 @@ impl ThreadOwner {
             return Ok(());
         }
         let binding = HostBinding::new(agent_id.to_string(), profile_id.clone());
-        if runtime
-            .thread
-            .lock()
-            .await
-            .has_agent_session(&binding, session_id)
-        {
+        if self.thread.has_agent_session(&binding, session_id) {
             self.session_id = Some(session_id.to_string());
             self.publish_runtime_state();
             return Ok(());
         }
-        let thread_id = runtime.thread.lock().await.id.clone();
+        let thread_id = self.thread.id.clone();
         let event = ThreadEvent::agent_session_observed(
             thread_id,
             agent_id.to_string(),
             profile_id,
             session_id.to_string(),
         );
-        append_thread_event(&runtime.store, &event).await?;
-        runtime.apply_thread_event(&event).await?;
+        self.persist_thread_event(runtime, &event).await?;
         self.session_id = Some(session_id.to_string());
+        self.publish_runtime_state();
+        runtime.notify_change();
+        Ok(())
+    }
+
+    async fn maybe_record_first_prompt(
+        &mut self,
+        runtime: &ThreadRuntime,
+        content_blocks: &[acp::ContentBlock],
+    ) -> acp::Result<()> {
+        if self.thread.first_user_prompt.is_some() {
+            return Ok(());
+        }
+        let Some(prompt) = first_text(content_blocks) else {
+            return Ok(());
+        };
+        let event = ThreadEvent::first_user_prompt_set(self.thread.id.clone(), prompt);
+        self.persist_thread_event(runtime, &event).await
+    }
+
+    async fn persist_thread_event(
+        &mut self,
+        runtime: &ThreadRuntime,
+        event: &ThreadEvent,
+    ) -> acp::Result<()> {
+        append_thread_event(&runtime.store, event).await?;
+        apply_thread_event_to(&mut self.thread, event);
         self.publish_runtime_state();
         runtime.notify_change();
         Ok(())
@@ -602,6 +623,7 @@ impl ThreadOwner {
 
     fn publish_runtime_state(&self) {
         let mut state = self.state_tx.borrow().clone();
+        state.thread = self.thread.clone();
         state.session_id = self.session_id.clone();
         state.host_agent = self.host.as_ref().map(|host| Arc::clone(&host.agent));
         self.set_state(state);
