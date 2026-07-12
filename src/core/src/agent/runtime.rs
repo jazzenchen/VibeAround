@@ -250,13 +250,15 @@ impl Agent {
         });
 
         let supervisor = Supervisor::global();
-        let id = supervisor.register(
-            ProcessKind::AcpAgent,
-            label,
-            spec,
-            RestartPolicy::Never,
-            factory,
-        );
+        let id = supervisor
+            .register(
+                ProcessKind::AcpAgent,
+                label,
+                spec,
+                RestartPolicy::Never,
+                factory,
+            )
+            .await;
         let registration = PendingProcessRegistration::new(supervisor, id);
 
         let err_label = agent_id.clone();
@@ -375,13 +377,15 @@ mod lifecycle_tests {
         let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
         let task_supervisor = Arc::clone(&supervisor);
         let owner = tokio::spawn(async move {
-            let process_id = task_supervisor.register(
-                ProcessKind::AcpAgent,
-                "hanging-agent-init",
-                hanging_child_spec(),
-                RestartPolicy::Never,
-                Box::new(|| Box::new(HangingInitializeBridge)),
-            );
+            let process_id = task_supervisor
+                .register(
+                    ProcessKind::AcpAgent,
+                    "hanging-agent-init",
+                    hanging_child_spec(),
+                    RestartPolicy::Never,
+                    Box::new(|| Box::new(HangingInitializeBridge)),
+                )
+                .await;
             let _registration =
                 PendingProcessRegistration::new(Arc::clone(&task_supervisor), process_id);
             let _ = registered_tx.send(process_id);

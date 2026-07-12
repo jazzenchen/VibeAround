@@ -310,7 +310,7 @@ impl ChannelMonitorOwner {
         while let Some(command) = command_rx.recv().await {
             match command {
                 ChannelMonitorCommand::Register { manifest, reply } => {
-                    let _ = reply.send(self.register(*manifest));
+                    let _ = reply.send(self.register(*manifest).await);
                 }
                 ChannelMonitorCommand::Touch(instance_id) => self.touch(&instance_id),
                 ChannelMonitorCommand::ForceStop { instance_id, reply } => {
@@ -365,7 +365,7 @@ impl ChannelMonitorOwner {
         }
     }
 
-    fn register(&mut self, manifest: ChannelPluginManifest) -> bool {
+    async fn register(&mut self, manifest: ChannelPluginManifest) -> bool {
         let kind = manifest.channel_kind.clone();
         let instance_id = manifest.instance_id.clone();
         if self.registrations.contains_key(&instance_id) {
@@ -387,16 +387,19 @@ impl ChannelMonitorOwner {
             Arc::clone(&self.plugin_host),
         )
         .into_bridge_factory();
-        let process_id = self.supervisor.register(
-            ProcessKind::ChannelPlugin,
-            instance_id.clone(),
-            spec,
-            RestartPolicy::OnCrash {
-                restart_delay: RESTART_DELAY,
-                watchdog: Some(HEARTBEAT_TIMEOUT),
-            },
-            factory,
-        );
+        let process_id = self
+            .supervisor
+            .register(
+                ProcessKind::ChannelPlugin,
+                instance_id.clone(),
+                spec,
+                RestartPolicy::OnCrash {
+                    restart_delay: RESTART_DELAY,
+                    watchdog: Some(HEARTBEAT_TIMEOUT),
+                },
+                factory,
+            )
+            .await;
         self.registrations.insert(
             instance_id,
             ChannelRegistration {

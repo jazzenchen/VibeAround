@@ -156,16 +156,18 @@ fn restart_delay_backs_off_and_caps() {
 async fn force_restart_reports_spawn_failure() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(registry);
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "missing-program",
-        SpawnSpec::new("vibearound-program-that-does-not-exist"),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::from_secs(30),
-            watchdog: None,
-        },
-        Box::new(|| Box::new(WaitForCancelBridge)),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "missing-program",
+            SpawnSpec::new("vibearound-program-that-does-not-exist"),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
     wait_for_status(&supervisor, id, ProcessStatus::Crashed).await;
 
     let error = supervisor.force_restart(id).await.unwrap_err();
@@ -180,17 +182,19 @@ async fn bridge_exit_terminates_helper_process_group() {
     let supervisor = Supervisor::new(Arc::clone(&registry));
     let helper_pid = Arc::new(AtomicU32::new(0));
     let captured_pid = Arc::clone(&helper_pid);
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "helper-tree-reap",
-        SpawnSpec::new("sh").args(["-c", "sleep 60 & echo $!; wait"]),
-        RestartPolicy::Never,
-        Box::new(move || {
-            Box::new(CapturePidThenCleanBridge {
-                pid: Arc::clone(&captured_pid),
-            })
-        }),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "helper-tree-reap",
+            SpawnSpec::new("sh").args(["-c", "sleep 60 & echo $!; wait"]),
+            RestartPolicy::Never,
+            Box::new(move || {
+                Box::new(CapturePidThenCleanBridge {
+                    pid: Arc::clone(&captured_pid),
+                })
+            }),
+        )
+        .await;
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let child_pid = loop {
@@ -269,16 +273,18 @@ async fn wait_for_count(counter: &AtomicUsize, expected: usize) {
 async fn register_runs_then_force_stop() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(Arc::clone(&registry));
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "cat-test",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::from_secs(30),
-            watchdog: None,
-        },
-        Box::new(|| Box::new(WaitForCancelBridge)),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "cat-test",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
 
     supervisor.force_stop(id).await.unwrap();
@@ -294,27 +300,29 @@ async fn lifecycle_commands_are_consumed_in_order() {
     let cancel_seen = Arc::new(tokio::sync::Semaphore::new(0));
     let release = Arc::new(tokio::sync::Semaphore::new(0));
     let factory_count = Arc::new(AtomicUsize::new(0));
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "ordered-lifecycle",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::ZERO,
-            watchdog: None,
-        },
-        {
-            let cancel_seen = Arc::clone(&cancel_seen);
-            let release = Arc::clone(&release);
-            let factory_count = Arc::clone(&factory_count);
-            Box::new(move || {
-                factory_count.fetch_add(1, Ordering::AcqRel);
-                Box::new(DelayedCancelBridge {
-                    cancel_seen: Arc::clone(&cancel_seen),
-                    release: Arc::clone(&release),
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "ordered-lifecycle",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: None,
+            },
+            {
+                let cancel_seen = Arc::clone(&cancel_seen);
+                let release = Arc::clone(&release);
+                let factory_count = Arc::clone(&factory_count);
+                Box::new(move || {
+                    factory_count.fetch_add(1, Ordering::AcqRel);
+                    Box::new(DelayedCancelBridge {
+                        cancel_seen: Arc::clone(&cancel_seen),
+                        release: Arc::clone(&release),
+                    })
                 })
-            })
-        },
-    );
+            },
+        )
+        .await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
 
     let restarting = {
@@ -342,23 +350,25 @@ async fn force_stop_aborts_a_stubborn_bridge() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(Arc::clone(&registry));
     let dropped = Arc::new(AtomicUsize::new(0));
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "stubborn",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::ZERO,
-            watchdog: None,
-        },
-        {
-            let dropped = Arc::clone(&dropped);
-            Box::new(move || {
-                Box::new(PendingBridge {
-                    dropped: Arc::clone(&dropped),
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "stubborn",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: None,
+            },
+            {
+                let dropped = Arc::clone(&dropped);
+                Box::new(move || {
+                    Box::new(PendingBridge {
+                        dropped: Arc::clone(&dropped),
+                    })
                 })
-            })
-        },
-    );
+            },
+        )
+        .await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
 
     tokio::time::timeout(Duration::from_secs(1), supervisor.force_stop(id))
@@ -374,16 +384,18 @@ async fn force_stop_aborts_a_stubborn_bridge() {
 async fn unregister_stops_and_removes_restartable_process() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(Arc::clone(&registry));
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "unregister",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::ZERO,
-            watchdog: None,
-        },
-        Box::new(|| Box::new(WaitForCancelBridge)),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "unregister",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
 
     supervisor.unregister(id).await.unwrap();
@@ -396,13 +408,15 @@ async fn unregister_stops_and_removes_restartable_process() {
 async fn never_policy_auto_deregisters_terminal_process() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(Arc::clone(&registry));
-    let id = supervisor.register(
-        ProcessKind::AcpAgent,
-        "one-shot",
-        cat_spec(),
-        RestartPolicy::Never,
-        Box::new(|| Box::new(InstantErrorBridge)),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::AcpAgent,
+            "one-shot",
+            cat_spec(),
+            RestartPolicy::Never,
+            Box::new(|| Box::new(InstantErrorBridge)),
+        )
+        .await;
 
     wait_for_absent(&supervisor, id).await;
     assert_eq!(registry.len(), 0);
@@ -412,16 +426,18 @@ async fn never_policy_auto_deregisters_terminal_process() {
 async fn crash_policy_marks_process_crashed() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(registry);
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "crash",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::from_secs(30),
-            watchdog: None,
-        },
-        Box::new(|| Box::new(InstantErrorBridge)),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "crash",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            Box::new(|| Box::new(InstantErrorBridge)),
+        )
+        .await;
 
     wait_for_status(&supervisor, id, ProcessStatus::Crashed).await;
     let reason = supervisor
@@ -439,22 +455,24 @@ async fn stopped_process_does_not_respawn_until_started() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(registry);
     let count = Arc::new(AtomicUsize::new(0));
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "start-stop",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::ZERO,
-            watchdog: None,
-        },
-        {
-            let count = Arc::clone(&count);
-            Box::new(move || {
-                count.fetch_add(1, Ordering::AcqRel);
-                Box::new(WaitForCancelBridge)
-            })
-        },
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "start-stop",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: None,
+            },
+            {
+                let count = Arc::clone(&count);
+                Box::new(move || {
+                    count.fetch_add(1, Ordering::AcqRel);
+                    Box::new(WaitForCancelBridge)
+                })
+            },
+        )
+        .await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
     supervisor.force_stop(id).await.unwrap();
     supervisor.tick().await;
@@ -473,42 +491,46 @@ async fn watchdog_restart_does_not_block_other_processes() {
     let supervisor = Supervisor::new(registry);
     let slow_cancel = Arc::new(tokio::sync::Semaphore::new(0));
     let slow_release = Arc::new(tokio::sync::Semaphore::new(0));
-    let slow_id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "slow-watchdog",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::ZERO,
-            watchdog: Some(Duration::ZERO),
-        },
-        {
-            let cancel_seen = Arc::clone(&slow_cancel);
-            let release = Arc::clone(&slow_release);
-            Box::new(move || {
-                Box::new(DelayedCancelBridge {
-                    cancel_seen: Arc::clone(&cancel_seen),
-                    release: Arc::clone(&release),
+    let slow_id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "slow-watchdog",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: Some(Duration::ZERO),
+            },
+            {
+                let cancel_seen = Arc::clone(&slow_cancel);
+                let release = Arc::clone(&slow_release);
+                Box::new(move || {
+                    Box::new(DelayedCancelBridge {
+                        cancel_seen: Arc::clone(&cancel_seen),
+                        release: Arc::clone(&release),
+                    })
                 })
-            })
-        },
-    );
+            },
+        )
+        .await;
     let fast_count = Arc::new(AtomicUsize::new(0));
-    let fast_id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "fast-watchdog",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::ZERO,
-            watchdog: Some(Duration::ZERO),
-        },
-        {
-            let fast_count = Arc::clone(&fast_count);
-            Box::new(move || {
-                fast_count.fetch_add(1, Ordering::AcqRel);
-                Box::new(WaitForCancelBridge)
-            })
-        },
-    );
+    let fast_id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "fast-watchdog",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: Some(Duration::ZERO),
+            },
+            {
+                let fast_count = Arc::clone(&fast_count);
+                Box::new(move || {
+                    fast_count.fetch_add(1, Ordering::AcqRel);
+                    Box::new(WaitForCancelBridge)
+                })
+            },
+        )
+        .await;
     wait_for_status(&supervisor, slow_id, ProcessStatus::Running).await;
     wait_for_status(&supervisor, fast_id, ProcessStatus::Running).await;
 
@@ -527,16 +549,18 @@ async fn subscribe_receives_status_events() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(registry);
     let mut events = supervisor.subscribe();
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "events",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::ZERO,
-            watchdog: None,
-        },
-        Box::new(|| Box::new(WaitForCancelBridge)),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "events",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
 
     let event = tokio::time::timeout(Duration::from_secs(1), async {
         loop {
@@ -557,16 +581,18 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(Arc::clone(&registry));
     for label in ["first", "second"] {
-        let id = supervisor.register(
-            ProcessKind::ChannelPlugin,
-            label,
-            cat_spec(),
-            RestartPolicy::OnCrash {
-                restart_delay: Duration::ZERO,
-                watchdog: None,
-            },
-            Box::new(|| Box::new(WaitForCancelBridge)),
-        );
+        let id = supervisor
+            .register(
+                ProcessKind::ChannelPlugin,
+                label,
+                cat_spec(),
+                RestartPolicy::OnCrash {
+                    restart_delay: Duration::ZERO,
+                    watchdog: None,
+                },
+                Box::new(|| Box::new(WaitForCancelBridge)),
+            )
+            .await;
         wait_for_status(&supervisor, id, ProcessStatus::Running).await;
     }
 
@@ -574,16 +600,18 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
 
     assert!(supervisor.snapshot().is_empty());
     assert_eq!(registry.len(), 0);
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "replacement",
-        cat_spec(),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::ZERO,
-            watchdog: None,
-        },
-        Box::new(|| Box::new(WaitForCancelBridge)),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "replacement",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::ZERO,
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
     supervisor.force_stop(id).await.unwrap();
 }
@@ -593,16 +621,18 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
 async fn real_exit_status_is_preserved() {
     let registry = Arc::new(ChildRegistry::new());
     let supervisor = Supervisor::new(registry);
-    let id = supervisor.register(
-        ProcessKind::ChannelPlugin,
-        "exit-seven",
-        SpawnSpec::new("sh").args(["-c", "exit 7"]),
-        RestartPolicy::OnCrash {
-            restart_delay: Duration::from_secs(30),
-            watchdog: None,
-        },
-        Box::new(|| Box::new(WaitForEofBridge)),
-    );
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "exit-seven",
+            SpawnSpec::new("sh").args(["-c", "exit 7"]),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForEofBridge)),
+        )
+        .await;
 
     wait_for_status(&supervisor, id, ProcessStatus::Crashed).await;
     let reason = supervisor

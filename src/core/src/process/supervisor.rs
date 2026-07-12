@@ -1,7 +1,6 @@
 //! Process supervision with one lifecycle owner task per child process.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,12 +41,10 @@ impl std::fmt::Display for ProcessId {
 pub struct Supervisor {
     manager_tx: mpsc::UnboundedSender<ManagerCommand>,
     snapshots: watch::Receiver<Vec<ProcessSnapshot>>,
-    next_id: AtomicU64,
     change_tx: broadcast::Sender<ProcessEvent>,
 }
 
 struct ProcessRegistration {
-    id: ProcessId,
     kind: ProcessKind,
     label: String,
     spec: SpawnSpec,
@@ -56,7 +53,10 @@ struct ProcessRegistration {
 }
 
 enum ManagerCommand {
-    Register(ProcessRegistration),
+    Register {
+        registration: ProcessRegistration,
+        reply: oneshot::Sender<ProcessId>,
+    },
     Touch(ProcessId),
     Stop {
         id: ProcessId,
@@ -92,6 +92,7 @@ struct ProcessManager {
     command_rx: mpsc::UnboundedReceiver<ManagerCommand>,
     snapshot_tx: watch::Sender<Vec<ProcessSnapshot>>,
     change_tx: broadcast::Sender<ProcessEvent>,
+    next_id: u64,
 }
 
 impl Supervisor {
@@ -102,7 +103,6 @@ impl Supervisor {
         let supervisor = Arc::new(Self {
             manager_tx: manager_tx.clone(),
             snapshots,
-            next_id: AtomicU64::new(1),
             change_tx: change_tx.clone(),
         });
         tokio::spawn(
@@ -113,6 +113,7 @@ impl Supervisor {
                 command_rx: manager_rx,
                 snapshot_tx,
                 change_tx,
+                next_id: 1,
             }
             .run(),
         );
@@ -129,7 +130,7 @@ impl Supervisor {
         }))
     }
 
-    pub fn register(
+    pub async fn register(
         self: &Arc<Self>,
         kind: ProcessKind,
         label: impl Into<String>,
@@ -137,18 +138,20 @@ impl Supervisor {
         policy: RestartPolicy,
         factory: BridgeFactory,
     ) -> ProcessId {
-        let id = ProcessId(self.next_id.fetch_add(1, Ordering::Relaxed));
-        let _ = self
-            .manager_tx
-            .send(ManagerCommand::Register(ProcessRegistration {
-                id,
-                kind,
-                label: label.into(),
-                spec,
-                policy,
-                factory,
-            }));
-        id
+        let (reply, registered) = oneshot::channel();
+        self.manager_tx
+            .send(ManagerCommand::Register {
+                registration: ProcessRegistration {
+                    kind,
+                    label: label.into(),
+                    spec,
+                    policy,
+                    factory,
+                },
+                reply,
+            })
+            .expect("process manager must outlive its supervisor");
+        registered.await.expect("process manager must assign an id")
     }
 
     pub fn touch(&self, id: ProcessId) {
@@ -243,7 +246,12 @@ impl ProcessManager {
     async fn run(mut self) {
         while let Some(command) = self.command_rx.recv().await {
             match command {
-                ManagerCommand::Register(registration) => self.register(registration),
+                ManagerCommand::Register {
+                    registration,
+                    reply,
+                } => {
+                    let _ = reply.send(self.register(registration));
+                }
                 ManagerCommand::Touch(id) => {
                     if let Some(process) = self.processes.get(&id) {
                         let _ = process.command_tx.send(ProcessCommand::Touch);
@@ -379,9 +387,10 @@ impl ProcessManager {
         }
     }
 
-    fn register(&mut self, registration: ProcessRegistration) {
+    fn register(&mut self, registration: ProcessRegistration) -> ProcessId {
+        let id = ProcessId(self.next_id);
+        self.next_id = self.next_id.wrapping_add(1);
         let ProcessRegistration {
-            id,
             kind,
             label,
             spec,
@@ -422,6 +431,7 @@ impl ProcessManager {
             )
             .run(true),
         );
+        id
     }
 
     fn publish_snapshots(&self) {

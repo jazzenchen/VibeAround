@@ -124,13 +124,15 @@ impl SearchToolRuntime {
             spec = spec.env(key, value);
         }
         let supervisor = Supervisor::global();
-        let process_id = supervisor.register(
-            ProcessKind::SearchProvider,
-            SEARCH_TOOL_LABEL,
-            spec,
-            RestartPolicy::Never,
-            factory,
-        );
+        let process_id = supervisor
+            .register(
+                ProcessKind::SearchProvider,
+                SEARCH_TOOL_LABEL,
+                spec,
+                RestartPolicy::Never,
+                factory,
+            )
+            .await;
 
         match timeout(SEARCH_READY_TIMEOUT, ready_rx).await {
             Ok(Ok(())) => {
