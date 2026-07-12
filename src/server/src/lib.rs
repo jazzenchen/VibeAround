@@ -327,7 +327,7 @@ impl ServerDaemon {
                     _ = input_shutdown_for_task.notified() => break,
                     maybe = input_rx.recv() => {
                         let Some(input) = maybe else { break };
-                        conversation_ingress.dispatch(input).await;
+                        conversation_ingress.dispatch(input);
                     }
                 }
             }

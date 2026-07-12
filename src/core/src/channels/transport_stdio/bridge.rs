@@ -7,7 +7,7 @@
 //!
 //! Returns a [`BridgeExit`] describing why the bridge ended. The
 //! supervisor observes the exit and drives the state transition
-//! (Running → Crashed / Stopped) according to policy + intent.
+//! (Running → Crashed / Stopped) according to state + restart policy.
 
 use std::sync::Arc;
 
@@ -338,7 +338,7 @@ mod tests {
             text: "still routed".to_string(),
             reply_to: None,
         };
-        host.send_output(output.clone()).await;
+        host.send_output(output.clone());
         assert_eq!(new_rx.recv().await, Some(output));
     }
 }

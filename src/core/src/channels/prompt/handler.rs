@@ -81,8 +81,7 @@ async fn handle_command(
                 plugin_host,
                 target,
                 &format!("Started new thread {}.", runtime.state().await.thread_id),
-            )
-            .await;
+            );
         }
         ThreadCommand::Close => {
             workspace_threads
@@ -93,19 +92,17 @@ async fn handle_command(
                 plugin_host,
                 target,
                 "Thread closed. Use /new to start again.",
-            )
-            .await;
+            );
         }
         ThreadCommand::Pair(code) => {
             if crate::auth::pair::validate(&code).is_some() {
-                send_system_text_to_target(plugin_host, target, "Session paired.").await;
+                send_system_text_to_target(plugin_host, target, "Session paired.");
             } else {
                 send_system_text_to_target(
                     plugin_host,
                     target,
                     "Pairing code is invalid or expired.",
-                )
-                .await;
+                );
             }
         }
         ThreadCommand::Pickup(code) => {
@@ -114,8 +111,7 @@ async fn handle_command(
                     plugin_host,
                     target,
                     "Handover code is invalid or expired.",
-                )
-                .await;
+                );
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             };
             let agent_id =
@@ -138,8 +134,7 @@ async fn handle_command(
                         plugin_host,
                         target,
                         &format!("Could not pickup session: {:#}", error),
-                    )
-                    .await;
+                    );
                     return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
                 }
             };
@@ -152,16 +147,14 @@ async fn handle_command(
                 plugin_host,
                 target,
                 &format!("Picked up session {} with {}.", session_id, agent_id),
-            )
-            .await;
+            );
         }
         ThreadCommand::Status => {
             let runtime = workspace_threads
                 .resolve_route_runtime(route)
                 .await
                 .map_err(internal_error)?;
-            send_system_text_to_target(plugin_host, target, &format_status(&runtime.state().await))
-                .await;
+            send_system_text_to_target(plugin_host, target, &format_status(&runtime.state().await));
         }
         ThreadCommand::Resource { kind, action } => match (kind, action) {
             (ResourceKind::Workspace, ResourceAction::List) => {
@@ -178,8 +171,7 @@ async fn handle_command(
                     plugin_host,
                     target,
                     &format_workspace_list(&workspaces, current.as_str()),
-                )
-                .await;
+                );
             }
             (ResourceKind::Workspace, ResourceAction::Switch(id)) => {
                 switch_workspace(
@@ -197,7 +189,7 @@ async fn handle_command(
                     .await
                     .map_err(internal_error)?;
                 let current = runtime.state().await.host_binding.agent_id;
-                send_system_text_to_target(plugin_host, target, &format_agent_list(&current)).await;
+                send_system_text_to_target(plugin_host, target, &format_agent_list(&current));
             }
             (ResourceKind::Agent, ResourceAction::Switch(id)) => {
                 switch_host(workspace_threads, plugin_host, target, &id, None).await?;
@@ -208,7 +200,7 @@ async fn handle_command(
                     .await
                     .map_err(internal_error)?;
                 let state = runtime.state().await;
-                send_system_text_to_target(plugin_host, target, &format_profile_list(&state)).await;
+                send_system_text_to_target(plugin_host, target, &format_profile_list(&state));
             }
             (ResourceKind::Profile, ResourceAction::Switch(id)) => {
                 let runtime = workspace_threads
@@ -230,8 +222,7 @@ async fn handle_command(
                     plugin_host,
                     target,
                     &format_session_list(&state, &sessions),
-                )
-                .await;
+                );
             }
             (ResourceKind::Session, ResourceAction::Switch(id)) => {
                 switch_session(workspace_threads, plugin_host, target, &id).await?;
@@ -254,15 +245,14 @@ async fn handle_command(
             return send_agent_command(workspace_threads, plugin_host, target, &command).await;
         }
         ThreadCommand::Help => {
-            send_system_text_to_target(plugin_host, target, command_help_text()).await;
+            send_system_text_to_target(plugin_host, target, command_help_text());
         }
         ThreadCommand::Unknown(command) => {
             send_system_text_to_target(
                 plugin_host,
                 target,
                 &format!("Unknown command: {}", command),
-            )
-            .await;
+            );
         }
     }
     Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
@@ -298,8 +288,7 @@ async fn switch_workspace(
             "Entered workspace and started thread {}.",
             runtime.state().await.thread_id
         ),
-    )
-    .await;
+    );
     Ok(())
 }
 
@@ -342,8 +331,7 @@ async fn switch_host(
                         .as_deref()
                         .unwrap_or(DIRECT_PROFILE_ID)
                 ),
-            )
-            .await;
+            );
             return Ok(());
         }
     }
@@ -371,8 +359,7 @@ async fn switch_host(
             host_binding.agent_id,
             runtime.state().await.thread_id
         ),
-    )
-    .await;
+    );
     Ok(())
 }
 
@@ -431,8 +418,7 @@ async fn switch_session(
                     "Session '{}' was not found for the current agent/workspace.",
                     id
                 ),
-            )
-            .await;
+            );
             return Ok(());
         }
         [session] => session.clone(),
@@ -441,8 +427,7 @@ async fn switch_session(
                 plugin_host,
                 target,
                 &format!("Session '{}' is ambiguous; use the full session id.", id),
-            )
-            .await;
+            );
             return Ok(());
         }
     };
@@ -463,8 +448,7 @@ async fn switch_session(
                 plugin_host,
                 target,
                 &format!("Could not switch session: {:#}", error),
-            )
-            .await;
+            );
             return Ok(());
         }
     };
@@ -479,8 +463,7 @@ async fn switch_session(
             session.session_id,
             resumed.state().await.thread_id
         ),
-    )
-    .await;
+    );
     Ok(())
 }
 
@@ -501,7 +484,7 @@ pub async fn start_runtime_and_notify(
             route = %route,
             "rejected non-ACP runtime agent for channel route"
         );
-        send_system_text_to_target(plugin_host, target, &message).await;
+        send_system_text_to_target(plugin_host, target, &message);
         return Ok(false);
     }
     if before.initialize.is_none() {
@@ -526,50 +509,44 @@ pub async fn start_runtime_and_notify(
         .map(|info| info.version.clone())
         .unwrap_or_default();
     if before.initialize.is_none() {
-        plugin_host
-            .send_output(ChannelOutput::AgentReady {
-                route: route.clone(),
-                reply_to: target.reply_to.clone(),
-                agent: agent.clone(),
-                version: version.clone(),
-            })
-            .await;
+        plugin_host.send_output(ChannelOutput::AgentReady {
+            route: route.clone(),
+            reply_to: target.reply_to.clone(),
+            agent: agent.clone(),
+            version: version.clone(),
+        });
     }
 
     let should_send_session_ready = force_session_ready
         || before.initialize.is_none()
         || before.session_id.as_deref() != Some(session_id.as_str());
     if should_send_session_ready {
-        plugin_host
-            .send_output(ChannelOutput::SessionReady {
-                route: route.clone(),
-                reply_to: target.reply_to.clone(),
-                session_id: session_id.clone(),
-            })
-            .await;
-        plugin_host
-            .send_output(ChannelOutput::SessionInfo {
-                route: route.clone(),
-                reply_to: target.reply_to.clone(),
-                info: ChannelSessionInfo {
-                    workspace_id: after.workspace_id.to_string(),
-                    workspace_path: after.workspace.to_string_lossy().into_owned(),
-                    thread_id: after.thread_id.to_string(),
-                    agent: ChannelSessionAgent {
-                        id: after.host_binding.agent_id.clone(),
-                        name: agent,
-                        version,
-                        profile_id: after.host_binding.profile_id.clone(),
-                    },
-                    session_id,
-                    start: if session_was_resumed {
-                        ChannelSessionStart::Resumed
-                    } else {
-                        ChannelSessionStart::New
-                    },
+        plugin_host.send_output(ChannelOutput::SessionReady {
+            route: route.clone(),
+            reply_to: target.reply_to.clone(),
+            session_id: session_id.clone(),
+        });
+        plugin_host.send_output(ChannelOutput::SessionInfo {
+            route: route.clone(),
+            reply_to: target.reply_to.clone(),
+            info: ChannelSessionInfo {
+                workspace_id: after.workspace_id.to_string(),
+                workspace_path: after.workspace.to_string_lossy().into_owned(),
+                thread_id: after.thread_id.to_string(),
+                agent: ChannelSessionAgent {
+                    id: after.host_binding.agent_id.clone(),
+                    name: agent,
+                    version,
+                    profile_id: after.host_binding.profile_id.clone(),
                 },
-            })
-            .await;
+                session_id,
+                start: if session_was_resumed {
+                    ChannelSessionStart::Resumed
+                } else {
+                    ChannelSessionStart::New
+                },
+            },
+        });
     }
     if should_send_session_ready && route_allows_startup_replay(route) {
         send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
@@ -612,13 +589,11 @@ async fn send_multi_agent_state(
             .filter(|agent| turn.agent_ids.contains(&agent.id))
             .cloned()
             .collect();
-        plugin_host
-            .send_output(ChannelOutput::MultiAgentTurn {
-                route: route.clone(),
-                turn: turn.clone(),
-                agents,
-            })
-            .await;
+        plugin_host.send_output(ChannelOutput::MultiAgentTurn {
+            route: route.clone(),
+            turn: turn.clone(),
+            agents,
+        });
     }
 }
 

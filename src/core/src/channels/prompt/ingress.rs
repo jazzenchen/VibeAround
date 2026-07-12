@@ -154,13 +154,19 @@ impl ConversationIngress {
 
     /// Dispatch a channel command. Stop and log records bypass route queues;
     /// every other command is accepted into the route's bounded FIFO lane.
-    pub async fn dispatch(self: &Arc<Self>, input: ChannelInput) {
+    pub fn dispatch(self: &Arc<Self>, input: ChannelInput) {
         match &input {
             ChannelInput::Stop { route } => {
                 if let Some(lane) = self.lanes.get(route) {
                     lane.stop();
                 }
-                let _ = self.workspace_threads.cancel_route(route).await;
+                let workspace_threads = Arc::clone(&self.workspace_threads);
+                let route = route.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = workspace_threads.cancel_route(&route).await {
+                        tracing::debug!(%route, %error, "failed to cancel route");
+                    }
+                });
                 return;
             }
             ChannelInput::Log { level, message } => {
@@ -181,7 +187,7 @@ impl ConversationIngress {
         if let Err(LaneCommand::Dispatch(rejected)) =
             self.enqueue(route.clone(), LaneCommand::Dispatch(Box::new(input)))
         {
-            self.reject_full_lane(&route, *rejected).await;
+            self.reject_full_lane(&route, *rejected);
         }
     }
 
@@ -302,10 +308,10 @@ impl ConversationIngress {
                 tokio::select! {
                     biased;
                     _ = wait_for_stop(&mut stop_rx, queued.stop_generation) => {
-                        self.reject_stopped(route, (*input).clone()).await;
+                        self.reject_stopped(route, (*input).clone());
                     }
                     _ = wait_for_shutdown(shutdown_rx) => {
-                        self.reject_stopped(route, (*input).clone()).await;
+                        self.reject_stopped(route, (*input).clone());
                     }
                     _ = self.dispatch_ordered((*input).clone()) => {}
                 }
@@ -362,8 +368,7 @@ impl ConversationIngress {
                     &self.plugin_host,
                     &route,
                     &format!("Use /switch host {} with workspace threads.", agent_kind),
-                )
-                .await;
+                );
             }
             ChannelInput::Stop { route } => {
                 let _ = self.workspace_threads.cancel_route(&route).await;
@@ -438,13 +443,13 @@ impl ConversationIngress {
             }
             Err(e) => {
                 tracing::warn!(route = %route, error = %e, "prompt failed");
-                send_system_text_to_target(&self.plugin_host, &target, &format!("❌ {}", e)).await;
+                send_system_text_to_target(&self.plugin_host, &target, &format!("❌ {}", e));
             }
         }
-        send_prompt_done(&self.plugin_host, &route, message_id).await;
+        send_prompt_done(&self.plugin_host, &route, message_id);
     }
 
-    async fn reject_full_lane(&self, route: &RouteKey, input: ChannelInput) {
+    fn reject_full_lane(&self, route: &RouteKey, input: ChannelInput) {
         let message_id = match input {
             ChannelInput::Message { envelope } | ChannelInput::Callback { envelope, .. } => {
                 (!envelope.message_id.is_empty()).then_some(envelope.message_id)
@@ -452,18 +457,18 @@ impl ConversationIngress {
             _ => None,
         };
         let target = ChannelTarget::new(route.clone(), message_id.clone());
-        send_system_text_to_target(&self.plugin_host, &target, ROUTE_LANE_FULL_MESSAGE).await;
-        send_prompt_done(&self.plugin_host, route, message_id).await;
+        send_system_text_to_target(&self.plugin_host, &target, ROUTE_LANE_FULL_MESSAGE);
+        send_prompt_done(&self.plugin_host, route, message_id);
     }
 
-    async fn reject_stopped(&self, route: &RouteKey, input: ChannelInput) {
+    fn reject_stopped(&self, route: &RouteKey, input: ChannelInput) {
         let message_id = match input {
             ChannelInput::Message { envelope } | ChannelInput::Callback { envelope, .. } => {
                 (!envelope.message_id.is_empty()).then_some(envelope.message_id)
             }
             _ => None,
         };
-        send_prompt_done(&self.plugin_host, route, message_id).await;
+        send_prompt_done(&self.plugin_host, route, message_id);
     }
 
     #[cfg(test)]

@@ -660,9 +660,5 @@ impl WebSocketPluginRuntime {
         })
     }
 
-    pub async fn send_output(&self, output: ChannelOutput) -> Result<(), String> {
-        self.send_output_now(output)
-    }
-
     pub async fn shutdown(&self) {}
 }

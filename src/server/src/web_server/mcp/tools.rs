@@ -751,8 +751,7 @@ async fn notify_presentation_multi_agent_turn(
                 route,
                 turn: turn.clone(),
                 agents: agents.to_vec(),
-            })
-            .await;
+            });
     }
 }
 
@@ -831,8 +830,7 @@ async fn notify_presentation_subagent_status(
             .send_output(common::channels::ChannelOutput::SubagentStatus {
                 route,
                 agent: agent.clone(),
-            })
-            .await;
+            });
     }
 }
 

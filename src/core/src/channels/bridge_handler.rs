@@ -214,13 +214,11 @@ impl ChannelBridgeHandler {
         };
 
         for target in self.attached_delivery_targets().await {
-            self.plugin_host
-                .send_output(ChannelOutput::ThreadReply {
-                    route: target.route,
-                    reply_to: target.reply_to,
-                    reply: reply.clone(),
-                })
-                .await;
+            self.plugin_host.send_output(ChannelOutput::ThreadReply {
+                route: target.route,
+                reply_to: target.reply_to,
+                reply: reply.clone(),
+            });
         }
     }
 
@@ -250,13 +248,11 @@ impl ChannelBridgeHandler {
         };
         let payload = synthetic_user_message_payload(&format!("subagent:{}", agent.id), text);
         for route in self.attached_rich_agent_event_routes().await {
-            self.plugin_host
-                .send_output(ChannelOutput::SubagentAcp {
-                    route,
-                    agent: agent.clone(),
-                    payload: payload.clone(),
-                })
-                .await;
+            self.plugin_host.send_output(ChannelOutput::SubagentAcp {
+                route,
+                agent: agent.clone(),
+                payload: payload.clone(),
+            });
         }
     }
 
@@ -288,12 +284,10 @@ impl ChannelBridgeHandler {
                     .into_iter()
                     .filter(|route| channel_traits(&route.channel_kind).rich_agent_events)
                 {
-                    plugin_host
-                        .send_output(ChannelOutput::SubagentStatus {
-                            route,
-                            agent: agent.clone(),
-                        })
-                        .await;
+                    plugin_host.send_output(ChannelOutput::SubagentStatus {
+                        route,
+                        agent: agent.clone(),
+                    });
                 }
             }
         });
@@ -307,13 +301,11 @@ impl ChannelBridgeHandler {
                 .as_ref()
                 .filter(|origin| origin.route == route)
                 .and_then(|origin| origin.reply_to.clone());
-            self.plugin_host
-                .send_output(ChannelOutput::SystemText {
-                    route,
-                    text: text.to_string(),
-                    reply_to,
-                })
-                .await;
+            self.plugin_host.send_output(ChannelOutput::SystemText {
+                route,
+                text: text.to_string(),
+                reply_to,
+            });
         }
     }
 }
@@ -384,13 +376,11 @@ impl AgentClientHandler for ChannelBridgeHandler {
         };
 
         for target in self.attached_delivery_targets().await {
-            self.plugin_host
-                .send_output(ChannelOutput::ThreadReply {
-                    route: target.route,
-                    reply_to: target.reply_to,
-                    reply: reply.clone(),
-                })
-                .await;
+            self.plugin_host.send_output(ChannelOutput::ThreadReply {
+                route: target.route,
+                reply_to: target.reply_to,
+                reply: reply.clone(),
+            });
         }
         Ok(())
     }
@@ -449,8 +439,7 @@ impl AgentClientHandler for ChannelBridgeHandler {
                 reply_to: target.reply_to,
                 request_id: request_id.clone(),
                 payload,
-            })
-            .await;
+            });
 
         // Wait for plugin response — no timeout by design. If the plugin
         // crashes, `tx` is dropped and `rx.await` errors, which we treat as
