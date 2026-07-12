@@ -1,36 +1,13 @@
-//! `Supervisor` — owns the lifecycle of every supervised subprocess.
-//!
-//! This replaces the ad-hoc spawn/kill/restart paths that previously lived
-//! inside `channels::monitor`, `agent::runtime`, and friends. Managers hand
-//! the supervisor a `SpawnSpec` plus a `BridgeFactory` at `register()`
-//! time, and from then on the supervisor:
-//!
-//! - Spawns the child process (via `process::env::command`, which injects
-//!   the enriched login-shell env) and transfers the `Child` to the global
-//!   [`ChildRegistry`].
-//! - Invokes the factory on every (re)spawn to build a fresh
-//!   [`ProcessBridge`], hands the bridge the stdio pipes, and runs it to
-//!   completion in a task.
-//! - Drives a state machine (`NotStarted` → `Spawning` → `Running` →
-//!   `Crashed` → `Spawning` …) on a single 5-second tick loop that honors
-//!   the [`RestartPolicy`] attached to each process.
-//! - Broadcasts every status change on a `tokio::sync::broadcast` channel
-//!   so dashboards, HTTP handlers, and other subscribers only subscribe
-//!   once instead of polling per-module monitors.
-//!
-//! The supervisor does NOT know anything about the protocol spoken over
-//! the stdio pipes — that is entirely the bridge's concern. It does own
-//! direct-child termination and reaping for normal stop/restart/shutdown;
-//! [`ChildRegistry::kill_all`] remains the abrupt-runtime safety net.
+//! Process supervision with one lifecycle owner task per child process.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::RwLock;
 use tokio::process::Command;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::proc_log;
 use crate::process::bridge::{BridgeExit, BridgeFactory, StdioPipes};
@@ -40,17 +17,19 @@ use crate::process::kill;
 use crate::process::registry::{ChildRegistry, ProcessKind};
 
 mod generation;
+mod model;
 
-/// Tick interval for the supervisor's scan loop.
+use generation::ProcessOwner;
+use model::{ProcessCommand, ProcessState, SupervisedProcess};
+pub use model::{ProcessEvent, ProcessSnapshot, ProcessStatus, RestartPolicy, SpawnSpec};
+
 pub const TICK_INTERVAL: Duration = Duration::from_secs(5);
 #[cfg(not(test))]
 const BRIDGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const BRIDGE_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
-const CHILD_EXIT_OBSERVATION_TIMEOUT: Duration = Duration::from_millis(50);
 const MAX_RESTART_DELAY: Duration = Duration::from_secs(300);
 
-/// Unique id for a supervised process within one Supervisor instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProcessId(pub u64);
 
@@ -60,16 +39,12 @@ impl std::fmt::Display for ProcessId {
     }
 }
 
-mod model;
-use model::{ActiveGeneration, SupervisedProcess};
-pub use model::{ProcessEvent, ProcessSnapshot, ProcessStatus, RestartPolicy, SpawnSpec};
-
 pub struct Supervisor {
     registry: Arc<ChildRegistry>,
     processes: RwLock<HashMap<ProcessId, Arc<SupervisedProcess>>>,
-    next_id: parking_lot::Mutex<u64>,
+    next_id: AtomicU64,
     change_tx: broadcast::Sender<ProcessEvent>,
-    tick_loop_started: parking_lot::Mutex<bool>,
+    tick_loop_started: AtomicBool,
 }
 
 impl Supervisor {
@@ -78,34 +53,22 @@ impl Supervisor {
         Arc::new(Self {
             registry,
             processes: RwLock::new(HashMap::new()),
-            next_id: parking_lot::Mutex::new(1),
+            next_id: AtomicU64::new(1),
             change_tx,
-            tick_loop_started: parking_lot::Mutex::new(false),
+            tick_loop_started: AtomicBool::new(false),
         })
     }
 
-    /// Process-wide singleton. Bound to `ChildRegistry::global()`; the
-    /// tick loop is auto-started on first access and runs for the
-    /// remainder of the process lifetime — [`shutdown_all`] only drains
-    /// the current process table so a subsequent daemon start gets a
-    /// clean slate while the loop keeps ticking. Must be called from
-    /// inside a tokio runtime.
-    ///
-    /// [`shutdown_all`]: Supervisor::shutdown_all
     pub fn global() -> Arc<Self> {
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<Arc<Supervisor>> = OnceLock::new();
         Arc::clone(INSTANCE.get_or_init(|| {
-            let sup = Supervisor::new(ChildRegistry::global());
-            sup.spawn_tick_loop();
-            sup
+            let supervisor = Supervisor::new(ChildRegistry::global());
+            supervisor.spawn_tick_loop();
+            supervisor
         }))
     }
 
-    /// Register a new supervised process. Returns an opaque `ProcessId`
-    /// that the caller uses for later `force_*`, `touch`, and status calls.
-    /// The first spawn attempt is kicked off immediately (not waiting for
-    /// the next tick).
     pub fn register(
         self: &Arc<Self>,
         kind: ProcessKind,
@@ -114,314 +77,241 @@ impl Supervisor {
         policy: RestartPolicy,
         factory: BridgeFactory,
     ) -> ProcessId {
-        let label = label.into();
-        let id = {
-            let mut next = self.next_id.lock();
-            let id = *next;
-            *next = next.wrapping_add(1);
-            ProcessId(id)
-        };
-
-        let proc = Arc::new(SupervisedProcess {
+        let id = ProcessId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        self.insert_process(
             id,
             kind,
-            label: label.clone(),
+            label.into(),
             spec,
             policy,
             factory,
-            status: AtomicU8::new(ProcessStatus::NotStarted as u8),
-            reason: RwLock::new(String::new()),
-            last_heartbeat_ts: AtomicU64::new(now_secs()),
-            next_spawn_at: AtomicU64::new(0),
-            next_generation: AtomicU64::new(1),
-            consecutive_failures: AtomicU32::new(0),
-            stopping: std::sync::atomic::AtomicBool::new(false),
-            stop_completed: tokio::sync::Notify::new(),
-            active_generation: parking_lot::Mutex::new(None),
-            pending_child: parking_lot::Mutex::new(None),
-            transition_lock: parking_lot::Mutex::new(()),
-            spawn_task: parking_lot::Mutex::new(None),
-        });
-
-        self.processes.write().insert(id, Arc::clone(&proc));
-        self.notify_change(&proc);
-
-        // Immediate spawn — don't wait for the tick.
-        self.schedule_spawn(proc);
-
+            ProcessStatus::NotStarted,
+            true,
+        );
         id
     }
 
-    /// Bump the heartbeat timestamp. Managers call this on every heartbeat
-    /// or keepalive from the remote end of the bridge — channel plugins
-    /// on `_va/heartbeat`, ACP agents on any notification, etc.
+    #[allow(clippy::too_many_arguments)]
+    fn insert_process(
+        self: &Arc<Self>,
+        id: ProcessId,
+        kind: ProcessKind,
+        label: String,
+        spec: SpawnSpec,
+        policy: RestartPolicy,
+        factory: BridgeFactory,
+        initial_status: ProcessStatus,
+        start_immediately: bool,
+    ) -> Arc<SupervisedProcess> {
+        let state = ProcessState {
+            status: initial_status,
+            reason: String::new(),
+        };
+        let (state_tx, _) = watch::channel(state.clone());
+        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let process = Arc::new(SupervisedProcess {
+            id,
+            kind,
+            label,
+            command_tx: command_tx.clone(),
+            state_tx,
+        });
+        self.processes.write().insert(id, Arc::clone(&process));
+        self.notify_change(&process);
+        let owner = ProcessOwner::new(
+            Arc::downgrade(self),
+            Arc::clone(&process),
+            Arc::clone(&self.registry),
+            spec,
+            policy,
+            factory,
+            command_tx,
+            command_rx,
+            state,
+        );
+        tokio::spawn(owner.run(start_immediately));
+        process
+    }
+
     pub fn touch(&self, id: ProcessId) {
-        if let Some(proc) = self.processes.read().get(&id).cloned() {
-            proc.last_heartbeat_ts.store(now_secs(), Ordering::Relaxed);
-            proc.reset_restart_backoff();
+        if let Ok(process) = self.get_process(id) {
+            let _ = process.command_tx.send(ProcessCommand::Touch);
         }
     }
 
-    /// Stop the process. Cancels the current bridge and leaves the process
-    /// in `Stopped` — no respawn regardless of policy.
     pub async fn force_stop(&self, id: ProcessId) -> ProcessResult<()> {
-        let proc = self.get_proc(id)?;
-        self.stop_process(proc, "stopped by user").await;
+        let process = self.get_process(id)?;
+        self.stop_process(&process, "stopped by user").await;
         Ok(())
     }
 
-    async fn stop_process(&self, proc: Arc<SupervisedProcess>, reason: &str) {
-        while !self.acquire_stop(&proc).await {
-            // Stop has priority over a concurrent restart. Once the current
-            // lifecycle owner finishes, acquire the barrier and apply Stop
-            // instead of treating the wait itself as success.
-        }
+    async fn stop_process(&self, process: &SupervisedProcess, reason: &str) {
+        let (reply, done) = oneshot::channel();
+        if process
+            .command_tx
+            .send(ProcessCommand::Stop {
+                reason: reason.to_string(),
+                reply,
+            })
+            .is_ok()
         {
-            let _transition = proc.transition_lock.lock();
-            proc.set_status(ProcessStatus::Stopped);
-            proc.next_spawn_at.store(0, Ordering::Relaxed);
-            proc.set_reason(reason);
+            let _ = done.await;
         }
-
-        self.notify_change(&proc);
-        let spawn_task = proc.spawn_task.lock().take();
-        if let Some(spawn_task) = spawn_task {
-            let _ = spawn_task.await;
-        }
-        if let Some(registry_id) = self.take_pending_registry_id(&proc) {
-            self.terminate_and_reap_registry_id(&proc, registry_id)
-                .await;
-        }
-        let generation = proc.active_generation.lock().take();
-        if let Some(generation) = generation {
-            self.stop_generation(&proc, generation).await;
-        }
-        self.deregister_terminal_process(&proc);
-        self.finish_stop(&proc);
     }
 
-    /// Stop, reap, and permanently remove one registered process.
     pub async fn unregister(&self, id: ProcessId) -> ProcessResult<()> {
-        self.force_stop(id).await?;
-        self.processes.write().remove(&id);
+        let process = self
+            .processes
+            .write()
+            .remove(&id)
+            .ok_or_else(|| unknown_process(id))?;
+        self.shutdown_process(&process, "unregistered").await;
         Ok(())
     }
 
-    /// Cancel the current generation and schedule an immediate respawn.
-    /// No-op if policy is `Never` and the process is already stopped.
-    pub async fn force_restart(self: &Arc<Self>, id: ProcessId) -> ProcessResult<()> {
+    pub async fn force_restart(&self, id: ProcessId) -> ProcessResult<()> {
         self.restart(id, false).await
     }
 
-    pub(super) async fn restart_after_failure(
-        self: &Arc<Self>,
-        id: ProcessId,
-    ) -> ProcessResult<()> {
-        self.restart(id, true).await
-    }
-
-    async fn restart(self: &Arc<Self>, id: ProcessId, apply_backoff: bool) -> ProcessResult<()> {
-        let proc = self.get_proc(id)?;
-        if !self.acquire_stop(&proc).await {
-            return Ok(());
-        }
-
-        let (should_restart, restart_delay) = {
-            let _transition = proc.transition_lock.lock();
-            if matches!(proc.status(), ProcessStatus::Stopped)
-                && matches!(proc.policy, RestartPolicy::Never)
-            {
-                proc.next_spawn_at.store(0, Ordering::Relaxed);
-                (false, Duration::ZERO)
-            } else {
-                let delay = if apply_backoff {
-                    proc.next_restart_delay()
-                } else {
-                    proc.reset_restart_backoff();
-                    Duration::ZERO
-                };
-                proc.set_status(ProcessStatus::Crashed);
-                proc.next_spawn_at
-                    .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
-                proc.set_reason(if apply_backoff {
-                    "watchdog restart requested"
-                } else {
-                    "restart requested"
-                });
-                (true, delay)
-            }
-        };
-        self.notify_change(&proc);
-
-        // Join publication before inspecting pending/active ownership. This
-        // closes the same staged-child race as force_stop/shutdown_all.
-        let spawn_task = proc.spawn_task.lock().take();
-        if let Some(spawn_task) = spawn_task {
-            let _ = spawn_task.await;
-        }
-        if let Some(registry_id) = self.take_pending_registry_id(&proc) {
-            self.terminate_and_reap_registry_id(&proc, registry_id)
-                .await;
-        }
-        let generation = proc.active_generation.lock().take();
-        if let Some(generation) = generation {
-            self.stop_generation(&proc, generation).await;
-        }
-
-        self.finish_stop(&proc);
-        if should_restart && restart_delay.is_zero() {
-            self.schedule_spawn(proc);
+    async fn restart(&self, id: ProcessId, apply_backoff: bool) -> ProcessResult<()> {
+        let process = self.get_process(id)?;
+        let (reply, done) = oneshot::channel();
+        if process
+            .command_tx
+            .send(ProcessCommand::Restart {
+                apply_backoff,
+                reply,
+            })
+            .is_ok()
+        {
+            let _ = done.await;
         }
         Ok(())
     }
 
-    /// If the process is `Stopped` / `Crashed` / `NotStarted`, schedule an
-    /// immediate respawn. Ignored in `Running` / `Spawning`.
-    pub fn force_start(self: &Arc<Self>, id: ProcessId) -> ProcessResult<()> {
-        let proc = self.get_proc(id)?;
-        let should_spawn = {
-            let _transition = proc.transition_lock.lock();
-            if !proc.stopping.load(Ordering::Acquire)
-                && proc.active_generation.lock().is_none()
-                && matches!(
-                    proc.status(),
-                    ProcessStatus::Stopped | ProcessStatus::Crashed | ProcessStatus::NotStarted
-                )
-            {
-                proc.reset_restart_backoff();
-                proc.set_status(ProcessStatus::Crashed);
-                proc.set_reason("started by user");
-                proc.next_spawn_at.store(now_secs(), Ordering::Relaxed);
-                true
-            } else {
-                false
-            }
-        };
-        if should_spawn {
-            self.notify_change(&proc);
-            self.schedule_spawn(proc);
-        }
+    pub fn force_start(&self, id: ProcessId) -> ProcessResult<()> {
+        let process = self.get_process(id)?;
+        let _ = process.command_tx.send(ProcessCommand::Start);
         Ok(())
     }
 
-    /// Snapshot of every registered process, sorted by label.
     pub fn snapshot(&self) -> Vec<ProcessSnapshot> {
-        let mut out: Vec<_> = self
+        let mut snapshots = self
             .processes
             .read()
             .values()
-            .map(|proc| ProcessSnapshot {
-                id: proc.id,
-                kind: proc.kind,
-                label: proc.label.clone(),
-                status: proc.status(),
-                reason: proc.reason.read().clone(),
+            .map(|process| ProcessSnapshot {
+                id: process.id,
+                kind: process.kind,
+                label: process.label.clone(),
+                status: process.status(),
+                reason: process.reason(),
             })
-            .collect();
-        out.sort_by(|a, b| a.label.cmp(&b.label));
-        out
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.label.cmp(&right.label));
+        snapshots
     }
 
-    /// Subscribe to per-process status change events.
     pub fn subscribe(&self) -> broadcast::Receiver<ProcessEvent> {
         self.change_tx.subscribe()
     }
 
-    /// Start the supervisor's 5-second scan loop. Idempotent — a second
-    /// call is a no-op. The loop runs for the process lifetime; daemon
-    /// stop/restart cycles just drain the process table via
-    /// [`shutdown_all`].
-    ///
-    /// [`shutdown_all`]: Supervisor::shutdown_all
     pub fn spawn_tick_loop(self: &Arc<Self>) {
-        let mut started = self.tick_loop_started.lock();
-        if *started {
+        if self
+            .tick_loop_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return;
         }
-        *started = true;
-        drop(started);
-        let sup = Arc::clone(self);
-        tokio::spawn(async move {
-            sup.run_tick_loop().await;
-        });
+        let supervisor = Arc::clone(self);
+        tokio::spawn(async move { supervisor.run_tick_loop().await });
     }
 
-    /// Cancel every active bridge and drain the process table so a
-    /// subsequent daemon start gets a clean slate. The tick loop keeps
-    /// running — it's process-wide and survives daemon restart.
-    /// Every in-flight spawn is joined and every registered child is reaped
-    /// before this method returns. `ChildRegistry::kill_all()` remains the
-    /// abrupt-runtime safety net in `RunningDaemon::stop`.
+    async fn run_tick_loop(self: Arc<Self>) {
+        let mut ticker = tokio::time::interval(TICK_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            self.tick().await;
+        }
+    }
+
+    async fn tick(&self) {
+        let now = now_secs();
+        let processes = self.processes.read().values().cloned().collect::<Vec<_>>();
+        for process in processes {
+            let _ = process.command_tx.send(ProcessCommand::Tick(now));
+        }
+        tokio::task::yield_now().await;
+    }
+
     pub async fn shutdown_all(&self) {
-        let procs: Vec<Arc<SupervisedProcess>> = self
+        let processes = self
             .processes
             .write()
             .drain()
-            .map(|(_, proc)| proc)
-            .collect();
-        for proc in procs {
-            // Re-acquire after any concurrent lifecycle owner completes and
-            // apply terminal state again. Waiting alone is not a stop: a
-            // restart may publish Crashed or schedule a replacement before
-            // releasing its barrier.
-            self.stop_process(proc, "supervisor shutdown").await;
+            .map(|(_, process)| process)
+            .collect::<Vec<_>>();
+        let mut completions = Vec::with_capacity(processes.len());
+        for process in processes {
+            let (reply, done) = oneshot::channel();
+            let _ = process.command_tx.send(ProcessCommand::Shutdown {
+                reason: "supervisor shutdown".to_string(),
+                reply,
+            });
+            completions.push(done);
+        }
+        for completion in completions {
+            let _ = completion.await;
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Internals
-    // -----------------------------------------------------------------------
-
-    fn get_proc(&self, id: ProcessId) -> ProcessResult<Arc<SupervisedProcess>> {
+    fn get_process(&self, id: ProcessId) -> ProcessResult<Arc<SupervisedProcess>> {
         self.processes
             .read()
             .get(&id)
             .cloned()
-            .ok_or_else(|| ProcessError::UnknownProcess {
-                label: format!("#{}", id.0),
+            .ok_or_else(|| unknown_process(id))
+    }
+
+    async fn shutdown_process(&self, process: &SupervisedProcess, reason: &str) {
+        let (reply, done) = oneshot::channel();
+        if process
+            .command_tx
+            .send(ProcessCommand::Shutdown {
+                reason: reason.to_string(),
+                reply,
             })
-    }
-
-    fn take_pending_registry_id(&self, proc: &SupervisedProcess) -> Option<u64> {
-        proc.pending_child
-            .lock()
-            .take()
-            .map(|(_, registry_id)| registry_id)
-    }
-
-    async fn acquire_stop(&self, proc: &SupervisedProcess) -> bool {
-        if proc
-            .stopping
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
-            return true;
-        }
-        self.wait_for_stop(proc).await;
-        false
-    }
-
-    async fn wait_for_stop(&self, proc: &SupervisedProcess) {
-        loop {
-            let completed = proc.stop_completed.notified();
-            if !proc.stopping.load(Ordering::Acquire) {
-                return;
-            }
-            completed.await;
+            let _ = done.await;
         }
     }
 
-    fn finish_stop(&self, proc: &SupervisedProcess) {
-        proc.stopping.store(false, Ordering::Release);
-        proc.stop_completed.notify_waiters();
+    fn remove_process(&self, process: &Arc<SupervisedProcess>) {
+        let mut processes = self.processes.write();
+        if processes
+            .get(&process.id)
+            .is_some_and(|current| Arc::ptr_eq(current, process))
+        {
+            processes.remove(&process.id);
+        }
     }
 
-    fn notify_change(&self, proc: &SupervisedProcess) {
+    fn notify_change(&self, process: &SupervisedProcess) {
         let _ = self.change_tx.send(ProcessEvent {
-            id: proc.id,
-            kind: proc.kind,
-            status: proc.status(),
+            id: process.id,
+            kind: process.kind,
+            status: process.status(),
         });
+    }
+}
+
+fn unknown_process(id: ProcessId) -> ProcessError {
+    ProcessError::UnknownProcess {
+        label: format!("#{}", id.0),
     }
 }
 
@@ -429,10 +319,9 @@ fn now_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|duration| duration.as_secs())
         .unwrap_or(0)
 }
-// Tests live beside the implementation so production lifecycle code remains
-// reviewable without a 600-line test tail.
+
 #[cfg(test)]
 mod tests;
