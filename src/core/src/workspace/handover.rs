@@ -2,12 +2,12 @@
 //! workspace thread.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
 use rand::rngs::OsRng;
 use rand::Rng;
+use tokio::sync::{mpsc, oneshot};
 
 struct HandoverEntry {
     agent_kind: String,
@@ -17,10 +17,22 @@ struct HandoverEntry {
     expires_at: Instant,
 }
 
-static HANDOVER_CODES: LazyLock<Mutex<HashMap<String, HandoverEntry>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-static HANDOVER_FAILED_ATTEMPTS: LazyLock<Mutex<VecDeque<Instant>>> =
-    LazyLock::new(|| Mutex::new(VecDeque::new()));
+#[derive(Default)]
+struct HandoverState {
+    codes: HashMap<String, HandoverEntry>,
+    failed_attempts: VecDeque<Instant>,
+}
+
+enum HandoverCommand {
+    Store {
+        payload: HandoverPayload,
+        reply: oneshot::Sender<String>,
+    },
+    Consume {
+        code: String,
+        reply: oneshot::Sender<Option<HandoverPayload>>,
+    },
+}
 
 const TTL: Duration = Duration::from_secs(120);
 const FAILED_ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
@@ -45,66 +57,94 @@ fn generate_code() -> String {
         .collect()
 }
 
-pub fn store(payload: HandoverPayload) -> String {
-    let mut map = HANDOVER_CODES.lock();
-    let now = Instant::now();
-    map.retain(|_, entry| entry.expires_at > now);
-
-    let code = loop {
-        let candidate = generate_code();
-        if !map.contains_key(&candidate) {
-            break candidate;
-        }
-    };
-    map.insert(
-        code.clone(),
-        HandoverEntry {
-            agent_kind: payload.agent_kind,
-            profile_id: payload.profile_id,
-            session_id: payload.session_id,
-            cwd: payload.cwd,
-            expires_at: now + TTL,
-        },
-    );
-    code
+pub async fn store(payload: HandoverPayload) -> String {
+    let (reply, code) = oneshot::channel();
+    command_tx()
+        .send(HandoverCommand::Store { payload, reply })
+        .expect("handover owner must outlive its command sender");
+    code.await.expect("handover owner must reply")
 }
 
-pub fn consume(code: &str) -> Option<HandoverPayload> {
-    let now = Instant::now();
-    if failed_attempt_limit_reached(now) {
-        tracing::warn!(
-            window_secs = FAILED_ATTEMPT_WINDOW.as_secs(),
-            max_attempts = MAX_FAILED_ATTEMPTS,
-            "handover pickup rejected after too many failed attempts"
-        );
-        return None;
-    }
+pub async fn consume(code: &str) -> Option<HandoverPayload> {
+    let (reply, payload) = oneshot::channel();
+    command_tx()
+        .send(HandoverCommand::Consume {
+            code: code.to_string(),
+            reply,
+        })
+        .expect("handover owner must outlive its command sender");
+    payload.await.expect("handover owner must reply")
+}
 
-    let mut map = HANDOVER_CODES.lock();
-    map.retain(|_, entry| entry.expires_at > now);
-    let Some(entry) = map.remove(&code.to_uppercase()) else {
-        drop(map);
-        record_failed_attempt(now);
-        return None;
-    };
-    Some(HandoverPayload {
-        agent_kind: entry.agent_kind,
-        profile_id: entry.profile_id,
-        session_id: entry.session_id,
-        cwd: entry.cwd,
+fn command_tx() -> &'static mpsc::UnboundedSender<HandoverCommand> {
+    static COMMAND_TX: OnceLock<mpsc::UnboundedSender<HandoverCommand>> = OnceLock::new();
+    COMMAND_TX.get_or_init(|| {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        tokio::spawn(run_owner(command_rx));
+        command_tx
     })
 }
 
-fn failed_attempt_limit_reached(now: Instant) -> bool {
-    let mut attempts = HANDOVER_FAILED_ATTEMPTS.lock();
-    prune_failed_attempts(&mut attempts, now);
-    attempts.len() >= MAX_FAILED_ATTEMPTS
+async fn run_owner(mut command_rx: mpsc::UnboundedReceiver<HandoverCommand>) {
+    let mut state = HandoverState::default();
+    while let Some(command) = command_rx.recv().await {
+        match command {
+            HandoverCommand::Store { payload, reply } => {
+                let _ = reply.send(state.store(payload));
+            }
+            HandoverCommand::Consume { code, reply } => {
+                let _ = reply.send(state.consume(&code));
+            }
+        }
+    }
 }
 
-fn record_failed_attempt(now: Instant) {
-    let mut attempts = HANDOVER_FAILED_ATTEMPTS.lock();
-    prune_failed_attempts(&mut attempts, now);
-    attempts.push_back(now);
+impl HandoverState {
+    fn store(&mut self, payload: HandoverPayload) -> String {
+        let now = Instant::now();
+        self.codes.retain(|_, entry| entry.expires_at > now);
+        let code = loop {
+            let candidate = generate_code();
+            if !self.codes.contains_key(&candidate) {
+                break candidate;
+            }
+        };
+        self.codes.insert(
+            code.clone(),
+            HandoverEntry {
+                agent_kind: payload.agent_kind,
+                profile_id: payload.profile_id,
+                session_id: payload.session_id,
+                cwd: payload.cwd,
+                expires_at: now + TTL,
+            },
+        );
+        code
+    }
+
+    fn consume(&mut self, code: &str) -> Option<HandoverPayload> {
+        let now = Instant::now();
+        prune_failed_attempts(&mut self.failed_attempts, now);
+        if self.failed_attempts.len() >= MAX_FAILED_ATTEMPTS {
+            tracing::warn!(
+                window_secs = FAILED_ATTEMPT_WINDOW.as_secs(),
+                max_attempts = MAX_FAILED_ATTEMPTS,
+                "handover pickup rejected after too many failed attempts"
+            );
+            return None;
+        }
+        self.codes.retain(|_, entry| entry.expires_at > now);
+        let Some(entry) = self.codes.remove(&code.to_uppercase()) else {
+            self.failed_attempts.push_back(now);
+            return None;
+        };
+        Some(HandoverPayload {
+            agent_kind: entry.agent_kind,
+            profile_id: entry.profile_id,
+            session_id: entry.session_id,
+            cwd: entry.cwd,
+        })
+    }
 }
 
 fn prune_failed_attempts(attempts: &mut VecDeque<Instant>, now: Instant) {
@@ -120,17 +160,8 @@ fn prune_failed_attempts(attempts: &mut VecDeque<Instant>, now: Instant) {
 mod tests {
     use super::*;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
-
-    fn reset_for_test() {
-        HANDOVER_CODES.lock().clear();
-        HANDOVER_FAILED_ATTEMPTS.lock().clear();
-    }
-
     #[test]
     fn generated_code_is_four_chars_from_alphabet() {
-        let _guard = TEST_LOCK.lock();
-        reset_for_test();
         for _ in 0..100 {
             let code = generate_code();
             assert_eq!(code.len(), 4);
@@ -142,15 +173,14 @@ mod tests {
 
     #[test]
     fn store_and_consume_roundtrip() {
-        let _guard = TEST_LOCK.lock();
-        reset_for_test();
-        let code = store(HandoverPayload {
+        let mut state = HandoverState::default();
+        let code = state.store(HandoverPayload {
             agent_kind: "claude".into(),
             profile_id: Some("deepseek".into()),
             session_id: "sess-1".into(),
             cwd: "/tmp".into(),
         });
-        let payload = consume(&code).expect("code should resolve");
+        let payload = state.consume(&code).expect("code should resolve");
         assert_eq!(payload.agent_kind, "claude");
         assert_eq!(payload.profile_id.as_deref(), Some("deepseek"));
         assert_eq!(payload.session_id, "sess-1");
@@ -159,33 +189,31 @@ mod tests {
 
     #[test]
     fn consume_is_one_shot() {
-        let _guard = TEST_LOCK.lock();
-        reset_for_test();
-        let code = store(HandoverPayload {
+        let mut state = HandoverState::default();
+        let code = state.store(HandoverPayload {
             agent_kind: "gemini".into(),
             profile_id: None,
             session_id: "sess-2".into(),
             cwd: "/home".into(),
         });
-        assert!(consume(&code).is_some());
-        assert!(consume(&code).is_none(), "second consume must fail");
+        assert!(state.consume(&code).is_some());
+        assert!(state.consume(&code).is_none(), "second consume must fail");
     }
 
     #[test]
     fn failed_pickups_are_rate_limited() {
-        let _guard = TEST_LOCK.lock();
-        reset_for_test();
+        let mut state = HandoverState::default();
 
         for attempt in 0..MAX_FAILED_ATTEMPTS {
-            assert!(consume(&format!("MISS{attempt}")).is_none());
+            assert!(state.consume(&format!("MISS{attempt}")).is_none());
         }
-        let valid_code = store(HandoverPayload {
+        let valid_code = state.store(HandoverPayload {
             agent_kind: "claude".into(),
             profile_id: Some("default".into()),
             session_id: "sess-1".into(),
             cwd: "/tmp".into(),
         });
 
-        assert!(consume(&valid_code).is_none());
+        assert!(state.consume(&valid_code).is_none());
     }
 }

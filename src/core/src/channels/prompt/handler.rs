@@ -112,7 +112,7 @@ async fn handle_command(
             }
         }
         ThreadCommand::Pickup(code) => {
-            let Some(handover) = crate::workspace::handover::consume(&code) else {
+            let Some(handover) = crate::workspace::handover::consume(&code).await else {
                 send_system_text_to_target(
                     plugin_host,
                     target,
