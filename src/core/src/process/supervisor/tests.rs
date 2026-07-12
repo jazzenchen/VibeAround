@@ -571,6 +571,27 @@ async fn late_tick_spawn_is_ignored_while_restart_owns_stop_barrier() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn published_spawn_is_ignored_after_restart_owns_stop_barrier() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(Arc::clone(&registry));
+    let proc = insert_process_with_status(
+        &sup,
+        ProcessId(215),
+        ProcessStatus::Crashed,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+
+    // Model a spawn task that was published before restart acquired lifecycle
+    // ownership, but did not begin consuming its stale Crashed state until now.
+    proc.stopping.store(true, Ordering::Release);
+    sup.begin_spawn(Arc::clone(&proc)).await;
+
+    assert_eq!(proc.status(), ProcessStatus::Crashed);
+    assert_eq!(registry.len(), 0);
+    sup.finish_stop(&proc);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn force_restart_while_spawning_reaps_staged_generation() {
     let registry = Arc::new(ChildRegistry::new());
     let sup = Supervisor::new(Arc::clone(&registry));

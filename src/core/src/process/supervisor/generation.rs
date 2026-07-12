@@ -107,10 +107,12 @@ impl Supervisor {
         // Guard against racing tickers / immediate-spawn.
         {
             let _transition = proc.transition_lock.lock();
-            if !matches!(
-                proc.status(),
-                ProcessStatus::NotStarted | ProcessStatus::Crashed
-            ) {
+            if proc.stopping.load(Ordering::Acquire)
+                || !matches!(
+                    proc.status(),
+                    ProcessStatus::NotStarted | ProcessStatus::Crashed
+                )
+            {
                 return;
             }
             proc.set_status(ProcessStatus::Spawning);
