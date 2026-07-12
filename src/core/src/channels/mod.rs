@@ -265,6 +265,6 @@ impl ChannelManager {
         if let Some(monitor) = monitor {
             monitor.shutdown_all().await;
         }
-        self.plugin_host.shutdown_all().await;
+        self.plugin_host.shutdown_all();
     }
 }

@@ -659,6 +659,4 @@ impl WebSocketPluginRuntime {
             message
         })
     }
-
-    pub async fn shutdown(&self) {}
 }

@@ -10,8 +10,8 @@
 //!
 //! [`PluginHost::send_output`] uses this enum to dispatch without caring
 //! about transport specifics. Lifecycle (spawn / kill / respawn) lives
-//! in `process::Supervisor`; this enum only carries the send + shutdown
-//! surfaces the host needs.
+//! in `process::Supervisor`; this enum only carries the send surface the host
+//! needs.
 //!
 //! [`PluginHost::send_output`]: super::plugin_host::PluginHost::send_output
 
@@ -32,15 +32,6 @@ impl PluginRuntime {
         match self {
             Self::Stdio(runtime) => runtime.send_output_now(output),
             Self::WebSocket(runtime) => runtime.send_output_now(output),
-        }
-    }
-
-    pub async fn shutdown(&self) {
-        match self {
-            // The process supervisor owns stdio lifecycle and has already
-            // cancelled/reaped these bridges before PluginHost shutdown.
-            Self::Stdio(_) => {}
-            Self::WebSocket(runtime) => runtime.shutdown().await,
         }
     }
 }

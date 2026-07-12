@@ -204,25 +204,12 @@ impl PluginHost {
             })
     }
 
-    pub async fn shutdown_all(&self) {
-        let runtimes: Vec<PluginRuntime> = self
-            .runtimes
-            .iter()
-            .map(|entry| match entry.value() {
-                PluginRuntime::Stdio(runtime) => PluginRuntime::Stdio(Arc::clone(runtime)),
-                PluginRuntime::WebSocket(runtime) => PluginRuntime::WebSocket(Arc::clone(runtime)),
-            })
-            .collect();
-
+    pub fn shutdown_all(&self) {
         self.runtimes.clear();
         // Drop every pending oneshot sender so waiting `request_permission`
         // callers in `ChannelBridgeHandler` see `rx.await -> Err` and fall
         // through to `Cancelled` instead of stalling forever.
         self.pending_permissions.clear();
-
-        for runtime in runtimes {
-            runtime.shutdown().await;
-        }
     }
 
     /// Drop every pending permission request belonging to `instance_id`.
