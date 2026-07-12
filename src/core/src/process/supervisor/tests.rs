@@ -546,6 +546,31 @@ async fn force_restart_without_bridge_spawns_fresh_generation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn late_tick_spawn_is_ignored_while_restart_owns_stop_barrier() {
+    let registry = Arc::new(ChildRegistry::new());
+    let sup = Supervisor::new(registry);
+    let proc = insert_process_with_status(
+        &sup,
+        ProcessId(210),
+        ProcessStatus::Crashed,
+        Box::new(|| Box::new(WaitForCancelBridge)),
+    );
+
+    // Model a tick that retained this Crashed process immediately before a
+    // concurrent restart acquired the lifecycle stop barrier.
+    proc.stopping.store(true, Ordering::Release);
+    sup.schedule_spawn(Arc::clone(&proc));
+
+    assert!(proc.spawn_task.lock().is_none());
+    assert_eq!(proc.status(), ProcessStatus::Crashed);
+
+    sup.finish_stop(&proc);
+    sup.schedule_spawn(Arc::clone(&proc));
+    wait_for_status(&sup, proc.id, ProcessStatus::Running).await;
+    sup.force_stop(proc.id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn force_restart_while_spawning_reaps_staged_generation() {
     let registry = Arc::new(ChildRegistry::new());
     let sup = Supervisor::new(Arc::clone(&registry));

@@ -10,6 +10,18 @@ pub(super) struct StagedGeneration {
 
 impl Supervisor {
     pub(super) fn schedule_spawn(self: &Arc<Self>, proc: Arc<SupervisedProcess>) {
+        // Serialize task publication with lifecycle state changes. A tick may
+        // hold a stale `Crashed` snapshot while restart already owns the stop
+        // barrier; it must not publish a late spawn task into that window.
+        let _transition = proc.transition_lock.lock();
+        if proc.stopping.load(Ordering::Acquire)
+            || !matches!(
+                proc.status(),
+                ProcessStatus::NotStarted | ProcessStatus::Crashed
+            )
+        {
+            return;
+        }
         let mut slot = proc.spawn_task.lock();
         if slot.as_ref().is_some_and(|task| !task.is_finished()) {
             return;
