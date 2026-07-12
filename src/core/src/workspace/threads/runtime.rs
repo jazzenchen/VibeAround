@@ -42,6 +42,8 @@ pub(crate) struct PromptCancellation {
 struct TurnState {
     busy: bool,
     failed: Option<String>,
+    session_id: Option<String>,
+    host_agent: Option<Arc<Agent>>,
 }
 
 struct PromptCommand {
@@ -53,9 +55,42 @@ struct PromptCommand {
     reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
 }
 
+struct StartCommand {
+    runtime: Arc<ThreadRuntime>,
+    route: RouteKey,
+    handler: Arc<dyn AgentClientHandler>,
+    reply: oneshot::Sender<acp::Result<String>>,
+}
+
+struct RuntimeCommand<T> {
+    runtime: Arc<ThreadRuntime>,
+    reply: oneshot::Sender<T>,
+}
+
+struct CloseCommand {
+    runtime: Arc<ThreadRuntime>,
+    reason: Option<String>,
+    reply: oneshot::Sender<acp::Result<()>>,
+}
+
+struct SwitchProfileCommand {
+    runtime: Arc<ThreadRuntime>,
+    host_binding: HostBinding,
+    reply: oneshot::Sender<acp::Result<()>>,
+}
+
 enum ThreadOwnerCommand {
     Prompt(Box<PromptCommand>),
-    ClearFailure,
+    Start(Box<StartCommand>),
+    Cancel(oneshot::Sender<acp::Result<()>>),
+    Close(Box<CloseCommand>),
+    ShutdownHost(RuntimeCommand<()>),
+    ShutdownHostIfIdle {
+        runtime: Arc<ThreadRuntime>,
+        generation: u64,
+        reply: oneshot::Sender<bool>,
+    },
+    SwitchProfile(Box<SwitchProfileCommand>),
     #[cfg(test)]
     Probe {
         started: oneshot::Sender<()>,
@@ -67,6 +102,8 @@ struct ThreadOwner {
     command_rx: mpsc::UnboundedReceiver<ThreadOwnerCommand>,
     state_tx: watch::Sender<TurnState>,
     change_tx: Option<broadcast::Sender<()>>,
+    host: Option<AcpSessionRunner>,
+    session_id: Option<String>,
 }
 
 impl PromptCancellation {
@@ -93,10 +130,7 @@ impl ThreadOwner {
         while let Some(command) = self.command_rx.recv().await {
             match command {
                 ThreadOwnerCommand::Prompt(command) => {
-                    self.set_state(TurnState {
-                        busy: true,
-                        failed: None,
-                    });
+                    self.set_turn_state(true, None);
                     let PromptCommand {
                         runtime,
                         target,
@@ -105,32 +139,399 @@ impl ThreadOwner {
                         cancellation,
                         reply,
                     } = *command;
-                    let result = runtime
-                        .run_prompt(&target, content_blocks, handler, cancellation)
+                    let result = self
+                        .run_prompt(&runtime, &target, content_blocks, handler, cancellation)
                         .await;
-                    self.set_state(TurnState {
-                        busy: false,
-                        failed: result.as_ref().err().map(|error| error.message.to_string()),
-                    });
+                    self.set_turn_state(
+                        false,
+                        result.as_ref().err().map(|error| error.message.to_string()),
+                    );
                     let _ = reply.send(result);
                 }
-                ThreadOwnerCommand::ClearFailure => {
-                    let mut state = self.state_tx.borrow().clone();
-                    state.failed = None;
-                    self.set_state(state);
+                ThreadOwnerCommand::Start(command) => {
+                    let StartCommand {
+                        runtime,
+                        route,
+                        handler,
+                        reply,
+                    } = *command;
+                    let result = self.start(&runtime, &route, handler).await;
+                    let _ = reply.send(result);
+                }
+                ThreadOwnerCommand::Cancel(reply) => {
+                    let result = self.cancel().await;
+                    let _ = reply.send(result);
+                }
+                ThreadOwnerCommand::Close(command) => {
+                    let CloseCommand {
+                        runtime,
+                        reason,
+                        reply,
+                    } = *command;
+                    let result = self.close(&runtime, reason).await;
+                    let _ = reply.send(result);
+                }
+                ThreadOwnerCommand::ShutdownHost(command) => {
+                    self.shutdown_host_contents(&command.runtime).await;
+                    let _ = command.reply.send(());
+                }
+                ThreadOwnerCommand::ShutdownHostIfIdle {
+                    runtime,
+                    generation,
+                    reply,
+                } => {
+                    let stopped = self.shutdown_host_if_idle(&runtime, generation).await;
+                    let _ = reply.send(stopped);
+                }
+                ThreadOwnerCommand::SwitchProfile(command) => {
+                    let SwitchProfileCommand {
+                        runtime,
+                        host_binding,
+                        reply,
+                    } = *command;
+                    let result = self.switch_profile(&runtime, host_binding).await;
+                    let _ = reply.send(result);
                 }
                 #[cfg(test)]
                 ThreadOwnerCommand::Probe { started, release } => {
-                    self.set_state(TurnState {
-                        busy: true,
-                        failed: None,
-                    });
+                    self.set_turn_state(true, None);
                     let _ = started.send(());
                     let _ = release.await;
-                    self.set_state(TurnState::default());
+                    self.set_turn_state(false, None);
                 }
             }
         }
+    }
+
+    async fn run_prompt(
+        &mut self,
+        runtime: &ThreadRuntime,
+        target: &ChannelTarget,
+        content_blocks: Vec<acp::ContentBlock>,
+        handler: Arc<dyn AgentClientHandler>,
+        mut route_cancellation: Option<PromptCancellation>,
+    ) -> acp::Result<acp::PromptResponse> {
+        let target_guard = runtime.active_turn_target.install(target.clone());
+        let mut cancellation = target_guard.cancellation();
+        let fallback_finish_handler = Arc::clone(&handler);
+
+        let result = tokio::select! {
+            biased;
+            _ = wait_for_signal(&mut cancellation) => {
+                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+            }
+            _ = wait_for_prompt_cancellation(&mut route_cancellation) => {
+                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+            }
+            result = async {
+                runtime.maybe_record_first_prompt(&content_blocks).await?;
+                let agent = self.ensure_agent(runtime, &target.route, handler).await?;
+                let session_id = self.ensure_session(runtime, &agent).await?;
+                agent
+                    .prompt(acp::PromptRequest::new(session_id, content_blocks))
+                    .await
+            } => result,
+        };
+        let finish_handler = self
+            .host
+            .as_ref()
+            .map(|host| Arc::clone(&host.client_handler))
+            .unwrap_or(fallback_finish_handler);
+        if let Err(error) = finish_handler.prompt_finished(result.is_ok()).await {
+            let thread_id = runtime.thread.lock().await.id.clone();
+            tracing::warn!(
+                thread_id = %thread_id,
+                error = %error.message,
+                "host prompt_finished hook failed"
+            );
+        }
+        result
+    }
+
+    async fn start(
+        &mut self,
+        runtime: &ThreadRuntime,
+        route: &RouteKey,
+        handler: Arc<dyn AgentClientHandler>,
+    ) -> acp::Result<String> {
+        let agent = self.ensure_agent(runtime, route, handler).await?;
+        self.ensure_session(runtime, &agent).await
+    }
+
+    async fn cancel(&mut self) -> acp::Result<()> {
+        let agent = self
+            .host
+            .as_ref()
+            .filter(|host| host.is_live())
+            .map(|host| Arc::clone(&host.agent))
+            .ok_or_else(acp::Error::method_not_found)?;
+        let session_id = self
+            .session_id
+            .clone()
+            .ok_or_else(acp::Error::method_not_found)?;
+        agent.cancel(acp::CancelNotification::new(session_id)).await
+    }
+
+    async fn close(&mut self, runtime: &ThreadRuntime, reason: Option<String>) -> acp::Result<()> {
+        self.shutdown_host_contents(runtime).await;
+        let thread_id = runtime.thread.lock().await.id.clone();
+        let event = ThreadEvent::closed(thread_id, reason);
+        append_thread_event(&runtime.store, &event).await?;
+        runtime.apply_thread_event(&event).await?;
+        self.session_id = None;
+        self.publish_runtime_state();
+        runtime.notify_change();
+        Ok(())
+    }
+
+    async fn shutdown_host_contents(&mut self, runtime: &ThreadRuntime) {
+        if let Some(session_id) = &self.session_id {
+            crate::previews::kill_by_session(session_id);
+        }
+        if let Some(host) = self.host.take() {
+            host.shutdown().await;
+        }
+        for (_, subagent) in std::mem::take(&mut *runtime.subagents.lock().await) {
+            crate::previews::kill_by_session(&subagent.session_id);
+            subagent.agent.shutdown().await;
+        }
+        let mut state = self.state_tx.borrow().clone();
+        state.failed = None;
+        self.set_state(state);
+        self.publish_runtime_state();
+        runtime.notify_change();
+    }
+
+    async fn shutdown_host_if_idle(&mut self, runtime: &ThreadRuntime, generation: u64) -> bool {
+        if runtime.idle_generation() != generation
+            || self.state_tx.borrow().busy
+            || self.host.is_none()
+            || !runtime.subagents.lock().await.is_empty()
+            || runtime.idle_generation() != generation
+        {
+            return false;
+        }
+        self.shutdown_host_contents(runtime).await;
+        true
+    }
+
+    async fn switch_profile(
+        &mut self,
+        runtime: &ThreadRuntime,
+        host_binding: HostBinding,
+    ) -> acp::Result<()> {
+        {
+            let thread = runtime.thread.lock().await;
+            if thread.host_binding.agent_id != host_binding.agent_id {
+                return Err(acp::Error::new(
+                    -32602,
+                    "profile switch cannot change agent",
+                ));
+            }
+            if thread.host_binding == host_binding {
+                return Ok(());
+            }
+        }
+
+        let preserved_session_id = self.session_id.clone();
+        if let Some(host) = self.host.take() {
+            host.shutdown().await;
+        }
+        self.set_turn_state(false, None);
+
+        let thread_id = runtime.thread.lock().await.id.clone();
+        let event = ThreadEvent::host_changed(thread_id.clone(), host_binding.clone());
+        append_thread_event(&runtime.store, &event).await?;
+        runtime.apply_thread_event(&event).await?;
+
+        if let Some(session_id) = preserved_session_id {
+            let needs_session_ref = {
+                let thread = runtime.thread.lock().await;
+                !thread.has_agent_session(&host_binding, &session_id)
+            };
+            if needs_session_ref {
+                let event = ThreadEvent::agent_session_observed(
+                    thread_id,
+                    host_binding.agent_id,
+                    host_binding.profile_id,
+                    session_id.clone(),
+                );
+                append_thread_event(&runtime.store, &event).await?;
+                runtime.apply_thread_event(&event).await?;
+            }
+            self.session_id = Some(session_id);
+        }
+        self.publish_runtime_state();
+        runtime.notify_change();
+        Ok(())
+    }
+
+    async fn ensure_agent(
+        &mut self,
+        runtime: &ThreadRuntime,
+        route: &RouteKey,
+        handler: Arc<dyn AgentClientHandler>,
+    ) -> acp::Result<Arc<Agent>> {
+        if let Some(host) = self.host.as_ref().filter(|host| host.is_live()) {
+            return Ok(Arc::clone(&host.agent));
+        }
+        if let Some(stale) = self.host.take() {
+            let thread_id = runtime.thread.lock().await.id.clone();
+            tracing::info!(
+                thread_id = %thread_id,
+                agent_id = %stale.agent.id(),
+                "replacing stopped ACP host generation"
+            );
+            stale.shutdown().await;
+        }
+
+        let thread = runtime.thread.lock().await.clone();
+        if thread.status == ThreadStatus::Closed {
+            return Err(acp::Error::new(-32603, "workspace thread is closed"));
+        }
+        let agent_id = crate::resources::resolve_agent_id(&thread.host_binding.agent_id)
+            .map_err(|error| acp::Error::new(-32602, error))?;
+        let profile = thread
+            .host_binding
+            .profile_id
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+        let startup_session = host_startup_session(route, self.session_id.clone(), &thread);
+
+        std::fs::create_dir_all(&runtime.workspace).map_err(|error| {
+            acp::Error::new(
+                -32603,
+                format!(
+                    "failed to create workspace {:?}: {}",
+                    runtime.workspace, error
+                ),
+            )
+        })?;
+        let mut env_vars = vec![
+            (
+                "VIBEAROUND_CHANNEL_KIND".to_string(),
+                route.channel_kind.clone(),
+            ),
+            ("VIBEAROUND_CHAT_ID".to_string(), route.chat_id.clone()),
+            ("VIBEAROUND_AGENT_KIND".to_string(), agent_id.clone()),
+            ("VIBEAROUND_THREAD_ID".to_string(), thread.id.to_string()),
+            (
+                "VIBEAROUND_WORKSPACE_ID".to_string(),
+                thread.workspace_id.to_string(),
+            ),
+        ];
+        let mut extra_args = Vec::new();
+        if crate::agent::launch::profile_uses_vibearound_credentials(&profile) {
+            let applied = crate::agent::launch::materialize_profile_for_agent(
+                &profile,
+                &agent_id,
+                &runtime.workspace,
+                route,
+            )
+            .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
+            env_vars.extend(applied.env);
+            extra_args.extend(applied.command_args);
+        }
+        crate::agent::launch::append_profile_id_env(
+            &mut env_vars,
+            thread.host_binding.profile_id.as_deref(),
+        );
+        let agent_prefs = crate::agent_state::read_prefs();
+        extra_args.extend(crate::agent_state::resolve_agent_acp_args(
+            &agent_prefs,
+            &agent_id,
+        ));
+
+        let spawned_handler = Arc::clone(&handler);
+        let ready = Agent::spawn(
+            agent_id.clone(),
+            route,
+            &runtime.workspace,
+            startup_session.clone(),
+            handler,
+            extra_args,
+            env_vars,
+        )
+        .await
+        .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
+
+        if runtime.thread.lock().await.status == ThreadStatus::Closed {
+            ready.agent.shutdown().await;
+            return Err(acp::Error::new(-32603, "workspace thread is closed"));
+        }
+        self.host = Some(AcpSessionRunner {
+            agent: Arc::clone(&ready.agent),
+            client_handler: spawned_handler,
+        });
+        self.publish_runtime_state();
+
+        if let Some(session_id) = ready.startup_session_id {
+            self.observe_session(
+                runtime,
+                &agent_id,
+                thread.host_binding.profile_id,
+                &session_id,
+            )
+            .await?;
+        } else if startup_session.session_id().is_some() {
+            self.session_id = None;
+            self.publish_runtime_state();
+        }
+        Ok(ready.agent)
+    }
+
+    async fn ensure_session(
+        &mut self,
+        runtime: &ThreadRuntime,
+        agent: &Arc<Agent>,
+    ) -> acp::Result<String> {
+        if let Some(session_id) = &self.session_id {
+            return Ok(session_id.clone());
+        }
+        let response = agent
+            .new_session(acp::NewSessionRequest::new(runtime.workspace.clone()))
+            .await?;
+        let session_id = response.session_id.to_string();
+        let host = runtime.thread.lock().await.host_binding.clone();
+        self.observe_session(runtime, &host.agent_id, host.profile_id, &session_id)
+            .await?;
+        Ok(session_id)
+    }
+
+    async fn observe_session(
+        &mut self,
+        runtime: &ThreadRuntime,
+        agent_id: &str,
+        profile_id: Option<String>,
+        session_id: &str,
+    ) -> acp::Result<()> {
+        if self.session_id.as_deref() == Some(session_id) {
+            return Ok(());
+        }
+        let binding = HostBinding::new(agent_id.to_string(), profile_id.clone());
+        if runtime
+            .thread
+            .lock()
+            .await
+            .has_agent_session(&binding, session_id)
+        {
+            self.session_id = Some(session_id.to_string());
+            self.publish_runtime_state();
+            return Ok(());
+        }
+        let thread_id = runtime.thread.lock().await.id.clone();
+        let event = ThreadEvent::agent_session_observed(
+            thread_id,
+            agent_id.to_string(),
+            profile_id,
+            session_id.to_string(),
+        );
+        append_thread_event(&runtime.store, &event).await?;
+        runtime.apply_thread_event(&event).await?;
+        self.session_id = Some(session_id.to_string());
+        self.publish_runtime_state();
+        runtime.notify_change();
+        Ok(())
     }
 
     fn set_state(&self, state: TurnState) {
@@ -138,6 +539,20 @@ impl ThreadOwner {
         if let Some(change_tx) = &self.change_tx {
             let _ = change_tx.send(());
         }
+    }
+
+    fn set_turn_state(&self, busy: bool, failed: Option<String>) {
+        let mut state = self.state_tx.borrow().clone();
+        state.busy = busy;
+        state.failed = failed;
+        self.set_state(state);
+    }
+
+    fn publish_runtime_state(&self) {
+        let mut state = self.state_tx.borrow().clone();
+        state.session_id = self.session_id.clone();
+        state.host_agent = self.host.as_ref().map(|host| Arc::clone(&host.agent));
+        self.set_state(state);
     }
 }
 
@@ -191,10 +606,7 @@ const SUBAGENT_RETRY_DELAY: Duration = Duration::from_millis(750);
 pub struct ThreadRuntime {
     thread: Mutex<WorkspaceThread>,
     workspace: PathBuf,
-    host: Mutex<Option<AcpSessionRunner>>,
-    spawn_lock: Mutex<()>,
     subagents: Mutex<BTreeMap<ThreadAgentId, SubagentRuntime>>,
-    session_id: Mutex<Option<String>>,
     active_turn_target: ActiveTurnTarget,
     owner_tx: mpsc::UnboundedSender<ThreadOwnerCommand>,
     turn_state: watch::Receiver<TurnState>,
@@ -216,22 +628,24 @@ impl ThreadRuntime {
     ) -> Self {
         let session_id = latest_session_for_host(&thread);
         let (owner_tx, owner_rx) = mpsc::unbounded_channel();
-        let (turn_state_tx, turn_state) = watch::channel(TurnState::default());
+        let (turn_state_tx, turn_state) = watch::channel(TurnState {
+            session_id: session_id.clone(),
+            ..TurnState::default()
+        });
         tokio::spawn(
             ThreadOwner {
                 command_rx: owner_rx,
                 state_tx: turn_state_tx,
                 change_tx: change_tx.clone(),
+                host: None,
+                session_id,
             }
             .run(),
         );
         Self {
             thread: Mutex::new(thread),
             workspace,
-            host: Mutex::new(None),
-            spawn_lock: Mutex::new(()),
             subagents: Mutex::new(BTreeMap::new()),
-            session_id: Mutex::new(session_id),
             active_turn_target: ActiveTurnTarget::default(),
             owner_tx,
             turn_state,
@@ -244,18 +658,16 @@ impl ThreadRuntime {
     pub async fn state(&self) -> ThreadRuntimeState {
         let thread = self.thread.lock().await.clone();
         let turn_state = self.turn_state.borrow().clone();
-        let initialize = self
-            .host
-            .lock()
-            .await
+        let initialize = turn_state
+            .host_agent
             .as_ref()
-            .filter(|host| host.is_live())
-            .map(|host| host.agent.initialize_response());
+            .filter(|agent| agent.is_live())
+            .map(|agent| agent.initialize_response());
         ThreadRuntimeState {
             thread_id: thread.id.clone(),
             workspace_id: thread.workspace_id.clone(),
             host_binding: thread.host_binding.clone(),
-            session_id: self.session_id.lock().await.clone(),
+            session_id: turn_state.session_id,
             workspace: self.workspace.clone(),
             busy: turn_state.busy,
             failed: turn_state.failed,
@@ -272,13 +684,21 @@ impl ThreadRuntime {
     /// Start the host agent and ensure a session exists, without sending a
     /// user prompt. This backs `/new` and route attachment warmup.
     pub async fn start(
-        &self,
+        self: &Arc<Self>,
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
     ) -> acp::Result<String> {
         self.mark_activity();
-        let agent = self.ensure_agent(route, handler).await?;
-        self.ensure_session(&agent).await
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::Start(Box::new(StartCommand {
+                runtime: Arc::clone(self),
+                route: route.clone(),
+                handler,
+                reply,
+            })))
+            .map_err(|_| runtime_stopped_error())?;
+        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
     }
 
     pub async fn prompt(
@@ -309,6 +729,7 @@ impl ThreadRuntime {
         handler: Arc<dyn AgentClientHandler>,
         cancellation: Option<PromptCancellation>,
     ) -> acp::Result<acp::PromptResponse> {
+        self.mark_activity();
         let (reply, done) = oneshot::channel();
         self.owner_tx
             .send(ThreadOwnerCommand::Prompt(Box::new(PromptCommand {
@@ -324,54 +745,7 @@ impl ThreadRuntime {
             .unwrap_or_else(|_| Err(acp::Error::new(-32603, "thread runtime stopped")))
     }
 
-    async fn run_prompt(
-        &self,
-        target: &ChannelTarget,
-        content_blocks: Vec<acp::ContentBlock>,
-        handler: Arc<dyn AgentClientHandler>,
-        mut route_cancellation: Option<PromptCancellation>,
-    ) -> acp::Result<acp::PromptResponse> {
-        let target_guard = self.active_turn_target.install(target.clone());
-        let mut cancellation = target_guard.cancellation();
-        self.mark_activity();
-        let fallback_finish_handler = Arc::clone(&handler);
-
-        let result = tokio::select! {
-            biased;
-            _ = wait_for_signal(&mut cancellation) => {
-                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
-            }
-            _ = wait_for_prompt_cancellation(&mut route_cancellation) => {
-                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
-            }
-            result = async {
-                self.maybe_record_first_prompt(&content_blocks).await?;
-                let agent = self.ensure_agent(&target.route, handler).await?;
-                let session_id = self.ensure_session(&agent).await?;
-                agent
-                    .prompt(acp::PromptRequest::new(session_id, content_blocks))
-                    .await
-            } => result,
-        };
-        let finish_handler = self
-            .host
-            .lock()
-            .await
-            .as_ref()
-            .map(|host| Arc::clone(&host.client_handler))
-            .unwrap_or(fallback_finish_handler);
-        if let Err(error) = finish_handler.prompt_finished(result.is_ok()).await {
-            let thread_id = self.thread.lock().await.id.clone();
-            tracing::warn!(
-                thread_id = %thread_id,
-                error = %error.message,
-                "host prompt_finished hook failed"
-            );
-        }
-        result
-    }
-
-    pub async fn cancel(&self) -> acp::Result<()> {
+    pub async fn cancel(self: &Arc<Self>) -> acp::Result<()> {
         self.mark_activity();
         self.active_turn_target.cancel_current();
         {
@@ -380,160 +754,79 @@ impl ThreadRuntime {
                 subagent.active_turn_target.cancel_current();
             }
         }
-        let agent = self
-            .host
-            .lock()
-            .await
-            .as_ref()
-            .filter(|host| host.is_live())
-            .map(|host| Arc::clone(&host.agent))
-            .ok_or_else(acp::Error::method_not_found)?;
-        let session_id = self
-            .session_id
-            .lock()
-            .await
-            .clone()
-            .ok_or_else(acp::Error::method_not_found)?;
-        agent.cancel(acp::CancelNotification::new(session_id)).await
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::Cancel(reply))
+            .map_err(|_| runtime_stopped_error())?;
+        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
     }
 
-    pub async fn close(&self, reason: Option<String>) -> acp::Result<()> {
+    pub async fn close(self: &Arc<Self>, reason: Option<String>) -> acp::Result<()> {
         self.mark_activity();
-        let _spawn_guard = self.spawn_lock.lock().await;
-        if let Some(session_id) = self.session_id.lock().await.clone() {
-            crate::previews::kill_by_session(&session_id);
-        }
-        let host = self.host.lock().await.take();
-        if let Some(host) = host {
-            host.shutdown().await;
-        }
-        for (_, subagent) in std::mem::take(&mut *self.subagents.lock().await) {
-            crate::previews::kill_by_session(&subagent.session_id);
-            subagent.agent.shutdown().await;
-        }
-        let thread_id = self.thread.lock().await.id.clone();
-        let event = ThreadEvent::closed(thread_id, reason);
-        append_thread_event(&self.store, &event).await?;
-        self.apply_thread_event(&event).await?;
-        *self.session_id.lock().await = None;
-        self.notify_change();
-        Ok(())
+        self.active_turn_target.cancel_current();
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::Close(Box::new(CloseCommand {
+                runtime: Arc::clone(self),
+                reason,
+                reply,
+            })))
+            .map_err(|_| runtime_stopped_error())?;
+        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
     }
 
-    pub async fn shutdown_host(&self) {
+    pub async fn shutdown_host(self: &Arc<Self>) {
         self.mark_activity();
-        let _spawn_guard = self.spawn_lock.lock().await;
-        self.shutdown_host_contents().await;
-    }
-
-    async fn shutdown_host_contents(&self) {
-        if let Some(session_id) = self.session_id.lock().await.clone() {
-            crate::previews::kill_by_session(&session_id);
+        self.active_turn_target.cancel_current();
+        let (reply, done) = oneshot::channel();
+        if self
+            .owner_tx
+            .send(ThreadOwnerCommand::ShutdownHost(RuntimeCommand {
+                runtime: Arc::clone(self),
+                reply,
+            }))
+            .is_ok()
+        {
+            let _ = done.await;
         }
-        let host = self.host.lock().await.take();
-        if let Some(host) = host {
-            host.shutdown().await;
-        }
-        for (_, subagent) in std::mem::take(&mut *self.subagents.lock().await) {
-            crate::previews::kill_by_session(&subagent.session_id);
-            subagent.agent.shutdown().await;
-        }
-        self.clear_failure();
-        self.notify_change();
     }
 
     pub fn idle_generation(&self) -> u64 {
         self.activity_generation.load(Ordering::Relaxed)
     }
 
-    pub async fn shutdown_host_if_idle(&self, generation: u64) -> bool {
-        if self.idle_generation() != generation {
+    pub async fn shutdown_host_if_idle(self: &Arc<Self>, generation: u64) -> bool {
+        let (reply, done) = oneshot::channel();
+        if self
+            .owner_tx
+            .send(ThreadOwnerCommand::ShutdownHostIfIdle {
+                runtime: Arc::clone(self),
+                generation,
+                reply,
+            })
+            .is_err()
+        {
             return false;
         }
-        if self.turn_state.borrow().busy {
-            return false;
-        }
-        if !self.subagents.lock().await.is_empty() {
-            return false;
-        }
-        if self.idle_generation() != generation {
-            return false;
-        }
-        let has_host = self.host.lock().await.is_some();
-        if !has_host {
-            return false;
-        }
-        if self.idle_generation() != generation {
-            return false;
-        }
-        let _spawn_guard = self.spawn_lock.lock().await;
-        if self.idle_generation() != generation {
-            return false;
-        }
-        if self.turn_state.borrow().busy {
-            return false;
-        }
-        if !self.subagents.lock().await.is_empty() {
-            return false;
-        }
-        let has_host = self.host.lock().await.is_some();
-        if !has_host {
-            return false;
-        }
-        self.shutdown_host_contents().await;
-        true
+        done.await.unwrap_or(false)
     }
 
     pub async fn switch_profile_preserving_session(
-        &self,
+        self: &Arc<Self>,
         host_binding: HostBinding,
     ) -> acp::Result<()> {
         self.mark_activity();
-        let _spawn_guard = self.spawn_lock.lock().await;
-        {
-            let thread = self.thread.lock().await;
-            if thread.host_binding.agent_id != host_binding.agent_id {
-                return Err(acp::Error::new(
-                    -32602,
-                    "profile switch cannot change agent",
-                ));
-            }
-            if thread.host_binding == host_binding {
-                return Ok(());
-            }
-        }
-
-        let preserved_session_id = self.session_id.lock().await.clone();
-        let host = self.host.lock().await.take();
-        if let Some(host) = host {
-            host.shutdown().await;
-        }
-        self.clear_failure();
-
-        let thread_id = self.thread.lock().await.id.clone();
-        let event = ThreadEvent::host_changed(thread_id.clone(), host_binding.clone());
-        append_thread_event(&self.store, &event).await?;
-        self.apply_thread_event(&event).await?;
-
-        if let Some(session_id) = preserved_session_id.clone() {
-            let needs_session_ref = {
-                let thread = self.thread.lock().await;
-                !thread.has_agent_session(&host_binding, &session_id)
-            };
-            if needs_session_ref {
-                let event = ThreadEvent::agent_session_observed(
-                    thread_id,
-                    host_binding.agent_id,
-                    host_binding.profile_id,
-                    session_id.clone(),
-                );
-                append_thread_event(&self.store, &event).await?;
-                self.apply_thread_event(&event).await?;
-            }
-            *self.session_id.lock().await = Some(session_id);
-        }
-        self.notify_change();
-        Ok(())
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::SwitchProfile(Box::new(
+                SwitchProfileCommand {
+                    runtime: Arc::clone(self),
+                    host_binding,
+                    reply,
+                },
+            )))
+            .map_err(|_| runtime_stopped_error())?;
+        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
     }
 
     pub async fn initialize_multi_agent_turn(
@@ -956,125 +1249,6 @@ impl ThreadRuntime {
         }
     }
 
-    async fn ensure_agent(
-        &self,
-        route: &RouteKey,
-        handler: Arc<dyn AgentClientHandler>,
-    ) -> acp::Result<Arc<Agent>> {
-        let _spawn_guard = self.spawn_lock.lock().await;
-        if let Some(host) = self.host.lock().await.as_ref() {
-            if host.is_live() {
-                return Ok(Arc::clone(&host.agent));
-            }
-        }
-        let stale = self.host.lock().await.take();
-        if let Some(stale) = stale {
-            let thread_id = self.thread.lock().await.id.clone();
-            tracing::info!(
-                thread_id = %thread_id,
-                agent_id = %stale.agent.id(),
-                "replacing stopped ACP host generation"
-            );
-            stale.shutdown().await;
-        }
-
-        let thread = self.thread.lock().await.clone();
-        if thread.status == ThreadStatus::Closed {
-            return Err(acp::Error::new(-32603, "workspace thread is closed"));
-        }
-
-        let agent_id = crate::resources::resolve_agent_id(&thread.host_binding.agent_id)
-            .map_err(|error| acp::Error::new(-32602, error))?;
-        let profile = thread
-            .host_binding
-            .profile_id
-            .clone()
-            .unwrap_or_else(|| "default".to_string());
-        let runtime_session_id = self.session_id.lock().await.clone();
-        let startup_session = host_startup_session(route, runtime_session_id, &thread);
-
-        std::fs::create_dir_all(&self.workspace).map_err(|error| {
-            acp::Error::new(
-                -32603,
-                format!("failed to create workspace {:?}: {}", self.workspace, error),
-            )
-        })?;
-
-        let mut env_vars = vec![
-            (
-                "VIBEAROUND_CHANNEL_KIND".to_string(),
-                route.channel_kind.clone(),
-            ),
-            ("VIBEAROUND_CHAT_ID".to_string(), route.chat_id.clone()),
-            ("VIBEAROUND_AGENT_KIND".to_string(), agent_id.clone()),
-            ("VIBEAROUND_THREAD_ID".to_string(), thread.id.to_string()),
-            (
-                "VIBEAROUND_WORKSPACE_ID".to_string(),
-                thread.workspace_id.to_string(),
-            ),
-        ];
-        let mut extra_args = Vec::new();
-        if crate::agent::launch::profile_uses_vibearound_credentials(&profile) {
-            let applied = crate::agent::launch::materialize_profile_for_agent(
-                &profile,
-                &agent_id,
-                &self.workspace,
-                route,
-            )
-            .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
-            env_vars.extend(applied.env);
-            extra_args.extend(applied.command_args);
-        }
-        crate::agent::launch::append_profile_id_env(
-            &mut env_vars,
-            thread.host_binding.profile_id.as_deref(),
-        );
-        let agent_prefs = crate::agent_state::read_prefs();
-        extra_args.extend(crate::agent_state::resolve_agent_acp_args(
-            &agent_prefs,
-            &agent_id,
-        ));
-
-        let spawned_handler = Arc::clone(&handler);
-        let ready = Agent::spawn(
-            agent_id.clone(),
-            route,
-            &self.workspace,
-            startup_session.clone(),
-            handler,
-            extra_args,
-            env_vars,
-        )
-        .await
-        .map_err(|error| {
-            let message = format!("{:#}", error);
-            acp::Error::new(-32603, message)
-        })?;
-
-        if self.thread.lock().await.status == ThreadStatus::Closed {
-            ready.agent.shutdown().await;
-            return Err(acp::Error::new(-32603, "workspace thread is closed"));
-        }
-
-        *self.host.lock().await = Some(AcpSessionRunner {
-            agent: Arc::clone(&ready.agent),
-            client_handler: spawned_handler,
-        });
-        self.clear_failure();
-        self.notify_change();
-
-        if let Some(session_id) = ready.startup_session_id {
-            self.observe_session(&agent_id, thread.host_binding.profile_id, &session_id)
-                .await?;
-        } else if startup_session.session_id().is_some() {
-            // The bridge falls back to a fresh agent when startup attachment fails.
-            // Clear the stale candidate so ensure_session creates a real one.
-            *self.session_id.lock().await = None;
-        }
-
-        Ok(ready.agent)
-    }
-
     async fn spawn_subagent(
         &self,
         route: &RouteKey,
@@ -1184,54 +1358,6 @@ impl ThreadRuntime {
         .await
         .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
         Ok(ready.agent)
-    }
-
-    async fn ensure_session(&self, agent: &Arc<Agent>) -> acp::Result<String> {
-        if let Some(session_id) = self.session_id.lock().await.clone() {
-            return Ok(session_id);
-        }
-
-        let response = agent
-            .new_session(acp::NewSessionRequest::new(self.workspace.clone()))
-            .await?;
-        let session_id = response.session_id.to_string();
-        let host = self.thread.lock().await.host_binding.clone();
-        self.observe_session(&host.agent_id, host.profile_id, &session_id)
-            .await?;
-        Ok(session_id)
-    }
-
-    async fn observe_session(
-        &self,
-        agent_id: &str,
-        profile_id: Option<String>,
-        session_id: &str,
-    ) -> acp::Result<()> {
-        if self.session_id.lock().await.as_deref() == Some(session_id) {
-            return Ok(());
-        }
-
-        let binding = HostBinding::new(agent_id.to_string(), profile_id.clone());
-        {
-            let thread = self.thread.lock().await;
-            if thread.has_agent_session(&binding, session_id) {
-                *self.session_id.lock().await = Some(session_id.to_string());
-                return Ok(());
-            }
-        }
-
-        let thread_id = self.thread.lock().await.id.clone();
-        let event = ThreadEvent::agent_session_observed(
-            thread_id,
-            agent_id.to_string(),
-            profile_id,
-            session_id.to_string(),
-        );
-        append_thread_event(&self.store, &event).await?;
-        self.apply_thread_event(&event).await?;
-        *self.session_id.lock().await = Some(session_id.to_string());
-        self.notify_change();
-        Ok(())
     }
 
     async fn set_thread_agent_status(
@@ -1406,12 +1532,6 @@ impl ThreadRuntime {
     fn mark_activity(&self) {
         self.activity_generation.fetch_add(1, Ordering::Relaxed);
     }
-
-    fn clear_failure(&self) {
-        if !self.turn_state.borrow().busy {
-            let _ = self.owner_tx.send(ThreadOwnerCommand::ClearFailure);
-        }
-    }
 }
 
 async fn wait_for_prompt_cancellation(cancellation: &mut Option<PromptCancellation>) {
@@ -1419,6 +1539,10 @@ async fn wait_for_prompt_cancellation(cancellation: &mut Option<PromptCancellati
         Some(cancellation) => cancellation.cancelled().await,
         None => std::future::pending().await,
     }
+}
+
+fn runtime_stopped_error() -> acp::Error {
+    acp::Error::new(-32603, "thread runtime stopped")
 }
 
 fn latest_session_for_host(thread: &WorkspaceThread) -> Option<String> {
@@ -1698,11 +1822,11 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_initial_state_uses_latest_host_session() {
-        let runtime = ThreadRuntime::new(
+        let runtime = Arc::new(ThreadRuntime::new(
             thread_with_sessions(),
             PathBuf::from("/tmp/project"),
             ThreadEventStore::new("/tmp/unused.jsonl"),
-        );
+        ));
 
         let state = runtime.state().await;
 
@@ -1739,11 +1863,11 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_signals_active_turn_before_agent_lookup() {
-        let runtime = ThreadRuntime::new(
+        let runtime = Arc::new(ThreadRuntime::new(
             thread_with_sessions(),
             PathBuf::from("/tmp/project"),
             ThreadEventStore::new("/tmp/unused.jsonl"),
-        );
+        ));
         let _target_guard = runtime
             .active_turn_target
             .install(ChannelTarget::for_route(RouteKey::new("web", "chat-1")));
@@ -1840,11 +1964,11 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_file(&path);
-        let runtime = ThreadRuntime::new(
+        let runtime = Arc::new(ThreadRuntime::new(
             thread_with_sessions(),
             PathBuf::from("/tmp/project"),
             ThreadEventStore::new(&path),
-        );
+        ));
 
         runtime
             .switch_profile_preserving_session(HostBinding::new(
