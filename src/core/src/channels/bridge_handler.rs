@@ -13,7 +13,7 @@
 use std::sync::{Arc, Weak};
 
 use agent_client_protocol::schema::v1 as acp;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::AgentClientHandler;
 use crate::routing::{channel_traits, ActiveTurnTarget, ChannelTarget, RouteKey};
@@ -38,7 +38,7 @@ pub(crate) struct ChannelBridgeHandler {
     thread_id: WorkspaceThreadId,
     host_binding: HostBinding,
     active_turn_target: ActiveTurnTarget,
-    host_protocol: Mutex<HostProtocolState>,
+    host_protocol: HostProtocolOwner,
 }
 
 impl ChannelBridgeHandler {
@@ -57,7 +57,7 @@ impl ChannelBridgeHandler {
             thread_id,
             host_binding,
             active_turn_target,
-            host_protocol: Mutex::new(HostProtocolState::default()),
+            host_protocol: HostProtocolOwner::new(),
         }
     }
 
@@ -105,11 +105,10 @@ impl ChannelBridgeHandler {
         let Some(text) = session_update_text(&args.update) else {
             return notification_payload(args).map(Some);
         };
-        let visible = {
-            let mut state = self.host_protocol.lock().await;
-            state.last_session_id = Some(args.session_id.to_string());
-            state.filter.feed_text(text)
-        };
+        let visible = self
+            .host_protocol
+            .feed(args.session_id.to_string(), text.to_string())
+            .await;
         if visible.is_empty() {
             return Ok(None);
         }
@@ -117,12 +116,7 @@ impl ChannelBridgeHandler {
     }
 
     async fn finish_host_protocol(&self, success: bool) {
-        let (session_id, finished) = {
-            let mut state = self.host_protocol.lock().await;
-            let session_id = state.last_session_id.clone();
-            let finished = state.filter.finish();
-            (session_id, finished)
-        };
+        let (session_id, finished) = self.host_protocol.finish().await;
 
         if let Some(session_id) = session_id.as_deref() {
             self.send_host_visible_text_chunk(session_id, &finished.visible_tail)
@@ -412,6 +406,64 @@ struct HostProtocolState {
     last_session_id: Option<String>,
 }
 
+struct HostProtocolOwner {
+    command_tx: mpsc::UnboundedSender<HostProtocolCommand>,
+}
+
+enum HostProtocolCommand {
+    Feed {
+        session_id: String,
+        text: String,
+        reply: oneshot::Sender<String>,
+    },
+    Finish(oneshot::Sender<(Option<String>, super::agent_protocol::AgentProtocolFinish)>),
+}
+
+impl HostProtocolOwner {
+    fn new() -> Self {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut state = HostProtocolState::default();
+            while let Some(command) = command_rx.recv().await {
+                match command {
+                    HostProtocolCommand::Feed {
+                        session_id,
+                        text,
+                        reply,
+                    } => {
+                        state.last_session_id = Some(session_id);
+                        let _ = reply.send(state.filter.feed_text(&text));
+                    }
+                    HostProtocolCommand::Finish(reply) => {
+                        let _ = reply.send((state.last_session_id.clone(), state.filter.finish()));
+                    }
+                }
+            }
+        });
+        Self { command_tx }
+    }
+
+    async fn feed(&self, session_id: String, text: String) -> String {
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(HostProtocolCommand::Feed {
+                session_id,
+                text,
+                reply,
+            })
+            .expect("host protocol owner must outlive its handler");
+        result.await.expect("host protocol owner must reply")
+    }
+
+    async fn finish(&self) -> (Option<String>, super::agent_protocol::AgentProtocolFinish) {
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(HostProtocolCommand::Finish(reply))
+            .expect("host protocol owner must outlive its handler");
+        result.await.expect("host protocol owner must reply")
+    }
+}
+
 struct HostAssignment {
     to_agent_id: ThreadAgentId,
     payload: serde_json::Value,
@@ -478,7 +530,7 @@ mod tests {
             thread_id: WorkspaceThreadId::from("thread-1"),
             host_binding: HostBinding::new("codex", None),
             active_turn_target,
-            host_protocol: Mutex::new(HostProtocolState::default()),
+            host_protocol: HostProtocolOwner::new(),
         }
     }
 
