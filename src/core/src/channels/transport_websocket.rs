@@ -51,7 +51,6 @@ struct WebChannelState {
     route_history: HashMap<String, Vec<ChannelOutput>>,
     route_pending_permissions: HashMap<String, HashMap<String, ChannelOutput>>,
     route_pending_user_messages: HashMap<String, Vec<PendingUserMessage>>,
-    permission_routes: HashMap<String, String>,
     route_activity: HashMap<String, RouteActivity>,
 }
 
@@ -358,14 +357,16 @@ impl WebChannelState {
     }
 
     pub fn clear_pending_permission(&mut self, request_id: &str) {
-        let Some(route_chat_id) = self.permission_routes.remove(request_id) else {
-            return;
-        };
-        let Some(route_pending) = self.route_pending_permissions.get_mut(&route_chat_id) else {
-            return;
-        };
-        route_pending.remove(request_id);
-        if route_pending.is_empty() {
+        let mut empty_route = None;
+        for (route_chat_id, pending) in &mut self.route_pending_permissions {
+            if pending.remove(request_id).is_some() {
+                if pending.is_empty() {
+                    empty_route = Some(route_chat_id.clone());
+                }
+                break;
+            }
+        }
+        if let Some(route_chat_id) = empty_route {
             self.route_pending_permissions.remove(&route_chat_id);
         }
     }
@@ -480,8 +481,6 @@ impl WebChannelState {
         request_id: &str,
         output: &ChannelOutput,
     ) {
-        self.permission_routes
-            .insert(request_id.to_string(), route_chat_id.to_string());
         self.route_pending_permissions
             .entry(route_chat_id.to_string())
             .or_default()
@@ -489,15 +488,7 @@ impl WebChannelState {
     }
 
     fn clear_route_pending_permissions(&mut self, route_chat_id: &str) {
-        let request_ids = {
-            let Some(pending) = self.route_pending_permissions.remove(route_chat_id) else {
-                return;
-            };
-            pending.keys().cloned().collect::<Vec<_>>()
-        };
-        for request_id in request_ids {
-            self.permission_routes.remove(&request_id);
-        }
+        self.route_pending_permissions.remove(route_chat_id);
     }
 
     fn clear_route_pending_user_messages(&mut self, route_chat_id: &str) {
@@ -728,6 +719,30 @@ mod tests {
             ChannelOutput::SessionReady { .. }
         ));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn cleared_permission_is_not_replayed() {
+        let manager = WebChannelManager::new();
+        let route = RouteKey::new("web", "chat-1");
+        manager
+            .dispatch_output(ChannelOutput::PermissionRequest {
+                route: route.clone(),
+                reply_to: None,
+                request_id: "permission-1".to_string(),
+                payload: serde_json::json!({}),
+            })
+            .await;
+        manager.clear_pending_permission("permission-1").await;
+
+        let (tx, mut replay_rx) = manager.sender();
+        manager
+            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .await;
+
+        while let Ok(output) = replay_rx.try_recv() {
+            assert!(!matches!(output, ChannelOutput::PermissionRequest { .. }));
+        }
     }
 
     #[tokio::test]
