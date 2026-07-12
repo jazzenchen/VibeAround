@@ -9,11 +9,17 @@
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use agent_client_protocol as acp;
 use futures::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
 use futures::{Sink, Stream};
 use tokio::sync::oneshot;
+
+/// Local stdio writes should complete immediately. If the child keeps
+/// producing heartbeats but stops reading stdin, bound the SDK's unbounded
+/// outgoing queue by failing the bridge once the OS pipe remains full.
+const STDIO_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) fn notifying_stdio_transport<OB, IB>(
     outgoing: OB,
@@ -33,11 +39,7 @@ where
 
     let outgoing_sink =
         futures::sink::unfold(Box::pin(outgoing), async move |mut writer, line: String| {
-            use futures::AsyncWriteExt;
-
-            let mut bytes = line.into_bytes();
-            bytes.push(b'\n');
-            writer.write_all(&bytes).await?;
+            write_line_with_timeout(&mut writer, line, STDIO_WRITE_TIMEOUT).await?;
             Ok::<_, io::Error>(writer)
         });
 
@@ -48,6 +50,23 @@ where
     };
 
     (acp::Lines::new(outgoing_sink, incoming_lines), closed_rx)
+}
+
+async fn write_line_with_timeout<W>(
+    writer: &mut W,
+    line: String,
+    timeout: Duration,
+) -> io::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    use futures::AsyncWriteExt;
+
+    let mut bytes = line.into_bytes();
+    bytes.push(b'\n');
+    tokio::time::timeout(timeout, writer.write_all(&bytes))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ACP stdio write timed out"))?
 }
 
 struct NotifyOnEnd<S> {
@@ -74,5 +93,41 @@ where
             }
             other => other,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct StalledWriter;
+
+    impl AsyncWrite for StalledWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            _buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Pending
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn stalled_stdio_write_times_out() {
+        let mut writer = StalledWriter;
+        let error =
+            write_line_with_timeout(&mut writer, "{}".to_string(), Duration::from_millis(10))
+                .await
+                .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 }
