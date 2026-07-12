@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::VecDeque;
 
 #[derive(Clone, Default)]
 pub(super) struct TurnState {
@@ -53,14 +54,23 @@ pub(super) enum ThreadOwnerCommand {
         reply: oneshot::Sender<bool>,
     },
     SwitchProfile(Box<SwitchProfileCommand>),
+    PromptFinished {
+        result: Box<acp::Result<acp::PromptResponse>>,
+        reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
+    },
     #[cfg(test)]
     Probe {
         started: oneshot::Sender<()>,
         release: oneshot::Receiver<()>,
     },
+    #[cfg(test)]
+    ProbeFinished,
+    #[cfg(test)]
+    Ping(oneshot::Sender<()>),
 }
 
 pub(super) struct ThreadOwner {
+    pub(super) command_tx: mpsc::UnboundedSender<ThreadOwnerCommand>,
     pub(super) command_rx: mpsc::UnboundedReceiver<ThreadOwnerCommand>,
     pub(super) state_tx: watch::Sender<TurnState>,
     pub(super) change_tx: Option<broadcast::Sender<()>>,
@@ -89,26 +99,37 @@ impl PromptCancellation {
 
 impl ThreadOwner {
     pub(super) async fn run(mut self) {
-        while let Some(command) = self.command_rx.recv().await {
+        let mut prompt_active = false;
+        let mut deferred = VecDeque::new();
+        loop {
+            let deferred_command = if prompt_active {
+                None
+            } else {
+                deferred.pop_front()
+            };
+            let command = match deferred_command {
+                Some(command) => command,
+                None => match self.command_rx.recv().await {
+                    Some(command) => command,
+                    None => break,
+                },
+            };
+            if prompt_active
+                && matches!(
+                    command,
+                    ThreadOwnerCommand::Prompt(_)
+                        | ThreadOwnerCommand::Start(_)
+                        | ThreadOwnerCommand::ShutdownHostIfIdle { .. }
+                        | ThreadOwnerCommand::SwitchProfile(_)
+                )
+            {
+                deferred.push_back(command);
+                continue;
+            }
             match command {
                 ThreadOwnerCommand::Prompt(command) => {
                     self.set_turn_state(true, None);
-                    let PromptCommand {
-                        runtime,
-                        target,
-                        content_blocks,
-                        handler,
-                        cancellation,
-                        reply,
-                    } = *command;
-                    let result = self
-                        .run_prompt(&runtime, &target, content_blocks, handler, cancellation)
-                        .await;
-                    self.set_turn_state(
-                        false,
-                        result.as_ref().err().map(|error| error.message.to_string()),
-                    );
-                    let _ = reply.send(result);
+                    prompt_active = self.begin_prompt(*command).await;
                 }
                 ThreadOwnerCommand::Start(command) => {
                     let StartCommand {
@@ -154,52 +175,117 @@ impl ThreadOwner {
                     let result = self.switch_profile(&runtime, host_binding).await;
                     let _ = reply.send(result);
                 }
+                ThreadOwnerCommand::PromptFinished { result, reply } => {
+                    let result = *result;
+                    prompt_active = false;
+                    self.set_turn_state(
+                        false,
+                        result.as_ref().err().map(|error| error.message.to_string()),
+                    );
+                    let _ = reply.send(result);
+                }
                 #[cfg(test)]
                 ThreadOwnerCommand::Probe { started, release } => {
                     self.set_turn_state(true, None);
                     let _ = started.send(());
-                    let _ = release.await;
+                    let command_tx = self.command_tx.clone();
+                    tokio::spawn(async move {
+                        let _ = release.await;
+                        let _ = command_tx.send(ThreadOwnerCommand::ProbeFinished);
+                    });
+                }
+                #[cfg(test)]
+                ThreadOwnerCommand::ProbeFinished => {
                     self.set_turn_state(false, None);
+                }
+                #[cfg(test)]
+                ThreadOwnerCommand::Ping(reply) => {
+                    let _ = reply.send(());
                 }
             }
         }
     }
 
-    async fn run_prompt(
-        &mut self,
-        runtime: &ThreadRuntime,
-        target: &ChannelTarget,
-        content_blocks: Vec<acp::ContentBlock>,
-        handler: Arc<dyn AgentClientHandler>,
-        mut route_cancellation: Option<PromptCancellation>,
-    ) -> acp::Result<acp::PromptResponse> {
+    async fn begin_prompt(&mut self, command: PromptCommand) -> bool {
+        let PromptCommand {
+            runtime,
+            target,
+            content_blocks,
+            handler,
+            mut cancellation,
+            reply,
+        } = command;
         let target_guard = runtime.active_turn_target.install(target.clone());
-        let mut cancellation = target_guard.cancellation();
-        let fallback_finish_handler = Arc::clone(&handler);
-
-        let result = tokio::select! {
+        let mut turn_cancellation = target_guard.cancellation();
+        let setup = async {
+            runtime.maybe_record_first_prompt(&content_blocks).await?;
+            let agent = self
+                .ensure_agent(&runtime, &target.route, Arc::clone(&handler))
+                .await?;
+            let session_id = self.ensure_session(&runtime, &agent).await?;
+            Ok::<_, acp::Error>((agent, session_id))
+        };
+        let setup_result = tokio::select! {
             biased;
-            _ = wait_for_signal(&mut cancellation) => {
-                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+            _ = wait_for_signal(&mut turn_cancellation) => None,
+            _ = wait_for_prompt_cancellation(&mut cancellation) => None,
+            result = setup => Some(result),
+        };
+        let Some(setup_result) = setup_result else {
+            let result = Ok(acp::PromptResponse::new(acp::StopReason::Cancelled));
+            self.finish_prompt_inline(&runtime, handler, result, reply)
+                .await;
+            return false;
+        };
+        let (agent, session_id) = match setup_result {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.finish_prompt_inline(&runtime, handler, Err(error), reply)
+                    .await;
+                return false;
             }
-            _ = wait_for_prompt_cancellation(&mut route_cancellation) => {
-                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
-            }
-            result = async {
-                runtime.maybe_record_first_prompt(&content_blocks).await?;
-                let agent = self.ensure_agent(runtime, &target.route, handler).await?;
-                let session_id = self.ensure_session(runtime, &agent).await?;
-                agent
-                    .prompt(acp::PromptRequest::new(session_id, content_blocks))
-                    .await
-            } => result,
         };
         let finish_handler = self
             .host
             .as_ref()
             .map(|host| Arc::clone(&host.client_handler))
-            .unwrap_or(fallback_finish_handler);
-        if let Err(error) = finish_handler.prompt_finished(result.is_ok()).await {
+            .unwrap_or(handler);
+        let command_tx = self.command_tx.clone();
+        let thread_id = runtime.thread.lock().await.id.clone();
+        tokio::spawn(async move {
+            let result = tokio::select! {
+                biased;
+                _ = wait_for_signal(&mut turn_cancellation) => {
+                    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                }
+                _ = wait_for_prompt_cancellation(&mut cancellation) => {
+                    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                }
+                result = agent.prompt(acp::PromptRequest::new(session_id, content_blocks)) => result,
+            };
+            if let Err(error) = finish_handler.prompt_finished(result.is_ok()).await {
+                tracing::warn!(
+                    thread_id = %thread_id,
+                    error = %error.message,
+                    "host prompt_finished hook failed"
+                );
+            }
+            let _ = command_tx.send(ThreadOwnerCommand::PromptFinished {
+                result: Box::new(result),
+                reply,
+            });
+        });
+        true
+    }
+
+    async fn finish_prompt_inline(
+        &self,
+        runtime: &ThreadRuntime,
+        handler: Arc<dyn AgentClientHandler>,
+        result: acp::Result<acp::PromptResponse>,
+        reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
+    ) {
+        if let Err(error) = handler.prompt_finished(result.is_ok()).await {
             let thread_id = runtime.thread.lock().await.id.clone();
             tracing::warn!(
                 thread_id = %thread_id,
@@ -207,7 +293,11 @@ impl ThreadOwner {
                 "host prompt_finished hook failed"
             );
         }
-        result
+        self.set_turn_state(
+            false,
+            result.as_ref().err().map(|error| error.message.to_string()),
+        );
+        let _ = reply.send(result);
     }
 
     async fn start(

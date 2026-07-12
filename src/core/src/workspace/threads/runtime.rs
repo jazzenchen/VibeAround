@@ -126,6 +126,7 @@ impl ThreadRuntime {
         });
         tokio::spawn(
             ThreadOwner {
+                command_tx: owner_tx.clone(),
                 command_rx: owner_rx,
                 state_tx: turn_state_tx,
                 change_tx: change_tx.clone(),
@@ -650,6 +651,15 @@ mod tests {
 
         started_rx.await.expect("prompt scope started");
         assert!(runtime.state().await.busy);
+
+        let (ping_tx, ping_rx) = oneshot::channel();
+        runtime
+            .owner_tx
+            .send(ThreadOwnerCommand::Ping(ping_tx))
+            .unwrap();
+        ping_rx
+            .await
+            .expect("owner should consume events while a turn is active");
 
         let mut turn_state = runtime.turn_state.clone();
         assert!(turn_state.borrow_and_update().busy);
