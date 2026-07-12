@@ -1,8 +1,6 @@
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use parking_lot::RwLock;
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::sync::watch;
 
@@ -253,29 +251,52 @@ impl ChannelTarget {
 
 /// Shared, cancellation-safe pointer to the target of the currently running
 /// turn on one workspace thread.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ActiveTurnTarget {
     state: Arc<ActiveTurnTargetState>,
 }
 
-#[derive(Default)]
 struct ActiveTurnTargetState {
-    next_generation: AtomicU64,
-    current: RwLock<Option<(u64, ChannelTarget, watch::Sender<bool>)>>,
+    current: watch::Sender<Option<ActiveTurn>>,
+}
+
+#[derive(Clone)]
+struct ActiveTurn {
+    token: Arc<()>,
+    target: ChannelTarget,
+    cancel_tx: watch::Sender<bool>,
+}
+
+impl Default for ActiveTurnTarget {
+    fn default() -> Self {
+        let (current, _) = watch::channel(None);
+        Self {
+            state: Arc::new(ActiveTurnTargetState { current }),
+        }
+    }
 }
 
 impl ActiveTurnTarget {
     pub fn install(&self, target: ChannelTarget) -> ActiveTurnTargetGuard {
-        let generation = self.state.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
         let (cancel_tx, _) = watch::channel(false);
-        let mut current = self.state.current.write();
-        if let Some((_, _, previous_cancel_tx)) = current.take() {
-            previous_cancel_tx.send_replace(true);
+        let previous_cancel = self
+            .state
+            .current
+            .borrow()
+            .as_ref()
+            .map(|previous| previous.cancel_tx.clone());
+        if let Some(previous_cancel) = previous_cancel {
+            previous_cancel.send_replace(true);
         }
-        *current = Some((generation, target, cancel_tx.clone()));
+        let token = Arc::new(());
+        self.state.current.send_replace(Some(ActiveTurn {
+            token: Arc::clone(&token),
+            target,
+            cancel_tx: cancel_tx.clone(),
+        }));
         ActiveTurnTargetGuard {
             owner: self.clone(),
-            generation,
+            token,
             cancel_tx,
         }
     }
@@ -283,9 +304,9 @@ impl ActiveTurnTarget {
     pub fn current(&self) -> Option<ChannelTarget> {
         self.state
             .current
-            .read()
+            .borrow()
             .as_ref()
-            .map(|(_, target, _)| target.clone())
+            .map(|current| current.target.clone())
     }
 
     pub(crate) fn current_with_cancellation(
@@ -293,21 +314,21 @@ impl ActiveTurnTarget {
     ) -> Option<(ChannelTarget, watch::Receiver<bool>)> {
         self.state
             .current
-            .read()
+            .borrow()
             .as_ref()
-            .map(|(_, target, cancel_tx)| (target.clone(), cancel_tx.subscribe()))
+            .map(|current| (current.target.clone(), current.cancel_tx.subscribe()))
     }
 
     pub(crate) fn cancel_current(&self) {
-        if let Some((_, _, cancel_tx)) = self.state.current.read().as_ref() {
-            cancel_tx.send_replace(true);
+        if let Some(current) = self.state.current.borrow().as_ref() {
+            current.cancel_tx.send_replace(true);
         }
     }
 }
 
 pub struct ActiveTurnTargetGuard {
     owner: ActiveTurnTarget,
-    generation: u64,
+    token: Arc<()>,
     cancel_tx: watch::Sender<bool>,
 }
 
@@ -328,13 +349,17 @@ pub(crate) async fn wait_for_signal(signal: &mut watch::Receiver<bool>) {
 impl Drop for ActiveTurnTargetGuard {
     fn drop(&mut self) {
         self.cancel_tx.send_replace(true);
-        let mut current = self.owner.state.current.write();
-        if current
-            .as_ref()
-            .is_some_and(|(generation, _, _)| *generation == self.generation)
-        {
-            *current = None;
-        }
+        self.owner.state.current.send_if_modified(|current| {
+            if current
+                .as_ref()
+                .is_some_and(|active| Arc::ptr_eq(&active.token, &self.token))
+            {
+                *current = None;
+                true
+            } else {
+                false
+            }
+        });
     }
 }
 
