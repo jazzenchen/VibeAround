@@ -34,15 +34,18 @@ impl TreeKillableChild {
 }
 
 #[cfg(unix)]
-fn prepare_tree_root(command: &mut Command) {
+pub(crate) fn prepare_tree_root(command: &mut Command) {
     command.process_group(0);
 }
 
 #[cfg(not(unix))]
-fn prepare_tree_root(_command: &mut Command) {}
+pub(crate) fn prepare_tree_root(_command: &mut Command) {}
 
 #[cfg(unix)]
-async fn terminate_child_tree(child: &mut Child, root_pid: Option<u32>) -> io::Result<()> {
+pub(crate) async fn terminate_child_tree(
+    child: &mut Child,
+    root_pid: Option<u32>,
+) -> io::Result<()> {
     let Some(root_pid) = root_pid else {
         child.start_kill()?;
         let _ = child.wait().await;
@@ -50,21 +53,25 @@ async fn terminate_child_tree(child: &mut Child, root_pid: Option<u32>) -> io::R
     };
 
     let term_result = signal_process_group(root_pid, libc::SIGTERM);
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-
-    if child.try_wait()?.is_none() {
-        let kill_result = signal_process_group(root_pid, libc::SIGKILL);
-        let _ = child.wait().await;
-        kill_result.or(term_result)?;
-    } else {
-        term_result?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(400);
+    while child.try_wait()?.is_none() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 
-    Ok(())
+    // Signal the whole group even if the root has already exited: helpers can
+    // remain alive in the same process group after their parent is reaped.
+    let kill_result = signal_process_group(root_pid, libc::SIGKILL);
+    if child.try_wait()?.is_none() {
+        let _ = child.wait().await;
+    }
+    kill_result.or(term_result)
 }
 
 #[cfg(windows)]
-async fn terminate_child_tree(child: &mut Child, root_pid: Option<u32>) -> io::Result<()> {
+pub(crate) async fn terminate_child_tree(
+    child: &mut Child,
+    root_pid: Option<u32>,
+) -> io::Result<()> {
     if let Some(root_pid) = root_pid {
         let pid = root_pid.to_string();
         let _ = Command::new("taskkill")
@@ -83,7 +90,10 @@ async fn terminate_child_tree(child: &mut Child, root_pid: Option<u32>) -> io::R
 }
 
 #[cfg(not(any(unix, windows)))]
-async fn terminate_child_tree(child: &mut Child, _root_pid: Option<u32>) -> io::Result<()> {
+pub(crate) async fn terminate_child_tree(
+    child: &mut Child,
+    _root_pid: Option<u32>,
+) -> io::Result<()> {
     child.start_kill()?;
     let _ = child.wait().await;
     Ok(())

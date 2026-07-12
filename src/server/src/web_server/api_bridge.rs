@@ -889,9 +889,7 @@ async fn build_upstream_request(
 ) -> Result<reqwest::RequestBuilder, Response> {
     let bridge_headers = bridge_preference
         .map(|preference| render_bridge_headers(&preference.headers, &upstream.profile));
-    let bridge_managed_auth = bridge_headers
-        .as_ref()
-        .is_some_and(|headers| has_auth_header(headers));
+    let bridge_managed_auth = bridge_headers.as_ref().is_some_and(has_auth_header);
     let upstream_headers = match merged_upstream_headers(&upstream.headers, bridge_headers.as_ref())
     {
         Ok(headers) => headers,

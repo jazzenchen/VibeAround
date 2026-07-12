@@ -87,7 +87,7 @@ Kind id 和仓库链接也在[支持矩阵](../product/supported-matrix.md#im-�
 
 ---
 
-*Source anchors: `src/core/src/config.rs` (channel_names, channel raw config, RemoteConfig), `src/core/src/plugins/` (plugin directories), `src/core/src/channels/` (sync, supervision, outbox), `src/cli/src/args.rs` (channel commands).*
+*Source anchors: `src/core/src/config.rs` (channel_names, channel raw config, RemoteConfig), `src/core/src/plugins/` (plugin directories), `src/core/src/channels/` (sync, supervision, live runtime routing), `src/cli/src/args.rs` (channel commands).*
 *Last verified: v0.7.11*
 
 <sub>[◀ IM 使用](im-usage.md) · [文档索引](../README.md) · [模型 Profile 指南 ▶](model-profiles.md)</sub>

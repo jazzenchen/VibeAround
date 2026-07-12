@@ -751,8 +751,7 @@ async fn notify_presentation_multi_agent_turn(
                 route,
                 turn: turn.clone(),
                 agents: agents.to_vec(),
-            })
-            .await;
+            });
     }
 }
 
@@ -788,6 +787,7 @@ async fn start_initialized_subagents(
 
     let mut errors = Vec::new();
     for agent in agents {
+        let active_turn_target = common::routing::ActiveTurnTarget::default();
         let tracker =
             Arc::new(common::channels::subagent_handler::SubagentReportTracker::new(agent.clone()));
         let handler = Arc::new(
@@ -796,6 +796,7 @@ async fn start_initialized_subagents(
                 &manager,
                 thread_id.clone(),
                 agent.clone(),
+                active_turn_target.clone(),
                 Arc::clone(&tracker),
             ),
         );
@@ -803,9 +804,10 @@ async fn start_initialized_subagents(
             tracker;
         if let Err(error) = runtime
             .start_subagent_assignment(
-                &launch_route,
+                common::routing::ChannelTarget::for_route(launch_route.clone()),
                 agent.clone(),
                 handler,
+                active_turn_target,
                 status_tx.clone(),
                 Some(validator),
             )
@@ -828,8 +830,7 @@ async fn notify_presentation_subagent_status(
             .send_output(common::channels::ChannelOutput::SubagentStatus {
                 route,
                 agent: agent.clone(),
-            })
-            .await;
+            });
     }
 }
 

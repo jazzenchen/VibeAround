@@ -87,7 +87,7 @@ Plugins are supervised: crash means respawn after a short delay, and a plugin th
 
 ---
 
-*Source anchors: `src/core/src/config.rs` (channel_names, channel raw config, RemoteConfig), `src/core/src/plugins/` (plugin directories), `src/core/src/channels/` (sync, supervision, outbox), `src/cli/src/args.rs` (channel commands).*
+*Source anchors: `src/core/src/config.rs` (channel_names, channel raw config, RemoteConfig), `src/core/src/plugins/` (plugin directories), `src/core/src/channels/` (sync, supervision, live runtime routing), `src/cli/src/args.rs` (channel commands).*
 *Last verified: v0.7.11*
 
 <sub>[◀ IM usage](im-usage.md) · [Documentation index](../README.md) · [Model profiles guide ▶](model-profiles.md)</sub>

@@ -12,7 +12,7 @@ export type { ChannelRuntime };
  * Channels tab in the desktop dashboard. Subscribes to `/ws/channels`
  * for live updates and falls back to `/api/channels` polling on
  * disconnect. Exposes the stop/start/restart actions backed by the
- * `/api/channels/:kind/:action` endpoints.
+ * `/api/channels/:instance_id/:action` endpoints.
  */
 export function useChannelsState() {
   const base = useManagerState(
@@ -22,16 +22,16 @@ export function useChannelsState() {
   );
 
   const action = useCallback(
-    async (kind: string, verb: "start" | "stop" | "restart") => {
+    async (instanceId: string, verb: "start" | "stop" | "restart") => {
       try {
         const res = await apiFetch(
-          `/api/channels/${encodeURIComponent(kind)}/${verb}`,
+          `/api/channels/${encodeURIComponent(instanceId)}/${verb}`,
           { method: "POST" },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         if (!base.connected) await base.refresh();
       } catch (e) {
-        console.warn(`[useChannelsState] ${verb} ${kind} failed:`, e);
+        console.warn(`[useChannelsState] ${verb} ${instanceId} failed:`, e);
       }
     },
     [base],
@@ -44,8 +44,8 @@ export function useChannelsState() {
     connected: base.connected,
     everLoaded: base.everLoaded,
     refresh: base.refresh,
-    start: (kind: string) => action(kind, "start"),
-    stop: (kind: string) => action(kind, "stop"),
-    restart: (kind: string) => action(kind, "restart"),
+    start: (instanceId: string) => action(instanceId, "start"),
+    stop: (instanceId: string) => action(instanceId, "stop"),
+    restart: (instanceId: string) => action(instanceId, "restart"),
   };
 }

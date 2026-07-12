@@ -35,13 +35,12 @@ Define the profile schema, ship the provider catalog, persist user profiles, and
 
 ## Known debt
 
-- The `127.0.0.1:{port}/va/local-api/…` URL shape is duplicated knowledge with server's route table — remediation M7 plans a shared constant + cross-layer test.
 - Upstream auth is static API key per profile; subscription/OAuth upstreams beyond the Gemini adapter need new adapters (known limitation, noted in the api-bridge memory).
 - `bridge_launch.rs` is 1.3k lines of per-target rendering — candidate for per-target submodules when the next target lands.
 
 ---
 
 *Source anchors: `src/core/src/profiles/` (schema, catalog, connections/, render, bridge_launch, runtime, google_oauth, headers), `src/resources/profile-catalog/`.*
-*Last verified: v0.7.11*
+*Last verified: system review 2026-07-11.*
 
 <sub>[◀ Module: agent](agent.md) · [Documentation index](../../README.md) · [Module: pty ▶](pty.md)</sub>

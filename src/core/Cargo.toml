@@ -1,6 +1,6 @@
 [package]
 name = "common"
-version = "0.7.13"
+version = "0.7.14"
 description = "VibeAround shared logic: PTY, session registry, tunnel, headless CLI, IM (Telegram)"
 edition = "2021"
 rust-version = "1.82"
@@ -44,3 +44,6 @@ zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 xz2 = { version = "0.1", features = ["static"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"

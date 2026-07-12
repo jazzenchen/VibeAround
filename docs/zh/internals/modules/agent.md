@@ -31,6 +31,7 @@
 2. **Startup-session fallback 要清掉 stale id**：如果 resume 失败且 bridge fallback 到 fresh agent，记录的 candidate session id 必须清掉，后续才会创建真实 session，否则 prompt 会指向死 session。
 3. **Config injection 幂等且可逆**：MCP/skill 写入带 VibeAround-managed 标记，daemon down 时 launch-time cleanup 能移除。
 4. **Registry-driven identity**：新增 agent 应是 `agents.json` 变更（adapter package、pty command、config paths），不是新 match arms。尽量保持这一点。
+5. `Agent::shutdown` 返回前，supervisor 必须已经 reap child，并 join 或有界 abort 该 generation 的 bridge task。
 
 ## 已知技术债
 
@@ -39,6 +40,6 @@
 ---
 
 *Source anchors: `src/core/src/agent/` (runtime, bridge, launch, mcp, skills, install), `src/resources/agents.json`, `src/core/src/resources.rs`.*
-*Last verified: v0.7.11*
+*Last verified: `codex/im-acp-route-refactor` at `924d4c60`（2026-07-11）。*
 
 <sub>[◀ Module: process](process.md) · [文档索引](../../README.md) · [Module: profiles ▶](profiles.md)</sub>

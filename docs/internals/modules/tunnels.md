@@ -1,10 +1,10 @@
 # Module: tunnels
 
-`src/core/src/tunnels/` — publishing the local dashboard to a public URL through three interchangeable providers.
+`src/core/src/tunnels/` (current location) — publishing the server's web listener to a public URL through three interchangeable providers.
 
 ## Responsibility
 
-Start, track, and stop tunnel runtimes; expose the current public URL to the rest of the system (pairing hints, preview link bases). Each provider has a different process model, hidden behind one start/guard interface.
+Start, track, and stop tunnel runtimes; expose the current public URL to the rest of the system (pairing hints, preview link bases). Tunnel is a **server exposure capability**, not a general core domain: its target is the bound web listener and its trust policy is coupled to server auth/origin enforcement. Provider process mechanics may remain reusable below that service.
 
 ## Key types
 
@@ -14,7 +14,7 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 | `start_web_tunnel_with_provider` | `mod.rs` | Entry: config → provider start → (guard, public URL) |
 | ngrok provider | `providers/ngrok.rs` | In-process via the ngrok Rust SDK (session + forwarder; optional reserved domain) |
 | cloudflare provider | `providers/cloudflare.rs` | Child process: `cloudflared tunnel run --token …` |
-| localtunnel provider | `providers/localtunnel.rs` | Child process: `npx localtunnel --port 12358` |
+| localtunnel provider | `providers/localtunnel.rs` | Child process: currently `npx localtunnel --port 12358` (known target-port defect) |
 
 ## Interactions
 
@@ -32,11 +32,13 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 
 ## Known debt
 
-- None tracked in the remediation plan. (Provider set is catalog-of-three by design; new providers follow the guard pattern.)
+- Localtunnel currently hardcodes port 12358 instead of receiving the daemon's actual bound port; custom-port tunnel startup must be rejected until fixed.
+- Provider startup/exit needs a real `Starting/Running/Failed/Stopped` lifecycle with URL invalidation and bounded backoff.
+- Move orchestration behind an injected server `TunnelService`; core should not decide what local listener is safe to expose.
 
 ---
 
 *Source anchors: `src/core/src/tunnels/` (mod, providers/), `src/core/src/config.rs` (tunnel settings), `src/server/src/lib.rs` (boot wiring).*
-*Last verified: v0.7.11*
+*Last verified: system review 2026-07-11.*
 
 <sub>[◀ Module: previews](previews.md) · [Documentation index](../../README.md) · [Module: auth ▶](auth.md)</sub>

@@ -10,7 +10,7 @@ Wrap a single agent subprocess behind a typed handle (`Agent`) speaking ACP, and
 
 | Type | File | Role |
 |---|---|---|
-| `Agent` | `runtime.rs` | The handle: `prompt`, `cancel`, `shutdown`, spawn via the supervisor (policy `Never`); stdio ACP only — no transport trait until a second transport exists |
+| `Agent` | `runtime.rs` | One live ACP/process generation: `prompt`, `cancel`, `shutdown`, spawn via supervisor policy `Never` |
 | `AgentClientHandler` | `runtime.rs` | Southbound callback trait: `session_notification`, `request_permission`, `prompt_finished` — implemented by `channels::bridge_handler` and the subagent handler |
 | `AcpAgentBridge` | `bridge.rs` | ProcessBridge impl: drives the ACP connection, handles startup session attach/fallback |
 | `StartupSession` | `runtime.rs` | Fresh vs resume-by-id startup semantics |
@@ -31,6 +31,7 @@ Wrap a single agent subprocess behind a typed handle (`Agent`) speaking ACP, and
 2. **Startup-session fallback clears the stale id**: if resume fails and the bridge fell back to a fresh agent, the recorded candidate session id must be cleared so a real one is created — otherwise prompts target a dead session.
 3. **Config injection is idempotent and reversible**: MCP/skill writes are marked as VibeAround-managed so launch-time cleanup can remove them when the daemon is down.
 4. **Registry-driven identity**: adding an agent is an `agents.json` change (adapter package, pty command, config paths), not new match arms — keep it that way where possible.
+5. `Agent::shutdown` must not return until the supervisor has reaped the child and joined or bounded-aborted that generation's bridge task.
 
 ## Known debt
 
@@ -39,6 +40,6 @@ Wrap a single agent subprocess behind a typed handle (`Agent`) speaking ACP, and
 ---
 
 *Source anchors: `src/core/src/agent/` (runtime, bridge, launch, mcp, skills, install), `src/resources/agents.json`, `src/core/src/resources.rs`.*
-*Last verified: v0.7.11*
+*Last verified: `codex/im-acp-route-refactor` at `924d4c60` (2026-07-11).*
 
 <sub>[◀ Module: process](process.md) · [Documentation index](../../README.md) · [Module: profiles ▶](profiles.md)</sub>

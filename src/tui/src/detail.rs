@@ -36,8 +36,9 @@ pub(crate) fn session_status_label(status: &PtyRunState) -> &'static str {
 
 pub(crate) fn channel_detail(channel: &ChannelRuntime) -> DetailContent {
     DetailContent {
-        title: format!("channel {}", channel.kind),
+        title: format!("channel {}", channel.instance_id),
         lines: vec![
+            format!("instance_id: {}", channel.instance_id),
             format!("kind: {}", channel.kind),
             format!("status: {}", channel_status_label(channel.status)),
             format!("version: {}", channel.version.as_deref().unwrap_or("-")),

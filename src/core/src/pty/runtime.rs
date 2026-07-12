@@ -333,62 +333,6 @@ impl PtyTool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pty_tool_agent_ids_round_trip() {
-        for tool in [
-            PtyTool::Claude,
-            PtyTool::Gemini,
-            PtyTool::Codex,
-            PtyTool::Pi,
-            PtyTool::OpenCode,
-            PtyTool::Cursor,
-            PtyTool::Kiro,
-            PtyTool::QwenCode,
-        ] {
-            let agent_id = tool.agent_id().expect("tool should map to an agent");
-            assert_eq!(PtyTool::from_agent_id(agent_id), Some(tool));
-        }
-        assert_eq!(PtyTool::Generic.agent_id(), None);
-        assert_eq!(PtyTool::from_agent_id("missing"), None);
-    }
-
-    #[test]
-    fn shell_quote_handles_single_quotes() {
-        assert_eq!(shell_quote("plain"), "'plain'");
-        assert_eq!(shell_quote("team's session"), "'team'\"'\"'s session'");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn powershell_quote_handles_single_quotes() {
-        assert_eq!(powershell_quote("plain"), "'plain'");
-        assert_eq!(powershell_quote("team's session"), "'team''s session'");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn powershell_encoded_command_uses_utf16le_base64() {
-        assert_eq!(powershell_encoded_command("A"), "QQA=");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn powershell_launch_script_sets_literal_cwd() {
-        let script = powershell_launch_script(
-            Some(Path::new(r"D:\_P\26\中文workspace")),
-            Some("claude code"),
-        );
-
-        assert!(script.contains(r"Set-Location -LiteralPath 'D:\_P\26\中文workspace'"));
-        assert!(script.contains("claude code"));
-        assert!(script.contains("exit $global:LASTEXITCODE"));
-    }
-}
-
 pub struct PtyBridge {
     pub writer: Arc<std::sync::Mutex<Box<dyn Write + Send>>>,
     child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
@@ -646,4 +590,60 @@ pub fn tmux_available() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pty_tool_agent_ids_round_trip() {
+        for tool in [
+            PtyTool::Claude,
+            PtyTool::Gemini,
+            PtyTool::Codex,
+            PtyTool::Pi,
+            PtyTool::OpenCode,
+            PtyTool::Cursor,
+            PtyTool::Kiro,
+            PtyTool::QwenCode,
+        ] {
+            let agent_id = tool.agent_id().expect("tool should map to an agent");
+            assert_eq!(PtyTool::from_agent_id(agent_id), Some(tool));
+        }
+        assert_eq!(PtyTool::Generic.agent_id(), None);
+        assert_eq!(PtyTool::from_agent_id("missing"), None);
+    }
+
+    #[test]
+    fn shell_quote_handles_single_quotes() {
+        assert_eq!(shell_quote("plain"), "'plain'");
+        assert_eq!(shell_quote("team's session"), "'team'\"'\"'s session'");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_quote_handles_single_quotes() {
+        assert_eq!(powershell_quote("plain"), "'plain'");
+        assert_eq!(powershell_quote("team's session"), "'team''s session'");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_encoded_command_uses_utf16le_base64() {
+        assert_eq!(powershell_encoded_command("A"), "QQA=");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_launch_script_sets_literal_cwd() {
+        let script = powershell_launch_script(
+            Some(Path::new(r"D:\_P\26\中文workspace")),
+            Some("claude code"),
+        );
+
+        assert!(script.contains(r"Set-Location -LiteralPath 'D:\_P\26\中文workspace'"));
+        assert!(script.contains("claude code"));
+        assert!(script.contains("exit $global:LASTEXITCODE"));
+    }
 }

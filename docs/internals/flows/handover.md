@@ -34,7 +34,7 @@ phone IM chat ──3─ /pickup CODE ──4─► consume ──5─► attach
 |---|---|
 | Web → phone | The dashboard issues the code for a web thread's session; pickup is identical |
 | `/session --switch <id>` in chat | Skips the code: directly binds a discovered native session to the chat's route |
-| Web chat "Resume" picker | Same binding, driven by a `ResumeSession` intent over `/ws/chat` instead of a command |
+| Web chat "Resume" picker | Same binding, driven by a `ResumeSession` intent over `/va/ws/chat` instead of a command |
 
 All three converge on `attach_external_session` — one binding path, three doorways.
 
@@ -47,6 +47,6 @@ All three converge on `attach_external_session` — one binding path, three door
 ---
 
 *Source anchors: `src/core/src/workspace/handover.rs` (codes), `src/server/src/web_server/mcp/tools.rs` (prepare_handover, get_session_id), `src/core/src/channels/prompt/handler.rs` (pickup), `src/core/src/workspace/manager.rs` (attach_external_session), `src/core/src/launch_sessions/` (session resolution).*
-*Last verified: v0.7.11*
+*Last verified: 2026-07-11.*
 
 <sub>[◀ Flow: agent launch](native-launch.md) · [Documentation index](../../README.md) · [Flow: PTY terminal ▶](web-terminal.md)</sub>

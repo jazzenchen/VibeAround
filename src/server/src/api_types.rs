@@ -34,6 +34,7 @@ pub struct ServiceHealthResponse {
     pub ok: bool,
     pub service: &'static str,
     pub version: &'static str,
+    /// Deprecated wire-compatibility field. IM delivery is live-only.
     pub channel_outbox_pending: usize,
 }
 
@@ -230,6 +231,7 @@ impl AgentInfo {
 /// # Wire format (JSON)
 /// ```json
 /// {
+///   "instance_id": "telegram",
 ///   "kind": "telegram",
 ///   "version": "0.1.0",
 ///   "plugin_dir": "/path/to/va-plugin-channel-telegram",
@@ -242,6 +244,7 @@ impl AgentInfo {
 /// `reason` carries a short explanation for crashed/stopped states.
 #[derive(Debug, Clone, Serialize)]
 pub struct ChannelRuntime {
+    pub instance_id: String,
     pub kind: String,
     pub version: Option<String>,
     pub plugin_dir: Option<String>,
@@ -490,7 +493,7 @@ pub enum ChatEvent {
 /// # Wire format (JSON)
 /// ```json
 /// {
-///   "route_key": "telegram:chat_42",
+///   "route_key": "wt_0123456789abcdef",
 ///   "channel_kind": "telegram",
 ///   "chat_id": "chat_42",
 ///   "cli_kind": "claude",

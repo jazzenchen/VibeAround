@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio::time::{sleep, Duration};
 
 use crate::agent::{Agent, AgentClientHandler, StartupSession};
-use crate::routing::{channel_traits, RouteKey};
+use crate::routing::{channel_traits, ActiveTurnTarget, ChannelTarget, RouteKey};
 use crate::workspace::registry::WorkspaceId;
 
 use super::store::{
@@ -38,7 +38,28 @@ struct SubagentRuntime {
     agent: Arc<Agent>,
     session_id: String,
     client_handler: Arc<dyn AgentClientHandler>,
+    active_turn_target: ActiveTurnTarget,
     completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
+}
+
+/// One live host-agent generation owned by a workspace thread.
+///
+/// The ACP session id remains on `ThreadRuntime` because it is durable across
+/// generations. Everything tied to one connection/process is replaced as a
+/// unit when the bridge reports that generation dead.
+struct AcpSessionRunner {
+    agent: Arc<Agent>,
+    client_handler: Arc<dyn AgentClientHandler>,
+}
+
+impl AcpSessionRunner {
+    fn is_live(&self) -> bool {
+        self.agent.is_live()
+    }
+
+    async fn shutdown(self) {
+        self.agent.shutdown().await;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -62,18 +83,35 @@ const SUBAGENT_RETRY_DELAY: Duration = Duration::from_millis(750);
 pub struct ThreadRuntime {
     thread: Mutex<WorkspaceThread>,
     workspace: PathBuf,
-    agent: Mutex<Option<Arc<Agent>>>,
-    host_client_handler: Mutex<Option<Arc<dyn AgentClientHandler>>>,
+    host: Mutex<Option<AcpSessionRunner>>,
     spawn_lock: Mutex<()>,
     subagents: Mutex<BTreeMap<ThreadAgentId, SubagentRuntime>>,
     session_id: Mutex<Option<String>>,
-    initialize: Mutex<Option<acp::InitializeResponse>>,
     prompt_lock: Mutex<()>,
-    busy: Mutex<bool>,
+    active_turn_target: ActiveTurnTarget,
+    busy: AtomicBool,
     failed: Mutex<Option<String>>,
     activity_generation: AtomicU64,
     store: ThreadEventStore,
     change_tx: Option<broadcast::Sender<()>>,
+}
+
+struct PromptBusyGuard<'a> {
+    runtime: &'a ThreadRuntime,
+}
+
+impl<'a> PromptBusyGuard<'a> {
+    fn enter(runtime: &'a ThreadRuntime) -> Self {
+        runtime.busy.store(true, Ordering::Release);
+        Self { runtime }
+    }
+}
+
+impl Drop for PromptBusyGuard<'_> {
+    fn drop(&mut self) {
+        self.runtime.busy.store(false, Ordering::Release);
+        self.runtime.notify_change();
+    }
 }
 
 impl ThreadRuntime {
@@ -91,14 +129,13 @@ impl ThreadRuntime {
         Self {
             thread: Mutex::new(thread),
             workspace,
-            agent: Mutex::new(None),
-            host_client_handler: Mutex::new(None),
+            host: Mutex::new(None),
             spawn_lock: Mutex::new(()),
             subagents: Mutex::new(BTreeMap::new()),
             session_id: Mutex::new(session_id),
-            initialize: Mutex::new(None),
             prompt_lock: Mutex::new(()),
-            busy: Mutex::new(false),
+            active_turn_target: ActiveTurnTarget::default(),
+            busy: AtomicBool::new(false),
             failed: Mutex::new(None),
             activity_generation: AtomicU64::new(0),
             store,
@@ -107,19 +144,30 @@ impl ThreadRuntime {
     }
 
     pub async fn state(&self) -> ThreadRuntimeState {
-        let thread = self.thread.lock().await;
+        let thread = self.thread.lock().await.clone();
+        let initialize = self
+            .host
+            .lock()
+            .await
+            .as_ref()
+            .filter(|host| host.is_live())
+            .map(|host| host.agent.initialize_response());
         ThreadRuntimeState {
             thread_id: thread.id.clone(),
             workspace_id: thread.workspace_id.clone(),
             host_binding: thread.host_binding.clone(),
             session_id: self.session_id.lock().await.clone(),
             workspace: self.workspace.clone(),
-            busy: *self.busy.lock().await,
+            busy: self.busy.load(Ordering::Acquire),
             failed: self.failed.lock().await.clone(),
-            initialize: self.initialize.lock().await.clone(),
+            initialize,
             agents: thread.agents.values().cloned().collect(),
             multi_agent_turns: thread.multi_agent_turns.values().cloned().collect(),
         }
+    }
+
+    pub fn active_turn_target(&self) -> ActiveTurnTarget {
+        self.active_turn_target.clone()
     }
 
     /// Start the host agent and ensure a session exists, without sending a
@@ -136,20 +184,21 @@ impl ThreadRuntime {
 
     pub async fn prompt(
         &self,
-        route: &RouteKey,
+        target: &ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
         handler: Arc<dyn AgentClientHandler>,
     ) -> acp::Result<acp::PromptResponse> {
         let _prompt_guard = self.prompt_lock.lock().await;
+        let _target_guard = self.active_turn_target.install(target.clone());
         self.mark_activity();
-        *self.busy.lock().await = true;
+        let busy_guard = PromptBusyGuard::enter(self);
         *self.failed.lock().await = None;
         self.notify_change();
         let fallback_finish_handler = Arc::clone(&handler);
 
         let result = async {
             self.maybe_record_first_prompt(&content_blocks).await?;
-            let agent = self.ensure_agent(route, handler).await?;
+            let agent = self.ensure_agent(&target.route, handler).await?;
             let session_id = self.ensure_session(&agent).await?;
             agent
                 .prompt(acp::PromptRequest::new(session_id, content_blocks))
@@ -157,10 +206,11 @@ impl ThreadRuntime {
         }
         .await;
         let finish_handler = self
-            .host_client_handler
+            .host
             .lock()
             .await
-            .clone()
+            .as_ref()
+            .map(|host| Arc::clone(&host.client_handler))
             .unwrap_or(fallback_finish_handler);
         if let Err(error) = finish_handler.prompt_finished(result.is_ok()).await {
             let thread_id = self.thread.lock().await.id.clone();
@@ -170,22 +220,29 @@ impl ThreadRuntime {
                 "host prompt_finished hook failed"
             );
         }
-
-        *self.busy.lock().await = false;
         if let Err(error) = &result {
             *self.failed.lock().await = Some(error.message.to_string());
         }
-        self.notify_change();
+        drop(busy_guard);
         result
     }
 
     pub async fn cancel(&self) -> acp::Result<()> {
         self.mark_activity();
+        self.active_turn_target.cancel_current();
+        {
+            let subagents = self.subagents.lock().await;
+            for subagent in subagents.values() {
+                subagent.active_turn_target.cancel_current();
+            }
+        }
         let agent = self
-            .agent
+            .host
             .lock()
             .await
-            .clone()
+            .as_ref()
+            .filter(|host| host.is_live())
+            .map(|host| Arc::clone(&host.agent))
             .ok_or_else(acp::Error::method_not_found)?;
         let session_id = self
             .session_id
@@ -202,10 +259,10 @@ impl ThreadRuntime {
         if let Some(session_id) = self.session_id.lock().await.clone() {
             crate::previews::kill_by_session(&session_id);
         }
-        if let Some(agent) = self.agent.lock().await.take() {
-            agent.shutdown().await;
+        let host = self.host.lock().await.take();
+        if let Some(host) = host {
+            host.shutdown().await;
         }
-        *self.host_client_handler.lock().await = None;
         for (_, subagent) in std::mem::take(&mut *self.subagents.lock().await) {
             crate::previews::kill_by_session(&subagent.session_id);
             subagent.agent.shutdown().await;
@@ -215,7 +272,6 @@ impl ThreadRuntime {
         append_thread_event(&self.store, &event).await?;
         self.apply_thread_event(&event).await?;
         *self.session_id.lock().await = None;
-        *self.initialize.lock().await = None;
         self.notify_change();
         Ok(())
     }
@@ -230,16 +286,15 @@ impl ThreadRuntime {
         if let Some(session_id) = self.session_id.lock().await.clone() {
             crate::previews::kill_by_session(&session_id);
         }
-        if let Some(agent) = self.agent.lock().await.take() {
-            agent.shutdown().await;
+        let host = self.host.lock().await.take();
+        if let Some(host) = host {
+            host.shutdown().await;
         }
-        *self.host_client_handler.lock().await = None;
         for (_, subagent) in std::mem::take(&mut *self.subagents.lock().await) {
             crate::previews::kill_by_session(&subagent.session_id);
             subagent.agent.shutdown().await;
         }
-        *self.initialize.lock().await = None;
-        *self.busy.lock().await = false;
+        self.busy.store(false, Ordering::Release);
         *self.failed.lock().await = None;
         self.notify_change();
     }
@@ -252,7 +307,7 @@ impl ThreadRuntime {
         if self.idle_generation() != generation {
             return false;
         }
-        if *self.busy.lock().await {
+        if self.busy.load(Ordering::Acquire) {
             return false;
         }
         if !self.subagents.lock().await.is_empty() {
@@ -261,7 +316,7 @@ impl ThreadRuntime {
         if self.idle_generation() != generation {
             return false;
         }
-        let has_host = self.agent.lock().await.is_some() || self.initialize.lock().await.is_some();
+        let has_host = self.host.lock().await.is_some();
         if !has_host {
             return false;
         }
@@ -272,13 +327,13 @@ impl ThreadRuntime {
         if self.idle_generation() != generation {
             return false;
         }
-        if *self.busy.lock().await {
+        if self.busy.load(Ordering::Acquire) {
             return false;
         }
         if !self.subagents.lock().await.is_empty() {
             return false;
         }
-        let has_host = self.agent.lock().await.is_some() || self.initialize.lock().await.is_some();
+        let has_host = self.host.lock().await.is_some();
         if !has_host {
             return false;
         }
@@ -300,14 +355,16 @@ impl ThreadRuntime {
                     "profile switch cannot change agent",
                 ));
             }
+            if thread.host_binding == host_binding {
+                return Ok(());
+            }
         }
 
         let preserved_session_id = self.session_id.lock().await.clone();
-        if let Some(agent) = self.agent.lock().await.take() {
-            agent.shutdown().await;
+        let host = self.host.lock().await.take();
+        if let Some(host) = host {
+            host.shutdown().await;
         }
-        *self.host_client_handler.lock().await = None;
-        *self.initialize.lock().await = None;
         *self.failed.lock().await = None;
 
         let thread_id = self.thread.lock().await.id.clone();
@@ -390,9 +447,10 @@ impl ThreadRuntime {
 
     pub async fn start_subagent_assignment(
         self: &Arc<Self>,
-        route: &RouteKey,
+        target: ChannelTarget,
         thread_agent: ThreadAgent,
         handler: Arc<dyn AgentClientHandler>,
+        active_turn_target: ActiveTurnTarget,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
         completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
     ) -> acp::Result<()> {
@@ -403,7 +461,7 @@ impl ThreadRuntime {
 
         let runtime_handler = Arc::clone(&handler);
         let (agent, session_id) = match self
-            .spawn_subagent_session_with_retries(route, &thread_agent, handler)
+            .spawn_subagent_session_with_retries(&target.route, &thread_agent, handler)
             .await
         {
             Ok(session) => session,
@@ -429,6 +487,7 @@ impl ThreadRuntime {
                 agent: Arc::clone(&agent),
                 session_id: session_id.clone(),
                 client_handler: Arc::clone(&runtime_handler),
+                active_turn_target: active_turn_target.clone(),
                 completion_validator: completion_validator_for_runtime,
             },
         );
@@ -452,6 +511,8 @@ impl ThreadRuntime {
             agent,
             session_id,
             prompt,
+            target,
+            active_turn_target,
             status_tx,
             runtime_handler,
             completion_validator,
@@ -464,6 +525,7 @@ impl ThreadRuntime {
         self: &Arc<Self>,
         agent_id: &ThreadAgentId,
         assignment: serde_json::Value,
+        target: ChannelTarget,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
     ) -> acp::Result<()> {
         self.mark_activity();
@@ -515,6 +577,8 @@ impl ThreadRuntime {
             subagent.agent,
             subagent.session_id,
             prompt,
+            target,
+            subagent.active_turn_target,
             status_tx,
             subagent.client_handler,
             subagent.completion_validator,
@@ -574,6 +638,8 @@ impl ThreadRuntime {
         agent: Arc<Agent>,
         session_id: String,
         prompt: String,
+        target: ChannelTarget,
+        active_turn_target: ActiveTurnTarget,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
         prompt_finish_handler: Arc<dyn AgentClientHandler>,
         completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
@@ -586,6 +652,8 @@ impl ThreadRuntime {
                     agent,
                     session_id,
                     prompt,
+                    target,
+                    active_turn_target,
                     status_tx,
                     prompt_finish_handler,
                     completion_validator,
@@ -601,10 +669,13 @@ impl ThreadRuntime {
         agent: Arc<Agent>,
         session_id: String,
         mut prompt: String,
+        target: ChannelTarget,
+        active_turn_target: ActiveTurnTarget,
         status_tx: mpsc::UnboundedSender<ThreadAgent>,
         prompt_finish_handler: Arc<dyn AgentClientHandler>,
         completion_validator: Option<Arc<dyn SubagentCompletionValidator>>,
     ) {
+        let _target_guard = active_turn_target.install(target);
         let agent_id = thread_agent.id.clone();
         for attempt in 1..=SUBAGENT_PROMPT_MAX_ATTEMPTS {
             if let Some(validator) = completion_validator.as_ref() {
@@ -748,8 +819,20 @@ impl ThreadRuntime {
         handler: Arc<dyn AgentClientHandler>,
     ) -> acp::Result<Arc<Agent>> {
         let _spawn_guard = self.spawn_lock.lock().await;
-        if let Some(agent) = self.agent.lock().await.clone() {
-            return Ok(agent);
+        if let Some(host) = self.host.lock().await.as_ref() {
+            if host.is_live() {
+                return Ok(Arc::clone(&host.agent));
+            }
+        }
+        let stale = self.host.lock().await.take();
+        if let Some(stale) = stale {
+            let thread_id = self.thread.lock().await.id.clone();
+            tracing::info!(
+                thread_id = %thread_id,
+                agent_id = %stale.agent.id(),
+                "replacing stopped ACP host generation"
+            );
+            stale.shutdown().await;
         }
 
         let thread = self.thread.lock().await.clone();
@@ -830,9 +913,10 @@ impl ThreadRuntime {
             return Err(acp::Error::new(-32603, "workspace thread is closed"));
         }
 
-        *self.initialize.lock().await = Some(ready.initialize.clone());
-        *self.agent.lock().await = Some(Arc::clone(&ready.agent));
-        *self.host_client_handler.lock().await = Some(spawned_handler);
+        *self.host.lock().await = Some(AcpSessionRunner {
+            agent: Arc::clone(&ready.agent),
+            client_handler: spawned_handler,
+        });
         *self.failed.lock().await = None;
         self.notify_change();
 
@@ -1469,6 +1553,52 @@ mod tests {
         assert_eq!(state.session_id.as_deref(), Some("session-old"));
     }
 
+    #[tokio::test]
+    async fn dropped_prompt_scope_clears_busy_state() {
+        let runtime = Arc::new(ThreadRuntime::new(
+            thread_with_sessions(),
+            PathBuf::from("/tmp/project"),
+            ThreadEventStore::new("/tmp/unused.jsonl"),
+        ));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let runtime_for_task = Arc::clone(&runtime);
+        let prompt = tokio::spawn(async move {
+            let _busy_guard = PromptBusyGuard::enter(&runtime_for_task);
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+
+        started_rx.await.expect("prompt scope started");
+        assert!(runtime.state().await.busy);
+
+        prompt.abort();
+        let _ = prompt.await;
+
+        assert!(!runtime.state().await.busy);
+    }
+
+    #[tokio::test]
+    async fn cancel_signals_active_turn_before_agent_lookup() {
+        let runtime = ThreadRuntime::new(
+            thread_with_sessions(),
+            PathBuf::from("/tmp/project"),
+            ThreadEventStore::new("/tmp/unused.jsonl"),
+        );
+        let _target_guard = runtime
+            .active_turn_target
+            .install(ChannelTarget::for_route(RouteKey::new("web", "chat-1")));
+        let (_, mut cancelled) = runtime
+            .active_turn_target
+            .current_with_cancellation()
+            .expect("active target");
+
+        assert!(runtime.cancel().await.is_err(), "runtime has no live agent");
+        cancelled
+            .wait_for(|is_cancelled| *is_cancelled)
+            .await
+            .expect("active turn cancellation sender remains live");
+    }
+
     #[test]
     fn web_routes_load_previous_host_session_for_playback() {
         let route = RouteKey::new("web", "chat-1");
@@ -1541,6 +1671,37 @@ mod tests {
         let startup_session = host_startup_session(&route, None, &thread);
 
         assert_eq!(startup_session, StartupSession::Fresh);
+    }
+
+    #[tokio::test]
+    async fn selecting_the_current_profile_is_a_noop() {
+        let path = std::env::temp_dir().join(format!(
+            "vibearound-runtime-noop-profile-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let runtime = ThreadRuntime::new(
+            thread_with_sessions(),
+            PathBuf::from("/tmp/project"),
+            ThreadEventStore::new(&path),
+        );
+
+        runtime
+            .switch_profile_preserving_session(HostBinding::new(
+                "codex",
+                Some("profile_a".to_string()),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            runtime.state().await.session_id.as_deref(),
+            Some("session-old")
+        );
+        assert!(
+            !path.exists(),
+            "a no-op profile selection persisted a host change"
+        );
     }
 
     #[test]

@@ -495,6 +495,7 @@ mod tests {
 
         manager.dispatch_output(ChannelOutput::SessionReady {
             route: route.clone(),
+            reply_to: None,
             session_id: "sid-1".to_string(),
         });
 
@@ -502,6 +503,7 @@ mod tests {
             rx.try_recv().expect("session ready"),
             ChannelOutput::SessionReady {
                 route: route.clone(),
+                reply_to: None,
                 session_id: "sid-1".to_string(),
             }
         );
@@ -545,6 +547,7 @@ mod tests {
 
         manager.dispatch_output(ChannelOutput::SessionReady {
             route: route.clone(),
+            reply_to: None,
             session_id: "sid-1".to_string(),
         });
 
@@ -577,6 +580,7 @@ mod tests {
 
         manager.dispatch_output(ChannelOutput::SessionReady {
             route,
+            reply_to: None,
             session_id: "sid-1".to_string(),
         });
 
@@ -595,6 +599,7 @@ mod tests {
         manager.mark_route_active(&route);
         manager.dispatch_output(ChannelOutput::SessionReady {
             route: route.clone(),
+            reply_to: None,
             session_id: "sid-1".to_string(),
         });
         manager.dispatch_output(ChannelOutput::SystemText {
@@ -654,10 +659,4 @@ impl WebSocketPluginRuntime {
             message
         })
     }
-
-    pub async fn send_output(&self, output: ChannelOutput) -> Result<(), String> {
-        self.send_output_now(output)
-    }
-
-    pub async fn shutdown(&self) {}
 }

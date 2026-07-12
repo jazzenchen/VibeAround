@@ -345,13 +345,13 @@ Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki
 
 ### Desktop App
 
-Latest desktop release: [VibeAround v0.7.13](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.13).
+Latest desktop release: [VibeAround v0.7.14](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.14).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.13.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-macOS-arm64-0.7.13.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-Setup-0.7.13.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-MSI-0.7.13.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-Portable-0.7.13.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Linux-x64-AppImage-0.7.13.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Linux-x64-DEB-0.7.13.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.14.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-macOS-arm64-0.7.14.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Windows-x64-Setup-0.7.14.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Windows-x64-MSI-0.7.14.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Windows-x64-Portable-0.7.14.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Linux-x64-AppImage-0.7.14.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Linux-x64-DEB-0.7.14.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
 
@@ -371,7 +371,7 @@ va launch --profile codex-work
 
 After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
 
-Latest CLI package: [`@vibearound/cli@0.0.3`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.3](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.3).
+Latest CLI package: [`@vibearound/cli@0.0.4`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.4](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.4).
 
 ## Upgrade Notes
 
@@ -423,9 +423,9 @@ Friendly community: [LINUX DO](https://linux.do)
 
 WeChat group for Chinese-language discussion:
 
-<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr-2026-07-13.webp" width="180" alt="VibeAround WeChat group QR code, valid until July 13, 2026" />
+<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr-2026-07-19.webp" width="180" alt="VibeAround WeChat group QR code, valid until July 19, 2026" />
 
-This WeChat QR code is valid until July 13, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
+This WeChat QR code is valid until July 19, 2026. Use Discord or GitHub Issues to ask for the latest one if it has expired.
 
 ## License
 

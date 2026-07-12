@@ -347,13 +347,13 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
 ### Desktop 应用
 
-最新桌面版：[VibeAround v0.7.13](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.13)。
+最新桌面版：[VibeAround v0.7.14](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.14)。
 
 | 平台 | 推荐下载 |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.13.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-macOS-arm64-0.7.13.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-Setup-0.7.13.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-MSI-0.7.13.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Windows-x64-Portable-0.7.13.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Linux-x64-AppImage-0.7.13.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.13/VibeAround-Linux-x64-DEB-0.7.13.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.14.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-macOS-arm64-0.7.14.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Windows-x64-Setup-0.7.14.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Windows-x64-MSI-0.7.14.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Windows-x64-Portable-0.7.14.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Linux-x64-AppImage-0.7.14.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.14/VibeAround-Linux-x64-DEB-0.7.14.deb) |
 
 Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Silicon 版本。
 
@@ -373,7 +373,7 @@ va launch --profile codex-work
 
 server 启动后，在浏览器访问 `http://127.0.0.1:12358/va/`。
 
-最新 CLI 包：[`@vibearound/cli@0.0.3`](https://www.npmjs.com/package/@vibearound/cli)。各平台 payload 单独记录在 [VibeAround CLI 0.0.3](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.3)。
+最新 CLI 包：[`@vibearound/cli@0.0.4`](https://www.npmjs.com/package/@vibearound/cli)。各平台 payload 单独记录在 [VibeAround CLI 0.0.4](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.4)。
 
 ## 升级说明
 
@@ -425,9 +425,9 @@ VibeAround 还处在快速打磨阶段，目前也主要是我一个人在开发
 
 微信交流群：
 
-<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr-2026-07-13.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 7 月 13 日" />
+<img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/community/wechat-group-qr-2026-07-19.webp" width="180" alt="VibeAround 微信群二维码，有效期至 2026 年 7 月 19 日" />
 
-该微信群二维码有效期至 2026 年 7 月 13 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
+该微信群二维码有效期至 2026 年 7 月 19 日。如果图片失效，可以通过 Discord 或 GitHub Issues 索取最新二维码。
 
 ## 许可证
 

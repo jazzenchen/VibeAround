@@ -823,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -859,6 +859,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "winreg 0.55.0",
  "xz2",
  "zip",
 ]
@@ -4558,7 +4559,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -6083,7 +6084,7 @@ dependencies = [
 
 [[package]]
 name = "va-cli"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "clap",
  "crossterm",
@@ -6099,7 +6100,7 @@ dependencies = [
 
 [[package]]
 name = "va-client"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "serde",
  "serde_json",
@@ -6108,7 +6109,7 @@ dependencies = [
 
 [[package]]
 name = "va-launcher"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "anyhow",
  "clap",
@@ -6123,7 +6124,7 @@ dependencies = [
 
 [[package]]
 name = "va-tui"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "clap",
  "crossterm",
@@ -6164,7 +6165,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vibearound-desktop"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "anyhow",
  "common",

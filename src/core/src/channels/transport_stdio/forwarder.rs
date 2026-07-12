@@ -32,15 +32,18 @@ pub(super) async fn forward_output_to_plugin(
     output: ChannelOutput,
 ) -> Result<(), String> {
     match output {
-        ChannelOutput::ThreadReply { route, reply } => {
+        ChannelOutput::ThreadReply {
+            route,
+            reply_to,
+            reply,
+        } => {
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
                 "va/thread_reply",
                 &serde_json::json!({
-                "target": {
-                    "chatId": route.chat_id.clone(),
-                },
+                "target": target,
                 "reply": reply,
                 }),
             )
@@ -53,13 +56,19 @@ pub(super) async fn forward_output_to_plugin(
                 route
             );
         }
-        ChannelOutput::SystemText { route, text, .. } => {
+        ChannelOutput::SystemText {
+            route,
+            text,
+            reply_to,
+        } => {
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
                 "va/system_text",
                 &serde_json::json!({
                     "chatId": route.chat_id,
+                    "target": target,
                     "text": text,
                 }),
             )
@@ -67,16 +76,18 @@ pub(super) async fn forward_output_to_plugin(
         }
         ChannelOutput::AgentReady {
             route,
+            reply_to,
             agent,
             version,
-            ..
         } => {
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
                 "va/agent_ready",
                 &serde_json::json!({
                     "chatId": route.chat_id,
+                    "target": target,
                     "agent": agent,
                     "version": version,
                 }),
@@ -84,26 +95,36 @@ pub(super) async fn forward_output_to_plugin(
             .await?;
         }
         ChannelOutput::SessionReady {
-            route, session_id, ..
+            route,
+            reply_to,
+            session_id,
         } => {
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
                 "va/session_ready",
                 &serde_json::json!({
                     "chatId": route.chat_id,
+                    "target": target,
                     "sessionId": session_id,
                 }),
             )
             .await?;
         }
-        ChannelOutput::SessionInfo { route, info } => {
+        ChannelOutput::SessionInfo {
+            route,
+            reply_to,
+            info,
+        } => {
+            let target = route_target(&route, reply_to.as_deref());
             send_ext_notification(
                 conn,
                 channel_kind,
                 "va/session_info",
                 &serde_json::json!({
                     "chatId": route.chat_id,
+                    "target": target,
                     "info": info,
                 }),
             )
@@ -113,12 +134,14 @@ pub(super) async fn forward_output_to_plugin(
             route,
             session_mode,
         } => {
+            let target = route_target(&route, None);
             send_ext_notification(
                 conn,
                 channel_kind,
                 "va/session_mode",
                 &serde_json::json!({
                     "chatId": route.chat_id,
+                    "target": target,
                     "sessionMode": session_mode,
                 }),
             )
@@ -129,12 +152,14 @@ pub(super) async fn forward_output_to_plugin(
             system_commands,
             agent_commands,
         } => {
+            let target = route_target(&route, None);
             send_ext_notification(
                 conn,
                 channel_kind,
                 "va/command_menu",
                 &serde_json::json!({
                     "chatId": route.chat_id,
+                    "target": target,
                     "systemCommands": system_commands,
                     "agentCommands": agent_commands,
                 }),
@@ -148,9 +173,11 @@ pub(super) async fn forward_output_to_plugin(
         | ChannelOutput::SubagentAcp { .. } => {}
         ChannelOutput::PermissionRequest {
             route,
+            reply_to,
             request_id,
             payload,
         } => {
+            let channel_instance_id = route.channel_instance_id().to_string();
             // Forward as a VibeAround ext method so the transport envelope can
             // carry the IM chat target while the ACP request keeps its real
             // agent sessionId.
@@ -164,7 +191,7 @@ pub(super) async fn forward_output_to_plugin(
                     );
                         complete_permission_request(
                             plugin_host,
-                            channel_kind,
+                            &channel_instance_id,
                             &route.to_string(),
                             &request_id,
                             schema::RequestPermissionResponse::new(
@@ -175,16 +202,14 @@ pub(super) async fn forward_output_to_plugin(
                     }
                 };
             let params = serde_json::json!({
-                "target": {
-                    "chatId": route.chat_id.clone(),
-                },
+                "target": route_target(&route, reply_to.as_deref()),
                 "requestId": request_id.clone(),
                 "request": request,
             });
             let Some(raw_params) = raw_json_params(channel_kind, &params) else {
                 complete_permission_request(
                     plugin_host,
-                    channel_kind,
+                    &channel_instance_id,
                     &route.to_string(),
                     &request_id,
                     schema::RequestPermissionResponse::new(
@@ -205,7 +230,7 @@ pub(super) async fn forward_output_to_plugin(
                         Ok(resp) => {
                             complete_permission_request(
                                 plugin_host,
-                                channel_kind,
+                                &channel_instance_id,
                                 &route.to_string(),
                                 &request_id,
                                 resp,
@@ -221,7 +246,7 @@ pub(super) async fn forward_output_to_plugin(
                             );
                             complete_permission_request(
                                 plugin_host,
-                                channel_kind,
+                                &channel_instance_id,
                                 &route.to_string(),
                                 &request_id,
                                 schema::RequestPermissionResponse::new(
@@ -242,7 +267,7 @@ pub(super) async fn forward_output_to_plugin(
                     );
                     complete_permission_request(
                         plugin_host,
-                        channel_kind,
+                        &channel_instance_id,
                         &route.to_string(),
                         &request_id,
                         schema::RequestPermissionResponse::new(
@@ -257,17 +282,41 @@ pub(super) async fn forward_output_to_plugin(
     Ok(())
 }
 
+fn route_target(route: &crate::routing::RouteKey, reply_to: Option<&str>) -> serde_json::Value {
+    let mut target = serde_json::Map::from_iter([
+        (
+            "channelInstanceId".to_string(),
+            route.channel_instance_id().into(),
+        ),
+        (
+            "actorId".to_string(),
+            route
+                .actor_id()
+                .unwrap_or_else(|| route.channel_instance_id())
+                .into(),
+        ),
+        ("chatId".to_string(), route.chat_id.clone().into()),
+    ]);
+    if let Some(topic_id) = route.topic_id() {
+        target.insert("topicId".to_string(), topic_id.into());
+    }
+    if let Some(reply_to) = reply_to.filter(|reply_to| !reply_to.is_empty()) {
+        target.insert("replyTo".to_string(), reply_to.into());
+    }
+    serde_json::Value::Object(target)
+}
+
 fn complete_permission_request(
     plugin_host: &PluginHost,
-    channel_kind: &str,
+    channel_instance_id: &str,
     route: &str,
     request_id: &str,
     response: schema::RequestPermissionResponse,
 ) {
-    if let Err(error) = plugin_host.respond_permission(channel_kind, request_id, response) {
+    if let Err(error) = plugin_host.respond_permission(channel_instance_id, request_id, response) {
         tracing::info!(
             "[{}] PermissionRequest response dropped route={} request_id={}: {}",
-            channel_kind,
+            channel_instance_id,
             route,
             request_id,
             error
@@ -315,4 +364,35 @@ async fn send_ext_notification(
         return Err(message);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::route_target;
+    use crate::routing::RouteKey;
+
+    #[test]
+    fn extended_output_target_preserves_actor_and_topic() {
+        let route = RouteKey::with_actor(
+            "feishu",
+            "feishu-primary",
+            "chat-1",
+            "codex-reviewer",
+            Some("topic-1".to_string()),
+        );
+
+        assert_eq!(
+            route_target(&route, None),
+            serde_json::json!({
+                "channelInstanceId": "feishu-primary",
+                "actorId": "codex-reviewer",
+                "chatId": "chat-1",
+                "topicId": "topic-1"
+            })
+        );
+        assert_eq!(
+            route_target(&route, Some("message-1"))["replyTo"],
+            "message-1"
+        );
+    }
 }

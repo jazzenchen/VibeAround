@@ -11,7 +11,8 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 | Type | File | Role |
 |---|---|---|
 | `WorkspaceThreadManager` | `manager.rs` | The orchestrator: route→thread resolution, thread creation/close, attachments, external session binding, idle shutdown |
-| `ThreadRuntime` | `threads/runtime.rs` | One live thread: host agent handle, session id, busy/failed state, subagents, prompt serialization |
+| `ThreadRuntime` | `threads/runtime.rs` | One live thread: durable session id, live host generation, busy/failed state, subagents, prompt serialization |
+| `AcpSessionRunner` | `threads/runtime.rs` | Live host `Agent` + callback handler for exactly one ACP/process generation |
 | `WorkspaceEventStore` / `ThreadEventStore` / `RouteAttachmentEventStore` | `store.rs`, `threads/store.rs`, `threads/attachment.rs` | Append-only JSONL logs + projection replay |
 | `WorkspaceThread` / `ThreadProjection` | `threads/store.rs` | Persistent thread record: status, host binding, agent sessions, multi-agent turns |
 | `HostBinding` | `threads/store.rs` | (agent id, profile id) pair hosting a thread |
@@ -29,20 +30,19 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 
 1. **Persist before apply**: every state change is an event appended to its store *before* observable behavior depends on it; a crash replays to the same state.
 2. **One open thread per route**: `resolve_route_runtime` holds the per-route lock across check-create-attach; new resolution paths must take the same lock.
-3. **A thread's agent spawn is single-flight** (`spawn_lock` in `ThreadRuntime`) and prompts on one thread are serialized (`prompt_lock`); `cancel` intentionally bypasses the prompt lock — preserve that or cancellation dies.
+3. **A thread's agent spawn is single-flight** (`spawn_lock`), and a stopped `AcpSessionRunner` is replaced as a unit. Prompts on one thread are serialized (`prompt_lock`); cancel intentionally bypasses it.
 4. **Closed is terminal** for a thread id; reopening means a new thread.
 5. **Session ids are observations, not ownership** — the agent's own storage is authoritative; never fabricate one.
 
 ## Known debt
 
-- Projections re-read and replay whole JSONL files on the hot path; thread/workspace stores never compact (attachments do). Remediation H1 — the top-priority fix.
-- `ThreadRuntime` is 10 independent mutexes with manually maintained `busy`/`failed` shadows; planned actor-model rewrite (remediation H2, with the supervisor-tree milestone).
-- `route_locks` map never prunes entries (remediation L8).
-- `RouteKey::as_key()` drops `bot_id` — latent for multi-bot futures (remediation L9).
+- Active routes hit runtime/attachment caches first, but thread/workspace projections still replay their full JSONL stores and need measurement before snapshotting.
+- `ThreadRuntime` still has many independent mutexes with manually maintained `busy`/`failed` shadows; ownership should be consolidated incrementally.
+- `RouteKey::as_key()`/`from_key()` are intentionally lossy and cannot represent actor/topic identity; runtime control now uses workspace thread ids, and the lossy form must remain legacy/display-only until a versioned persistent route key is defined.
 
 ---
 
-*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store), `reports/architecture-review-remediation-2026-07-04.md` (H1, H2, L8, L9).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store).*
+*Last verified: `codex/im-acp-route-refactor` at `121381f4` (2026-07-11).*
 
 <sub>[◀ Module: channels](channels.md) · [Documentation index](../../README.md) · [Module: process ▶](process.md)</sub>

@@ -11,7 +11,8 @@
 | Type | File | Role |
 |---|---|---|
 | `WorkspaceThreadManager` | `manager.rs` | 编排器：route→thread resolution、thread creation/close、attachments、external session binding、idle shutdown |
-| `ThreadRuntime` | `threads/runtime.rs` | 一个 live thread：host agent handle、session id、busy/failed state、subagents、prompt serialization |
+| `ThreadRuntime` | `threads/runtime.rs` | 一个 live thread：durable session id、live host generation、busy/failed state、subagents、prompt serialization |
+| `AcpSessionRunner` | `threads/runtime.rs` | 一个 ACP/process generation 的 live `Agent` + callback handler |
 | `WorkspaceEventStore` / `ThreadEventStore` / `RouteAttachmentEventStore` | `store.rs`, `threads/store.rs`, `threads/attachment.rs` | Append-only JSONL logs + projection replay |
 | `WorkspaceThread` / `ThreadProjection` | `threads/store.rs` | 持久化 thread record：status、host binding、agent sessions、multi-agent turns |
 | `HostBinding` | `threads/store.rs` | 托管 thread 的 `(agent id, profile id)` pair |
@@ -29,20 +30,19 @@
 
 1. **先持久化，再应用**：每个状态变化都要先 append 到 store，然后才能让可观察行为依赖它；crash 后 replay 到同一状态。
 2. **每个 route 一个 open thread**：`resolve_route_runtime` 在 check-create-attach 期间持有 per-route lock；新的 resolution path 也必须拿同一把锁。
-3. **Thread 的 agent spawn 是 single-flight**（`ThreadRuntime` 里的 `spawn_lock`），同一 thread 的 prompts 串行化（`prompt_lock`）；`cancel` 刻意绕过 prompt lock，必须保留，否则 cancellation 会死。
+3. **Thread 的 agent spawn 是 single-flight**（`spawn_lock`），停止的 `AcpSessionRunner` 作为整体替换；同一 thread 的 prompts 由 `prompt_lock` 串行，`cancel` 刻意绕过它。
 4. **Closed 对 thread id 是终态**；reopen 意味着新 thread。
 5. **Session id 是观测，不是所有权**。Agent 自己的 storage 才是权威；不要伪造 session id。
 
 ## 已知技术债
 
-- Projections 在 hot path 上重读并 replay 整个 JSONL 文件；thread/workspace stores 从不 compact（attachments 会）。remediation H1，最高优先级。
-- `ThreadRuntime` 是 10 个独立 mutex，加手工维护的 `busy`/`failed` shadows；计划改成 actor model（remediation H2，随 supervisor-tree 里程碑）。
-- `route_locks` map 从不 prune entries（remediation L8）。
-- `RouteKey::as_key()` 丢弃 `bot_id`，对未来 multi-bot 是潜在问题（remediation L9）。
+- Active route 先命中 runtime/attachment cache，但 thread/workspace projection 仍全量 replay JSONL，需要 benchmark 后再决定 snapshot。
+- `ThreadRuntime` 仍有多把独立 mutex 和手工维护的 `busy`/`failed` shadows，应渐进收拢所有权。
+- `RouteKey::as_key()/from_key()` 有意 lossy，无法表达 actor/topic；runtime control 已改用 workspace thread id，在定义 versioned persistent route key 前，该形式只能用于 legacy/display。
 
 ---
 
-*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store), `reports/architecture-review-remediation-2026-07-04.md` (H1, H2, L8, L9).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/workspace/` (manager, threads/, handover, registry, store).*
+*Last verified: `codex/im-acp-route-refactor` at `121381f4`（2026-07-11）。*
 
 <sub>[◀ Module: channels](channels.md) · [文档索引](../../README.md) · [Module: process ▶](process.md)</sub>

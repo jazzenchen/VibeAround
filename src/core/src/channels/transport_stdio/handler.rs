@@ -2,48 +2,211 @@
 //! Drives the prompt lifecycle and routes extension notifications back into
 //! the host.
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use tokio::sync::mpsc;
 
 use agent_client_protocol::schema::v1 as acp;
 use agent_client_protocol::schema::ProtocolVersion;
 
+use super::super::plugin_host::PluginHost;
+use super::super::types::{ChannelInboundContext, CHANNEL_CONTEXT_META_KEY};
+use super::super::{ChannelEnvelope, ChannelInput, ConversationIngress};
 use crate::proc_log;
 use crate::process::registry::ProcessKind;
-use crate::routing::RouteKey;
-use crate::workspace::WorkspaceThreadManager;
+use crate::routing::{ChannelTarget, RouteKey};
 
-use super::super::plugin_host::PluginHost;
-use super::super::prompt::handle_prompt;
-use super::super::{ChannelEnvelope, ChannelInput};
+fn route_for_prompt(
+    channel_kind: &str,
+    channel_instance_id: &str,
+    default_actor_id: &str,
+    session_chat_id: &str,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<RouteKey, String> {
+    let Some(value) = meta.and_then(|meta| meta.get(CHANNEL_CONTEXT_META_KEY)) else {
+        return Ok(RouteKey::with_actor(
+            channel_kind,
+            channel_instance_id,
+            session_chat_id,
+            default_actor_id,
+            None,
+        ));
+    };
 
-/// ACP Agent handler for a channel plugin. `prompt()` calls through to
-/// `handle_prompt()` directly — blocks until the turn completes and
+    let context: ChannelInboundContext = serde_json::from_value(value.clone())
+        .map_err(|error| format!("invalid {CHANNEL_CONTEXT_META_KEY} metadata: {error}"))?;
+    if context.channel_instance_id.trim().is_empty() {
+        return Err("channelInstanceId must not be empty".into());
+    }
+    if context.channel_instance_id != channel_instance_id {
+        return Err("channelInstanceId must match the supervised plugin instance".into());
+    }
+    if context.actor_id.trim().is_empty() {
+        return Err("actorId must not be empty".into());
+    }
+    if context.chat_id.trim().is_empty() {
+        return Err("chatId must not be empty".into());
+    }
+    if context.chat_id != session_chat_id {
+        return Err("va.channel chatId must match the ACP sessionId".into());
+    }
+    if !context.is_prompt_allowed() {
+        return Err("group prompts must explicitly address the actor".into());
+    }
+
+    Ok(RouteKey::with_actor(
+        channel_kind,
+        context.channel_instance_id,
+        context.chat_id,
+        context.actor_id,
+        context.topic_id,
+    ))
+}
+
+fn target_for_prompt(
+    channel_kind: &str,
+    channel_instance_id: &str,
+    default_actor_id: &str,
+    session_chat_id: &str,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<ChannelTarget, String> {
+    let route = route_for_prompt(
+        channel_kind,
+        channel_instance_id,
+        default_actor_id,
+        session_chat_id,
+        meta,
+    )?;
+    let reply_to = meta
+        .and_then(|meta| meta.get(CHANNEL_CONTEXT_META_KEY))
+        .and_then(|context| context.get("platformMessageId"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|message_id| !message_id.is_empty())
+        .map(ToOwned::to_owned);
+    Ok(ChannelTarget::new(route, reply_to))
+}
+
+fn route_for_callback(
+    channel_kind: &str,
+    channel_instance_id: &str,
+    default_actor_id: &str,
+    chat_id: &str,
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> Result<RouteKey, String> {
+    let Some(context) = params
+        .get(CHANNEL_CONTEXT_META_KEY)
+        .or_else(|| params.get("context"))
+    else {
+        return Ok(RouteKey::with_actor(
+            channel_kind,
+            channel_instance_id,
+            chat_id,
+            default_actor_id,
+            None,
+        ));
+    };
+    let meta =
+        serde_json::Map::from_iter([(CHANNEL_CONTEXT_META_KEY.to_string(), context.clone())]);
+    route_for_prompt(
+        channel_kind,
+        channel_instance_id,
+        default_actor_id,
+        chat_id,
+        Some(&meta),
+    )
+}
+
+fn route_for_cancel(
+    channel_kind: &str,
+    channel_instance_id: &str,
+    default_actor_id: &str,
+    session_chat_id: &str,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<Option<RouteKey>, String> {
+    if meta.is_some_and(|meta| meta.contains_key(CHANNEL_CONTEXT_META_KEY)) {
+        return route_for_prompt(
+            channel_kind,
+            channel_instance_id,
+            default_actor_id,
+            session_chat_id,
+            meta,
+        )
+        .map(Some);
+    }
+    Ok(None)
+}
+
+struct ActivePromptRoute<'a> {
+    routes: &'a DashMap<String, HashMap<u64, RouteKey>>,
+    chat_id: String,
+    token: u64,
+}
+
+impl Drop for ActivePromptRoute<'_> {
+    fn drop(&mut self) {
+        if let Entry::Occupied(mut entry) = self.routes.entry(self.chat_id.clone()) {
+            entry.get_mut().remove(&self.token);
+            if entry.get().is_empty() {
+                entry.remove();
+            }
+        }
+    }
+}
+
+/// ACP Agent handler for a channel plugin. `prompt()` calls through the
+/// shared conversation ingress — blocks until the turn completes and
 /// returns the real `PromptResponse` with `StopReason`.
 pub(super) struct PluginAgentHandler {
     channel_kind: String,
+    channel_instance_id: String,
+    default_actor_id: String,
     config: serde_json::Value,
-    /// Still used for fire-and-forget operations: cancel, callback.
+    /// Used for fire-and-forget callback notifications.
     input_tx: mpsc::UnboundedSender<ChannelInput>,
-    workspace_thread_manager: Arc<WorkspaceThreadManager>,
+    ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
+    active_prompt_routes: DashMap<String, HashMap<u64, RouteKey>>,
+    next_prompt_token: AtomicU64,
 }
 
 impl PluginAgentHandler {
     pub(super) fn new(
         channel_kind: String,
+        channel_instance_id: String,
+        default_actor_id: String,
         config: serde_json::Value,
         input_tx: mpsc::UnboundedSender<ChannelInput>,
-        workspace_thread_manager: Arc<WorkspaceThreadManager>,
+        ingress: Arc<ConversationIngress>,
         plugin_host: Arc<PluginHost>,
     ) -> Self {
         Self {
             channel_kind,
+            channel_instance_id,
+            default_actor_id,
             config,
             input_tx,
-            workspace_thread_manager,
+            ingress,
             plugin_host,
+            active_prompt_routes: DashMap::new(),
+            next_prompt_token: AtomicU64::new(1),
+        }
+    }
+
+    fn track_active_route<'a>(&'a self, chat_id: &str, route: RouteKey) -> ActivePromptRoute<'a> {
+        let token = self.next_prompt_token.fetch_add(1, Ordering::Relaxed);
+        self.active_prompt_routes
+            .entry(chat_id.to_string())
+            .or_default()
+            .insert(token, route);
+        ActivePromptRoute {
+            routes: &self.active_prompt_routes,
+            chat_id: chat_id.to_string(),
+            token,
         }
     }
     pub(super) async fn initialize(
@@ -59,6 +222,11 @@ impl PluginAgentHandler {
 
         let mut meta = serde_json::Map::new();
         meta.insert("channelKind".into(), self.channel_kind.clone().into());
+        meta.insert(
+            "channelInstanceId".into(),
+            self.channel_instance_id.clone().into(),
+        );
+        meta.insert("actorId".into(), self.default_actor_id.clone().into());
         meta.insert("config".into(), self.config.clone());
         meta.insert("hostVersion".into(), env!("CARGO_PKG_VERSION").into());
         meta.insert(
@@ -82,7 +250,22 @@ impl PluginAgentHandler {
         args: acp::PromptRequest,
     ) -> acp::Result<acp::PromptResponse> {
         let chat_id = args.session_id.to_string();
-        let route = RouteKey::new(&self.channel_kind, &chat_id);
+        let target = target_for_prompt(
+            &self.channel_kind,
+            &self.channel_instance_id,
+            &self.default_actor_id,
+            &chat_id,
+            args.meta.as_ref(),
+        )
+        .map_err(|error| {
+            tracing::warn!(
+                channel_kind = %self.channel_kind,
+                chat_id = %chat_id,
+                error = %error,
+                "rejected channel prompt metadata"
+            );
+            acp::Error::invalid_params()
+        })?;
 
         let content_blocks = args.prompt;
 
@@ -107,23 +290,49 @@ impl PluginAgentHandler {
             text_preview.chars().take(80).collect::<String>()
         );
 
-        // Call through to handle_prompt — blocks until the turn completes.
+        // The shared ingress blocks until the turn completes.
         // Session notifications stream to the plugin via ChannelBridgeHandler
         // → PluginHost → output_tx → output forwarder → conn.session_notification().
-        let result = handle_prompt(
-            &self.workspace_thread_manager,
-            &self.plugin_host,
-            route.clone(),
-            content_blocks,
-        )
-        .await;
-
-        result
+        let _active_route = self.track_active_route(&chat_id, target.route.clone());
+        self.ingress.prompt(target, content_blocks).await
     }
 
     pub(super) async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {
         let chat_id = args.session_id.to_string();
-        let route = RouteKey::new(&self.channel_kind, &chat_id);
+        let targeted_route = route_for_cancel(
+            &self.channel_kind,
+            &self.channel_instance_id,
+            &self.default_actor_id,
+            &chat_id,
+            args.meta.as_ref(),
+        )
+        .map_err(|error| {
+            tracing::warn!(
+                channel_kind = %self.channel_kind,
+                chat_id = %chat_id,
+                error = %error,
+                "rejected channel cancel metadata"
+            );
+            acp::Error::invalid_params()
+        })?;
+        let routes = targeted_route.map_or_else(
+            || {
+                self.active_prompt_routes
+                    .get(&chat_id)
+                    .map(|routes| routes.values().cloned().collect::<Vec<_>>())
+                    .filter(|routes| !routes.is_empty())
+                    .unwrap_or_else(|| {
+                        vec![RouteKey::with_actor(
+                            &self.channel_kind,
+                            &self.channel_instance_id,
+                            &chat_id,
+                            &self.default_actor_id,
+                            None,
+                        )]
+                    })
+            },
+            |route| vec![route],
+        );
 
         proc_log!(
             info,
@@ -133,7 +342,9 @@ impl PluginAgentHandler {
             chat_id = %chat_id
         );
 
-        let _ = self.workspace_thread_manager.cancel_route(&route).await;
+        for route in routes {
+            self.ingress.dispatch(ChannelInput::Stop { route });
+        }
         Ok(())
     }
 
@@ -148,7 +359,7 @@ impl PluginAgentHandler {
             "va/heartbeat" => {
                 super::super::monitor::touch_weak(
                     &self.plugin_host.monitor_weak(),
-                    &self.channel_kind,
+                    &self.channel_instance_id,
                 );
             }
             "va/callback" => {
@@ -166,7 +377,22 @@ impl PluginAgentHandler {
                             })
                     })
                     .unwrap_or("");
-                let route = RouteKey::new(&self.channel_kind, chat_id);
+                let route = route_for_callback(
+                    &self.channel_kind,
+                    &self.channel_instance_id,
+                    &self.default_actor_id,
+                    chat_id,
+                    &params_obj,
+                )
+                .map_err(|error| {
+                    tracing::warn!(
+                        channel_kind = %self.channel_kind,
+                        chat_id,
+                        error = %error,
+                        "rejected channel callback metadata"
+                    );
+                    acp::Error::invalid_params()
+                })?;
                 let action_value = params_obj
                     .get("data")
                     .and_then(|v| v.as_str())
@@ -217,5 +443,262 @@ impl PluginAgentHandler {
             method = %method
         );
         Err(acp::Error::method_not_found())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn channel_meta(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::Map::from_iter([(CHANNEL_CONTEXT_META_KEY.to_string(), value)])
+    }
+
+    #[test]
+    fn legacy_prompt_route_uses_session_id_and_default_bot() {
+        let route = route_for_prompt("feishu", "feishu", "feishu", "chat-1", None)
+            .expect("legacy route parses");
+
+        assert_eq!(route, RouteKey::new("feishu", "chat-1"));
+    }
+
+    #[test]
+    fn routed_prompt_uses_full_channel_context() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "topicId": "topic-1",
+            "platformMessageId": "message-1",
+            "scope": "group",
+            "addressedBy": "mention"
+        }));
+
+        let target = target_for_prompt(
+            "feishu",
+            "feishu-primary",
+            "feishu-primary",
+            "chat-1",
+            Some(&meta),
+        )
+        .expect("routed prompt metadata parses");
+        let route = target.route;
+
+        assert_eq!(route.channel_instance_id(), "feishu-primary");
+        assert_eq!(route.chat_id, "chat-1");
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+        assert_eq!(route.topic_id(), Some("topic-1"));
+        assert_eq!(target.reply_to.as_deref(), Some("message-1"));
+    }
+
+    #[test]
+    fn routed_prompt_ignores_an_empty_platform_message_id() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "platformMessageId": "  ",
+            "scope": "dm",
+            "addressedBy": "dm"
+        }));
+
+        let target = target_for_prompt(
+            "feishu",
+            "feishu-primary",
+            "feishu-primary",
+            "chat-1",
+            Some(&meta),
+        )
+        .expect("routed prompt metadata parses");
+
+        assert_eq!(target.reply_to, None);
+    }
+
+    #[test]
+    fn routed_group_prompt_rejects_unaddressed_message() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "scope": "group",
+            "addressedBy": "unaddressed"
+        }));
+
+        let error = route_for_prompt(
+            "feishu",
+            "feishu-primary",
+            "feishu-primary",
+            "chat-1",
+            Some(&meta),
+        )
+        .expect_err("unaddressed group message must be rejected");
+
+        assert_eq!(error, "group prompts must explicitly address the actor");
+    }
+
+    #[test]
+    fn routed_group_prompt_rejects_bare_command() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "scope": "group",
+            "addressedBy": "command"
+        }));
+
+        let error = route_for_prompt(
+            "feishu",
+            "feishu-primary",
+            "feishu-primary",
+            "chat-1",
+            Some(&meta),
+        )
+        .expect_err("a bare group command does not identify the target bot");
+
+        assert_eq!(error, "group prompts must explicitly address the actor");
+    }
+
+    #[test]
+    fn routed_group_callback_is_an_explicit_bot_interaction() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "scope": "group",
+            "addressedBy": "callback"
+        }));
+
+        let route = route_for_prompt(
+            "feishu",
+            "feishu-primary",
+            "feishu-primary",
+            "chat-1",
+            Some(&meta),
+        )
+        .expect("a callback targets the bot that created the action");
+
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+    }
+
+    #[test]
+    fn callback_metadata_preserves_extended_route() {
+        let params = serde_json::Map::from_iter([(
+            "context".to_string(),
+            json!({
+                "channelInstanceId": "feishu-primary",
+                "actorId": "codex-reviewer",
+                "chatId": "chat-1",
+                "topicId": "topic-1",
+                "scope": "group",
+                "addressedBy": "callback"
+            }),
+        )]);
+
+        let route = route_for_callback(
+            "feishu",
+            "feishu-primary",
+            "feishu-primary",
+            "chat-1",
+            &params,
+        )
+        .expect("callback context should parse");
+
+        assert_eq!(route.channel_instance_id(), "feishu-primary");
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+        assert_eq!(route.topic_id(), Some("topic-1"));
+    }
+
+    #[test]
+    fn cancel_metadata_targets_only_the_addressed_actor_route() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "slack-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "group-1",
+            "topicId": "thread-1",
+            "scope": "group",
+            "addressedBy": "mention"
+        }));
+
+        let route = route_for_cancel(
+            "slack",
+            "slack-primary",
+            "slack-primary",
+            "group-1",
+            Some(&meta),
+        )
+        .expect("targeted cancel metadata parses")
+        .expect("targeted cancel carries a route");
+
+        assert_eq!(route.channel_instance_id(), "slack-primary");
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+        assert_eq!(route.topic_id(), Some("thread-1"));
+    }
+
+    #[test]
+    fn legacy_cancel_keeps_chat_wide_compatibility_fallback() {
+        assert_eq!(
+            route_for_cancel("slack", "slack", "slack", "group-1", None)
+                .expect("legacy cancel parses"),
+            None
+        );
+    }
+
+    #[test]
+    fn active_prompt_route_guard_prunes_finished_chat() {
+        let routes = DashMap::new();
+        routes.insert(
+            "chat-1".to_string(),
+            HashMap::from([(7, RouteKey::new("feishu", "chat-1"))]),
+        );
+        {
+            let _guard = ActivePromptRoute {
+                routes: &routes,
+                chat_id: "chat-1".to_string(),
+                token: 7,
+            };
+        }
+        assert!(!routes.contains_key("chat-1"));
+    }
+
+    #[test]
+    fn routed_dm_prompt_allows_unaddressed_message() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "feishu-primary",
+            "actorId": "codex-reviewer",
+            "chatId": "chat-1",
+            "scope": "dm",
+            "addressedBy": "unaddressed"
+        }));
+
+        let route = route_for_prompt(
+            "feishu",
+            "feishu-primary",
+            "feishu-primary",
+            "chat-1",
+            Some(&meta),
+        )
+        .expect("direct messages do not require an explicit mention");
+
+        assert_eq!(route.actor_id(), Some("codex-reviewer"));
+    }
+
+    #[test]
+    fn routed_prompt_rejects_a_spoofed_channel_instance() {
+        let meta = channel_meta(json!({
+            "channelInstanceId": "slack-other",
+            "actorId": "U123",
+            "chatId": "chat-1",
+            "scope": "dm",
+            "addressedBy": "dm"
+        }));
+
+        let error = route_for_prompt("slack", "slack-work", "slack-work", "chat-1", Some(&meta))
+            .expect_err("a plugin connection cannot impersonate another instance");
+
+        assert_eq!(
+            error,
+            "channelInstanceId must match the supervised plugin instance"
+        );
     }
 }

@@ -8,6 +8,52 @@ use serde::{Deserialize, Serialize};
 
 use crate::routing::{Attachment, MessageId, RouteKey, TurnId};
 
+pub const CHANNEL_CONTEXT_META_KEY: &str = "va.channel";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConversationScope {
+    Dm,
+    Group,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AddressedBy {
+    Dm,
+    Mention,
+    Command,
+    Callback,
+    Unaddressed,
+}
+
+/// Platform-neutral routing metadata attached to an inbound channel prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelInboundContext {
+    pub channel_instance_id: String,
+    pub actor_id: String,
+    pub chat_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform_message_id: Option<String>,
+    pub scope: ConversationScope,
+    pub addressed_by: AddressedBy,
+}
+
+impl ChannelInboundContext {
+    pub fn is_prompt_allowed(&self) -> bool {
+        self.scope == ConversationScope::Dm
+            || matches!(
+                self.addressed_by,
+                AddressedBy::Mention | AddressedBy::Callback
+            )
+    }
+}
+
 /// Legacy envelope kept for stdio plugin compatibility.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +126,8 @@ impl ChannelInput {
 pub enum ChannelOutput {
     ThreadReply {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         reply: ThreadReply,
     },
     RawAcp {
@@ -93,15 +141,21 @@ pub enum ChannelOutput {
     },
     AgentReady {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         agent: String,
         version: String,
     },
     SessionReady {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         session_id: String,
     },
     SessionInfo {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         info: ChannelSessionInfo,
     },
     SessionMode {
@@ -131,6 +185,8 @@ pub enum ChannelOutput {
     /// `payload` is a JSON-serialized `acp::RequestPermissionRequest`.
     PermissionRequest {
         route: RouteKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reply_to: Option<MessageId>,
         request_id: String,
         payload: serde_json::Value,
     },

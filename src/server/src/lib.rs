@@ -6,19 +6,17 @@ mod web_server;
 
 pub use web_server::run_web_server;
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
-use tokio::sync::{mpsc, Notify};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
 use common::auth::{self, AuthToken};
-use common::channels::{handle_channel_input, ChannelInput, ChannelManager, WebChannelManager};
+use common::channels::{ChannelManager, WebChannelManager};
 use common::config;
 use common::plugins;
 use common::process::registry::{self as child_registry, ChildRegistry};
@@ -27,7 +25,6 @@ use common::search::SearchToolRuntime;
 use common::tunnels::{self, TunnelManager};
 use common::workspace::WorkspaceThreadManager;
 
-const CHANNEL_INPUT_WORKER_COUNT: usize = 64;
 const WEB_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(windows)]
 const WEB_BIND_RETRY_ATTEMPTS: usize = 20;
@@ -68,6 +65,10 @@ pub struct RunningDaemon {
 
 impl RunningDaemon {
     pub async fn stop(self) {
+        self.stop_inner(false).await;
+    }
+
+    async fn stop_inner(self, web_handle_completed: bool) {
         let RunningDaemon {
             channel_hub,
             workspace_thread_manager,
@@ -83,8 +84,16 @@ impl RunningDaemon {
             ..
         } = self;
 
-        workspace_thread_manager.shutdown_all().await;
+        // Close every ingress before tearing down the runtimes it can reach.
+        // This ordering prevents a queued route-lane command from spawning a
+        // fresh ACP host while daemon shutdown is already reaping children.
+        web_shutdown.notify_waiters();
+        channel_input_shutdown.notify_waiters();
+        channel_input_handle.abort();
+        let _ = channel_input_handle.await;
+        channel_hub.ingress().shutdown().await;
         channel_hub.shutdown_all().await;
+        workspace_thread_manager.shutdown_all().await;
         if let Some(search_runtime) = search_runtime {
             search_runtime.shutdown().await;
         }
@@ -105,25 +114,12 @@ impl RunningDaemon {
             let _ = pty_manager.delete_session(session_id);
         }
 
-        web_shutdown.notify_waiters();
         web_dispatch_handle.abort();
         tunnel_handle.abort();
 
-        // Wake the channel-input task and wait for it to exit.
-        channel_input_shutdown.notify_waiters();
-        channel_input_handle.abort();
-        let _ = channel_input_handle.await;
-
         // Let Axum close the listener cleanly, but do not let long-lived
         // websocket clients hang daemon shutdown forever.
-        let mut web_handle = web_handle;
-        if tokio::time::timeout(WEB_SHUTDOWN_TIMEOUT, &mut web_handle)
-            .await
-            .is_err()
-        {
-            web_handle.abort();
-            let _ = web_handle.await;
-        }
+        finish_web_handle(web_handle, web_handle_completed).await;
 
         // Wait for aborted tasks so their sockets and child handles are
         // dropped before a hot restart probes/binds the same port.
@@ -137,13 +133,23 @@ impl RunningDaemon {
     }
 }
 
-fn channel_input_shard(input: &ChannelInput, shard_count: usize) -> usize {
-    let Some(route) = input.route_key() else {
-        return 0;
-    };
-    let mut hasher = DefaultHasher::new();
-    route.hash(&mut hasher);
-    (hasher.finish() as usize) % shard_count.max(1)
+async fn finish_web_handle(
+    mut web_handle: JoinHandle<Result<(), String>>,
+    already_completed: bool,
+) {
+    // Tokio JoinHandle panics if it is polled again after completion. The
+    // foreground start path already awaited it in select!, while desktop
+    // shutdown reaches this helper with a still-running handle.
+    if already_completed {
+        return;
+    }
+    if tokio::time::timeout(WEB_SHUTDOWN_TIMEOUT, &mut web_handle)
+        .await
+        .is_err()
+    {
+        web_handle.abort();
+        let _ = web_handle.await;
+    }
 }
 
 async fn shutdown_signal() {
@@ -311,40 +317,20 @@ impl ServerDaemon {
         let mut input_rx = channel_hub
             .take_input_rx()
             .context("input_rx already taken")?;
-        let manager_for_input = Arc::clone(&workspace_thread_manager);
-        let plugin_host_for_input = channel_hub.plugin_host();
+        let conversation_ingress = channel_hub.ingress();
         let channel_input_shutdown = Arc::new(Notify::new());
         let input_shutdown_for_task = Arc::clone(&channel_input_shutdown);
         let channel_input_handle = tokio::spawn(async move {
-            let mut workers = JoinSet::new();
-            let mut input_shards = Vec::with_capacity(CHANNEL_INPUT_WORKER_COUNT);
-            for _ in 0..CHANNEL_INPUT_WORKER_COUNT {
-                let (tx, mut rx) = mpsc::unbounded_channel::<ChannelInput>();
-                let workspace_thread_manager = Arc::clone(&manager_for_input);
-                let plugin_host = Arc::clone(&plugin_host_for_input);
-                workers.spawn(async move {
-                    while let Some(input) = rx.recv().await {
-                        handle_channel_input(&workspace_thread_manager, &plugin_host, input).await;
-                    }
-                });
-                input_shards.push(tx);
-            }
-
             loop {
                 tokio::select! {
                     biased;
                     _ = input_shutdown_for_task.notified() => break,
                     maybe = input_rx.recv() => {
                         let Some(input) = maybe else { break };
-                        let shard = channel_input_shard(&input, input_shards.len());
-                        if input_shards[shard].send(input).is_err() {
-                            tracing::warn!(shard, "channel input worker stopped");
-                        }
+                        conversation_ingress.dispatch(input);
                     }
                 }
             }
-            drop(input_shards);
-            workers.abort_all();
         });
 
         // 3. Channel plugins — supervised by ChannelMonitor (respawn on
@@ -357,7 +343,7 @@ impl ServerDaemon {
                 tracing::warn!(channel = %name, "no plugin found, skipping");
                 continue;
             };
-            channel_hub.register_plugin(&name, plugin);
+            channel_hub.register_plugin(&name, plugin).await;
         }
 
         // 4. Search provider runtime — supervised like ACP providers. It
@@ -441,7 +427,7 @@ impl ServerDaemon {
     pub async fn start(&self, dist_path: PathBuf) -> anyhow::Result<()> {
         let mut running = self.start_background(dist_path).await?;
 
-        tokio::select! {
+        let web_handle_completed = tokio::select! {
             result = &mut running.web_handle => {
                 match result {
                     Ok(Ok(())) => tracing::info!("web server stopped"),
@@ -449,13 +435,28 @@ impl ServerDaemon {
                     Err(e) => tracing::error!(error = %e, "web server panic"),
                 }
                 running.tunnel_handle.abort();
+                true
             }
             _ = shutdown_signal() => {
                 tracing::info!("shutting down");
+                false
             }
-        }
+        };
 
-        running.stop().await;
+        running.stop_inner(web_handle_completed).await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn completed_web_handle_is_not_polled_twice() {
+        let mut handle = tokio::spawn(async { Ok(()) });
+        (&mut handle).await.unwrap().unwrap();
+
+        finish_web_handle(handle, true).await;
     }
 }

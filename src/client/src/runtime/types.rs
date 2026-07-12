@@ -15,12 +15,39 @@ pub struct AgentsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(from = "ChannelRuntimeWire")]
 pub struct ChannelRuntime {
+    pub instance_id: String,
     pub kind: String,
     pub version: Option<String>,
     pub plugin_dir: Option<String>,
     pub status: ChannelStatus,
     pub reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ChannelRuntimeWire {
+    #[serde(default)]
+    instance_id: Option<String>,
+    kind: String,
+    version: Option<String>,
+    plugin_dir: Option<String>,
+    status: ChannelStatus,
+    reason: Option<String>,
+}
+
+impl From<ChannelRuntimeWire> for ChannelRuntime {
+    fn from(wire: ChannelRuntimeWire) -> Self {
+        let instance_id = wire.instance_id.unwrap_or_else(|| wire.kind.clone());
+        Self {
+            instance_id,
+            kind: wire.kind,
+            version: wire.version,
+            plugin_dir: wire.plugin_dir,
+            status: wire.status,
+            reason: wire.reason,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

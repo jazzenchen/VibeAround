@@ -100,6 +100,8 @@ impl WorkspaceThreadManager {
         let route_lock = self.route_lock(route);
         let _route_guard = route_lock.lock().await;
 
+        self.adopt_legacy_route_attachment(route).await?;
+
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
             return Ok(runtime);
         }
@@ -120,6 +122,49 @@ impl WorkspaceThreadManager {
             .entry(route.clone())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
+    }
+
+    async fn adopt_legacy_route_attachment(&self, route: &RouteKey) -> anyhow::Result<()> {
+        let legacy_route = RouteKey::new(&route.channel_kind, &route.chat_id);
+        if route == &legacy_route
+            || route
+                .topic_id()
+                .is_some_and(|topic_id| topic_id != route.chat_id)
+            || self.current_attachment(route).await?.is_some()
+        {
+            return Ok(());
+        }
+
+        // All extended routes for one legacy chat contend on this lock. The
+        // first route to arrive adopts the old attachment; later Bot/topic
+        // routes start independently instead of all inheriting one session.
+        let legacy_lock = self.route_lock(&legacy_route);
+        let _legacy_guard = legacy_lock.lock().await;
+        if self.current_attachment(route).await?.is_some() {
+            return Ok(());
+        }
+        let Some(legacy_attachment) = self.current_attachment(&legacy_route).await? else {
+            return Ok(());
+        };
+
+        self.attach_route(
+            route.clone(),
+            legacy_attachment.workspace_id,
+            legacy_attachment.thread_id,
+        )
+        .await?;
+        if let Err(error) = self.detach_route(&legacy_route).await {
+            tracing::warn!(
+                route = %route,
+                legacy_route = %legacy_route,
+                error = %error,
+                "extended route adopted legacy attachment but legacy detach failed"
+            );
+        }
+        drop(_legacy_guard);
+        drop(legacy_lock);
+        self.remove_idle_route_lock(&legacy_route);
+        Ok(())
     }
 
     pub async fn create_thread_for_route(
@@ -1621,6 +1666,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn extended_channel_route_adopts_the_legacy_attachment_once() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let legacy_route = RouteKey::new("slack", "chat-a");
+        let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
+        let legacy_thread_id = legacy_runtime.state().await.thread_id;
+        let extended_route = RouteKey::with_actor("slack", "U_REAL_BOT", "chat-a", "slack", None);
+
+        let adopted = manager
+            .resolve_route_runtime(&extended_route)
+            .await
+            .unwrap();
+
+        assert_eq!(adopted.state().await.thread_id, legacy_thread_id);
+        assert!(manager
+            .current_attachment(&legacy_route)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            manager
+                .current_attachment(&extended_route)
+                .await
+                .unwrap()
+                .unwrap()
+                .thread_id,
+            legacy_thread_id
+        );
+    }
+
+    #[tokio::test]
+    async fn extended_topic_route_does_not_steal_the_legacy_base_attachment() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let legacy_route = RouteKey::new("slack", "chat-a");
+        let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
+        let legacy_thread_id = legacy_runtime.state().await.thread_id;
+        let topic_route = RouteKey::with_actor(
+            "slack",
+            "U_REAL_BOT",
+            "chat-a",
+            "slack",
+            Some("thread-1".to_string()),
+        );
+
+        let topic_runtime = manager.resolve_route_runtime(&topic_route).await.unwrap();
+
+        assert_ne!(topic_runtime.state().await.thread_id, legacy_thread_id);
+        assert_eq!(
+            manager
+                .current_attachment(&legacy_route)
+                .await
+                .unwrap()
+                .unwrap()
+                .thread_id,
+            legacy_thread_id
+        );
+    }
+
+    #[tokio::test]
+    async fn discord_thread_route_adopts_its_same_id_legacy_attachment() {
+        let (workspaces, threads, attachments) = temp_paths();
+        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+        let legacy_route = RouteKey::new("discord", "thread-channel-a");
+        let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
+        let legacy_thread_id = legacy_runtime.state().await.thread_id;
+        let extended_route = RouteKey::with_actor(
+            "discord",
+            "REAL_BOT_ID",
+            "thread-channel-a",
+            "discord",
+            Some("thread-channel-a".to_string()),
+        );
+
+        let adopted = manager
+            .resolve_route_runtime(&extended_route)
+            .await
+            .unwrap();
+
+        assert_eq!(adopted.state().await.thread_id, legacy_thread_id);
+        assert!(manager
+            .current_attachment(&legacy_route)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn different_channels_get_different_default_threads() {
         let (workspaces, threads, attachments) = temp_paths();
         let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
@@ -1637,26 +1770,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_route_attachment_starts_new_thread() {
-        let (workspaces, threads, attachments) = temp_paths();
-        let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-        let route = RouteKey::new("feishu", "chat-a");
-        let first = manager.resolve_route_runtime(&route).await.unwrap();
-        let first_thread_id = first.state().await.thread_id;
-
-        manager.runtimes.remove(&first_thread_id);
-        let second = manager.resolve_route_runtime(&route).await.unwrap();
-
-        assert_ne!(second.state().await.thread_id, first_thread_id);
-        assert_eq!(
-            manager
-                .current_attachment(&route)
-                .await
-                .unwrap()
-                .unwrap()
-                .thread_id,
-            second.state().await.thread_id
-        );
+    async fn im_route_attachment_rehydrates_runtime_after_host_shutdown() {
+        route_attachment_rehydrates_runtime_after_host_shutdown("feishu").await;
     }
 
     #[tokio::test]

@@ -98,6 +98,7 @@ mod tests {
         let mut snapshot = RuntimeSnapshot::new();
         snapshot.apply_channels(vec![
             ChannelRuntime {
+                instance_id: "feishu".into(),
                 kind: "feishu".into(),
                 version: None,
                 plugin_dir: None,
@@ -105,6 +106,7 @@ mod tests {
                 reason: None,
             },
             ChannelRuntime {
+                instance_id: "telegram".into(),
                 kind: "telegram".into(),
                 version: None,
                 plugin_dir: None,

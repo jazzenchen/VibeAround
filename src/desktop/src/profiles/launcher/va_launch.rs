@@ -535,7 +535,9 @@ mod tests {
     }
 
     fn read_to_string_eventually(path: &std::path::Path) -> String {
-        for _ in 0..50 {
+        // Workspace test runs can leave the detached launcher waiting for CPU
+        // longer than one second even though the copy itself is immediate.
+        for _ in 0..250 {
             if let Ok(body) = std::fs::read_to_string(path) {
                 if body.trim().is_empty() {
                     std::thread::sleep(std::time::Duration::from_millis(20));

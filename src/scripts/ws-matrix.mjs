@@ -974,7 +974,7 @@ async function writeFakeAgents(home) {
   await linkBin(bin, "gemini", fakeAgent);
   await linkBin(bin, "opencode", fakeAgent);
 
-  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.0.1");
+  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.1.0");
   await writePackage(nodeModules, "pi-acp", "0.0.27");
   await writePackage(nodeModules, "@agentclientprotocol/claude-agent-acp", "0.0.0");
 }
@@ -1087,6 +1087,8 @@ function sleep(ms) {
 const FAKE_AGENT_SOURCE = String.raw`#!/usr/bin/env node
 const readline = require("node:readline");
 const { randomUUID } = require("node:crypto");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
 
 const agent = process.env.VIBEAROUND_LAUNCH_TARGET || "matrix-agent";
 const sessions = new Map();
@@ -1250,8 +1252,8 @@ class BridgeConversation {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: "Bearer matrix-test-key",
-        "x-api-key": "matrix-test-key",
+        authorization: "Bearer " + this.bridgeClientKey(),
+        "x-api-key": this.bridgeClientKey(),
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify(body),
@@ -1264,6 +1266,13 @@ class BridgeConversation {
       throw new Error("bridge returned invalid JSON: " + text);
     }
     return { ok: response.ok, status: response.status, json };
+  }
+
+  bridgeClientKey() {
+    const authPath = path.join(process.env.HOME, ".vibearound", "auth.json");
+    const key = JSON.parse(readFileSync(authPath, "utf8")).token;
+    if (!key) throw new Error("missing local bridge client key");
+    return key;
   }
 
   url() {
