@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 
 use crate::agent::launch::normalize_launch_profile_id;
 use crate::agent_state;
@@ -64,7 +64,6 @@ pub struct WorkspaceThreadManager {
     thread_store: ThreadEventStore,
     attachment_store: RouteAttachmentEventStore,
     runtimes: DashMap<WorkspaceThreadId, Arc<ThreadRuntime>>,
-    route_locks: DashMap<RouteKey, Arc<Mutex<()>>>,
     change_tx: broadcast::Sender<()>,
 }
 
@@ -78,7 +77,6 @@ impl WorkspaceThreadManager {
                 RouteAttachmentEventStore::default_path(),
             ),
             runtimes: DashMap::new(),
-            route_locks: DashMap::new(),
             change_tx,
         })
     }
@@ -94,7 +92,6 @@ impl WorkspaceThreadManager {
             thread_store: ThreadEventStore::new(thread_path),
             attachment_store: RouteAttachmentEventStore::new(attachment_path),
             runtimes: DashMap::new(),
-            route_locks: DashMap::new(),
             change_tx,
         })
     }
@@ -103,9 +100,6 @@ impl WorkspaceThreadManager {
         &self,
         route: &RouteKey,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        let route_lock = self.route_lock(route);
-        let _route_guard = route_lock.lock().await;
-
         self.adopt_legacy_route_attachment(route).await?;
 
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
@@ -123,13 +117,6 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(thread).await
     }
 
-    fn route_lock(&self, route: &RouteKey) -> Arc<Mutex<()>> {
-        self.route_locks
-            .entry(route.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
-    }
-
     async fn adopt_legacy_route_attachment(&self, route: &RouteKey) -> anyhow::Result<()> {
         let legacy_route = RouteKey::new(&route.channel_kind, &route.chat_id);
         if route == &legacy_route
@@ -141,14 +128,6 @@ impl WorkspaceThreadManager {
             return Ok(());
         }
 
-        // All extended routes for one legacy chat contend on this lock. The
-        // first route to arrive adopts the old attachment; later Bot/topic
-        // routes start independently instead of all inheriting one session.
-        let legacy_lock = self.route_lock(&legacy_route);
-        let _legacy_guard = legacy_lock.lock().await;
-        if self.current_attachment(route).await?.is_some() {
-            return Ok(());
-        }
         let Some(legacy_attachment) = self.current_attachment(&legacy_route).await? else {
             return Ok(());
         };
@@ -167,9 +146,6 @@ impl WorkspaceThreadManager {
                 "extended route adopted legacy attachment but legacy detach failed"
             );
         }
-        drop(_legacy_guard);
-        drop(legacy_lock);
-        self.remove_idle_route_lock(&legacy_route);
         Ok(())
     }
 
@@ -304,14 +280,8 @@ impl WorkspaceThreadManager {
             .compact()
             .await
             .context("compact route attachments")?;
-        self.remove_idle_route_lock(route);
         self.notify_change();
         Ok(())
-    }
-
-    fn remove_idle_route_lock(&self, route: &RouteKey) {
-        self.route_locks
-            .remove_if(route, |_, lock| Arc::strong_count(lock) == 1);
     }
 
     pub async fn close_thread(

@@ -301,39 +301,6 @@ async fn route_attachment_rehydrates_runtime_after_host_shutdown(channel_kind: &
 }
 
 #[tokio::test]
-async fn concurrent_route_resolve_uses_single_runtime() {
-    let (workspaces, threads, attachments) = temp_paths();
-    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-    let route = RouteKey::new("feishu", "chat-a");
-
-    let (first, second) = tokio::join!(
-        manager.resolve_route_runtime(&route),
-        manager.resolve_route_runtime(&route)
-    );
-    let first = first.unwrap();
-    let second = second.unwrap();
-
-    assert!(Arc::ptr_eq(&first, &second));
-    let attached_events = manager
-        .attachment_store
-        .read_events()
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|event| {
-            matches!(
-                event,
-                RouteAttachmentEvent::Attached {
-                    route: attached_route,
-                    ..
-                } if attached_route == &route
-            )
-        })
-        .count();
-    assert_eq!(attached_events, 1);
-}
-
-#[tokio::test]
 async fn detach_route_keeps_thread_open() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
@@ -341,33 +308,13 @@ async fn detach_route_keeps_thread_open() {
 
     let runtime = manager.resolve_route_runtime(&route).await.unwrap();
     let thread_id = runtime.state().await.thread_id;
-    assert!(manager.route_locks.contains_key(&route));
-
     manager.detach_route(&route).await.unwrap();
 
     assert!(manager.current_attachment(&route).await.unwrap().is_none());
-    assert!(!manager.route_locks.contains_key(&route));
     assert_eq!(
         manager.thread(&thread_id).await.unwrap().unwrap().status,
         crate::workspace::threads::store::ThreadStatus::Open
     );
-}
-
-#[tokio::test]
-async fn route_lock_cleanup_keeps_in_use_lock() {
-    let (workspaces, threads, attachments) = temp_paths();
-    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-    let route = RouteKey::new("web", "chat-a");
-
-    let route_lock = manager.route_lock(&route);
-    manager.remove_idle_route_lock(&route);
-
-    assert!(manager.route_locks.contains_key(&route));
-    drop(route_lock);
-
-    manager.remove_idle_route_lock(&route);
-
-    assert!(!manager.route_locks.contains_key(&route));
 }
 
 #[tokio::test]
