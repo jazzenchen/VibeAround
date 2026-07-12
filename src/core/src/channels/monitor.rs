@@ -258,7 +258,10 @@ impl ChannelMonitor {
         let id = self
             .lookup(instance_id)
             .ok_or_else(|| format!("unknown channel instance: {}", instance_id))?;
-        self.supervisor.force_start(id).map_err(|e| e.to_string())
+        self.supervisor
+            .force_start(id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub fn snapshot(&self) -> Vec<ChannelStatusSnapshot> {

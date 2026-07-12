@@ -334,7 +334,7 @@ async fn stopped_process_does_not_respawn_until_started() {
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert_eq!(count.load(Ordering::Acquire), 1);
 
-    supervisor.force_start(id).unwrap();
+    supervisor.force_start(id).await.unwrap();
     wait_for_count(&count, 2).await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
     supervisor.force_stop(id).await.unwrap();

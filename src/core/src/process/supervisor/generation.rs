@@ -16,7 +16,7 @@ struct StagedGeneration {
 }
 
 pub(super) struct ProcessOwner {
-    supervisor: std::sync::Weak<Supervisor>,
+    manager_tx: tokio::sync::mpsc::UnboundedSender<ManagerCommand>,
     process: Arc<SupervisedProcess>,
     registry: Arc<ChildRegistry>,
     spec: SpawnSpec,
@@ -35,7 +35,7 @@ pub(super) struct ProcessOwner {
 impl ProcessOwner {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
-        supervisor: std::sync::Weak<Supervisor>,
+        manager_tx: tokio::sync::mpsc::UnboundedSender<ManagerCommand>,
         process: Arc<SupervisedProcess>,
         registry: Arc<ChildRegistry>,
         spec: SpawnSpec,
@@ -46,7 +46,7 @@ impl ProcessOwner {
         state: ProcessState,
     ) -> Self {
         Self {
-            supervisor,
+            manager_tx,
             process,
             registry,
             spec,
@@ -445,18 +445,18 @@ impl ProcessOwner {
             reason: reason.into(),
         };
         self.process.state_tx.send_replace(self.state.clone());
-        if let Some(supervisor) = self.supervisor.upgrade() {
-            supervisor.notify_change(&self.process);
-        }
+        let _ = self
+            .manager_tx
+            .send(ManagerCommand::ProcessChanged(Arc::clone(&self.process)));
     }
 
     fn remove_if_terminal(&self) {
         if matches!(self.policy, RestartPolicy::Never)
             && self.state.status == ProcessStatus::Stopped
         {
-            if let Some(supervisor) = self.supervisor.upgrade() {
-                supervisor.remove_process(&self.process);
-            }
+            let _ = self
+                .manager_tx
+                .send(ManagerCommand::Remove(Arc::clone(&self.process)));
         }
     }
 }

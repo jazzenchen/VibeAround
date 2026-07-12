@@ -5,9 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use parking_lot::RwLock;
 use tokio::process::Command;
-use tokio::sync::{broadcast, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::proc_log;
 use crate::process::bridge::{BridgeExit, BridgeFactory, StdioPipes};
@@ -41,23 +40,85 @@ impl std::fmt::Display for ProcessId {
 }
 
 pub struct Supervisor {
-    registry: Arc<ChildRegistry>,
-    processes: RwLock<HashMap<ProcessId, Arc<SupervisedProcess>>>,
+    manager_tx: mpsc::UnboundedSender<ManagerCommand>,
+    snapshots: watch::Receiver<Vec<ProcessSnapshot>>,
     next_id: AtomicU64,
     change_tx: broadcast::Sender<ProcessEvent>,
     tick_loop_started: AtomicBool,
 }
 
+struct ProcessRegistration {
+    id: ProcessId,
+    kind: ProcessKind,
+    label: String,
+    spec: SpawnSpec,
+    policy: RestartPolicy,
+    factory: BridgeFactory,
+}
+
+enum ManagerCommand {
+    Register(ProcessRegistration),
+    Touch(ProcessId),
+    Stop {
+        id: ProcessId,
+        reason: String,
+        reply: oneshot::Sender<ProcessResult<()>>,
+    },
+    Unregister {
+        id: ProcessId,
+        reply: oneshot::Sender<ProcessResult<()>>,
+    },
+    Restart {
+        id: ProcessId,
+        apply_backoff: bool,
+        reply: oneshot::Sender<ProcessResult<()>>,
+    },
+    Start {
+        id: ProcessId,
+        reply: oneshot::Sender<ProcessResult<()>>,
+    },
+    Tick {
+        now: u64,
+        reply: oneshot::Sender<()>,
+    },
+    ShutdownAll(oneshot::Sender<()>),
+    ProcessChanged(Arc<SupervisedProcess>),
+    Remove(Arc<SupervisedProcess>),
+}
+
+struct ProcessManager {
+    registry: Arc<ChildRegistry>,
+    processes: HashMap<ProcessId, Arc<SupervisedProcess>>,
+    command_tx: mpsc::UnboundedSender<ManagerCommand>,
+    command_rx: mpsc::UnboundedReceiver<ManagerCommand>,
+    snapshot_tx: watch::Sender<Vec<ProcessSnapshot>>,
+    change_tx: broadcast::Sender<ProcessEvent>,
+}
+
 impl Supervisor {
     pub fn new(registry: Arc<ChildRegistry>) -> Arc<Self> {
         let (change_tx, _) = broadcast::channel(64);
-        Arc::new(Self {
-            registry,
-            processes: RwLock::new(HashMap::new()),
+        let (snapshot_tx, snapshots) = watch::channel(Vec::new());
+        let (manager_tx, manager_rx) = mpsc::unbounded_channel();
+        let supervisor = Arc::new(Self {
+            manager_tx: manager_tx.clone(),
+            snapshots,
             next_id: AtomicU64::new(1),
-            change_tx,
+            change_tx: change_tx.clone(),
             tick_loop_started: AtomicBool::new(false),
-        })
+        });
+        tokio::spawn(
+            ProcessManager {
+                registry,
+                processes: HashMap::new(),
+                command_tx: manager_tx,
+                command_rx: manager_rx,
+                snapshot_tx,
+                change_tx,
+            }
+            .run(),
+        );
+        supervisor
     }
 
     pub fn global() -> Arc<Self> {
@@ -79,95 +140,41 @@ impl Supervisor {
         factory: BridgeFactory,
     ) -> ProcessId {
         let id = ProcessId(self.next_id.fetch_add(1, Ordering::Relaxed));
-        self.insert_process(
-            id,
-            kind,
-            label.into(),
-            spec,
-            policy,
-            factory,
-            ProcessStatus::NotStarted,
-            true,
-        );
+        let _ = self
+            .manager_tx
+            .send(ManagerCommand::Register(ProcessRegistration {
+                id,
+                kind,
+                label: label.into(),
+                spec,
+                policy,
+                factory,
+            }));
         id
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn insert_process(
-        self: &Arc<Self>,
-        id: ProcessId,
-        kind: ProcessKind,
-        label: String,
-        spec: SpawnSpec,
-        policy: RestartPolicy,
-        factory: BridgeFactory,
-        initial_status: ProcessStatus,
-        start_immediately: bool,
-    ) -> Arc<SupervisedProcess> {
-        let state = ProcessState {
-            status: initial_status,
-            reason: String::new(),
-        };
-        let (state_tx, _) = watch::channel(state.clone());
-        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
-        let process = Arc::new(SupervisedProcess {
-            id,
-            kind,
-            label,
-            command_tx: command_tx.clone(),
-            state_tx,
-        });
-        self.processes.write().insert(id, Arc::clone(&process));
-        self.notify_change(&process);
-        let owner = ProcessOwner::new(
-            Arc::downgrade(self),
-            Arc::clone(&process),
-            Arc::clone(&self.registry),
-            spec,
-            policy,
-            factory,
-            command_tx,
-            command_rx,
-            state,
-        );
-        tokio::spawn(owner.run(start_immediately));
-        process
-    }
-
     pub fn touch(&self, id: ProcessId) {
-        if let Ok(process) = self.get_process(id) {
-            let _ = process.command_tx.send(ProcessCommand::Touch);
-        }
+        let _ = self.manager_tx.send(ManagerCommand::Touch(id));
     }
 
     pub async fn force_stop(&self, id: ProcessId) -> ProcessResult<()> {
-        let process = self.get_process(id)?;
-        self.stop_process(&process, "stopped by user").await;
-        Ok(())
-    }
-
-    async fn stop_process(&self, process: &SupervisedProcess, reason: &str) {
         let (reply, done) = oneshot::channel();
-        if process
-            .command_tx
-            .send(ProcessCommand::Stop {
-                reason: reason.to_string(),
+        self.manager_tx
+            .send(ManagerCommand::Stop {
+                id,
+                reason: "stopped by user".to_string(),
                 reply,
             })
-            .is_ok()
-        {
-            let _ = done.await;
-        }
+            .map_err(|_| unknown_process(id))?;
+        done.await.unwrap_or_else(|_| Err(unknown_process(id)))
     }
 
     pub async fn unregister(&self, id: ProcessId) -> ProcessResult<()> {
-        let process = self
-            .processes
-            .write()
-            .remove(&id)
-            .ok_or_else(|| unknown_process(id))?;
-        self.shutdown_process(&process, "unregistered").await;
-        Ok(())
+        let (reply, done) = oneshot::channel();
+        self.manager_tx
+            .send(ManagerCommand::Unregister { id, reply })
+            .map_err(|_| unknown_process(id))?;
+        done.await.unwrap_or_else(|_| Err(unknown_process(id)))
     }
 
     pub async fn force_restart(&self, id: ProcessId) -> ProcessResult<()> {
@@ -175,42 +182,27 @@ impl Supervisor {
     }
 
     async fn restart(&self, id: ProcessId, apply_backoff: bool) -> ProcessResult<()> {
-        let process = self.get_process(id)?;
         let (reply, done) = oneshot::channel();
-        if process
-            .command_tx
-            .send(ProcessCommand::Restart {
+        self.manager_tx
+            .send(ManagerCommand::Restart {
+                id,
                 apply_backoff,
                 reply,
             })
-            .is_ok()
-        {
-            let _ = done.await;
-        }
-        Ok(())
+            .map_err(|_| unknown_process(id))?;
+        done.await.unwrap_or_else(|_| Err(unknown_process(id)))
     }
 
-    pub fn force_start(&self, id: ProcessId) -> ProcessResult<()> {
-        let process = self.get_process(id)?;
-        let _ = process.command_tx.send(ProcessCommand::Start);
-        Ok(())
+    pub async fn force_start(&self, id: ProcessId) -> ProcessResult<()> {
+        let (reply, done) = oneshot::channel();
+        self.manager_tx
+            .send(ManagerCommand::Start { id, reply })
+            .map_err(|_| unknown_process(id))?;
+        done.await.unwrap_or_else(|_| Err(unknown_process(id)))
     }
 
     pub fn snapshot(&self) -> Vec<ProcessSnapshot> {
-        let mut snapshots = self
-            .processes
-            .read()
-            .values()
-            .map(|process| ProcessSnapshot {
-                id: process.id,
-                kind: process.kind,
-                label: process.label.clone(),
-                status: process.status(),
-                reason: process.reason(),
-            })
-            .collect::<Vec<_>>();
-        snapshots.sort_by(|left, right| left.label.cmp(&right.label));
-        snapshots
+        self.snapshots.borrow().clone()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<ProcessEvent> {
@@ -240,73 +232,221 @@ impl Supervisor {
     }
 
     async fn tick(&self) {
-        let now = now_secs();
-        let processes = self.processes.read().values().cloned().collect::<Vec<_>>();
-        for process in processes {
-            let _ = process.command_tx.send(ProcessCommand::Tick(now));
-        }
+        let (reply, done) = oneshot::channel();
+        let _ = self.manager_tx.send(ManagerCommand::Tick {
+            now: now_secs(),
+            reply,
+        });
+        let _ = done.await;
         tokio::task::yield_now().await;
     }
 
     pub async fn shutdown_all(&self) {
-        let processes = self
-            .processes
-            .write()
-            .drain()
-            .map(|(_, process)| process)
-            .collect::<Vec<_>>();
-        let mut completions = Vec::with_capacity(processes.len());
-        for process in processes {
-            let (reply, done) = oneshot::channel();
-            let _ = process.command_tx.send(ProcessCommand::Shutdown {
-                reason: "supervisor shutdown".to_string(),
-                reply,
-            });
-            completions.push(done);
-        }
-        for completion in completions {
-            let _ = completion.await;
-        }
-    }
-
-    fn get_process(&self, id: ProcessId) -> ProcessResult<Arc<SupervisedProcess>> {
-        self.processes
-            .read()
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| unknown_process(id))
-    }
-
-    async fn shutdown_process(&self, process: &SupervisedProcess, reason: &str) {
         let (reply, done) = oneshot::channel();
-        if process
-            .command_tx
-            .send(ProcessCommand::Shutdown {
-                reason: reason.to_string(),
-                reply,
-            })
-            .is_ok()
-        {
-            let _ = done.await;
+        let _ = self.manager_tx.send(ManagerCommand::ShutdownAll(reply));
+        let _ = done.await;
+    }
+}
+
+impl ProcessManager {
+    async fn run(mut self) {
+        while let Some(command) = self.command_rx.recv().await {
+            match command {
+                ManagerCommand::Register(registration) => self.register(registration),
+                ManagerCommand::Touch(id) => {
+                    if let Some(process) = self.processes.get(&id) {
+                        let _ = process.command_tx.send(ProcessCommand::Touch);
+                    }
+                }
+                ManagerCommand::Stop { id, reason, reply } => {
+                    let Some(process) = self.processes.get(&id) else {
+                        let _ = reply.send(Err(unknown_process(id)));
+                        continue;
+                    };
+                    let (process_reply, done) = oneshot::channel();
+                    if process
+                        .command_tx
+                        .send(ProcessCommand::Stop {
+                            reason,
+                            reply: process_reply,
+                        })
+                        .is_err()
+                    {
+                        let _ = reply.send(Err(unknown_process(id)));
+                    } else {
+                        tokio::spawn(async move {
+                            let _ = done.await;
+                            let _ = reply.send(Ok(()));
+                        });
+                    }
+                }
+                ManagerCommand::Unregister { id, reply } => {
+                    let Some(process) = self.processes.remove(&id) else {
+                        let _ = reply.send(Err(unknown_process(id)));
+                        continue;
+                    };
+                    self.publish_snapshots();
+                    let (process_reply, done) = oneshot::channel();
+                    let _ = process.command_tx.send(ProcessCommand::Shutdown {
+                        reason: "unregistered".to_string(),
+                        reply: process_reply,
+                    });
+                    tokio::spawn(async move {
+                        let _ = done.await;
+                        let _ = reply.send(Ok(()));
+                    });
+                }
+                ManagerCommand::Restart {
+                    id,
+                    apply_backoff,
+                    reply,
+                } => {
+                    let Some(process) = self.processes.get(&id) else {
+                        let _ = reply.send(Err(unknown_process(id)));
+                        continue;
+                    };
+                    let (process_reply, done) = oneshot::channel();
+                    if process
+                        .command_tx
+                        .send(ProcessCommand::Restart {
+                            apply_backoff,
+                            reply: process_reply,
+                        })
+                        .is_err()
+                    {
+                        let _ = reply.send(Err(unknown_process(id)));
+                    } else {
+                        tokio::spawn(async move {
+                            let _ = done.await;
+                            let _ = reply.send(Ok(()));
+                        });
+                    }
+                }
+                ManagerCommand::Start { id, reply } => {
+                    let result = self
+                        .processes
+                        .get(&id)
+                        .ok_or_else(|| unknown_process(id))
+                        .and_then(|process| {
+                            process
+                                .command_tx
+                                .send(ProcessCommand::Start)
+                                .map_err(|_| unknown_process(id))
+                        });
+                    let _ = reply.send(result);
+                }
+                ManagerCommand::Tick { now, reply } => {
+                    for process in self.processes.values() {
+                        let _ = process.command_tx.send(ProcessCommand::Tick(now));
+                    }
+                    let _ = reply.send(());
+                }
+                ManagerCommand::ShutdownAll(reply) => {
+                    let processes = self.processes.drain().map(|(_, process)| process);
+                    let mut completions = Vec::new();
+                    for process in processes {
+                        let (process_reply, done) = oneshot::channel();
+                        let _ = process.command_tx.send(ProcessCommand::Shutdown {
+                            reason: "supervisor shutdown".to_string(),
+                            reply: process_reply,
+                        });
+                        completions.push(done);
+                    }
+                    self.publish_snapshots();
+                    tokio::spawn(async move {
+                        for completion in completions {
+                            let _ = completion.await;
+                        }
+                        let _ = reply.send(());
+                    });
+                }
+                ManagerCommand::ProcessChanged(process) => {
+                    if self
+                        .processes
+                        .get(&process.id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &process))
+                    {
+                        let _ = self.change_tx.send(ProcessEvent {
+                            id: process.id,
+                            kind: process.kind,
+                            status: process.status(),
+                        });
+                        self.publish_snapshots();
+                    }
+                }
+                ManagerCommand::Remove(process) => {
+                    if self
+                        .processes
+                        .get(&process.id)
+                        .is_some_and(|current| Arc::ptr_eq(current, &process))
+                    {
+                        self.processes.remove(&process.id);
+                        self.publish_snapshots();
+                    }
+                }
+            }
         }
     }
 
-    fn remove_process(&self, process: &Arc<SupervisedProcess>) {
-        let mut processes = self.processes.write();
-        if processes
-            .get(&process.id)
-            .is_some_and(|current| Arc::ptr_eq(current, process))
-        {
-            processes.remove(&process.id);
-        }
-    }
-
-    fn notify_change(&self, process: &SupervisedProcess) {
-        let _ = self.change_tx.send(ProcessEvent {
-            id: process.id,
-            kind: process.kind,
-            status: process.status(),
+    fn register(&mut self, registration: ProcessRegistration) {
+        let ProcessRegistration {
+            id,
+            kind,
+            label,
+            spec,
+            policy,
+            factory,
+        } = registration;
+        let state = ProcessState {
+            status: ProcessStatus::NotStarted,
+            reason: String::new(),
+        };
+        let (state_tx, _) = watch::channel(state.clone());
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let process = Arc::new(SupervisedProcess {
+            id,
+            kind,
+            label,
+            command_tx: command_tx.clone(),
+            state_tx,
         });
+        self.processes.insert(id, Arc::clone(&process));
+        let _ = self.change_tx.send(ProcessEvent {
+            id,
+            kind,
+            status: ProcessStatus::NotStarted,
+        });
+        self.publish_snapshots();
+        tokio::spawn(
+            ProcessOwner::new(
+                self.command_tx.clone(),
+                process,
+                Arc::clone(&self.registry),
+                spec,
+                policy,
+                factory,
+                command_tx,
+                command_rx,
+                state,
+            )
+            .run(true),
+        );
+    }
+
+    fn publish_snapshots(&self) {
+        let mut snapshots = self
+            .processes
+            .values()
+            .map(|process| ProcessSnapshot {
+                id: process.id,
+                kind: process.kind,
+                label: process.label.clone(),
+                status: process.status(),
+                reason: process.reason(),
+            })
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.label.cmp(&right.label));
+        self.snapshot_tx.send_replace(snapshots);
     }
 }
 
