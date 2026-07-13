@@ -127,18 +127,6 @@ impl ChannelManager {
                     return false;
                 }
             };
-        if let Err(error) = self
-            .workspace_thread_manager
-            .migrate_legacy_channel_routes(&manifest.channel_kind, &manifest.instance_id)
-            .await
-        {
-            tracing::warn!(
-                channel_kind = %manifest.channel_kind,
-                instance_id = %manifest.instance_id,
-                error = %error,
-                "failed to migrate legacy channel attachments"
-            );
-        }
         self.monitor().register(manifest).await
     }
 

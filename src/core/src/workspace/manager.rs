@@ -114,17 +114,6 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(thread).await
     }
 
-    pub async fn migrate_legacy_channel_routes(
-        &self,
-        channel_kind: &str,
-        instance_id: &str,
-    ) -> anyhow::Result<usize> {
-        self.attachment_store
-            .migrate_channel_instance(channel_kind, instance_id)
-            .await
-            .context("migrate legacy channel route attachments")
-    }
-
     pub async fn create_thread_for_route(
         &self,
         route: &RouteKey,

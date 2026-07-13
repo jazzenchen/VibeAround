@@ -157,51 +157,12 @@ async fn channel_routes_get_route_private_threads() {
 }
 
 #[tokio::test]
-async fn channel_registration_migrates_the_legacy_attachment_once() {
+async fn base_and_topic_routes_get_different_threads() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-    let legacy_route = RouteKey::new("slack", "chat-a");
-    let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
-    let legacy_thread_id = legacy_runtime.state().await.thread_id;
-    let extended_route = RouteKey::with_actor("slack", "U_REAL_BOT", "chat-a", "U_REAL_BOT", None);
-
-    assert_eq!(
-        manager
-            .migrate_legacy_channel_routes("slack", "U_REAL_BOT")
-            .await
-            .unwrap(),
-        1
-    );
-
-    let adopted = manager
-        .resolve_route_runtime(&extended_route)
-        .await
-        .unwrap();
-
-    assert_eq!(adopted.state().await.thread_id, legacy_thread_id);
-    assert!(manager
-        .current_attachment(&legacy_route)
-        .await
-        .unwrap()
-        .is_none());
-    assert_eq!(
-        manager
-            .current_attachment(&extended_route)
-            .await
-            .unwrap()
-            .unwrap()
-            .thread_id,
-        legacy_thread_id
-    );
-}
-
-#[tokio::test]
-async fn extended_topic_route_does_not_steal_the_legacy_base_attachment() {
-    let (workspaces, threads, attachments) = temp_paths();
-    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-    let legacy_route = RouteKey::new("slack", "chat-a");
-    let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
-    let legacy_thread_id = legacy_runtime.state().await.thread_id;
+    let base_route = RouteKey::new("slack", "chat-a");
+    let base_runtime = manager.resolve_route_runtime(&base_route).await.unwrap();
+    let base_thread_id = base_runtime.state().await.thread_id;
     let topic_route = RouteKey::with_actor(
         "slack",
         "U_REAL_BOT",
@@ -212,52 +173,16 @@ async fn extended_topic_route_does_not_steal_the_legacy_base_attachment() {
 
     let topic_runtime = manager.resolve_route_runtime(&topic_route).await.unwrap();
 
-    assert_ne!(topic_runtime.state().await.thread_id, legacy_thread_id);
+    assert_ne!(topic_runtime.state().await.thread_id, base_thread_id);
     assert_eq!(
         manager
-            .current_attachment(&legacy_route)
+            .current_attachment(&base_route)
             .await
             .unwrap()
             .unwrap()
             .thread_id,
-        legacy_thread_id
+        base_thread_id
     );
-}
-
-#[tokio::test]
-async fn channel_registration_migrates_discord_attachment() {
-    let (workspaces, threads, attachments) = temp_paths();
-    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-    let legacy_route = RouteKey::new("discord", "thread-channel-a");
-    let legacy_runtime = manager.resolve_route_runtime(&legacy_route).await.unwrap();
-    let legacy_thread_id = legacy_runtime.state().await.thread_id;
-    let extended_route = RouteKey::with_actor(
-        "discord",
-        "REAL_BOT_ID",
-        "thread-channel-a",
-        "REAL_BOT_ID",
-        None,
-    );
-
-    assert_eq!(
-        manager
-            .migrate_legacy_channel_routes("discord", "REAL_BOT_ID")
-            .await
-            .unwrap(),
-        1
-    );
-
-    let adopted = manager
-        .resolve_route_runtime(&extended_route)
-        .await
-        .unwrap();
-
-    assert_eq!(adopted.state().await.thread_id, legacy_thread_id);
-    assert!(manager
-        .current_attachment(&legacy_route)
-        .await
-        .unwrap()
-        .is_none());
 }
 
 #[tokio::test]

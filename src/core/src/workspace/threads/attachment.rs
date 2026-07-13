@@ -162,11 +162,6 @@ pub struct RouteAttachmentEventStore {
 enum RouteAttachmentStoreCommand {
     Load(oneshot::Sender<jsonl::Result<RouteAttachmentProjection>>),
     Apply(RouteAttachmentEvent, oneshot::Sender<jsonl::Result<()>>),
-    Migrate {
-        channel_kind: String,
-        instance_id: String,
-        reply: oneshot::Sender<jsonl::Result<usize>>,
-    },
 }
 
 impl RouteAttachmentEventStore {
@@ -209,24 +204,6 @@ impl RouteAttachmentEventStore {
             .await
             .expect("attachment store owner must reply while its handle is alive")
     }
-
-    pub async fn migrate_channel_instance(
-        &self,
-        channel_kind: &str,
-        instance_id: &str,
-    ) -> jsonl::Result<usize> {
-        let (reply, result) = oneshot::channel();
-        self.command_tx
-            .send(RouteAttachmentStoreCommand::Migrate {
-                channel_kind: channel_kind.to_string(),
-                instance_id: instance_id.to_string(),
-                reply,
-            })
-            .expect("attachment store owner must outlive its handle");
-        result
-            .await
-            .expect("attachment store owner must reply while its handle is alive")
-    }
 }
 
 async fn run_attachment_store(
@@ -257,31 +234,6 @@ async fn run_attachment_store(
                 };
                 let _ = reply.send(result);
             }
-            RouteAttachmentStoreCommand::Migrate {
-                channel_kind,
-                instance_id,
-                reply,
-            } => {
-                let result = match loaded {
-                    Ok(()) => {
-                        let mut next = projection.as_ref().expect("projection was loaded").clone();
-                        let count = migrate_projection(&mut next, &channel_kind, &instance_id);
-                        if count == 0 {
-                            Ok(0)
-                        } else {
-                            let result = replace_attachment_projection(&path, &next)
-                                .await
-                                .map(|()| count);
-                            if result.is_ok() {
-                                projection = Some(next);
-                            }
-                            result
-                        }
-                    }
-                    Err(error) => Err(error),
-                };
-                let _ = reply.send(result);
-            }
         }
     }
 }
@@ -295,45 +247,6 @@ async fn ensure_attachment_projection_loaded(
         *projection = Some(RouteAttachmentProjection::from_events(&events));
     }
     Ok(())
-}
-
-fn migrate_projection(
-    projection: &mut RouteAttachmentProjection,
-    channel_kind: &str,
-    instance_id: &str,
-) -> usize {
-    if channel_kind == instance_id {
-        return 0;
-    }
-    let migrations = projection
-        .current
-        .values()
-        .filter(|attachment| {
-            attachment.route.channel_kind == channel_kind
-                && attachment.route.channel_instance_id() == channel_kind
-        })
-        .map(|attachment| {
-            let route = &attachment.route;
-            let migrated_route = RouteKey::with_actor(
-                channel_kind,
-                instance_id,
-                route.chat_id.clone(),
-                route.actor_id().unwrap_or(instance_id),
-                route.topic_id.clone(),
-            );
-            (route.clone(), migrated_route, attachment.clone())
-        })
-        .collect::<Vec<_>>();
-    for (legacy_route, migrated_route, attachment) in &migrations {
-        projection.current.remove(legacy_route);
-        let mut attachment = attachment.clone();
-        attachment.route = migrated_route.clone();
-        projection
-            .current
-            .entry(migrated_route.clone())
-            .or_insert(attachment);
-    }
-    migrations.len()
 }
 
 async fn replace_attachment_projection(
@@ -470,48 +383,6 @@ mod tests {
 
         let projection = store.load_projection().await.unwrap();
         assert_eq!(projection.len(), 2);
-
-        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
-    }
-
-    #[tokio::test]
-    async fn channel_instance_migration_rewrites_legacy_route_once() {
-        let path = std::env::temp_dir()
-            .join(format!("vibearound-attachments-{}", uuid::Uuid::new_v4()))
-            .join("attachments.jsonl");
-        let store = RouteAttachmentEventStore::new(path.clone());
-        let legacy_route = RouteKey::new("slack", "chat-a");
-        store
-            .append(&RouteAttachmentEvent::attached(
-                legacy_route.clone(),
-                "ws_a",
-                "wt_a",
-            ))
-            .await
-            .unwrap();
-
-        assert_eq!(
-            store
-                .migrate_channel_instance("slack", "slack-primary")
-                .await
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            store
-                .migrate_channel_instance("slack", "slack-primary")
-                .await
-                .unwrap(),
-            0
-        );
-        let projection = store.load_projection().await.unwrap();
-        let migrated =
-            RouteKey::with_actor("slack", "slack-primary", "chat-a", "slack-primary", None);
-        assert!(projection.get(&legacy_route).is_none());
-        assert_eq!(
-            projection.get(&migrated).unwrap().thread_id,
-            WorkspaceThreadId::from("wt_a")
-        );
 
         let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
     }

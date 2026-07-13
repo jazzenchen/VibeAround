@@ -46,8 +46,8 @@ pub fn runtime_kill_tunnel(provider: &str) -> Operation<()> {
     Operation::new(crate::runtime::kill_tunnel(provider), decode_success)
 }
 
-pub fn runtime_kill_agent(route_key: &str) -> Operation<()> {
-    Operation::new(crate::runtime::kill_agent(route_key), decode_success)
+pub fn runtime_kill_agent(thread_id: &str) -> Operation<()> {
+    Operation::new(crate::runtime::kill_agent(thread_id), decode_success)
 }
 
 pub fn runtime_kill_pty(session_id: &str) -> Operation<()> {

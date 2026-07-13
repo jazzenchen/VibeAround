@@ -95,10 +95,10 @@ pub fn kill_tunnel(provider: &str) -> RequestSpec {
     )
 }
 
-pub fn kill_agent(route_key: &str) -> RequestSpec {
+pub fn kill_agent(thread_id: &str) -> RequestSpec {
     RequestSpec::new(
         HttpMethod::Delete,
-        join_path("/api/agents", route_key),
+        join_path("/api/agents", thread_id),
         AuthRequirement::BearerToken,
     )
 }
@@ -119,10 +119,10 @@ mod tests {
     use crate::runtime::TunnelStatus;
 
     #[test]
-    fn kill_agent_encodes_route_key() {
-        let request = kill_agent("telegram:chat/1");
+    fn kill_agent_encodes_thread_id() {
+        let request = kill_agent("wt/thread-1");
         assert_eq!(request.method, HttpMethod::Delete);
-        assert_eq!(request.path, "/api/agents/telegram%3Achat%2F1");
+        assert_eq!(request.path, "/api/agents/wt%2Fthread-1");
     }
 
     #[test]

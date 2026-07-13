@@ -68,7 +68,7 @@ pub(crate) async fn dispatch(options: &Options, command: Command) -> Result<(), 
         Command::ChannelStop { kind } => runtime::stop_channel(options, &kind).await?,
         Command::ChannelRestart { kind } => runtime::restart_channel(options, &kind).await?,
         Command::TunnelKill { provider } => runtime::kill_tunnel(options, &provider).await?,
-        Command::AgentKill { route_key } => runtime::kill_agent(options, &route_key).await?,
+        Command::AgentKill { thread_id } => runtime::kill_agent(options, &thread_id).await?,
         Command::SessionCreate(create) => sessions::create(options, &create).await?,
         Command::SessionAttach { session_id } => {
             crate::attach::attach_session(options, &session_id).await?;

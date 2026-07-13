@@ -131,7 +131,7 @@ enum TunnelCommand {
 #[derive(Debug, Subcommand)]
 #[command(rename_all = "kebab-case")]
 enum AgentCommand {
-    Kill { route_key: String },
+    Kill { thread_id: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -213,7 +213,7 @@ fn top_command_into_command(command: TopCommand) -> Result<Command, CliError> {
             TunnelCommand::Kill { provider } => Command::TunnelKill { provider },
         },
         TopCommand::Agent { command } => match command {
-            AgentCommand::Kill { route_key } => Command::AgentKill { route_key },
+            AgentCommand::Kill { thread_id } => Command::AgentKill { thread_id },
         },
         TopCommand::Session { command } => session::command_into_command(command)?,
         TopCommand::Pty { command } => match command {
