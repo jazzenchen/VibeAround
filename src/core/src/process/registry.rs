@@ -13,8 +13,8 @@
 //!    a `spawn_local` stdout-reader closure, dropping it only on stdout EOF.
 //!    Same runtime-teardown hole as above.
 //!
-//! This module owns every spawned `Child` centrally in a `DashMap` behind
-//! a global singleton so that:
+//! This module owns every spawned `Child` centrally behind a global singleton
+//! so that:
 //!
 //! - `kill_all()` (called from `RunningDaemon::stop` and Tauri `RunEvent::Exit`)
 //!   synchronously kills each registered child plus any helper descendants,
@@ -34,7 +34,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use dashmap::DashMap;
+use parking_lot::Mutex;
 use tokio::process::Child;
 
 /// Classification of a registered child, used by `orphan_sweep` to decide
@@ -75,8 +75,12 @@ struct Entry {
 }
 
 pub struct ChildRegistry {
-    entries: DashMap<u64, Entry>,
-    next_id: parking_lot::Mutex<u64>,
+    state: Mutex<ChildRegistryState>,
+}
+
+struct ChildRegistryState {
+    entries: HashMap<u64, Entry>,
+    next_id: u64,
 }
 
 impl ChildRegistry {
@@ -84,13 +88,15 @@ impl ChildRegistry {
     /// that assert the registry gets drained on terminal bridge exits.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.entries.len()
+        self.state.lock().entries.len()
     }
 
     pub(crate) fn new() -> Self {
         Self {
-            entries: DashMap::new(),
-            next_id: parking_lot::Mutex::new(1),
+            state: Mutex::new(ChildRegistryState {
+                entries: HashMap::new(),
+                next_id: 1,
+            }),
         }
     }
 
@@ -107,12 +113,9 @@ impl ChildRegistry {
     /// must pass to `remove()` when the child exits cleanly.
     pub fn register(&self, kind: ProcessKind, label: impl Into<String>, child: Child) -> u64 {
         let label = label.into();
-        let id = {
-            let mut next = self.next_id.lock();
-            let id = *next;
-            *next = next.wrapping_add(1);
-            id
-        };
+        let mut state = self.state.lock();
+        let id = state.next_id;
+        state.next_id = state.next_id.wrapping_add(1);
         let pid = child.id();
         tracing::info!(
             "[child-registry] register id={} kind={:?} label={} pid={:?}",
@@ -121,7 +124,7 @@ impl ChildRegistry {
             label,
             pid
         );
-        self.entries.insert(id, Entry { kind, label, child });
+        state.entries.insert(id, Entry { kind, label, child });
         id
     }
 
@@ -129,7 +132,7 @@ impl ChildRegistry {
     /// cleanup. Typically called after the caller has observed the child's
     /// stdout EOF, or during the happy-path shutdown.
     pub fn remove(&self, id: u64) -> Option<Child> {
-        self.entries.remove(&id).map(|(_, entry)| {
+        self.state.lock().entries.remove(&id).map(|entry| {
             tracing::info!(
                 "[child-registry] remove id={} kind={:?} label={}",
                 id,
@@ -148,40 +151,37 @@ impl ChildRegistry {
     /// Intentionally does NOT `.await` on `wait()` — Exit handlers must
     /// return promptly, and the OS will reap the killed children anyway.
     pub fn kill_all(&self) {
-        let ids: Vec<u64> = self.entries.iter().map(|e| *e.key()).collect();
-        tracing::info!("[child-registry] kill_all: {} child(ren)", ids.len());
-        for id in ids {
-            if let Some((_, mut entry)) = self.entries.remove(&id) {
-                let pid = entry.child.id();
-                if let Some(pid) = pid {
-                    let descendant_count =
-                        kill_registered_descendants(pid, entry.kind, &entry.label);
-                    if descendant_count > 0 {
-                        tracing::info!(
-                            "[child-registry] killed {} descendant(s) for id={} kind={:?} label={} pid={}",
-                            descendant_count,
-                            id,
-                            entry.kind,
-                            entry.label,
-                            pid
-                        );
-                    }
-                }
-                match entry.child.start_kill() {
-                    Ok(()) => tracing::info!(
-                        "[child-registry] killed id={} kind={:?} label={} pid={:?}",
+        let entries = std::mem::take(&mut self.state.lock().entries);
+        tracing::info!("[child-registry] kill_all: {} child(ren)", entries.len());
+        for (id, mut entry) in entries {
+            let pid = entry.child.id();
+            if let Some(pid) = pid {
+                let descendant_count = kill_registered_descendants(pid, entry.kind, &entry.label);
+                if descendant_count > 0 {
+                    tracing::info!(
+                        "[child-registry] killed {} descendant(s) for id={} kind={:?} label={} pid={}",
+                        descendant_count,
                         id,
                         entry.kind,
                         entry.label,
                         pid
-                    ),
-                    Err(e) => tracing::info!(
-                        "[child-registry] start_kill failed id={} label={}: {}",
-                        id,
-                        entry.label,
-                        e
-                    ),
+                    );
                 }
+            }
+            match entry.child.start_kill() {
+                Ok(()) => tracing::info!(
+                    "[child-registry] killed id={} kind={:?} label={} pid={:?}",
+                    id,
+                    entry.kind,
+                    entry.label,
+                    pid
+                ),
+                Err(error) => tracing::info!(
+                    "[child-registry] start_kill failed id={} label={}: {}",
+                    id,
+                    entry.label,
+                    error
+                ),
             }
         }
     }

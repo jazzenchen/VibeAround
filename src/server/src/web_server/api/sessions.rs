@@ -181,7 +181,8 @@ async fn launch_session_info(
 ) -> Result<crate::api_types::LaunchSessionInfo, (StatusCode, String)> {
     let active = state
         .web_channel
-        .session_is_active(&session.agent_id, &session.session_id);
+        .session_is_active(&session.agent_id, &session.session_id)
+        .await;
     let thread_host = state
         .channel_hub
         .workspace_thread_manager()

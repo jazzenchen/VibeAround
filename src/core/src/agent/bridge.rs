@@ -10,8 +10,8 @@
 //! Unlike [`ChannelPluginBridge`], the agent has **no restart policy**
 //! ([`RestartPolicy::Never`]). One bridge = one spawn = one `AgentReady`.
 //! The `BridgeFactory` handed to [`Supervisor::register`] is therefore
-//! single-shot: we build the bridge eagerly, stash it in a `Mutex<Option>`,
-//! and `take()` it the first (and only) time the factory is invoked.
+//! single-shot: we build the bridge eagerly and `take()` it from the
+//! `FnMut` factory the first (and only) time the factory is invoked.
 //!
 //! [`ChannelPluginBridge`]: crate::channels::plugin_bridge::ChannelPluginBridge
 //! [`RestartPolicy::Never`]: crate::process::RestartPolicy::Never
@@ -258,7 +258,6 @@ async fn drive_agent_bridge(
                 conn,
                 agent_id_for_run.clone(),
                 initialize.clone(),
-                startup_session_id.clone(),
                 suppress_startup_notifications,
             );
             // This guard also runs if the ACP driver cancels this callback,

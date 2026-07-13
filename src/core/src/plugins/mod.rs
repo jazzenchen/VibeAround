@@ -51,6 +51,16 @@ pub struct PluginCapabilities {
     #[serde(default)]
     pub media: bool,
     pub auth: Option<PluginAuthCapabilities>,
+    #[serde(default, rename = "topicScope")]
+    pub topic_scope: TopicConversationScope,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TopicConversationScope {
+    Chat,
+    #[default]
+    Topic,
 }
 
 impl PluginCapabilities {
@@ -351,4 +361,42 @@ fn read_package_version(path: &Path) -> Option<String> {
         .map(str::trim)
         .filter(|version| !version.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest_with_capabilities(capabilities: serde_json::Value) -> PluginManifest {
+        serde_json::from_value(serde_json::json!({
+            "id": "slack",
+            "name": "Slack",
+            "version": "1.0.0",
+            "kind": "channel",
+            "runtime": "node",
+            "entry": "index.js",
+            "capabilities": capabilities
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn topic_scope_defaults_to_topic() {
+        let manifest = manifest_with_capabilities(serde_json::json!({}));
+
+        assert_eq!(
+            manifest.capabilities.topic_scope,
+            TopicConversationScope::Topic
+        );
+    }
+
+    #[test]
+    fn manifest_can_scope_topics_to_chat() {
+        let manifest = manifest_with_capabilities(serde_json::json!({ "topicScope": "chat" }));
+
+        assert_eq!(
+            manifest.capabilities.topic_scope,
+            TopicConversationScope::Chat
+        );
+    }
 }

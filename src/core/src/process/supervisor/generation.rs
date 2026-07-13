@@ -1,125 +1,206 @@
 use super::*;
 
-pub(super) struct StagedGeneration {
-    pub(super) id: u64,
-    pub(super) registry_id: u64,
+struct ActiveGeneration {
+    id: u64,
+    registry_id: u64,
+    cancel_tx: watch::Sender<bool>,
+    bridge_task: tokio::task::JoinHandle<()>,
+}
+
+struct StagedGeneration {
+    id: u64,
+    registry_id: u64,
     pipes: StdioPipes,
     cancel_tx: watch::Sender<bool>,
     cancel_rx: watch::Receiver<bool>,
 }
 
-impl Supervisor {
-    pub(super) fn schedule_spawn(self: &Arc<Self>, proc: Arc<SupervisedProcess>) {
-        // Serialize task publication with lifecycle state changes. A tick may
-        // hold a stale `Crashed` snapshot while restart already owns the stop
-        // barrier; it must not publish a late spawn task into that window.
-        let _transition = proc.transition_lock.lock();
-        if proc.stopping.load(Ordering::Acquire)
+pub(super) struct ProcessOwner {
+    manager_tx: tokio::sync::mpsc::UnboundedSender<ManagerCommand>,
+    process: Arc<SupervisedProcess>,
+    registry: Arc<ChildRegistry>,
+    spec: SpawnSpec,
+    policy: RestartPolicy,
+    factory: BridgeFactory,
+    command_tx: tokio::sync::mpsc::UnboundedSender<ProcessCommand>,
+    command_rx: tokio::sync::mpsc::UnboundedReceiver<ProcessCommand>,
+    state: ProcessState,
+    last_heartbeat_ts: u64,
+    next_spawn_at: u64,
+    next_generation: u64,
+    consecutive_failures: u32,
+    active: Option<ActiveGeneration>,
+}
+
+impl ProcessOwner {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new(
+        manager_tx: tokio::sync::mpsc::UnboundedSender<ManagerCommand>,
+        process: Arc<SupervisedProcess>,
+        registry: Arc<ChildRegistry>,
+        spec: SpawnSpec,
+        policy: RestartPolicy,
+        factory: BridgeFactory,
+        command_tx: tokio::sync::mpsc::UnboundedSender<ProcessCommand>,
+        command_rx: tokio::sync::mpsc::UnboundedReceiver<ProcessCommand>,
+        state: ProcessState,
+    ) -> Self {
+        Self {
+            manager_tx,
+            process,
+            registry,
+            spec,
+            policy,
+            factory,
+            command_tx,
+            command_rx,
+            state,
+            last_heartbeat_ts: now_secs(),
+            next_spawn_at: 0,
+            next_generation: 1,
+            consecutive_failures: 0,
+            active: None,
+        }
+    }
+
+    pub(super) async fn run(mut self, start_immediately: bool) {
+        if start_immediately {
+            let _ = self.spawn_generation();
+        }
+        while let Some(command) = self.command_rx.recv().await {
+            match command {
+                ProcessCommand::Touch => {
+                    self.last_heartbeat_ts = now_secs();
+                    self.consecutive_failures = 0;
+                }
+                ProcessCommand::Tick(now) => self.tick(now).await,
+                ProcessCommand::Start => self.start(),
+                ProcessCommand::Stop { reason, reply } => {
+                    self.stop(&reason).await;
+                    let _ = reply.send(());
+                    if matches!(self.policy, RestartPolicy::Never) {
+                        break;
+                    }
+                }
+                ProcessCommand::Shutdown { reason, reply } => {
+                    self.stop(&reason).await;
+                    let _ = reply.send(());
+                    break;
+                }
+                ProcessCommand::Restart {
+                    apply_backoff,
+                    reply,
+                } => {
+                    let result = self.restart(apply_backoff).await;
+                    let _ = reply.send(result);
+                }
+                ProcessCommand::BridgeExited {
+                    generation_id,
+                    registry_id,
+                    exit,
+                } => {
+                    self.bridge_exited(generation_id, registry_id, exit).await;
+                    if matches!(self.policy, RestartPolicy::Never)
+                        && self.state.status == ProcessStatus::Stopped
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        self.stop_active().await;
+    }
+
+    async fn tick(&mut self, now: u64) {
+        match self.state.status {
+            ProcessStatus::NotStarted => {
+                let _ = self.spawn_generation();
+            }
+            ProcessStatus::Crashed if self.next_spawn_at != 0 && now >= self.next_spawn_at => {
+                let _ = self.spawn_generation();
+            }
+            ProcessStatus::Running => {
+                if let Some(watchdog) = self.policy.watchdog() {
+                    if now.saturating_sub(self.last_heartbeat_ts) > watchdog.as_secs() {
+                        proc_log!(
+                            info,
+                            kind = self.process.kind,
+                            label = self.process.label,
+                            event = "watchdog_fired",
+                            heartbeat_age_secs = now.saturating_sub(self.last_heartbeat_ts)
+                        );
+                        let _ = self.restart(true).await;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn start(&mut self) {
+        if self.active.is_some()
             || !matches!(
-                proc.status(),
-                ProcessStatus::NotStarted | ProcessStatus::Crashed
+                self.state.status,
+                ProcessStatus::Stopped | ProcessStatus::Crashed | ProcessStatus::NotStarted
             )
         {
             return;
         }
-        let mut slot = proc.spawn_task.lock();
-        if slot.as_ref().is_some_and(|task| !task.is_finished()) {
-            return;
-        }
-        let sup = Arc::clone(self);
-        let proc_for_task = Arc::clone(&proc);
-        *slot = Some(tokio::spawn(async move {
-            sup.begin_spawn(proc_for_task).await;
-        }));
+        self.consecutive_failures = 0;
+        self.next_spawn_at = 0;
+        self.set_state(ProcessStatus::Crashed, "started by user");
+        let _ = self.spawn_generation();
     }
 
-    pub(super) async fn run_tick_loop(self: Arc<Self>) {
-        let mut ticker = tokio::time::interval(TICK_INTERVAL);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        ticker.tick().await; // consume the immediate first tick
-
-        tracing::info!(
-            tick_secs = TICK_INTERVAL.as_secs(),
-            "supervisor loop started"
-        );
-        loop {
-            ticker.tick().await;
-            self.tick().await;
-        }
+    async fn stop(&mut self, reason: &str) {
+        self.next_spawn_at = 0;
+        self.set_state(ProcessStatus::Stopped, reason);
+        self.stop_active().await;
+        self.remove_if_terminal();
     }
 
-    pub(super) async fn tick(self: &Arc<Self>) {
-        let now = now_secs();
-        let mut to_spawn: Vec<Arc<SupervisedProcess>> = Vec::new();
-        let mut to_watchdog: Vec<Arc<SupervisedProcess>> = Vec::new();
-
-        for proc in self.processes.read().values().cloned() {
-            match proc.status() {
-                ProcessStatus::NotStarted => to_spawn.push(proc),
-                ProcessStatus::Crashed => {
-                    let at = proc.next_spawn_at.load(Ordering::Relaxed);
-                    if at != 0 && now >= at {
-                        to_spawn.push(proc);
-                    }
-                }
-                ProcessStatus::Running => {
-                    if let Some(watchdog) = proc.policy.watchdog() {
-                        let last = proc.last_heartbeat_ts.load(Ordering::Relaxed);
-                        if now.saturating_sub(last) > watchdog.as_secs() {
-                            to_watchdog.push(proc);
-                        }
-                    }
-                }
-                ProcessStatus::Spawning | ProcessStatus::Stopped => {}
-            }
-        }
-
-        for proc in to_watchdog {
-            let age = now.saturating_sub(proc.last_heartbeat_ts.load(Ordering::Relaxed));
-            proc_log!(
-                info,
-                kind = proc.kind,
-                label = proc.label,
-                event = "watchdog_fired",
-                heartbeat_age_secs = age
-            );
-            // A watchdog is a lifecycle decision, not a best-effort protocol
-            // notification. Reuse the full restart path so a bridge that
-            // ignores cancellation is terminated, reaped, and bounded-aborted
-            // before the replacement generation is published.
-            if let Err(error) = self.restart_after_failure(proc.id).await {
-                proc_log!(
-                    warn,
-                    kind = proc.kind,
-                    label = proc.label,
-                    event = "watchdog_restart_failed",
-                    error = %error
-                );
-            }
-        }
-
-        for proc in to_spawn {
-            self.schedule_spawn(proc);
-        }
-    }
-
-    pub(super) async fn begin_spawn(self: &Arc<Self>, proc: Arc<SupervisedProcess>) {
-        // Guard against racing tickers / immediate-spawn.
+    async fn restart(&mut self, apply_backoff: bool) -> ProcessResult<()> {
+        if self.state.status == ProcessStatus::Stopped
+            && matches!(self.policy, RestartPolicy::Never)
         {
-            let _transition = proc.transition_lock.lock();
-            if !matches!(
-                proc.status(),
-                ProcessStatus::NotStarted | ProcessStatus::Crashed
-            ) {
-                return;
-            }
-            proc.set_status(ProcessStatus::Spawning);
-            proc.next_spawn_at.store(0, Ordering::Relaxed);
-            proc.set_reason("spawning");
+            return Ok(());
         }
-        self.notify_change(&proc);
+        self.stop_active().await;
+        let delay = if apply_backoff {
+            self.next_restart_delay()
+        } else {
+            self.consecutive_failures = 0;
+            Duration::ZERO
+        };
+        self.next_spawn_at = now_secs() + delay.as_secs();
+        self.set_state(
+            ProcessStatus::Crashed,
+            if apply_backoff {
+                "watchdog restart requested"
+            } else {
+                "restart requested"
+            },
+        );
+        if delay.is_zero() {
+            self.spawn_generation()
+        } else {
+            Ok(())
+        }
+    }
 
-        match self.spawn_child(&proc).await {
+    fn spawn_generation(&mut self) -> ProcessResult<()> {
+        if self.active.is_some()
+            || !matches!(
+                self.state.status,
+                ProcessStatus::NotStarted | ProcessStatus::Crashed
+            )
+        {
+            return Ok(());
+        }
+        self.next_spawn_at = 0;
+        self.set_state(ProcessStatus::Spawning, "spawning");
+
+        match self.spawn_child() {
             Ok(staged) => {
                 let StagedGeneration {
                     id: generation_id,
@@ -128,129 +209,71 @@ impl Supervisor {
                     cancel_tx,
                     cancel_rx,
                 } = staged;
-
-                // Install the complete active generation before allowing the
-                // bridge task to run. Even an instant bridge exit therefore
-                // observes its own generation record, never a partial slot.
-                let start_bridge = {
-                    let _transition = proc.transition_lock.lock();
-                    if !matches!(proc.status(), ProcessStatus::Spawning)
-                        || proc.stopping.load(Ordering::Acquire)
-                    {
-                        None
-                    } else {
-                        let (start_tx, start_rx) = tokio::sync::oneshot::channel();
-                        let bridge = (proc.factory)();
-                        let sup = Arc::clone(self);
-                        let proc_for_task = Arc::clone(&proc);
-                        let bridge_task = tokio::spawn(async move {
-                            if start_rx.await.is_err() {
-                                return;
-                            }
-                            let exit = bridge.run(pipes, cancel_rx).await;
-                            sup.handle_bridge_exit(proc_for_task, generation_id, registry_id, exit)
-                                .await;
-                        });
-                        *proc.active_generation.lock() = Some(ActiveGeneration {
-                            id: generation_id,
-                            registry_id,
-                            cancel_tx,
-                            bridge_task,
-                        });
-                        proc.pending_child
-                            .lock()
-                            .take_if(|(id, _)| *id == generation_id);
-                        proc.set_status(ProcessStatus::Running);
-                        proc.set_reason("");
-                        proc.last_heartbeat_ts.store(now_secs(), Ordering::Relaxed);
-                        Some(start_tx)
-                    }
-                };
-                let Some(start_tx) = start_bridge else {
-                    proc_log!(
-                        info,
-                        kind = proc.kind,
-                        label = proc.label,
-                        event = "spawn_superseded"
-                    );
-                    proc.pending_child
-                        .lock()
-                        .take_if(|(id, _)| *id == generation_id);
-                    self.terminate_and_reap_registry_id(&proc, registry_id)
-                        .await;
-                    return;
-                };
+                let bridge = (self.factory)();
+                let command_tx = self.command_tx.clone();
+                let bridge_task = tokio::spawn(async move {
+                    let exit = bridge.run(pipes, cancel_rx).await;
+                    let _ = command_tx.send(ProcessCommand::BridgeExited {
+                        generation_id,
+                        registry_id,
+                        exit,
+                    });
+                });
+                self.active = Some(ActiveGeneration {
+                    id: generation_id,
+                    registry_id,
+                    cancel_tx,
+                    bridge_task,
+                });
+                self.last_heartbeat_ts = now_secs();
+                self.set_state(ProcessStatus::Running, "");
                 proc_log!(
                     info,
-                    kind = proc.kind,
-                    label = proc.label,
+                    kind = self.process.kind,
+                    label = self.process.label,
                     event = "running"
                 );
-                self.notify_change(&proc);
-                let _ = start_tx.send(());
+                Ok(())
             }
-            Err(e) => {
-                let reason = format!("{}", e);
-                let publish_crash = {
-                    let _transition = proc.transition_lock.lock();
-                    if matches!(proc.status(), ProcessStatus::Spawning) {
-                        proc.set_status(ProcessStatus::Crashed);
-                        proc.set_reason(format!("spawn failed: {}", reason));
-                        if proc.policy.restart_delay().is_some() {
-                            let delay = proc.next_restart_delay();
-                            proc.next_spawn_at
-                                .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                };
-                if !publish_crash {
-                    proc_log!(
-                        error,
-                        kind = proc.kind,
-                        label = proc.label,
-                        event = "spawn_failed_superseded",
-                        error = %reason
-                    );
-                    return;
-                }
+            Err(error) => {
+                let reason = format!("spawn failed: {error}");
+                self.next_spawn_at = self
+                    .policy
+                    .restart_delay()
+                    .map(|_| now_secs() + self.next_restart_delay().as_secs())
+                    .unwrap_or(0);
+                self.set_state(ProcessStatus::Crashed, reason.clone());
                 proc_log!(
                     error,
-                    kind = proc.kind,
-                    label = proc.label,
+                    kind = self.process.kind,
+                    label = self.process.label,
                     event = "spawn_failed",
                     error = %reason
                 );
-                self.notify_change(&proc);
+                Err(error)
             }
         }
     }
 
-    pub(super) async fn spawn_child(
-        &self,
-        proc: &SupervisedProcess,
-    ) -> ProcessResult<StagedGeneration> {
-        let mut cmd: Command = env::command(&proc.spec.program);
-        cmd.args(&proc.spec.args)
+    fn spawn_child(&mut self) -> ProcessResult<StagedGeneration> {
+        let mut cmd: Command = env::command(&self.spec.program);
+        cmd.args(&self.spec.args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        if let Some(cwd) = &proc.spec.cwd {
+        if let Some(cwd) = &self.spec.cwd {
             cmd.current_dir(cwd);
         }
-        for (k, v) in &proc.spec.extra_env {
-            cmd.env(k, v);
+        for (key, value) in &self.spec.extra_env {
+            cmd.env(key, value);
         }
         kill::prepare_tree_root(&mut cmd);
 
-        let mut child = cmd.spawn().map_err(|e| ProcessError::Spawn {
-            program: proc.spec.program.clone(),
-            source: e,
+        let mut child = cmd.spawn().map_err(|source| ProcessError::Spawn {
+            program: self.spec.program.clone(),
+            source,
         })?;
-
         let stdin = child
             .stdin
             .take()
@@ -264,49 +287,37 @@ impl Supervisor {
             .take()
             .ok_or(ProcessError::StdioUnavailable { what: "stderr" })?;
         let pid = child.id();
-
-        // Hand ownership of the Child to the global registry. This is the
-        // canonical owner — kill_on_drop alone can't be relied on under
-        // abrupt runtime teardown. The id is stashed on the proc so
-        // `handle_bridge_exit` can remove + reap the child (otherwise
-        // every respawn leaks a registry entry + zombie process).
-        let registry_id = self.registry.register(proc.kind, proc.label.clone(), child);
-        let generation_id = proc.next_generation.fetch_add(1, Ordering::AcqRel);
-        *proc.pending_child.lock() = Some((generation_id, registry_id));
+        let registry_id =
+            self.registry
+                .register(self.process.kind, self.process.label.clone(), child);
+        let generation_id = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1);
 
         proc_log!(
             info,
-            kind = proc.kind,
-            label = proc.label,
+            kind = self.process.kind,
+            label = self.process.label,
             pid = pid,
             event = "spawned",
-            program = %proc.spec.program
+            program = %self.spec.program
         );
 
-        let stderr = if proc.spec.capture_stderr {
+        let stderr = if self.spec.capture_stderr {
             Some(stderr_raw)
         } else {
-            let kind = proc.kind;
-            let label = proc.label.clone();
+            let kind = self.process.kind;
+            let label = self.process.label.clone();
             tokio::spawn(async move {
                 use tokio::io::AsyncBufReadExt;
                 let reader = tokio::io::BufReader::new(stderr_raw);
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    proc_log!(
-                        info,
-                        kind = kind,
-                        label = label,
-                        event = "stderr",
-                        line = %line
-                    );
+                    proc_log!(info, kind = kind, label = label, event = "stderr", line = %line);
                 }
             });
             None
         };
-
         let (cancel_tx, cancel_rx) = watch::channel(false);
-
         Ok(StagedGeneration {
             id: generation_id,
             registry_id,
@@ -320,21 +331,16 @@ impl Supervisor {
         })
     }
 
-    pub(super) async fn handle_bridge_exit(
-        self: Arc<Self>,
-        proc: Arc<SupervisedProcess>,
-        generation_id: u64,
-        registry_id: u64,
-        exit: BridgeExit,
-    ) {
-        // A bridge can finish while its child is frozen or otherwise still
-        // alive. Terminate that generation before waiting so respawn cannot
-        // leave a twin process behind, then reap before publishing the next
-        // state transition.
-        let child_status = self
-            .terminate_and_reap_registry_id(&proc, registry_id)
-            .await;
-
+    async fn bridge_exited(&mut self, generation_id: u64, registry_id: u64, exit: BridgeExit) {
+        if self
+            .active
+            .as_ref()
+            .is_none_or(|generation| generation.id != generation_id)
+        {
+            return;
+        }
+        self.active.take();
+        let child_status = self.terminate_and_reap(registry_id).await;
         let (reason, was_crash) = match exit {
             BridgeExit::Clean => match child_status {
                 Some(status) if status.success() => {
@@ -344,127 +350,82 @@ impl Supervisor {
                 None => ("clean bridge exit".to_string(), false),
             },
             BridgeExit::Cancelled => ("cancelled".to_string(), false),
-            BridgeExit::ProtocolError(e) => (format!("protocol error: {}", e), true),
+            BridgeExit::ProtocolError(error) => (format!("protocol error: {error}"), true),
         };
 
-        let transition = proc.transition_lock.lock();
-        let is_current = proc
-            .active_generation
-            .lock()
-            .as_ref()
-            .is_some_and(|generation| generation.id == generation_id);
-        if !is_current {
-            return;
-        }
-        // Dropping the JoinHandle of this currently-running task only detaches
-        // it; the task continues through the state transition below.
-        proc.active_generation.lock().take();
-        if matches!(proc.status(), ProcessStatus::Stopped) {
-            // `force_stop` won while this generation was being reaped.
-            proc.next_spawn_at.store(0, Ordering::Relaxed);
-            drop(transition);
-            self.deregister_terminal_process(&proc);
-            return;
-        }
-
-        match proc.policy {
+        match self.policy {
             RestartPolicy::Never => {
-                proc.set_status(ProcessStatus::Stopped);
-                proc.next_spawn_at.store(0, Ordering::Relaxed);
-                proc.set_reason(&reason);
-                if was_crash {
-                    proc_log!(
-                        warn,
-                        kind = proc.kind,
-                        label = proc.label,
-                        event = "exited_no_restart",
-                        reason = %reason
-                    );
-                } else {
-                    proc_log!(
-                        info,
-                        kind = proc.kind,
-                        label = proc.label,
-                        event = "exited",
-                        reason = %reason
-                    );
-                }
+                self.next_spawn_at = 0;
+                self.set_state(ProcessStatus::Stopped, &reason);
+                proc_log!(
+                    info,
+                    kind = self.process.kind,
+                    label = self.process.label,
+                    event = if was_crash { "exited_no_restart" } else { "exited" },
+                    reason = %reason
+                );
+                self.remove_if_terminal();
             }
             RestartPolicy::OnCrash { .. } => {
-                proc.set_status(ProcessStatus::Crashed);
-                let delay = proc.next_restart_delay();
-                proc.next_spawn_at
-                    .store(now_secs() + delay.as_secs(), Ordering::Relaxed);
-                proc.set_reason(&reason);
+                let delay = self.next_restart_delay();
+                self.next_spawn_at = now_secs() + delay.as_secs();
+                self.set_state(ProcessStatus::Crashed, &reason);
                 proc_log!(
                     warn,
-                    kind = proc.kind,
-                    label = proc.label,
+                    kind = self.process.kind,
+                    label = self.process.label,
                     event = "crashed",
                     reason = %reason,
                     respawn_in_secs = delay.as_secs()
                 );
             }
         }
-        drop(transition);
-        self.notify_change(&proc);
-        self.deregister_terminal_process(&proc);
     }
 
-    pub(super) async fn terminate_and_reap_registry_id(
-        &self,
-        proc: &SupervisedProcess,
-        id: u64,
-    ) -> Option<std::process::ExitStatus> {
-        let mut child = self.registry.remove(id)?;
-        let root_pid = child.id();
-        let mut observed_status = match child.try_wait() {
-            Ok(status) => status,
-            Err(error) => {
-                proc_log!(
-                    warn,
-                    kind = proc.kind,
-                    label = proc.label,
-                    event = "child_status_read_failed",
-                    error = %error
-                );
-                None
-            }
+    async fn stop_active(&mut self) {
+        let Some(mut generation) = self.active.take() else {
+            return;
         };
-
-        // stdout/stderr can reach EOF a few scheduler turns before the child
-        // status becomes observable. Give a naturally exiting process a small,
-        // bounded window so diagnostics retain its real exit code. A frozen
-        // child still falls through to the tree-kill path below.
-        if observed_status.is_none() {
-            let deadline = tokio::time::Instant::now() + CHILD_EXIT_OBSERVATION_TIMEOUT;
-            while tokio::time::Instant::now() < deadline {
-                tokio::task::yield_now().await;
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        observed_status = Some(status);
-                        break;
-                    }
-                    Ok(None) => tokio::time::sleep(Duration::from_millis(5)).await,
-                    Err(error) => {
-                        proc_log!(
-                            warn,
-                            kind = proc.kind,
-                            label = proc.label,
-                            event = "child_status_read_failed",
-                            error = %error
-                        );
-                        break;
-                    }
-                }
-            }
+        let _ = generation.cancel_tx.send(true);
+        self.terminate_and_reap(generation.registry_id).await;
+        if tokio::time::timeout(BRIDGE_SHUTDOWN_TIMEOUT, &mut generation.bridge_task)
+            .await
+            .is_err()
+        {
+            proc_log!(
+                warn,
+                kind = self.process.kind,
+                label = self.process.label,
+                event = "bridge_shutdown_timeout",
+                generation = generation.id
+            );
+            generation.bridge_task.abort();
+            let _ = generation.bridge_task.await;
         }
+    }
 
+    async fn terminate_and_reap(&mut self, registry_id: u64) -> Option<std::process::ExitStatus> {
+        let mut child = self.registry.remove(registry_id)?;
+        let root_pid = child.id();
+        let observed_status =
+            match kill::wait_for_exit_within(&mut child, CHILD_EXIT_OBSERVATION_TIMEOUT).await {
+                Ok(status) => status,
+                Err(error) => {
+                    proc_log!(
+                        warn,
+                        kind = self.process.kind,
+                        label = self.process.label,
+                        event = "child_status_read_failed",
+                        error = %error
+                    );
+                    None
+                }
+            };
         if let Err(error) = kill::terminate_child_tree(&mut child, root_pid).await {
             proc_log!(
                 warn,
-                kind = proc.kind,
-                label = proc.label,
+                kind = self.process.kind,
+                label = self.process.label,
                 event = "child_tree_terminate_failed",
                 error = %error
             );
@@ -474,48 +435,38 @@ impl Supervisor {
         observed_status
     }
 
-    pub(super) async fn stop_generation(
-        &self,
-        proc: &SupervisedProcess,
-        mut generation: ActiveGeneration,
-    ) {
-        let _ = generation.cancel_tx.send(true);
-        self.terminate_and_reap_registry_id(proc, generation.registry_id)
-            .await;
-
-        if tokio::time::timeout(BRIDGE_SHUTDOWN_TIMEOUT, &mut generation.bridge_task)
-            .await
-            .is_err()
-        {
-            proc_log!(
-                warn,
-                kind = proc.kind,
-                label = proc.label,
-                event = "bridge_shutdown_timeout",
-                generation = generation.id
-            );
-            generation.bridge_task.abort();
-            let _ = generation.bridge_task.await;
-        }
+    fn next_restart_delay(&mut self) -> Duration {
+        let Some(base) = self.policy.restart_delay() else {
+            return Duration::ZERO;
+        };
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        restart_delay_for_failure(base, self.consecutive_failures)
     }
 
-    pub(super) fn deregister_terminal_process(&self, proc: &SupervisedProcess) {
-        // Auto-deregister terminal one-shot processes. Without this the
-        // `processes` map grows unbounded over daemon lifetime as
-        // `RestartPolicy::Never` workloads (chiefly `AcpAgent` spawns
-        // tied to one-shot agent launches) accumulate Stopped entries.
-        // Keeping `OnCrash` entries around is deliberate: a user-stopped
-        // channel plugin can still be resurrected via `force_start`.
-        if matches!(proc.policy, RestartPolicy::Never)
-            && matches!(proc.status(), ProcessStatus::Stopped)
-            && self.processes.write().remove(&proc.id).is_some()
+    fn set_state(&mut self, status: ProcessStatus, reason: impl Into<String>) {
+        self.state = ProcessState {
+            status,
+            reason: reason.into(),
+        };
+        self.process.state_tx.send_replace(self.state.clone());
+        let _ = self
+            .manager_tx
+            .send(ManagerCommand::ProcessChanged(Arc::clone(&self.process)));
+    }
+
+    fn remove_if_terminal(&self) {
+        if matches!(self.policy, RestartPolicy::Never)
+            && self.state.status == ProcessStatus::Stopped
         {
-            proc_log!(
-                info,
-                kind = proc.kind,
-                label = proc.label,
-                event = "deregistered"
-            );
+            let _ = self
+                .manager_tx
+                .send(ManagerCommand::Remove(Arc::clone(&self.process)));
         }
     }
+}
+
+pub(super) fn restart_delay_for_failure(base: Duration, failure: u32) -> Duration {
+    let exponent = failure.saturating_sub(1).min(16);
+    base.saturating_mul(1_u32 << exponent)
+        .min(MAX_RESTART_DELAY)
 }

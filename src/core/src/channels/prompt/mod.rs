@@ -94,11 +94,7 @@ fn attachment_uri(file_key: &str) -> Option<String> {
 /// Fire-and-forget helper: emit a `SystemText` to the plugin for this route.
 /// Shared by every sub-module in this folder.
 pub(super) fn send_system_text(plugin_host: &Arc<PluginHost>, route: &RouteKey, text: &str) {
-    plugin_host.send_output(ChannelOutput::SystemText {
-        route: route.clone(),
-        text: text.to_string(),
-        reply_to: None,
-    });
+    send_system_text_to_target(plugin_host, &ChannelTarget::for_route(route.clone()), text);
 }
 
 /// Emit system text for one inbound turn, preserving its platform reply target.
@@ -142,7 +138,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn test_ingress() -> Arc<ConversationIngress> {
+    fn test_ingress_with_manager() -> (Arc<ConversationIngress>, Arc<WorkspaceThreadManager>) {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let base =
@@ -154,7 +150,14 @@ mod tests {
         );
         let (input_tx, _input_rx) = mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx));
-        Arc::new(ConversationIngress::new(workspace_threads, plugin_host))
+        (
+            ConversationIngress::new(Arc::clone(&workspace_threads), plugin_host),
+            workspace_threads,
+        )
+    }
+
+    fn test_ingress() -> Arc<ConversationIngress> {
+        test_ingress_with_manager().0
     }
 
     fn test_ingress_with_output() -> (
@@ -177,7 +180,7 @@ mod tests {
         let (output_tx, output_rx) = mpsc::unbounded_channel();
         plugin_host.register_websocket_plugin("web", output_tx);
         (
-            Arc::new(ConversationIngress::new(workspace_threads, plugin_host)),
+            ConversationIngress::new(workspace_threads, plugin_host),
             output_rx,
         )
     }
@@ -216,10 +219,10 @@ mod tests {
 
     async fn wait_for_lanes_to_drain(ingress: &ConversationIngress) {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-        while ingress.active_lane_count() != 0 && tokio::time::Instant::now() < deadline {
+        while ingress.active_lane_count().await != 0 && tokio::time::Instant::now() < deadline {
             tokio::task::yield_now().await;
         }
-        assert_eq!(ingress.active_lane_count(), 0);
+        assert_eq!(ingress.active_lane_count().await, 0);
     }
 
     fn envelope_with_text(text: &str) -> ChannelEnvelope {
@@ -353,11 +356,13 @@ mod tests {
                 let _ = first_started.send(());
                 let _ = release_first_rx.await;
             })
+            .await
             .unwrap();
         let second_done = ingress
             .enqueue_probe(route, async move {
                 let _ = second_started.send(());
             })
+            .await
             .unwrap();
 
         first_started_rx.await.unwrap();
@@ -385,12 +390,14 @@ mod tests {
                 let _ = first_started.send(());
                 let _ = release_first_rx.await;
             })
+            .await
             .unwrap();
         first_started_rx.await.unwrap();
         let second_done = ingress
             .enqueue_probe(RouteKey::new("web", "chat-b"), async move {
                 let _ = second_started.send(());
             })
+            .await
             .unwrap();
 
         tokio::time::timeout(std::time::Duration::from_millis(100), second_started_rx)
@@ -414,9 +421,13 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
-        let queued_done = ingress.enqueue_probe(route.clone(), async {}).unwrap();
+        let queued_done = ingress
+            .enqueue_probe(route.clone(), async {})
+            .await
+            .unwrap();
 
         ingress.dispatch(ChannelInput::Stop { route });
 
@@ -427,7 +438,109 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn work_enqueued_after_stop_uses_the_new_route_generation() {
+    async fn stop_without_a_lane_cancels_the_attached_runtime() {
+        let (ingress, workspace_threads) = test_ingress_with_manager();
+        let route = RouteKey::new("web", "attached-chat");
+        let runtime = workspace_threads
+            .resolve_route_runtime(&route)
+            .await
+            .unwrap();
+        let active_turn = runtime.active_turn_target();
+        let _target_guard = active_turn.install(ChannelTarget::for_route(route.clone()));
+        let (_, mut cancelled) = active_turn
+            .current_with_cancellation()
+            .expect("active turn target");
+
+        assert_eq!(ingress.active_lane_count().await, 0);
+        ingress.dispatch(ChannelInput::Stop { route });
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            cancelled.wait_for(|cancelled| *cancelled),
+        )
+        .await
+        .expect("no-lane stop did not reach the attached runtime")
+        .expect("active turn cancellation sender closed");
+    }
+
+    #[tokio::test]
+    async fn close_bypasses_an_occupied_route_lane() {
+        let (ingress, workspace_threads) = test_ingress_with_manager();
+        let route = RouteKey::new("web", "close-chat");
+        workspace_threads
+            .resolve_route_runtime(&route)
+            .await
+            .unwrap();
+        let (started, started_rx) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let active_done = ingress
+            .enqueue_probe(route.clone(), async move {
+                let _ = started.send(());
+                let _ = release_rx.await;
+            })
+            .await
+            .unwrap();
+        started_rx.await.unwrap();
+
+        ingress.dispatch(ChannelInput::Close {
+            route: route.clone(),
+            reason: Some("user closed".to_string()),
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if workspace_threads
+                    .current_attachment(&route)
+                    .await
+                    .unwrap()
+                    .is_none()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("close waited behind the occupied route lane");
+
+        release.send(()).unwrap();
+        active_done.await.unwrap();
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
+    async fn switch_agent_bypasses_an_occupied_route_lane() {
+        let (ingress, mut output_rx) = test_ingress_with_output();
+        let route = RouteKey::new("web", "switch-chat");
+        let (started, started_rx) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let active_done = ingress
+            .enqueue_probe(route.clone(), async move {
+                let _ = started.send(());
+                let _ = release_rx.await;
+            })
+            .await
+            .unwrap();
+        started_rx.await.unwrap();
+
+        ingress.dispatch(ChannelInput::SwitchAgent {
+            route,
+            agent_kind: "claude".to_string(),
+        });
+
+        let output = tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv())
+            .await
+            .expect("switch agent waited behind the occupied route lane")
+            .expect("output channel closed");
+        assert!(matches!(output, ChannelOutput::SystemText { .. }));
+
+        release.send(()).unwrap();
+        active_done.await.unwrap();
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
+    async fn work_enqueued_after_stop_is_not_cancelled_by_the_previous_stop() {
         let ingress = test_ingress();
         let route = RouteKey::new("web", "chat-a");
         let (started, started_rx) = oneshot::channel();
@@ -437,6 +550,7 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
 
@@ -449,11 +563,12 @@ mod tests {
             .enqueue_probe(route, async move {
                 let _ = new_started.send(());
             })
+            .await
             .unwrap();
-        assert!(old_done.await.is_err(), "old generation survived stop");
+        assert!(old_done.await.is_err(), "pre-stop work survived stop");
         tokio::time::timeout(std::time::Duration::from_millis(100), new_started_rx)
             .await
-            .expect("new generation was cancelled by the old stop")
+            .expect("post-stop work was cancelled by the previous stop")
             .unwrap();
         new_done.await.unwrap();
         wait_for_lanes_to_drain(&ingress).await;
@@ -470,6 +585,7 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
 
@@ -478,8 +594,8 @@ mod tests {
             .expect("ingress shutdown did not drain active lanes");
 
         assert!(active_done.await.is_err(), "active work survived shutdown");
-        assert_eq!(ingress.active_lane_count(), 0);
-        assert!(ingress.enqueue_probe(route, async {}).is_err());
+        assert_eq!(ingress.active_lane_count().await, 0);
+        assert!(ingress.enqueue_probe(route, async {}).await.is_err());
     }
 
     #[tokio::test]
@@ -493,14 +609,20 @@ mod tests {
                 let _ = started.send(());
                 let _ = release_rx.await;
             })
+            .await
             .unwrap();
         started_rx.await.unwrap();
 
         let mut queued = Vec::new();
         for _ in 0..ROUTE_LANE_CAPACITY {
-            queued.push(ingress.enqueue_probe(route.clone(), async {}).unwrap());
+            queued.push(
+                ingress
+                    .enqueue_probe(route.clone(), async {})
+                    .await
+                    .unwrap(),
+            );
         }
-        assert!(ingress.enqueue_probe(route, async {}).is_err());
+        assert!(ingress.enqueue_probe(route, async {}).await.is_err());
 
         release.send(()).unwrap();
         first_done.await.unwrap();

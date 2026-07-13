@@ -197,7 +197,8 @@ pub(super) async fn forward_output_to_plugin(
                             schema::RequestPermissionResponse::new(
                                 schema::RequestPermissionOutcome::Cancelled,
                             ),
-                        );
+                        )
+                        .await;
                         return Ok(());
                     }
                 };
@@ -215,7 +216,8 @@ pub(super) async fn forward_output_to_plugin(
                     schema::RequestPermissionResponse::new(
                         schema::RequestPermissionOutcome::Cancelled,
                     ),
-                );
+                )
+                .await;
                 return Ok(());
             };
             let response = conn
@@ -234,7 +236,8 @@ pub(super) async fn forward_output_to_plugin(
                                 &route.to_string(),
                                 &request_id,
                                 resp,
-                            );
+                            )
+                            .await;
                         }
                         Err(e) => {
                             tracing::info!(
@@ -252,7 +255,8 @@ pub(super) async fn forward_output_to_plugin(
                                 schema::RequestPermissionResponse::new(
                                     schema::RequestPermissionOutcome::Cancelled,
                                 ),
-                            );
+                            )
+                            .await;
                         }
                     }
                 }
@@ -273,7 +277,8 @@ pub(super) async fn forward_output_to_plugin(
                         schema::RequestPermissionResponse::new(
                             schema::RequestPermissionOutcome::Cancelled,
                         ),
-                    );
+                    )
+                    .await;
                     return Err(error);
                 }
             }
@@ -306,14 +311,17 @@ fn route_target(route: &crate::routing::RouteKey, reply_to: Option<&str>) -> ser
     serde_json::Value::Object(target)
 }
 
-fn complete_permission_request(
+async fn complete_permission_request(
     plugin_host: &PluginHost,
     channel_instance_id: &str,
     route: &str,
     request_id: &str,
     response: schema::RequestPermissionResponse,
 ) {
-    if let Err(error) = plugin_host.respond_permission(channel_instance_id, request_id, response) {
+    if let Err(error) = plugin_host
+        .respond_permission(channel_instance_id, request_id, response)
+        .await
+    {
         tracing::info!(
             "[{}] PermissionRequest response dropped route={} request_id={}: {}",
             channel_instance_id,

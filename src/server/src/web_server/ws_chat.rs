@@ -118,12 +118,15 @@ async fn handle_chat_socket(
     // Explicit chat_id attachments are reconnects or existing thread views, so
     // replay the bounded route history independent of runtime lifetime.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelOutput>();
-    state.web_channel.register_connection(
-        &active_route,
-        connection_id.clone(),
-        tx.clone(),
-        replay_history,
-    );
+    state
+        .web_channel
+        .register_connection(
+            &active_route,
+            connection_id.clone(),
+            tx.clone(),
+            replay_history,
+        )
+        .await;
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
 
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -141,7 +144,8 @@ async fn handle_chat_socket(
     if send_event(&mut ws_tx, &config_event).await.is_err() {
         state
             .web_channel
-            .unregister_connection(&active_route.chat_id, &connection_id);
+            .unregister_connection(&active_route.chat_id, &connection_id)
+            .await;
         return;
     }
 
@@ -186,13 +190,14 @@ async fn handle_chat_socket(
                             .await;
                             let mut dispatch_input = true;
                             if let Some(route) = input_route(&input) {
-                                state.web_channel.mark_route_active(&route);
+                                state.web_channel.mark_route_active(&route).await;
                                 remember_web_route_agent(&state, &route, input_agent(&input)).await;
                                 let wait_for_session_ready = should_wait_for_user_message_session(
                                     &state,
                                     &route,
                                     &session_intent,
-                                );
+                                )
+                                .await;
                                 match session_intent {
                                     Some(WebChatSessionIntent::Resume {
                                         agent,
@@ -253,7 +258,8 @@ async fn handle_chat_socket(
                                     &route,
                                     &input,
                                     wait_for_session_ready,
-                                );
+                                )
+                                .await;
                             }
                             if dispatch_input {
                                 enqueue_channel_input(&state.channel_hub, input);
@@ -261,7 +267,8 @@ async fn handle_chat_socket(
                         }
                         WebChatInput::SetMode { mode_id } => {
                             apply_web_session_mode(&state, &active_route, &mode_id).await;
-                            if let Some(deadline) = state.web_channel.bump_idle_route(&active_route)
+                            if let Some(deadline) =
+                                state.web_channel.bump_idle_route(&active_route).await
                             {
                                 state.web_channel.schedule_idle_close(
                                     state.channel_hub.workspace_thread_manager(),
@@ -277,7 +284,8 @@ async fn handle_chat_socket(
                                 value,
                             )
                             .await;
-                            if let Some(deadline) = state.web_channel.bump_idle_route(&active_route)
+                            if let Some(deadline) =
+                                state.web_channel.bump_idle_route(&active_route).await
                             {
                                 state.web_channel.schedule_idle_close(
                                     state.channel_hub.workspace_thread_manager(),
@@ -297,7 +305,7 @@ async fn handle_chat_socket(
                             // overtake a message still waiting in input_rx and
                             // cancel an empty route before that message runs.
                             enqueue_channel_input(&state.channel_hub, input);
-                            let deadline = state.web_channel.mark_route_idle(&active_route);
+                            let deadline = state.web_channel.mark_route_idle(&active_route).await;
                             state.web_channel.schedule_idle_close(
                                 state.channel_hub.workspace_thread_manager(),
                                 deadline,
@@ -307,12 +315,19 @@ async fn handle_chat_socket(
                             request_id,
                             response,
                         } => {
-                            state.web_channel.clear_pending_permission(&request_id);
-                            if let Err(error) = state.channel_hub.respond_permission(
-                                &active_route.channel_kind,
-                                &request_id,
-                                response,
-                            ) {
+                            state
+                                .web_channel
+                                .clear_pending_permission(&request_id)
+                                .await;
+                            if let Err(error) = state
+                                .channel_hub
+                                .respond_permission(
+                                    &active_route.channel_kind,
+                                    &request_id,
+                                    response,
+                                )
+                                .await
+                            {
                                 tracing::warn!(
                                     request_id = %request_id,
                                     error = %error,
@@ -338,20 +353,28 @@ async fn handle_chat_socket(
                                 resolve_web_session_agent(&state, &active_route, agent.clone())
                                     .await
                             {
-                                if let Some(route) =
-                                    state.web_channel.route_for_session(&agent_id, &session_id)
+                                if let Some(route) = state
+                                    .web_channel
+                                    .route_for_session(&agent_id, &session_id)
+                                    .await
                                 {
-                                    state.web_channel.unregister_connection(
-                                        &active_route.chat_id,
-                                        &connection_id,
-                                    );
+                                    state
+                                        .web_channel
+                                        .unregister_connection(
+                                            &active_route.chat_id,
+                                            &connection_id,
+                                        )
+                                        .await;
                                     active_route = route;
-                                    state.web_channel.register_connection(
-                                        &active_route,
-                                        connection_id.clone(),
-                                        tx.clone(),
-                                        true,
-                                    );
+                                    state
+                                        .web_channel
+                                        .register_connection(
+                                            &active_route,
+                                            connection_id.clone(),
+                                            tx.clone(),
+                                            true,
+                                        )
+                                        .await;
                                     let _ = tx.send(ChannelOutput::SessionReady {
                                         route: active_route.clone(),
                                         reply_to: None,
@@ -374,7 +397,7 @@ async fn handle_chat_socket(
                                         .await;
                                     }
                                     if let Some(deadline) =
-                                        state.web_channel.bump_idle_route(&active_route)
+                                        state.web_channel.bump_idle_route(&active_route).await
                                     {
                                         state.web_channel.schedule_idle_close(
                                             state.channel_hub.workspace_thread_manager(),
@@ -396,7 +419,8 @@ async fn handle_chat_socket(
                                     cwd,
                                 )
                                 .await;
-                                let deadline = task_state.web_channel.mark_route_idle(&task_route);
+                                let deadline =
+                                    task_state.web_channel.mark_route_idle(&task_route).await;
                                 task_state.web_channel.schedule_idle_close(
                                     task_state.channel_hub.workspace_thread_manager(),
                                     deadline,
@@ -417,16 +441,23 @@ async fn handle_chat_socket(
     outbound_task.abort();
     state
         .web_channel
-        .unregister_connection(&active_route.chat_id, &connection_id);
-    if !state.web_channel.route_has_session(&active_route.chat_id)
-        && !state.web_channel.route_is_active(&active_route.chat_id)
+        .unregister_connection(&active_route.chat_id, &connection_id)
+        .await;
+    if !state
+        .web_channel
+        .route_has_session(&active_route.chat_id)
+        .await
+        && !state
+            .web_channel
+            .route_is_active(&active_route.chat_id)
+            .await
     {
         let _ = state
             .channel_hub
             .workspace_thread_manager()
             .detach_route(&active_route)
             .await;
-        state.web_channel.forget_route(&active_route.chat_id);
+        state.web_channel.forget_route(&active_route.chat_id).await;
     }
 }
 
@@ -453,7 +484,7 @@ async fn abort_direct_resume_task(
         .workspace_thread_manager()
         .detach_route(route)
         .await;
-    state.web_channel.forget_route(&route.chat_id);
+    state.web_channel.forget_route(&route.chat_id).await;
 }
 
 fn input_route(input: &ChannelInput) -> Option<RouteKey> {
@@ -482,11 +513,14 @@ fn input_agent(input: &ChannelInput) -> Option<String> {
 
 async fn remember_web_route_agent(state: &AppState, route: &RouteKey, agent: Option<String>) {
     if let Some(agent_id) = resolve_web_session_agent(state, route, agent).await {
-        state.web_channel.set_route_agent(&route.chat_id, agent_id);
+        state
+            .web_channel
+            .set_route_agent(&route.chat_id, agent_id)
+            .await;
     }
 }
 
-fn should_wait_for_user_message_session(
+async fn should_wait_for_user_message_session(
     state: &AppState,
     route: &RouteKey,
     session_intent: &Option<WebChatSessionIntent>,
@@ -497,6 +531,7 @@ fn should_wait_for_user_message_session(
             state
                 .web_channel
                 .route_session_id(&route.chat_id)
+                .await
                 .as_deref()
                 != Some(session_id.as_str())
         }
@@ -504,7 +539,7 @@ fn should_wait_for_user_message_session(
     }
 }
 
-fn remember_web_user_message(
+async fn remember_web_user_message(
     state: &AppState,
     route: &RouteKey,
     input: &ChannelInput,
@@ -514,12 +549,15 @@ fn remember_web_user_message(
         return;
     };
     let content = web_user_message_content(envelope);
-    state.web_channel.record_user_message(
-        route,
-        envelope.message_id.clone(),
-        content,
-        wait_for_session_ready,
-    );
+    state
+        .web_channel
+        .record_user_message(
+            route,
+            envelope.message_id.clone(),
+            content,
+            wait_for_session_ready,
+        )
+        .await;
 }
 
 fn web_user_message_content(envelope: &ChannelEnvelope) -> Vec<serde_json::Value> {
@@ -664,14 +702,20 @@ async fn apply_web_launch_selection(
                         send_web_system_text(state, route, &format!("❌ {}", error));
                         return;
                     }
-                    state.web_channel.set_route_agent(&route.chat_id, agent_id);
+                    state
+                        .web_channel
+                        .set_route_agent(&route.chat_id, agent_id)
+                        .await;
                 } else {
                     match workspace_threads
                         .create_thread_in_current_workspace_with_host(route, target)
                         .await
                     {
                         Ok(_) => {
-                            state.web_channel.set_route_agent(&route.chat_id, agent_id);
+                            state
+                                .web_channel
+                                .set_route_agent(&route.chat_id, agent_id)
+                                .await;
                         }
                         Err(error) => {
                             send_web_system_text(state, route, &format!("❌ {}", error));
@@ -684,7 +728,10 @@ async fn apply_web_launch_selection(
                 .await
             {
                 Ok(_) => {
-                    state.web_channel.set_route_agent(&route.chat_id, agent_id);
+                    state
+                        .web_channel
+                        .set_route_agent(&route.chat_id, agent_id)
+                        .await;
                 }
                 Err(error) => {
                     send_web_system_text(state, route, &format!("❌ {}", error));
@@ -713,7 +760,8 @@ async fn apply_web_session_resume(
 
     state
         .web_channel
-        .set_route_agent(&route.chat_id, resume.agent.clone());
+        .set_route_agent(&route.chat_id, resume.agent.clone())
+        .await;
     if let Err(error) = state
         .channel_hub
         .workspace_thread_manager()
@@ -763,7 +811,8 @@ async fn apply_web_session_resume_now(
 
     state
         .web_channel
-        .set_route_agent(&route.chat_id, resume.agent.clone());
+        .set_route_agent(&route.chat_id, resume.agent.clone())
+        .await;
     let requested_session_id = resume.session_id.clone();
     let runtime = match state
         .channel_hub
@@ -1076,8 +1125,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn message_and_stop_share_the_same_upstream_fifo() {
+    #[tokio::test]
+    async fn message_and_stop_share_the_same_upstream_fifo() {
         let base = std::env::temp_dir().join(format!(
             "vibearound-ws-input-order-{}",
             uuid::Uuid::new_v4()
@@ -1087,8 +1136,7 @@ mod tests {
             base.join("threads.jsonl"),
             base.join("attachments.jsonl"),
         );
-        let channel_hub = ChannelManager::new(workspace_threads);
-        let mut input_rx = channel_hub.take_input_rx().unwrap();
+        let (channel_hub, mut input_rx) = ChannelManager::new(workspace_threads);
         let route = RouteKey::new("web", "ordered-stop");
 
         enqueue_channel_input(

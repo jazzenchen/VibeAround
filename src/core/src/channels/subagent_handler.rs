@@ -8,7 +8,7 @@
 use std::sync::{Arc, Weak};
 
 use agent_client_protocol::schema::v1 as acp;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::AgentClientHandler;
 use crate::routing::{channel_traits, ActiveTurnTarget, RouteKey};
@@ -20,7 +20,7 @@ use super::agent_protocol::{
     notification_payload, notification_payload_with_text, session_update_text,
     synthetic_agent_message_payload, AgentProtocolFilter,
 };
-use super::plugin_host::{PendingPermissionRegistration, PluginHost};
+use super::plugin_host::PluginHost;
 use super::types::ChannelOutput;
 
 pub struct SubagentBridgeHandler {
@@ -115,70 +115,26 @@ impl AgentClientHandler for SubagentBridgeHandler {
         &self,
         args: acp::RequestPermissionRequest,
     ) -> acp::Result<acp::RequestPermissionResponse> {
-        if args.options.is_empty() {
-            return Err(acp::Error::method_not_found());
-        }
-
-        let Some((target, mut turn_cancelled)) =
-            self.active_turn_target.current_with_cancellation()
-        else {
-            return Ok(acp::RequestPermissionResponse::new(
-                acp::RequestPermissionOutcome::Cancelled,
-            ));
-        };
-
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
-        let _pending_permission = PendingPermissionRegistration::register(
+        super::permission::forward_permission_request(
             &self.plugin_host,
-            request_id.clone(),
-            target.route.channel_instance_id().to_string(),
-            tx,
-        );
-
-        let mut payload = serde_json::to_value(&args).map_err(|e| {
-            self.plugin_host.remove_pending_permission(&request_id);
-            acp::Error::new(-32603, format!("serialize requestPermission: {}", e))
-        })?;
-        if let Some(object) = payload.as_object_mut() {
-            object.insert(
-                "subagent".to_string(),
+            &self.active_turn_target,
+            args,
+            Some((
+                "subagent",
                 serde_json::json!({
                     "id": self.thread_agent.id.to_string(),
                     "name": self.thread_agent.name.clone(),
                     "turn_id": self.thread_agent.turn_id.to_string(),
                 }),
-            );
-        }
-
-        self.plugin_host
-            .send_output(ChannelOutput::PermissionRequest {
-                route: target.route,
-                reply_to: target.reply_to,
-                request_id: request_id.clone(),
-                payload,
-            });
-
-        tokio::select! {
-            biased;
-            _ = turn_cancelled.wait_for(|cancelled| *cancelled) => {
-                Ok(acp::RequestPermissionResponse::new(
-                    acp::RequestPermissionOutcome::Cancelled,
-                ))
-            }
-            response = rx => match response {
-                Ok(response) => Ok(response),
-                Err(_) => Ok(acp::RequestPermissionResponse::new(
-                    acp::RequestPermissionOutcome::Cancelled,
-                )),
-            }
-        }
+            )),
+        )
+        .await
     }
 }
 
 pub struct SubagentReportTracker {
     expected_agent: ThreadAgent,
-    state: Mutex<SubagentReportState>,
+    command_tx: mpsc::UnboundedSender<SubagentReportCommand>,
 }
 
 #[derive(Default)]
@@ -188,11 +144,54 @@ struct SubagentReportState {
     report_frame: Option<Result<String, String>>,
 }
 
+enum SubagentReportCommand {
+    Feed {
+        session_id: String,
+        text: String,
+        reply: oneshot::Sender<String>,
+    },
+    Finish {
+        success: bool,
+        reply: oneshot::Sender<(Option<String>, String)>,
+    },
+    Reset(oneshot::Sender<()>),
+    Report(oneshot::Sender<Option<Result<String, String>>>),
+}
+
 impl SubagentReportTracker {
     pub fn new(expected_agent: ThreadAgent) -> Self {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut state = SubagentReportState::default();
+            while let Some(command) = command_rx.recv().await {
+                match command {
+                    SubagentReportCommand::Feed {
+                        session_id,
+                        text,
+                        reply,
+                    } => {
+                        state.last_session_id = Some(session_id);
+                        let _ = reply.send(state.filter.feed_text(&text));
+                    }
+                    SubagentReportCommand::Finish { success, reply } => {
+                        let session_id = state.last_session_id.clone();
+                        let finished = state.filter.finish();
+                        state.report_frame = success.then_some(finished.frame).flatten();
+                        let _ = reply.send((session_id, finished.visible_tail));
+                    }
+                    SubagentReportCommand::Reset(reply) => {
+                        state = SubagentReportState::default();
+                        let _ = reply.send(());
+                    }
+                    SubagentReportCommand::Report(reply) => {
+                        let _ = reply.send(state.report_frame.clone());
+                    }
+                }
+            }
+        });
         Self {
             expected_agent,
-            state: Mutex::new(SubagentReportState::default()),
+            command_tx,
         }
     }
 
@@ -206,11 +205,15 @@ impl SubagentReportTracker {
         let Some(text) = session_update_text(&args.update) else {
             return notification_payload(args).map(Some);
         };
-        let visible = {
-            let mut state = self.state.lock().await;
-            state.last_session_id = Some(args.session_id.to_string());
-            state.filter.feed_text(text)
-        };
+        let (reply, visible) = oneshot::channel();
+        self.command_tx
+            .send(SubagentReportCommand::Feed {
+                session_id: args.session_id.to_string(),
+                text: text.to_string(),
+                reply,
+            })
+            .expect("subagent report owner must outlive its tracker");
+        let visible = visible.await.expect("subagent report owner must reply");
         if visible.is_empty() {
             return Ok(None);
         }
@@ -218,26 +221,30 @@ impl SubagentReportTracker {
     }
 
     async fn finish_stream(&self, success: bool) -> (Option<String>, String) {
-        let mut state = self.state.lock().await;
-        let session_id = state.last_session_id.clone();
-        let finished = state.filter.finish();
-        if success {
-            state.report_frame = finished.frame;
-        } else {
-            state.report_frame = None;
-        }
-        (session_id, finished.visible_tail)
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(SubagentReportCommand::Finish { success, reply })
+            .expect("subagent report owner must outlive its tracker");
+        result.await.expect("subagent report owner must reply")
     }
 }
 
 #[async_trait::async_trait]
 impl SubagentCompletionValidator for SubagentReportTracker {
     async fn reset_completion(&self) {
-        *self.state.lock().await = SubagentReportState::default();
+        let (reply, reset) = oneshot::channel();
+        self.command_tx
+            .send(SubagentReportCommand::Reset(reply))
+            .expect("subagent report owner must outlive its tracker");
+        let _ = reset.await;
     }
 
     async fn validate_completion(&self) -> Result<SubagentCompletionResult, String> {
-        let frame = self.state.lock().await.report_frame.clone();
+        let (reply, frame) = oneshot::channel();
+        self.command_tx
+            .send(SubagentReportCommand::Report(reply))
+            .expect("subagent report owner must outlive its tracker");
+        let frame = frame.await.expect("subagent report owner must reply");
         let envelope = match frame {
             Some(Ok(envelope)) => envelope,
             Some(Err(error)) => return Err(error),
@@ -366,18 +373,6 @@ mod tests {
         )
     }
 
-    fn permission_request() -> acp::RequestPermissionRequest {
-        acp::RequestPermissionRequest::new(
-            "session-1",
-            acp::ToolCallUpdate::new("tool-1", acp::ToolCallUpdateFields::new()),
-            vec![acp::PermissionOption::new(
-                "allow-once",
-                "Allow once",
-                acp::PermissionOptionKind::AllowOnce,
-            )],
-        )
-    }
-
     fn permission_handler(
         plugin_host: Arc<PluginHost>,
         active_turn_target: ActiveTurnTarget,
@@ -412,25 +407,31 @@ mod tests {
 
         let permission_task = tokio::spawn({
             let handler = Arc::clone(&handler);
-            async move { handler.request_permission(permission_request()).await }
+            async move {
+                handler
+                    .request_permission(super::super::permission::test_permission_request())
+                    .await
+            }
         });
         let output = output_rx.recv().await.expect("permission output");
         let ChannelOutput::PermissionRequest {
             route,
             reply_to,
             request_id,
-            ..
+            payload,
         } = output
         else {
             panic!("expected permission request");
         };
         assert_eq!(route, target.route);
         assert_eq!(reply_to, target.reply_to);
+        assert_eq!(payload["subagent"]["id"], self::test_agent().id.to_string());
 
         let response =
             acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled);
         plugin_host
             .respond_permission("web", &request_id, response.clone())
+            .await
             .unwrap();
         assert_eq!(permission_task.await.unwrap().unwrap(), response);
     }
@@ -451,7 +452,11 @@ mod tests {
 
         let permission_task = tokio::spawn({
             let handler = Arc::clone(&handler);
-            async move { handler.request_permission(permission_request()).await }
+            async move {
+                handler
+                    .request_permission(super::super::permission::test_permission_request())
+                    .await
+            }
         });
         let output = output_rx.recv().await.expect("permission output");
         let ChannelOutput::PermissionRequest { request_id, .. } = output else {
@@ -469,6 +474,7 @@ mod tests {
                 &request_id,
                 acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
             )
+            .await
             .is_err());
     }
 
@@ -527,8 +533,8 @@ Done.
         );
     }
 
-    #[test]
-    fn report_tracker_reset_supports_multiple_assignments() {
+    #[tokio::test]
+    async fn report_tracker_reset_supports_multiple_assignments() {
         let tracker = SubagentReportTracker::new(test_agent());
         let first = acp::SessionNotification::new(
             "session-a",
@@ -547,21 +553,19 @@ Done.
             ))),
         );
 
-        futures::executor::block_on(async {
-            let visible = tracker.record_notification(&first).await.unwrap();
-            assert!(visible.is_none());
-            tracker.finish_stream(true).await;
-            assert_eq!(
-                tracker.validate_completion().await.unwrap().status,
-                ThreadAgentStatus::Completed
-            );
-            tracker.reset_completion().await;
-            let visible = tracker.record_notification(&second).await.unwrap();
-            assert!(visible.is_none());
-            tracker.finish_stream(true).await;
-            let result = tracker.validate_completion().await.unwrap();
-            assert_eq!(result.status, ThreadAgentStatus::Error);
-            assert_eq!(result.last_error.as_deref(), Some("Second failed."));
-        });
+        let visible = tracker.record_notification(&first).await.unwrap();
+        assert!(visible.is_none());
+        tracker.finish_stream(true).await;
+        assert_eq!(
+            tracker.validate_completion().await.unwrap().status,
+            ThreadAgentStatus::Completed
+        );
+        tracker.reset_completion().await;
+        let visible = tracker.record_notification(&second).await.unwrap();
+        assert!(visible.is_none());
+        tracker.finish_stream(true).await;
+        let result = tracker.validate_completion().await.unwrap();
+        assert_eq!(result.status, ThreadAgentStatus::Error);
+        assert_eq!(result.last_error.as_deref(), Some("Second failed."));
     }
 }

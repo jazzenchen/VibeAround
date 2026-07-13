@@ -6,6 +6,7 @@
 pub mod handover;
 pub mod manager;
 pub mod registry;
+mod runtime_registry;
 pub mod store;
 pub mod threads;
 

@@ -34,16 +34,15 @@ pub(crate) async fn run_acp_plugin_bridge(
     mut cancel: CancelSignal,
 ) -> BridgeExit {
     let ChannelPluginRunner {
-        channel_kind,
-        instance_id,
-        actor_id,
-        raw_config: config,
+        manifest,
         input_tx,
         mut output_rx,
         ingress,
         plugin_host,
         runtime,
     } = runner;
+    let channel_kind = manifest.channel_kind.clone();
+    let instance_id = manifest.instance_id.clone();
     // This guard must outlive every bridge await. Supervisor shutdown may
     // abort this task after its timeout, so function-tail cleanup alone is
     // insufficient.
@@ -54,10 +53,7 @@ pub(crate) async fn run_acp_plugin_bridge(
     );
     let forwarder_plugin_host = Arc::clone(&plugin_host);
     let handler = Arc::new(PluginAgentHandler::new(
-        channel_kind.clone(),
-        instance_id.clone(),
-        actor_id,
-        config.clone(),
+        manifest,
         input_tx.clone(),
         ingress,
         plugin_host,
@@ -316,7 +312,7 @@ mod tests {
         host.replace_stdio_runtime("slack-work", Arc::clone(&old_runtime));
         let cleanup = BridgeCleanup::new(Arc::clone(&host), "slack-work".to_string(), old_runtime);
 
-        let (permission_tx, mut permission_rx) = oneshot::channel();
+        let (permission_tx, permission_rx) = oneshot::channel();
         host.register_pending_permission(
             "permission-1".to_string(),
             ["slack-work".to_string()],
@@ -329,12 +325,9 @@ mod tests {
 
         drop(cleanup);
 
-        assert!(matches!(
-            permission_rx.try_recv(),
-            Err(oneshot::error::TryRecvError::Closed)
-        ));
+        assert!(permission_rx.await.is_err());
         let output = ChannelOutput::SystemText {
-            route: RouteKey::with_bot_id("slack", "slack-work", "chat-1"),
+            route: RouteKey::with_channel_instance("slack", "slack-work", "chat-1"),
             text: "still routed".to_string(),
             reply_to: None,
         };

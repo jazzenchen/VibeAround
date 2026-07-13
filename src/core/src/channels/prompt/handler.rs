@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
+use tokio::sync::watch;
 
 use crate::agent::launch::{normalize_launch_profile_id, DIRECT_PROFILE_ID};
 use crate::agent::AgentClientHandler;
@@ -31,6 +32,7 @@ pub(crate) async fn handle_prompt(
     plugin_host: &Arc<PluginHost>,
     target: ChannelTarget,
     mut content_blocks: Vec<acp::ContentBlock>,
+    cancellation: watch::Receiver<bool>,
 ) -> acp::Result<acp::PromptResponse> {
     let text = first_text(&content_blocks).unwrap_or_default();
 
@@ -55,7 +57,12 @@ pub(crate) async fn handle_prompt(
     let state = runtime.state().await;
     let handler = bridge_handler(workspace_threads, plugin_host, &runtime, &state);
     runtime
-        .prompt(&target, std::mem::take(&mut content_blocks), handler)
+        .prompt_cancellable(
+            &target,
+            std::mem::take(&mut content_blocks),
+            handler,
+            cancellation,
+        )
         .await
 }
 
@@ -106,7 +113,7 @@ async fn handle_command(
             }
         }
         ThreadCommand::Pickup(code) => {
-            let Some(handover) = crate::workspace::handover::consume(&code) else {
+            let Some(handover) = crate::workspace::handover::consume(&code).await else {
                 send_system_text_to_target(
                     plugin_host,
                     target,
@@ -552,7 +559,9 @@ pub async fn start_runtime_and_notify(
         send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
             .await;
     }
-    workspace_threads.schedule_host_idle_shutdown(after.thread_id);
+    workspace_threads
+        .schedule_host_idle_shutdown(after.thread_id)
+        .await;
     Ok(true)
 }
 

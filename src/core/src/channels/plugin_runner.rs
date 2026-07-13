@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+use super::manifest::ChannelPluginManifest;
 use super::plugin_host::PluginHost;
 use super::transport_stdio::{run_acp_plugin_bridge, StdioPluginRuntime};
 use super::{ChannelInput, ConversationIngress};
@@ -21,10 +22,7 @@ const CHANNEL_OUTPUT_BUFFER: usize = 256;
 
 /// The protocol-side owner for one stdio channel-plugin spawn.
 pub struct ChannelPluginRunner {
-    pub channel_kind: String,
-    pub instance_id: String,
-    pub actor_id: String,
-    pub raw_config: serde_json::Value,
+    pub manifest: ChannelPluginManifest,
     pub input_tx: mpsc::UnboundedSender<ChannelInput>,
     pub output_rx: mpsc::Receiver<super::ChannelOutput>,
     pub ingress: Arc<ConversationIngress>,
@@ -43,10 +41,7 @@ impl ProcessBridge for ChannelPluginRunner {
 
 /// Builds a fresh [`ChannelPluginRunner`] for every supervised spawn.
 pub struct ChannelPluginRunnerFactory {
-    channel_kind: String,
-    instance_id: String,
-    actor_id: String,
-    raw_config: serde_json::Value,
+    manifest: ChannelPluginManifest,
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
@@ -54,19 +49,13 @@ pub struct ChannelPluginRunnerFactory {
 
 impl ChannelPluginRunnerFactory {
     pub fn new(
-        channel_kind: impl Into<String>,
-        instance_id: impl Into<String>,
-        actor_id: impl Into<String>,
-        raw_config: serde_json::Value,
+        manifest: ChannelPluginManifest,
         input_tx: mpsc::UnboundedSender<ChannelInput>,
         ingress: Arc<ConversationIngress>,
         plugin_host: Arc<PluginHost>,
     ) -> Self {
         Self {
-            channel_kind: channel_kind.into(),
-            instance_id: instance_id.into(),
-            actor_id: actor_id.into(),
-            raw_config,
+            manifest,
             input_tx,
             ingress,
             plugin_host,
@@ -79,15 +68,15 @@ impl ChannelPluginRunnerFactory {
 
     fn create(&self) -> ChannelPluginRunner {
         let (output_tx, output_rx) = mpsc::channel(CHANNEL_OUTPUT_BUFFER);
-        let runtime = Arc::new(StdioPluginRuntime::new(self.instance_id.clone(), output_tx));
+        let runtime = Arc::new(StdioPluginRuntime::new(
+            self.manifest.instance_id.clone(),
+            output_tx,
+        ));
         self.plugin_host
-            .replace_stdio_runtime(&self.instance_id, Arc::clone(&runtime));
+            .replace_stdio_runtime(&self.manifest.instance_id, Arc::clone(&runtime));
 
         ChannelPluginRunner {
-            channel_kind: self.channel_kind.clone(),
-            instance_id: self.instance_id.clone(),
-            actor_id: self.actor_id.clone(),
-            raw_config: self.raw_config.clone(),
+            manifest: self.manifest.clone(),
             input_tx: self.input_tx.clone(),
             output_rx,
             ingress: Arc::clone(&self.ingress),

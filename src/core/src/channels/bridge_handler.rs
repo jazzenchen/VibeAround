@@ -13,7 +13,7 @@
 use std::sync::{Arc, Weak};
 
 use agent_client_protocol::schema::v1 as acp;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::AgentClientHandler;
 use crate::routing::{channel_traits, ActiveTurnTarget, ChannelTarget, RouteKey};
@@ -26,7 +26,9 @@ use super::agent_protocol::{
     notification_payload, notification_payload_with_text, session_update_text,
     synthetic_agent_message_payload, synthetic_user_message_payload, AgentProtocolFilter,
 };
-use super::plugin_host::{PendingPermissionRegistration, PluginHost};
+#[cfg(test)]
+use super::plugin_host::PendingPermissionRegistration;
+use super::plugin_host::PluginHost;
 use super::types::{ChannelOutput, ThreadReply, ThreadReplyAgent, ThreadReplyPayload};
 
 pub(crate) struct ChannelBridgeHandler {
@@ -36,7 +38,7 @@ pub(crate) struct ChannelBridgeHandler {
     thread_id: WorkspaceThreadId,
     host_binding: HostBinding,
     active_turn_target: ActiveTurnTarget,
-    host_protocol: Mutex<HostProtocolState>,
+    host_protocol: HostProtocolOwner,
 }
 
 impl ChannelBridgeHandler {
@@ -55,7 +57,7 @@ impl ChannelBridgeHandler {
             thread_id,
             host_binding,
             active_turn_target,
-            host_protocol: Mutex::new(HostProtocolState::default()),
+            host_protocol: HostProtocolOwner::new(),
         }
     }
 
@@ -103,11 +105,10 @@ impl ChannelBridgeHandler {
         let Some(text) = session_update_text(&args.update) else {
             return notification_payload(args).map(Some);
         };
-        let visible = {
-            let mut state = self.host_protocol.lock().await;
-            state.last_session_id = Some(args.session_id.to_string());
-            state.filter.feed_text(text)
-        };
+        let visible = self
+            .host_protocol
+            .feed(args.session_id.to_string(), text.to_string())
+            .await;
         if visible.is_empty() {
             return Ok(None);
         }
@@ -115,12 +116,7 @@ impl ChannelBridgeHandler {
     }
 
     async fn finish_host_protocol(&self, success: bool) {
-        let (session_id, finished) = {
-            let mut state = self.host_protocol.lock().await;
-            let session_id = state.last_session_id.clone();
-            let finished = state.filter.finish();
-            (session_id, finished)
-        };
+        let (session_id, finished) = self.host_protocol.finish().await;
 
         if let Some(session_id) = session_id.as_deref() {
             self.send_host_visible_text_chunk(session_id, &finished.visible_tail)
@@ -394,78 +390,13 @@ impl AgentClientHandler for ChannelBridgeHandler {
         &self,
         args: acp::RequestPermissionRequest,
     ) -> acp::Result<acp::RequestPermissionResponse> {
-        if args.options.is_empty() {
-            return Err(acp::Error::method_not_found());
-        }
-
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel::<acp::RequestPermissionResponse>();
-        let Some((target, mut turn_cancelled)) =
-            self.active_turn_target.current_with_cancellation()
-        else {
-            return Ok(acp::RequestPermissionResponse::new(
-                acp::RequestPermissionOutcome::Cancelled,
-            ));
-        };
-        let _pending_permission = PendingPermissionRegistration::register(
+        super::permission::forward_permission_request(
             &self.plugin_host,
-            request_id.clone(),
-            target.route.channel_instance_id().to_string(),
-            tx,
-        );
-
-        let options_len = args.options.len();
-        let payload = match serde_json::to_value(&args) {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(acp::Error::new(
-                    -32603,
-                    format!("serialize requestPermission: {}", e),
-                ));
-            }
-        };
-
-        tracing::info!(
-            "[ChannelBridgeHandler] request_permission forwarding thread={} origin={} request_id={} options={}",
-            self.thread_id,
-            target.route,
-            request_id,
-            options_len
-        );
-
-        self.plugin_host
-            .send_output(ChannelOutput::PermissionRequest {
-                route: target.route,
-                reply_to: target.reply_to,
-                request_id: request_id.clone(),
-                payload,
-            });
-
-        // Wait for plugin response — no timeout by design. If the plugin
-        // crashes, `tx` is dropped and `rx.await` errors, which we treat as
-        // cancelled so the upstream agent turn gracefully ends.
-        tokio::select! {
-            biased;
-            _ = turn_cancelled.wait_for(|cancelled| *cancelled) => {
-                Ok(acp::RequestPermissionResponse::new(
-                    acp::RequestPermissionOutcome::Cancelled,
-                ))
-            }
-            response = rx => {
-                match response {
-                    Ok(response) => Ok(response),
-                    Err(_) => {
-                        tracing::info!(
-                            "[ChannelBridgeHandler] request_permission dropped (plugin gone?) thread={} request_id={}",
-                            self.thread_id, request_id
-                        );
-                        Ok(acp::RequestPermissionResponse::new(
-                            acp::RequestPermissionOutcome::Cancelled,
-                        ))
-                    }
-                }
-            }
-        }
+            &self.active_turn_target,
+            args,
+            None,
+        )
+        .await
     }
 }
 
@@ -473,6 +404,64 @@ impl AgentClientHandler for ChannelBridgeHandler {
 struct HostProtocolState {
     filter: AgentProtocolFilter,
     last_session_id: Option<String>,
+}
+
+struct HostProtocolOwner {
+    command_tx: mpsc::UnboundedSender<HostProtocolCommand>,
+}
+
+enum HostProtocolCommand {
+    Feed {
+        session_id: String,
+        text: String,
+        reply: oneshot::Sender<String>,
+    },
+    Finish(oneshot::Sender<(Option<String>, super::agent_protocol::AgentProtocolFinish)>),
+}
+
+impl HostProtocolOwner {
+    fn new() -> Self {
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut state = HostProtocolState::default();
+            while let Some(command) = command_rx.recv().await {
+                match command {
+                    HostProtocolCommand::Feed {
+                        session_id,
+                        text,
+                        reply,
+                    } => {
+                        state.last_session_id = Some(session_id);
+                        let _ = reply.send(state.filter.feed_text(&text));
+                    }
+                    HostProtocolCommand::Finish(reply) => {
+                        let _ = reply.send((state.last_session_id.clone(), state.filter.finish()));
+                    }
+                }
+            }
+        });
+        Self { command_tx }
+    }
+
+    async fn feed(&self, session_id: String, text: String) -> String {
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(HostProtocolCommand::Feed {
+                session_id,
+                text,
+                reply,
+            })
+            .expect("host protocol owner must outlive its handler");
+        result.await.expect("host protocol owner must reply")
+    }
+
+    async fn finish(&self) -> (Option<String>, super::agent_protocol::AgentProtocolFinish) {
+        let (reply, result) = oneshot::channel();
+        self.command_tx
+            .send(HostProtocolCommand::Finish(reply))
+            .expect("host protocol owner must outlive its handler");
+        result.await.expect("host protocol owner must reply")
+    }
 }
 
 struct HostAssignment {
@@ -530,18 +519,6 @@ fn string_field(
 mod tests {
     use super::*;
 
-    fn permission_request() -> acp::RequestPermissionRequest {
-        acp::RequestPermissionRequest::new(
-            "session-1",
-            acp::ToolCallUpdate::new("tool-1", acp::ToolCallUpdateFields::new()),
-            vec![acp::PermissionOption::new(
-                "allow-once",
-                "Allow once",
-                acp::PermissionOptionKind::AllowOnce,
-            )],
-        )
-    }
-
     fn permission_handler(
         plugin_host: Arc<PluginHost>,
         active_turn_target: ActiveTurnTarget,
@@ -553,7 +530,7 @@ mod tests {
             thread_id: WorkspaceThreadId::from("thread-1"),
             host_binding: HostBinding::new("codex", None),
             active_turn_target,
-            host_protocol: Mutex::new(HostProtocolState::default()),
+            host_protocol: HostProtocolOwner::new(),
         }
     }
 
@@ -619,6 +596,7 @@ mod tests {
                 "request-1",
                 acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
             )
+            .await
             .is_err());
     }
 
@@ -638,7 +616,11 @@ mod tests {
 
         let permission_task = tokio::spawn({
             let handler = Arc::clone(&handler);
-            async move { handler.request_permission(permission_request()).await }
+            async move {
+                handler
+                    .request_permission(super::super::permission::test_permission_request())
+                    .await
+            }
         });
         let output = output_rx.recv().await.expect("permission output");
         let ChannelOutput::PermissionRequest { request_id, .. } = output else {
@@ -655,6 +637,7 @@ mod tests {
                 &request_id,
                 acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled,),
             )
+            .await
             .is_err());
     }
 

@@ -20,6 +20,7 @@ pub(crate) mod agent_protocol;
 pub mod bridge_handler;
 pub mod manifest;
 pub mod monitor;
+mod permission;
 pub mod plugin_bridge;
 pub mod plugin_host;
 pub mod plugin_runner;
@@ -30,7 +31,7 @@ pub mod transport_stdio;
 pub mod transport_websocket;
 pub mod types;
 
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
 use serde::Serialize;
@@ -64,63 +65,47 @@ pub struct ChannelManager {
     /// `handle_input` sends here; the processing loop runs on a dedicated
     /// task owned by the server startup path.
     input_tx: mpsc::UnboundedSender<ChannelInput>,
-    input_rx: StdMutex<Option<mpsc::UnboundedReceiver<ChannelInput>>>,
     workspace_thread_manager: Arc<WorkspaceThreadManager>,
     ingress: Arc<ConversationIngress>,
-    /// Lazy-initialised on first `register_plugin` call. The monitor is
-    /// a thin facade over `process::Supervisor` — it owns the supervisor
-    /// and its tick loop internally.
-    monitor: StdMutex<Option<Arc<monitor::ChannelMonitor>>>,
+    monitor: Arc<monitor::ChannelMonitor>,
 }
 
 impl ChannelManager {
-    pub fn new(workspace_thread_manager: Arc<WorkspaceThreadManager>) -> Self {
+    pub fn new(
+        workspace_thread_manager: Arc<WorkspaceThreadManager>,
+    ) -> (Self, mpsc::UnboundedReceiver<ChannelInput>) {
         let (input_tx, input_rx) = mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx.clone()));
-        let ingress = Arc::new(ConversationIngress::new(
+        let ingress = ConversationIngress::new(
             Arc::clone(&workspace_thread_manager),
             Arc::clone(&plugin_host),
-        ));
-        Self {
-            plugin_host,
-            input_tx,
-            input_rx: StdMutex::new(Some(input_rx)),
-            workspace_thread_manager,
-            ingress,
-            monitor: StdMutex::new(None),
-        }
+        );
+        let (change_tx, _) = tokio::sync::broadcast::channel::<()>(64);
+        let monitor = monitor::ChannelMonitor::new(
+            Arc::clone(&ingress),
+            input_tx.clone(),
+            Arc::clone(&plugin_host),
+            change_tx,
+        );
+        plugin_host.set_monitor(Arc::downgrade(&monitor));
+        (
+            Self {
+                plugin_host,
+                input_tx,
+                workspace_thread_manager,
+                ingress,
+                monitor,
+            },
+            input_rx,
+        )
     }
 
     pub fn plugin_host(&self) -> Arc<PluginHost> {
         Arc::clone(&self.plugin_host)
     }
 
-    /// Return the monitor, initialising it on first call. Construction
-    /// also spawns the underlying `process::Supervisor` tick loop.
     pub fn monitor(&self) -> Arc<monitor::ChannelMonitor> {
-        let mut slot = self.monitor.lock().unwrap();
-        if let Some(existing) = slot.as_ref() {
-            return Arc::clone(existing);
-        }
-        let (change_tx, _) = tokio::sync::broadcast::channel::<()>(64);
-        let m = monitor::ChannelMonitor::new(
-            Arc::clone(&self.ingress),
-            self.input_tx.clone(),
-            Arc::clone(&self.plugin_host),
-            change_tx,
-        );
-        // Weak back-pointer so the plugin bridge's `_va/heartbeat`
-        // handler can call `touch(kind)` on the monitor.
-        self.plugin_host.set_monitor(Arc::downgrade(&m));
-
-        *slot = Some(Arc::clone(&m));
-        m
-    }
-
-    /// Take the input receiver so the caller can drive the processing loop.
-    /// Must be called exactly once (typically during daemon startup).
-    pub fn take_input_rx(&self) -> Option<mpsc::UnboundedReceiver<ChannelInput>> {
-        self.input_rx.lock().unwrap().take()
+        Arc::clone(&self.monitor)
     }
 
     /// Register a channel plugin with the supervisor. The monitor spawns it
@@ -159,7 +144,7 @@ impl ChannelManager {
             .cloned()
             .collect::<std::collections::HashSet<_>>();
         let monitor = self.monitor();
-        let registered = monitor.registered_instances();
+        let registered = monitor.registered_instances().await;
         let registered_set = registered
             .iter()
             .cloned()
@@ -248,7 +233,7 @@ impl ChannelManager {
         self.plugin_host.send_output(output);
     }
 
-    pub fn respond_permission(
+    pub async fn respond_permission(
         &self,
         channel_instance_id: &str,
         request_id: &str,
@@ -256,15 +241,13 @@ impl ChannelManager {
     ) -> Result<(), String> {
         self.plugin_host
             .respond_permission(channel_instance_id, request_id, response)
+            .await
     }
 
     pub async fn shutdown_all(&self) {
         // Cancel every supervised plugin bridge first so they wind down
         // cleanly, then drop the host-side routing + pending permissions.
-        let monitor = self.monitor.lock().unwrap().clone();
-        if let Some(monitor) = monitor {
-            monitor.shutdown_all().await;
-        }
-        self.plugin_host.shutdown_all();
+        self.monitor.shutdown_all().await;
+        self.plugin_host.shutdown_all().await;
     }
 }

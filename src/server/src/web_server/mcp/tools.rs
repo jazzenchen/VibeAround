@@ -298,7 +298,8 @@ pub(super) async fn mcp_prepare_handover(
         profile_id: Some(profile_id),
         session_id,
         cwd: cwd_path.to_string_lossy().to_string(),
-    });
+    })
+    .await;
     let pickup_cmd = format!("/pickup {}", code);
     mcp_text(
         id,

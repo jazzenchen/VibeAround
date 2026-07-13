@@ -359,7 +359,7 @@ pub async fn run_web_server(
             post(api::start_channel_handler),
         )
         .route("/api/tunnels/{provider}", delete(api::kill_tunnel_handler))
-        .route("/api/agents/{route_key}", delete(api::kill_agent_handler))
+        .route("/api/agents/{thread_id}", delete(api::kill_agent_handler))
         .route("/api/pty/{session_id}", delete(api::kill_pty_handler))
         .route("/api/previews", get(api::list_previews_handler))
         .route("/api/previews/{slug}", delete(api::delete_preview_handler))

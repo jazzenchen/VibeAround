@@ -15,6 +15,16 @@ pub fn spawn_tree_killable(command: &mut Command) -> io::Result<TreeKillableChil
     Ok(TreeKillableChild { child, root_pid })
 }
 
+pub(crate) async fn wait_for_exit_within(
+    child: &mut Child,
+    duration: std::time::Duration,
+) -> io::Result<Option<ExitStatus>> {
+    match tokio::time::timeout(duration, child.wait()).await {
+        Ok(status) => status.map(Some),
+        Err(_) => Ok(None),
+    }
+}
+
 impl TreeKillableChild {
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
         self.child.stdout.take()
@@ -53,15 +63,12 @@ pub(crate) async fn terminate_child_tree(
     };
 
     let term_result = signal_process_group(root_pid, libc::SIGTERM);
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(400);
-    while child.try_wait()?.is_none() && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
+    let exited = wait_for_exit_within(child, std::time::Duration::from_millis(400)).await?;
 
     // Signal the whole group even if the root has already exited: helpers can
     // remain alive in the same process group after their parent is reaped.
     let kill_result = signal_process_group(root_pid, libc::SIGKILL);
-    if child.try_wait()?.is_none() {
+    if exited.is_none() {
         let _ = child.wait().await;
     }
     kill_result.or(term_result)

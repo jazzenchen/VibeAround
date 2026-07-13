@@ -1,9 +1,9 @@
 //! `PluginHost` — the per-daemon **routing table** for outbound channel
 //! traffic, plus a small amount of bridge-adjacent bookkeeping.
 //!
-//! Three tables, one job each:
+//! One owner task serializes two tables:
 //!
-//! 1. **`runtimes`** (`DashMap<ChannelInstanceId, PluginRuntime>`) — "which
+//! 1. **`runtimes`** — "which
 //!    live sender does a `ChannelOutput` for configured Bot instance X use?".
 //!    supervisor's bridge factory calls [`PluginHost::replace_stdio_runtime`]
 //!    on every (re)spawn so the table always points at the live bridge;
@@ -15,7 +15,7 @@
 //!    here when the plugin answers; [`PluginHost::cancel_channel_permissions`]
 //!    drains the map when a plugin dies so waiting callers don't stall.
 //!
-//! 3. **`monitor: Weak<ChannelMonitor>`** — back-pointer used by the ACP
+//! A write-once **`monitor: Weak<ChannelMonitor>`** back-pointer is used by the ACP
 //!    bridge to report `_va/heartbeat` liveness. Weak to avoid a
 //!    reference cycle (`ChannelMonitor` holds `Arc<PluginHost>`).
 //!
@@ -23,12 +23,10 @@
 //! state machines — those are `process::Supervisor`, the bridge threads,
 //! and `ChannelMonitor` respectively.
 
-use std::collections::HashSet;
-use std::sync::{Arc, Weak};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock, Weak};
 
 use agent_client_protocol::schema::v1 as acp;
-use dashmap::DashMap;
-use parking_lot::RwLock;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::proc_log;
@@ -42,18 +40,45 @@ use super::transport_websocket::WebSocketPluginRuntime;
 use super::{ChannelInput, ChannelOutput};
 
 pub struct PluginHost {
-    runtimes: DashMap<ChannelInstanceId, PluginRuntime>,
+    command_tx: mpsc::UnboundedSender<HostCommand>,
     input_tx: mpsc::UnboundedSender<ChannelInput>,
-    /// Pending `requestPermission` replies keyed by a fresh request_id.
-    /// Each entry records every channel instance that received the permission card.
-    /// The first valid answer consumes the sender; plugin shutdown removes only
-    /// that instance and drops the sender once no visible surface can answer.
-    pending_permissions: DashMap<String, PendingPermission>,
     /// Back-pointer to the ChannelMonitor. Weak to avoid a reference cycle
     /// (ChannelMonitor holds `Arc<PluginHost>`). Used by the plugin bridge
     /// to call `touch` on `_va/heartbeat`. `mark_crashed` is no longer
     /// needed here — the supervisor observes `BridgeExit` directly.
-    monitor: RwLock<Weak<ChannelMonitor>>,
+    monitor: OnceLock<Weak<ChannelMonitor>>,
+}
+
+enum HostCommand {
+    ReplaceRuntime {
+        instance_id: ChannelInstanceId,
+        runtime: PluginRuntime,
+    },
+    RemoveStdioRuntime {
+        instance_id: ChannelInstanceId,
+        runtime: Arc<StdioPluginRuntime>,
+    },
+    SendOutput(Box<ChannelOutput>),
+    RegisterPermission {
+        request_id: String,
+        channel_instances: HashSet<ChannelInstanceId>,
+        tx: oneshot::Sender<acp::RequestPermissionResponse>,
+    },
+    RemovePermission(String),
+    CancelChannelPermissions(ChannelInstanceId),
+    RespondPermission {
+        channel_instance_id: ChannelInstanceId,
+        request_id: String,
+        response: acp::RequestPermissionResponse,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    Shutdown(oneshot::Sender<()>),
+}
+
+struct PluginHostOwner {
+    runtimes: HashMap<ChannelInstanceId, PluginRuntime>,
+    pending_permissions: HashMap<String, PendingPermission>,
+    command_rx: mpsc::UnboundedReceiver<HostCommand>,
 }
 
 /// Cancellation-safe ownership of one pending permission entry.
@@ -88,11 +113,19 @@ impl Drop for PendingPermissionRegistration {
 
 impl PluginHost {
     pub fn new(input_tx: mpsc::UnboundedSender<ChannelInput>) -> Self {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        tokio::spawn(
+            PluginHostOwner {
+                runtimes: HashMap::new(),
+                pending_permissions: HashMap::new(),
+                command_rx,
+            }
+            .run(),
+        );
         Self {
-            runtimes: DashMap::new(),
+            command_tx,
             input_tx,
-            pending_permissions: DashMap::new(),
-            monitor: RwLock::new(Weak::new()),
+            monitor: OnceLock::new(),
         }
     }
 
@@ -100,11 +133,11 @@ impl PluginHost {
     /// exist. Establishes the back-pointer so bridge threads can signal the
     /// monitor.
     pub fn set_monitor(&self, monitor: Weak<ChannelMonitor>) {
-        *self.monitor.write() = monitor;
+        let _ = self.monitor.set(monitor);
     }
 
     pub fn monitor_weak(&self) -> Weak<ChannelMonitor> {
-        self.monitor.read().clone()
+        self.monitor.get().cloned().unwrap_or_default()
     }
 
     pub fn input_tx(&self) -> mpsc::UnboundedSender<ChannelInput> {
@@ -115,21 +148,21 @@ impl PluginHost {
     /// the supervisor's bridge factory on every (re)spawn so `send_output`
     /// always routes to the live process.
     pub fn replace_stdio_runtime(&self, instance_id: &str, runtime: Arc<StdioPluginRuntime>) {
-        self.runtimes
-            .insert(instance_id.to_string(), PluginRuntime::Stdio(runtime));
+        let _ = self.command_tx.send(HostCommand::ReplaceRuntime {
+            instance_id: instance_id.to_string(),
+            runtime: PluginRuntime::Stdio(runtime),
+        });
     }
 
     pub fn remove_stdio_runtime_if_current(
         &self,
         instance_id: &str,
         runtime: &Arc<StdioPluginRuntime>,
-    ) -> bool {
-        self.runtimes
-            .remove_if(instance_id, |_, current| match current {
-                PluginRuntime::Stdio(current) => Arc::ptr_eq(current, runtime),
-                PluginRuntime::WebSocket(_) => false,
-            })
-            .is_some()
+    ) {
+        let _ = self.command_tx.send(HostCommand::RemoveStdioRuntime {
+            instance_id: instance_id.to_string(),
+            runtime: Arc::clone(runtime),
+        });
     }
 
     pub fn register_websocket_plugin(
@@ -139,20 +172,150 @@ impl PluginHost {
     ) {
         let channel_kind = channel_kind.into();
         let runtime = WebSocketPluginRuntime::new(channel_kind.clone(), outbound_tx);
-        self.runtimes
-            .insert(channel_kind.clone(), PluginRuntime::WebSocket(runtime));
+        let _ = self.command_tx.send(HostCommand::ReplaceRuntime {
+            instance_id: channel_kind,
+            runtime: PluginRuntime::WebSocket(runtime),
+        });
     }
 
     /// Best-effort realtime delivery. This method never waits for a plugin:
     /// a full per-generation transport buffer drops the output and logs it.
     pub fn send_output(&self, output: ChannelOutput) {
+        let _ = self
+            .command_tx
+            .send(HostCommand::SendOutput(Box::new(output)));
+    }
+
+    pub async fn shutdown_all(&self) {
+        let (reply, done) = oneshot::channel();
+        let _ = self.command_tx.send(HostCommand::Shutdown(reply));
+        let _ = done.await;
+    }
+
+    /// Drop every pending permission request belonging to `instance_id`.
+    /// Called from `run_acp_plugin_bridge` right before it returns its
+    /// `BridgeExit` — guaranteed to fire exactly once per bridge death.
+    /// Without this drain, oneshot senders waiting on a reply from the
+    /// dying plugin would stall `ChannelBridgeHandler::request_permission`
+    /// callers indefinitely.
+    pub fn cancel_channel_permissions(&self, instance_id: &str) {
+        let _ = self.command_tx.send(HostCommand::CancelChannelPermissions(
+            instance_id.to_string(),
+        ));
+    }
+
+    pub fn register_pending_permission<I>(
+        &self,
+        request_id: String,
+        channel_instances: I,
+        tx: oneshot::Sender<acp::RequestPermissionResponse>,
+    ) where
+        I: IntoIterator<Item = ChannelInstanceId>,
+    {
+        let _ = self.command_tx.send(HostCommand::RegisterPermission {
+            request_id,
+            channel_instances: channel_instances.into_iter().collect(),
+            tx,
+        });
+    }
+
+    pub fn remove_pending_permission(&self, request_id: &str) {
+        let _ = self
+            .command_tx
+            .send(HostCommand::RemovePermission(request_id.to_string()));
+    }
+
+    /// Resolve a pending permission request from an in-process client such as
+    /// the web chat channel. Stdio plugins answer through ACP in
+    /// `transport_stdio::forwarder`; websocket channels need this small
+    /// bridge back into the same pending-permission table.
+    pub async fn respond_permission(
+        &self,
+        channel_instance_id: &str,
+        request_id: &str,
+        response: acp::RequestPermissionResponse,
+    ) -> Result<(), String> {
+        let (reply, done) = oneshot::channel();
+        self.command_tx
+            .send(HostCommand::RespondPermission {
+                channel_instance_id: channel_instance_id.to_string(),
+                request_id: request_id.to_string(),
+                response,
+                reply,
+            })
+            .map_err(|_| "plugin host is shut down".to_string())?;
+        done.await
+            .unwrap_or_else(|_| Err("plugin host is shut down".to_string()))
+    }
+}
+
+impl PluginHostOwner {
+    async fn run(mut self) {
+        while let Some(command) = self.command_rx.recv().await {
+            match command {
+                HostCommand::ReplaceRuntime {
+                    instance_id,
+                    runtime,
+                } => {
+                    self.runtimes.insert(instance_id, runtime);
+                }
+                HostCommand::RemoveStdioRuntime {
+                    instance_id,
+                    runtime,
+                } => {
+                    if matches!(
+                        self.runtimes.get(&instance_id),
+                        Some(PluginRuntime::Stdio(current)) if Arc::ptr_eq(current, &runtime)
+                    ) {
+                        self.runtimes.remove(&instance_id);
+                    }
+                }
+                HostCommand::SendOutput(output) => self.send_output(*output),
+                HostCommand::RegisterPermission {
+                    request_id,
+                    channel_instances,
+                    tx,
+                } => {
+                    self.pending_permissions.insert(
+                        request_id,
+                        PendingPermission {
+                            channel_instances,
+                            tx,
+                        },
+                    );
+                }
+                HostCommand::RemovePermission(request_id) => {
+                    self.pending_permissions.remove(&request_id);
+                }
+                HostCommand::CancelChannelPermissions(instance_id) => {
+                    self.cancel_channel_permissions(&instance_id);
+                }
+                HostCommand::RespondPermission {
+                    channel_instance_id,
+                    request_id,
+                    response,
+                    reply,
+                } => {
+                    let result =
+                        self.respond_permission(&channel_instance_id, &request_id, response);
+                    let _ = reply.send(result);
+                }
+                HostCommand::Shutdown(reply) => {
+                    self.runtimes.clear();
+                    self.pending_permissions.clear();
+                    let _ = reply.send(());
+                }
+            }
+        }
+    }
+
+    fn send_output(&mut self, output: ChannelOutput) {
         let route = output.route_key().clone();
         let instance_id = route.channel_instance_id().to_string();
         let permission_request_id = match &output {
             ChannelOutput::PermissionRequest { request_id, .. } => Some(request_id.clone()),
             _ => None,
         };
-        let runtime = self.runtime_for_instance(&instance_id);
         proc_log!(
             debug,
             kind = ProcessKind::ChannelPlugin,
@@ -161,7 +324,7 @@ impl PluginHost {
             route = %route
         );
 
-        if let Some(runtime) = runtime {
+        if let Some(runtime) = self.runtimes.get(&instance_id) {
             if let Err(error) = runtime.send_output_now(output) {
                 if let Some(request_id) = permission_request_id.as_deref() {
                     self.cancel_permission_surface(request_id, &instance_id);
@@ -179,11 +342,7 @@ impl PluginHost {
             if let Some(request_id) = permission_request_id.as_deref() {
                 self.cancel_permission_surface(request_id, &instance_id);
             }
-            let known: Vec<String> = self
-                .runtimes
-                .iter()
-                .map(|e| format!("{:?}", e.key()))
-                .collect();
+            let known = self.runtimes.keys().cloned().collect::<Vec<_>>();
             proc_log!(
                 warn,
                 kind = ProcessKind::ChannelPlugin,
@@ -195,103 +354,41 @@ impl PluginHost {
         }
     }
 
-    fn runtime_for_instance(&self, instance_id: &str) -> Option<PluginRuntime> {
-        self.runtimes
-            .get(instance_id)
-            .map(|entry| match entry.value() {
-                PluginRuntime::Stdio(runtime) => PluginRuntime::Stdio(Arc::clone(runtime)),
-                PluginRuntime::WebSocket(runtime) => PluginRuntime::WebSocket(Arc::clone(runtime)),
-            })
-    }
-
-    pub fn shutdown_all(&self) {
-        self.runtimes.clear();
-        // Drop every pending oneshot sender so waiting `request_permission`
-        // callers in `ChannelBridgeHandler` see `rx.await -> Err` and fall
-        // through to `Cancelled` instead of stalling forever.
-        self.pending_permissions.clear();
-    }
-
-    /// Drop every pending permission request belonging to `instance_id`.
-    /// Called from `run_acp_plugin_bridge` right before it returns its
-    /// `BridgeExit` — guaranteed to fire exactly once per bridge death.
-    /// Without this drain, oneshot senders waiting on a reply from the
-    /// dying plugin would stall `ChannelBridgeHandler::request_permission`
-    /// callers indefinitely.
-    pub fn cancel_channel_permissions(&self, instance_id: &str) {
-        let request_ids: Vec<String> = self
-            .pending_permissions
-            .iter()
-            .filter(|entry| entry.value().channel_instances.contains(instance_id))
-            .map(|entry| entry.key().clone())
-            .collect();
-        for id in request_ids {
-            let mut should_remove = false;
-            if let Some(mut pending) = self.pending_permissions.get_mut(&id) {
-                pending.channel_instances.remove(instance_id);
-                should_remove = pending.channel_instances.is_empty();
-            }
-            if should_remove {
-                self.pending_permissions.remove(&id);
-            }
-        }
-    }
-
-    fn cancel_permission_surface(&self, request_id: &str, instance_id: &str) {
-        let mut should_remove = false;
-        if let Some(mut pending) = self.pending_permissions.get_mut(request_id) {
+    fn cancel_channel_permissions(&mut self, instance_id: &str) {
+        self.pending_permissions.retain(|_, pending| {
             pending.channel_instances.remove(instance_id);
-            should_remove = pending.channel_instances.is_empty();
-        }
+            !pending.channel_instances.is_empty()
+        });
+    }
+
+    fn cancel_permission_surface(&mut self, request_id: &str, instance_id: &str) {
+        let should_remove = self
+            .pending_permissions
+            .get_mut(request_id)
+            .is_some_and(|pending| {
+                pending.channel_instances.remove(instance_id);
+                pending.channel_instances.is_empty()
+            });
         if should_remove {
             self.pending_permissions.remove(request_id);
         }
     }
 
-    pub fn register_pending_permission<I>(
-        &self,
-        request_id: String,
-        channel_instances: I,
-        tx: oneshot::Sender<acp::RequestPermissionResponse>,
-    ) where
-        I: IntoIterator<Item = ChannelInstanceId>,
-    {
-        self.pending_permissions.insert(
-            request_id,
-            PendingPermission {
-                channel_instances: channel_instances.into_iter().collect(),
-                tx,
-            },
-        );
-    }
-
-    pub fn remove_pending_permission(&self, request_id: &str) {
-        self.pending_permissions.remove(request_id);
-    }
-
-    /// Resolve a pending permission request from an in-process client such as
-    /// the web chat channel. Stdio plugins answer through ACP in
-    /// `transport_stdio::forwarder`; websocket channels need this small
-    /// bridge back into the same pending-permission table.
-    pub fn respond_permission(
-        &self,
+    fn respond_permission(
+        &mut self,
         channel_instance_id: &str,
         request_id: &str,
         response: acp::RequestPermissionResponse,
     ) -> Result<(), String> {
-        let Some((_, pending)) = self
-            .pending_permissions
-            .remove_if(request_id, |_, pending| {
-                pending.channel_instances.contains(channel_instance_id)
-            })
-        else {
-            if self.pending_permissions.contains_key(request_id) {
-                return Err("permission request belongs to a different channel".to_string());
-            }
+        let Some(pending) = self.pending_permissions.get(request_id) else {
             return Err("permission request is no longer pending".to_string());
         };
-
-        pending
+        if !pending.channel_instances.contains(channel_instance_id) {
+            return Err("permission request belongs to a different channel".to_string());
+        }
+        self.pending_permissions
+            .remove(request_id)
+            .expect("permission checked above")
             .tx
             .send(response)
             .map_err(|_| "permission requester is no longer listening".to_string())
@@ -325,18 +422,18 @@ mod tests {
 
         assert!(host
             .respond_permission("slack", "req-1", permission_response())
+            .await
             .is_err());
-        assert!(host.pending_permissions.contains_key("req-1"));
 
         host.respond_permission("web", "req-1", permission_response())
+            .await
             .unwrap();
 
-        assert!(!host.pending_permissions.contains_key("req-1"));
         assert!(rx.await.is_ok());
     }
 
-    #[test]
-    fn disconnected_outputs_are_not_queued_for_replay() {
+    #[tokio::test]
+    async fn disconnected_outputs_are_not_queued_for_replay() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = PluginHost::new(input_tx);
 
@@ -361,7 +458,6 @@ mod tests {
             payload: serde_json::json!({}),
         });
 
-        assert!(!host.pending_permissions.contains_key("req-1"));
         assert!(rx.await.is_err());
     }
 
@@ -406,30 +502,44 @@ mod tests {
         });
 
         assert!(permission_rx.await.is_err());
-        assert!(blocked_rx.try_recv().is_ok());
-        assert_eq!(live_rx.try_recv().unwrap().route_key(), &live_route);
+        assert!(blocked_rx.recv().await.is_some());
+        assert_eq!(live_rx.recv().await.unwrap().route_key(), &live_route);
     }
 
-    #[test]
-    fn remove_stdio_runtime_only_removes_current_runtime() {
+    #[tokio::test]
+    async fn remove_stdio_runtime_only_removes_current_runtime() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = PluginHost::new(input_tx);
         let (output_tx, _output_rx) = tokio::sync::mpsc::channel(8);
         let old_runtime = Arc::new(StdioPluginRuntime::new("feishu", output_tx));
         host.replace_stdio_runtime("feishu", Arc::clone(&old_runtime));
 
-        let (output_tx, _output_rx) = tokio::sync::mpsc::channel(8);
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::channel(8);
         let new_runtime = Arc::new(StdioPluginRuntime::new("feishu", output_tx));
         host.replace_stdio_runtime("feishu", Arc::clone(&new_runtime));
 
-        assert!(!host.remove_stdio_runtime_if_current("feishu", &old_runtime));
-        assert!(matches!(
-            host.runtime_for_instance("feishu"),
-            Some(PluginRuntime::Stdio(runtime)) if Arc::ptr_eq(&runtime, &new_runtime)
-        ));
+        host.remove_stdio_runtime_if_current("feishu", &old_runtime);
+        host.send_output(ChannelOutput::SystemText {
+            route: RouteKey::new("feishu", "chat-a"),
+            text: "still live".to_string(),
+            reply_to: None,
+        });
+        assert!(output_rx.recv().await.is_some());
 
-        assert!(host.remove_stdio_runtime_if_current("feishu", &new_runtime));
-        assert!(host.runtime_for_instance("feishu").is_none());
+        host.remove_stdio_runtime_if_current("feishu", &new_runtime);
+        let (permission_tx, permission_rx) = oneshot::channel();
+        host.register_pending_permission(
+            "req-removed".to_string(),
+            ["feishu".to_string()],
+            permission_tx,
+        );
+        host.send_output(ChannelOutput::PermissionRequest {
+            route: RouteKey::new("feishu", "chat-a"),
+            reply_to: None,
+            request_id: "req-removed".to_string(),
+            payload: serde_json::json!({}),
+        });
+        assert!(permission_rx.await.is_err());
     }
 
     #[tokio::test]
@@ -462,7 +572,7 @@ mod tests {
     async fn cancel_channel_permissions_keeps_other_surfaces_alive() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = PluginHost::new(input_tx);
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::oneshot::channel();
         host.register_pending_permission(
             "req-1".to_string(),
             vec!["feishu".to_string(), "web".to_string()],
@@ -471,12 +581,8 @@ mod tests {
 
         host.cancel_channel_permissions("feishu");
 
-        assert!(host.pending_permissions.contains_key("req-1"));
-        assert!(matches!(
-            rx.try_recv(),
-            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-        ));
         host.respond_permission("web", "req-1", permission_response())
+            .await
             .unwrap();
         assert!(rx.await.is_ok());
 
@@ -485,7 +591,6 @@ mod tests {
 
         host.cancel_channel_permissions("feishu");
 
-        assert!(!host.pending_permissions.contains_key("req-2"));
         assert!(rx.await.is_err());
     }
 }
