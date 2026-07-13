@@ -11,6 +11,35 @@ use super::super::store::{event_id, now};
 use super::store::WorkspaceThreadId;
 
 const SCHEMA_VERSION: u8 = 2;
+
+#[derive(Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum LegacyRouteAttachmentEvent {
+    Attached {
+        #[serde(rename = "route")]
+        _route: LegacyRouteKey,
+    },
+    Detached {
+        #[serde(rename = "route")]
+        _route: LegacyRouteKey,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyRouteKey {
+    #[serde(rename = "channel_kind")]
+    _channel_kind: String,
+    #[serde(rename = "bot_id")]
+    _bot_id: String,
+    #[serde(rename = "chat_id")]
+    _chat_id: String,
+    #[serde(default, rename = "actor_id")]
+    _actor_id: Option<String>,
+    #[serde(default, rename = "topic_id")]
+    _topic_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteAttachmentVisibility {
@@ -235,10 +264,29 @@ async fn ensure_attachment_projection_loaded(
     projection: &mut Option<RouteAttachmentProjection>,
 ) -> jsonl::Result<()> {
     if projection.is_none() {
-        let events = jsonl::read_all(path).await?;
-        *projection = Some(RouteAttachmentProjection::from_events(&events));
+        *projection = Some(load_attachment_projection(path).await?);
     }
     Ok(())
+}
+
+async fn load_attachment_projection(path: &Path) -> jsonl::Result<RouteAttachmentProjection> {
+    match jsonl::read_all(path).await {
+        Ok(events) => Ok(RouteAttachmentProjection::from_events(&events)),
+        Err(error) => {
+            let legacy_events: jsonl::Result<Vec<LegacyRouteAttachmentEvent>> =
+                jsonl::read_all(path).await;
+            if legacy_events.is_err() {
+                return Err(error);
+            }
+
+            jsonl::replace_all::<RouteAttachmentEvent>(path, &[]).await?;
+            tracing::warn!(
+                path = %path.display(),
+                "discarded route attachments written with the obsolete bot_id schema"
+            );
+            Ok(RouteAttachmentProjection::default())
+        }
+    }
 }
 
 async fn replace_attachment_projection(
@@ -354,6 +402,48 @@ mod tests {
 
         let projection = store.load_projection().await.unwrap();
         assert_eq!(projection.len(), 2);
+
+        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
+    }
+
+    #[tokio::test]
+    async fn obsolete_bot_id_store_is_discarded_and_can_be_rebuilt() {
+        let path = std::env::temp_dir()
+            .join(format!("vibearound-attachments-{}", uuid::Uuid::new_v4()))
+            .join("attachments.jsonl");
+        jsonl::append(
+            &path,
+            &serde_json::json!({
+                "event": "attached",
+                "schema_version": 1,
+                "event_id": "old-event",
+                "occurred_at": "2026-01-01T00:00:00Z",
+                "route": {
+                    "channel_kind": "slack",
+                    "bot_id": "bot-a",
+                    "chat_id": "chat-a"
+                },
+                "workspace_id": "ws_old",
+                "thread_id": "wt_old"
+            }),
+        )
+        .await
+        .unwrap();
+        let store = RouteAttachmentEventStore::new(path.clone());
+
+        assert!(store.load_projection().await.unwrap().is_empty());
+        assert!(store.read_events().await.unwrap().is_empty());
+
+        let route = RouteKey::with_channel_instance("slack", "bot-a", "chat-a");
+        store
+            .append(&RouteAttachmentEvent::attached(
+                route.clone(),
+                "ws_new",
+                "wt_new",
+            ))
+            .await
+            .unwrap();
+        assert!(store.load_projection().await.unwrap().get(&route).is_some());
 
         let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
     }
