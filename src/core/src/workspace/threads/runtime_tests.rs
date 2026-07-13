@@ -169,12 +169,23 @@ async fn cancel_signals_active_turn_without_agent_lookup() {
         .active_turn_target
         .current_with_cancellation()
         .expect("active target");
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    runtime
+        .owner_tx
+        .send(ThreadOwnerCommand::Probe {
+            started: started_tx,
+            release: release_rx,
+        })
+        .unwrap();
+    started_rx.await.unwrap();
 
     runtime.cancel().await.unwrap();
     cancelled
         .wait_for(|is_cancelled| *is_cancelled)
         .await
         .expect("active turn cancellation sender remains live");
+    release_tx.send(()).unwrap();
 }
 
 #[test]

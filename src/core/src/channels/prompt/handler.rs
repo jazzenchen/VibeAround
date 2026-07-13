@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
+use tokio::sync::watch;
 
 use crate::agent::launch::{normalize_launch_profile_id, DIRECT_PROFILE_ID};
 use crate::agent::AgentClientHandler;
@@ -17,7 +18,7 @@ use crate::profiles::{self, connections};
 use crate::routing::{ChannelTarget, RouteKey};
 use crate::workspace::manager::ExternalSessionAttachMode;
 use crate::workspace::threads::runtime::{
-    route_allows_startup_replay, PromptCancellation, ThreadRuntime, ThreadRuntimeState,
+    route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
 };
 use crate::workspace::threads::store::HostBinding;
 use crate::workspace::WorkspaceThreadManager;
@@ -31,7 +32,7 @@ pub(crate) async fn handle_prompt(
     plugin_host: &Arc<PluginHost>,
     target: ChannelTarget,
     mut content_blocks: Vec<acp::ContentBlock>,
-    cancellation: PromptCancellation,
+    cancellation: watch::Receiver<bool>,
 ) -> acp::Result<acp::PromptResponse> {
     let text = first_text(&content_blocks).unwrap_or_default();
 

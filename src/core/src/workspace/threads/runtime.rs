@@ -32,11 +32,6 @@ pub struct ThreadRuntimeState {
     pub multi_agent_turns: Vec<MultiAgentTurn>,
 }
 
-pub(crate) struct PromptCancellation {
-    cancel_rx: watch::Receiver<bool>,
-    shutdown_rx: watch::Receiver<bool>,
-}
-
 #[path = "runtime_owner.rs"]
 mod owner;
 use owner::*;
@@ -215,7 +210,7 @@ impl ThreadRuntime {
         target: &ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
         handler: Arc<dyn AgentClientHandler>,
-        cancellation: PromptCancellation,
+        cancellation: watch::Receiver<bool>,
     ) -> acp::Result<acp::PromptResponse> {
         self.enqueue_prompt(target, content_blocks, handler, Some(cancellation))
             .await
@@ -226,7 +221,7 @@ impl ThreadRuntime {
         target: &ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
         handler: Arc<dyn AgentClientHandler>,
-        cancellation: Option<PromptCancellation>,
+        cancellation: Option<watch::Receiver<bool>>,
     ) -> acp::Result<acp::PromptResponse> {
         self.mark_activity();
         let (reply, done) = oneshot::channel();
@@ -246,12 +241,10 @@ impl ThreadRuntime {
 
     pub async fn cancel(self: &Arc<Self>) -> acp::Result<()> {
         self.mark_activity();
-        let host_turn_active = self.active_turn_target.current().is_some();
-        self.active_turn_target.cancel_current();
         let (reply, done) = oneshot::channel();
         self.owner_tx
-            .send(ThreadOwnerCommand::Cancel(CancelCommand {
-                host_turn_active,
+            .send(ThreadOwnerCommand::Cancel(RuntimeCommand {
+                runtime: Arc::clone(self),
                 reply,
             }))
             .map_err(|_| runtime_stopped_error())?;
@@ -260,7 +253,6 @@ impl ThreadRuntime {
 
     pub async fn close(self: &Arc<Self>, reason: Option<String>) -> acp::Result<()> {
         self.mark_activity();
-        self.active_turn_target.cancel_current();
         let (reply, done) = oneshot::channel();
         self.owner_tx
             .send(ThreadOwnerCommand::Close(Box::new(CloseCommand {
@@ -274,7 +266,6 @@ impl ThreadRuntime {
 
     pub async fn shutdown_host(self: &Arc<Self>) {
         self.mark_activity();
-        self.active_turn_target.cancel_current();
         let (reply, done) = oneshot::channel();
         if self
             .owner_tx
@@ -334,13 +325,6 @@ impl ThreadRuntime {
 
     fn mark_activity(&self) {
         let _ = self.owner_tx.send(ThreadOwnerCommand::Touch);
-    }
-}
-
-async fn wait_for_prompt_cancellation(cancellation: &mut Option<PromptCancellation>) {
-    match cancellation {
-        Some(cancellation) => cancellation.cancelled().await,
-        None => std::future::pending().await,
     }
 }
 

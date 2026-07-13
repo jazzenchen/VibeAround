@@ -17,7 +17,7 @@ pub(super) struct PromptCommand {
     pub(super) target: ChannelTarget,
     pub(super) content_blocks: Vec<acp::ContentBlock>,
     pub(super) handler: Arc<dyn AgentClientHandler>,
-    pub(super) cancellation: Option<PromptCancellation>,
+    pub(super) cancellation: Option<watch::Receiver<bool>>,
     pub(super) reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
 }
 
@@ -31,11 +31,6 @@ pub(super) struct StartCommand {
 pub(super) struct RuntimeCommand<T> {
     pub(super) runtime: Arc<ThreadRuntime>,
     pub(super) reply: oneshot::Sender<T>,
-}
-
-pub(super) struct CancelCommand {
-    pub(super) host_turn_active: bool,
-    pub(super) reply: oneshot::Sender<acp::Result<()>>,
 }
 
 pub(super) struct CloseCommand {
@@ -59,7 +54,7 @@ pub(super) struct RegisterSubagentCommand {
 pub(super) enum ThreadOwnerCommand {
     Prompt(Box<PromptCommand>),
     Start(Box<StartCommand>),
-    Cancel(CancelCommand),
+    Cancel(RuntimeCommand<acp::Result<()>>),
     Close(Box<CloseCommand>),
     ShutdownHost(RuntimeCommand<()>),
     ShutdownHostIfIdle {
@@ -99,25 +94,6 @@ pub(super) struct ThreadOwner {
     pub(super) thread: WorkspaceThread,
     pub(super) subagents: BTreeMap<ThreadAgentId, SubagentRuntime>,
     pub(super) activity_generation: u64,
-}
-
-impl PromptCancellation {
-    pub(crate) fn new(
-        cancel_rx: watch::Receiver<bool>,
-        shutdown_rx: watch::Receiver<bool>,
-    ) -> Self {
-        Self {
-            cancel_rx,
-            shutdown_rx,
-        }
-    }
-
-    pub(super) async fn cancelled(&mut self) {
-        tokio::select! {
-            _ = wait_for_signal(&mut self.cancel_rx) => {}
-            _ = wait_for_signal(&mut self.shutdown_rx) => {}
-        }
-    }
 }
 
 impl ThreadOwner {
@@ -165,7 +141,7 @@ impl ThreadOwner {
                     let _ = reply.send(result);
                 }
                 ThreadOwnerCommand::Cancel(command) => {
-                    let result = self.cancel(command.host_turn_active);
+                    let result = self.cancel(&command.runtime, prompt_active);
                     let _ = command.reply.send(result);
                 }
                 ThreadOwnerCommand::Close(command) => {
@@ -236,6 +212,7 @@ impl ThreadOwner {
                 }
                 #[cfg(test)]
                 ThreadOwnerCommand::Probe { started, release } => {
+                    prompt_active = true;
                     self.set_turn_state(true, None);
                     let _ = started.send(());
                     if let Some(command_tx) = self.command_tx.upgrade() {
@@ -247,6 +224,7 @@ impl ThreadOwner {
                 }
                 #[cfg(test)]
                 ThreadOwnerCommand::ProbeFinished => {
+                    prompt_active = false;
                     self.set_turn_state(false, None);
                 }
                 #[cfg(test)]
@@ -263,9 +241,21 @@ impl ThreadOwner {
             target,
             content_blocks,
             handler,
-            mut cancellation,
+            cancellation,
             reply,
         } = command;
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| *cancellation.borrow())
+        {
+            self.finish_prompt_inline(
+                handler,
+                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)),
+                reply,
+            )
+            .await;
+            return false;
+        }
         let target_guard = runtime.active_turn_target.install(target.clone());
         let mut turn_cancellation = target_guard.cancellation();
         let setup = async {
@@ -289,6 +279,18 @@ impl ThreadOwner {
             .as_ref()
             .map(|host| Arc::clone(&host.client_handler))
             .unwrap_or(handler);
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| *cancellation.borrow())
+        {
+            self.finish_prompt_inline(
+                finish_handler,
+                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled)),
+                reply,
+            )
+            .await;
+            return false;
+        }
         let Some(command_tx) = self.command_tx.upgrade() else {
             self.finish_prompt_inline(finish_handler, Err(runtime_stopped_error()), reply)
                 .await;
@@ -302,10 +304,6 @@ impl ThreadOwner {
             let result = tokio::select! {
                 biased;
                 _ = wait_for_signal(&mut turn_cancellation) => {
-                    let _ = agent.cancel(acp::CancelNotification::new(session_id.clone())).await;
-                    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
-                }
-                _ = wait_for_prompt_cancellation(&mut cancellation) => {
                     let _ = agent.cancel(acp::CancelNotification::new(session_id.clone())).await;
                     Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
                 }
@@ -357,12 +355,16 @@ impl ThreadOwner {
         self.ensure_session(runtime, &agent).await
     }
 
-    fn cancel(&mut self, host_turn_active: bool) -> acp::Result<()> {
-        let subagents_active = !self.subagents.is_empty();
+    fn cancel(&mut self, runtime: &ThreadRuntime, prompt_active: bool) -> acp::Result<()> {
+        runtime.active_turn_target.cancel_current();
+        let mut cancelled = prompt_active;
         for subagent in self.subagents.values() {
-            subagent.active_turn_target.cancel_current();
+            if subagent.active_turn_target.current().is_some() {
+                subagent.active_turn_target.cancel_current();
+                cancelled = true;
+            }
         }
-        if host_turn_active || subagents_active {
+        if cancelled {
             Ok(())
         } else {
             Err(acp::Error::method_not_found())
@@ -381,6 +383,7 @@ impl ThreadOwner {
     }
 
     async fn shutdown_host_contents(&mut self, runtime: &ThreadRuntime) {
+        runtime.active_turn_target.cancel_current();
         if let Some(session_id) = &self.session_id {
             crate::previews::kill_by_session(session_id);
         }

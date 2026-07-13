@@ -4,10 +4,8 @@ use std::sync::Arc;
 use agent_client_protocol::schema::v1 as acp;
 use tokio::sync::{mpsc, oneshot, watch};
 
-#[cfg(test)]
 use crate::routing::wait_for_signal;
 use crate::routing::ChannelTarget;
-use crate::workspace::threads::runtime::PromptCancellation;
 use crate::workspace::WorkspaceThreadManager;
 
 use super::{
@@ -105,7 +103,6 @@ pub struct ConversationIngress {
     workspace_threads: Arc<WorkspaceThreadManager>,
     plugin_host: Arc<PluginHost>,
     command_tx: mpsc::UnboundedSender<IngressCommand>,
-    shutdown_tx: watch::Sender<bool>,
 }
 
 impl IngressOwner {
@@ -193,10 +190,12 @@ impl IngressOwner {
         }
     }
 
-    fn shutdown(&mut self, ingress: &ConversationIngress, reply: oneshot::Sender<()>) {
+    fn shutdown(&mut self, reply: oneshot::Sender<()>) {
         if !self.shutting_down {
             self.shutting_down = true;
-            ingress.shutdown_tx.send_replace(true);
+            for lane in self.lanes.values() {
+                lane.cancel_tx.send_replace(true);
+            }
             self.lanes.clear();
         }
         if self.active_lane_ids.is_empty() {
@@ -212,13 +211,11 @@ impl ConversationIngress {
         workspace_threads: Arc<WorkspaceThreadManager>,
         plugin_host: Arc<PluginHost>,
     ) -> Arc<Self> {
-        let (shutdown_tx, _) = watch::channel(false);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let ingress = Arc::new(Self {
             workspace_threads,
             plugin_host,
             command_tx,
-            shutdown_tx,
         });
         tokio::spawn(Self::run_owner(Arc::downgrade(&ingress), command_rx));
         ingress
@@ -357,11 +354,7 @@ impl ConversationIngress {
                 } => owner.lane_completed(&route, lane_id, sequence),
                 IngressCommand::LaneExited(lane_id) => owner.lane_exited(lane_id),
                 IngressCommand::Shutdown(reply) => {
-                    let Some(ingress) = ingress.upgrade() else {
-                        let _ = reply.send(());
-                        break;
-                    };
-                    owner.shutdown(&ingress, reply);
+                    owner.shutdown(reply);
                 }
                 #[cfg(test)]
                 IngressCommand::LaneCount(reply) => {
@@ -379,12 +372,9 @@ impl ConversationIngress {
     ) {
         let ingress = Arc::clone(self);
         tokio::spawn(async move {
-            let mut shutdown_rx = ingress.shutdown_tx.subscribe();
             while let Some(queued) = rx.recv().await {
                 let sequence = queued.sequence;
-                ingress
-                    .execute_lane_command(&route, queued, &mut shutdown_rx)
-                    .await;
+                ingress.execute_lane_command(&route, queued).await;
                 let _ = ingress.command_tx.send(IngressCommand::LaneCompleted {
                     route: route.clone(),
                     lane_id,
@@ -395,13 +385,8 @@ impl ConversationIngress {
         });
     }
 
-    async fn execute_lane_command(
-        &self,
-        route: &RouteKey,
-        queued: QueuedCommand,
-        shutdown_rx: &mut watch::Receiver<bool>,
-    ) {
-        let cancellation = queued.cancellation;
+    async fn execute_lane_command(&self, route: &RouteKey, queued: QueuedCommand) {
+        let mut cancellation = queued.cancellation;
         match queued.command {
             LaneCommand::Prompt {
                 reply_to,
@@ -415,9 +400,17 @@ impl ConversationIngress {
                 let prompt = self.run_prompt(
                     ChannelTarget::new(route.clone(), reply_to),
                     content_blocks,
-                    PromptCancellation::new(cancellation.clone(), shutdown_rx.clone()),
+                    cancellation.clone(),
                 );
-                let result = prompt.await;
+                tokio::pin!(prompt);
+                let result = tokio::select! {
+                    biased;
+                    _ = wait_for_signal(&mut cancellation) => {
+                        let _ = self.workspace_threads.cancel_route(route).await;
+                        prompt.await
+                    }
+                    result = &mut prompt => result,
+                };
                 self.schedule_route_host_idle_shutdown(route).await;
                 let _ = reply.send(result);
             }
@@ -430,22 +423,25 @@ impl ConversationIngress {
                     self.reject_stopped(route, *input);
                     return;
                 }
-                self.dispatch_ordered(
-                    (*input).clone(),
-                    PromptCancellation::new(cancellation.clone(), shutdown_rx.clone()),
-                )
-                .await;
+                let dispatch = self.dispatch_ordered((*input).clone(), cancellation.clone());
+                tokio::pin!(dispatch);
+                tokio::select! {
+                    biased;
+                    _ = wait_for_signal(&mut cancellation) => {
+                        let _ = self.workspace_threads.cancel_route(route).await;
+                        dispatch.await;
+                    }
+                    _ = &mut dispatch => {}
+                }
                 if ran_prompt {
                     self.schedule_route_host_idle_shutdown(route).await;
                 }
             }
             #[cfg(test)]
             LaneCommand::Probe { work, done } => {
-                let mut cancellation = cancellation;
                 tokio::select! {
                     biased;
                     _ = wait_for_signal(&mut cancellation) => {}
-                    _ = wait_for_signal(shutdown_rx) => {}
                     _ = work => { let _ = done.send(()); }
                 }
             }
@@ -465,7 +461,7 @@ impl ConversationIngress {
         }
     }
 
-    async fn dispatch_ordered(&self, input: OrderedInput, cancellation: PromptCancellation) {
+    async fn dispatch_ordered(&self, input: OrderedInput, cancellation: watch::Receiver<bool>) {
         match input {
             OrderedInput::Message { envelope } => {
                 self.handle_prompt_input(envelope, None, cancellation).await;
@@ -484,7 +480,7 @@ impl ConversationIngress {
         &self,
         target: ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
-        cancellation: PromptCancellation,
+        cancellation: watch::Receiver<bool>,
     ) -> acp::Result<acp::PromptResponse> {
         let result = handler::handle_prompt(
             &self.workspace_threads,
@@ -530,7 +526,7 @@ impl ConversationIngress {
         &self,
         envelope: ChannelEnvelope,
         action_value: Option<String>,
-        cancellation: PromptCancellation,
+        cancellation: watch::Receiver<bool>,
     ) {
         let route = envelope.route.clone();
         let cli_kind = envelope.cli_kind.clone();
