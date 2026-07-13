@@ -12,34 +12,6 @@ use super::store::WorkspaceThreadId;
 
 const SCHEMA_VERSION: u8 = 2;
 
-#[derive(Deserialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
-enum LegacyRouteAttachmentEvent {
-    Attached {
-        #[serde(rename = "route")]
-        _route: LegacyRouteKey,
-    },
-    Detached {
-        #[serde(rename = "route")]
-        _route: LegacyRouteKey,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyRouteKey {
-    #[serde(rename = "channel_kind")]
-    _channel_kind: String,
-    #[serde(rename = "bot_id")]
-    _bot_id: String,
-    #[serde(rename = "chat_id")]
-    _chat_id: String,
-    #[serde(default, rename = "actor_id")]
-    _actor_id: Option<String>,
-    #[serde(default, rename = "topic_id")]
-    _topic_id: Option<String>,
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteAttachmentVisibility {
@@ -273,16 +245,18 @@ async fn load_attachment_projection(path: &Path) -> jsonl::Result<RouteAttachmen
     match jsonl::read_all(path).await {
         Ok(events) => Ok(RouteAttachmentProjection::from_events(&events)),
         Err(error) => {
-            let legacy_events: jsonl::Result<Vec<LegacyRouteAttachmentEvent>> =
-                jsonl::read_all(path).await;
-            if legacy_events.is_err() {
-                return Err(error);
-            }
-
-            jsonl::replace_all::<RouteAttachmentEvent>(path, &[]).await?;
+            let backup = path.with_extension("jsonl.bak");
+            tokio::fs::rename(path, &backup)
+                .await
+                .map_err(|source| jsonl::JsonlError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
             tracing::warn!(
                 path = %path.display(),
-                "discarded route attachments written with the obsolete bot_id schema"
+                backup = %backup.display(),
+                error = %error,
+                "discarded unreadable route attachments"
             );
             Ok(RouteAttachmentProjection::default())
         }
@@ -407,10 +381,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn obsolete_bot_id_store_is_discarded_and_can_be_rebuilt() {
+    async fn unreadable_store_is_backed_up_and_can_be_rebuilt() {
         let path = std::env::temp_dir()
             .join(format!("vibearound-attachments-{}", uuid::Uuid::new_v4()))
             .join("attachments.jsonl");
+        let backup = path.with_extension("jsonl.bak");
         jsonl::append(
             &path,
             &serde_json::json!({
@@ -432,6 +407,8 @@ mod tests {
         let store = RouteAttachmentEventStore::new(path.clone());
 
         assert!(store.load_projection().await.unwrap().is_empty());
+        assert!(!path.exists());
+        assert!(backup.exists());
         assert!(store.read_events().await.unwrap().is_empty());
 
         let route = RouteKey::with_channel_instance("slack", "bot-a", "chat-a");
