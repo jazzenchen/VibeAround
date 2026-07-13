@@ -327,7 +327,7 @@ mod tests {
 
         assert!(permission_rx.await.is_err());
         let output = ChannelOutput::SystemText {
-            route: RouteKey::with_bot_id("slack", "slack-work", "chat-1"),
+            route: RouteKey::with_channel_instance("slack", "slack-work", "chat-1"),
             text: "still routed".to_string(),
             reply_to: None,
         };

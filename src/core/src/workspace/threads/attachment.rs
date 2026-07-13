@@ -11,8 +11,6 @@ use super::super::store::{event_id, now};
 use super::store::WorkspaceThreadId;
 
 const SCHEMA_VERSION: u8 = 2;
-const LEGACY_CHANNEL_DEFAULT_CHAT_ID: &str = "__channel_default__";
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteAttachmentVisibility {
@@ -40,7 +38,6 @@ pub enum RouteAttachmentEvent {
         route: RouteKey,
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
-        #[serde(default)]
         visibility: RouteAttachmentVisibility,
     },
     Detached {
@@ -114,11 +111,6 @@ impl RouteAttachmentProjection {
                 visibility,
                 ..
             } => {
-                let visibility = if route.chat_id == LEGACY_CHANNEL_DEFAULT_CHAT_ID {
-                    RouteAttachmentVisibility::Hidden
-                } else {
-                    *visibility
-                };
                 self.current.insert(
                     route.clone(),
                     RouteAttachment {
@@ -126,7 +118,7 @@ impl RouteAttachmentProjection {
                         workspace_id: workspace_id.clone(),
                         thread_id: thread_id.clone(),
                         attached_at: occurred_at.clone(),
-                        visibility,
+                        visibility: *visibility,
                     },
                 );
             }
@@ -166,7 +158,7 @@ enum RouteAttachmentStoreCommand {
 
 impl RouteAttachmentEventStore {
     pub fn default_path() -> PathBuf {
-        crate::config::migrate_legacy_state_file("route-attachments.jsonl")
+        crate::config::state_file("route-attachments.jsonl")
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
@@ -266,7 +258,7 @@ mod tests {
 
     #[test]
     fn latest_route_attachment_wins() {
-        let route = RouteKey::with_bot_id("feishu", "bot-a", "chat-a");
+        let route = RouteKey::with_channel_instance("feishu", "bot-a", "chat-a");
         let events = vec![
             RouteAttachmentEvent::attached(route.clone(), "ws_a", "wt_a"),
             RouteAttachmentEvent::attached(route.clone(), "ws_b", "wt_b"),
@@ -290,27 +282,6 @@ mod tests {
         let projection = RouteAttachmentProjection::from_events(&events);
 
         assert!(projection.get(&route).is_none());
-    }
-
-    #[test]
-    fn legacy_channel_default_attachment_migrates_to_hidden_visibility() {
-        let route = RouteKey::new("slack", LEGACY_CHANNEL_DEFAULT_CHAT_ID);
-        let legacy_event = serde_json::json!({
-            "event": "attached",
-            "schema_version": 1,
-            "event_id": "rae_legacy",
-            "occurred_at": "2026-01-01T00:00:00Z",
-            "route": route,
-            "workspace_id": "ws_a",
-            "thread_id": "wt_a"
-        });
-        let event: RouteAttachmentEvent = serde_json::from_value(legacy_event).unwrap();
-        let projection = RouteAttachmentProjection::from_events(&[event]);
-
-        assert_eq!(
-            projection.all().next().unwrap().visibility,
-            RouteAttachmentVisibility::Hidden
-        );
     }
 
     #[tokio::test]

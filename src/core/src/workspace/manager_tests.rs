@@ -281,7 +281,7 @@ async fn host_start_reset_keeps_other_routes_on_shared_thread() {
         .attached_routes_for_thread(&thread_id)
         .await
         .unwrap();
-    routes.sort_by_key(|route| route.as_key());
+    routes.sort_by_key(|route| route.display_key());
 
     assert_eq!(routes, vec![current_route, stale_route]);
 }
@@ -525,7 +525,7 @@ async fn attach_external_session_reuses_existing_open_thread() {
         .attached_routes_for_thread(&thread_id)
         .await
         .unwrap();
-    routes.sort_by_key(|route| route.as_key());
+    routes.sort_by_key(|route| route.display_key());
     assert_eq!(routes, vec![im_route, web_route]);
 }
 

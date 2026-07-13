@@ -518,7 +518,7 @@ pub struct AgentAttachedRoute {
 impl From<&RouteKey> for AgentAttachedRoute {
     fn from(route: &RouteKey) -> Self {
         Self {
-            route_key: route.as_key(),
+            route_key: route.display_key(),
             channel_kind: route.channel_kind.clone(),
             chat_id: route.chat_id.clone(),
         }

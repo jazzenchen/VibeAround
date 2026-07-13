@@ -160,7 +160,7 @@ impl WorkspaceThreadManager {
                 .get(&thread.id)
                 .cloned()
                 .unwrap_or_default();
-            attached_routes.sort_by_key(|attachment| attachment.route.as_key());
+            attached_routes.sort_by_key(|attachment| attachment.route.display_key());
             let visible_routes = attached_routes
                 .iter()
                 .filter(|attachment| attachment.visibility == RouteAttachmentVisibility::Visible)

@@ -21,36 +21,22 @@ use crate::routing::{ChannelTarget, RouteKey};
 fn route_for_prompt(
     channel_kind: &str,
     channel_instance_id: &str,
-    default_actor_id: &str,
     session_chat_id: &str,
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Result<RouteKey, String> {
-    target_for_prompt(
-        channel_kind,
-        channel_instance_id,
-        default_actor_id,
-        session_chat_id,
-        meta,
-    )
-    .map(|target| target.route)
+    target_for_prompt(channel_kind, channel_instance_id, session_chat_id, meta)
+        .map(|target| target.route)
 }
 
 fn target_for_prompt(
     channel_kind: &str,
     channel_instance_id: &str,
-    default_actor_id: &str,
     session_chat_id: &str,
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Result<ChannelTarget, String> {
-    let Some(value) = meta.and_then(|meta| meta.get(CHANNEL_CONTEXT_META_KEY)) else {
-        return Ok(ChannelTarget::for_route(RouteKey::with_actor(
-            channel_kind,
-            channel_instance_id,
-            session_chat_id,
-            default_actor_id,
-            None,
-        )));
-    };
+    let value = meta
+        .and_then(|meta| meta.get(CHANNEL_CONTEXT_META_KEY))
+        .ok_or_else(|| format!("missing {CHANNEL_CONTEXT_META_KEY} metadata"))?;
 
     let context: ChannelInboundContext = serde_json::from_value(value.clone())
         .map_err(|error| format!("invalid {CHANNEL_CONTEXT_META_KEY} metadata: {error}"))?;
@@ -94,56 +80,25 @@ fn target_for_prompt(
 fn route_for_callback(
     channel_kind: &str,
     channel_instance_id: &str,
-    default_actor_id: &str,
     chat_id: &str,
     params: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<RouteKey, String> {
-    let Some(context) = params
+    let context = params
         .get(CHANNEL_CONTEXT_META_KEY)
         .or_else(|| params.get("context"))
-    else {
-        return Ok(RouteKey::with_actor(
-            channel_kind,
-            channel_instance_id,
-            chat_id,
-            default_actor_id,
-            None,
-        ));
-    };
+        .ok_or_else(|| format!("missing {CHANNEL_CONTEXT_META_KEY} metadata"))?;
     let meta =
         serde_json::Map::from_iter([(CHANNEL_CONTEXT_META_KEY.to_string(), context.clone())]);
-    route_for_prompt(
-        channel_kind,
-        channel_instance_id,
-        default_actor_id,
-        chat_id,
-        Some(&meta),
-    )
+    route_for_prompt(channel_kind, channel_instance_id, chat_id, Some(&meta))
 }
 
 fn route_for_cancel(
     channel_kind: &str,
     channel_instance_id: &str,
-    default_actor_id: &str,
     session_chat_id: &str,
     meta: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Result<RouteKey, String> {
-    if meta.is_some_and(|meta| meta.contains_key(CHANNEL_CONTEXT_META_KEY)) {
-        return route_for_prompt(
-            channel_kind,
-            channel_instance_id,
-            default_actor_id,
-            session_chat_id,
-            meta,
-        );
-    }
-    Ok(RouteKey::with_actor(
-        channel_kind,
-        channel_instance_id,
-        session_chat_id,
-        default_actor_id,
-        None,
-    ))
+    route_for_prompt(channel_kind, channel_instance_id, session_chat_id, meta)
 }
 
 /// ACP Agent handler for a channel plugin. `prompt()` calls through the
@@ -231,7 +186,6 @@ impl PluginAgentHandler {
         let mut target = target_for_prompt(
             &self.channel_kind,
             &self.channel_instance_id,
-            &self.default_actor_id,
             &chat_id,
             args.meta.as_ref(),
         )
@@ -280,7 +234,6 @@ impl PluginAgentHandler {
         let mut route = route_for_cancel(
             &self.channel_kind,
             &self.channel_instance_id,
-            &self.default_actor_id,
             &chat_id,
             args.meta.as_ref(),
         )
@@ -322,24 +275,13 @@ impl PluginAgentHandler {
                 );
             }
             "va/callback" => {
-                // Accept both chatId (new) and channelId (legacy, "kind:chatId") for compat.
                 let chat_id = params_obj
                     .get("chatId")
                     .and_then(|v| v.as_str())
-                    .or_else(|| {
-                        params_obj
-                            .get("channelId")
-                            .and_then(|v| v.as_str())
-                            .map(|cid| {
-                                cid.strip_prefix(&format!("{}:", self.channel_kind))
-                                    .unwrap_or(cid)
-                            })
-                    })
                     .unwrap_or("");
                 let mut route = route_for_callback(
                     &self.channel_kind,
                     &self.channel_instance_id,
-                    &self.default_actor_id,
                     chat_id,
                     &params_obj,
                 )
@@ -452,11 +394,8 @@ mod tests {
     }
 
     #[test]
-    fn legacy_prompt_route_uses_session_id_and_default_bot() {
-        let route = route_for_prompt("feishu", "feishu", "feishu", "chat-1", None)
-            .expect("legacy route parses");
-
-        assert_eq!(route, RouteKey::new("feishu", "chat-1"));
+    fn prompt_without_route_metadata_is_rejected() {
+        assert!(route_for_prompt("feishu", "feishu", "chat-1", None).is_err());
     }
 
     #[test]
@@ -471,14 +410,8 @@ mod tests {
             "addressedBy": "mention"
         }));
 
-        let target = target_for_prompt(
-            "feishu",
-            "feishu-primary",
-            "feishu-primary",
-            "chat-1",
-            Some(&meta),
-        )
-        .expect("routed prompt metadata parses");
+        let target = target_for_prompt("feishu", "feishu-primary", "chat-1", Some(&meta))
+            .expect("routed prompt metadata parses");
         let route = target.route;
 
         assert_eq!(route.channel_instance_id(), "feishu-primary");
@@ -499,14 +432,8 @@ mod tests {
             "addressedBy": "dm"
         }));
 
-        let target = target_for_prompt(
-            "feishu",
-            "feishu-primary",
-            "feishu-primary",
-            "chat-1",
-            Some(&meta),
-        )
-        .expect("routed prompt metadata parses");
+        let target = target_for_prompt("feishu", "feishu-primary", "chat-1", Some(&meta))
+            .expect("routed prompt metadata parses");
 
         assert_eq!(target.reply_to, None);
     }
@@ -521,14 +448,8 @@ mod tests {
             "addressedBy": "unaddressed"
         }));
 
-        let error = route_for_prompt(
-            "feishu",
-            "feishu-primary",
-            "feishu-primary",
-            "chat-1",
-            Some(&meta),
-        )
-        .expect_err("unaddressed group message must be rejected");
+        let error = route_for_prompt("feishu", "feishu-primary", "chat-1", Some(&meta))
+            .expect_err("unaddressed group message must be rejected");
 
         assert_eq!(error, "group prompts must explicitly address the actor");
     }
@@ -543,14 +464,8 @@ mod tests {
             "addressedBy": "command"
         }));
 
-        let error = route_for_prompt(
-            "feishu",
-            "feishu-primary",
-            "feishu-primary",
-            "chat-1",
-            Some(&meta),
-        )
-        .expect_err("a bare group command does not identify the target bot");
+        let error = route_for_prompt("feishu", "feishu-primary", "chat-1", Some(&meta))
+            .expect_err("a bare group command does not identify the target bot");
 
         assert_eq!(error, "group prompts must explicitly address the actor");
     }
@@ -565,14 +480,8 @@ mod tests {
             "addressedBy": "callback"
         }));
 
-        let route = route_for_prompt(
-            "feishu",
-            "feishu-primary",
-            "feishu-primary",
-            "chat-1",
-            Some(&meta),
-        )
-        .expect("a callback targets the bot that created the action");
+        let route = route_for_prompt("feishu", "feishu-primary", "chat-1", Some(&meta))
+            .expect("a callback targets the bot that created the action");
 
         assert_eq!(route.actor_id(), Some("codex-reviewer"));
     }
@@ -591,14 +500,8 @@ mod tests {
             }),
         )]);
 
-        let route = route_for_callback(
-            "feishu",
-            "feishu-primary",
-            "feishu-primary",
-            "chat-1",
-            &params,
-        )
-        .expect("callback context should parse");
+        let route = route_for_callback("feishu", "feishu-primary", "chat-1", &params)
+            .expect("callback context should parse");
 
         assert_eq!(route.channel_instance_id(), "feishu-primary");
         assert_eq!(route.actor_id(), Some("codex-reviewer"));
@@ -616,14 +519,8 @@ mod tests {
             "addressedBy": "mention"
         }));
 
-        let route = route_for_cancel(
-            "slack",
-            "slack-primary",
-            "slack-primary",
-            "group-1",
-            Some(&meta),
-        )
-        .expect("targeted cancel metadata parses");
+        let route = route_for_cancel("slack", "slack-primary", "group-1", Some(&meta))
+            .expect("targeted cancel metadata parses");
 
         assert_eq!(route.channel_instance_id(), "slack-primary");
         assert_eq!(route.actor_id(), Some("codex-reviewer"));
@@ -631,12 +528,8 @@ mod tests {
     }
 
     #[test]
-    fn cancel_without_metadata_targets_the_plugin_default_route() {
-        assert_eq!(
-            route_for_cancel("slack", "slack", "slack", "group-1", None)
-                .expect("legacy cancel parses"),
-            RouteKey::with_actor("slack", "slack", "group-1", "slack", None)
-        );
+    fn cancel_without_route_metadata_is_rejected() {
+        assert!(route_for_cancel("slack", "slack", "group-1", None).is_err());
     }
 
     #[test]
@@ -649,14 +542,8 @@ mod tests {
             "addressedBy": "unaddressed"
         }));
 
-        let route = route_for_prompt(
-            "feishu",
-            "feishu-primary",
-            "feishu-primary",
-            "chat-1",
-            Some(&meta),
-        )
-        .expect("direct messages do not require an explicit mention");
+        let route = route_for_prompt("feishu", "feishu-primary", "chat-1", Some(&meta))
+            .expect("direct messages do not require an explicit mention");
 
         assert_eq!(route.actor_id(), Some("codex-reviewer"));
     }
@@ -671,7 +558,7 @@ mod tests {
             "addressedBy": "dm"
         }));
 
-        let error = route_for_prompt("slack", "slack-work", "slack-work", "chat-1", Some(&meta))
+        let error = route_for_prompt("slack", "slack-work", "chat-1", Some(&meta))
             .expect_err("a plugin connection cannot impersonate another instance");
 
         assert_eq!(
