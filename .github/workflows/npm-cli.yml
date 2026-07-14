@@ -121,4 +121,4 @@ jobs:
             find npm-dist -maxdepth 3 -type f -print >&2
             exit 1
           fi
-          npm publish "${tarball}" --access public
+          npm publish "$(pwd)/${tarball}" --access public
