@@ -85,10 +85,6 @@ function withTextPart(message: ChatMessage, text: string): ChatMessage {
   return withContentBlock(message, textContentBlock(text));
 }
 
-function isOptimisticUserMessage(message: ChatMessage | undefined) {
-  return message?.role === "user" && message.optimistic === true;
-}
-
 function stableValueKey(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
@@ -107,14 +103,6 @@ function contentBlockKey(block: ContentBlock) {
   return `${block.type}:${stableValueKey(block)}`;
 }
 
-function canonicalTailIndex(messages: ChatMessage[]) {
-  let index = messages.length;
-  while (index > 0 && isOptimisticUserMessage(messages[index - 1])) {
-    index -= 1;
-  }
-  return index;
-}
-
 function insertMessageAt(
   messages: ChatMessage[],
   index: number,
@@ -124,7 +112,7 @@ function insertMessageAt(
 }
 
 function streamAssistantTargetIndex(messages: ChatMessage[]) {
-  const tailIndex = canonicalTailIndex(messages);
+  const tailIndex = messages.length;
   const message = messages[tailIndex - 1];
   return message?.role === "assistant" && message.mode === "stream"
     ? tailIndex - 1
@@ -184,7 +172,7 @@ export function appendStandaloneAssistantMessage(
 ): ChatMessage[] {
   if (!text) return prev;
   const next = [...prev];
-  const tailIndex = canonicalTailIndex(next);
+  const tailIndex = next.length;
   let insertionIndex = tailIndex;
   const last = next[tailIndex - 1];
   if (
@@ -313,7 +301,7 @@ export function appendUserMessageChunk(
       return next;
     }
   }
-  const tailIndex = canonicalTailIndex(prev);
+  const tailIndex = prev.length;
   if (prev.length === 0) {
     return [
       {
@@ -438,7 +426,7 @@ export function appendStreamAssistantMessage(
       return next;
     }
   }
-  const tailIndex = canonicalTailIndex(prev);
+  const tailIndex = prev.length;
   const last = prev[tailIndex - 1];
   if (options.forceNewMessage) {
     return insertMessageAt(prev, tailIndex, freshMessage);
@@ -475,7 +463,7 @@ function updateStreamAssistantMessage(
 ): ChatMessage[] {
   const targetIndex = streamAssistantTargetIndex(prev);
   if (targetIndex < 0) {
-    return insertMessageAt(prev, canonicalTailIndex(prev), fallback);
+    return insertMessageAt(prev, prev.length, fallback);
   }
   const next = [...prev];
   next[targetIndex] = updater(next[targetIndex]);
@@ -726,7 +714,7 @@ export function setStreamProgressMessage(
 ): ChatMessage[] {
   const targetIndex = streamAssistantTargetIndex(prev);
   if (targetIndex < 0) {
-    return insertMessageAt(prev, canonicalTailIndex(prev), {
+    return insertMessageAt(prev, prev.length, {
       role: "assistant",
       content: "",
       progress,
@@ -784,7 +772,7 @@ export function appendErrorToStreamMessage(
   };
   const targetIndex = streamAssistantTargetIndex(prev);
   if (targetIndex < 0) {
-    return insertMessageAt(prev, canonicalTailIndex(prev), fallback);
+    return insertMessageAt(prev, prev.length, fallback);
   }
   const next = [...prev];
   const settledLast = settleActiveThinking(next[targetIndex]);
