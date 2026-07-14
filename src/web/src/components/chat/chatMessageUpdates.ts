@@ -407,13 +407,14 @@ export function appendStreamAssistantMessage(
     return [freshMessage];
   }
   if (messageId) {
-    const existingIndex = prev.findIndex(
+    const existingIndex = findLastMatchingActivityIndex(
+      prev,
       (message) =>
         message.role === "assistant" &&
         message.mode === "stream" &&
         message.messageId === messageId,
     );
-    if (existingIndex >= 0) {
+    if (existingIndex === prev.length - 1) {
       const next = [...prev];
       const existing = next[existingIndex];
       const settled = settleActiveThinking(existing);
