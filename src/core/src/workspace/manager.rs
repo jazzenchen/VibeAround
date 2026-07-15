@@ -33,7 +33,8 @@ mod sessions;
 #[path = "manager_routes.rs"]
 mod routes;
 
-pub const AGENT_HOST_IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(10 * 60);
+const MAX_WARM_THREADS: usize = 4;
+const WARM_THREAD_MIN_IDLE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExternalSessionAttachMode {
@@ -273,8 +274,6 @@ impl WorkspaceThreadManager {
             return Ok(());
         };
         runtime.shutdown_host().await;
-        self.runtimes.remove(thread_id.clone());
-        self.notify_change();
         Ok(())
     }
 

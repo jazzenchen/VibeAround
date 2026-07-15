@@ -300,13 +300,9 @@ impl ServerDaemon {
         channel_hub.start_internal_plugin("tui", web_outbound_tx);
         let web_dispatch_handle = {
             let web_channel = Arc::clone(&web_channel);
-            let workspace_thread_manager = Arc::clone(&workspace_thread_manager);
             tokio::spawn(async move {
                 while let Some(output) = web_outbound_rx.recv().await {
-                    if let Some(deadline) = web_channel.dispatch_output(output).await {
-                        web_channel
-                            .schedule_idle_close(Arc::clone(&workspace_thread_manager), deadline);
-                    }
+                    web_channel.dispatch_output(output).await;
                 }
             })
         };

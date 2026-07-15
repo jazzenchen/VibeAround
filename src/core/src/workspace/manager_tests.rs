@@ -202,21 +202,21 @@ async fn different_channels_get_different_default_threads() {
 }
 
 #[tokio::test]
-async fn im_route_attachment_rehydrates_runtime_after_host_shutdown() {
-    route_attachment_rehydrates_runtime_after_host_shutdown("feishu").await;
+async fn im_route_attachment_retains_runtime_after_host_shutdown() {
+    route_attachment_retains_runtime_after_host_shutdown("feishu").await;
 }
 
 #[tokio::test]
-async fn web_route_attachment_rehydrates_runtime_after_host_shutdown() {
-    route_attachment_rehydrates_runtime_after_host_shutdown("web").await;
+async fn web_route_attachment_retains_runtime_after_host_shutdown() {
+    route_attachment_retains_runtime_after_host_shutdown("web").await;
 }
 
 #[tokio::test]
-async fn tui_route_attachment_rehydrates_runtime_after_host_shutdown() {
-    route_attachment_rehydrates_runtime_after_host_shutdown("tui").await;
+async fn tui_route_attachment_retains_runtime_after_host_shutdown() {
+    route_attachment_retains_runtime_after_host_shutdown("tui").await;
 }
 
-async fn route_attachment_rehydrates_runtime_after_host_shutdown(channel_kind: &str) {
+async fn route_attachment_retains_runtime_after_host_shutdown(channel_kind: &str) {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let route = RouteKey::new(channel_kind, "chat-a");
@@ -224,7 +224,7 @@ async fn route_attachment_rehydrates_runtime_after_host_shutdown(channel_kind: &
     let first_thread_id = first.state().await.thread_id;
 
     manager.shutdown_route_host(&route).await.unwrap();
-    assert!(manager.runtimes.get(&first_thread_id).await.is_none());
+    assert!(manager.runtimes.get(&first_thread_id).await.is_some());
     assert_eq!(
         manager
             .current_attachment(&route)
@@ -238,6 +238,7 @@ async fn route_attachment_rehydrates_runtime_after_host_shutdown(channel_kind: &
     let second = manager.resolve_route_runtime(&route).await.unwrap();
 
     assert_eq!(second.state().await.thread_id, first_thread_id);
+    assert!(Arc::ptr_eq(&first, &second));
     assert!(manager.runtimes.get(&first_thread_id).await.is_some());
 }
 
