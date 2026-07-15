@@ -81,7 +81,7 @@ pub(crate) async fn terminate_child_tree(
 ) -> io::Result<()> {
     if let Some(root_pid) = root_pid {
         let pid = root_pid.to_string();
-        let _ = Command::new("taskkill")
+        let _ = crate::process::env::silent_command("taskkill")
             .args(["/PID", &pid, "/T", "/F"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
