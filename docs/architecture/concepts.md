@@ -74,11 +74,11 @@ A session is the agent CLI's own conversation record — the thing `claude --res
 
 ## How the pieces work together
 
-A message arrives on a route. The route resolves to its attached open thread (creating a thread in a default workspace on first contact). The thread ensures its host agent process is running — launched in the workspace directory, with the bound profile's credentials materialized — and ensures an agent session exists. The prompt is forwarded over ACP; output streams back along every route attached to the thread. After ten idle minutes the agent process is shut down to save resources; the thread stays open and the next message transparently respawns the agent and resumes the session.
+A message arrives on a route. The route resolves to its attached open thread (creating a thread in a default workspace on first contact). The thread ensures its host agent process is running — launched in the workspace directory, with the bound profile's credentials materialized — and ensures an agent session exists. The prompt is forwarded over ACP; output streams back along every route attached to the thread. Finished hosts stay warm for reuse. Only when a genuinely new host starts above the [warm-thread pool's soft limit](../reference/timers-and-limits.md#sizes-and-counts) can one eligible least-recently-active host be evicted; otherwise the pool may overflow. The thread and session remain, so its next prompt transparently resumes.
 
 ---
 
-*Source anchors: `src/core/src/routing.rs` (RouteKey), `src/core/src/workspace/` (workspaces, threads, attachments), `src/core/src/resources.rs` + `src/resources/agents.json` (agent registry), `src/core/src/profiles/` (profiles), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY).*
+*Source anchors: `src/core/src/routing.rs` (RouteKey), `src/core/src/workspace/` (workspaces, threads, attachments, warm-host eviction), `src/core/src/resources.rs` + `src/resources/agents.json` (agent registry), `src/core/src/profiles/` (profiles).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Troubleshooting and FAQ](../guides/troubleshooting-and-faq.md) · [Documentation index](../README.md) · [How it works ▶](overview.md)</sub>

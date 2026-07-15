@@ -49,7 +49,7 @@ va launch unarchive --agent claude <id>
 | | Launch（你的终端） | 托管（IM / Web Chat） |
 |---|---|---|
 | UI | Agent 自己的完整 TUI | 聊天气泡 + 权限卡片 |
-| 进程属主 | 你的终端 | 守护进程（闲时自动关停） |
+| 进程属主 | 你的终端 | 守护进程（由 warm pool 管理） |
 | 模型路由 | Profile 渲染的配置 | 同样的 Profile、同样的 Bridge |
 | 连续性 | 会话可被发现，交接靠交接码 | 会话自动跟随 Thread |
 | 守护进程停止后 | CLI 继续运行；Bridge 化的模型调用失败，直到守护进程回来 | 不存续（Agent 由守护进程托管） |

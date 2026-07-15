@@ -42,13 +42,13 @@ Web channel 是**进程内**的：它不是 stdio plugin，而是在同一个 `P
 
 > Ordering note：intent side-effects 在 socket task 里执行，早于 queue 的 per-route serialization。单 tab 时看不出来；两个 tab 在同一个 thread 上竞速 launch selection 时可能交错。remediation plan 中作为已知 cleanup 跟踪。
 
-## 出站：fan-out 与 idle
+## 出站：fan-out 与 Host 常驻
 
 Web route 的 output 会派发给该 chat id 下所有已注册 connection；每个 output 变成 JSON `ChatEvent`（message chunks、tool status、permission cards、`PromptDone`）。
 
-Web thread 参与 idle 管理：活动会刷新 route 的 idle deadline；deadline 过期会 unload agent（thread 仍 open，replay + resume 让重新打开无缝）。关闭 tab 不会关闭 thread。
+Web Chat 没有 route 专属的进程 idle deadline。`PromptDone`、socket 断开和关闭标签页都不会 unload Host，也不会关闭 Thread。它与 IM 共用 warm Thread 池策略：Host 保持常驻；只有以后真正的新 Host 让池超过软上限，且这个 Thread 是符合条件、最近最少活动的候选者时，才会被回收。回收保留 `ThreadRuntime` 与 Session；重新打开仍有 output replay，下一条提示需要时会恢复。
 
-→ `ws_chat.rs` (`output_to_chat_event`), `transport_websocket.rs` (idle bookkeeping)
+→ `ws_chat.rs` (`output_to_chat_event`), `transport_websocket.rs`（connection fan-out），`workspace/manager_routes.rs`（共用 warm Thread 池）
 
 ## TUI
 
@@ -58,7 +58,7 @@ TUI chat 作为自己的进程内 channel kind（`tui`）注册，使用同一�
 
 ---
 
-*Source anchors: `src/server/src/web_server/ws_chat.rs` (socket loop, intents, events), `src/core/src/channels/transport_websocket.rs` (WebChannelManager, idle), `src/server/src/lib.rs` (web/tui channel registration, dispatch task).*
+*Source anchors: `src/server/src/web_server/ws_chat.rs` (socket loop, intents, events), `src/core/src/channels/transport_websocket.rs` (WebChannelManager, fan-out/replay), `src/server/src/lib.rs` (web/tui channel registration, dispatch task), `src/core/src/workspace/manager_routes.rs` (shared warm-thread pool).*
 *Last verified: `codex/im-acp-route-refactor` at `0ba7fa2e`（2026-07-11）。*
 
 <sub>[◀ Flow: IM 消息](im-message.md) · [文档索引](../../README.md) · [Flow: 权限请求 ▶](permission.md)</sub>

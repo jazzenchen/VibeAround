@@ -10,8 +10,8 @@
 
 | Type | File | Role |
 |---|---|---|
-| `WorkspaceThreadManager` | `manager.rs` | 编排器：route→thread resolution、thread creation/close、attachments、external session binding、idle shutdown |
-| `ThreadRuntime` | `threads/runtime.rs` | 一个 live thread：durable session id、live host generation、busy/failed state、subagents、prompt serialization |
+| `WorkspaceThreadManager` | `manager.rs`, `manager_routes.rs` | 编排器：route→thread resolution、thread creation/close、attachments、external session binding、warm Thread 池 reconcile |
+| `ThreadRuntime` | `threads/runtime.rs` | 一个 live thread：durable session id、live host generation、activity/busy/failed state、subagents、prompt serialization |
 | `AcpSessionRunner` | `threads/runtime.rs` | 一个 ACP/process generation 的 live `Agent` + callback handler |
 | `WorkspaceEventStore` / `ThreadEventStore` / `RouteAttachmentEventStore` | `store.rs`, `threads/store.rs`, `threads/attachment.rs` | Append-only JSONL logs + projection replay |
 | `WorkspaceThread` / `ThreadProjection` | `threads/store.rs` | 持久化 thread record：status、host binding、agent sessions、multi-agent turns |
@@ -33,6 +33,7 @@
 3. **Thread 的 agent spawn 是 single-flight**（`spawn_lock`），停止的 `AcpSessionRunner` 作为整体替换；同一 thread 的 prompts 由 `prompt_lock` 串行，`cancel` 刻意绕过它。
 4. **Closed 对 thread id 是终态**；reopen 意味着新 thread。
 5. **Session id 是观测，不是所有权**。Agent 自己的 storage 才是权威；不要伪造 session id。
+6. **Warm 回收由压力触发且保持保守**：只有真正的新 Host 启动并超过软上限后才 reconcile；最多回收一个达到闲置门槛、不在忙、不是受保护 Thread、且没有任何常驻子 Agent 的最近最少活动 runtime。没有候选者就允许 overflow。回收保留 runtime/session 与预览记录。
 
 ## 已知技术债
 

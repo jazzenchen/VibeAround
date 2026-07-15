@@ -74,11 +74,11 @@ Session 是 Agent CLI 自己的对话记录 —— `claude --resume <id>` 或 `c
 
 ## 各部分如何协作
 
-一条消息到达某 Route。Route 解析到它附着的开启 Thread（首次联系时在默认 Workspace 创建 Thread）。Thread 确保宿主 Agent 进程在运行 —— 在 Workspace 目录里启动、绑定 Profile 的凭据已就位 —— 并确保 Agent Session 存在。提示通过 ACP 转发；输出沿着附着在该 Thread 上的每条 Route 流回。闲置十分钟后 Agent 进程被关停以节省资源；Thread 保持开启，下一条消息会透明地重新拉起 Agent 并恢复 Session。
+一条消息到达某 Route。Route 解析到它附着的开启 Thread（首次联系时在默认 Workspace 创建 Thread）。Thread 确保宿主 Agent 进程在运行 —— 在 Workspace 目录里启动、绑定 Profile 的凭据已就位 —— 并确保 Agent Session 存在。提示通过 ACP 转发；输出沿着附着在该 Thread 上的每条 Route 流回。完成回合的 Host 会保持 warm 以便复用。只有真正的新 Host 启动后超过 [warm Thread 池软上限](../reference/timers-and-limits.md#大小与数量)时，才可能回收一个符合条件、最近最少活动的 Host；否则允许暂时超出。Thread 与 Session 仍保留，下一条提示会透明恢复。
 
 ---
 
-*Source anchors: `src/core/src/routing.rs` (RouteKey), `src/core/src/workspace/` (workspaces, threads, attachments), `src/core/src/resources.rs` + `src/resources/agents.json` (agent registry), `src/core/src/profiles/` (profiles), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY).*
+*Source anchors: `src/core/src/routing.rs` (RouteKey), `src/core/src/workspace/` (workspaces, threads, attachments, warm-host eviction), `src/core/src/resources.rs` + `src/resources/agents.json` (agent registry), `src/core/src/profiles/` (profiles).*
 *Last verified: v0.7.11*
 
 <sub>[◀ 故障排查与 FAQ](../guides/troubleshooting-and-faq.md) · [文档索引](../README.md) · [工作原理 ▶](overview.md)</sub>

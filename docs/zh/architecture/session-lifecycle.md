@@ -17,16 +17,19 @@ Thread 在某条 Route 第一次需要它时诞生 —— 聊天的第一条消�
 
 ## Thread 内的 Agent 进程生命周期
 
-托管 Thread 的 Agent 进程刻意比 Thread 本身更短命：
+托管 Thread 的 Agent 进程可以在池压力下被回收，而 Thread 本身保持持久：
 
 ```text
-首条提示 ──► 拉起 Agent ──► 创建/恢复 CLI Session ──► 回合 ──► 闲置
-                                                                │ 10 分钟
-      下一条提示 ◄── 重新拉起 + 恢复 Session ◄── Agent 被关停 ◄──┘
+首条提示 ──► 拉起 Host ──► 创建/恢复 CLI Session ──► 回合 ──► warm Host
+                                                               ├──► 下一条提示复用 live Host
+                   新 Host 启动后超软上限 + 有合格 LRU 候选 ◄──┤
+                                                               ▼
+同一 ThreadRuntime + Session ◄── Host 被回收 ──► 下一条提示恢复 Session
 ```
 
-- **闲时关停：** 最后一次活动十分钟后，宿主 Agent 进程被停止。聊天里对此无感 —— Thread 仍开启，CLI session id 被保留。
-- **透明恢复：** 下一条提示重新拉起 Agent 并恢复记录的 CLI Session，上下文跨过这段空档。
+- **没有固定的闲时关停：** 回合完成、收到 `PromptDone` 或关闭 Web 标签页，都不会启动杀进程 deadline。
+- **压力回收：** 只有真正的新 Host 成功启动并超过 warm Thread 池的[软上限](../reference/timers-and-limits.md#大小与数量)后，manager 才考虑一个最近最少活动的候选者。候选者必须达到闲置时长门槛、不在忙、不是新 Thread，且没有常驻子 Agent。没有合格候选者就允许暂时超出上限。
+- **连续性保留：** 回收只停止 Host generation；已有 `ThreadRuntime`、Thread/Session 记录、Route 附着与预览记录都保留。下一条提示复用这个 runtime，重新拉起 Host 并恢复记录的 CLI Session。
 - **崩溃：** Agent 进程在回合中不会被自动重启（重启策略是刻意的：崩溃以错误形式呈现，而不是静默重试）。下一条提示会启动新进程并恢复 Session。
 
 ## 守护进程重启后什么会保留
@@ -61,13 +64,13 @@ Thread 在某条 Route 第一次需要它时诞生 —— 聊天的第一条消�
 
 Thread 可以运行多 Agent 回合：宿主 Agent 用 `initialize_subagents` / `wait_for_subagents` MCP 工具在同一 Workspace 里拉起具名子 Agent（并行、协作或头脑风暴模式）。每个子 Agent 是拥有自己 CLI Session 的完整 Agent 进程，在 Thread 上被跟踪，完成报告收回到宿主的回合里。被打断的子 Agent 会在 Thread 运行时重建时恢复。
 
-## 计时参考
+## 计时与上限参考
 
-所有生命周期计时器（闲时关停、心跳/看门狗、码的 TTL、分享链接过期）集中在一张权威表：[计时器与上限](../reference/timers-and-limits.md)。
+Warm pool 软上限与回收资格门槛，以及心跳/看门狗、码 TTL、分享链接过期等真正的计时器，都集中在一张权威表：[计时器与上限](../reference/timers-and-limits.md)。
 
 ---
 
-*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handover.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (switch_host: new-thread vs preserve-session split), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
+*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, activity, busy/subagent state), `src/core/src/workspace/manager.rs` + `manager_routes.rs` (warm-pool limits and LRU eviction), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handover.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (host start and switching), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
 *Last verified: v0.7.11*
 
 <sub>[◀ 工作原理](overview.md) · [文档索引](../README.md) · [渠道插件系统 ▶](channel-plugin-system.md)</sub>

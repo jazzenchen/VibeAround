@@ -10,8 +10,8 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 
 | Type | File | Role |
 |---|---|---|
-| `WorkspaceThreadManager` | `manager.rs` | The orchestrator: route→thread resolution, thread creation/close, attachments, external session binding, idle shutdown |
-| `ThreadRuntime` | `threads/runtime.rs` | One live thread: durable session id, live host generation, busy/failed state, subagents, prompt serialization |
+| `WorkspaceThreadManager` | `manager.rs`, `manager_routes.rs` | The orchestrator: route→thread resolution, thread creation/close, attachments, external session binding, warm-thread pool reconciliation |
+| `ThreadRuntime` | `threads/runtime.rs` | One live thread: durable session id, live host generation, activity/busy/failed state, subagents, prompt serialization |
 | `AcpSessionRunner` | `threads/runtime.rs` | Live host `Agent` + callback handler for exactly one ACP/process generation |
 | `WorkspaceEventStore` / `ThreadEventStore` / `RouteAttachmentEventStore` | `store.rs`, `threads/store.rs`, `threads/attachment.rs` | Append-only JSONL logs + projection replay |
 | `WorkspaceThread` / `ThreadProjection` | `threads/store.rs` | Persistent thread record: status, host binding, agent sessions, multi-agent turns |
@@ -33,6 +33,7 @@ Own all persistent conversation state and its runtime counterparts. Three event-
 3. **A thread's agent spawn is single-flight** (`spawn_lock`), and a stopped `AcpSessionRunner` is replaced as a unit. Prompts on one thread are serialized (`prompt_lock`); cancel intentionally bypasses it.
 4. **Closed is terminal** for a thread id; reopening means a new thread.
 5. **Session ids are observations, not ownership** — the agent's own storage is authoritative; never fabricate one.
+6. **Warm eviction is pressure-triggered and conservative**: only reconcile after a genuinely new host starts above the soft limit; evict at most one least-recently-active runtime that has crossed the idle threshold, is not busy or protected, and has no resident subagents. No candidate means overflow. Eviction preserves the runtime/session and preview records.
 
 ## Known debt
 

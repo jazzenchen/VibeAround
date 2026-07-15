@@ -19,7 +19,7 @@ VibeAround 通过 Agent Client Protocol（ACP）驱动 Agent。每个托管 Agen
 | `claude-desktop` | Claude Desktop | **仅作为启动目标** | — | 打开桌面应用；不是 ACP 运行时 |
 | `codex-desktop` | Codex Desktop | **仅作为启动目标** | — | 打开桌面应用；不是 ACP 运行时 |
 
-"会话恢复"指 VibeAround 能在闲时关停、守护进程重启和会话交接之后，恢复 Agent 自己的 CLI 会话。
+"会话恢复"指 VibeAround 能在 warm pool 回收、守护进程重启和会话交接之后，恢复 Agent 自己的 CLI 会话。
 
 ## IM 渠道
 

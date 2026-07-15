@@ -6,7 +6,7 @@
 
 | 值 | 管什么 | 定义于 |
 |---|---|---|
-| 10 分钟 | 宿主 Agent 闲时关停 —— Agent 进程停止，Thread 保持开启，下一条提示恢复 | `src/core/src/workspace/manager.rs`（`AGENT_HOST_IDLE_SHUTDOWN_DELAY`） |
+| 10 分钟 | 常驻 warm Thread 可因池压力被回收前的最短闲置时长；它不是计时器 | `src/core/src/workspace/manager.rs`（`WARM_THREAD_MIN_IDLE`） |
 | 120 秒 | 交接接续码 TTL（4 字符码，一次性） | `src/core/src/workspace/handover.rs` |
 | 60 秒 | 浏览器配对码 TTL（6 位码，可刷新） | `src/core/src/auth/pair.rs`（`CODE_TTL`） |
 | 600 秒 | 预览**分享**链接寿命（owner 链接永不过期） | `src/core/src/previews/store.rs`（`SHARE_TTL_SECS`） |
@@ -25,6 +25,7 @@
 
 | 值 | 管什么 | 定义于 |
 |---|---|---|
+| 4（软上限） | 常驻 warm Thread 数；真正的新 Host 成功启动并超过上限后，最多回收一个符合条件、最近最少活动的 Thread；没有候选者则允许超出 | `src/core/src/workspace/manager.rs`（`MAX_WARM_THREADS`） |
 | 64 MB | 本地 bridge 端点的最大请求体（大上下文负载） | `src/server/src/web_server/mod.rs`（`LOCAL_BRIDGE_BODY_LIMIT_BYTES`） |
 | 64 | 渠道输入分片 worker 数 —— 同一 Route 严格有序，Route 之间并行 | `src/server/src/lib.rs`（`CHANNEL_INPUT_WORKER_COUNT`） |
 | 4 字符 / 32 字符字母表 | 交接码格式 | `src/core/src/workspace/handover.rs` |
@@ -37,6 +38,8 @@
 | `12358` | 守护进程端口（HTTP、WS、MCP、bridge） | `src/core/src/config.rs`（`DEFAULT_PORT`） |
 | `127.0.0.1` | 绑定地址；bridge 端点额外拒绝非回环调用方 | `src/server/src/` |
 | 3 秒 | Web 监听优雅关停超时，超时则强制中止 | `src/server/src/lib.rs`（`WEB_SHUTDOWN_TIMEOUT`） |
+
+托管 Agent 和 Web Chat 都没有固定的闲置关停 deadline。只有真正的新 Host 启动成功且超过 warm pool 软上限时，才会考虑回收；候选 Thread 必须达到上面的最短闲置时长、不在忙、不是刚启动的 Thread，且没有常驻子 Agent。没有候选者就允许池暂时超出上限。
 
 权限请求刻意没有超时 —— Agent 的回合可以无限等人；终止性由取消路径保证（[权限流程](../internals/flows/permission.md)）。
 
