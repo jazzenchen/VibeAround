@@ -8,7 +8,7 @@ A thread is born the first time a route needs one — the first message in a cha
 
 | Event | Effect |
 |---|---|
-| `/new` | Closes the current thread, creates a fresh one in the same workspace, re-attaches the route |
+| `/new` | Closes the current thread, creates a fresh one in the same workspace, re-attaches the route; IM routes reload the channel's configured agent/profile |
 | `/close` | Closes the thread; the next message will create a new one |
 | Unrecoverable agent error (e.g. authentication required) | Thread auto-closes with the reason sent to the chat |
 | Daemon shutdown | Threads stay open — thread state is an on-disk event log |

@@ -8,7 +8,7 @@ Thread 在某条 Route 第一次需要它时诞生 —— 聊天的第一条消�
 
 | 事件 | 效果 |
 |---|---|
-| `/new` | 关闭当前 Thread，在同一 Workspace 新建一个，重新附着 Route |
+| `/new` | 关闭当前 Thread，在同一 Workspace 新建一个，重新附着 Route；IM Route 会重新读取该渠道配置的 Agent/Profile |
 | `/close` | 关闭 Thread；下一条消息会创建新的 |
 | 不可恢复的 Agent 错误（如需要登录） | Thread 自动关闭，原因发到聊天里 |
 | 守护进程关停 | Thread 保持开启 —— Thread 状态是磁盘上的事件日志 |
