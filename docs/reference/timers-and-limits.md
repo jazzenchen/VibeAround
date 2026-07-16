@@ -6,7 +6,7 @@ Every timeout, TTL, interval, and size limit in one table. **This page is the si
 
 | Value | What it governs | Defined in |
 |---|---|---|
-| 10 minutes | Host agent idle shutdown — agent process stops, thread stays open, next prompt resumes | `src/core/src/workspace/manager.rs` (`AGENT_HOST_IDLE_SHUTDOWN_DELAY`) |
+| 10 minutes | Minimum idle age before a resident warm thread is eligible for pressure eviction; this is not a timer | `src/core/src/workspace/manager.rs` (`WARM_THREAD_MIN_IDLE`) |
 | 120 seconds | Handover pickup code TTL (4-character code, one-shot) | `src/core/src/workspace/handover.rs` |
 | 60 seconds | Browser pairing code TTL (6-digit code, refreshable) | `src/core/src/auth/pair.rs` (`CODE_TTL`) |
 | 600 seconds | Preview **share** link lifetime (owner links never expire) | `src/core/src/previews/store.rs` (`SHARE_TTL_SECS`) |
@@ -25,6 +25,7 @@ Every timeout, TTL, interval, and size limit in one table. **This page is the si
 
 | Value | What it governs | Defined in |
 |---|---|---|
+| 4 (soft limit) | Resident warm threads; after a genuinely new host starts above the limit, evict at most one eligible least-recently-active thread, or allow overflow if none qualifies | `src/core/src/workspace/manager.rs` (`MAX_WARM_THREADS`) |
 | 64 MB | Max request body on local bridge endpoints (large context payloads) | `src/server/src/web_server/mod.rs` (`LOCAL_BRIDGE_BODY_LIMIT_BYTES`) |
 | 64 | Channel input shard workers — same route strictly ordered, routes parallel | `src/server/src/lib.rs` (`CHANNEL_INPUT_WORKER_COUNT`) |
 | 4 chars / 32-char alphabet | Handover code format | `src/core/src/workspace/handover.rs` |
@@ -37,6 +38,8 @@ Every timeout, TTL, interval, and size limit in one table. **This page is the si
 | `12358` | Daemon port (HTTP, WS, MCP, bridge) | `src/core/src/config.rs` (`DEFAULT_PORT`) |
 | `127.0.0.1` | Bind address; bridge endpoints additionally reject non-loopback callers | `src/server/src/` |
 | 3 seconds | Web listener graceful-shutdown timeout before abort | `src/server/src/lib.rs` (`WEB_SHUTDOWN_TIMEOUT`) |
+
+There is no fixed idle-shutdown deadline for hosted agents or Web Chat. A warm host is considered for eviction only when a genuinely new host has started above the soft pool limit. The candidate must be idle for at least the threshold above, not busy, not the newly started thread, and have no resident subagents. If no candidate qualifies, the pool is allowed to overflow.
 
 No timeout exists on permission requests by design — an agent turn waits for the human as long as it takes; termination is guaranteed by cancellation paths instead ([permission flow](../internals/flows/permission.md)).
 

@@ -22,7 +22,6 @@ enum RuntimeRegistryCommand {
     },
     Remove {
         thread_id: WorkspaceThreadId,
-        expected: Option<Arc<ThreadRuntime>>,
     },
     Entries(oneshot::Sender<Vec<(WorkspaceThreadId, Arc<ThreadRuntime>)>>),
     Values(oneshot::Sender<Vec<Arc<ThreadRuntime>>>),
@@ -46,18 +45,8 @@ impl RuntimeRegistry {
                         let runtime = Arc::clone(runtimes.entry(thread_id).or_insert(runtime));
                         let _ = reply.send(runtime);
                     }
-                    RuntimeRegistryCommand::Remove {
-                        thread_id,
-                        expected,
-                    } => {
-                        let remove = expected.as_ref().is_none_or(|expected| {
-                            runtimes
-                                .get(&thread_id)
-                                .is_some_and(|current| Arc::ptr_eq(current, expected))
-                        });
-                        if remove {
-                            runtimes.remove(&thread_id);
-                        }
+                    RuntimeRegistryCommand::Remove { thread_id } => {
+                        runtimes.remove(&thread_id);
                     }
                     RuntimeRegistryCommand::Entries(reply) => {
                         let _ = reply.send(
@@ -104,21 +93,9 @@ impl RuntimeRegistry {
     }
 
     pub(super) fn remove(&self, thread_id: WorkspaceThreadId) {
-        let _ = self.command_tx.send(RuntimeRegistryCommand::Remove {
-            thread_id,
-            expected: None,
-        });
-    }
-
-    pub(super) fn remove_if_current(
-        &self,
-        thread_id: WorkspaceThreadId,
-        runtime: Arc<ThreadRuntime>,
-    ) {
-        let _ = self.command_tx.send(RuntimeRegistryCommand::Remove {
-            thread_id,
-            expected: Some(runtime),
-        });
+        let _ = self
+            .command_tx
+            .send(RuntimeRegistryCommand::Remove { thread_id });
     }
 
     pub(super) async fn entries(&self) -> Vec<(WorkspaceThreadId, Arc<ThreadRuntime>)> {

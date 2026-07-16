@@ -19,7 +19,7 @@ VibeAround drives agents over the Agent Client Protocol (ACP). Every hosted agen
 | `claude-desktop` | Claude Desktop | **Launch target only** | — | Opens the desktop app; not an ACP runtime |
 | `codex-desktop` | Codex Desktop | **Launch target only** | — | Opens the desktop app; not an ACP runtime |
 
-"Session resume" means VibeAround can restore the agent's own CLI session across idle shutdowns, daemon restarts, and handovers.
+"Session resume" means VibeAround can restore the agent's own CLI session after warm-pool eviction, daemon restarts, and handovers.
 
 ## IM channels
 

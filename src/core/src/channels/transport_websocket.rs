@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 
 use crate::routing::ChannelKind;
 use crate::routing::RouteKey;
-use crate::workspace::WorkspaceThreadManager;
 
 use super::ChannelOutput;
 
@@ -14,18 +12,10 @@ use super::ChannelOutput;
 pub type WebChatSink = mpsc::UnboundedSender<ChannelOutput>;
 
 const MAX_ROUTE_HISTORY: usize = 4000;
-const WEB_ROUTE_IDLE_CLOSE_DELAY: Duration = Duration::from_secs(60);
-
-#[derive(Debug, Clone)]
-pub struct WebRouteIdleDeadline {
-    route: RouteKey,
-    generation: u64,
-}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct RouteActivity {
     active: bool,
-    generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -156,16 +146,10 @@ impl WebChannelManager {
             .await;
     }
 
-    pub async fn mark_route_idle(&self, route: &RouteKey) -> WebRouteIdleDeadline {
+    pub async fn mark_route_idle(&self, route: &RouteKey) {
         let route = route.clone();
         self.request(move |state| state.mark_route_idle(&route))
-            .await
-    }
-
-    pub async fn bump_idle_route(&self, route: &RouteKey) -> Option<WebRouteIdleDeadline> {
-        let route = route.clone();
-        self.request(move |state| state.bump_idle_route(&route))
-            .await
+            .await;
     }
 
     pub async fn clear_pending_permission(&self, request_id: &str) {
@@ -188,9 +172,9 @@ impl WebChannelManager {
         .await;
     }
 
-    pub async fn dispatch_output(&self, output: ChannelOutput) -> Option<WebRouteIdleDeadline> {
+    pub async fn dispatch_output(&self, output: ChannelOutput) {
         self.request(move |state| state.dispatch_output(output))
-            .await
+            .await;
     }
 
     pub fn sender(
@@ -200,27 +184,6 @@ impl WebChannelManager {
         mpsc::UnboundedReceiver<ChannelOutput>,
     ) {
         mpsc::unbounded_channel()
-    }
-
-    pub fn schedule_idle_close(
-        self: &Arc<Self>,
-        workspace_threads: Arc<WorkspaceThreadManager>,
-        deadline: WebRouteIdleDeadline,
-    ) {
-        let manager = Arc::clone(self);
-        tokio::spawn(async move {
-            tokio::time::sleep(WEB_ROUTE_IDLE_CLOSE_DELAY).await;
-            let current = manager
-                .request({
-                    let deadline = deadline.clone();
-                    move |state| state.is_idle_deadline_current(&deadline)
-                })
-                .await;
-            if !current {
-                return;
-            }
-            let _ = workspace_threads.shutdown_route_host(&deadline.route).await;
-        });
     }
 }
 
@@ -324,38 +287,16 @@ impl WebChannelState {
             .entry(route.chat_id.clone())
             .or_default();
         entry.active = true;
-        entry.generation = entry.generation.wrapping_add(1);
         self.send_turn_status(route, true);
     }
 
-    pub fn mark_route_idle(&mut self, route: &RouteKey) -> WebRouteIdleDeadline {
+    pub fn mark_route_idle(&mut self, route: &RouteKey) {
         let entry = self
             .route_activity
             .entry(route.chat_id.clone())
             .or_default();
         entry.active = false;
-        entry.generation = entry.generation.wrapping_add(1);
-        let generation = entry.generation;
         self.send_turn_status(route, false);
-        WebRouteIdleDeadline {
-            route: route.clone(),
-            generation,
-        }
-    }
-
-    pub fn bump_idle_route(&mut self, route: &RouteKey) -> Option<WebRouteIdleDeadline> {
-        let entry = self
-            .route_activity
-            .entry(route.chat_id.clone())
-            .or_default();
-        if entry.active {
-            return None;
-        }
-        entry.generation = entry.generation.wrapping_add(1);
-        Some(WebRouteIdleDeadline {
-            route: route.clone(),
-            generation: entry.generation,
-        })
     }
 
     pub fn clear_pending_permission(&mut self, request_id: &str) {
@@ -401,10 +342,10 @@ impl WebChannelState {
             .push(message);
     }
 
-    pub fn dispatch_output(&mut self, output: ChannelOutput) -> Option<WebRouteIdleDeadline> {
+    pub fn dispatch_output(&mut self, output: ChannelOutput) {
         let route = output.route_key().clone();
         if matches!(output, ChannelOutput::SessionInfo { .. }) {
-            return self.bump_idle_route(&route);
+            return;
         }
         let chat_id = route.chat_id.clone();
         let mut follow_up_outputs = Vec::new();
@@ -425,9 +366,7 @@ impl WebChannelState {
         }
 
         if matches!(output, ChannelOutput::PromptDone { .. }) {
-            Some(self.mark_route_idle(&route))
-        } else {
-            self.bump_idle_route(&route)
+            self.mark_route_idle(&route);
         }
     }
 
@@ -514,12 +453,6 @@ impl WebChannelState {
             .collect()
     }
 
-    fn is_idle_deadline_current(&self, deadline: &WebRouteIdleDeadline) -> bool {
-        self.route_activity
-            .get(&deadline.route.chat_id)
-            .is_some_and(|activity| !activity.active && activity.generation == deadline.generation)
-    }
-
     fn route_activity_state(&self, route_chat_id: &str) -> Option<bool> {
         self.route_activity
             .get(route_chat_id)
@@ -589,6 +522,41 @@ mod tests {
                 active: true,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn prompt_done_marks_route_idle_and_emits_turn_status() {
+        let manager = WebChannelManager::new();
+        let route = RouteKey::new("web", "chat-1");
+        let (tx, mut rx) = manager.sender();
+        manager
+            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .await;
+        manager.mark_route_active(&route).await;
+        assert!(matches!(
+            rx.try_recv().expect("active turn status"),
+            ChannelOutput::TurnStatus { active: true, .. }
+        ));
+
+        manager
+            .dispatch_output(ChannelOutput::PromptDone {
+                route: route.clone(),
+                message_id: Some("msg-1".to_string()),
+            })
+            .await;
+
+        assert!(matches!(
+            rx.try_recv().expect("prompt done"),
+            ChannelOutput::PromptDone { .. }
+        ));
+        assert_eq!(
+            rx.try_recv().expect("idle turn status"),
+            ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: false,
+            }
+        );
+        assert!(!manager.route_is_active(&route.chat_id).await);
     }
 
     #[tokio::test]

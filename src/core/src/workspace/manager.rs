@@ -33,7 +33,8 @@ mod sessions;
 #[path = "manager_routes.rs"]
 mod routes;
 
-pub const AGENT_HOST_IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(10 * 60);
+const MAX_WARM_THREADS: usize = 4;
+const WARM_THREAD_MIN_IDLE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExternalSessionAttachMode {
@@ -191,13 +192,14 @@ impl WorkspaceThreadManager {
         let current = match self.active_runtime_for_route(route).await? {
             Some(runtime) => {
                 let state = runtime.state().await;
+                let next_host_binding = host_binding_for_explicit_new(route, state.host_binding);
                 runtime
                     .close(reason)
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
                 self.runtimes.remove(state.thread_id.clone());
                 self.detach_route(route).await?;
-                Some((state.workspace_id, state.host_binding))
+                Some((state.workspace_id, next_host_binding))
             }
             None => None,
         };
@@ -273,8 +275,6 @@ impl WorkspaceThreadManager {
             return Ok(());
         };
         runtime.shutdown_host().await;
-        self.runtimes.remove(thread_id.clone());
-        self.notify_change();
         Ok(())
     }
 
@@ -555,6 +555,13 @@ fn default_route_binding_and_workspace(route: &RouteKey) -> (HostBinding, PathBu
         DefaultWorkspaceKind::ChannelDefault => {
             default_channel_binding_and_workspace(&route.channel_kind)
         }
+    }
+}
+
+fn host_binding_for_explicit_new(route: &RouteKey, current: HostBinding) -> HostBinding {
+    match route.channel_kind.as_str() {
+        "web" | "tui" => current,
+        _ => default_route_binding_and_workspace(route).0,
     }
 }
 

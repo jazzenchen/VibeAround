@@ -63,10 +63,9 @@ pub fn channel_traits(channel_kind: &str) -> ChannelTraits {
             rich_agent_events: true,
         },
         _ => ChannelTraits {
-            // IM routes keep their WorkspaceThread attachment across host
-            // idle shutdown. Rehydrate the runtime on the next message so
-            // agent/profile/session continuity is preserved without replaying
-            // old output into the chat.
+            // IM routes keep their WorkspaceThread attachment when a warm
+            // host is evicted or explicitly stopped, so the next message can
+            // resume agent/profile/session state without replaying old output.
             rehydratable_runtime: true,
             startup_replay: false,
             default_workspace: DefaultWorkspaceKind::ChannelDefault,

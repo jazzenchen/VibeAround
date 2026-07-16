@@ -20,7 +20,7 @@ Commands work with either prefix style: `/command`, or `/va command` / `va comma
 
 | Command | Effect |
 |---|---|
-| `/new` | Close the current thread and start a fresh one in the same workspace |
+| `/new` | Close the current thread and start a fresh one in the same workspace using the channel's configured agent/profile |
 | `/close` | Close the thread; next message starts a new one |
 | `/status` | Show thread id, workspace, host agent, profile, session, busy state |
 | `/help` (or `/commands`, `/va`) | Show command help |

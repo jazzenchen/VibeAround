@@ -7,7 +7,7 @@ use std::sync::Arc;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Context;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, Instant};
 
 use crate::agent::{Agent, AgentClientHandler, StartupSession};
 use crate::routing::{channel_traits, wait_for_signal, ActiveTurnTarget, ChannelTarget, RouteKey};
@@ -60,6 +60,20 @@ struct SubagentRuntime {
 struct AcpSessionRunner {
     agent: Arc<Agent>,
     client_handler: Arc<dyn AgentClientHandler>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ThreadActivitySnapshot {
+    pub(crate) live: bool,
+    pub(crate) busy: bool,
+    pub(crate) has_subagents: bool,
+    pub(crate) generation: u64,
+    pub(crate) last_activity_at: Instant,
+}
+
+pub(crate) struct ThreadRuntimeStart {
+    pub(crate) session_id: String,
+    pub(crate) host_started: bool,
 }
 
 impl AcpSessionRunner {
@@ -120,6 +134,7 @@ impl ThreadRuntime {
             host_agent: None,
             subagents: BTreeMap::new(),
             activity_generation: 0,
+            last_activity_at: Instant::now(),
         });
         tokio::spawn(
             ThreadOwner {
@@ -132,6 +147,7 @@ impl ThreadRuntime {
                 thread,
                 subagents: BTreeMap::new(),
                 activity_generation: 0,
+                last_activity_at: Instant::now(),
             }
             .run(),
         );
@@ -177,11 +193,11 @@ impl ThreadRuntime {
 
     /// Start the host agent and ensure a session exists, without sending a
     /// user prompt. This backs `/new` and route attachment warmup.
-    pub async fn start(
+    pub(crate) async fn start(
         self: &Arc<Self>,
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
-    ) -> acp::Result<String> {
+    ) -> acp::Result<ThreadRuntimeStart> {
         self.mark_activity();
         let (reply, done) = oneshot::channel();
         self.owner_tx
@@ -279,15 +295,29 @@ impl ThreadRuntime {
         }
     }
 
-    pub fn idle_generation(&self) -> u64 {
-        self.turn_state.borrow().activity_generation
+    pub(crate) fn thread_activity(&self) -> ThreadActivitySnapshot {
+        let state = self.turn_state.borrow();
+        ThreadActivitySnapshot {
+            live: state
+                .host_agent
+                .as_ref()
+                .is_some_and(|agent| agent.is_live())
+                || state
+                    .subagents
+                    .values()
+                    .any(|subagent| subagent.agent.is_live()),
+            busy: state.busy,
+            has_subagents: !state.subagents.is_empty(),
+            generation: state.activity_generation,
+            last_activity_at: state.last_activity_at,
+        }
     }
 
-    pub async fn shutdown_host_if_idle(self: &Arc<Self>, generation: u64) -> bool {
+    pub(crate) async fn evict_if_idle(self: &Arc<Self>, generation: u64) -> bool {
         let (reply, done) = oneshot::channel();
         if self
             .owner_tx
-            .send(ThreadOwnerCommand::ShutdownHostIfIdle {
+            .send(ThreadOwnerCommand::EvictIfIdle {
                 runtime: Arc::clone(self),
                 generation,
                 reply,

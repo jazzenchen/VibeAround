@@ -411,14 +411,9 @@ impl ConversationIngress {
                     }
                     result = &mut prompt => result,
                 };
-                self.schedule_route_host_idle_shutdown(route).await;
                 let _ = reply.send(result);
             }
             LaneCommand::Dispatch(input) => {
-                let ran_prompt = matches!(
-                    input.as_ref(),
-                    OrderedInput::Message { .. } | OrderedInput::Callback { .. }
-                );
                 if *cancellation.borrow() {
                     self.reject_stopped(route, *input);
                     return;
@@ -432,9 +427,6 @@ impl ConversationIngress {
                         dispatch.await;
                     }
                     _ = &mut dispatch => {}
-                }
-                if ran_prompt {
-                    self.schedule_route_host_idle_shutdown(route).await;
                 }
             }
             #[cfg(test)]
@@ -506,20 +498,6 @@ impl ConversationIngress {
             }
         }
         result
-    }
-
-    async fn schedule_route_host_idle_shutdown(&self, route: &RouteKey) {
-        if let Err(error) = self
-            .workspace_threads
-            .schedule_route_host_idle_shutdown(route)
-            .await
-        {
-            tracing::debug!(
-                route = %route,
-                error = %error,
-                "failed to schedule agent host idle shutdown"
-            );
-        }
     }
 
     async fn handle_prompt_input(

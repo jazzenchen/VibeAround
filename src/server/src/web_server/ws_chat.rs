@@ -267,14 +267,6 @@ async fn handle_chat_socket(
                         }
                         WebChatInput::SetMode { mode_id } => {
                             apply_web_session_mode(&state, &active_route, &mode_id).await;
-                            if let Some(deadline) =
-                                state.web_channel.bump_idle_route(&active_route).await
-                            {
-                                state.web_channel.schedule_idle_close(
-                                    state.channel_hub.workspace_thread_manager(),
-                                    deadline,
-                                );
-                            }
                         }
                         WebChatInput::SetConfigOption { config_id, value } => {
                             apply_web_session_config_option(
@@ -284,14 +276,6 @@ async fn handle_chat_socket(
                                 value,
                             )
                             .await;
-                            if let Some(deadline) =
-                                state.web_channel.bump_idle_route(&active_route).await
-                            {
-                                state.web_channel.schedule_idle_close(
-                                    state.channel_hub.workspace_thread_manager(),
-                                    deadline,
-                                );
-                            }
                         }
                         WebChatInput::Stop(input) => {
                             abort_direct_resume_task(
@@ -305,11 +289,7 @@ async fn handle_chat_socket(
                             // overtake a message still waiting in input_rx and
                             // cancel an empty route before that message runs.
                             enqueue_channel_input(&state.channel_hub, input);
-                            let deadline = state.web_channel.mark_route_idle(&active_route).await;
-                            state.web_channel.schedule_idle_close(
-                                state.channel_hub.workspace_thread_manager(),
-                                deadline,
-                            );
+                            state.web_channel.mark_route_idle(&active_route).await;
                         }
                         WebChatInput::PermissionResponse {
                             request_id,
@@ -396,14 +376,6 @@ async fn handle_chat_socket(
                                         )
                                         .await;
                                     }
-                                    if let Some(deadline) =
-                                        state.web_channel.bump_idle_route(&active_route).await
-                                    {
-                                        state.web_channel.schedule_idle_close(
-                                            state.channel_hub.workspace_thread_manager(),
-                                            deadline,
-                                        );
-                                    }
                                     continue;
                                 }
                             }
@@ -419,12 +391,7 @@ async fn handle_chat_socket(
                                     cwd,
                                 )
                                 .await;
-                                let deadline =
-                                    task_state.web_channel.mark_route_idle(&task_route).await;
-                                task_state.web_channel.schedule_idle_close(
-                                    task_state.channel_hub.workspace_thread_manager(),
-                                    deadline,
-                                );
+                                task_state.web_channel.mark_route_idle(&task_route).await;
                             }));
                         }
                     }
