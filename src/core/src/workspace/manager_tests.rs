@@ -89,6 +89,58 @@ async fn route_resolves_to_stable_thread_attachment() {
 }
 
 #[tokio::test]
+async fn explicit_new_reloads_im_channel_host_defaults() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let route = RouteKey::new("telegram", "chat-a");
+    let workspace = manager
+        .ensure_workspace_for_cwd(std::env::temp_dir())
+        .await
+        .unwrap();
+    let old_host = HostBinding::new("stale-agent", Some("stale-profile".to_string()));
+    manager
+        .create_thread_for_route_with_host(&route, workspace.id.clone(), old_host)
+        .await
+        .unwrap();
+
+    let expected_host = default_route_binding_and_workspace(&route).0;
+    let runtime = manager
+        .close_route_and_create_thread(&route, Some("test new".to_string()))
+        .await
+        .unwrap();
+    let state = runtime.state().await;
+
+    assert_eq!(state.workspace_id, workspace.id);
+    assert_eq!(state.host_binding, expected_host);
+    assert_ne!(state.host_binding.agent_id, "stale-agent");
+}
+
+#[tokio::test]
+async fn explicit_new_preserves_web_selected_host() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let route = RouteKey::new("web", "chat-a");
+    let workspace = manager
+        .ensure_workspace_for_cwd(std::env::temp_dir())
+        .await
+        .unwrap();
+    let selected_host = HostBinding::new("cursor", Some("direct".to_string()));
+    manager
+        .create_thread_for_route_with_host(&route, workspace.id.clone(), selected_host.clone())
+        .await
+        .unwrap();
+
+    let runtime = manager
+        .close_route_and_create_thread(&route, Some("test new".to_string()))
+        .await
+        .unwrap();
+    let state = runtime.state().await;
+
+    assert_eq!(state.workspace_id, workspace.id);
+    assert_eq!(state.host_binding, selected_host);
+}
+
+#[tokio::test]
 async fn active_runtime_resolve_does_not_reload_thread_store() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
