@@ -24,7 +24,7 @@ pub fn detect_default_terminal() -> TerminalChoice {
 
 fn read_or_initialize_terminal() -> anyhow::Result<TerminalChoice> {
     let path = paths::settings_path()?;
-    let mut config = read_settings_config(&path)?;
+    let config = read_settings_config(&path)?;
     if let Some(value) = config
         .get("launcher")
         .and_then(|launcher| launcher.get("terminal"))
@@ -33,12 +33,24 @@ fn read_or_initialize_terminal() -> anyhow::Result<TerminalChoice> {
     }
 
     let choice = detect_default_terminal();
-    launcher_config_mut(&mut config).insert(
-        "terminal".to_string(),
-        Value::String(choice.id().to_string()),
-    );
-    write_settings_config(&path, &config)?;
-    Ok(choice)
+    common::config::mutate_settings_json(|config| {
+        if let Some(value) = config
+            .get("launcher")
+            .and_then(|launcher| launcher.get("terminal"))
+        {
+            return terminal_from_config_value(value, &path).map_err(|error| error.to_string());
+        }
+
+        let root = config
+            .as_object_mut()
+            .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+        launcher_config_mut(root).insert(
+            "terminal".to_string(),
+            Value::String(choice.id().to_string()),
+        );
+        Ok(choice)
+    })
+    .map_err(anyhow::Error::msg)
 }
 
 fn terminal_from_config_value(value: &Value, path: &Path) -> anyhow::Result<TerminalChoice> {
@@ -82,19 +94,6 @@ fn read_settings_config(path: &Path) -> anyhow::Result<Map<String, Value>> {
         Value::Object(object) => Ok(object),
         _ => bail!("settings config {} must be a JSON object", path.display()),
     }
-}
-
-fn write_settings_config(path: &Path, config: &Map<String, Value>) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let body = serde_json::to_string_pretty(config).context("serialize settings config")?;
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
-    set_owner_only(&tmp).ok();
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
-    Ok(())
 }
 
 fn launcher_config_mut(config: &mut Map<String, Value>) -> &mut Map<String, Value> {
@@ -198,19 +197,6 @@ fn is_executable_file(path: &Path) -> bool {
     {
         true
     }
-}
-
-fn set_owner_only(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

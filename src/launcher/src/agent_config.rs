@@ -13,15 +13,19 @@ pub fn resolve_configured_agent_executable(agent_id: &str) -> anyhow::Result<Opt
 }
 
 pub fn write_scanned_agent_executable(agent_id: &str, path: &Path) -> anyhow::Result<()> {
-    let config_path = paths::settings_path()?;
-    let mut config = read_settings_config(&config_path)?;
-    let root = ensure_object(&mut config);
-    let launcher = ensure_child_object(root, "launcher");
-    let agents = ensure_child_object(launcher, "agents");
-    let agent = ensure_child_object(agents, agent_id);
+    let agent_id = agent_id.to_string();
     let executable = executable_object(path);
-    agent.insert("executable".to_string(), Value::Object(executable));
-    write_settings_config(&config_path, &config)
+    common::config::mutate_settings_json(move |config| {
+        let root = config
+            .as_object_mut()
+            .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+        let launcher = ensure_child_object(root, "launcher");
+        let agents = ensure_child_object(launcher, "agents");
+        let agent = ensure_child_object(agents, &agent_id);
+        agent.insert("executable".to_string(), Value::Object(executable));
+        Ok(())
+    })
+    .map_err(anyhow::Error::msg)
 }
 
 fn agent_entry<'a>(config: &'a Value, agent_id: &str) -> Option<&'a Map<String, Value>> {
@@ -53,26 +57,6 @@ fn read_settings_config(path: &Path) -> anyhow::Result<Value> {
         Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
     };
     serde_json::from_str(&body).with_context(|| format!("parse {}", path.display()))
-}
-
-fn write_settings_config(path: &Path, config: &Value) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let body = serde_json::to_string_pretty(config).context("serialize settings config")?;
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
-    set_owner_only(&tmp).ok();
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
-    Ok(())
-}
-
-fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
-    if !value.is_object() {
-        *value = Value::Object(Map::new());
-    }
-    value.as_object_mut().expect("object just inserted")
 }
 
 fn ensure_child_object<'a>(
@@ -107,19 +91,6 @@ fn executable_object(path: &Path) -> Map<String, Value> {
     );
     object.insert("rank".to_string(), Value::Number(4000.into()));
     object
-}
-
-fn set_owner_only(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

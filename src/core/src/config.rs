@@ -3,7 +3,6 @@
 //! Callers load a fresh Config when they need one.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -119,10 +118,8 @@ fn init_data_dir() {
             "[VibeAround] Creating default settings.json at {:?}",
             settings_path
         );
-        if let Err(e) = std::fs::write(&settings_path, DEFAULT_SETTINGS_JSON) {
-            tracing::info!("[VibeAround] Failed to write settings.json: {}", e);
-        } else if let Err(e) = crate::auth::set_owner_only(&settings_path) {
-            tracing::info!("[VibeAround] Failed to chmod settings.json: {}", e);
+        if let Err(e) = mutate_settings_json_at(&settings_path, |_| Ok(())) {
+            tracing::info!("[VibeAround] Failed to initialize settings.json: {}", e);
         }
     }
     let ws_dir = dir.join("workspaces");
@@ -822,17 +819,26 @@ pub fn builtin_workspaces_dir() -> PathBuf {
     data_dir().join("workspaces")
 }
 
-/// Read + write settings.json (for API-driven updates).
-/// Automatically reloads the in-memory config cache after writing.
-pub fn update_settings_json(mutator: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
-    let path = settings_path();
-    let data = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
-    let mut root: serde_json::Value = serde_json::from_str(&data).unwrap_or(serde_json::json!({}));
-    mutator(&mut root);
-    write_settings_json_locked(&root)?;
-    // Invalidate cache so next ensure_loaded() picks up the change.
+/// Mutate settings.json while holding its cross-process transaction lock.
+///
+/// The lock covers reading, strict parsing, mutation, and atomic replacement.
+/// A missing file starts from the embedded default. Malformed JSON is returned
+/// as an error and is never replaced. The mutator must not call another
+/// settings writer while the lock is held.
+pub fn mutate_settings_json<T>(
+    mutator: impl FnOnce(&mut serde_json::Value) -> Result<T, String>,
+) -> Result<T, String> {
+    let result = mutate_settings_json_at(&settings_path(), mutator)?;
     *CONFIG_CACHE.write() = None;
-    Ok(())
+    Ok(result)
+}
+
+/// Read and incrementally update the latest settings document.
+pub fn update_settings_json(mutator: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
+    mutate_settings_json(|root| {
+        mutator(root);
+        Ok(())
+    })
 }
 
 /// Remove a user workspace registration from settings.json.
@@ -847,14 +853,20 @@ pub fn remove_workspace_path(path: &Path) -> Result<bool, String> {
     Ok(removed)
 }
 
-/// Replace settings.json with an already-mutated JSON value. Use this for
-/// whole-file settings flows such as onboarding. Incremental updates should
-/// prefer [`update_settings_json`] so they merge against the latest on-disk
-/// content.
+/// Authoritatively replace settings.json with a complete object.
+///
+/// This participates in the same transaction lock as incremental mutations,
+/// but callers are still responsible for avoiding stale whole-document
+/// replacements. Incremental updates should prefer [`update_settings_json`].
 pub fn write_settings_json(root: &serde_json::Value) -> Result<(), String> {
-    write_settings_json_locked(root)?;
-    *CONFIG_CACHE.write() = None;
-    Ok(())
+    if !root.is_object() {
+        return Err("settings.json root must be a JSON object".to_string());
+    }
+    let replacement = root.clone();
+    mutate_settings_json(move |current| {
+        *current = replacement;
+        Ok(())
+    })
 }
 
 /// Read the raw settings JSON file after ensuring the data directory exists.
@@ -866,9 +878,45 @@ pub fn read_settings_json() -> Result<serde_json::Value, String> {
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
-fn write_settings_json_locked(root: &serde_json::Value) -> Result<(), String> {
-    let path = settings_path();
-    write_settings_json_to_path(&path, root)
+fn mutate_settings_json_at<T>(
+    path: &Path,
+    mutator: impl FnOnce(&mut serde_json::Value) -> Result<T, String>,
+) -> Result<T, String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("create {}: {error}", parent.display()))?;
+
+    let lock_path = settings_lock_path(path);
+    let _lock = crate::file_lock::ExclusiveFileLock::acquire(&lock_path)
+        .map_err(|error| format!("lock {}: {error}", lock_path.display()))?;
+    let data = match std::fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            DEFAULT_SETTINGS_JSON.to_string()
+        }
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
+    let mut root: serde_json::Value = serde_json::from_str(&data)
+        .map_err(|error| format!("parse {}: {error}", path.display()))?;
+    if !root.is_object() {
+        return Err(format!("{} must contain a JSON object", path.display()));
+    }
+
+    let result = mutator(&mut root)?;
+    if !root.is_object() {
+        return Err("settings.json root must remain a JSON object".to_string());
+    }
+    write_settings_json_to_path(path, &root)?;
+    Ok(result)
+}
+
+fn settings_lock_path(path: &Path) -> PathBuf {
+    let mut lock_path = path.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    PathBuf::from(lock_path)
 }
 
 fn write_settings_json_to_path(path: &Path, root: &serde_json::Value) -> Result<(), String> {
@@ -958,6 +1006,7 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn unique_test_dir(name: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
@@ -1008,6 +1057,93 @@ mod tests {
             serde_json::json!({ "onboarded": true })
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_settings_mutations_preserve_disjoint_fields() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = unique_test_dir("concurrent-fields");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, "{}").unwrap();
+        let start = Arc::new(Barrier::new(3));
+        let handles = ["alpha", "beta"].map(|field| {
+            let path = path.clone();
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                mutate_settings_json_at(&path, |root| {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    root.as_object_mut()
+                        .expect("validated settings object")
+                        .insert(field.to_string(), serde_json::json!(true));
+                    Ok(())
+                })
+            })
+        });
+
+        start.wait();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(settings["alpha"], true);
+        assert_eq!(settings["beta"], true);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_settings_mutations_serialize_same_field() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = unique_test_dir("concurrent-counter");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "count": 0 }"#).unwrap();
+        let start = Arc::new(Barrier::new(5));
+        let handles = (0..4)
+            .map(|_| {
+                let path = path.clone();
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    mutate_settings_json_at(&path, |root| {
+                        let count = root["count"].as_u64().unwrap();
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        root["count"] = serde_json::json!(count + 1);
+                        Ok(())
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        start.wait();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(settings["count"], 4);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_mutation_preserves_malformed_file() {
+        let dir = unique_test_dir("malformed");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let malformed = r#"{ "workspaces": ["#;
+        fs::write(&path, malformed).unwrap();
+
+        let error = mutate_settings_json_at(&path, |_| Ok(())).unwrap_err();
+
+        assert!(error.contains("parse"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), malformed);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
