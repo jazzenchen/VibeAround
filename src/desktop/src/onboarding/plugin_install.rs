@@ -282,7 +282,7 @@ pub async fn check_plugin_status(plugin_id: String) -> Result<String, String> {
 }
 
 pub(crate) fn check_plugin_status_sync(plugin_id: &str) -> String {
-    let plugin_def = resources::plugin_by_id(&plugin_id);
+    let plugin_def = resources::plugin_by_id(plugin_id);
     let plugin_kind = plugin_def
         .map(|plugin| plugin.kind.as_str())
         .unwrap_or("channel");
