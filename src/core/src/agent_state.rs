@@ -307,7 +307,15 @@ pub fn write_agent_launch_args(agent_id: &str, launch_args: AgentLaunchArgs) -> 
 }
 
 pub fn remove_profile_references(profile_id: &str) -> anyhow::Result<()> {
-    update_prefs(|prefs| {
+    config::mutate_settings_json(|root| remove_profile_references_from_settings(root, profile_id))
+        .map_err(anyhow::Error::msg)
+}
+
+pub fn remove_profile_references_from_settings(
+    root: &mut Value,
+    profile_id: &str,
+) -> Result<(), String> {
+    update_prefs_in_settings(root, |prefs| {
         if prefs.default_profile_id.as_deref() == Some(profile_id) {
             prefs.default_profile_id = None;
         }
@@ -678,6 +686,33 @@ mod tests {
 
         assert_eq!(settings["launcher"]["selected_agent"], "codex");
         assert_eq!(settings["launcher"]["default_agent"], "claude");
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
+    }
+
+    #[test]
+    fn profile_reference_removal_preserves_other_launcher_fields() {
+        let mut settings = serde_json::json!({
+            "launcher": {
+                "default_profile_id": "removed",
+                "terminal": "terminal",
+                "agents": {
+                    "codex": { "profile_id": "removed" },
+                    "claude": {
+                        "profile_id": "kept",
+                        "workspace": "/tmp/work"
+                    }
+                }
+            }
+        });
+
+        remove_profile_references_from_settings(&mut settings, "removed").unwrap();
+
+        assert!(settings["launcher"].get("default_profile_id").is_none());
+        assert!(settings["launcher"]["agents"].get("codex").is_none());
+        assert_eq!(
+            settings["launcher"]["agents"]["claude"]["profile_id"],
+            "kept"
+        );
         assert_eq!(settings["launcher"]["terminal"], "terminal");
     }
 

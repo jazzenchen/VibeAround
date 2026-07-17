@@ -4,6 +4,8 @@
 //! declarations in `web_server::mod` stable while the implementation stays
 //! grouped by feature area.
 
+use axum::http::StatusCode;
+
 mod files;
 mod launcher;
 mod previews;
@@ -44,3 +46,35 @@ pub use workspaces::{
     add_workspace_handler, create_workspace_handler, list_workspaces_handler,
     remove_workspace_handler, reorder_workspaces_handler, set_default_workspace_handler,
 };
+
+pub(super) async fn run_blocking_io<T>(
+    operation: impl FnOnce() -> Result<T, (StatusCode, String)> + Send + 'static,
+) -> Result<T, (StatusCode, String)>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(operation)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_io_does_not_stall_the_async_runtime() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let task = tokio::spawn(run_blocking_io(move || {
+            started_tx.send(()).expect("signal blocking task start");
+            release_rx.recv().expect("release blocking task");
+            Ok::<_, (StatusCode, String)>(())
+        }));
+
+        started_rx.await.expect("blocking task started");
+        assert_eq!(tokio::spawn(async { 42 }).await.unwrap(), 42);
+        release_tx.send(()).expect("release blocking task");
+        task.await.unwrap().unwrap();
+    }
+}
