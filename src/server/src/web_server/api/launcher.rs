@@ -76,108 +76,132 @@ pub struct LaunchPlanBody {
 
 /// GET /api/launcher/preferences -- server-owned launcher runtime preferences.
 pub async fn get_launcher_preferences_handler(
-) -> Json<crate::api_types::LauncherPreferencesResponse> {
-    Json(launcher_preferences())
+) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
+    super::run_blocking_io(|| Ok(Json(launcher_preferences()))).await
 }
 
 /// PUT /api/launcher/default-agent -- set app-wide default agent/profile.
 pub async fn set_default_launch_handler(
     Json(body): Json<AgentProfileBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
-    let (agent_id, profile_id) = validate_agent_profile_selection(&body.agent_id, body.profile_id)?;
-    agent_state::write_default_launch(&agent_id, profile_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(launcher_preferences()))
+    super::run_blocking_io(move || {
+        let (agent_id, profile_id) =
+            validate_agent_profile_selection(&body.agent_id, body.profile_id)?;
+        agent_state::write_default_launch(&agent_id, profile_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok(Json(launcher_preferences()))
+    })
+    .await
 }
 
 /// PUT /api/launcher/agent-profile -- set one agent's default profile.
 pub async fn set_agent_profile_handler(
     Json(body): Json<AgentProfileBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
-    let (agent_id, profile_id) = validate_agent_profile_selection(&body.agent_id, body.profile_id)?;
-    agent_state::write_agent_profile(&agent_id, profile_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(launcher_preferences()))
+    super::run_blocking_io(move || {
+        let (agent_id, profile_id) =
+            validate_agent_profile_selection(&body.agent_id, body.profile_id)?;
+        agent_state::write_agent_profile(&agent_id, profile_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok(Json(launcher_preferences()))
+    })
+    .await
 }
 
 /// PUT /api/launcher/agent-workspace -- set one agent's default workspace.
 pub async fn set_agent_workspace_handler(
     Json(body): Json<AgentWorkspaceBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
-    let (agent_id, workspace) =
-        validate_agent_workspace_selection(&body.agent_id, &body.workspace)?;
-    agent_state::write_agent_workspace(&agent_id, workspace)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(launcher_preferences()))
+    super::run_blocking_io(move || {
+        let (agent_id, workspace) =
+            validate_agent_workspace_selection(&body.agent_id, &body.workspace)?;
+        agent_state::write_agent_workspace(&agent_id, workspace)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok(Json(launcher_preferences()))
+    })
+    .await
 }
 
 /// PUT /api/launcher/agent-launch-args -- set terminal/acp args for one agent.
 pub async fn set_agent_launch_args_handler(
     Json(body): Json<AgentLaunchArgsBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
-    let agent_id = canonical_agent_id(&body.agent_id)?;
-    let launch_args = sanitize_agent_launch_args(body.launch_args)?;
-    agent_state::write_agent_launch_args(&agent_id, launch_args)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(launcher_preferences()))
+    super::run_blocking_io(move || {
+        let agent_id = canonical_agent_id(&body.agent_id)?;
+        let launch_args = sanitize_agent_launch_args(body.launch_args)?;
+        agent_state::write_agent_launch_args(&agent_id, launch_args)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok(Json(launcher_preferences()))
+    })
+    .await
 }
 
 /// PUT /api/launcher/selected-agent -- set the launch tab's selected agent.
 pub async fn set_selected_agent_handler(
     Json(body): Json<SelectedAgentBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
-    let agent_id = canonical_agent_id(&body.agent_id)?;
-    agent_state::write_selected_agent(&agent_id)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(launcher_preferences()))
+    super::run_blocking_io(move || {
+        let agent_id = canonical_agent_id(&body.agent_id)?;
+        agent_state::write_selected_agent(&agent_id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok(Json(launcher_preferences()))
+    })
+    .await
 }
 
 /// PUT /api/launcher/local-agent-api -- enable/disable sessionless local API.
 pub async fn set_local_agent_api_handler(
     Json(body): Json<EnabledBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
-    config::update_settings_json_async(move |root| {
-        if !root.is_object() {
-            *root = serde_json::json!({});
-        }
-        let Some(root_obj) = root.as_object_mut() else {
-            return;
-        };
-        let entry = root_obj
-            .entry("local_agent_api".to_string())
-            .or_insert_with(|| serde_json::json!({}));
-        if !entry.is_object() {
-            *entry = serde_json::json!({});
-        }
-        if let Some(settings) = entry.as_object_mut() {
+    super::run_blocking_io(move || {
+        config::mutate_settings_json(|root| {
+            let root_obj = root
+                .as_object_mut()
+                .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+            let entry = root_obj
+                .entry("local_agent_api".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if !entry.is_object() {
+                *entry = serde_json::json!({});
+            }
+            let settings = entry
+                .as_object_mut()
+                .ok_or_else(|| "settings.json local_agent_api must be an object".to_string())?;
             settings.insert("enabled".to_string(), serde_json::json!(body.enabled));
-        }
+            Ok(())
+        })
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        Ok(Json(launcher_preferences()))
     })
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    Ok(Json(launcher_preferences()))
 }
 
 /// PUT /api/launcher/profile-connection -- set profile-to-agent bridge routing.
 pub async fn set_profile_connection_handler(
     Json(body): Json<ProfileConnectionBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
-    let agent_id = canonical_agent_id(&body.agent_id)?;
-    let mut profile = load_profile(&body.profile_id)?;
-    let preference =
-        connections::sanitize_profile_connection_preference(&profile, &agent_id, body.preference)
-            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    super::run_blocking_io(move || {
+        let agent_id = canonical_agent_id(&body.agent_id)?;
+        let mut profile = load_profile(&body.profile_id)?;
+        let preference = connections::sanitize_profile_connection_preference(
+            &profile,
+            &agent_id,
+            body.preference,
+        )
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    schema::set_connection(&mut profile, &agent_id, preference);
-    schema::save(&profile).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(launcher_preferences()))
+        schema::set_connection(&mut profile, &agent_id, preference);
+        schema::save(&profile).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        Ok(Json(launcher_preferences()))
+    })
+    .await
 }
 
 /// POST /api/launcher/plan -- build a launch plan without executing it.
 pub async fn launcher_plan_handler(
     Json(body): Json<LaunchPlanBody>,
 ) -> Result<Json<crate::api_types::LaunchPlanResponse>, (StatusCode, String)> {
-    build_launch_plan(body).map(Json)
+    super::run_blocking_io(move || build_launch_plan(body).map(Json)).await
 }
 
 fn launcher_preferences() -> crate::api_types::LauncherPreferencesResponse {
