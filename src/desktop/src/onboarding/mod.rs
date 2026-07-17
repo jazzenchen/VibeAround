@@ -30,7 +30,6 @@ pub use search_settings::{
 };
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::process::{Output, Stdio};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -80,16 +79,8 @@ pub struct PluginUpdateCheckRequest {
 // Settings helpers
 // ---------------------------------------------------------------------------
 
-fn settings_path() -> PathBuf {
-    config::data_dir().join("settings.json")
-}
-
 fn read_settings_value() -> Value {
-    let path = settings_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}))
+    config::read_settings_json().unwrap_or_else(|_| serde_json::json!({}))
 }
 
 // ---------------------------------------------------------------------------
@@ -148,13 +139,17 @@ pub struct PluginSummary {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_settings() -> Result<Value, String> {
-    Ok(read_settings_value())
+pub async fn get_settings() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(read_settings_value)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn list_channel_plugins() -> Result<Vec<plugins::DiscoveredPluginSummary>, String> {
-    Ok(plugins::channel::list_summaries())
+pub async fn list_channel_plugins() -> Result<Vec<plugins::DiscoveredPluginSummary>, String> {
+    tauri::async_runtime::spawn_blocking(plugins::channel::list_summaries)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
