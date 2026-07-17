@@ -55,6 +55,18 @@ describe("createSettingsPatch", () => {
     ]);
   });
 
+  test("treats prototype names as ordinary JSON keys", () => {
+    const base = JSON.parse(
+      '{"constructor":true,"toString":"custom","__proto__":{"enabled":true}}',
+    );
+
+    expect(createSettingsPatch(base, {})).toEqual([
+      { op: "remove", path: "/constructor" },
+      { op: "remove", path: "/toString" },
+      { op: "remove", path: "/__proto__" },
+    ]);
+  });
+
   test("includes pending edits when an autosave starts from persisted settings", () => {
     const persisted = {
       im: {

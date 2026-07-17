@@ -39,11 +39,13 @@ function appendDifference(
     const keys = new Set([...Object.keys(base), ...Object.keys(desired)]);
     for (const key of keys) {
       const childPath = `${path}/${pointerSegment(key)}`;
-      if (!(key in desired) || desired[key] === undefined) {
-        if (key in base) patch.push({ op: "remove", path: childPath });
+      const baseHasKey = Object.hasOwn(base, key);
+      const desiredHasKey = Object.hasOwn(desired, key);
+      if (!desiredHasKey || desired[key] === undefined) {
+        if (baseHasKey) patch.push({ op: "remove", path: childPath });
         continue;
       }
-      if (!(key in base)) {
+      if (!baseHasKey) {
         patch.push({ op: "add", path: childPath, value: desired[key] });
         continue;
       }
