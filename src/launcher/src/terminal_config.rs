@@ -24,6 +24,14 @@ pub fn detect_default_terminal() -> TerminalChoice {
 
 fn read_or_initialize_terminal() -> anyhow::Result<TerminalChoice> {
     let path = common::config::settings_path();
+    let config = common::config::read_settings_json().map_err(anyhow::Error::msg)?;
+    if let Some(value) = config
+        .get("launcher")
+        .and_then(|launcher| launcher.get("terminal"))
+    {
+        return terminal_from_config_value(value, &path);
+    }
+
     let choice = detect_default_terminal();
     common::config::mutate_settings_json(|config| {
         if let Some(value) = config
@@ -268,6 +276,30 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
 
         assert!(error.contains("unknown launcher.terminal"));
+    }
+
+    #[test]
+    fn existing_terminal_is_not_rewritten() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let choice = TerminalChoice::default_for_current_platform();
+        let original = format!(
+            "{{\n  \"launcher\": {{ \"terminal\": \"{}\" }},\n  \"workspaces\": []\n}}\n",
+            choice.id()
+        );
+        fs::write(dir.join("settings.json"), &original).expect("write settings config");
+        let previous = std::env::var_os("VIBEAROUND_DATA_DIR");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+
+        let resolved = resolve_terminal_choice(None).expect("resolve terminal");
+        let current = fs::read_to_string(dir.join("settings.json")).expect("read settings config");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous);
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(resolved, choice);
+        assert_eq!(current, original);
     }
 
     fn temp_dir() -> PathBuf {
