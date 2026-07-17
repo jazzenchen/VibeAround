@@ -872,12 +872,8 @@ fn write_settings_json_locked(root: &serde_json::Value) -> Result<(), String> {
 }
 
 fn write_settings_json_to_path(path: &Path, root: &serde_json::Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let pretty = serde_json::to_string_pretty(root).map_err(|e| e.to_string())?;
-    fs::write(path, pretty).map_err(|e| e.to_string())?;
-    crate::auth::set_owner_only(path).map_err(|e| e.to_string())
+    crate::file_replace::write_private(path, pretty).map_err(|e| e.to_string())
 }
 
 fn remove_workspace_from_settings_root(root: &mut serde_json::Value, path: &Path) -> bool {
