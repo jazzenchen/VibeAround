@@ -20,13 +20,11 @@ pub struct WorkspaceOption {
 pub(super) fn launcher_workspace_options(agent_id: Option<&str>) -> Vec<WorkspaceOption> {
     let builtin = config::builtin_workspaces_dir();
     let home = terminal::launch_home_dir().unwrap_or_else(|_| config::data_dir());
-    let agent_prefs = agent_state::read_prefs();
+    let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
     let selected = agent_id
         .map(canonical_agent_id)
         .and_then(|agent_id| resolve_agent_workspace_preference(&agent_id, &agent_prefs).ok())
         .or_else(|| terminal::resolve_workspace_preference().ok());
-    let cfg = config::ensure_loaded();
-
     let mut out = Vec::new();
     push_workspace_option(&mut out, &home, "Home", "home", false);
     for workspace in cfg.all_workspaces() {
@@ -55,8 +53,7 @@ pub(super) fn set_workspace(workspace_path: &str, agent_id: Option<String>) -> R
     let path =
         terminal::canonical_workspace_path(Path::new(workspace_path)).map_err(|e| e.to_string())?;
     register_launcher_workspace(&path)?;
-    let cfg = config::ensure_loaded();
-    let agent_prefs = agent_state::read_prefs();
+    let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
     let agent_id = agent_id
         .map(|id| canonical_agent_id(&id))
         .unwrap_or_else(|| agent_state::resolve_selected_agent(&agent_prefs, &cfg));

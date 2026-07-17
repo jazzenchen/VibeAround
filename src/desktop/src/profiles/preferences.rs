@@ -91,8 +91,7 @@ pub(super) fn launcher_preferences() -> LauncherPreferences {
             installed: true,
         })
         .collect();
-    let cfg = config::ensure_loaded();
-    let agent_prefs = agent_state::read_prefs();
+    let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
     let selected_agent = agent_state::resolve_selected_agent(&agent_prefs, &cfg);
     let default_agent = agent_state::resolve_default_agent(&agent_prefs, &cfg);
     let default_profile_id =

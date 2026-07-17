@@ -212,8 +212,7 @@ pub async fn launcher_plan_handler(
 }
 
 fn launcher_preferences() -> crate::api_types::LauncherPreferencesResponse {
-    let cfg = config::ensure_loaded();
-    let prefs = agent_state::read_prefs();
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
     let selected_agent = agent_state::resolve_selected_agent(&prefs, &cfg);
     let default_agent = agent_state::resolve_default_agent(&prefs, &cfg);
     let default_profile_id = agent_state::resolve_default_profile(&prefs, &cfg, &default_agent);
@@ -342,8 +341,7 @@ fn build_direct_launch_plan(
     launch_id: &str,
     body: LaunchPlanBody,
 ) -> Result<crate::api_types::LaunchPlanResponse, (StatusCode, String)> {
-    let cfg = config::ensure_loaded();
-    let prefs = agent_state::read_prefs();
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
     let terminal_id = body.terminal_id.as_deref();
     let agent_id = match body.agent_id {
         Some(agent_id) => canonical_agent_id(&agent_id)?,
@@ -398,8 +396,7 @@ fn build_profile_launch_plan(
     profile_id: String,
     body: LaunchPlanBody,
 ) -> Result<crate::api_types::LaunchPlanResponse, (StatusCode, String)> {
-    let cfg = config::ensure_loaded();
-    let prefs = agent_state::read_prefs();
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
     let terminal_id = body.terminal_id.as_deref();
     let profile = load_profile(&profile_id)?;
     let launch_target = body.launch_target.ok_or_else(|| {

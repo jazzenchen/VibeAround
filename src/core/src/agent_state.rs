@@ -134,11 +134,19 @@ pub type ProfileConnectionPreferences =
 pub fn read_prefs() -> AgentsPrefsFile {
     config::read_settings_json()
         .ok()
-        .map(|root| prefs_from_settings(&root))
+        .map(|root| prefs_from_settings_json(&root))
         .unwrap_or_default()
 }
 
-fn prefs_from_settings(root: &Value) -> AgentsPrefsFile {
+pub fn read_config_and_prefs() -> (config::Config, AgentsPrefsFile) {
+    let root = config::read_settings_json().unwrap_or_else(|_| serde_json::json!({}));
+    (
+        config::config_from_settings_json(&root),
+        prefs_from_settings_json(&root),
+    )
+}
+
+pub fn prefs_from_settings_json(root: &Value) -> AgentsPrefsFile {
     root.get("launcher")
         .cloned()
         .and_then(
@@ -361,7 +369,7 @@ fn update_prefs_in_settings(
     root: &mut Value,
     f: impl FnOnce(&mut AgentsPrefsFile),
 ) -> Result<(), String> {
-    let mut prefs = prefs_from_settings(root);
+    let mut prefs = prefs_from_settings_json(root);
     f(&mut prefs);
     let value = serde_json::to_value(prefs).map_err(|error| error.to_string())?;
     let prefs_obj = value.as_object().cloned().unwrap_or_default();

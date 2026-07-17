@@ -444,6 +444,10 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         return Config::default();
     };
 
+    config_from_settings_json(&root)
+}
+
+pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
     let tunnel_provider = root
         .get("tunnel")
         .and_then(|t| t.get("provider"))
@@ -494,7 +498,7 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .cloned()
         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-    let workspace_settings = workspace_settings_from_json(&root);
+    let workspace_settings = workspace_settings_from_json(root);
     let default_workspace = workspace_settings.default_workspace;
     let workspaces = workspace_settings.workspaces;
 
@@ -551,10 +555,10 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         })
         .unwrap_or_default();
 
-    let api_bridge = load_api_bridge_config(&root);
-    let local_agent_api = load_local_agent_api_config(&root);
-    let search_tool = load_search_tool_config(&root);
-    let remote = load_remote_config(&root);
+    let api_bridge = load_api_bridge_config(root);
+    let local_agent_api = load_local_agent_api_config(root);
+    let search_tool = load_search_tool_config(root);
+    let remote = load_remote_config(root);
 
     let proxy = root
         .get("proxy")
@@ -935,12 +939,20 @@ pub fn set_default_workspace_path(path: &Path) -> Result<(), String> {
     mutate_settings_json(|root| set_default_workspace_in_settings(root, path))
 }
 
-/// Read the raw settings JSON file after ensuring the data directory exists.
+/// Read the raw settings JSON without creating files as a side effect.
+/// A missing file is equivalent to the embedded default settings document.
 pub fn read_settings_json() -> Result<serde_json::Value, String> {
-    ensure_rustls_provider();
-    init_data_dir();
-    let path = settings_path();
-    let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    read_settings_json_at(&settings_path())
+}
+
+fn read_settings_json_at(path: &Path) -> Result<serde_json::Value, String> {
+    let data = match std::fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            DEFAULT_SETTINGS_JSON.to_string()
+        }
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
@@ -1378,6 +1390,17 @@ mod tests {
             serde_json::json!({ "onboarded": true })
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn missing_settings_read_returns_defaults_without_creating_files() {
+        let dir = unique_test_dir("read-missing");
+        let path = dir.join("settings.json");
+
+        let settings = read_settings_json_at(&path).unwrap();
+
+        assert_eq!(settings, serde_json::json!({ "workspaces": [] }));
+        assert!(!dir.exists());
     }
 
     #[test]

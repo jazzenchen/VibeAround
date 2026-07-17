@@ -432,8 +432,7 @@ pub async fn profiles_launch_default() -> Result<(), String> {
 }
 
 pub(crate) fn profiles_launch_default_sync() -> Result<(), String> {
-    let cfg = config::ensure_loaded();
-    let agent_prefs = agent_state::read_prefs();
+    let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
     let agent_id = agent_state::resolve_default_agent(&agent_prefs, &cfg);
     let profile_id = agent_state::resolve_default_profile(&agent_prefs, &cfg, &agent_id);
     if let Some(profile_id) = profile_id {
