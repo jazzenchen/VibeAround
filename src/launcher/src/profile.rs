@@ -108,8 +108,7 @@ fn read_profile_file(path: &Path) -> anyhow::Result<LaunchProfile> {
 }
 
 fn model_profile_into_native_input(profile: ProfileDef) -> anyhow::Result<NativeLaunchInput> {
-    let cfg = config::ensure_loaded();
-    let prefs = agent_state::read_prefs();
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
     let launch_target = resolve_launch_target_for_profile(&profile, &prefs, &cfg)?;
     let route = profiles::connections::resolve_profile_agent_route(&profile, &launch_target)
         .ok_or_else(|| anyhow!("profile '{}' cannot launch '{}'", profile.id, launch_target))?;
