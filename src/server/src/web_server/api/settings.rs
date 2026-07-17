@@ -5,7 +5,22 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
-type ApiResult = Result<Response, Response>;
+#[derive(Debug)]
+pub struct SettingsApiError(Box<Response>);
+
+impl SettingsApiError {
+    fn new(response: impl IntoResponse) -> Self {
+        Self(Box::new(response.into_response()))
+    }
+}
+
+impl IntoResponse for SettingsApiError {
+    fn into_response(self) -> Response {
+        *self.0
+    }
+}
+
+type ApiResult = Result<Response, SettingsApiError>;
 
 /// GET /api/settings -- return raw settings.json with its current ETag.
 pub async fn get_settings_handler() -> ApiResult {
@@ -22,11 +37,10 @@ pub async fn put_settings_handler(
     Json(settings): Json<serde_json::Value>,
 ) -> ApiResult {
     if !settings.is_object() {
-        return Err((
+        return Err(SettingsApiError::new((
             StatusCode::BAD_REQUEST,
             "settings body must be a JSON object",
-        )
-            .into_response());
+        )));
     }
     let expected_revision = parse_if_match(&headers)?;
     let result = tokio::task::spawn_blocking(move || {
@@ -53,7 +67,7 @@ pub async fn put_settings_handler(
             )
                 .into_response();
             let response = response_with_etag(response, &snapshot.revision)?;
-            Err(response)
+            Err(SettingsApiError::new(response))
         }
     }
 }
@@ -69,10 +83,10 @@ pub async fn patch_settings_handler(Json(patch): Json<serde_json::Value>) -> Api
     .map_err(internal_join_error)?
     .map_err(|error| match error.as_str() {
         error if error.starts_with("invalid settings patch:") => {
-            (StatusCode::BAD_REQUEST, error.to_string()).into_response()
+            SettingsApiError::new((StatusCode::BAD_REQUEST, error.to_string()))
         }
         error if error.starts_with("settings patch conflict:") => {
-            (StatusCode::CONFLICT, error.to_string()).into_response()
+            SettingsApiError::new((StatusCode::CONFLICT, error.to_string()))
         }
         _ => internal_error(error),
     })?;
@@ -83,22 +97,23 @@ pub async fn patch_settings_handler(Json(patch): Json<serde_json::Value>) -> Api
     )
 }
 
-fn parse_if_match(headers: &HeaderMap) -> Result<String, Response> {
+fn parse_if_match(headers: &HeaderMap) -> Result<String, SettingsApiError> {
     let raw = headers.get(IF_MATCH).ok_or_else(|| {
-        (
+        SettingsApiError::new((
             StatusCode::PRECONDITION_REQUIRED,
             "PUT /api/settings requires If-Match",
-        )
-            .into_response()
+        ))
     })?;
     let raw = raw
         .to_str()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "invalid If-Match header").into_response())?;
+        .map_err(|_| SettingsApiError::new((StatusCode::BAD_REQUEST, "invalid If-Match header")))?;
     let revision = raw
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
         .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "invalid If-Match header").into_response())?;
+        .ok_or_else(|| {
+            SettingsApiError::new((StatusCode::BAD_REQUEST, "invalid If-Match header"))
+        })?;
     Ok(revision.to_ascii_lowercase())
 }
 
@@ -109,11 +124,11 @@ fn response_with_etag(mut response: Response, revision: &str) -> ApiResult {
     Ok(response)
 }
 
-fn internal_error(error: String) -> Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, error).into_response()
+fn internal_error(error: String) -> SettingsApiError {
+    SettingsApiError::new((StatusCode::INTERNAL_SERVER_ERROR, error))
 }
 
-fn internal_join_error(error: tokio::task::JoinError) -> Response {
+fn internal_join_error(error: tokio::task::JoinError) -> SettingsApiError {
     internal_error(error.to_string())
 }
 
