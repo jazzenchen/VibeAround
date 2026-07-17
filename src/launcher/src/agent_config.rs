@@ -1,14 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use serde_json::{Map, Value};
 
-use crate::paths;
-
 pub fn resolve_configured_agent_executable(agent_id: &str) -> anyhow::Result<Option<PathBuf>> {
-    let path = paths::settings_path()?;
-    let config = read_settings_config(&path)?;
+    let config = common::config::read_settings_json().map_err(anyhow::Error::msg)?;
     Ok(agent_entry(&config, agent_id).and_then(executable_path_from_entry))
 }
 
@@ -46,17 +42,6 @@ fn executable_path_from_entry(entry: &Map<String, Value>) -> Option<PathBuf> {
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
-}
-
-fn read_settings_config(path: &Path) -> anyhow::Result<Value> {
-    let body = match fs::read_to_string(path) {
-        Ok(body) => body,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Value::Object(Map::new()))
-        }
-        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-    };
-    serde_json::from_str(&body).with_context(|| format!("parse {}", path.display()))
 }
 
 fn ensure_child_object<'a>(
@@ -176,6 +161,38 @@ mod tests {
             "path_scan"
         );
         assert!(!agents_json_exists);
+    }
+
+    #[test]
+    fn reads_settings_from_core_expanded_data_dir() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let home = temp_dir();
+        fs::create_dir_all(&home).expect("create temp home");
+        fs::write(
+            home.join("settings.json"),
+            r#"{
+  "launcher": {
+    "agents": {
+      "codex": {
+        "executable": { "path": "/usr/local/bin/codex" }
+      }
+    }
+  }
+}"#,
+        )
+        .expect("write settings config");
+        let previous_home = std::env::var_os("HOME");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("VIBEAROUND_DATA_DIR", "~");
+
+        let path = resolve_configured_agent_executable("codex").expect("read config");
+
+        restore_env("HOME", previous_home);
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        let _ = fs::remove_dir_all(&home);
+
+        assert_eq!(path, Some(PathBuf::from("/usr/local/bin/codex")));
     }
 
     fn temp_dir() -> PathBuf {

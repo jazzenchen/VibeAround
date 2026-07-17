@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{bail, Context};
 use serde_json::{Map, Value};
 
-use crate::{paths, TerminalChoice};
+use crate::TerminalChoice;
 
 pub fn resolve_terminal_choice(explicit: Option<TerminalChoice>) -> anyhow::Result<TerminalChoice> {
     if let Some(choice) = explicit {
@@ -23,15 +23,7 @@ pub fn detect_default_terminal() -> TerminalChoice {
 }
 
 fn read_or_initialize_terminal() -> anyhow::Result<TerminalChoice> {
-    let path = paths::settings_path()?;
-    let config = read_settings_config(&path)?;
-    if let Some(value) = config
-        .get("launcher")
-        .and_then(|launcher| launcher.get("terminal"))
-    {
-        return terminal_from_config_value(value, &path);
-    }
-
+    let path = common::config::settings_path();
     let choice = detect_default_terminal();
     common::config::mutate_settings_json(|config| {
         if let Some(value) = config
@@ -80,20 +72,6 @@ fn ensure_terminal_supported(choice: TerminalChoice, source: &str) -> anyhow::Re
         );
     }
     Ok(())
-}
-
-fn read_settings_config(path: &Path) -> anyhow::Result<Map<String, Value>> {
-    let body = match fs::read_to_string(path) {
-        Ok(body) => body,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
-        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-    };
-    let value: Value =
-        serde_json::from_str(&body).with_context(|| format!("parse {}", path.display()))?;
-    match value {
-        Value::Object(object) => Ok(object),
-        _ => bail!("settings config {} must be a JSON object", path.display()),
-    }
 }
 
 fn launcher_config_mut(config: &mut Map<String, Value>) -> &mut Map<String, Value> {

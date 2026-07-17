@@ -18,10 +18,6 @@ pub fn launch_profile_path(name: &str) -> anyhow::Result<PathBuf> {
     Ok(data_dir()?.join("profiles").join(format!("{name}.json")))
 }
 
-pub fn settings_path() -> anyhow::Result<PathBuf> {
-    Ok(data_dir()?.join("settings.json"))
-}
-
 pub fn validate_launch_name(name: &str, label: &str) -> anyhow::Result<()> {
     if name.trim().is_empty()
         || name.contains('/')
