@@ -10,7 +10,6 @@ use common::{archive, plugins, resources};
 #[serde(rename_all = "camelCase")]
 pub struct InstallPluginRequest {
     pub plugin_id: String,
-    pub github_url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,23 +46,17 @@ where
     F: FnMut(String),
     C: Fn() -> bool,
 {
-    let plugin_def = resources::plugin_by_id(&request.plugin_id);
-    let plugin_kind = plugin_def
-        .map(|plugin| plugin.kind.as_str())
-        .unwrap_or("channel");
+    let plugin_def = catalog_plugin(&request.plugin_id)?;
+    let plugin_kind = plugin_def.kind.as_str();
     let install_steps = install_steps_for(plugin_def);
     let plugins_dir = plugins::user_plugins_dir();
-    let target_dir = plugins_dir.join(
-        plugin_def
-            .map(resources::PluginDef::install_dir_name)
-            .unwrap_or(request.plugin_id.as_str()),
-    );
+    let target_dir = plugins_dir.join(plugin_def.install_dir_name());
     let mut logs = Vec::new();
 
     std::fs::create_dir_all(&plugins_dir).context("creating plugins directory")?;
 
     if has_step(&install_steps, "git_clone") {
-        if let Some(archive_url) = portable_archive_url(&request.github_url) {
+        if let Some(archive_url) = portable_archive_url(&plugin_def.github) {
             install_github_archive_checkout(
                 &target_dir,
                 &archive_url,
@@ -144,10 +137,10 @@ where
             if needs_clone {
                 tracing::info!(
                     "[install_plugin] cloning {} → {:?}",
-                    request.github_url,
+                    plugin_def.github,
                     target_dir
                 );
-                let message = format!("Running: git clone --depth 1 {}", request.github_url);
+                let message = format!("Running: git clone --depth 1 {}", plugin_def.github);
                 logs.push(message.clone());
                 on_log(message);
                 let mut command = common::process::env::command("git");
@@ -155,7 +148,7 @@ where
                     "clone",
                     "--depth",
                     "1",
-                    &request.github_url,
+                    &plugin_def.github,
                     &target_dir.to_string_lossy(),
                 ]);
                 let output = command_streaming(command, &mut on_log, &is_cancelled)
@@ -282,10 +275,10 @@ pub async fn check_plugin_status(plugin_id: String) -> Result<String, String> {
 }
 
 pub(crate) fn check_plugin_status_sync(plugin_id: &str) -> String {
-    let plugin_def = resources::plugin_by_id(plugin_id);
-    let plugin_kind = plugin_def
-        .map(|plugin| plugin.kind.as_str())
-        .unwrap_or("channel");
+    let Ok(plugin_def) = catalog_plugin(plugin_id) else {
+        return "unknown_plugin".to_string();
+    };
+    let plugin_kind = plugin_def.kind.as_str();
 
     // Onboarding installs must verify the per-user plugin tree. Project plugins
     // are useful in debug builds, but they should not satisfy Startkit's
@@ -298,11 +291,7 @@ pub(crate) fn check_plugin_status_sync(plugin_id: &str) -> String {
         return "ready".to_string();
     }
 
-    let target_dir = plugins::user_plugins_dir().join(
-        plugin_def
-            .map(resources::PluginDef::install_dir_name)
-            .unwrap_or(plugin_id),
-    );
+    let target_dir = plugins::user_plugins_dir().join(plugin_def.install_dir_name());
     if !target_dir.join("plugin.json").exists() {
         return "not_installed".to_string();
     }
@@ -424,11 +413,34 @@ fn default_install_steps() -> Vec<String> {
     ]
 }
 
-fn install_steps_for(plugin_def: Option<&resources::PluginDef>) -> Vec<String> {
-    match plugin_def {
-        Some(plugin) if !plugin.install_steps.is_empty() => plugin.install_steps.clone(),
-        _ => default_install_steps(),
+fn install_steps_for(plugin_def: &resources::PluginDef) -> Vec<String> {
+    if plugin_def.install_steps.is_empty() {
+        default_install_steps()
+    } else {
+        plugin_def.install_steps.clone()
     }
+}
+
+fn catalog_plugin(plugin_id: &str) -> anyhow::Result<&'static resources::PluginDef> {
+    if !valid_catalog_name(plugin_id) {
+        bail!("invalid plugin id '{plugin_id}'");
+    }
+    let plugin = resources::plugin_by_id(plugin_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown managed plugin '{plugin_id}'"))?;
+    if !valid_catalog_name(plugin.install_dir_name()) {
+        bail!("plugin catalog contains an invalid install directory");
+    }
+    Ok(plugin)
+}
+
+fn valid_catalog_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric()
 }
 
 fn has_step(steps: &[String], step: &str) -> bool {
@@ -649,6 +661,24 @@ fn output_excerpt(label: &str, output: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_only_single_safe_catalog_names() {
+        assert!(valid_catalog_name("va-search-tool"));
+        assert!(valid_catalog_name("qqbot"));
+        assert!(!valid_catalog_name("../qqbot"));
+        assert!(!valid_catalog_name("plugin/name"));
+        assert!(!valid_catalog_name("Plugin"));
+        assert!(!valid_catalog_name("-plugin"));
+        assert!(!valid_catalog_name("plugin-"));
+    }
+
+    #[test]
+    fn rejects_plugins_outside_the_catalog() {
+        let error = catalog_plugin("not-in-catalog").unwrap_err();
+        assert!(error.to_string().contains("unknown managed plugin"));
+        assert!(catalog_plugin("../../tmp").is_err());
+    }
 
     #[test]
     fn detects_tencent_openclaw_qqbot_dependency() {

@@ -79,7 +79,6 @@ async fn install_channel_plugin<R: Runtime>(
     let result = crate::onboarding::plugin_install::run_install_inner_with_progress(
         crate::onboarding::plugin_install::InstallPluginRequest {
             plugin_id: channel_id.to_string(),
-            github_url: plugin.github.clone(),
         },
         |line| {
             emit_progress_event(
