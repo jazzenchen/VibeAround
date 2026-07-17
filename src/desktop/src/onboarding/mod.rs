@@ -873,13 +873,15 @@ pub async fn finish_onboarding<R: Runtime>(
     }
     drop(sessions);
 
-    config::update_settings_json_async(|settings| {
-        if let Some(obj) = settings.as_object_mut() {
-            obj.insert("onboarded".into(), serde_json::json!(true));
-        }
+    tauri::async_runtime::spawn_blocking(|| {
+        config::update_settings_json(|settings| {
+            if let Some(obj) = settings.as_object_mut() {
+                obj.insert("onboarded".into(), serde_json::json!(true));
+            }
+        })
     })
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| error.to_string())??;
 
     let _ = app.emit("onboarding-complete", ());
 

@@ -905,14 +905,6 @@ pub fn update_settings_json(mutator: impl FnOnce(&mut serde_json::Value)) -> Res
     })
 }
 
-pub async fn update_settings_json_async(
-    mutator: impl FnOnce(&mut serde_json::Value) + Send + 'static,
-) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || update_settings_json(mutator))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
 pub fn register_workspace_path(path: &Path) -> Result<(), String> {
     mutate_settings_json(|root| add_workspace_to_settings(root, path))
 }
