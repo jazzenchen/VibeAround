@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context};
 use common::{agent_state, config, profiles};
-use profiles::{normalize_legacy_profile, ProfileDef};
+use profiles::ProfileDef;
 use serde::{Deserialize, Serialize};
 
 use crate::{paths, NativeLaunchArgs, NativeLaunchInput, TerminalChoice};
@@ -84,9 +84,8 @@ impl LaunchProfile {
 
 pub fn load_launch_profile(name: &str) -> anyhow::Result<NativeLaunchInput> {
     paths::validate_launch_name(name, "profile")?;
-    let profile = profiles::schema::load(name)
-        .map(normalize_legacy_profile)
-        .ok_or_else(|| anyhow!("profile '{}' not found", name))?;
+    let profile =
+        profiles::load_profile(name).ok_or_else(|| anyhow!("profile '{}' not found", name))?;
     model_profile_into_native_input(profile)
 }
 

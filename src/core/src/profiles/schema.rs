@@ -433,10 +433,7 @@ fn load_path(path: &Path) -> anyhow::Result<ProfileDef> {
     Ok(profile)
 }
 
-pub fn save(profile: &ProfileDef) -> anyhow::Result<()> {
-    save_at(&profiles_dir(), profile)
-}
-
+#[cfg(test)]
 fn save_at(dir: &Path, profile: &ProfileDef) -> anyhow::Result<()> {
     let locked = LockedProfileFile::acquire_at(dir, &profile.id)?;
     locked.save(profile)
@@ -597,11 +594,6 @@ pub fn set_connection(
     } else {
         profile.connections.insert(agent_id.to_string(), preference);
     }
-}
-
-pub fn delete(id: &str) -> anyhow::Result<()> {
-    let locked = LockedProfileFile::acquire(id)?;
-    locked.delete()
 }
 
 // ---------------------------------------------------------------------------
