@@ -306,12 +306,7 @@ pub fn write_agent_launch_args(agent_id: &str, launch_args: AgentLaunchArgs) -> 
     })
 }
 
-pub fn remove_profile_references(profile_id: &str) -> anyhow::Result<()> {
-    config::mutate_settings_json(|root| remove_profile_references_from_settings(root, profile_id))
-        .map_err(anyhow::Error::msg)
-}
-
-pub fn remove_profile_references_from_settings(
+pub(crate) fn remove_profile_references_from_settings(
     root: &mut Value,
     profile_id: &str,
 ) -> Result<(), String> {
@@ -333,12 +328,7 @@ pub fn remove_profile_references_from_settings(
     })
 }
 
-pub fn remove_workspace_references(workspace: &std::path::Path) -> anyhow::Result<()> {
-    config::mutate_settings_json(|root| remove_workspace_references_from_settings(root, workspace))
-        .map_err(anyhow::Error::msg)
-}
-
-pub fn remove_workspace_references_from_settings(
+pub(crate) fn remove_workspace_references_from_settings(
     root: &mut Value,
     workspace: &std::path::Path,
 ) -> Result<(), String> {
@@ -347,7 +337,7 @@ pub fn remove_workspace_references_from_settings(
             if preference
                 .workspace
                 .as_deref()
-                .map(|candidate| paths_equal(candidate, workspace))
+                .map(|candidate| config::workspace_paths_equal(candidate, workspace))
                 .unwrap_or(false)
             {
                 preference.workspace = None;
@@ -360,15 +350,6 @@ pub fn remove_workspace_references_from_settings(
                 || !preference.launch_args.is_empty()
         });
     })
-}
-
-fn paths_equal(left: &std::path::Path, right: &std::path::Path) -> bool {
-    left == right
-        || std::fs::canonicalize(left)
-            .ok()
-            .zip(std::fs::canonicalize(right).ok())
-            .map(|(left, right)| left == right)
-            .unwrap_or(false)
 }
 
 fn update_prefs(f: impl FnOnce(&mut AgentsPrefsFile)) -> anyhow::Result<()> {

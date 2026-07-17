@@ -301,13 +301,6 @@ pub fn read_workspace_preference() -> Option<PathBuf> {
     read_prefs_file().workspace
 }
 
-pub fn write_workspace_preference(path: PathBuf) -> anyhow::Result<()> {
-    let path = canonical_workspace_path(&path)?;
-    update_prefs_file(|prefs| {
-        prefs.workspace = Some(path);
-    })
-}
-
 pub fn read_compatibility_bridge_preference() -> CompatibilityBridgeMode {
     read_prefs_file()
         .compatibility_bridge

@@ -202,6 +202,18 @@ pub struct WorkspaceSettings {
     pub workspaces: Vec<PathBuf>,
 }
 
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RemoveWorkspaceError {
+    #[error("cannot remove the default workspace")]
+    Default,
+    #[error("cannot remove the built-in workspace")]
+    Builtin,
+    #[error("workspace is not registered")]
+    Unregistered,
+    #[error("{0}")]
+    Storage(String),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ToolchainMode {
     #[default]
@@ -897,16 +909,30 @@ pub async fn update_settings_json_async(
         .map_err(|error| error.to_string())?
 }
 
-/// Remove a user workspace registration from settings.json.
-///
-/// This does not delete the directory on disk. Legacy workspace fields are
-/// removed too because they are still read as regular workspace entries.
-pub fn remove_workspace_path(path: &Path) -> Result<bool, String> {
-    let mut removed = false;
-    update_settings_json(|root| {
-        removed = remove_workspace_from_settings(root, path);
-    })?;
-    Ok(removed)
+pub fn register_workspace_path(path: &Path) -> Result<(), String> {
+    mutate_settings_json(|root| add_workspace_to_settings(root, path))
+}
+
+pub fn reorder_workspace_paths(requested: &[PathBuf]) -> Result<(), String> {
+    mutate_settings_json(|root| reorder_workspaces_in_settings(root, requested))
+}
+
+pub fn remove_registered_workspace(path: &Path) -> Result<(), RemoveWorkspaceError> {
+    let mut rejection = None;
+    let result = mutate_settings_json(|root| {
+        remove_registered_workspace_from_settings(root, path).map_err(|error| {
+            rejection = Some(error);
+            "workspace removal rejected".to_string()
+        })
+    });
+    if let Some(error) = rejection {
+        return Err(error);
+    }
+    result.map_err(RemoveWorkspaceError::Storage)
+}
+
+pub fn set_default_workspace_path(path: &Path) -> Result<(), String> {
+    mutate_settings_json(|root| set_default_workspace_in_settings(root, path))
 }
 
 /// Read the raw settings JSON file after ensuring the data directory exists.
@@ -1055,7 +1081,163 @@ fn write_settings_json_to_path(path: &Path, root: &serde_json::Value) -> Result<
     crate::file_replace::write_private(path, pretty).map_err(|e| e.to_string())
 }
 
-pub fn remove_workspace_from_settings(root: &mut serde_json::Value, path: &Path) -> bool {
+fn add_workspace_to_settings(root: &mut serde_json::Value, path: &Path) -> Result<(), String> {
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let workspaces = obj
+        .entry("workspaces".to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    let workspaces = workspaces
+        .as_array_mut()
+        .ok_or_else(|| "settings.json workspaces must be an array".to_string())?;
+    if !workspaces.iter().any(|value| {
+        value
+            .as_str()
+            .map(|candidate| settings_path_matches(candidate, path))
+            .unwrap_or(false)
+    }) {
+        workspaces.push(serde_json::Value::String(
+            path.to_string_lossy().to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn reorder_workspaces_in_settings(
+    root: &mut serde_json::Value,
+    requested: &[PathBuf],
+) -> Result<(), String> {
+    let settings = workspace_settings_from_json(root);
+    let builtin = builtin_workspaces_dir();
+    let mut ordered = Vec::new();
+
+    for requested_path in requested {
+        if workspace_paths_equal(requested_path, &settings.default_workspace)
+            || workspace_paths_equal(requested_path, &builtin)
+        {
+            continue;
+        }
+        if let Some(current) = settings
+            .workspaces
+            .iter()
+            .find(|current| workspace_paths_equal(current, requested_path))
+        {
+            push_unique_workspace_path(&mut ordered, current.clone());
+        }
+    }
+    for workspace in settings.workspaces {
+        if !workspace_paths_equal(&workspace, &settings.default_workspace)
+            && !workspace_paths_equal(&workspace, &builtin)
+        {
+            push_unique_workspace_path(&mut ordered, workspace);
+        }
+    }
+
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    obj.insert(
+        "workspaces".to_string(),
+        serde_json::Value::Array(
+            ordered
+                .into_iter()
+                .map(|path| serde_json::Value::String(path.to_string_lossy().to_string()))
+                .collect(),
+        ),
+    );
+    Ok(())
+}
+
+fn remove_registered_workspace_from_settings(
+    root: &mut serde_json::Value,
+    path: &Path,
+) -> Result<(), RemoveWorkspaceError> {
+    let settings = workspace_settings_from_json(root);
+    if workspace_paths_equal(path, &settings.default_workspace) {
+        return Err(RemoveWorkspaceError::Default);
+    }
+    if workspace_paths_equal(path, &builtin_workspaces_dir()) {
+        return Err(RemoveWorkspaceError::Builtin);
+    }
+    if !settings
+        .workspaces
+        .iter()
+        .any(|workspace| workspace_paths_equal(workspace, path))
+    {
+        return Err(RemoveWorkspaceError::Unregistered);
+    }
+
+    remove_workspace_from_settings(root, path);
+    replace_removed_launcher_workspace(root, path, &settings.default_workspace)
+        .map_err(RemoveWorkspaceError::Storage)?;
+    crate::agent_state::remove_workspace_references_from_settings(root, path)
+        .map_err(RemoveWorkspaceError::Storage)
+}
+
+fn replace_removed_launcher_workspace(
+    root: &mut serde_json::Value,
+    removed: &Path,
+    fallback: &Path,
+) -> Result<(), String> {
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let Some(launcher) = obj
+        .get_mut("launcher")
+        .and_then(|value| value.as_object_mut())
+    else {
+        return Ok(());
+    };
+    let uses_removed = launcher
+        .get("workspace")
+        .and_then(|value| value.as_str())
+        .map(|candidate| settings_path_matches(candidate, removed))
+        .unwrap_or(false);
+    if uses_removed {
+        launcher.insert(
+            "workspace".to_string(),
+            serde_json::Value::String(fallback.to_string_lossy().to_string()),
+        );
+    }
+    Ok(())
+}
+
+fn set_default_workspace_in_settings(
+    root: &mut serde_json::Value,
+    path: &Path,
+) -> Result<(), String> {
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    obj.insert(
+        "default_workspace".to_string(),
+        serde_json::Value::String(path.to_string_lossy().to_string()),
+    );
+    if let Some(workspaces) = obj
+        .get_mut("workspaces")
+        .and_then(|value| value.as_array_mut())
+    {
+        workspaces.retain(|value| {
+            value
+                .as_str()
+                .map(|candidate| !settings_path_matches(candidate, path))
+                .unwrap_or(true)
+        });
+    }
+    Ok(())
+}
+
+fn push_unique_workspace_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths
+        .iter()
+        .any(|existing| workspace_paths_equal(existing, &path))
+    {
+        paths.push(path);
+    }
+}
+
+fn remove_workspace_from_settings(root: &mut serde_json::Value, path: &Path) -> bool {
     let Some(obj) = root.as_object_mut() else {
         return false;
     };
@@ -1092,14 +1274,22 @@ pub fn remove_workspace_from_settings(root: &mut serde_json::Value, path: &Path)
 }
 
 fn settings_path_matches(candidate: &str, target: &Path) -> bool {
-    paths_equal(&expand_home(candidate.trim()), target)
+    workspace_paths_equal(&expand_home(candidate.trim()), target)
 }
 
-fn paths_equal(left: &Path, right: &Path) -> bool {
+pub fn workspace_paths_equal(left: &Path, right: &Path) -> bool {
+    let left = left
+        .to_str()
+        .map(expand_home)
+        .unwrap_or_else(|| left.to_path_buf());
+    let right = right
+        .to_str()
+        .map(expand_home)
+        .unwrap_or_else(|| right.to_path_buf());
     left == right
-        || std::fs::canonicalize(left)
+        || std::fs::canonicalize(&left)
             .ok()
-            .zip(std::fs::canonicalize(right).ok())
+            .zip(std::fs::canonicalize(&right).ok())
             .map(|(left, right)| left == right)
             .unwrap_or(false)
 }
@@ -1817,8 +2007,75 @@ mod tests {
     }
 
     #[test]
+    fn reorder_preserves_workspace_added_after_request_snapshot() {
+        let mut settings = serde_json::json!({
+            "default_workspace": "/tmp/default",
+            "workspaces": ["/tmp/first", "/tmp/second", "/tmp/concurrent"],
+            "enabled_agents": ["codex"]
+        });
+        let requested = vec![
+            PathBuf::from("/tmp/second"),
+            PathBuf::from("/tmp/first"),
+            PathBuf::from("/tmp/unknown"),
+        ];
+
+        reorder_workspaces_in_settings(&mut settings, &requested).unwrap();
+
+        assert_eq!(
+            settings["workspaces"],
+            serde_json::json!(["/tmp/second", "/tmp/first", "/tmp/concurrent"])
+        );
+        assert_eq!(settings["enabled_agents"], serde_json::json!(["codex"]));
+    }
+
+    #[test]
+    fn remove_validates_latest_settings_and_clears_workspace_references() {
+        let mut settings = serde_json::json!({
+            "default_workspace": "/tmp/default",
+            "workspaces": ["/tmp/removed", "/tmp/kept"],
+            "launcher": {
+                "terminal": "terminal",
+                "workspace": "/tmp/removed",
+                "agents": {
+                    "codex": { "workspace": "/tmp/removed" },
+                    "claude": { "workspace": "/tmp/kept" }
+                }
+            }
+        });
+
+        assert_eq!(
+            remove_registered_workspace_from_settings(&mut settings, Path::new("/tmp/default"))
+                .unwrap_err(),
+            RemoveWorkspaceError::Default
+        );
+        assert_eq!(
+            remove_registered_workspace_from_settings(&mut settings, Path::new("/tmp/missing"))
+                .unwrap_err(),
+            RemoveWorkspaceError::Unregistered
+        );
+        assert_eq!(
+            remove_registered_workspace_from_settings(&mut settings, &builtin_workspaces_dir())
+                .unwrap_err(),
+            RemoveWorkspaceError::Builtin
+        );
+
+        remove_registered_workspace_from_settings(&mut settings, Path::new("/tmp/removed"))
+            .unwrap();
+
+        assert_eq!(settings["workspaces"], serde_json::json!(["/tmp/kept"]));
+        assert_eq!(settings["launcher"]["workspace"], "/tmp/default");
+        assert!(settings["launcher"]["agents"].get("codex").is_none());
+        assert_eq!(
+            settings["launcher"]["agents"]["claude"]["workspace"],
+            "/tmp/kept"
+        );
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
+    }
+
+    #[test]
     fn expand_home_handles_bare_home() {
         assert_eq!(expand_home("~"), home_dir());
         assert_eq!(expand_home("~/project"), home_dir().join("project"));
+        assert!(workspace_paths_equal(Path::new("~"), &home_dir()));
     }
 }

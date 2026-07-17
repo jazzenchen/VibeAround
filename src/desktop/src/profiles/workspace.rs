@@ -1,6 +1,5 @@
 //! Workspace choices for profile/direct launches.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use common::{agent_state, config, resources};
@@ -26,15 +25,12 @@ pub(super) fn launcher_workspace_options(agent_id: Option<&str>) -> Vec<Workspac
         .map(canonical_agent_id)
         .and_then(|agent_id| resolve_agent_workspace_preference(&agent_id, &agent_prefs).ok())
         .or_else(|| terminal::resolve_workspace_preference().ok());
-    if let Some(path) = selected.as_ref() {
-        let _ = register_launcher_workspace(path);
-    }
     let cfg = config::ensure_loaded();
 
     let mut out = Vec::new();
     push_workspace_option(&mut out, &home, "Home", "home", false);
     for workspace in cfg.all_workspaces() {
-        let is_default = paths_equal(&workspace, &builtin);
+        let is_default = config::workspace_paths_equal(&workspace, &builtin);
         let kind = if is_default { "built-in" } else { "workspace" };
         let label = if is_default {
             "Default workspace".to_string()
@@ -46,7 +42,7 @@ pub(super) fn launcher_workspace_options(agent_id: Option<&str>) -> Vec<Workspac
     if let Some(path) = selected {
         if !out
             .iter()
-            .any(|option| paths_equal(Path::new(&option.path), &path))
+            .any(|option| config::workspace_paths_equal(Path::new(&option.path), &path))
         {
             let label = path_label(&path);
             push_workspace_option(&mut out, &path, &label, "selected", false);
@@ -69,76 +65,15 @@ pub(super) fn set_workspace(workspace_path: &str, agent_id: Option<String>) -> R
 
 pub(super) fn remove_workspace(workspace_path: String) -> Result<(), String> {
     let path = PathBuf::from(workspace_path);
-    let cfg = config::ensure_loaded();
-    let builtin = config::builtin_workspaces_dir();
-    if paths_equal(&path, &builtin) {
-        return Err("Cannot remove the built-in workspace".to_string());
-    }
-    if !cfg
-        .workspaces
-        .iter()
-        .any(|workspace| paths_equal(workspace, &path))
-    {
-        return Err(format!("workspace is not registered: {}", path.display()));
-    }
-
-    config::remove_workspace_path(&path).map_err(|e| e.to_string())?;
-
-    if terminal::read_workspace_preference()
-        .as_ref()
-        .map(|selected| paths_equal(selected, &path))
-        .unwrap_or(false)
-    {
-        let fallback = config::ensure_loaded().resolve_workspace("codex");
-        terminal::write_workspace_preference(fallback).map_err(|e| e.to_string())?;
-    }
-    agent_state::remove_workspace_references(&path).map_err(|e| e.to_string())
+    config::remove_registered_workspace(&path).map_err(|error| error.to_string())
 }
 
 pub(super) fn reorder_workspaces(workspace_paths: Vec<String>) -> Result<(), String> {
-    let cfg = config::ensure_loaded();
-    let builtin = config::builtin_workspaces_dir();
-    let mut seen = HashSet::new();
-    let mut ordered = Vec::new();
-
-    for path in workspace_paths {
-        let canonical = PathBuf::from(path);
-        if paths_equal(&canonical, &builtin) {
-            continue;
-        }
-        if cfg
-            .workspaces
-            .iter()
-            .any(|workspace| paths_equal(workspace, &canonical))
-            && seen.insert(canonical.clone())
-        {
-            ordered.push(canonical);
-        }
-    }
-
-    for workspace in &cfg.workspaces {
-        if paths_equal(workspace, &builtin) {
-            continue;
-        }
-        if seen.insert(workspace.clone()) {
-            ordered.push(workspace.clone());
-        }
-    }
-
-    config::update_settings_json(|root| {
-        if let Some(obj) = root.as_object_mut() {
-            obj.insert(
-                "workspaces".into(),
-                serde_json::Value::Array(
-                    ordered
-                        .iter()
-                        .map(|path| serde_json::Value::String(path.to_string_lossy().to_string()))
-                        .collect(),
-                ),
-            );
-        }
-    })
-    .map_err(|e| e.to_string())
+    let requested = workspace_paths
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    config::reorder_workspace_paths(&requested)
 }
 
 pub(super) fn canonical_agent_id(agent_id: &str) -> String {
@@ -168,51 +103,17 @@ pub(super) fn resolve_launch_workspace(agent_id: &str) -> anyhow::Result<PathBuf
 
 fn register_launcher_workspace(path: &Path) -> Result<(), String> {
     let builtin = config::builtin_workspaces_dir();
-    if paths_equal(path, &builtin) {
+    if config::workspace_paths_equal(path, &builtin) {
         return Ok(());
     }
     if terminal::launch_home_dir()
         .as_ref()
-        .map(|home| paths_equal(path, home))
+        .map(|home| config::workspace_paths_equal(path, home))
         .unwrap_or(false)
     {
         return Ok(());
     }
-
-    let cfg = config::ensure_loaded();
-    if cfg
-        .workspaces
-        .iter()
-        .any(|workspace| paths_equal(workspace, path))
-    {
-        return Ok(());
-    }
-
-    config::update_settings_json(|root| {
-        if !root.is_object() {
-            *root = serde_json::json!({});
-        }
-        if let Some(obj) = root.as_object_mut() {
-            let workspaces = obj
-                .entry("workspaces")
-                .or_insert_with(|| serde_json::json!([]));
-            if !workspaces.is_array() {
-                *workspaces = serde_json::json!([]);
-            }
-            if let Some(arr) = workspaces.as_array_mut() {
-                let already_registered = arr
-                    .iter()
-                    .filter_map(|value| value.as_str())
-                    .any(|candidate| paths_equal(Path::new(candidate), path));
-                if !already_registered {
-                    arr.push(serde_json::Value::String(
-                        path.to_string_lossy().to_string(),
-                    ));
-                }
-            }
-        }
-    })
-    .map_err(|e| e.to_string())
+    config::register_workspace_path(path)
 }
 
 fn push_workspace_option(
@@ -224,7 +125,7 @@ fn push_workspace_option(
 ) {
     if out
         .iter()
-        .any(|option| paths_equal(Path::new(&option.path), path))
+        .any(|option| config::workspace_paths_equal(Path::new(&option.path), path))
     {
         return;
     }
@@ -247,13 +148,4 @@ fn path_label(path: &Path) -> String {
     } else {
         path.to_string_lossy().to_string()
     }
-}
-
-fn paths_equal(left: &Path, right: &Path) -> bool {
-    left == right
-        || std::fs::canonicalize(left)
-            .ok()
-            .zip(std::fs::canonicalize(right).ok())
-            .map(|(left, right)| left == right)
-            .unwrap_or(false)
 }
