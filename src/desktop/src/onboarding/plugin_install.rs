@@ -275,7 +275,13 @@ where
 }
 
 #[tauri::command]
-pub fn check_plugin_status(plugin_id: String) -> String {
+pub async fn check_plugin_status(plugin_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || check_plugin_status_sync(&plugin_id))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub(crate) fn check_plugin_status_sync(plugin_id: &str) -> String {
     let plugin_def = resources::plugin_by_id(&plugin_id);
     let plugin_kind = plugin_def
         .map(|plugin| plugin.kind.as_str())
@@ -285,8 +291,8 @@ pub fn check_plugin_status(plugin_id: String) -> String {
     // are useful in debug builds, but they should not satisfy Startkit's
     // "installed" check for a fresh user's ~/.vibearound/plugins directory.
     let ready = match plugin_kind {
-        "channel" => plugins::channel::find_user(&plugin_id).is_some(),
-        _ => plugins::find_user(&plugin_id).is_some(),
+        "channel" => plugins::channel::find_user(plugin_id).is_some(),
+        _ => plugins::find_user(plugin_id).is_some(),
     };
     if ready {
         return "ready".to_string();
@@ -295,7 +301,7 @@ pub fn check_plugin_status(plugin_id: String) -> String {
     let target_dir = plugins::user_plugins_dir().join(
         plugin_def
             .map(resources::PluginDef::install_dir_name)
-            .unwrap_or(plugin_id.as_str()),
+            .unwrap_or(plugin_id),
     );
     if !target_dir.join("plugin.json").exists() {
         return "not_installed".to_string();
