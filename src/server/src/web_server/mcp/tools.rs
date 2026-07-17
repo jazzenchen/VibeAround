@@ -227,9 +227,7 @@ pub(super) async fn mcp_prepare_handover(
             Ok(agent_id) => agent_id,
             Err(error) => return mcp_error_text(id, &error),
         };
-        let Some(profile) = common::profiles::schema::load(&profile_id)
-            .map(common::profiles::normalize_legacy_profile_and_persist)
-        else {
+        let Some(profile) = common::profiles::load_profile(&profile_id) else {
             return mcp_error_text(id, &format!("Profile '{}' was not found.", profile_id));
         };
         if common::profiles::connections::resolve_profile_agent_route(&profile, &agent_id).is_none()

@@ -1053,9 +1053,7 @@ fn validate_profile_for_agent(profile_id: &str, agent_id: &str) -> Result<(), St
     if profile_id == DIRECT_PROFILE_ID {
         return Ok(());
     }
-    let Some(profile) =
-        profiles::schema::load(&profile_id).map(profiles::normalize_legacy_profile_and_persist)
-    else {
+    let Some(profile) = profiles::load_profile(&profile_id) else {
         return Err(format!("Profile '{}' was not found.", profile_id));
     };
     if !connections::profile_can_launch_agent(&profile, agent_id) {

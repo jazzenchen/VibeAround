@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use axum::{http::StatusCode, Json};
 use common::agent_state;
-use common::profiles::{connections, normalize_legacy_profile_and_persist, runtime, schema};
+use common::profiles::{connections, runtime, schema};
 use common::{config, resources};
 use serde::Deserialize;
 
@@ -306,8 +306,7 @@ fn canonical_agent_id(agent_id: &str) -> Result<String, (StatusCode, String)> {
 }
 
 fn load_profile(id: &str) -> Result<schema::ProfileDef, (StatusCode, String)> {
-    schema::load(id)
-        .map(normalize_legacy_profile_and_persist)
+    common::profiles::load_profile(id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("profile '{id}' not found")))
 }
 

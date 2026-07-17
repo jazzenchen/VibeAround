@@ -17,7 +17,7 @@ mod workspace;
 use std::path::PathBuf;
 
 use common::agent_state;
-use common::profiles::{normalize_legacy_profile_and_persist, schema};
+use common::profiles::load_profile;
 use common::{config, resources};
 use serde::Serialize;
 use tauri::Emitter;
@@ -150,9 +150,7 @@ pub async fn profiles_launch(id: String, launch_target: String) -> Result<(), St
 }
 
 pub(crate) fn profiles_launch_sync(id: String, launch_target: String) -> Result<(), String> {
-    let profile = schema::load(&id)
-        .map(normalize_legacy_profile_and_persist)
-        .ok_or_else(|| format!("profile '{id}' not found"))?;
+    let profile = load_profile(&id).ok_or_else(|| format!("profile '{id}' not found"))?;
     if !profile_can_launch_agent(&profile, &launch_target) {
         return Err(format!("profile '{id}' cannot launch '{launch_target}'"));
     }
@@ -436,7 +434,7 @@ pub(crate) fn profiles_launch_default_sync() -> Result<(), String> {
     let agent_id = agent_state::resolve_default_agent(&agent_prefs, &cfg);
     let profile_id = agent_state::resolve_default_profile(&agent_prefs, &cfg, &agent_id);
     if let Some(profile_id) = profile_id {
-        if let Some(profile) = schema::load(&profile_id).map(normalize_legacy_profile_and_persist) {
+        if let Some(profile) = load_profile(&profile_id) {
             if profile_can_launch_agent(&profile, &agent_id) {
                 return launcher::launch(&profile, &agent_id).map_err(|e| e.to_string());
             }
@@ -463,9 +461,7 @@ pub(crate) fn profiles_launch_resume_sync(
     launch_target: String,
     session_id: String,
 ) -> Result<(), String> {
-    let profile = schema::load(&id)
-        .map(normalize_legacy_profile_and_persist)
-        .ok_or_else(|| format!("profile '{id}' not found"))?;
+    let profile = load_profile(&id).ok_or_else(|| format!("profile '{id}' not found"))?;
     if !profile_can_launch_agent(&profile, &launch_target) {
         return Err(format!("profile '{id}' cannot launch '{launch_target}'"));
     }

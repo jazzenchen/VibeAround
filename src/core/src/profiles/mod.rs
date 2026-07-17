@@ -45,6 +45,7 @@ pub enum ProfileStoreError {
     Storage(String),
 }
 
+/// Load a saved profile and persist any supported legacy migration.
 pub fn load_profile(id: &str) -> Option<ProfileDef> {
     schema::load(id).map(normalize_legacy_profile_and_persist)
 }
@@ -260,7 +261,7 @@ pub fn normalize_legacy_profile(mut profile: ProfileDef) -> ProfileDef {
     profile
 }
 
-pub fn normalize_legacy_profile_and_persist(profile: ProfileDef) -> ProfileDef {
+fn normalize_legacy_profile_and_persist(profile: ProfileDef) -> ProfileDef {
     let should_persist_profile_migration = needs_dashscope_profile_persist(&profile)
         || needs_kimi_profile_persist(&profile)
         || needs_gemini_profile_persist(&profile);
@@ -312,10 +313,8 @@ pub fn ordered_profiles() -> Vec<ProfileDef> {
 }
 
 fn read_profile_order() -> Vec<String> {
-    let path = config::data_dir().join("settings.json");
-    std::fs::read_to_string(path)
+    config::read_settings_json()
         .ok()
-        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
         .and_then(|root| {
             root.get("profile_order")
                 .and_then(|value| value.as_array())

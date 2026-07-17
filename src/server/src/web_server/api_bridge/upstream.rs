@@ -8,7 +8,7 @@ use std::time::Duration;
 use common::config::{self, Retry429Config};
 use common::profiles::endpoint_url::join_protocol_endpoint;
 use common::profiles::schema::ProfileDef;
-use common::profiles::{catalog, normalize_legacy_profile_and_persist, schema};
+use common::profiles::{catalog, schema};
 
 use super::super::bridge_recording::{ActiveBridgeRecord, RecordedPayload};
 use super::{json_error, BridgeProtocol};
@@ -108,14 +108,12 @@ pub(super) fn upstream_endpoint(
             format!("unsupported bridge target api kind '{target_api_type}'"),
         )
     })?;
-    let profile = schema::load(profile_id)
-        .map(normalize_legacy_profile_and_persist)
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                format!("profile '{profile_id}' not found"),
-            )
-        })?;
+    let profile = common::profiles::load_profile(profile_id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            format!("profile '{profile_id}' not found"),
+        )
+    })?;
     if !schema::enabled_api_types(&profile)
         .iter()
         .any(|api_type| api_type == target_api_type)
