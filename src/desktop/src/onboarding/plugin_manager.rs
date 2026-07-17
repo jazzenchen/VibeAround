@@ -217,10 +217,7 @@ async fn im_plugin_from_registry(
     let discovered = plugins::channel::find(&plugin.id);
     let version = discovered.as_ref().map(|plugin| plugin.installed_version());
     let latest = if include_latest {
-        super::github_plugin_version(&plugin.github)
-            .await
-            .ok()
-            .flatten()
+        super::github_plugin_version(plugin).await.ok().flatten()
     } else {
         None
     };
@@ -274,10 +271,7 @@ async fn search_plugin_from_registry(
     let discovered = plugins::find(&plugin.id);
     let version = discovered.as_ref().map(|plugin| plugin.installed_version());
     let latest = if include_latest {
-        super::github_plugin_version(&plugin.github)
-            .await
-            .ok()
-            .flatten()
+        super::github_plugin_version(plugin).await.ok().flatten()
     } else {
         None
     };
