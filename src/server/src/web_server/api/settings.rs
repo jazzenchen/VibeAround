@@ -1,28 +1,139 @@
 //! Runtime settings API.
 
-use axum::{http::StatusCode, Json};
+use axum::http::header::{ETAG, IF_MATCH};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 
-/// GET /api/settings -- return raw settings.json.
-pub async fn get_settings_handler() -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    common::config::read_settings_json()
-        .map(Json)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+type ApiResult = Result<Response, Response>;
+
+/// GET /api/settings -- return raw settings.json with its current ETag.
+pub async fn get_settings_handler() -> ApiResult {
+    let snapshot = tokio::task::spawn_blocking(common::config::read_settings_snapshot)
+        .await
+        .map_err(internal_join_error)?
+        .map_err(internal_error)?;
+    response_with_etag(Json(snapshot.settings).into_response(), &snapshot.revision)
 }
 
-/// PUT /api/settings -- replace settings.json with the supplied JSON object.
+/// PUT /api/settings -- replace settings.json if the supplied ETag is current.
 pub async fn put_settings_handler(
+    headers: HeaderMap,
     Json(settings): Json<serde_json::Value>,
-) -> Result<Json<crate::api_types::SettingsWriteResponse>, (StatusCode, String)> {
+) -> ApiResult {
     if !settings.is_object() {
         return Err((
             StatusCode::BAD_REQUEST,
-            "settings body must be a JSON object".to_string(),
-        ));
+            "settings body must be a JSON object",
+        )
+            .into_response());
     }
+    let expected_revision = parse_if_match(&headers)?;
+    let result = tokio::task::spawn_blocking(move || {
+        let result =
+            common::config::replace_settings_json_if_revision(&expected_revision, &settings)?;
+        if matches!(result, common::config::SettingsReplaceResult::Replaced(_)) {
+            common::config::reload();
+        }
+        Ok::<_, String>(result)
+    })
+    .await
+    .map_err(internal_join_error)?
+    .map_err(internal_error)?;
 
-    common::config::write_settings_json(&settings)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    common::config::reload();
+    match result {
+        common::config::SettingsReplaceResult::Replaced(snapshot) => response_with_etag(
+            Json(crate::api_types::SettingsWriteResponse { ok: true }).into_response(),
+            &snapshot.revision,
+        ),
+        common::config::SettingsReplaceResult::Conflict(snapshot) => {
+            let response = (
+                StatusCode::PRECONDITION_FAILED,
+                "settings changed since the supplied If-Match revision",
+            )
+                .into_response();
+            let response = response_with_etag(response, &snapshot.revision)?;
+            Err(response)
+        }
+    }
+}
 
-    Ok(Json(crate::api_types::SettingsWriteResponse { ok: true }))
+/// PATCH /api/settings -- atomically apply an RFC 7396 JSON Merge Patch.
+pub async fn patch_settings_handler(Json(patch): Json<serde_json::Value>) -> ApiResult {
+    let snapshot = tokio::task::spawn_blocking(move || {
+        let snapshot = common::config::patch_settings_json(&patch)?;
+        common::config::reload();
+        Ok::<_, String>(snapshot)
+    })
+    .await
+    .map_err(internal_join_error)?
+    .map_err(|error| {
+        if error == "settings patch must be a JSON object" {
+            (StatusCode::BAD_REQUEST, error).into_response()
+        } else {
+            internal_error(error)
+        }
+    })?;
+
+    response_with_etag(
+        Json(crate::api_types::SettingsWriteResponse { ok: true }).into_response(),
+        &snapshot.revision,
+    )
+}
+
+fn parse_if_match(headers: &HeaderMap) -> Result<String, Response> {
+    let raw = headers.get(IF_MATCH).ok_or_else(|| {
+        (
+            StatusCode::PRECONDITION_REQUIRED,
+            "PUT /api/settings requires If-Match",
+        )
+            .into_response()
+    })?;
+    let raw = raw
+        .to_str()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "invalid If-Match header").into_response())?;
+    let revision = raw
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "invalid If-Match header").into_response())?;
+    Ok(revision.to_ascii_lowercase())
+}
+
+fn response_with_etag(mut response: Response, revision: &str) -> ApiResult {
+    let value = HeaderValue::from_str(&format!("\"{revision}\""))
+        .map_err(|_| internal_error("invalid settings revision".to_string()))?;
+    response.headers_mut().insert(ETAG, value);
+    Ok(response)
+}
+
+fn internal_error(error: String) -> Response {
+    (StatusCode::INTERNAL_SERVER_ERROR, error).into_response()
+}
+
+fn internal_join_error(error: tokio::task::JoinError) -> Response {
+    internal_error(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn if_match_requires_one_strong_sha256_etag() {
+        let revision = "a".repeat(64);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            IF_MATCH,
+            HeaderValue::from_str(&format!("\"{revision}\"")).unwrap(),
+        );
+        assert_eq!(parse_if_match(&headers).unwrap(), revision);
+
+        for invalid in [revision.as_str(), "*", "W/\"abc\"", "\"abc\""] {
+            let mut headers = HeaderMap::new();
+            headers.insert(IF_MATCH, HeaderValue::from_str(invalid).unwrap());
+            assert!(parse_if_match(&headers).is_err());
+        }
+        assert!(parse_if_match(&HeaderMap::new()).is_err());
+    }
 }

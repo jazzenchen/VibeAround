@@ -341,7 +341,7 @@ pub(super) async fn mcp_register_workspace(
 
     // Add to settings.json
     let cwd_owned = cwd.to_string();
-    if let Err(e) = common::config::update_settings_json(move |settings| {
+    if let Err(e) = common::config::update_settings_json_async(move |settings| {
         if let Some(obj) = settings.as_object_mut() {
             let workspaces = obj
                 .entry("workspaces")
@@ -350,7 +350,9 @@ pub(super) async fn mcp_register_workspace(
                 arr.push(serde_json::Value::String(cwd_owned));
             }
         }
-    }) {
+    })
+    .await
+    {
         return mcp_error_text(id, &format!("Failed to update settings: {}", e));
     }
 

@@ -57,12 +57,16 @@ impl HttpTransport {
             HttpMethod::Get => reqwest::Method::GET,
             HttpMethod::Post => reqwest::Method::POST,
             HttpMethod::Put => reqwest::Method::PUT,
+            HttpMethod::Patch => reqwest::Method::PATCH,
             HttpMethod::Delete => reqwest::Method::DELETE,
         };
         let url = self.endpoint.http_url(&request);
         let mut builder = self.client.request(method, &url);
         if let Some(auth) = self.endpoint.authorization_header(&request) {
             builder = builder.header(reqwest::header::AUTHORIZATION, auth);
+        }
+        for (name, value) in &request.headers {
+            builder = builder.header(name.as_str(), value.as_str());
         }
         if let Some(body) = request.body {
             builder = builder.json(&body);
@@ -73,6 +77,16 @@ impl HttpTransport {
             source,
         })?;
         let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_string(), value.to_string()))
+            })
+            .collect();
         let body = response.text().await.map_err(|source| TuiError::Http {
             url: url.clone(),
             source,
@@ -82,6 +96,6 @@ impl HttpTransport {
         } else {
             serde_json::from_str(&body).unwrap_or(Value::String(body))
         };
-        Ok(ResponseSpec::json(status, body))
+        Ok(ResponseSpec::json_with_headers(status, body, headers))
     }
 }

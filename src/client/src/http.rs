@@ -7,6 +7,7 @@ pub enum HttpMethod {
     Get,
     Post,
     Put,
+    Patch,
     Delete,
 }
 
@@ -16,6 +17,7 @@ impl HttpMethod {
             Self::Get => "GET",
             Self::Post => "POST",
             Self::Put => "PUT",
+            Self::Patch => "PATCH",
             Self::Delete => "DELETE",
         }
     }
@@ -33,6 +35,7 @@ pub struct RequestSpec {
     pub path: String,
     pub body: Option<Value>,
     pub auth: AuthRequirement,
+    pub headers: Vec<(String, String)>,
 }
 
 impl RequestSpec {
@@ -42,11 +45,17 @@ impl RequestSpec {
             path: path.into(),
             body: None,
             auth,
+            headers: Vec::new(),
         }
     }
 
     pub fn with_body(mut self, body: Value) -> Self {
         self.body = Some(body);
+        self
+    }
+
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
         self
     }
 }
@@ -55,11 +64,31 @@ impl RequestSpec {
 pub struct ResponseSpec {
     pub status: u16,
     pub body: Value,
+    pub headers: Vec<(String, String)>,
 }
 
 impl ResponseSpec {
     pub fn json(status: u16, body: Value) -> Self {
-        Self { status, body }
+        Self {
+            status,
+            body,
+            headers: Vec::new(),
+        }
+    }
+
+    pub fn json_with_headers(status: u16, body: Value, headers: Vec<(String, String)>) -> Self {
+        Self {
+            status,
+            body,
+            headers,
+        }
+    }
+
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
     }
 
     pub fn decode<T: serde::de::DeserializeOwned>(self) -> Result<T> {
@@ -142,7 +171,18 @@ mod tests {
         assert_eq!(HttpMethod::Get.as_str(), "GET");
         assert_eq!(HttpMethod::Post.as_str(), "POST");
         assert_eq!(HttpMethod::Put.as_str(), "PUT");
+        assert_eq!(HttpMethod::Patch.as_str(), "PATCH");
         assert_eq!(HttpMethod::Delete.as_str(), "DELETE");
+    }
+
+    #[test]
+    fn response_headers_are_case_insensitive() {
+        let response = ResponseSpec::json_with_headers(
+            200,
+            Value::Null,
+            vec![("etag".into(), "\"abc\"".into())],
+        );
+        assert_eq!(response.header("ETag"), Some("\"abc\""));
     }
 
     #[test]

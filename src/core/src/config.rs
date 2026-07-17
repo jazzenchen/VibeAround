@@ -8,12 +8,26 @@ use std::sync::{Arc, Once};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::tunnels::TunnelProvider;
 
 /// Global config cache. Populated on first `ensure_loaded()` call, reloaded
 /// by `reload()` or automatically after `update_settings_json()`.
 static CONFIG_CACHE: RwLock<Option<Arc<Config>>> = RwLock::new(None);
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingsSnapshot {
+    pub settings: serde_json::Value,
+    pub revision: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum SettingsReplaceResult {
+    Replaced(SettingsSnapshot),
+    Conflict(SettingsSnapshot),
+}
 
 /// Default server port for both standalone server and desktop-spawned server.
 pub const DEFAULT_PORT: u16 = 12358;
@@ -841,6 +855,14 @@ pub fn update_settings_json(mutator: impl FnOnce(&mut serde_json::Value)) -> Res
     })
 }
 
+pub async fn update_settings_json_async(
+    mutator: impl FnOnce(&mut serde_json::Value) + Send + 'static,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || update_settings_json(mutator))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 /// Remove a user workspace registration from settings.json.
 ///
 /// This does not delete the directory on disk. Legacy workspace fields are
@@ -853,22 +875,6 @@ pub fn remove_workspace_path(path: &Path) -> Result<bool, String> {
     Ok(removed)
 }
 
-/// Authoritatively replace settings.json with a complete object.
-///
-/// This participates in the same transaction lock as incremental mutations,
-/// but callers are still responsible for avoiding stale whole-document
-/// replacements. Incremental updates should prefer [`update_settings_json`].
-pub fn write_settings_json(root: &serde_json::Value) -> Result<(), String> {
-    if !root.is_object() {
-        return Err("settings.json root must be a JSON object".to_string());
-    }
-    let replacement = root.clone();
-    mutate_settings_json(move |current| {
-        *current = replacement;
-        Ok(())
-    })
-}
-
 /// Read the raw settings JSON file after ensuring the data directory exists.
 pub fn read_settings_json() -> Result<serde_json::Value, String> {
     ensure_rustls_provider();
@@ -878,9 +884,46 @@ pub fn read_settings_json() -> Result<serde_json::Value, String> {
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
+pub fn read_settings_snapshot() -> Result<SettingsSnapshot, String> {
+    settings_snapshot(read_settings_json()?)
+}
+
+/// Apply an RFC 7396 JSON Merge Patch to the latest settings document.
+pub fn patch_settings_json(patch: &serde_json::Value) -> Result<SettingsSnapshot, String> {
+    let snapshot = patch_settings_json_at(&settings_path(), patch)?;
+    *CONFIG_CACHE.write() = None;
+    Ok(snapshot)
+}
+
+/// Replace the complete settings document only when `expected_revision` still
+/// matches the latest value.
+pub fn replace_settings_json_if_revision(
+    expected_revision: &str,
+    replacement: &serde_json::Value,
+) -> Result<SettingsReplaceResult, String> {
+    let result =
+        replace_settings_json_if_revision_at(&settings_path(), expected_revision, replacement)?;
+    if matches!(result, SettingsReplaceResult::Replaced(_)) {
+        *CONFIG_CACHE.write() = None;
+    }
+    Ok(result)
+}
+
+enum SettingsTransaction<T> {
+    Read(T),
+    Write(T),
+}
+
 fn mutate_settings_json_at<T>(
     path: &Path,
     mutator: impl FnOnce(&mut serde_json::Value) -> Result<T, String>,
+) -> Result<T, String> {
+    transact_settings_json_at(path, |root| mutator(root).map(SettingsTransaction::Write))
+}
+
+fn transact_settings_json_at<T>(
+    path: &Path,
+    operation: impl FnOnce(&mut serde_json::Value) -> Result<SettingsTransaction<T>, String>,
 ) -> Result<T, String> {
     let parent = path
         .parent()
@@ -905,12 +948,90 @@ fn mutate_settings_json_at<T>(
         return Err(format!("{} must contain a JSON object", path.display()));
     }
 
-    let result = mutator(&mut root)?;
-    if !root.is_object() {
-        return Err("settings.json root must remain a JSON object".to_string());
+    match operation(&mut root)? {
+        SettingsTransaction::Read(result) => Ok(result),
+        SettingsTransaction::Write(result) => {
+            if !root.is_object() {
+                return Err("settings.json root must remain a JSON object".to_string());
+            }
+            write_settings_json_to_path(path, &root)?;
+            Ok(result)
+        }
     }
-    write_settings_json_to_path(path, &root)?;
-    Ok(result)
+}
+
+fn patch_settings_json_at(
+    path: &Path,
+    patch: &serde_json::Value,
+) -> Result<SettingsSnapshot, String> {
+    if !patch.is_object() {
+        return Err("settings patch must be a JSON object".to_string());
+    }
+    let patch = patch.clone();
+    mutate_settings_json_at(path, move |settings| {
+        apply_merge_patch(settings, &patch);
+        settings_snapshot(settings.clone())
+    })
+}
+
+fn replace_settings_json_if_revision_at(
+    path: &Path,
+    expected_revision: &str,
+    replacement: &serde_json::Value,
+) -> Result<SettingsReplaceResult, String> {
+    if !replacement.is_object() {
+        return Err("settings.json root must be a JSON object".to_string());
+    }
+    let replacement = replacement.clone();
+    transact_settings_json_at(path, |current| {
+        let current_snapshot = settings_snapshot(current.clone())?;
+        if current_snapshot.revision != expected_revision {
+            return Ok(SettingsTransaction::Read(SettingsReplaceResult::Conflict(
+                current_snapshot,
+            )));
+        }
+
+        *current = replacement;
+        let snapshot = settings_snapshot(current.clone())?;
+        Ok(SettingsTransaction::Write(SettingsReplaceResult::Replaced(
+            snapshot,
+        )))
+    })
+}
+
+fn settings_snapshot(settings: serde_json::Value) -> Result<SettingsSnapshot, String> {
+    let encoded = serde_json::to_vec(&settings).map_err(|error| error.to_string())?;
+    let digest = Sha256::digest(encoded);
+    let mut revision = String::with_capacity(digest.len() * 2);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in digest {
+        revision.push(HEX[(byte >> 4) as usize] as char);
+        revision.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(SettingsSnapshot { settings, revision })
+}
+
+fn apply_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    let serde_json::Value::Object(patch) = patch else {
+        *target = patch.clone();
+        return;
+    };
+    if !target.is_object() {
+        *target = serde_json::Value::Object(serde_json::Map::new());
+    }
+    let serde_json::Value::Object(target) = target else {
+        return;
+    };
+    for (key, value) in patch {
+        if value.is_null() {
+            target.remove(key);
+        } else {
+            apply_merge_patch(
+                target.entry(key.clone()).or_insert(serde_json::Value::Null),
+                value,
+            );
+        }
+    }
 }
 
 fn settings_lock_path(path: &Path) -> PathBuf {
@@ -1143,6 +1264,66 @@ mod tests {
 
         assert!(error.contains("parse"));
         assert_eq!(fs::read_to_string(&path).unwrap(), malformed);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_merge_patch_changes_only_named_fields() {
+        let dir = unique_test_dir("merge-patch");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "api_bridge": { "enabled": true, "port": 9000 }, "onboarded": true }"#,
+        )
+        .unwrap();
+
+        let snapshot = patch_settings_json_at(
+            &path,
+            &serde_json::json!({
+                "api_bridge": { "port": 9001 },
+                "onboarded": null
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.settings["api_bridge"]["enabled"], true);
+        assert_eq!(snapshot.settings["api_bridge"]["port"], 9001);
+        assert!(snapshot.settings.get("onboarded").is_none());
+        assert_eq!(snapshot.revision.len(), 64);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stale_settings_revision_cannot_replace_newer_document() {
+        let dir = unique_test_dir("revision");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "value": 1 }"#).unwrap();
+        let original = settings_snapshot(serde_json::json!({ "value": 1 })).unwrap();
+
+        let first = replace_settings_json_if_revision_at(
+            &path,
+            &original.revision,
+            &serde_json::json!({ "value": 2 }),
+        )
+        .unwrap();
+        assert!(matches!(first, SettingsReplaceResult::Replaced(_)));
+
+        let second = replace_settings_json_if_revision_at(
+            &path,
+            &original.revision,
+            &serde_json::json!({ "value": 3 }),
+        )
+        .unwrap();
+        let SettingsReplaceResult::Conflict(current) = second else {
+            panic!("stale revision unexpectedly replaced settings");
+        };
+
+        assert_eq!(current.settings["value"], 2);
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(persisted["value"], 2);
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -136,7 +136,7 @@ pub async fn set_selected_agent_handler(
 pub async fn set_local_agent_api_handler(
     Json(body): Json<EnabledBody>,
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
-    config::update_settings_json(|root| {
+    config::update_settings_json_async(move |root| {
         if !root.is_object() {
             *root = serde_json::json!({});
         }
@@ -153,6 +153,7 @@ pub async fn set_local_agent_api_handler(
             settings.insert("enabled".to_string(), serde_json::json!(body.enabled));
         }
     })
+    .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(launcher_preferences()))
 }

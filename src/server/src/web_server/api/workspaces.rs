@@ -80,19 +80,21 @@ pub async fn add_workspace_handler(
         ));
     }
     let path_string = path.to_string_lossy().to_string();
-    config::update_settings_json(|root| {
+    let stored_path = path_string.clone();
+    config::update_settings_json_async(move |root| {
         if let Some(obj) = root.as_object_mut() {
             let workspaces = obj
                 .entry("workspaces")
                 .or_insert_with(|| serde_json::json!([]));
             if let Some(arr) = workspaces.as_array_mut() {
-                let val = serde_json::Value::String(path_string.clone());
+                let val = serde_json::Value::String(stored_path.clone());
                 if !arr.contains(&val) {
                     arr.push(val);
                 }
             }
         }
     })
+    .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(serde_json::json!({ "added": path_string })))
@@ -118,7 +120,7 @@ pub async fn create_workspace_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let path_string = path.to_string_lossy().to_string();
-    config::update_settings_json(|root| {
+    config::update_settings_json_async(move |root| {
         if let Some(obj) = root.as_object_mut() {
             let workspaces = obj
                 .entry("workspaces")
@@ -131,6 +133,7 @@ pub async fn create_workspace_handler(
             }
         }
     })
+    .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let response = workspaces_response();
@@ -173,9 +176,13 @@ pub async fn remove_workspace_handler(
         ));
     }
 
-    config::remove_workspace_path(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    common::agent_state::remove_workspace_references(&path)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        config::remove_workspace_path(&path)?;
+        common::agent_state::remove_workspace_references(&path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
 
     Ok(Json(serde_json::json!({ "removed": body.path })))
 }
@@ -213,7 +220,7 @@ pub async fn reorder_workspaces_handler(
         }
     }
 
-    config::update_settings_json(|root| {
+    config::update_settings_json_async(move |root| {
         if !root.is_object() {
             *root = serde_json::json!({});
         }
@@ -229,6 +236,7 @@ pub async fn reorder_workspaces_handler(
             );
         }
     })
+    .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(workspaces_response()))
@@ -243,7 +251,7 @@ pub async fn set_default_workspace_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let path_string = path.to_string_lossy().to_string();
 
-    config::update_settings_json(|root| {
+    config::update_settings_json_async(move |root| {
         if !root.is_object() {
             *root = serde_json::json!({});
         }
@@ -265,6 +273,7 @@ pub async fn set_default_workspace_handler(
             }
         }
     })
+    .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(Json(workspaces_response()))
