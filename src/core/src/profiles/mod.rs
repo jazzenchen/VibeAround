@@ -21,7 +21,9 @@ pub mod schema;
 
 pub use schema::{AuthMode, ProfileDef};
 
-use crate::config;
+use std::collections::HashSet;
+
+use crate::{agent_state, config};
 
 const DASHSCOPE_PROVIDER_ID: &str = "dashscope";
 const DASHSCOPE_LABEL: &str = "Alibaba DashScope";
@@ -34,6 +36,167 @@ const KIMI_CODING_LEGACY_BASE_URL: &str = "https://api.kimi.com/coding";
 const GEMINI_PROVIDER_ID: &str = "gemini";
 const GEMINI_API_ENDPOINT_ID: &str = "gemini-api";
 const LEGACY_GEMINI_OPENAI_ENDPOINT_ID: &str = "openai-compatible";
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileStoreError {
+    #[error("{0}")]
+    Invalid(String),
+    #[error("{0}")]
+    Storage(String),
+}
+
+pub fn load_profile(id: &str) -> Option<ProfileDef> {
+    schema::load(id).map(normalize_legacy_profile_and_persist)
+}
+
+pub fn save_profile(profile: &ProfileDef) -> Result<(), ProfileStoreError> {
+    validate_profile(profile)?;
+    schema::save(profile).map_err(|error| ProfileStoreError::Storage(error.to_string()))?;
+    config::mutate_settings_json(|root| ensure_profile_order_contains(root, &profile.id))
+        .map_err(ProfileStoreError::Storage)
+}
+
+pub fn delete_profile(id: &str) -> Result<(), ProfileStoreError> {
+    if !schema::is_valid_id(id) {
+        return Err(ProfileStoreError::Invalid(format!(
+            "invalid profile id '{id}'"
+        )));
+    }
+    schema::delete(id).map_err(|error| ProfileStoreError::Storage(error.to_string()))?;
+    config::mutate_settings_json(|root| clear_profile_references(root, id))
+        .map_err(ProfileStoreError::Storage)
+}
+
+pub fn reorder_profiles(requested_ids: &[String]) -> Result<(), ProfileStoreError> {
+    let available_ids = schema::list()
+        .into_iter()
+        .map(|profile| profile.id)
+        .collect::<Vec<_>>();
+    config::mutate_settings_json(|root| {
+        reorder_profiles_in_settings(root, requested_ids, &available_ids)
+    })
+    .map_err(ProfileStoreError::Storage)
+}
+
+fn validate_profile(profile: &ProfileDef) -> Result<(), ProfileStoreError> {
+    schema::validate(profile).map_err(|error| ProfileStoreError::Invalid(error.to_string()))?;
+    let provider = catalog::get(&profile.provider).ok_or_else(|| {
+        ProfileStoreError::Invalid(format!("unknown provider '{}'", profile.provider))
+    })?;
+    for api_type in &profile.api_types {
+        let endpoint_id = profile
+            .overrides
+            .get(api_type)
+            .and_then(|overrides| overrides.endpoint_id.as_deref());
+        if catalog::find_endpoint(provider, api_type, endpoint_id).is_none() {
+            let suffix = endpoint_id
+                .map(|id| format!(" endpoint_id '{id}'"))
+                .unwrap_or_default();
+            return Err(ProfileStoreError::Invalid(format!(
+                "provider '{}' does not support api kind '{}'{}",
+                profile.provider, api_type, suffix
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_profile_order_contains(
+    root: &mut serde_json::Value,
+    profile_id: &str,
+) -> Result<(), String> {
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let order = obj
+        .entry("profile_order".to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    if !order.is_array() {
+        *order = serde_json::json!([]);
+    }
+    let order = order
+        .as_array_mut()
+        .ok_or_else(|| "settings.json profile_order must be an array".to_string())?;
+    if !order.iter().any(|id| id.as_str() == Some(profile_id)) {
+        order.push(serde_json::Value::String(profile_id.to_string()));
+    }
+    Ok(())
+}
+
+fn reorder_profiles_in_settings(
+    root: &mut serde_json::Value,
+    requested_ids: &[String],
+    available_ids: &[String],
+) -> Result<(), String> {
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let latest_order = obj
+        .get("profile_order")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let available = available_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut seen = HashSet::new();
+    let mut ordered_ids = Vec::new();
+
+    for id in requested_ids {
+        let id = id.trim();
+        if available.contains(id) && seen.insert(id.to_string()) {
+            ordered_ids.push(id.to_string());
+        }
+    }
+    for id in latest_order
+        .iter()
+        .filter(|id| available.contains(id.as_str()))
+    {
+        if seen.insert(id.clone()) {
+            ordered_ids.push(id.clone());
+        }
+    }
+    for id in available_ids {
+        if seen.insert(id.clone()) {
+            ordered_ids.push(id.clone());
+        }
+    }
+
+    obj.insert(
+        "profile_order".to_string(),
+        serde_json::Value::Array(
+            ordered_ids
+                .into_iter()
+                .map(serde_json::Value::String)
+                .collect(),
+        ),
+    );
+    Ok(())
+}
+
+fn clear_profile_references(root: &mut serde_json::Value, profile_id: &str) -> Result<(), String> {
+    {
+        let obj = root
+            .as_object_mut()
+            .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+        if let Some(order) = obj
+            .get_mut("profile_order")
+            .and_then(|value| value.as_array_mut())
+        {
+            order.retain(|value| value.as_str() != Some(profile_id));
+            if order.is_empty() {
+                obj.remove("profile_order");
+            }
+        }
+    }
+    agent_state::remove_profile_references_from_settings(root, profile_id)
+}
 
 pub fn normalize_legacy_profile(mut profile: ProfileDef) -> ProfileDef {
     normalize_legacy_dashscope_profile(&mut profile);
@@ -381,5 +544,70 @@ mod tests {
         let profile = normalize_legacy_profile(profile);
 
         assert_eq!(profile.auth_mode, AuthMode::GoogleOauth);
+    }
+
+    #[test]
+    fn adding_profile_order_uses_latest_settings_value() {
+        let mut settings = serde_json::json!({
+            "profile_order": ["existing"],
+            "workspaces": ["/tmp/work"]
+        });
+
+        ensure_profile_order_contains(&mut settings, "new-profile").unwrap();
+
+        assert_eq!(
+            settings["profile_order"],
+            serde_json::json!(["existing", "new-profile"])
+        );
+        assert_eq!(settings["workspaces"], serde_json::json!(["/tmp/work"]));
+    }
+
+    #[test]
+    fn reorder_preserves_latest_and_new_profile_ids() {
+        let mut settings = serde_json::json!({
+            "profile_order": ["first", "concurrent"],
+            "workspaces": ["/tmp/work"]
+        });
+        let requested = vec![
+            "second".to_string(),
+            "second".to_string(),
+            "unknown".to_string(),
+        ];
+        let available = vec![
+            "first".to_string(),
+            "second".to_string(),
+            "concurrent".to_string(),
+            "new-on-disk".to_string(),
+        ];
+
+        reorder_profiles_in_settings(&mut settings, &requested, &available).unwrap();
+
+        assert_eq!(
+            settings["profile_order"],
+            serde_json::json!(["second", "first", "concurrent", "new-on-disk"])
+        );
+        assert_eq!(settings["workspaces"], serde_json::json!(["/tmp/work"]));
+    }
+
+    #[test]
+    fn deleting_profile_clears_order_and_launcher_references_together() {
+        let mut settings = serde_json::json!({
+            "profile_order": ["removed", "kept"],
+            "launcher": {
+                "default_profile_id": "removed",
+                "terminal": "terminal",
+                "agents": {
+                    "codex": { "profile_id": "removed" },
+                    "claude": { "profile_id": "kept" }
+                }
+            }
+        });
+
+        clear_profile_references(&mut settings, "removed").unwrap();
+
+        assert_eq!(settings["profile_order"], serde_json::json!(["kept"]));
+        assert!(settings["launcher"].get("default_profile_id").is_none());
+        assert!(settings["launcher"]["agents"].get("codex").is_none());
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
     }
 }

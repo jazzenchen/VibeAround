@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use axum::{extract::Path, http::StatusCode, Json};
 use common::agent_state;
 use common::profiles::{
-    catalog, normalize_legacy_profile_and_persist, runtime, schema, AuthMode, ProfileDef,
+    catalog, normalize_legacy_profile, runtime, schema, AuthMode, ProfileDef, ProfileStoreError,
 };
 use serde::Deserialize;
 
@@ -95,8 +95,7 @@ pub async fn create_model_profile_handler(
         let id = schema::generate_unique_id(&draft.provider)
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
         let profile = draft.into_profile(id);
-        save_model_profile(&profile)?;
-        ensure_profile_order_contains(&profile.id)?;
+        common::profiles::save_profile(&profile).map_err(profile_store_error)?;
         Ok(Json(profile))
     })
     .await
@@ -114,9 +113,8 @@ pub async fn update_model_profile_handler(
                 format!("profile id mismatch: path '{id}' body '{}'", profile.id),
             ));
         }
-        profile = normalize_legacy_profile_and_persist(profile);
-        save_model_profile(&profile)?;
-        ensure_profile_order_contains(&profile.id)?;
+        profile = normalize_legacy_profile(profile);
+        common::profiles::save_profile(&profile).map_err(profile_store_error)?;
         Ok(Json(profile))
     })
     .await
@@ -127,8 +125,7 @@ pub async fn delete_model_profile_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     super::run_blocking_io(move || {
-        schema::delete(&id).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-        clear_profile_references(&id)?;
+        common::profiles::delete_profile(&id).map_err(profile_store_error)?;
         Ok(Json(serde_json::json!({ "deleted": id })))
     })
     .await
@@ -139,7 +136,7 @@ pub async fn reorder_model_profiles_handler(
     Json(body): Json<ProfileOrderBody>,
 ) -> Result<Json<Vec<crate::api_types::ModelProfileSummary>>, (StatusCode, String)> {
     super::run_blocking_io(move || {
-        reorder_profiles(body.profile_ids)?;
+        common::profiles::reorder_profiles(&body.profile_ids).map_err(profile_store_error)?;
         Ok(Json(
             common::profiles::ordered_profiles()
                 .into_iter()
@@ -169,168 +166,15 @@ impl ModelProfileDraft {
 }
 
 fn load_profile(id: &str) -> Result<ProfileDef, (StatusCode, String)> {
-    schema::load(id)
-        .map(normalize_legacy_profile_and_persist)
+    common::profiles::load_profile(id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("profile '{id}' not found")))
 }
 
-fn save_model_profile(profile: &ProfileDef) -> Result<(), (StatusCode, String)> {
-    validate_profile(profile)?;
-    schema::save(profile).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
-}
-
-fn validate_profile(profile: &ProfileDef) -> Result<(), (StatusCode, String)> {
-    schema::validate(profile).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let provider = catalog::get(&profile.provider).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("unknown provider '{}'", profile.provider),
-        )
-    })?;
-    for api_type in &profile.api_types {
-        let endpoint_id = profile
-            .overrides
-            .get(api_type)
-            .and_then(|overrides| overrides.endpoint_id.as_deref());
-        if catalog::find_endpoint(provider, api_type, endpoint_id).is_none() {
-            let suffix = endpoint_id
-                .map(|id| format!(" endpoint_id '{id}'"))
-                .unwrap_or_default();
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "provider '{}' does not support api kind '{}'{}",
-                    profile.provider, api_type, suffix
-                ),
-            ));
-        }
+fn profile_store_error(error: ProfileStoreError) -> (StatusCode, String) {
+    match error {
+        ProfileStoreError::Invalid(message) => (StatusCode::BAD_REQUEST, message),
+        ProfileStoreError::Storage(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
     }
-    Ok(())
-}
-
-fn reorder_profiles(profile_ids: Vec<String>) -> Result<(), (StatusCode, String)> {
-    common::config::mutate_settings_json(|root| {
-        let available_ids = schema::list()
-            .into_iter()
-            .map(|profile| profile.id)
-            .collect::<Vec<_>>();
-        reorder_profiles_in_settings(root, &profile_ids, &available_ids)
-    })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
-}
-
-fn reorder_profiles_in_settings(
-    root: &mut serde_json::Value,
-    requested_ids: &[String],
-    available_ids: &[String],
-) -> Result<(), String> {
-    let obj = root
-        .as_object_mut()
-        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
-    let latest_order = obj
-        .get("profile_order")
-        .and_then(|value| value.as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|value| value.as_str())
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    let available = available_ids
-        .iter()
-        .map(String::as_str)
-        .collect::<HashSet<_>>();
-    let mut seen = HashSet::new();
-    let mut ordered_ids = Vec::new();
-
-    for id in requested_ids {
-        let id = id.trim();
-        if available.contains(id) && seen.insert(id.to_string()) {
-            ordered_ids.push(id.to_string());
-        }
-    }
-    for id in latest_order
-        .iter()
-        .filter(|id| available.contains(id.as_str()))
-    {
-        if seen.insert(id.clone()) {
-            ordered_ids.push(id.clone());
-        }
-    }
-    for id in available_ids {
-        if seen.insert(id.clone()) {
-            ordered_ids.push(id.clone());
-        }
-    }
-
-    obj.insert(
-        "profile_order".to_string(),
-        serde_json::Value::Array(
-            ordered_ids
-                .into_iter()
-                .map(serde_json::Value::String)
-                .collect(),
-        ),
-    );
-    Ok(())
-}
-
-fn ensure_profile_order_contains(profile_id: &str) -> Result<(), (StatusCode, String)> {
-    common::config::mutate_settings_json(|root| {
-        ensure_profile_order_contains_in_settings(root, profile_id)
-    })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
-}
-
-fn ensure_profile_order_contains_in_settings(
-    root: &mut serde_json::Value,
-    profile_id: &str,
-) -> Result<(), String> {
-    let obj = root
-        .as_object_mut()
-        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
-    let order = obj
-        .entry("profile_order".to_string())
-        .or_insert_with(|| serde_json::json!([]));
-    if !order.is_array() {
-        *order = serde_json::json!([]);
-    }
-    let order = order
-        .as_array_mut()
-        .ok_or_else(|| "settings.json profile_order must be an array".to_string())?;
-    if !order.iter().any(|id| id.as_str() == Some(profile_id)) {
-        order.push(serde_json::Value::String(profile_id.to_string()));
-    }
-    Ok(())
-}
-
-fn clear_profile_references(profile_id: &str) -> Result<(), (StatusCode, String)> {
-    common::config::mutate_settings_json(|root| {
-        clear_profile_references_in_settings(root, profile_id)
-    })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
-}
-
-fn clear_profile_references_in_settings(
-    root: &mut serde_json::Value,
-    profile_id: &str,
-) -> Result<(), String> {
-    {
-        let obj = root
-            .as_object_mut()
-            .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
-        if let Some(order) = obj
-            .get_mut("profile_order")
-            .and_then(|value| value.as_array_mut())
-        {
-            order.retain(|value| value.as_str() != Some(profile_id));
-            if order.is_empty() {
-                obj.remove("profile_order");
-            }
-        }
-    }
-    agent_state::remove_profile_references_from_settings(root, profile_id)
 }
 
 fn model_profile_summary(profile: ProfileDef) -> crate::api_types::ModelProfileSummary {
@@ -574,74 +418,4 @@ fn clean_string(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn adding_profile_order_uses_latest_settings_value() {
-        let mut settings = serde_json::json!({
-            "profile_order": ["existing"],
-            "workspaces": ["/tmp/work"]
-        });
-
-        ensure_profile_order_contains_in_settings(&mut settings, "new-profile").unwrap();
-
-        assert_eq!(
-            settings["profile_order"],
-            serde_json::json!(["existing", "new-profile"])
-        );
-        assert_eq!(settings["workspaces"], serde_json::json!(["/tmp/work"]));
-    }
-
-    #[test]
-    fn reorder_preserves_latest_and_new_profile_ids() {
-        let mut settings = serde_json::json!({
-            "profile_order": ["first", "concurrent"],
-            "workspaces": ["/tmp/work"]
-        });
-        let requested = vec![
-            "second".to_string(),
-            "second".to_string(),
-            "unknown".to_string(),
-        ];
-        let available = vec![
-            "first".to_string(),
-            "second".to_string(),
-            "concurrent".to_string(),
-            "new-on-disk".to_string(),
-        ];
-
-        reorder_profiles_in_settings(&mut settings, &requested, &available).unwrap();
-
-        assert_eq!(
-            settings["profile_order"],
-            serde_json::json!(["second", "first", "concurrent", "new-on-disk"])
-        );
-        assert_eq!(settings["workspaces"], serde_json::json!(["/tmp/work"]));
-    }
-
-    #[test]
-    fn deleting_profile_clears_order_and_launcher_references_together() {
-        let mut settings = serde_json::json!({
-            "profile_order": ["removed", "kept"],
-            "launcher": {
-                "default_profile_id": "removed",
-                "terminal": "terminal",
-                "agents": {
-                    "codex": { "profile_id": "removed" },
-                    "claude": { "profile_id": "kept" }
-                }
-            }
-        });
-
-        clear_profile_references_in_settings(&mut settings, "removed").unwrap();
-
-        assert_eq!(settings["profile_order"], serde_json::json!(["kept"]));
-        assert!(settings["launcher"].get("default_profile_id").is_none());
-        assert!(settings["launcher"]["agents"].get("codex").is_none());
-        assert_eq!(settings["launcher"]["terminal"], "terminal");
-    }
 }
