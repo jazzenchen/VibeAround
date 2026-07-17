@@ -278,13 +278,13 @@ impl WorkspaceThreadManager {
         Ok(())
     }
 
-    async fn ensure_general_workspace(&self) -> anyhow::Result<WorkspaceRecord> {
+    async fn ensure_general_workspace(&self, cwd: PathBuf) -> anyhow::Result<WorkspaceRecord> {
         let projection = self.workspace_projection().await?;
         if let Some(workspace) = projection.get(&WorkspaceId::general()) {
             return Ok(workspace.clone());
         }
 
-        let cwd = normalize_workspace_cwd(crate::config::ensure_loaded().resolve_workspace(""));
+        let cwd = normalize_workspace_cwd(cwd);
         if let Some(workspace) = workspace_by_cwd(&projection, &cwd) {
             return Ok(workspace.clone());
         }
@@ -307,7 +307,7 @@ impl WorkspaceThreadManager {
         workspace_path: PathBuf,
     ) -> anyhow::Result<WorkspaceRecord> {
         match channel_traits(&route.channel_kind).default_workspace {
-            DefaultWorkspaceKind::General => self.ensure_general_workspace().await,
+            DefaultWorkspaceKind::General => self.ensure_general_workspace(workspace_path).await,
             DefaultWorkspaceKind::ChannelDefault => {
                 self.ensure_workspace_for_cwd(workspace_path).await
             }
@@ -522,11 +522,12 @@ impl crate::state::StateSource for WorkspaceThreadManager {
     }
 }
 
-fn default_host_binding() -> HostBinding {
-    let cfg = crate::config::ensure_loaded();
-    let prefs = agent_state::read_prefs();
-    let agent_id = agent_state::resolve_default_agent(&prefs, &cfg);
-    let profile_id = agent_state::resolve_default_profile(&prefs, &cfg, &agent_id)
+fn default_host_binding(
+    cfg: &crate::config::Config,
+    prefs: &agent_state::AgentsPrefsFile,
+) -> HostBinding {
+    let agent_id = agent_state::resolve_default_agent(prefs, cfg);
+    let profile_id = agent_state::resolve_default_profile(prefs, cfg, &agent_id)
         .map(|profile| normalize_launch_profile_id(Some(&profile)));
     HostBinding::new(agent_id, profile_id)
 }
@@ -539,21 +540,28 @@ fn normalize_optional_launch_profile_id(profile_id: Option<&str>) -> Option<Stri
 }
 
 fn launch_setting_profile_for_agent(agent_id: &str) -> Option<String> {
-    let cfg = crate::config::ensure_loaded();
-    let prefs = agent_state::read_prefs();
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
     agent_state::resolve_default_profile(&prefs, &cfg, agent_id)
         .map(|profile| normalize_launch_profile_id(Some(&profile)))
 }
 
 fn default_route_binding_and_workspace(route: &RouteKey) -> (HostBinding, PathBuf) {
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
+    default_route_binding_and_workspace_from_settings(route, &cfg, &prefs)
+}
+
+fn default_route_binding_and_workspace_from_settings(
+    route: &RouteKey,
+    cfg: &crate::config::Config,
+    prefs: &agent_state::AgentsPrefsFile,
+) -> (HostBinding, PathBuf) {
     match channel_traits(&route.channel_kind).default_workspace {
         DefaultWorkspaceKind::General => {
-            let cfg = crate::config::ensure_loaded();
-            let host_binding = default_host_binding();
+            let host_binding = default_host_binding(cfg, prefs);
             (host_binding, cfg.resolve_workspace(""))
         }
         DefaultWorkspaceKind::ChannelDefault => {
-            default_channel_binding_and_workspace(&route.channel_kind)
+            default_channel_binding_and_workspace(&route.channel_kind, cfg, prefs)
         }
     }
 }
@@ -565,9 +573,11 @@ fn host_binding_for_explicit_new(route: &RouteKey, current: HostBinding) -> Host
     }
 }
 
-fn default_channel_binding_and_workspace(channel_kind: &str) -> (HostBinding, PathBuf) {
-    let cfg = crate::config::ensure_loaded();
-    let prefs = agent_state::read_prefs();
+fn default_channel_binding_and_workspace(
+    channel_kind: &str,
+    cfg: &crate::config::Config,
+    prefs: &agent_state::AgentsPrefsFile,
+) -> (HostBinding, PathBuf) {
     let defaults = cfg.remote_channel_defaults(channel_kind);
     let agent_id = defaults
         .agent_id
@@ -578,16 +588,16 @@ fn default_channel_binding_and_workspace(channel_kind: &str) -> (HostBinding, Pa
                     .iter()
                     .any(|enabled_agent| enabled_agent == agent)
         })
-        .unwrap_or_else(|| agent_state::resolve_default_agent(&prefs, &cfg));
+        .unwrap_or_else(|| agent_state::resolve_default_agent(prefs, cfg));
     let profile_id = defaults
         .profile_id
         .as_deref()
         .map(|profile| normalize_launch_profile_id(Some(profile)))
         .or_else(|| {
-            agent_state::resolve_default_profile(&prefs, &cfg, &agent_id)
+            agent_state::resolve_default_profile(prefs, cfg, &agent_id)
                 .map(|profile| normalize_launch_profile_id(Some(&profile)))
         });
-    let workspace = im_workspace_for_channel(&cfg, channel_kind);
+    let workspace = im_workspace_for_channel(cfg, channel_kind);
 
     (HostBinding::new(agent_id, profile_id), workspace)
 }
