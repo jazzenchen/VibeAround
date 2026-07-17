@@ -54,4 +54,32 @@ describe("createSettingsPatch", () => {
       { op: "add", path: "/a~1b~0c", value: true },
     ]);
   });
+
+  test("includes pending edits when an autosave starts from persisted settings", () => {
+    const persisted = {
+      im: {
+        order: ["slack", "telegram"],
+        channels: { slack: { agent: "codex" } },
+      },
+    };
+    const reorderedWithPendingEdit = {
+      im: {
+        order: ["telegram", "slack"],
+        channels: { slack: { agent: "claude" } },
+      },
+    };
+
+    expect(createSettingsPatch(persisted, reorderedWithPendingEdit)).toEqual([
+      {
+        op: "add",
+        path: "/im/order",
+        value: ["telegram", "slack"],
+      },
+      {
+        op: "add",
+        path: "/im/channels/slack/agent",
+        value: "claude",
+      },
+    ]);
+  });
 });

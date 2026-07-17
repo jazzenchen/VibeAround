@@ -202,7 +202,7 @@ export function RemoteDashboard({
     async (baseSettings: AppSettings, nextSettings: AppSettings) => {
       try {
         const saved = await saveSettingsPatch(baseSettings, nextSettings);
-        setSettings(saved.settings);
+        setSettings((current) => (current === nextSettings ? saved.settings : current));
         setPersistedSettings(saved.settings);
       } catch (error) {
         setNotice({ variant: "error", message: formatErrorMessage(error) });
@@ -217,9 +217,9 @@ export function RemoteDashboard({
       const nextSettings = writeImChannelOrder(settings, nextOrder);
       setSettings(nextSettings);
       setNotice(null);
-      void persistChannelOrder(settings, nextSettings);
+      void persistChannelOrder(persistedSettings, nextSettings);
     },
-    [configuredChannelIds, persistChannelOrder, settings],
+    [configuredChannelIds, persistChannelOrder, persistedSettings, settings],
   );
 
   function handleChannelDragEnd(event: DragEndEvent) {
@@ -237,7 +237,7 @@ export function RemoteDashboard({
     setNotice(null);
     try {
       const saved = await saveSettingsPatch(persistedSettings, settings);
-      setSettings(saved.settings);
+      setSettings((current) => (current === settings ? saved.settings : current));
       setPersistedSettings(saved.settings);
       const response = await apiFetch("/api/settings/reload", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
