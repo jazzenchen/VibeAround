@@ -44,12 +44,7 @@ pub async fn put_settings_handler(
     }
     let expected_revision = parse_if_match(&headers)?;
     let result = tokio::task::spawn_blocking(move || {
-        let result =
-            common::config::replace_settings_json_if_revision(&expected_revision, &settings)?;
-        if matches!(result, common::config::SettingsReplaceResult::Replaced(_)) {
-            common::config::reload();
-        }
-        Ok::<_, String>(result)
+        common::config::replace_settings_json_if_revision(&expected_revision, &settings)
     })
     .await
     .map_err(internal_join_error)?
@@ -74,25 +69,21 @@ pub async fn put_settings_handler(
 
 /// PATCH /api/settings -- atomically apply an RFC 6902 JSON Patch.
 pub async fn patch_settings_handler(Json(patch): Json<serde_json::Value>) -> ApiResult {
-    let snapshot = tokio::task::spawn_blocking(move || {
-        let snapshot = common::config::patch_settings_json(&patch)?;
-        common::config::reload();
-        Ok::<_, String>(snapshot)
-    })
-    .await
-    .map_err(internal_join_error)?
-    .map_err(|error| match error.as_str() {
-        error if error.starts_with("invalid settings patch:") => {
-            SettingsApiError::new((StatusCode::BAD_REQUEST, error.to_string()))
-        }
-        error if error.starts_with("settings patch conflict:") => {
-            SettingsApiError::new((StatusCode::CONFLICT, error.to_string()))
-        }
-        error if error.starts_with("settings patch must leave") => {
-            SettingsApiError::new((StatusCode::BAD_REQUEST, error.to_string()))
-        }
-        _ => internal_error(error),
-    })?;
+    let snapshot = tokio::task::spawn_blocking(move || common::config::patch_settings_json(&patch))
+        .await
+        .map_err(internal_join_error)?
+        .map_err(|error| match error.as_str() {
+            error if error.starts_with("invalid settings patch:") => {
+                SettingsApiError::new((StatusCode::BAD_REQUEST, error.to_string()))
+            }
+            error if error.starts_with("settings patch conflict:") => {
+                SettingsApiError::new((StatusCode::CONFLICT, error.to_string()))
+            }
+            error if error.starts_with("settings patch must leave") => {
+                SettingsApiError::new((StatusCode::BAD_REQUEST, error.to_string()))
+            }
+            _ => internal_error(error),
+        })?;
 
     response_with_etag(
         Json(crate::api_types::SettingsWriteResponse { ok: true }).into_response(),
