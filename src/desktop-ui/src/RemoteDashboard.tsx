@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
   type Ref,
@@ -101,7 +102,8 @@ export function RemoteDashboard({
 }: RemoteDashboardProps) {
   const { t } = useI18n();
   const [settings, setSettings] = useState<AppSettings>({});
-  const [persistedSettings, setPersistedSettings] = useState<AppSettings>({});
+  const persistedSettingsRef = useRef<AppSettings>({});
+  const settingsWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [agentDefs, setAgentDefs] = useState<AgentSummary[]>([]);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [prefs, setPrefs] = useState<LauncherPreferences | null>(null);
@@ -145,7 +147,7 @@ export function RemoteDashboard({
         if (cancelled) return;
         const orderedAgents = orderAgents(loadedAgents);
         setSettings(loadedSettings);
-        setPersistedSettings(loadedSettings);
+        persistedSettingsRef.current = loadedSettings;
         setAgentDefs(orderedAgents);
         setProfiles(loadedProfiles);
         setPrefs(loadedPrefs);
@@ -198,17 +200,29 @@ export function RemoteDashboard({
     [selectedChannelId],
   );
 
+  const enqueueSettingsSave = useCallback((nextSettings: AppSettings) => {
+    const operation = settingsWriteQueueRef.current.then(async () => {
+      const saved = await saveSettingsPatch(persistedSettingsRef.current, nextSettings);
+      persistedSettingsRef.current = saved.settings;
+      setSettings((current) => (current === nextSettings ? saved.settings : current));
+      return saved.settings;
+    });
+    settingsWriteQueueRef.current = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }, []);
+
   const persistChannelOrder = useCallback(
-    async (baseSettings: AppSettings, nextSettings: AppSettings) => {
+    async (nextSettings: AppSettings) => {
       try {
-        const saved = await saveSettingsPatch(baseSettings, nextSettings);
-        setSettings((current) => (current === nextSettings ? saved.settings : current));
-        setPersistedSettings(saved.settings);
+        await enqueueSettingsSave(nextSettings);
       } catch (error) {
         setNotice({ variant: "error", message: formatErrorMessage(error) });
       }
     },
-    [],
+    [enqueueSettingsSave],
   );
 
   const reorderChannel = useCallback(
@@ -217,9 +231,9 @@ export function RemoteDashboard({
       const nextSettings = writeImChannelOrder(settings, nextOrder);
       setSettings(nextSettings);
       setNotice(null);
-      void persistChannelOrder(persistedSettings, nextSettings);
+      void persistChannelOrder(nextSettings);
     },
-    [configuredChannelIds, persistChannelOrder, persistedSettings, settings],
+    [configuredChannelIds, persistChannelOrder, settings],
   );
 
   function handleChannelDragEnd(event: DragEndEvent) {
@@ -236,9 +250,7 @@ export function RemoteDashboard({
     setSavingChannel(selectedChannelId);
     setNotice(null);
     try {
-      const saved = await saveSettingsPatch(persistedSettings, settings);
-      setSettings((current) => (current === settings ? saved.settings : current));
-      setPersistedSettings(saved.settings);
+      await enqueueSettingsSave(settings);
       const response = await apiFetch("/api/settings/reload", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setNotice({ variant: "success", message: "Remote defaults saved." });
@@ -247,7 +259,7 @@ export function RemoteDashboard({
     } finally {
       setSavingChannel(null);
     }
-  }, [persistedSettings, selectedChannelId, settings]);
+  }, [enqueueSettingsSave, selectedChannelId, settings]);
 
   const defaultAgent = prefs?.defaultAgent ?? agentDefs[0]?.id ?? "codex";
   const enabledAgents =
