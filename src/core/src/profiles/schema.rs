@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{bail, Context};
 use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
 
@@ -438,12 +438,8 @@ pub fn save(profile: &ProfileDef) -> anyhow::Result<()> {
 }
 
 fn save_at(dir: &Path, profile: &ProfileDef) -> anyhow::Result<()> {
-    let body = serialize_profile(profile)?;
-    ensure_profiles_dir(dir)?;
-    let _lock = acquire_profile_lock(dir, &profile.id)?;
-    let target = profile_path_in(dir, &profile.id);
-    crate::file_replace::write_private(&target, body)
-        .with_context(|| format!("save profile '{}'", profile.id))
+    let locked = LockedProfileFile::acquire_at(dir, &profile.id)?;
+    locked.save(profile)
 }
 
 /// Load, mutate, and atomically replace one profile under its per-profile lock.
@@ -472,8 +468,7 @@ fn update_at<T>(
         return Ok(None);
     }
 
-    ensure_profiles_dir(dir)?;
-    let _lock = acquire_profile_lock(dir, id)?;
+    let _lock = LockedProfileFile::acquire_at(dir, id)?;
     let target = profile_path_in(dir, id);
     let body = match std::fs::read_to_string(&target) {
         Ok(body) => body,
@@ -533,6 +528,65 @@ fn acquire_profile_lock(
         .with_context(|| format!("lock profile '{}' at {}", id, path.display()))
 }
 
+/// One profile file held under its existing per-profile lock.
+///
+/// High-level profile operations may keep this guard alive while updating the
+/// profile's settings references so save/delete calls for the same id remain
+/// serializable across both files.
+pub(crate) struct LockedProfileFile {
+    dir: PathBuf,
+    id: String,
+    _lock: crate::file_lock::ExclusiveFileLock,
+}
+
+impl LockedProfileFile {
+    pub(crate) fn acquire(id: &str) -> anyhow::Result<Self> {
+        Self::acquire_at(&profiles_dir(), id)
+    }
+
+    fn acquire_at(dir: &Path, id: &str) -> anyhow::Result<Self> {
+        if !is_valid_id(id) {
+            bail!("invalid profile id '{}'", id);
+        }
+        ensure_profiles_dir(dir)?;
+        let lock = acquire_profile_lock(dir, id)?;
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            id: id.to_string(),
+            _lock: lock,
+        })
+    }
+
+    pub(crate) fn save(&self, profile: &ProfileDef) -> anyhow::Result<()> {
+        if profile.id != self.id {
+            bail!(
+                "locked profile id '{}' does not match profile id '{}'",
+                self.id,
+                profile.id
+            );
+        }
+        let body = serialize_profile(profile)?;
+        let target = profile_path_in(&self.dir, &self.id);
+        crate::file_replace::write_private(&target, body)
+            .with_context(|| format!("save profile '{}'", self.id))
+    }
+
+    pub(crate) fn delete(&self) -> anyhow::Result<()> {
+        let path = profile_path_in(&self.dir, &self.id);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error).with_context(|| format!("remove {:?}", path)),
+        }
+        // Best-effort: also drop the per-profile state dir (rendered settings
+        // files, future agent session caches). If the user re-creates a profile
+        // with the same id later, we want a clean slate.
+        let state_dir = config::data_dir().join("profile-state").join(&self.id);
+        let _ = std::fs::remove_dir_all(&state_dir);
+        Ok(())
+    }
+}
+
 pub fn set_connection(
     profile: &mut ProfileDef,
     agent_id: &str,
@@ -546,30 +600,8 @@ pub fn set_connection(
 }
 
 pub fn delete(id: &str) -> anyhow::Result<()> {
-    if !is_valid_id(id) {
-        return Err(anyhow!("invalid profile id '{}'", id));
-    }
-    let dir = profiles_dir();
-    if !dir
-        .try_exists()
-        .with_context(|| format!("inspect {:?}", dir))?
-    {
-        return Ok(());
-    }
-    ensure_profiles_dir(&dir)?;
-    let _lock = acquire_profile_lock(&dir, id)?;
-    let path = profile_path_in(&dir, id);
-    match std::fs::remove_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error).with_context(|| format!("remove {:?}", path)),
-    }
-    // Best-effort: also drop the per-profile state dir (rendered settings
-    // files, future agent session caches). If the user re-creates a profile
-    // with the same id later, we want a clean slate.
-    let state_dir = config::data_dir().join("profile-state").join(id);
-    let _ = std::fs::remove_dir_all(&state_dir);
-    Ok(())
+    let locked = LockedProfileFile::acquire(id)?;
+    locked.delete()
 }
 
 // ---------------------------------------------------------------------------
@@ -783,6 +815,39 @@ mod tests {
 
         let profile = load_path(&profile_path_in(&dir, "shared")).unwrap();
         assert_eq!(profile.credentials["count"], "8");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn profile_lock_can_cover_file_and_followup_updates() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = test_dir("lock-followup");
+        save_at(&dir, &test_profile("shared", "Before")).unwrap();
+        let first = LockedProfileFile::acquire_at(&dir, "shared").unwrap();
+        first.delete().unwrap();
+
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let writer_dir = dir.clone();
+        let writer = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            let locked = LockedProfileFile::acquire_at(&writer_dir, "shared").unwrap();
+            acquired_tx.send(()).unwrap();
+            locked.save(&test_profile("shared", "After")).unwrap();
+        });
+
+        ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(acquired_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(first);
+        acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        writer.join().unwrap();
+
+        assert_eq!(
+            load_path(&profile_path_in(&dir, "shared")).unwrap().label,
+            "After"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

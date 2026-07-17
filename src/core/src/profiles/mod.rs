@@ -51,9 +51,16 @@ pub fn load_profile(id: &str) -> Option<ProfileDef> {
 
 pub fn save_profile(profile: &ProfileDef) -> Result<(), ProfileStoreError> {
     validate_profile(profile)?;
-    schema::save(profile).map_err(|error| ProfileStoreError::Storage(error.to_string()))?;
-    config::mutate_settings_json(|root| ensure_profile_order_contains(root, &profile.id))
-        .map_err(ProfileStoreError::Storage)
+    let locked = schema::LockedProfileFile::acquire(&profile.id)
+        .map_err(|error| ProfileStoreError::Storage(error.to_string()))?;
+    locked
+        .save(profile)
+        .map_err(|error| ProfileStoreError::Storage(error.to_string()))?;
+    let result =
+        config::mutate_settings_json(|root| ensure_profile_order_contains(root, &profile.id))
+            .map_err(ProfileStoreError::Storage);
+    drop(locked);
+    result
 }
 
 pub fn delete_profile(id: &str) -> Result<(), ProfileStoreError> {
@@ -62,17 +69,26 @@ pub fn delete_profile(id: &str) -> Result<(), ProfileStoreError> {
             "invalid profile id '{id}'"
         )));
     }
-    schema::delete(id).map_err(|error| ProfileStoreError::Storage(error.to_string()))?;
-    config::mutate_settings_json(|root| clear_profile_references(root, id))
-        .map_err(ProfileStoreError::Storage)
+    let locked = schema::LockedProfileFile::acquire(id)
+        .map_err(|error| ProfileStoreError::Storage(error.to_string()))?;
+    locked
+        .delete()
+        .map_err(|error| ProfileStoreError::Storage(error.to_string()))?;
+    let result = config::mutate_settings_json(|root| clear_profile_references(root, id))
+        .map_err(ProfileStoreError::Storage);
+    drop(locked);
+    result
 }
 
 pub fn reorder_profiles(requested_ids: &[String]) -> Result<(), ProfileStoreError> {
-    let available_ids = schema::list()
-        .into_iter()
-        .map(|profile| profile.id)
-        .collect::<Vec<_>>();
     config::mutate_settings_json(|root| {
+        // Save/delete keep their per-profile file lock through their settings
+        // update. Reading the inventory under the settings lock therefore
+        // observes a serializable point in every profile store operation.
+        let available_ids = schema::list()
+            .into_iter()
+            .map(|profile| profile.id)
+            .collect::<Vec<_>>();
         reorder_profiles_in_settings(root, requested_ids, &available_ids)
     })
     .map_err(ProfileStoreError::Storage)
