@@ -144,14 +144,14 @@ mod tests {
         fs::write(&path, r#"{ "port": 12358, "token": "secret" }"#).expect("write auth");
         let args = Args {
             auth_file: Some(path.clone()),
-            base_url: Some("http://localhost:12358/va".into()),
+            base_url: Some("http://127.0.0.1:12358/va".into()),
             token: None,
             once: false,
         };
 
         let endpoint = resolve_endpoint(&args, &RuntimeEnv::default()).expect("endpoint");
 
-        assert_eq!(endpoint.base_url(), "http://localhost:12358/va");
+        assert_eq!(endpoint.base_url(), "http://127.0.0.1:12358/va");
         assert_eq!(endpoint.token(), Some("secret"));
 
         let _ = fs::remove_file(&path);
@@ -192,7 +192,7 @@ mod tests {
         fs::write(&path, r#"{ "port": 12358, "token": "secret" }"#).expect("write auth");
         let args = Args {
             auth_file: Some(path.clone()),
-            base_url: Some("http://localhost:9000/va".into()),
+            base_url: Some("http://127.0.0.1:9000/va".into()),
             token: None,
             once: false,
         };

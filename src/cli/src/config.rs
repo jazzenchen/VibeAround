@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use va_client::auth::{auth_file_matches_base_url, loopback_port, AuthFile};
+use va_client::auth::{auth_file_matches_base_url, local_server_port, AuthFile};
 use va_client::endpoint::ServerEndpoint;
 use va_client::http::AuthRequirement;
 
@@ -160,7 +160,7 @@ pub(crate) fn save_auth_file(
 }
 
 pub(crate) fn local_auth_port(base_url: &str) -> Result<u16, CliError> {
-    let Some(port) = loopback_port(base_url)
+    let Some(port) = local_server_port(base_url)
         .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?
     else {
         return Err(CliError::Usage(
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn requires_token_for_authenticated_base_url() {
         let options = Options {
-            base_url: Some("http://localhost:12358/va".into()),
+            base_url: Some("http://127.0.0.1:12358/va".into()),
             ..Default::default()
         };
 
@@ -308,7 +308,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         fs::write(&path, r#"{ "port": 12358, "token": "local-secret" }"#).expect("write auth");
         let options = Options {
-            base_url: Some("http://localhost:12358/va".into()),
+            base_url: Some("http://127.0.0.1:12358/va".into()),
             auth_file: Some(path.clone()),
             ..Default::default()
         };
@@ -319,7 +319,7 @@ mod tests {
             &RuntimeEnv::default(),
         )
         .expect("endpoint");
-        assert_eq!(endpoint.endpoint.base_url(), "http://localhost:12358/va");
+        assert_eq!(endpoint.endpoint.base_url(), "http://127.0.0.1:12358/va");
         assert_eq!(endpoint.endpoint.token(), Some("local-secret"));
         assert_eq!(endpoint.base_url_source, "cli");
         assert_eq!(endpoint.auth_source, "auth-file");
@@ -363,7 +363,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         fs::write(&path, r#"{ "port": 12358, "token": "local-secret" }"#).expect("write auth");
         let options = Options {
-            base_url: Some("http://localhost:9000/va".into()),
+            base_url: Some("http://127.0.0.1:9000/va".into()),
             auth_file: Some(path.clone()),
             ..Default::default()
         };
@@ -462,10 +462,18 @@ mod tests {
             local_auth_port("http://127.0.0.1:12358/va").expect("port"),
             12358
         );
-        assert_eq!(
-            local_auth_port("http://localhost:3000/va").expect("port"),
-            3000
-        );
+        assert!(matches!(
+            local_auth_port("http://localhost:3000/va"),
+            Err(CliError::Usage(_))
+        ));
+        assert!(matches!(
+            local_auth_port("http://[::1]:3000/va"),
+            Err(CliError::Usage(_))
+        ));
+        assert!(matches!(
+            local_auth_port("https://127.0.0.1:12358/va"),
+            Err(CliError::Usage(_))
+        ));
         assert!(matches!(
             local_auth_port("https://example.test/va"),
             Err(CliError::Usage(_))
