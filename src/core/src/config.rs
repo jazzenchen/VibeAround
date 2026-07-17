@@ -1096,7 +1096,10 @@ fn write_settings_json_to_path(path: &Path, root: &serde_json::Value) -> Result<
     crate::file_replace::write_private(path, pretty).map_err(|e| e.to_string())
 }
 
-fn add_workspace_to_settings(root: &mut serde_json::Value, path: &Path) -> Result<(), String> {
+pub(crate) fn add_workspace_to_settings(
+    root: &mut serde_json::Value,
+    path: &Path,
+) -> Result<(), String> {
     let obj = root
         .as_object_mut()
         .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;

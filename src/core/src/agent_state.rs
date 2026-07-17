@@ -279,7 +279,24 @@ pub fn write_agent_profile(agent_id: &str, profile_id: Option<String>) -> anyhow
 }
 
 pub fn write_agent_workspace(agent_id: &str, workspace: PathBuf) -> anyhow::Result<()> {
-    update_prefs(|prefs| {
+    config::mutate_settings_json(|root| set_agent_workspace_in_settings(root, agent_id, workspace))
+        .map_err(anyhow::Error::msg)
+}
+
+pub fn write_registered_agent_workspace(agent_id: &str, workspace: PathBuf) -> anyhow::Result<()> {
+    config::mutate_settings_json(|root| {
+        config::add_workspace_to_settings(root, &workspace)?;
+        set_agent_workspace_in_settings(root, agent_id, workspace)
+    })
+    .map_err(anyhow::Error::msg)
+}
+
+fn set_agent_workspace_in_settings(
+    root: &mut Value,
+    agent_id: &str,
+    workspace: PathBuf,
+) -> Result<(), String> {
+    update_prefs_in_settings(root, |prefs| {
         let entry = prefs.agents.entry(agent_id.to_string()).or_default();
         entry.workspace = Some(workspace);
     })
@@ -738,6 +755,28 @@ mod tests {
         assert_eq!(
             settings["launcher"]["agents"]["claude"]["workspace"],
             "/tmp/kept"
+        );
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
+    }
+
+    #[test]
+    fn registered_agent_workspace_updates_one_settings_document() {
+        let workspace = std::path::PathBuf::from("/tmp/work");
+        let mut settings = serde_json::json!({
+            "workspaces": ["/tmp/kept"],
+            "launcher": { "terminal": "terminal" }
+        });
+
+        config::add_workspace_to_settings(&mut settings, &workspace).unwrap();
+        set_agent_workspace_in_settings(&mut settings, "codex", workspace).unwrap();
+
+        assert_eq!(
+            settings["workspaces"],
+            serde_json::json!(["/tmp/kept", "/tmp/work"])
+        );
+        assert_eq!(
+            settings["launcher"]["agents"]["codex"]["workspace"],
+            "/tmp/work"
         );
         assert_eq!(settings["launcher"]["terminal"], "terminal");
     }

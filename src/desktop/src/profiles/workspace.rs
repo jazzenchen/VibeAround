@@ -52,12 +52,17 @@ pub(super) fn launcher_workspace_options(agent_id: Option<&str>) -> Vec<Workspac
 pub(super) fn set_workspace(workspace_path: &str, agent_id: Option<String>) -> Result<(), String> {
     let path =
         terminal::canonical_workspace_path(Path::new(workspace_path)).map_err(|e| e.to_string())?;
-    register_launcher_workspace(&path)?;
+    let should_register = should_register_launcher_workspace(&path);
     let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
     let agent_id = agent_id
         .map(|id| canonical_agent_id(&id))
         .unwrap_or_else(|| agent_state::resolve_selected_agent(&agent_prefs, &cfg));
-    agent_state::write_agent_workspace(&agent_id, path).map_err(|e| e.to_string())
+    if should_register {
+        agent_state::write_registered_agent_workspace(&agent_id, path)
+    } else {
+        agent_state::write_agent_workspace(&agent_id, path)
+    }
+    .map_err(|e| e.to_string())
 }
 
 pub(super) fn remove_workspace(workspace_path: String) -> Result<(), String> {
@@ -98,19 +103,19 @@ pub(super) fn resolve_launch_workspace(agent_id: &str) -> anyhow::Result<PathBuf
     resolve_agent_workspace_preference(agent_id, &agent_prefs)
 }
 
-fn register_launcher_workspace(path: &Path) -> Result<(), String> {
+fn should_register_launcher_workspace(path: &Path) -> bool {
     let builtin = config::builtin_workspaces_dir();
     if config::workspace_paths_equal(path, &builtin) {
-        return Ok(());
+        return false;
     }
     if terminal::launch_home_dir()
         .as_ref()
         .map(|home| config::workspace_paths_equal(path, home))
         .unwrap_or(false)
     {
-        return Ok(());
+        return false;
     }
-    config::register_workspace_path(path)
+    true
 }
 
 fn push_workspace_option(
