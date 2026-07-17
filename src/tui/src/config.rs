@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use va_client::auth::auth_file_matches_base_url;
 use va_client::endpoint::ServerEndpoint;
 
 use crate::transport::TuiError;
@@ -60,6 +61,7 @@ pub(crate) fn resolve_endpoint(
         }
         if auth_path.exists() {
             let auth = read_auth_file(&auth_path)?;
+            require_matching_local_auth(base_url, &auth)?;
             return Ok(endpoint.with_token(auth.token));
         }
         return Err(TuiError::MissingAuth(auth_path.display().to_string()));
@@ -83,6 +85,20 @@ fn read_auth_file(path: &Path) -> Result<va_client::auth::AuthFile, TuiError> {
         source,
     })?;
     va_client::auth::parse_auth_file(&body).map_err(TuiError::from)
+}
+
+fn require_matching_local_auth(
+    base_url: &str,
+    auth_file: &va_client::auth::AuthFile,
+) -> Result<(), TuiError> {
+    let matches = auth_file_matches_base_url(base_url, auth_file)
+        .map_err(|_| TuiError::Usage(format!("invalid base url: {base_url}")))?;
+    if matches {
+        return Ok(());
+    }
+    Err(TuiError::Usage(format!(
+        "refusing to reuse local auth for {base_url}; pass --token explicitly"
+    )))
 }
 
 fn auth_file_path(args: &Args, runtime_env: &RuntimeEnv) -> PathBuf {
@@ -118,9 +134,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolves_base_url_with_auth_file_token() {
+    fn matching_local_base_url_uses_auth_file_token() {
         let path = std::env::temp_dir().join(format!(
             "va-tui-auth-test-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, r#"{ "port": 12358, "token": "secret" }"#).expect("write auth");
+        let args = Args {
+            auth_file: Some(path.clone()),
+            base_url: Some("http://localhost:12358/va".into()),
+            token: None,
+            once: false,
+        };
+
+        let endpoint = resolve_endpoint(&args, &RuntimeEnv::default()).expect("endpoint");
+
+        assert_eq!(endpoint.base_url(), "http://localhost:12358/va");
+        assert_eq!(endpoint.token(), Some("secret"));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn remote_base_url_cannot_reuse_local_auth_file() {
+        let path = std::env::temp_dir().join(format!(
+            "va-tui-auth-remote-test-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, r#"{ "port": 12358, "token": "secret" }"#).expect("write auth");
+        let args = Args {
+            auth_file: Some(path.clone()),
+            base_url: Some("https://example.test/va".into()),
+            token: None,
+            once: false,
+        };
+
+        assert!(matches!(
+            resolve_endpoint(&args, &RuntimeEnv::default()),
+            Err(TuiError::Usage(_))
+        ));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn different_local_port_cannot_reuse_auth_file() {
+        let path = std::env::temp_dir().join(format!(
+            "va-tui-auth-port-test-{}-{}.json",
             std::process::id(),
             line!()
         ));
@@ -133,10 +197,10 @@ mod tests {
             once: false,
         };
 
-        let endpoint = resolve_endpoint(&args, &RuntimeEnv::default()).expect("endpoint");
-
-        assert_eq!(endpoint.base_url(), "http://localhost:9000/va");
-        assert_eq!(endpoint.token(), Some("secret"));
+        assert!(matches!(
+            resolve_endpoint(&args, &RuntimeEnv::default()),
+            Err(TuiError::Usage(_))
+        ));
 
         let _ = fs::remove_file(&path);
     }

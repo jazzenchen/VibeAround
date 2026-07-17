@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use va_client::auth::AuthFile;
+use va_client::auth::{auth_file_matches_base_url, loopback_port, AuthFile};
 use va_client::endpoint::ServerEndpoint;
 use va_client::http::AuthRequirement;
 
@@ -160,30 +160,25 @@ pub(crate) fn save_auth_file(
 }
 
 pub(crate) fn local_auth_port(base_url: &str) -> Result<u16, CliError> {
-    let Some(url) = loopback_url(base_url)? else {
+    let Some(port) = loopback_port(base_url)
+        .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?
+    else {
         return Err(CliError::Usage(
             "saving auth files is only supported for local VibeAround servers".into(),
         ));
     };
-    url.port_or_known_default()
-        .ok_or_else(|| CliError::Usage(format!("base url has no port: {base_url}")))
+    Ok(port)
 }
 
 fn require_matching_local_auth(base_url: &str, auth_file: &AuthFile) -> Result<(), CliError> {
-    let port = loopback_url(base_url)?.and_then(|url| url.port_or_known_default());
-    if port == Some(auth_file.port) {
+    let matches = auth_file_matches_base_url(base_url, auth_file)
+        .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?;
+    if matches {
         return Ok(());
     }
     Err(CliError::Usage(format!(
         "refusing to reuse local auth for {base_url}; pass --token explicitly"
     )))
-}
-
-fn loopback_url(base_url: &str) -> Result<Option<reqwest::Url>, CliError> {
-    let url = reqwest::Url::parse(base_url)
-        .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?;
-    let host = url.host_str().unwrap_or_default();
-    Ok(matches!(host, "127.0.0.1" | "localhost" | "::1").then_some(url))
 }
 
 pub(crate) fn remove_auth_file(options: &Options) -> Result<Option<PathBuf>, CliError> {

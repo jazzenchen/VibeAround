@@ -7,6 +7,8 @@ use va_client::Operation;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TuiError {
+    #[error("{0}")]
+    Usage(String),
     #[error("auth is required; pass --token or start VibeAround so auth.json exists at {0}")]
     MissingAuth(String),
     #[error("failed to read auth file {path}: {source}")]

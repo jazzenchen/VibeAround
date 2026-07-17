@@ -9,3 +9,4 @@ rust-version = "1.82"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = "1"
+url = "2.5"
