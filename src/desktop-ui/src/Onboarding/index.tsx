@@ -797,7 +797,7 @@ export default function Onboarding() {
             icon: <Download className="h-4 w-4" />,
             disabled: installReportsRunning,
             run: () =>
-              void startkit.start(finalSettings, settingsPatch, choices, installReports),
+              void startkit.start(settingsPatch, choices, installReports),
           };
         }
         return {
@@ -813,7 +813,7 @@ export default function Onboarding() {
           icon: <Download className="h-4 w-4" />,
           disabled: installReportsRunning,
           run: () =>
-            void startkit.start(finalSettings, settingsPatch, choices, installReports),
+            void startkit.start(settingsPatch, choices, installReports),
         };
       }
       if (!hasRunnableInstallWork) {

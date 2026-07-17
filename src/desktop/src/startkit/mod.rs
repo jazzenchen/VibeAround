@@ -392,12 +392,10 @@ pub async fn startkit_scan<R: Runtime>(
 pub async fn start_startkit_install<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, StartkitRunState>,
-    settings: Value,
     settings_patch: Value,
     choices: StartkitChoices,
     run_id: Option<String>,
 ) -> Result<(), String> {
-    let _submitted_settings = settings;
     let settings = tauri::async_runtime::spawn_blocking(move || {
         common::config::patch_settings_json(&settings_patch)
     })
