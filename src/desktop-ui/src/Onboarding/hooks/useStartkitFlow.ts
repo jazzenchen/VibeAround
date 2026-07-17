@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { SettingsPatch } from "../../lib/settingsPatch";
 
 import type {
   Settings,
@@ -173,7 +174,7 @@ interface UseStartkitFlowResult {
   scan: (settings: Settings, choices: StartkitChoices) => Promise<void>;
   start: (
     settings: Settings,
-    settingsPatch: Record<string, unknown>,
+    settingsPatch: SettingsPatch,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
   ) => Promise<void>;
@@ -266,7 +267,7 @@ export function useStartkitFlow(): UseStartkitFlowResult {
 
   const start = useCallback(async (
     settings: Settings,
-    settingsPatch: Record<string, unknown>,
+    settingsPatch: SettingsPatch,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
   ) => {

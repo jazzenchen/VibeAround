@@ -36,6 +36,7 @@ tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 include_dir = "0.7"
+json-patch = "3.0"
 shell-escape = "0.1"
 libc = "0.2"
 flate2 = "1.1"

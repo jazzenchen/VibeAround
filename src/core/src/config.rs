@@ -888,7 +888,7 @@ pub fn read_settings_snapshot() -> Result<SettingsSnapshot, String> {
     settings_snapshot(read_settings_json()?)
 }
 
-/// Apply an RFC 7396 JSON Merge Patch to the latest settings document.
+/// Apply an RFC 6902 JSON Patch to the latest settings document.
 pub fn patch_settings_json(patch: &serde_json::Value) -> Result<SettingsSnapshot, String> {
     let snapshot = patch_settings_json_at(&settings_path(), patch)?;
     *CONFIG_CACHE.write() = None;
@@ -964,12 +964,11 @@ fn patch_settings_json_at(
     path: &Path,
     patch: &serde_json::Value,
 ) -> Result<SettingsSnapshot, String> {
-    if !patch.is_object() {
-        return Err("settings patch must be a JSON object".to_string());
-    }
-    let patch = patch.clone();
+    let patch = serde_json::from_value::<json_patch::Patch>(patch.clone())
+        .map_err(|error| format!("invalid settings patch: {error}"))?;
     mutate_settings_json_at(path, move |settings| {
-        apply_merge_patch(settings, &patch);
+        json_patch::patch(settings, &patch)
+            .map_err(|error| format!("settings patch conflict: {error}"))?;
         settings_snapshot(settings.clone())
     })
 }
@@ -1009,29 +1008,6 @@ fn settings_snapshot(settings: serde_json::Value) -> Result<SettingsSnapshot, St
         revision.push(HEX[(byte & 0x0f) as usize] as char);
     }
     Ok(SettingsSnapshot { settings, revision })
-}
-
-fn apply_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
-    let serde_json::Value::Object(patch) = patch else {
-        *target = patch.clone();
-        return;
-    };
-    if !target.is_object() {
-        *target = serde_json::Value::Object(serde_json::Map::new());
-    }
-    let serde_json::Value::Object(target) = target else {
-        return;
-    };
-    for (key, value) in patch {
-        if value.is_null() {
-            target.remove(key);
-        } else {
-            apply_merge_patch(
-                target.entry(key.clone()).or_insert(serde_json::Value::Null),
-                value,
-            );
-        }
-    }
 }
 
 fn settings_lock_path(path: &Path) -> PathBuf {
@@ -1268,27 +1244,29 @@ mod tests {
     }
 
     #[test]
-    fn settings_merge_patch_changes_only_named_fields() {
-        let dir = unique_test_dir("merge-patch");
+    fn settings_patch_changes_only_named_fields() {
+        let dir = unique_test_dir("json-patch");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("settings.json");
         fs::write(
             &path,
-            r#"{ "api_bridge": { "enabled": true, "port": 9000 }, "onboarded": true }"#,
+            r#"{ "api_bridge": { "enabled": true, "port": 9000, "retry_429": { "max_retries": 10 } }, "onboarded": true }"#,
         )
         .unwrap();
 
         let snapshot = patch_settings_json_at(
             &path,
-            &serde_json::json!({
-                "api_bridge": { "port": 9001 },
-                "onboarded": null
-            }),
+            &serde_json::json!([
+                { "op": "replace", "path": "/api_bridge/port", "value": 9001 },
+                { "op": "replace", "path": "/api_bridge/retry_429/max_retries", "value": null },
+                { "op": "remove", "path": "/onboarded" }
+            ]),
         )
         .unwrap();
 
         assert_eq!(snapshot.settings["api_bridge"]["enabled"], true);
         assert_eq!(snapshot.settings["api_bridge"]["port"], 9001);
+        assert!(snapshot.settings["api_bridge"]["retry_429"]["max_retries"].is_null());
         assert!(snapshot.settings.get("onboarded").is_none());
         assert_eq!(snapshot.revision.len(), 64);
         fs::remove_dir_all(dir).unwrap();

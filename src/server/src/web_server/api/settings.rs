@@ -58,7 +58,7 @@ pub async fn put_settings_handler(
     }
 }
 
-/// PATCH /api/settings -- atomically apply an RFC 7396 JSON Merge Patch.
+/// PATCH /api/settings -- atomically apply an RFC 6902 JSON Patch.
 pub async fn patch_settings_handler(Json(patch): Json<serde_json::Value>) -> ApiResult {
     let snapshot = tokio::task::spawn_blocking(move || {
         let snapshot = common::config::patch_settings_json(&patch)?;
@@ -67,12 +67,14 @@ pub async fn patch_settings_handler(Json(patch): Json<serde_json::Value>) -> Api
     })
     .await
     .map_err(internal_join_error)?
-    .map_err(|error| {
-        if error == "settings patch must be a JSON object" {
-            (StatusCode::BAD_REQUEST, error).into_response()
-        } else {
-            internal_error(error)
+    .map_err(|error| match error.as_str() {
+        error if error.starts_with("invalid settings patch:") => {
+            (StatusCode::BAD_REQUEST, error.to_string()).into_response()
         }
+        error if error.starts_with("settings patch conflict:") => {
+            (StatusCode::CONFLICT, error.to_string()).into_response()
+        }
+        _ => internal_error(error),
     })?;
 
     response_with_etag(

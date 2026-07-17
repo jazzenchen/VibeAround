@@ -5,46 +5,62 @@ export type SettingsSnapshot<T> = {
   revision: string;
 };
 
-const UNCHANGED = Symbol("unchanged");
+export type SettingsPatchOperation =
+  | { op: "add"; path: string; value: unknown }
+  | { op: "remove"; path: string };
+
+export type SettingsPatch = SettingsPatchOperation[];
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function mergePatchDifference(base: unknown, desired: unknown): unknown | typeof UNCHANGED {
-  if (Object.is(base, desired)) return UNCHANGED;
+function pointerSegment(key: string): string {
+  return key.replaceAll("~", "~0").replaceAll("/", "~1");
+}
+
+function valuesEqual(base: unknown, desired: unknown): boolean {
+  if (Object.is(base, desired)) return true;
+  if (Array.isArray(base) && Array.isArray(desired)) {
+    return JSON.stringify(base) === JSON.stringify(desired);
+  }
+  return false;
+}
+
+function appendDifference(
+  patch: SettingsPatch,
+  path: string,
+  base: unknown,
+  desired: unknown,
+): void {
+  if (valuesEqual(base, desired)) return;
 
   if (isObject(base) && isObject(desired)) {
-    const patch: Record<string, unknown> = {};
     const keys = new Set([...Object.keys(base), ...Object.keys(desired)]);
     for (const key of keys) {
+      const childPath = `${path}/${pointerSegment(key)}`;
       if (!(key in desired) || desired[key] === undefined) {
-        patch[key] = null;
+        if (key in base) patch.push({ op: "remove", path: childPath });
         continue;
       }
       if (!(key in base)) {
-        patch[key] = desired[key];
+        patch.push({ op: "add", path: childPath, value: desired[key] });
         continue;
       }
-      const difference = mergePatchDifference(base[key], desired[key]);
-      if (difference !== UNCHANGED) patch[key] = difference;
+      appendDifference(patch, childPath, base[key], desired[key]);
     }
-    return Object.keys(patch).length === 0 ? UNCHANGED : patch;
+    return;
   }
 
-  if (Array.isArray(base) && Array.isArray(desired)) {
-    return JSON.stringify(base) === JSON.stringify(desired) ? UNCHANGED : desired;
-  }
-
-  return desired;
+  patch.push({ op: "add", path, value: desired });
 }
 
-export function createSettingsPatch<T>(base: T, desired: T): Record<string, unknown> {
-  const patch = mergePatchDifference(base, desired);
-  if (patch === UNCHANGED) return {};
-  if (!isObject(patch)) {
+export function createSettingsPatch<T>(base: T, desired: T): SettingsPatch {
+  if (!isObject(base) || !isObject(desired)) {
     throw new Error("settings must remain a JSON object");
   }
+  const patch: SettingsPatch = [];
+  appendDifference(patch, "", base, desired);
   return patch;
 }
 

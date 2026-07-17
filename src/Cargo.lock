@@ -834,6 +834,7 @@ dependencies = [
  "flate2",
  "futures",
  "include_dir",
+ "json-patch",
  "libc",
  "nanoid",
  "ngrok",

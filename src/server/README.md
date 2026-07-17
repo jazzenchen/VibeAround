@@ -49,7 +49,7 @@ Token-protected management APIs:
 GET  /va/api/service/info
 GET  /va/api/settings
 PUT  /va/api/settings          # requires If-Match from GET ETag
-PATCH /va/api/settings         # RFC 7396 JSON Merge Patch
+PATCH /va/api/settings         # RFC 6902 JSON Patch
 POST /va/api/settings/reload
 
 GET  /va/api/workspaces
