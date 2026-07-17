@@ -1,6 +1,6 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
+use common::agent_state::{self, AgentExecutablePreference};
 use serde_json::{Map, Value};
 
 pub fn resolve_configured_agent_executable(agent_id: &str) -> anyhow::Result<Option<PathBuf>> {
@@ -9,19 +9,10 @@ pub fn resolve_configured_agent_executable(agent_id: &str) -> anyhow::Result<Opt
 }
 
 pub fn write_scanned_agent_executable(agent_id: &str, path: &Path) -> anyhow::Result<()> {
-    let agent_id = agent_id.to_string();
-    let executable = executable_object(path);
-    common::config::mutate_settings_json(move |config| {
-        let root = config
-            .as_object_mut()
-            .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
-        let launcher = ensure_child_object(root, "launcher");
-        let agents = ensure_child_object(launcher, "agents");
-        let agent = ensure_child_object(agents, &agent_id);
-        agent.insert("executable".to_string(), Value::Object(executable));
-        Ok(())
-    })
-    .map_err(anyhow::Error::msg)
+    agent_state::write_agent_executable(
+        agent_id,
+        Some(AgentExecutablePreference::path_scan(path.to_path_buf())),
+    )
 }
 
 fn agent_entry<'a>(config: &'a Value, agent_id: &str) -> Option<&'a Map<String, Value>> {
@@ -44,43 +35,10 @@ fn executable_path_from_entry(entry: &Map<String, Value>) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn ensure_child_object<'a>(
-    parent: &'a mut Map<String, Value>,
-    key: &str,
-) -> &'a mut Map<String, Value> {
-    let value = parent
-        .entry(key.to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !value.is_object() {
-        *value = Value::Object(Map::new());
-    }
-    value.as_object_mut().expect("object just inserted")
-}
-
-fn executable_object(path: &Path) -> Map<String, Value> {
-    let mut object = Map::new();
-    object.insert(
-        "path".to_string(),
-        Value::String(path.to_string_lossy().to_string()),
-    );
-    if let Ok(realpath) = fs::canonicalize(path) {
-        object.insert(
-            "realpath".to_string(),
-            Value::String(realpath.to_string_lossy().to_string()),
-        );
-    }
-    object.insert("source".to_string(), Value::String("path_scan".to_string()));
-    object.insert(
-        "source_label".to_string(),
-        Value::String("PATH scan".to_string()),
-    );
-    object.insert("rank".to_string(), Value::Number(4000.into()));
-    object
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn reads_configured_executable_from_settings() {

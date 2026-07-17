@@ -472,6 +472,19 @@ impl AgentExecutablePreference {
             package: None,
         }
     }
+
+    pub fn path_scan(path: PathBuf) -> Self {
+        let realpath = std::fs::canonicalize(&path).ok();
+        Self {
+            path,
+            realpath,
+            version: None,
+            source: "path_scan".to_string(),
+            source_label: "PATH scan".to_string(),
+            rank: 4000,
+            package: None,
+        }
+    }
 }
 
 fn manual_executable_source() -> String {
