@@ -196,6 +196,12 @@ pub struct Config {
     raw_channels: serde_json::Value,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceSettings {
+    pub default_workspace: PathBuf,
+    pub workspaces: Vec<PathBuf>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ToolchainMode {
     #[default]
@@ -458,26 +464,9 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .cloned()
         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-    let default_workspace = root
-        .get("default_workspace")
-        .and_then(|v| v.as_str())
-        .map(|s| expand_home(s.trim()))
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(builtin_workspaces_dir);
-
-    // --- Workspaces ---
-    let mut workspaces: Vec<PathBuf> = root
-        .get("workspaces")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| expand_home(s.trim()))
-                .filter(|p| !p.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    workspaces.retain(|workspace| workspace != &default_workspace);
+    let workspace_settings = workspace_settings_from_json(&root);
+    let default_workspace = workspace_settings.default_workspace;
+    let workspaces = workspace_settings.workspaces;
 
     let preview_base_url = root
         .get("preview_base_url")
@@ -585,6 +574,33 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         search_tool,
         remote,
         raw_channels,
+    }
+}
+
+pub fn workspace_settings_from_json(root: &serde_json::Value) -> WorkspaceSettings {
+    let default_workspace = root
+        .get("default_workspace")
+        .and_then(|value| value.as_str())
+        .map(|value| expand_home(value.trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(builtin_workspaces_dir);
+    let mut workspaces = root
+        .get("workspaces")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(|value| expand_home(value.trim()))
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    workspaces.retain(|workspace| workspace != &default_workspace);
+
+    WorkspaceSettings {
+        default_workspace,
+        workspaces,
     }
 }
 
@@ -870,7 +886,7 @@ pub async fn update_settings_json_async(
 pub fn remove_workspace_path(path: &Path) -> Result<bool, String> {
     let mut removed = false;
     update_settings_json(|root| {
-        removed = remove_workspace_from_settings_root(root, path);
+        removed = remove_workspace_from_settings(root, path);
     })?;
     Ok(removed)
 }
@@ -1021,7 +1037,7 @@ fn write_settings_json_to_path(path: &Path, root: &serde_json::Value) -> Result<
     crate::file_replace::write_private(path, pretty).map_err(|e| e.to_string())
 }
 
-fn remove_workspace_from_settings_root(root: &mut serde_json::Value, path: &Path) -> bool {
+pub fn remove_workspace_from_settings(root: &mut serde_json::Value, path: &Path) -> bool {
     let Some(obj) = root.as_object_mut() else {
         return false;
     };
@@ -1714,7 +1730,7 @@ mod tests {
             "working_dir": workspace.to_string_lossy().to_string()
         });
 
-        assert!(remove_workspace_from_settings_root(&mut root, &workspace));
+        assert!(remove_workspace_from_settings(&mut root, &workspace));
 
         let workspaces = root
             .get("workspaces")

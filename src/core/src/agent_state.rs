@@ -334,7 +334,15 @@ pub fn remove_profile_references_from_settings(
 }
 
 pub fn remove_workspace_references(workspace: &std::path::Path) -> anyhow::Result<()> {
-    update_prefs(|prefs| {
+    config::mutate_settings_json(|root| remove_workspace_references_from_settings(root, workspace))
+        .map_err(anyhow::Error::msg)
+}
+
+pub fn remove_workspace_references_from_settings(
+    root: &mut Value,
+    workspace: &std::path::Path,
+) -> Result<(), String> {
+    update_prefs_in_settings(root, |prefs| {
         for preference in prefs.agents.values_mut() {
             if preference
                 .workspace
@@ -712,6 +720,35 @@ mod tests {
         assert_eq!(
             settings["launcher"]["agents"]["claude"]["profile_id"],
             "kept"
+        );
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
+    }
+
+    #[test]
+    fn workspace_reference_removal_preserves_other_launcher_fields() {
+        let mut settings = serde_json::json!({
+            "launcher": {
+                "terminal": "terminal",
+                "agents": {
+                    "codex": { "workspace": "/tmp/removed" },
+                    "claude": {
+                        "profile_id": "kept",
+                        "workspace": "/tmp/kept"
+                    }
+                }
+            }
+        });
+
+        remove_workspace_references_from_settings(
+            &mut settings,
+            std::path::Path::new("/tmp/removed"),
+        )
+        .unwrap();
+
+        assert!(settings["launcher"]["agents"].get("codex").is_none());
+        assert_eq!(
+            settings["launcher"]["agents"]["claude"]["workspace"],
+            "/tmp/kept"
         );
         assert_eq!(settings["launcher"]["terminal"], "terminal");
     }
