@@ -81,46 +81,74 @@ pub struct AgentExecutableLatestView {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn profiles_list() -> Vec<ProfileSummary> {
-    profile_summaries()
+pub async fn profiles_list() -> Result<Vec<ProfileSummary>, String> {
+    tauri::async_runtime::spawn_blocking(profile_summaries)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn profiles_get(id: String) -> Result<ProfileDef, String> {
-    get_profile(&id)
+pub async fn profiles_get(id: String) -> Result<ProfileDef, String> {
+    tauri::async_runtime::spawn_blocking(move || get_profile(&id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn profiles_upsert(app: tauri::AppHandle, profile: ProfileDef) -> Result<(), String> {
-    save_profile(&profile)?;
-    emit_launch_config_changed(&app);
-    Ok(())
+pub async fn profiles_upsert(app: tauri::AppHandle, profile: ProfileDef) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        save_profile(&profile)?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn profiles_create(app: tauri::AppHandle, draft: ProfileDraft) -> Result<ProfileDef, String> {
-    let profile = create_profile(draft)?;
-    emit_launch_config_changed(&app);
-    Ok(profile)
+pub async fn profiles_create(
+    app: tauri::AppHandle,
+    draft: ProfileDraft,
+) -> Result<ProfileDef, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let profile = create_profile(draft)?;
+        emit_launch_config_changed(&app);
+        Ok(profile)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn profiles_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    delete_profile(&id)?;
-    emit_launch_config_changed(&app);
-    Ok(())
+pub async fn profiles_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_profile(&id)?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn profiles_reorder(app: tauri::AppHandle, profile_ids: Vec<String>) -> Result<(), String> {
-    reorder_profiles(profile_ids)?;
-    emit_launch_config_changed(&app);
-    Ok(())
+pub async fn profiles_reorder(
+    app: tauri::AppHandle,
+    profile_ids: Vec<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        reorder_profiles(profile_ids)?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn profiles_launch(id: String, launch_target: String) -> Result<(), String> {
-    profiles_launch_sync(id, launch_target)
+pub async fn profiles_launch(id: String, launch_target: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || profiles_launch_sync(id, launch_target))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn profiles_launch_sync(id: String, launch_target: String) -> Result<(), String> {
@@ -138,8 +166,10 @@ pub(crate) fn profiles_launch_sync(id: String, launch_target: String) -> Result<
 /// agent registry id (e.g. "claude", "codex", "gemini", "cursor", "kiro",
 /// "qwen-code", "opencode").
 #[tauri::command]
-pub fn profiles_launch_direct(agent_id: String) -> Result<(), String> {
-    profiles_launch_direct_sync(agent_id)
+pub async fn profiles_launch_direct(agent_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || profiles_launch_direct_sync(agent_id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn profiles_launch_direct_sync(agent_id: String) -> Result<(), String> {
@@ -152,8 +182,10 @@ pub fn profiles_catalog() -> Vec<CatalogEntry> {
 }
 
 #[tauri::command]
-pub fn profiles_google_oauth_status() -> GoogleOAuthStatus {
-    common::profiles::google_oauth::status()
+pub async fn profiles_google_oauth_status() -> Result<GoogleOAuthStatus, String> {
+    tauri::async_runtime::spawn_blocking(common::profiles::google_oauth::status)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -186,11 +218,16 @@ pub async fn launcher_agent_executable_resolution(
     agent_id: String,
     scan: Option<bool>,
 ) -> Result<AgentExecutableResolution, String> {
-    let agent_id = resources::agent_by_alias(&agent_id)
-        .map(|def| def.id.clone())
-        .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
     let scan = scan.unwrap_or(false);
-    let config = config::ensure_loaded();
+    let (agent_id, toolchain_mode) = tauri::async_runtime::spawn_blocking(move || {
+        let agent_id = resources::agent_by_alias(&agent_id)
+            .map(|def| def.id.clone())
+            .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
+        let toolchain_mode = config::ensure_loaded().toolchain_mode.as_str().to_string();
+        Ok::<_, String>((agent_id, toolchain_mode))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     let availability = common::agent_availability::resolve_agent_availability(
         &agent_id,
         common::agent_availability::AgentAvailabilityRequest {
@@ -199,7 +236,7 @@ pub async fn launcher_agent_executable_resolution(
             } else {
                 common::agent_availability::AgentScanPolicy::CacheOnly
             },
-            toolchain_mode: config.toolchain_mode.as_str(),
+            toolchain_mode: &toolchain_mode,
             candidate_preference:
                 common::agent_availability::AgentCandidatePreference::ToolchainMode,
             include_configured_version: scan,
@@ -210,32 +247,36 @@ pub async fn launcher_agent_executable_resolution(
     let detection = availability.detection;
     let configured = availability.configured;
     let selected = availability.selected;
-    let configured_path =
-        agent_state::resolve_agent_executable_path(&agent_state::read_prefs(), &agent_id)
-            .map(|path| path.to_string_lossy().to_string());
+    tauri::async_runtime::spawn_blocking(move || {
+        let configured_path =
+            agent_state::resolve_agent_executable_path(&agent_state::read_prefs(), &agent_id)
+                .map(|path| path.to_string_lossy().to_string());
 
-    let mut candidates = Vec::new();
-    if let Some(candidate) = configured {
-        candidates.push(candidate);
-    }
-    candidates.extend(detection.candidates);
+        let mut candidates = Vec::new();
+        if let Some(candidate) = configured {
+            candidates.push(candidate);
+        }
+        candidates.extend(detection.candidates);
 
-    let selected_key = selected.as_ref().map(candidate_key);
-    let mut candidate_views = Vec::new();
-    for candidate in dedupe_agent_candidates(candidates) {
-        let selected = selected_key
-            .as_deref()
-            .is_some_and(|key| key == candidate_key(&candidate));
-        candidate_views.push(candidate_view(&agent_id, candidate, selected));
-    }
-    let selected = selected.map(|candidate| candidate_view(&agent_id, candidate, true));
+        let selected_key = selected.as_ref().map(candidate_key);
+        let mut candidate_views = Vec::new();
+        for candidate in dedupe_agent_candidates(candidates) {
+            let selected = selected_key
+                .as_deref()
+                .is_some_and(|key| key == candidate_key(&candidate));
+            candidate_views.push(candidate_view(&agent_id, candidate, selected));
+        }
+        let selected = selected.map(|candidate| candidate_view(&agent_id, candidate, true));
 
-    Ok(AgentExecutableResolution {
-        agent_id: agent_id.clone(),
-        configured_path,
-        selected,
-        candidates: candidate_views,
+        AgentExecutableResolution {
+            agent_id,
+            configured_path,
+            selected,
+            candidates: candidate_views,
+        }
     })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -243,20 +284,24 @@ pub async fn launcher_agent_executable_latest(
     agent_id: String,
     executable_path: String,
 ) -> Result<AgentExecutableLatestView, String> {
-    let agent_id = resources::agent_by_alias(&agent_id)
-        .map(|def| def.id.clone())
-        .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
-    let path = PathBuf::from(executable_path.trim());
-    if !path.is_file() {
-        return Err(format!("executable path is not a file: {}", path.display()));
-    }
-
-    let detected_candidate = common::agent_detection::read_detected_agents().and_then(|detected| {
-        detected
-            .agents
-            .get(&agent_id)
-            .and_then(|detection| common::agent_detection::candidate_for_path(detection, &path))
-    });
+    let (agent_id, path, detected_candidate) = tauri::async_runtime::spawn_blocking(move || {
+        let agent_id = resources::agent_by_alias(&agent_id)
+            .map(|def| def.id.clone())
+            .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
+        let path = PathBuf::from(executable_path.trim());
+        if !path.is_file() {
+            return Err(format!("executable path is not a file: {}", path.display()));
+        }
+        let detected_candidate =
+            common::agent_detection::read_detected_agents().and_then(|detected| {
+                detected.agents.get(&agent_id).and_then(|detection| {
+                    common::agent_detection::candidate_for_path(detection, &path)
+                })
+            });
+        Ok::<_, String>((agent_id, path, detected_candidate))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     let candidate = if let Some(candidate) = detected_candidate {
         candidate
     } else {
@@ -281,15 +326,20 @@ pub async fn launcher_update_agent(
     agent_id: String,
     executable_path: Option<String>,
 ) -> Result<(), String> {
-    let agent_id = resources::agent_by_alias(&agent_id)
-        .map(|def| def.id.clone())
-        .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
-    let config = config::ensure_loaded();
+    let (agent_id, toolchain_mode) = tauri::async_runtime::spawn_blocking(move || {
+        let agent_id = resources::agent_by_alias(&agent_id)
+            .map(|def| def.id.clone())
+            .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
+        let toolchain_mode = config::ensure_loaded().toolchain_mode.as_str().to_string();
+        Ok::<_, String>((agent_id, toolchain_mode))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     let availability = common::agent_availability::resolve_agent_availability(
         &agent_id,
         common::agent_availability::AgentAvailabilityRequest {
             scan_policy: common::agent_availability::AgentScanPolicy::Refresh,
-            toolchain_mode: config.toolchain_mode.as_str(),
+            toolchain_mode: &toolchain_mode,
             candidate_preference:
                 common::agent_availability::AgentCandidatePreference::ToolchainMode,
             include_configured_version: true,
@@ -299,11 +349,17 @@ pub async fn launcher_update_agent(
     .map_err(|error| error.to_string())?;
     let detection = availability.detection;
     let candidate = if let Some(path) = executable_path {
-        let path = PathBuf::from(path.trim());
-        if !path.is_file() {
-            return Err(format!("executable path is not a file: {}", path.display()));
-        }
-        if let Some(candidate) = common::agent_detection::candidate_for_path(&detection, &path) {
+        let (path, detected_candidate) = tauri::async_runtime::spawn_blocking(move || {
+            let path = PathBuf::from(path.trim());
+            if !path.is_file() {
+                return Err(format!("executable path is not a file: {}", path.display()));
+            }
+            let candidate = common::agent_detection::candidate_for_path(&detection, &path);
+            Ok::<_, String>((path, candidate))
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        if let Some(candidate) = detected_candidate {
             candidate
         } else {
             common::agent_detection::manual_candidate_with_version(&agent_id, path)
@@ -371,8 +427,10 @@ pub async fn launcher_list_workspaces(
 }
 
 #[tauri::command]
-pub fn profiles_launch_default() -> Result<(), String> {
-    profiles_launch_default_sync()
+pub async fn profiles_launch_default() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(profiles_launch_default_sync)
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn profiles_launch_default_sync() -> Result<(), String> {
@@ -391,12 +449,16 @@ pub(crate) fn profiles_launch_default_sync() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn profiles_launch_resume(
+pub async fn profiles_launch_resume(
     id: String,
     launch_target: String,
     session_id: String,
 ) -> Result<(), String> {
-    profiles_launch_resume_sync(id, launch_target, session_id)
+    tauri::async_runtime::spawn_blocking(move || {
+        profiles_launch_resume_sync(id, launch_target, session_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn profiles_launch_resume_sync(
@@ -414,8 +476,15 @@ pub(crate) fn profiles_launch_resume_sync(
 }
 
 #[tauri::command]
-pub fn profiles_launch_direct_resume(agent_id: String, session_id: String) -> Result<(), String> {
-    profiles_launch_direct_resume_sync(agent_id, session_id)
+pub async fn profiles_launch_direct_resume(
+    agent_id: String,
+    session_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        profiles_launch_direct_resume_sync(agent_id, session_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn profiles_launch_direct_resume_sync(
@@ -440,42 +509,54 @@ pub async fn launcher_list_sessions(
 }
 
 #[tauri::command]
-pub fn launcher_set_default(
+pub async fn launcher_set_default(
     app: tauri::AppHandle,
     agent_id: String,
     profile_id: Option<String>,
 ) -> Result<(), String> {
-    let (agent_id, profile_id) = validate_agent_profile_selection(&agent_id, profile_id)?;
-    agent_state::write_default_launch(&agent_id, profile_id).map_err(|e| e.to_string())?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let (agent_id, profile_id) = validate_agent_profile_selection(&agent_id, profile_id)?;
+        agent_state::write_default_launch(&agent_id, profile_id).map_err(|e| e.to_string())?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_set_agent_profile(
+pub async fn launcher_set_agent_profile(
     app: tauri::AppHandle,
     agent_id: String,
     profile_id: Option<String>,
 ) -> Result<(), String> {
-    let (agent_id, profile_id) = validate_agent_profile_selection(&agent_id, profile_id)?;
-    agent_state::write_agent_profile(&agent_id, profile_id).map_err(|e| e.to_string())?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let (agent_id, profile_id) = validate_agent_profile_selection(&agent_id, profile_id)?;
+        agent_state::write_agent_profile(&agent_id, profile_id).map_err(|e| e.to_string())?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_set_agent_launch_args(
+pub async fn launcher_set_agent_launch_args(
     app: tauri::AppHandle,
     agent_id: String,
     launch_args: agent_state::AgentLaunchArgs,
 ) -> Result<(), String> {
-    let agent_id = resources::agent_by_alias(&agent_id)
-        .map(|def| def.id.clone())
-        .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
-    let launch_args = sanitize_agent_launch_args(launch_args)?;
-    agent_state::write_agent_launch_args(&agent_id, launch_args).map_err(|e| e.to_string())?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let agent_id = resources::agent_by_alias(&agent_id)
+            .map(|def| def.id.clone())
+            .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
+        let launch_args = sanitize_agent_launch_args(launch_args)?;
+        agent_state::write_agent_launch_args(&agent_id, launch_args).map_err(|e| e.to_string())?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -492,24 +573,38 @@ pub async fn launcher_set_agent_executable_path(
         Some(path) => {
             let path = PathBuf::from(path.trim());
             if agent.direct_only {
-                if !is_valid_direct_only_executable_path(&agent_id, &path) {
-                    return Err(format!(
-                        "agent path is not a valid {}: {}",
-                        direct_only_executable_path_label(),
-                        path.display()
-                    ));
-                }
-                Some(direct_only_executable_preference(&agent_id, path))
+                let path_agent_id = agent_id.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if !is_valid_direct_only_executable_path(&path_agent_id, &path) {
+                        return Err(format!(
+                            "agent path is not a valid {}: {}",
+                            direct_only_executable_path_label(),
+                            path.display()
+                        ));
+                    }
+                    Ok::<_, String>(Some(direct_only_executable_preference(
+                        &path_agent_id,
+                        path,
+                    )))
+                })
+                .await
+                .map_err(|error| error.to_string())??
             } else {
-                if !path.is_file() {
-                    return Err(format!("executable path is not a file: {}", path.display()));
-                }
-                let detected_candidate =
-                    common::agent_detection::read_detected_agents().and_then(|detected| {
-                        detected.agents.get(&agent_id).and_then(|detection| {
-                            common::agent_detection::candidate_for_path(detection, &path)
-                        })
-                    });
+                let path_agent_id = agent_id.clone();
+                let (path, detected_candidate) = tauri::async_runtime::spawn_blocking(move || {
+                    if !path.is_file() {
+                        return Err(format!("executable path is not a file: {}", path.display()));
+                    }
+                    let detected_candidate = common::agent_detection::read_detected_agents()
+                        .and_then(|detected| {
+                            detected.agents.get(&path_agent_id).and_then(|detection| {
+                                common::agent_detection::candidate_for_path(detection, &path)
+                            })
+                        });
+                    Ok::<_, String>((path, detected_candidate))
+                })
+                .await
+                .map_err(|error| error.to_string())??;
                 let candidate = if let Some(candidate) = detected_candidate {
                     candidate
                 } else {
@@ -526,9 +621,13 @@ pub async fn launcher_set_agent_executable_path(
         }
         None => None,
     };
-    agent_state::write_agent_executable(&agent_id, executable).map_err(|e| e.to_string())?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        agent_state::write_agent_executable(&agent_id, executable).map_err(|e| e.to_string())?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn is_valid_direct_only_executable_path(agent_id: &str, path: &std::path::Path) -> bool {
@@ -602,117 +701,152 @@ fn direct_only_executable_preference(
 }
 
 #[tauri::command]
-pub fn launcher_set_selected_agent(app: tauri::AppHandle, agent_id: String) -> Result<(), String> {
-    let agent_id = resources::agent_by_alias(&agent_id)
-        .map(|def| def.id.clone())
-        .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
-    agent_state::write_selected_agent(&agent_id).map_err(|e| e.to_string())?;
-    emit_launch_config_changed(&app);
-    Ok(())
+pub async fn launcher_set_selected_agent(
+    app: tauri::AppHandle,
+    agent_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let agent_id = resources::agent_by_alias(&agent_id)
+            .map(|def| def.id.clone())
+            .ok_or_else(|| format!("unknown agent: '{agent_id}'"))?;
+        agent_state::write_selected_agent(&agent_id).map_err(|e| e.to_string())?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_set_terminal(terminal_id: String) -> Result<(), String> {
-    let choice = terminal::TerminalChoice::from_id(&terminal_id)
-        .ok_or_else(|| format!("unknown terminal: '{}'", terminal_id))?;
-    if !terminal::TerminalChoice::ALL.contains(&choice) {
-        return Err(format!(
-            "terminal '{}' is not supported on this platform",
-            terminal_id
-        ));
-    }
-    if !terminal::is_available(choice) {
-        return Err(format!("terminal '{}' is not installed", terminal_id));
-    }
-    terminal::write_preference(choice).map_err(|e| e.to_string())
+pub async fn launcher_set_terminal(terminal_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let choice = terminal::TerminalChoice::from_id(&terminal_id)
+            .ok_or_else(|| format!("unknown terminal: '{}'", terminal_id))?;
+        if !terminal::TerminalChoice::ALL.contains(&choice) {
+            return Err(format!(
+                "terminal '{}' is not supported on this platform",
+                terminal_id
+            ));
+        }
+        if !terminal::is_available(choice) {
+            return Err(format!("terminal '{}' is not installed", terminal_id));
+        }
+        terminal::write_preference(choice).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_set_workspace(
+pub async fn launcher_set_workspace(
     app: tauri::AppHandle,
     workspace_path: String,
     agent_id: Option<String>,
 ) -> Result<(), String> {
-    workspace::set_workspace(&workspace_path, agent_id)?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace::set_workspace(&workspace_path, agent_id)?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_remove_workspace(
+pub async fn launcher_remove_workspace(
     app: tauri::AppHandle,
     workspace_path: String,
 ) -> Result<(), String> {
-    workspace::remove_workspace(workspace_path)?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace::remove_workspace(workspace_path)?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_reorder_workspaces(
+pub async fn launcher_reorder_workspaces(
     app: tauri::AppHandle,
     workspace_paths: Vec<String>,
 ) -> Result<(), String> {
-    workspace::reorder_workspaces(workspace_paths)?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        workspace::reorder_workspaces(workspace_paths)?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_set_compatibility_bridge(
+pub async fn launcher_set_compatibility_bridge(
     app: tauri::AppHandle,
     mode: String,
 ) -> Result<(), String> {
-    let mode = terminal::CompatibilityBridgeMode::from_id(&mode)
-        .ok_or_else(|| format!("unknown compatibility bridge mode: '{mode}'"))?;
-    terminal::write_compatibility_bridge_preference(mode).map_err(|e| e.to_string())?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        let mode = terminal::CompatibilityBridgeMode::from_id(&mode)
+            .ok_or_else(|| format!("unknown compatibility bridge mode: '{mode}'"))?;
+        terminal::write_compatibility_bridge_preference(mode).map_err(|e| e.to_string())?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_set_local_agent_api_enabled(
+pub async fn launcher_set_local_agent_api_enabled(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
-    config::update_settings_json(|root| {
-        if !root.is_object() {
-            *root = serde_json::json!({});
-        }
-        let Some(root_obj) = root.as_object_mut() else {
-            return;
-        };
-        let entry = root_obj
-            .entry("local_agent_api".to_string())
-            .or_insert_with(|| serde_json::json!({}));
-        if !entry.is_object() {
-            *entry = serde_json::json!({});
-        }
-        if let Some(settings) = entry.as_object_mut() {
-            settings.insert("enabled".to_string(), serde_json::json!(enabled));
-        }
-    })?;
-    emit_launch_config_changed(&app);
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        config::update_settings_json(|root| {
+            if !root.is_object() {
+                *root = serde_json::json!({});
+            }
+            let Some(root_obj) = root.as_object_mut() else {
+                return;
+            };
+            let entry = root_obj
+                .entry("local_agent_api".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if !entry.is_object() {
+                *entry = serde_json::json!({});
+            }
+            if let Some(settings) = entry.as_object_mut() {
+                settings.insert("enabled".to_string(), serde_json::json!(enabled));
+            }
+        })?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn launcher_set_profile_connection(
+pub async fn launcher_set_profile_connection(
     app: tauri::AppHandle,
     profile_id: String,
     agent_id: String,
     preference: agent_state::ProfileConnectionPreference,
 ) -> Result<(), String> {
-    let agent_id = validate_connection_agent_id(agent_id)?;
-    let mut profile = schema::load(&profile_id)
-        .map(normalize_legacy_profile_and_persist)
-        .ok_or_else(|| format!("profile '{profile_id}' not found"))?;
-    let preference = sanitize_profile_connection_preference(&profile, &agent_id, preference)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let agent_id = validate_connection_agent_id(agent_id)?;
+        let mut profile = schema::load(&profile_id)
+            .map(normalize_legacy_profile_and_persist)
+            .ok_or_else(|| format!("profile '{profile_id}' not found"))?;
+        let preference = sanitize_profile_connection_preference(&profile, &agent_id, preference)?;
 
-    schema::set_connection(&mut profile, &agent_id, preference);
-    schema::save(&profile).map_err(|e| e.to_string())?;
-    emit_launch_config_changed(&app);
-    Ok(())
+        schema::set_connection(&mut profile, &agent_id, preference);
+        schema::save(&profile).map_err(|e| e.to_string())?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn validate_connection_agent_id(agent_id: String) -> Result<String, String> {
@@ -811,7 +945,7 @@ fn emit_launch_config_changed(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
-    use super::profiles_launch_direct;
+    use super::profiles_launch_direct_sync;
     use super::{sanitize_agent_launch_args, validate_connection_agent_id};
     use common::agent_state::AgentLaunchArgs;
     #[cfg(windows)]
@@ -902,7 +1036,7 @@ mod tests {
         std::env::set_var("VA_LAUNCH_CAPTURE", &capture);
         let _ = common::config::reload();
 
-        profiles_launch_direct("codex".to_string()).expect("direct launch calls va-launch");
+        profiles_launch_direct_sync("codex".to_string()).expect("direct launch calls va-launch");
 
         let captured = read_to_string_eventually(&capture);
         let value: serde_json::Value =
