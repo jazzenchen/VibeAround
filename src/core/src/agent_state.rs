@@ -134,7 +134,13 @@ pub type ProfileConnectionPreferences =
 pub fn read_prefs() -> AgentsPrefsFile {
     config::read_settings_json()
         .ok()
-        .and_then(|root| root.get("launcher").cloned())
+        .map(|root| prefs_from_settings(&root))
+        .unwrap_or_default()
+}
+
+fn prefs_from_settings(root: &Value) -> AgentsPrefsFile {
+    root.get("launcher")
+        .cloned()
         .and_then(
             |launcher| match serde_json::from_value::<AgentsPrefsFile>(launcher) {
                 Ok(prefs) => Some(prefs),
@@ -350,39 +356,38 @@ fn paths_equal(left: &std::path::Path, right: &std::path::Path) -> bool {
 }
 
 fn update_prefs(f: impl FnOnce(&mut AgentsPrefsFile)) -> anyhow::Result<()> {
-    let mut prefs = read_prefs();
-    f(&mut prefs);
-    write_prefs(&prefs)
+    config::mutate_settings_json(|root| update_prefs_in_settings(root, f))
+        .map_err(anyhow::Error::msg)
 }
 
-fn write_prefs(prefs: &AgentsPrefsFile) -> anyhow::Result<()> {
-    let value = serde_json::to_value(prefs)?;
+fn update_prefs_in_settings(
+    root: &mut Value,
+    f: impl FnOnce(&mut AgentsPrefsFile),
+) -> Result<(), String> {
+    let mut prefs = prefs_from_settings(root);
+    f(&mut prefs);
+    let value = serde_json::to_value(prefs).map_err(|error| error.to_string())?;
     let prefs_obj = value.as_object().cloned().unwrap_or_default();
-    config::update_settings_json(|root| {
-        if !root.is_object() {
-            *root = Value::Object(Map::new());
-        }
-        let Some(root_obj) = root.as_object_mut() else {
-            return;
-        };
-        let launcher = root_obj
-            .entry("launcher".to_string())
-            .or_insert_with(|| Value::Object(Map::new()));
-        if !launcher.is_object() {
-            *launcher = Value::Object(Map::new());
-        }
-        let Some(launcher_obj) = launcher.as_object_mut() else {
-            return;
-        };
-        merge_pref_field(launcher_obj, &prefs_obj, "selected_agent");
-        merge_pref_field(launcher_obj, &prefs_obj, "default_agent");
-        merge_pref_field(launcher_obj, &prefs_obj, "default_profile_id");
-        merge_pref_field(launcher_obj, &prefs_obj, "agents");
-        if launcher_obj.is_empty() {
-            root_obj.remove("launcher");
-        }
-    })
-    .map_err(anyhow::Error::msg)
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let launcher = root_obj
+        .entry("launcher".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !launcher.is_object() {
+        *launcher = Value::Object(Map::new());
+    }
+    let launcher_obj = launcher
+        .as_object_mut()
+        .ok_or_else(|| "settings.json launcher must be a JSON object".to_string())?;
+    merge_pref_field(launcher_obj, &prefs_obj, "selected_agent");
+    merge_pref_field(launcher_obj, &prefs_obj, "default_agent");
+    merge_pref_field(launcher_obj, &prefs_obj, "default_profile_id");
+    merge_pref_field(launcher_obj, &prefs_obj, "agents");
+    if launcher_obj.is_empty() {
+        root_obj.remove("launcher");
+    }
+    Ok(())
 }
 
 fn resolve_agent_candidate(candidate: Option<&str>, cfg: &config::Config) -> Option<String> {
@@ -655,6 +660,25 @@ mod tests {
             resolve_agent_acp_args(&prefs, "codex"),
             vec!["--strict-config".to_string()]
         );
+    }
+
+    #[test]
+    fn preference_update_uses_latest_settings_value() {
+        let mut settings = serde_json::json!({
+            "launcher": {
+                "selected_agent": "codex",
+                "terminal": "terminal"
+            }
+        });
+
+        update_prefs_in_settings(&mut settings, |prefs| {
+            prefs.default_agent = Some("claude".to_string());
+        })
+        .unwrap();
+
+        assert_eq!(settings["launcher"]["selected_agent"], "codex");
+        assert_eq!(settings["launcher"]["default_agent"], "claude");
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
     }
 
     #[test]
