@@ -382,17 +382,14 @@ impl Config {
 /// Load config — returns cached version if available, otherwise reads from disk.
 /// Call `reload()` to force a fresh read (e.g. after settings change).
 pub fn ensure_loaded() -> Arc<Config> {
-    // Fast path: return cached config.
     if let Some(cfg) = CONFIG_CACHE.read().as_ref() {
         return Arc::clone(cfg);
     }
-    // Slow path: first call — initialize data dir, read from disk, cache.
+
     ensure_rustls_provider();
     init_data_dir();
     let path = settings_path();
-    let cfg = Arc::new(load_settings_from(&path));
-    *CONFIG_CACHE.write() = Some(Arc::clone(&cfg));
-    cfg
+    cached_or_load(&CONFIG_CACHE, || load_settings_from(&path))
 }
 
 /// Force re-read config from disk and update the cache.
@@ -401,8 +398,29 @@ pub fn reload() -> Arc<Config> {
     ensure_rustls_provider();
     init_data_dir();
     let path = settings_path();
+    // Keep invalidation ordered after the disk read and cache install.
+    let mut cache = CONFIG_CACHE.write();
     let cfg = Arc::new(load_settings_from(&path));
-    *CONFIG_CACHE.write() = Some(Arc::clone(&cfg));
+    *cache = Some(Arc::clone(&cfg));
+    cfg
+}
+
+fn cached_or_load(
+    cache: &RwLock<Option<Arc<Config>>>,
+    load: impl FnOnce() -> Config,
+) -> Arc<Config> {
+    if let Some(cfg) = cache.read().as_ref() {
+        return Arc::clone(cfg);
+    }
+
+    // A writer that persists newer settings must invalidate after this install.
+    let mut cache = cache.write();
+    if let Some(cfg) = cache.as_ref() {
+        return Arc::clone(cfg);
+    }
+
+    let cfg = Arc::new(load());
+    *cache = Some(Arc::clone(&cfg));
     cfg
 }
 
@@ -1241,6 +1259,54 @@ mod tests {
         let settings: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(settings["count"], 4);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cache_invalidation_cannot_be_overtaken_by_stale_first_load() {
+        use std::sync::mpsc;
+
+        let dir = unique_test_dir("cache-stale-install");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "default_agent": "alpha" }"#).unwrap();
+
+        let cache = Arc::new(RwLock::new(None));
+        let reader_cache = Arc::clone(&cache);
+        let reader_path = path.clone();
+        let (loaded_tx, loaded_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            cached_or_load(&reader_cache, || {
+                let config = load_settings_from(&reader_path);
+                loaded_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                config
+            })
+        });
+
+        loaded_rx.recv().unwrap();
+        fs::write(&path, r#"{ "default_agent": "beta" }"#).unwrap();
+        let invalidated_before_install = if let Some(mut cache) = cache.try_write() {
+            *cache = None;
+            true
+        } else {
+            false
+        };
+
+        resume_tx.send(()).unwrap();
+        let stale = reader.join().unwrap();
+        if !invalidated_before_install {
+            *cache.write() = None;
+        }
+        let current = cached_or_load(&cache, || load_settings_from(&path));
+
+        assert_eq!(stale.default_agent, "alpha");
+        assert!(
+            !invalidated_before_install,
+            "cache invalidation passed a first load before it installed its result"
+        );
+        assert_eq!(current.default_agent, "beta");
         fs::remove_dir_all(dir).unwrap();
     }
 
