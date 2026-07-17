@@ -92,13 +92,6 @@ fn read_settings_value() -> Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
-fn write_settings_value(val: &Value) -> Result<(), String> {
-    // settings.json holds bot tokens, webhook secrets, and tunnel credentials
-    // in plain text (by design — the user edits this file directly). Ensure
-    // other local users cannot read it. No-op on Windows.
-    config::write_settings_json(val)
-}
-
 // ---------------------------------------------------------------------------
 // Onboarding gate
 // ---------------------------------------------------------------------------
@@ -165,10 +158,16 @@ pub fn list_channel_plugins() -> Result<Vec<plugins::DiscoveredPluginSummary>, S
 }
 
 #[tauri::command]
-pub fn save_settings<R: Runtime>(app: AppHandle<R>, settings: Value) -> Result<(), String> {
-    write_settings_value(&settings)?;
+pub async fn save_settings<R: Runtime>(
+    app: AppHandle<R>,
+    patch: Value,
+) -> Result<config::SettingsSnapshot, String> {
+    let snapshot =
+        tauri::async_runtime::spawn_blocking(move || config::patch_settings_json(&patch))
+            .await
+            .map_err(|error| error.to_string())??;
     let _ = app.emit(crate::tray::LAUNCH_CONFIG_CHANGED_EVENT, ());
-    Ok(())
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -879,15 +878,13 @@ pub async fn finish_onboarding<R: Runtime>(
     }
     drop(sessions);
 
-    tauri::async_runtime::spawn_blocking(|| {
-        config::update_settings_json(|settings| {
-            if let Some(obj) = settings.as_object_mut() {
-                obj.insert("onboarded".into(), serde_json::json!(true));
-            }
-        })
+    config::update_settings_json_async(|settings| {
+        if let Some(obj) = settings.as_object_mut() {
+            obj.insert("onboarded".into(), serde_json::json!(true));
+        }
     })
     .await
-    .map_err(|error| error.to_string())??;
+    .map_err(|error| error.to_string())?;
 
     let _ = app.emit("onboarding-complete", ());
 

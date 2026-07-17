@@ -38,6 +38,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { StatusBanner } from "@/components/page";
 import { apiFetch, DAEMON_PORT, openDashboardUrl } from "@/lib/api";
+import { saveSettingsPatch } from "@/lib/settingsPatch";
 import { cn } from "@/lib/utils";
 import type { AgentRuntime } from "./hooks/useAgentsRuntime";
 import type { ChannelRuntime } from "./hooks/useChannelsState";
@@ -100,6 +101,7 @@ export function RemoteDashboard({
 }: RemoteDashboardProps) {
   const { t } = useI18n();
   const [settings, setSettings] = useState<AppSettings>({});
+  const [persistedSettings, setPersistedSettings] = useState<AppSettings>({});
   const [agentDefs, setAgentDefs] = useState<AgentSummary[]>([]);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [prefs, setPrefs] = useState<LauncherPreferences | null>(null);
@@ -143,6 +145,7 @@ export function RemoteDashboard({
         if (cancelled) return;
         const orderedAgents = orderAgents(loadedAgents);
         setSettings(loadedSettings);
+        setPersistedSettings(loadedSettings);
         setAgentDefs(orderedAgents);
         setProfiles(loadedProfiles);
         setPrefs(loadedPrefs);
@@ -196,9 +199,11 @@ export function RemoteDashboard({
   );
 
   const persistChannelOrder = useCallback(
-    async (nextSettings: AppSettings) => {
+    async (baseSettings: AppSettings, nextSettings: AppSettings) => {
       try {
-        await invoke("save_settings", { settings: nextSettings });
+        const saved = await saveSettingsPatch(baseSettings, nextSettings);
+        setSettings(saved.settings);
+        setPersistedSettings(saved.settings);
       } catch (error) {
         setNotice({ variant: "error", message: formatErrorMessage(error) });
       }
@@ -212,7 +217,7 @@ export function RemoteDashboard({
       const nextSettings = writeImChannelOrder(settings, nextOrder);
       setSettings(nextSettings);
       setNotice(null);
-      void persistChannelOrder(nextSettings);
+      void persistChannelOrder(settings, nextSettings);
     },
     [configuredChannelIds, persistChannelOrder, settings],
   );
@@ -231,7 +236,9 @@ export function RemoteDashboard({
     setSavingChannel(selectedChannelId);
     setNotice(null);
     try {
-      await invoke("save_settings", { settings });
+      const saved = await saveSettingsPatch(persistedSettings, settings);
+      setSettings(saved.settings);
+      setPersistedSettings(saved.settings);
       const response = await apiFetch("/api/settings/reload", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setNotice({ variant: "success", message: "Remote defaults saved." });
@@ -240,7 +247,7 @@ export function RemoteDashboard({
     } finally {
       setSavingChannel(null);
     }
-  }, [selectedChannelId, settings]);
+  }, [persistedSettings, selectedChannelId, settings]);
 
   const defaultAgent = prefs?.defaultAgent ?? agentDefs[0]?.id ?? "codex";
   const enabledAgents =

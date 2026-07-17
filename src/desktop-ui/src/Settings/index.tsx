@@ -45,6 +45,7 @@ import type {
   TunnelSummary,
 } from "../Onboarding/types";
 import { apiFetch } from "../lib/api";
+import { saveSettingsPatch } from "../lib/settingsPatch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -822,8 +823,8 @@ export function SettingsDialog({
         mcpAutoInstall,
         skillAutoInstall,
       });
-      await invoke("save_settings", { settings: nextSettings });
-      setSettings(nextSettings);
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
       const response = await apiFetch("/api/settings/reload", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       onServicesRestarted?.();
@@ -855,8 +856,8 @@ export function SettingsDialog({
         proxyHttp,
         proxyNoProxy,
       });
-      await invoke("save_settings", { settings: nextSettings });
-      setSettings(nextSettings);
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
       const response = await apiFetch("/api/settings/reload", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       onServicesRestarted?.();
@@ -880,8 +881,8 @@ export function SettingsDialog({
         settings,
         retry429Form: apiBridgeRetryForm,
       });
-      await invoke("save_settings", { settings: nextSettings });
-      setSettings(nextSettings);
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
       await invoke("restart_services");
       await readAuthToken();
       onServicesRestarted?.();
@@ -913,8 +914,8 @@ export function SettingsDialog({
         searchContextSize,
         sources: searchSources,
       });
-      await invoke("save_settings", { settings: nextSettings });
-      setSettings(nextSettings);
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
       await invoke("restart_services");
       await readAuthToken();
       onServicesRestarted?.();
@@ -977,8 +978,8 @@ export function SettingsDialog({
         channelConfigs,
         channelVerbose,
       });
-      await invoke("save_settings", { settings: nextSettings });
-      setSettings(nextSettings);
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
       const response = await apiFetch("/api/channels/sync", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       onServicesRestarted?.();
@@ -1013,8 +1014,8 @@ export function SettingsDialog({
         toolchainMode,
         portableToolchain,
       });
-      await invoke("save_settings", { settings: nextSettings });
-      setSettings(nextSettings);
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
       const response = await apiFetch("/api/settings/reload", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setDefaultWorkspace(workspace);
@@ -1046,8 +1047,8 @@ export function SettingsDialog({
         toolchainMode: mode,
         portableToolchain,
       });
-      await invoke("save_settings", { settings: nextSettings });
-      setSettings(nextSettings);
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
       const response = await apiFetch("/api/settings/reload", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       onServicesRestarted?.();
@@ -1078,8 +1079,8 @@ export function SettingsDialog({
         toolchainMode,
         portableToolchain: enabled,
       });
-      await invoke("save_settings", { settings: nextSettings });
-      setSettings(nextSettings);
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
       const response = await apiFetch("/api/settings/reload", { method: "POST" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       onServicesRestarted?.();
@@ -1149,8 +1150,8 @@ export function SettingsDialog({
           cfToken,
           cfHostname,
         });
-        await invoke("save_settings", { settings: nextSettings });
-        setSettings(nextSettings);
+        const saved = await saveSettingsPatch(settings, nextSettings);
+        setSettings(saved.settings);
 
         if (restart) {
           await invoke("restart_services");

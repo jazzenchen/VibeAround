@@ -173,6 +173,7 @@ interface UseStartkitFlowResult {
   scan: (settings: Settings, choices: StartkitChoices) => Promise<void>;
   start: (
     settings: Settings,
+    settingsPatch: Record<string, unknown>,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
   ) => Promise<void>;
@@ -265,6 +266,7 @@ export function useStartkitFlow(): UseStartkitFlowResult {
 
   const start = useCallback(async (
     settings: Settings,
+    settingsPatch: Record<string, unknown>,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
   ) => {
@@ -307,7 +309,12 @@ export function useStartkitFlow(): UseStartkitFlowResult {
       );
 
       unlistenRefs.current = [unlistenProgress, unlistenComplete];
-      await invoke("start_startkit_install", { settings, choices, runId });
+      await invoke("start_startkit_install", {
+        settings,
+        settingsPatch,
+        choices,
+        runId,
+      });
     } catch (err) {
       if (activeRunIdRef.current === runId) {
         activeRunIdRef.current = null;

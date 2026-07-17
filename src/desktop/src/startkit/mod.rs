@@ -393,10 +393,15 @@ pub async fn start_startkit_install<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, StartkitRunState>,
     settings: Value,
+    settings_patch: Value,
     choices: StartkitChoices,
     run_id: Option<String>,
 ) -> Result<(), String> {
-    common::config::write_settings_json(&settings).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        common::config::patch_settings_json(&settings_patch)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
 
     let run_id = normalize_run_id(run_id);
     let control = Arc::new(StartkitRunControl {
