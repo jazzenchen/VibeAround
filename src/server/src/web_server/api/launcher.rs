@@ -182,16 +182,23 @@ pub async fn set_profile_connection_handler(
 ) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
     super::run_blocking_io(move || {
         let agent_id = canonical_agent_id(&body.agent_id)?;
-        let mut profile = load_profile(&body.profile_id)?;
-        let preference = connections::sanitize_profile_connection_preference(
-            &profile,
-            &agent_id,
-            body.preference,
-        )
-        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-
-        schema::set_connection(&mut profile, &agent_id, preference);
-        schema::save(&profile).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let profile_id = body.profile_id;
+        let updated =
+            common::profiles::set_profile_connection(&profile_id, &agent_id, body.preference)
+                .map_err(|error| match error {
+                    common::profiles::ProfileStoreError::Invalid(message) => {
+                        (StatusCode::BAD_REQUEST, message)
+                    }
+                    common::profiles::ProfileStoreError::Storage(message) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, message)
+                    }
+                })?;
+        if !updated {
+            return Err((
+                StatusCode::NOT_FOUND,
+                format!("profile '{profile_id}' not found"),
+            ));
+        }
         Ok(Json(launcher_preferences()))
     })
     .await

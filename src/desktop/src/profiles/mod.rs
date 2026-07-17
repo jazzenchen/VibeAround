@@ -22,9 +22,7 @@ use common::{config, resources};
 use serde::Serialize;
 use tauri::Emitter;
 
-use self::connections::{
-    profile_can_launch_agent, resolve_profile_agent_route, sanitize_profile_connection_preference,
-};
+use self::connections::{profile_can_launch_agent, resolve_profile_agent_route};
 use self::preferences::{launcher_preferences, validate_agent_profile_selection};
 use self::sessions::list_sessions;
 use self::store::{create_profile, delete_profile, get_profile, reorder_profiles, save_profile};
@@ -835,13 +833,11 @@ pub async fn launcher_set_profile_connection(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let agent_id = validate_connection_agent_id(agent_id)?;
-        let mut profile = schema::load(&profile_id)
-            .map(normalize_legacy_profile_and_persist)
-            .ok_or_else(|| format!("profile '{profile_id}' not found"))?;
-        let preference = sanitize_profile_connection_preference(&profile, &agent_id, preference)?;
-
-        schema::set_connection(&mut profile, &agent_id, preference);
-        schema::save(&profile).map_err(|e| e.to_string())?;
+        let updated = common::profiles::set_profile_connection(&profile_id, &agent_id, preference)
+            .map_err(|error| error.to_string())?;
+        if !updated {
+            return Err(format!("profile '{profile_id}' not found"));
+        }
         emit_launch_config_changed(&app);
         Ok(())
     })

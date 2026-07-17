@@ -2,5 +2,4 @@
 
 pub(super) use common::profiles::connections::{
     merged_profile_connections, profile_can_launch_agent, resolve_profile_agent_route,
-    sanitize_profile_connection_preference,
 };

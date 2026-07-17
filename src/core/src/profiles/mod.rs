@@ -78,6 +78,31 @@ pub fn reorder_profiles(requested_ids: &[String]) -> Result<(), ProfileStoreErro
     .map_err(ProfileStoreError::Storage)
 }
 
+pub fn set_profile_connection(
+    profile_id: &str,
+    agent_id: &str,
+    preference: agent_state::ProfileConnectionPreference,
+) -> Result<bool, ProfileStoreError> {
+    let mut invalid = None;
+    let updated = schema::update(profile_id, |profile| {
+        *profile = normalize_legacy_profile(profile.clone());
+        let preference =
+            connections::sanitize_profile_connection_preference(profile, agent_id, preference)
+                .map_err(|error| {
+                    invalid = Some(error.clone());
+                    anyhow::Error::msg(error)
+                })?;
+        schema::set_connection(profile, agent_id, preference);
+        Ok(())
+    });
+    if let Some(error) = invalid {
+        return Err(ProfileStoreError::Invalid(error));
+    }
+    updated
+        .map(|result| result.is_some())
+        .map_err(|error| ProfileStoreError::Storage(error.to_string()))
+}
+
 fn validate_profile(profile: &ProfileDef) -> Result<(), ProfileStoreError> {
     schema::validate(profile).map_err(|error| ProfileStoreError::Invalid(error.to_string()))?;
     let provider = catalog::get(&profile.provider).ok_or_else(|| {
@@ -228,12 +253,20 @@ pub fn normalize_legacy_profile_and_persist(profile: ProfileDef) -> ProfileDef {
     // TODO(0.6.x): remove these legacy provider migrations once old profile
     // files have had a release window to be rewritten on load.
     if should_persist_profile_migration {
-        if let Err(error) = schema::save(&profile) {
-            tracing::warn!(
-                "[profiles] failed to persist legacy profile migration for '{}': {}",
-                profile.id,
-                error
-            );
+        let id = profile.id.clone();
+        match schema::update(&id, |current| {
+            *current = normalize_legacy_profile(current.clone());
+            Ok(current.clone())
+        }) {
+            Ok(Some(current)) => return current,
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    "[profiles] failed to persist legacy profile migration for '{}': {}",
+                    profile.id,
+                    error
+                );
+            }
         }
     }
 
