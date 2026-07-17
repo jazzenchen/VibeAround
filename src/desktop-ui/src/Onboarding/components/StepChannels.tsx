@@ -109,7 +109,7 @@ export function StepChannels({
               onToggle={(v) => onToggleChannel(entry.id, v)}
               onConfigChange={(k, v) => onConfigChange(entry.id, k, v)}
               onVerboseChange={(k, v) => onVerboseChange(entry.id, k, v)}
-              onInstall={() => onInstallPlugin(entry.id, entry.github)}
+              onInstall={() => onInstallPlugin(entry.id)}
               onStartAuth={() => onStartAuth(entry.id)}
               onCancelAuth={() => onCancelAuth(entry.id)}
               compact={compact}
