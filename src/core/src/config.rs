@@ -1296,18 +1296,10 @@ fn settings_path_matches(candidate: &str, target: &Path) -> bool {
 }
 
 pub fn workspace_paths_equal(left: &Path, right: &Path) -> bool {
-    let left = left
-        .to_str()
-        .map(expand_home)
-        .unwrap_or_else(|| left.to_path_buf());
-    let right = right
-        .to_str()
-        .map(expand_home)
-        .unwrap_or_else(|| right.to_path_buf());
     left == right
-        || std::fs::canonicalize(&left)
+        || std::fs::canonicalize(left)
             .ok()
-            .zip(std::fs::canonicalize(&right).ok())
+            .zip(std::fs::canonicalize(right).ok())
             .map(|(left, right)| left == right)
             .unwrap_or(false)
 }
@@ -2126,6 +2118,5 @@ mod tests {
     fn expand_home_handles_bare_home() {
         assert_eq!(expand_home("~"), home_dir());
         assert_eq!(expand_home("~/project"), home_dir().join("project"));
-        assert!(workspace_paths_equal(Path::new("~"), &home_dir()));
     }
 }
