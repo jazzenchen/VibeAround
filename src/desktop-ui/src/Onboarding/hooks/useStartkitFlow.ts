@@ -176,7 +176,7 @@ interface UseStartkitFlowResult {
     settingsPatch: SettingsPatch,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
-  ) => Promise<void>;
+  ) => Promise<Settings | null>;
   cancel: () => Promise<void>;
   finish: () => Promise<void>;
   reset: () => void;
@@ -308,17 +308,19 @@ export function useStartkitFlow(): UseStartkitFlowResult {
       );
 
       unlistenRefs.current = [unlistenProgress, unlistenComplete];
-      await invoke("start_startkit_install", {
+      const committedSettings = await invoke<Settings>("start_startkit_install", {
         settingsPatch,
         choices,
         runId,
       });
+      return committedSettings;
     } catch (err) {
       if (activeRunIdRef.current === runId) {
         activeRunIdRef.current = null;
       }
       setError(String(err));
       setRunning(false);
+      return null;
     }
   }, []);
 

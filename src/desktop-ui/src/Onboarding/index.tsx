@@ -635,6 +635,20 @@ export default function Onboarding() {
     onConfigChange: updateChannelConfig,
   });
 
+  const startStartkitInstall = useCallback(
+    async (initialReports: StartkitItemReport[]) => {
+      const committedSettings = await startkit.start(
+        settingsPatch,
+        choices,
+        initialReports,
+      );
+      if (committedSettings) {
+        setSettings(committedSettings);
+      }
+    },
+    [choices, settingsPatch, startkit.start],
+  );
+
   const finishOnboarding = useCallback(async () => {
     setFinishing(true);
     setFinishError(null);
@@ -797,7 +811,7 @@ export default function Onboarding() {
             icon: <Download className="h-4 w-4" />,
             disabled: installReportsRunning,
             run: () =>
-              void startkit.start(settingsPatch, choices, installReports),
+              void startStartkitInstall(installReports),
           };
         }
         return {
@@ -813,7 +827,7 @@ export default function Onboarding() {
           icon: <Download className="h-4 w-4" />,
           disabled: installReportsRunning,
           run: () =>
-            void startkit.start(settingsPatch, choices, installReports),
+            void startStartkitInstall(installReports),
         };
       }
       if (!hasRunnableInstallWork) {
@@ -861,6 +875,7 @@ export default function Onboarding() {
     installReportsRunning,
     enabledAgents,
     rerunInstallScan,
+    startStartkitInstall,
     startkit,
     t,
   ]);
