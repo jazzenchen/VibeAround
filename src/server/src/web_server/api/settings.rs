@@ -88,6 +88,9 @@ pub async fn patch_settings_handler(Json(patch): Json<serde_json::Value>) -> Api
         error if error.starts_with("settings patch conflict:") => {
             SettingsApiError::new((StatusCode::CONFLICT, error.to_string()))
         }
+        error if error.starts_with("settings patch must leave") => {
+            SettingsApiError::new((StatusCode::BAD_REQUEST, error.to_string()))
+        }
         _ => internal_error(error),
     })?;
 

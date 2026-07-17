@@ -29,6 +29,7 @@ pub fn decode_get(response: ResponseSpec) -> Result<Value> {
 }
 
 pub fn decode_snapshot(response: ResponseSpec) -> Result<SettingsSnapshot> {
+    response.ensure_success()?;
     let revision = response
         .header("etag")
         .and_then(strong_etag_revision)
@@ -84,6 +85,20 @@ mod tests {
 
         assert_eq!(snapshot.revision, revision);
         assert_eq!(snapshot.settings["onboarded"], true);
+    }
+
+    #[test]
+    fn settings_snapshot_reports_http_error_before_missing_etag() {
+        let error = decode_snapshot(ResponseSpec::json(
+            401,
+            serde_json::json!({ "error": "unauthorized" }),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ClientError::UnexpectedStatus { status: 401, .. }
+        ));
     }
 
     #[test]

@@ -1041,6 +1041,9 @@ fn patch_settings_json_at(
     mutate_settings_json_at(path, move |settings| {
         json_patch::patch(settings, &patch)
             .map_err(|error| format!("settings patch conflict: {error}"))?;
+        if !settings.is_object() {
+            return Err("settings patch must leave the root as a JSON object".to_string());
+        }
         settings_snapshot(settings.clone())
     })
 }
@@ -1564,6 +1567,27 @@ mod tests {
         assert!(snapshot.settings["api_bridge"]["retry_429"]["max_retries"].is_null());
         assert!(snapshot.settings.get("onboarded").is_none());
         assert_eq!(snapshot.revision.len(), 64);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_patch_rejects_non_object_root_without_writing() {
+        let dir = unique_test_dir("json-patch-root");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "onboarded": true }"#).unwrap();
+
+        let error = patch_settings_json_at(
+            &path,
+            &serde_json::json!([{ "op": "replace", "path": "", "value": [] }]),
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with("settings patch must leave"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap(),
+            serde_json::json!({ "onboarded": true })
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 
