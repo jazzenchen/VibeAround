@@ -94,4 +94,38 @@ describe("createSettingsPatch", () => {
       },
     ]);
   });
+
+  test("freezes queued intent before a server snapshot gains external changes", () => {
+    const firstDesired = {
+      im: { order: ["telegram", "slack"] },
+      launcher: { terminal: "old" },
+    };
+    const queuedDesired = {
+      im: { order: ["slack", "telegram"] },
+      launcher: { terminal: "old" },
+    };
+    const queuedIntent = createSettingsPatch(firstDesired, queuedDesired);
+    const firstServerResult = {
+      ...firstDesired,
+      launcher: { terminal: "external-new" },
+      external_only: true,
+    };
+
+    expect(createSettingsPatch(firstServerResult, queuedDesired)).toEqual([
+      {
+        op: "add",
+        path: "/im/order",
+        value: ["slack", "telegram"],
+      },
+      { op: "add", path: "/launcher/terminal", value: "old" },
+      { op: "remove", path: "/external_only" },
+    ]);
+    expect(queuedIntent).toEqual([
+      {
+        op: "add",
+        path: "/im/order",
+        value: ["slack", "telegram"],
+      },
+    ]);
+  });
 });

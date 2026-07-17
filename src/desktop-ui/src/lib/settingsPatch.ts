@@ -66,8 +66,14 @@ export function createSettingsPatch<T>(base: T, desired: T): SettingsPatch {
   return patch;
 }
 
-export function saveSettingsPatch<T>(base: T, desired: T): Promise<SettingsSnapshot<T>> {
+export function saveSettingsOperations<T>(
+  patch: SettingsPatch,
+): Promise<SettingsSnapshot<T>> {
   return invoke<SettingsSnapshot<T>>("save_settings", {
-    patch: createSettingsPatch(base, desired),
+    patch,
   });
+}
+
+export function saveSettingsPatch<T>(base: T, desired: T): Promise<SettingsSnapshot<T>> {
+  return saveSettingsOperations(createSettingsPatch(base, desired));
 }
