@@ -377,9 +377,24 @@ impl ChannelMonitorOwner {
             return false;
         }
 
+        let runtime_dirs = match super::plugin_paths::prepare_plugin_runtime_dirs(&instance_id) {
+            Ok(dirs) => dirs,
+            Err(error) => {
+                tracing::error!(
+                    channel_instance = %instance_id,
+                    error = %error,
+                    "failed to prepare private plugin runtime directories"
+                );
+                return false;
+            }
+        };
         let spec = SpawnSpec::new("node")
             .arg(manifest.entry_path.to_string_lossy().to_string())
-            .cwd(manifest.plugin_dir.clone());
+            .cwd(manifest.plugin_dir.clone())
+            .env(
+                super::plugin_paths::PLUGIN_STATE_DIR_ENV,
+                runtime_dirs.state.to_string_lossy(),
+            );
         let factory = ChannelPluginRunnerFactory::new(
             manifest.clone(),
             self.input_tx.clone(),

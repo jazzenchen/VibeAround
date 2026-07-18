@@ -23,6 +23,7 @@ pub mod monitor;
 mod permission;
 pub mod plugin_bridge;
 pub mod plugin_host;
+pub mod plugin_paths;
 pub mod plugin_runner;
 pub mod plugin_runtime;
 pub mod prompt;

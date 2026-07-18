@@ -10,7 +10,7 @@ use tauri::async_runtime;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 
-use common::{config, plugins};
+use common::{channels::plugin_paths, plugins};
 
 pub struct PluginSession {
     pub(super) child: Child,
@@ -77,7 +77,7 @@ pub(super) async fn spawn_plugin_session(
         }
     }
 
-    let cache_dir = config::data_dir().join(".cache");
+    let runtime_dirs = plugin_paths::plugin_runtime_dirs(name);
     let init_response = serde_json::json!({
         "jsonrpc": "2.0",
         "id": client_init_id,
@@ -86,7 +86,7 @@ pub(super) async fn spawn_plugin_session(
             "agentInfo": { "name": "vibearound-onboarding", "version": env!("CARGO_PKG_VERSION") },
             "_meta": {
                 "config": config_value,
-                "cacheDir": cache_dir.to_string_lossy(),
+                "cacheDir": runtime_dirs.cache.to_string_lossy(),
                 "channelKind": name,
             }
         }
@@ -112,9 +112,12 @@ async fn spawn_node_session(
     entry_point: &Path,
     plugin_dir: &Path,
 ) -> anyhow::Result<PluginSession> {
+    let runtime_dirs = plugin_paths::prepare_plugin_runtime_dirs(name)
+        .with_context(|| format!("preparing runtime directories for plugin '{}'", name))?;
     let mut child = common::process::env::command("node")
         .arg(entry_point)
         .current_dir(plugin_dir)
+        .env(plugin_paths::PLUGIN_STATE_DIR_ENV, &runtime_dirs.state)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
