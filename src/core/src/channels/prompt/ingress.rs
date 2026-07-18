@@ -227,11 +227,13 @@ impl ConversationIngress {
         target: ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
     ) -> acp::Result<acp::PromptResponse> {
+        let route = target.route.clone();
+        let message_id = target.reply_to.clone();
         let (reply, response) = oneshot::channel();
-        if self
+        let result = if self
             .command_tx
             .send(IngressCommand::Enqueue {
-                route: target.route.clone(),
+                route: route.clone(),
                 command: LaneCommand::Prompt {
                     reply_to: target.reply_to,
                     content_blocks,
@@ -241,11 +243,14 @@ impl ConversationIngress {
             })
             .is_err()
         {
-            return Err(acp::Error::new(-32000, ROUTE_STOPPED_MESSAGE));
-        }
-        response
-            .await
-            .unwrap_or_else(|_| Err(acp::Error::new(-32603, "conversation route stopped")))
+            Err(acp::Error::new(-32000, ROUTE_STOPPED_MESSAGE))
+        } else {
+            response
+                .await
+                .unwrap_or_else(|_| Err(acp::Error::new(-32603, "conversation route stopped")))
+        };
+        send_prompt_done(&self.plugin_host, &route, message_id);
+        result
     }
 
     /// Dispatch a channel command. Stop, Close, and log records bypass route queues;
