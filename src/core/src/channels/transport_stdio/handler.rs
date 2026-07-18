@@ -163,12 +163,11 @@ impl PluginAgentHandler {
         meta.insert("config".into(), self.config.clone());
         meta.insert("hostVersion".into(), env!("CARGO_PKG_VERSION").into());
         meta.insert("promptDone".into(), true.into());
+        let runtime_dirs =
+            super::super::plugin_paths::plugin_runtime_dirs(&self.channel_instance_id);
         meta.insert(
             "cacheDir".into(),
-            crate::config::data_dir()
-                .join(".cache")
-                .to_string_lossy()
-                .into(),
+            runtime_dirs.cache.to_string_lossy().into(),
         );
 
         Ok(acp::InitializeResponse::new(ProtocolVersion::V1)

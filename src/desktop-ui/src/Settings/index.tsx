@@ -1458,7 +1458,9 @@ export function SettingsDialog({
                       onConfigChange={updateChannelConfig}
                       onVerboseChange={updateChannelVerbose}
                       onInstallPlugin={installPlugin}
-                      onStartAuth={(pluginId) => void startAuth(pluginId)}
+                      onStartAuth={(pluginId, params) =>
+                        void startAuth(pluginId, params)
+                      }
                       onCancelAuth={(pluginId) => void cancelAuth(pluginId)}
                       switchSize="sm"
                       compact

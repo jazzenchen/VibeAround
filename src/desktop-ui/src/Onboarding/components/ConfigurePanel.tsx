@@ -61,7 +61,7 @@ export function ConfigurePanel({
     value: boolean,
   ) => void;
   onInstallPlugin: (pluginId: string) => void;
-  onStartAuth: (pluginId: string) => void;
+  onStartAuth: (pluginId: string, params?: Record<string, unknown>) => void;
   onCancelAuth: (pluginId: string) => void;
   onProvider: (value: TunnelProvider) => void;
   onNgrokToken: (value: string) => void;
@@ -96,7 +96,7 @@ export function ConfigurePanel({
             onStartAuth={onStartAuth}
             onCancelAuth={onCancelAuth}
             switchSize="sm"
-            description={t("Finish credentials and QR login for selected messaging apps.")}
+            description={t("Finish credentials and sign-in for selected messaging apps.")}
           />
         )}
 

@@ -54,7 +54,7 @@
     "kind": "channel",
     "slug": "va-plugin-channel-whatsapp",
     "name": "WhatsApp",
-    "description": "Connect WhatsApp via QR code login.",
+    "description": "Connect WhatsApp with a phone-number pairing code.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-whatsapp",
     "revision": "6c0980a0f1f9eac1ef550ff9973d8cc74b89ac8a",
     "install_steps": ["git_clone", "npm_install", "npm_build"]

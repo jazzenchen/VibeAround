@@ -1,5 +1,5 @@
 import { MessageSquare, Download, ExternalLink, Loader2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useI18n } from "@va/i18n";
 
@@ -9,6 +9,9 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
+import { firstSupportedAuthMethod } from "../authMethods";
+import type { ChannelAuthMethod } from "../authMethods";
+import type { AuthFlowState } from "../types";
 import type { StepChannelsProps, ConfigSchemaProperty } from "../types";
 
 /** Determine if a config field should use password input. */
@@ -110,7 +113,7 @@ export function StepChannels({
               onConfigChange={(k, v) => onConfigChange(entry.id, k, v)}
               onVerboseChange={(k, v) => onVerboseChange(entry.id, k, v)}
               onInstall={() => onInstallPlugin(entry.id)}
-              onStartAuth={() => onStartAuth(entry.id)}
+              onStartAuth={(params) => onStartAuth(entry.id, params)}
               onCancelAuth={() => onCancelAuth(entry.id)}
               compact={compact}
             />
@@ -148,7 +151,7 @@ interface PluginCardProps {
     value: boolean,
   ) => void;
   onInstall: () => void;
-  onStartAuth: () => void;
+  onStartAuth: (params?: Record<string, unknown>) => void;
   onCancelAuth: () => void;
 }
 
@@ -175,7 +178,9 @@ function PluginCard({
   onCancelAuth,
 }: PluginCardProps) {
   const { t } = useI18n();
-  const supportsAuth = discovered?.supportsQrcodeLogin ?? false;
+  const authMethod = firstSupportedAuthMethod(
+    discovered?.capabilities.auth?.methods,
+  );
   const schema = discovered?.configSchema;
   const properties = schema?.properties ?? {};
   const required = new Set(schema?.required ?? []);
@@ -296,9 +301,9 @@ function PluginCard({
             </div>
           </div>
 
-          {/* Auth flow (QR login) */}
-          {supportsAuth && (
+          {authMethod && (
             <AuthFlowSection
+              method={authMethod}
               authState={authState}
               onStart={onStartAuth}
               onCancel={onCancelAuth}
@@ -315,25 +320,34 @@ function PluginCard({
 // ---------------------------------------------------------------------------
 
 function AuthFlowSection({
+  method,
   authState,
   onStart,
   onCancel,
 }: {
-  authState?: { status: string; message: string; qrCodeUrl?: string };
-  onStart: () => void;
+  method: ChannelAuthMethod;
+  authState?: AuthFlowState;
+  onStart: (params?: Record<string, unknown>) => void;
   onCancel: () => void;
 }) {
   const { t } = useI18n();
+  const [phoneNumber, setPhoneNumber] = useState("");
   const status = authState?.status ?? "idle";
   const isBusy = status === "generating" || status === "waiting";
+  const isPairing = method === "pairing_code";
+  const canStart = !isBusy && (!isPairing || phoneNumber.trim().length > 0);
 
   return (
     <Card className="space-y-3 bg-muted/20 p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-medium">{t("QR Login")}</div>
+          <div className="text-sm font-medium">
+            {isPairing ? t("Phone pairing") : t("QR Login")}
+          </div>
           <div className="text-xs text-muted-foreground mt-1">
-            {t("Generate a QR code, scan it with the app, then wait for authorization.")}
+            {isPairing
+              ? t("Enter the country code and phone number as digits, without +, to generate a pairing code.")
+              : t("Generate a QR code, scan it with the app, then wait for authorization.")}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -350,8 +364,10 @@ function AuthFlowSection({
           )}
           <Button
             type="button"
-            onClick={onStart}
-            disabled={isBusy}
+            onClick={() =>
+              onStart(isPairing ? { phoneNumber: phoneNumber.trim() } : {})
+            }
+            disabled={!canStart}
             size="sm"
             className="text-xs"
           >
@@ -363,6 +379,20 @@ function AuthFlowSection({
           </Button>
         </div>
       </div>
+
+      {isPairing && (
+        <label className="block">
+          <span className="text-xs text-muted-foreground">{t("Phone number")}</span>
+          <Input
+            type="tel"
+            value={phoneNumber}
+            onChange={(event) => setPhoneNumber(event.target.value)}
+            disabled={isBusy}
+            placeholder={t("Country code and phone number, digits only")}
+            className="mt-1"
+          />
+        </label>
+      )}
 
       {authState?.message && (
         <Alert
@@ -383,7 +413,7 @@ function AuthFlowSection({
         </Alert>
       )}
 
-      {authState?.qrCodeUrl && (
+      {!isPairing && authState?.qrCodeUrl && (
         <div className="flex flex-col items-center gap-2 pt-1 scroll-mt-6">
           <div className="rounded-md border bg-white p-3 shadow-sm">
             <QRCodeSVG
@@ -398,6 +428,18 @@ function AuthFlowSection({
           </div>
           <div className="text-[11px] text-muted-foreground text-center">
             {t("Scan with the app and confirm on your phone.")}
+          </div>
+        </div>
+      )}
+
+      {isPairing && authState?.pairingCode && (
+        <div className="space-y-1 rounded-md border bg-background px-4 py-3 text-center">
+          <div className="text-xs text-muted-foreground">{t("Pairing code")}</div>
+          <div
+            className="font-mono text-2xl font-semibold tracking-widest text-foreground"
+            aria-live="polite"
+          >
+            {authState.pairingCode}
           </div>
         </div>
       )}

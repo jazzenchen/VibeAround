@@ -24,7 +24,6 @@ pub use plugin_manager::{
     __tauri_command_name_refresh_managed_plugins, install_managed_plugin, list_managed_plugins,
     refresh_managed_plugins,
 };
-pub use plugin_session::PluginSession;
 pub use search_settings::{
     __cmd__test_web_search, __tauri_command_name_test_web_search, test_web_search,
 };
@@ -39,7 +38,7 @@ use anyhow::Context;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::io::AsyncReadExt;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{watch, Mutex, Notify};
 use tokio::task::JoinSet;
 use tokio::time::sleep;
 
@@ -58,8 +57,16 @@ pub struct OnboardingGate {
     pub notify: Arc<Notify>,
 }
 
+#[derive(Default)]
 pub struct OnboardingSessions {
-    pub plugin_sessions: Arc<Mutex<HashMap<String, PluginSession>>>,
+    plugin_sessions: Mutex<HashMap<String, PluginAuthSession>>,
+}
+
+#[derive(Clone)]
+struct PluginAuthSession {
+    method: plugin_session::PluginAuthMethod,
+    session: Arc<Mutex<plugin_session::PluginSession>>,
+    cancel: watch::Sender<bool>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -777,7 +784,7 @@ pub fn list_plugin_registry() -> Vec<PluginSummary> {
 #[serde(rename_all = "camelCase")]
 pub struct PluginAuthStartRequest {
     pub plugin_id: String,
-    pub config: Value,
+    pub params: Value,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -793,27 +800,98 @@ pub struct PluginAuthCancelRequest {
     pub plugin_id: String,
 }
 
+async fn stop_plugin_auth(active: PluginAuthSession) {
+    let _ = active.cancel.send(true);
+    let mut session = active.session.lock().await;
+    plugin_session::shutdown_plugin_session(&mut session).await;
+}
+
+async fn remove_plugin_auth_if_current(
+    state: &OnboardingSessions,
+    plugin_id: &str,
+    session: &Arc<Mutex<plugin_session::PluginSession>>,
+) -> Option<PluginAuthSession> {
+    let mut sessions = state.plugin_sessions.lock().await;
+    let is_current = sessions
+        .get(plugin_id)
+        .is_some_and(|active| Arc::ptr_eq(&active.session, session));
+    is_current.then(|| sessions.remove(plugin_id)).flatten()
+}
+
 #[tauri::command]
 pub async fn plugin_auth_start(
     state: State<'_, OnboardingSessions>,
     request: PluginAuthStartRequest,
 ) -> Result<Value, String> {
-    let mut sessions = state.plugin_sessions.lock().await;
-    if let Some(mut existing) = sessions.remove(&request.plugin_id) {
-        plugin_session::shutdown_plugin_session(&mut existing).await;
+    let plugin = plugin_session::resolve_auth_plugin(&request.plugin_id)
+        .map_err(|error| error.to_string())?;
+
+    let existing = state
+        .plugin_sessions
+        .lock()
+        .await
+        .remove(&request.plugin_id);
+    if let Some(existing) = existing {
+        stop_plugin_auth(existing).await;
     }
 
-    let mut session =
-        plugin_session::spawn_auth_session(&request.plugin_id, request.config.clone())
-            .await
-            .map_err(|e| e.to_string())?;
+    // TODO: Represent pre-spawn starts in the session map so cancellation or
+    // navigation during subprocess initialization can invalidate the result.
+    let session = plugin_session::spawn_auth_session(&plugin)
+        .await
+        .map_err(|error| error.to_string())?;
+    let (cancel, cancel_rx) = watch::channel(false);
+    let active = PluginAuthSession {
+        method: plugin.method,
+        session: Arc::new(Mutex::new(session)),
+        cancel,
+    };
+    let displaced = state
+        .plugin_sessions
+        .lock()
+        .await
+        .insert(request.plugin_id.clone(), active.clone());
+    if let Some(displaced) = displaced {
+        stop_plugin_auth(displaced).await;
+    }
 
-    let result: Value =
-        plugin_session::plugin_request(&mut session, "login_qr_start", request.config)
-            .await
-            .map_err(|e| e.to_string())?;
+    let result: anyhow::Result<Value> = {
+        let mut session = active.session.lock().await;
+        plugin_session::plugin_request(
+            &mut session,
+            active.method.start_rpc(),
+            request.params,
+            cancel_rx,
+        )
+        .await
+    };
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(active) =
+                remove_plugin_auth_if_current(&state, &request.plugin_id, &active.session).await
+            {
+                stop_plugin_auth(active).await;
+            }
+            return Err(error.to_string());
+        }
+    };
 
-    sessions.insert(request.plugin_id, session);
+    let already_connected = result
+        .get("alreadyConnected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let has_challenge = result
+        .get(active.method.challenge_field())
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty());
+    if already_connected || !has_challenge {
+        if let Some(active) =
+            remove_plugin_auth_if_current(&state, &request.plugin_id, &active.session).await
+        {
+            stop_plugin_auth(active).await;
+        }
+    }
     Ok(result)
 }
 
@@ -822,27 +900,31 @@ pub async fn plugin_auth_wait(
     state: State<'_, OnboardingSessions>,
     request: PluginAuthWaitRequest,
 ) -> Result<Value, String> {
-    let mut sessions = state.plugin_sessions.lock().await;
-    let session = sessions
-        .get_mut(&request.plugin_id)
+    let active = state
+        .plugin_sessions
+        .lock()
+        .await
+        .get(&request.plugin_id)
+        .cloned()
         .ok_or_else(|| format!("auth session for '{}' not started", request.plugin_id))?;
 
-    let result: Value = plugin_session::plugin_request(session, "login_qr_wait", request.params)
+    let result: anyhow::Result<Value> = {
+        let mut session = active.session.lock().await;
+        plugin_session::plugin_request(
+            &mut session,
+            active.method.wait_rpc(),
+            request.params,
+            active.cancel.subscribe(),
+        )
         .await
-        .map_err(|e| e.to_string())?;
-
-    // Shutdown on success
-    if result
-        .get("connected")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
+    };
+    if let Some(active) =
+        remove_plugin_auth_if_current(&state, &request.plugin_id, &active.session).await
     {
-        if let Some(mut session) = sessions.remove(&request.plugin_id) {
-            plugin_session::shutdown_plugin_session(&mut session).await;
-        }
+        stop_plugin_auth(active).await;
     }
 
-    Ok(result)
+    result.map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -850,9 +932,13 @@ pub async fn plugin_auth_cancel(
     state: State<'_, OnboardingSessions>,
     request: PluginAuthCancelRequest,
 ) -> Result<(), String> {
-    let mut sessions = state.plugin_sessions.lock().await;
-    if let Some(mut session) = sessions.remove(&request.plugin_id) {
-        plugin_session::shutdown_plugin_session(&mut session).await;
+    let active = state
+        .plugin_sessions
+        .lock()
+        .await
+        .remove(&request.plugin_id);
+    if let Some(active) = active {
+        stop_plugin_auth(active).await;
     }
     Ok(())
 }
@@ -865,11 +951,16 @@ pub async fn finish_onboarding<R: Runtime>(
     state: State<'_, OnboardingSessions>,
 ) -> Result<(), String> {
     // Clean up any remaining auth sessions
-    let mut sessions = state.plugin_sessions.lock().await;
-    for (_, mut session) in sessions.drain() {
-        plugin_session::shutdown_plugin_session(&mut session).await;
+    let sessions = {
+        let mut sessions = state.plugin_sessions.lock().await;
+        sessions
+            .drain()
+            .map(|(_, active)| active)
+            .collect::<Vec<_>>()
+    };
+    for active in sessions {
+        stop_plugin_auth(active).await;
     }
-    drop(sessions);
 
     tauri::async_runtime::spawn_blocking(|| {
         config::update_settings_json(|settings| {
