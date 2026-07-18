@@ -517,7 +517,7 @@ async fn plugin_update_report(plugin_id: String) -> Option<StartkitItemReport> {
         settings_key: None,
     };
 
-    let latest = match github_plugin_version(&plugin_def.github).await {
+    let latest = match github_plugin_version(plugin_def).await {
         Ok(Some(version)) => version,
         _ => return Some(report),
     };
@@ -630,8 +630,14 @@ async fn npm_latest_version(package: &str, source: &str) -> anyhow::Result<Optio
         .map(str::to_string))
 }
 
-pub(super) async fn github_plugin_version(github_url: &str) -> anyhow::Result<Option<String>> {
-    let Some(package_url) = github_raw_file_url(github_url, "package.json") else {
+pub(super) async fn github_plugin_version(
+    plugin: &common::resources::PluginDef,
+) -> anyhow::Result<Option<String>> {
+    let Some(package_url) = common::archive::github_revision_raw_file_url(
+        &plugin.github,
+        &plugin.revision,
+        "package.json",
+    ) else {
         return Ok(None);
     };
     let client = reqwest::Client::builder()
@@ -642,7 +648,11 @@ pub(super) async fn github_plugin_version(github_url: &str) -> anyhow::Result<Op
         return Ok(Some(version));
     }
 
-    let Some(manifest_url) = github_raw_file_url(github_url, "plugin.json") else {
+    let Some(manifest_url) = common::archive::github_revision_raw_file_url(
+        &plugin.github,
+        &plugin.revision,
+        "plugin.json",
+    ) else {
         return Ok(None);
     };
     github_json_version(&client, &manifest_url).await
@@ -730,18 +740,6 @@ fn extract_semver(value: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn github_raw_file_url(github_url: &str, file_name: &str) -> Option<String> {
-    let trimmed = github_url.trim().trim_end_matches(".git");
-    let marker = "github.com/";
-    let (_, rest) = trimmed.split_once(marker)?;
-    let mut segments = rest.split('/').filter(|segment| !segment.is_empty());
-    let owner = segments.next()?;
-    let repo = segments.next()?;
-    Some(format!(
-        "https://raw.githubusercontent.com/{owner}/{repo}/HEAD/{file_name}"
-    ))
 }
 
 #[tauri::command]

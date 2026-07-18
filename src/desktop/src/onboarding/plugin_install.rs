@@ -17,7 +17,7 @@ pub struct InstallPluginRequest {
 pub struct InstallPluginResponse {
     pub success: bool,
     pub message: String,
-    /// The plugin ID as declared in the installed plugin.json (may differ from the requested id).
+    /// The catalog ID, verified against the installed plugin.json.
     pub actual_plugin_id: Option<String>,
     pub logs: Vec<String>,
 }
@@ -47,223 +47,99 @@ where
     C: Fn() -> bool,
 {
     let plugin_def = catalog_plugin(&request.plugin_id)?;
-    let plugin_kind = plugin_def.kind.as_str();
-    let install_steps = install_steps_for(plugin_def);
     let plugins_dir = plugins::user_plugins_dir();
     let target_dir = plugins_dir.join(plugin_def.install_dir_name());
+    let staging_dir = archive::staging_dir_for(&target_dir, "plugin")?;
     let mut logs = Vec::new();
 
     std::fs::create_dir_all(&plugins_dir).context("creating plugins directory")?;
+    archive::recreate_dir(&staging_dir)?;
 
-    if has_step(&install_steps, "git_clone") {
-        if let Some(archive_url) = portable_archive_url(&plugin_def.github) {
-            install_github_archive_checkout(
-                &target_dir,
-                &archive_url,
-                &mut logs,
-                &mut on_log,
-                &is_cancelled,
-            )
-            .await?;
-        } else {
-            ensure_portable_git_for_plugin(&mut on_log, &is_cancelled).await?;
-            // If a previous install left a partial directory, wipe it for a clean clone.
-            // Complete git installs are refreshed to the registry HEAD so "Install"
-            // also acts as "Update" for already-installed plugins.
-            let needs_clone = if target_dir.exists() {
-                if installed_tree_complete(&target_dir, plugin_kind) {
-                    if target_dir.join(".git").exists() {
-                        tracing::info!(
-                            "[install_plugin] {} already installed at {:?}, refreshing git HEAD",
-                            request.plugin_id,
-                            target_dir
-                        );
-                        let message = "Refreshing existing plugin checkout".to_string();
-                        logs.push(message.clone());
-                        on_log(message);
+    let result = install_staged_plugin(
+        plugin_def,
+        &staging_dir,
+        &target_dir,
+        &mut logs,
+        &mut on_log,
+        &is_cancelled,
+    )
+    .await;
 
-                        let mut fetch = common::process::env::command("git");
-                        fetch.args(["fetch", "--depth", "1", "origin", "HEAD"]);
-                        fetch.current_dir(&target_dir);
-                        let output = command_streaming(fetch, &mut on_log, &is_cancelled)
-                            .await
-                            .context("git fetch")?;
-                        push_output_logs(&mut logs, "git fetch", &output);
-                        if !output.status.success() {
-                            bail!(
-                                "git fetch failed: {}",
-                                String::from_utf8_lossy(&output.stderr)
-                            );
-                        }
-
-                        let mut reset = common::process::env::command("git");
-                        reset.args(["reset", "--hard", "FETCH_HEAD"]);
-                        reset.current_dir(&target_dir);
-                        let output = command_streaming(reset, &mut on_log, &is_cancelled)
-                            .await
-                            .context("git reset")?;
-                        push_output_logs(&mut logs, "git reset", &output);
-                        if !output.status.success() {
-                            bail!(
-                                "git reset failed: {}",
-                                String::from_utf8_lossy(&output.stderr)
-                            );
-                        }
-                        false
-                    } else {
-                        tracing::info!(
-                            "[install_plugin] {} exists without git metadata at {:?}, re-cloning",
-                            request.plugin_id,
-                            target_dir
-                        );
-                        std::fs::remove_dir_all(&target_dir)
-                            .context("removing non-git plugin directory")?;
-                        true
-                    }
-                } else {
-                    tracing::info!(
-                        "[install_plugin] {} has a stale install at {:?}, re-cloning",
-                        request.plugin_id,
-                        target_dir
-                    );
-                    std::fs::remove_dir_all(&target_dir)
-                        .context("removing stale plugin directory")?;
-                    true
-                }
-            } else {
-                true
-            };
-
-            if needs_clone {
-                tracing::info!(
-                    "[install_plugin] cloning {} → {:?}",
-                    plugin_def.github,
-                    target_dir
-                );
-                let message = format!("Running: git clone --depth 1 {}", plugin_def.github);
-                logs.push(message.clone());
-                on_log(message);
-                let mut command = common::process::env::command("git");
-                command.args([
-                    "clone",
-                    "--depth",
-                    "1",
-                    &plugin_def.github,
-                    &target_dir.to_string_lossy(),
-                ]);
-                let output = command_streaming(command, &mut on_log, &is_cancelled)
-                    .await
-                    .context("git clone")?;
-                push_output_logs(&mut logs, "git clone", &output);
-                if !output.status.success() {
-                    bail!(
-                        "git clone failed: {}",
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                }
-            }
+    if result.is_err() && staging_dir.exists() {
+        if let Err(error) = std::fs::remove_dir_all(&staging_dir) {
+            tracing::warn!(path = %staging_dir.display(), %error, "could not remove failed plugin staging directory");
         }
-    } else if !target_dir.exists() {
-        bail!("plugin directory does not exist: {}", target_dir.display());
+    }
+    result
+}
+
+async fn install_staged_plugin<F, C>(
+    plugin: &resources::PluginDef,
+    staging_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+    logs: &mut Vec<String>,
+    on_log: &mut F,
+    is_cancelled: &C,
+) -> anyhow::Result<InstallPluginResponse>
+where
+    F: FnMut(String),
+    C: Fn() -> bool,
+{
+    let install_steps = install_steps_for(plugin);
+    if !has_step(&install_steps, "git_clone") {
+        bail!("plugin catalog entry must include git_clone");
     }
 
+    acquire_catalog_source(plugin, staging_dir, logs, on_log, is_cancelled).await?;
+    validate_plugin_manifest(plugin, staging_dir)?;
+
     if has_step(&install_steps, "npm_install") {
-        ensure_managed_node_for_plugin(&mut on_log, &is_cancelled).await?;
-        tracing::info!("[install_plugin] npm install in {:?}", target_dir);
-        let mut install_args = npm_install_args_for(&target_dir);
+        ensure_managed_node_for_plugin(on_log, is_cancelled).await?;
+        let mut install_args = npm_install_args_for(staging_dir);
         install_args.extend(common::process::env::npm_registry_args());
-        let install_message = format!("Running: npm {}", install_args.join(" "));
-        logs.push(install_message.clone());
-        on_log(install_message);
-        let output = command_streaming(
-            common::process::env::npm_process(&install_args, &target_dir).await?,
-            &mut on_log,
-            &is_cancelled,
+        let command = common::process::env::npm_process(&install_args, staging_dir).await?;
+        run_checked_command(
+            "npm install",
+            format!("Running: npm {}", install_args.join(" ")),
+            command,
+            logs,
+            on_log,
+            is_cancelled,
         )
-        .await
-        .context("npm install")?;
-        push_output_logs(&mut logs, "npm install", &output);
-        if !output.status.success() {
-            bail!(
-                "npm install failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        .await?;
     }
 
     if has_step(&install_steps, "npm_build") {
-        ensure_managed_node_for_plugin(&mut on_log, &is_cancelled).await?;
-        tracing::info!("[install_plugin] npm run build in {:?}", target_dir);
-        logs.push("Running: npm run build".into());
-        on_log("Running: npm run build".into());
+        ensure_managed_node_for_plugin(on_log, is_cancelled).await?;
         let build_args = vec!["run".to_string(), "build".to_string()];
-        let output = command_streaming(
-            common::process::env::npm_process(&build_args, &target_dir).await?,
-            &mut on_log,
-            &is_cancelled,
+        let command = common::process::env::npm_process(&build_args, staging_dir).await?;
+        run_checked_command(
+            "npm run build",
+            "Running: npm run build".to_string(),
+            command,
+            logs,
+            on_log,
+            is_cancelled,
         )
-        .await
-        .context("npm run build")?;
-        push_output_logs(&mut logs, "npm run build", &output);
-        if !output.status.success() {
-            bail!(
-                "npm run build failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        .await?;
     }
 
-    if requires_built_entry(plugin_kind) {
-        let entry =
-            plugin_entry_path(&target_dir).unwrap_or_else(|| target_dir.join("dist/main.js"));
-        if !entry.exists() {
-            bail!(
-                "{} plugin install did not produce {}",
-                plugin_kind,
-                entry.strip_prefix(&target_dir).unwrap_or(&entry).display()
-            );
-        }
-        let message = format!(
-            "Verified: {} exists",
-            entry.strip_prefix(&target_dir).unwrap_or(&entry).display()
-        );
-        logs.push(message.clone());
-        on_log(message);
+    let manifest = validate_plugin_manifest(plugin, staging_dir)?;
+    validate_built_entry(&manifest, staging_dir)?;
+    if is_cancelled() {
+        bail!("install cancelled");
     }
 
-    let actual_id = match discover_installed_plugin(&request.plugin_id, plugin_kind) {
-        Some(p) => {
-            tracing::info!(
-                "[install_plugin] {} discoverable as {} plugin (manifest id='{}')",
-                request.plugin_id,
-                plugin_kind,
-                p.manifest.id
-            );
-            p.manifest.id.clone()
-        }
-        None => {
-            let fallback_id = plugin_manifest_id(&target_dir);
-            tracing::info!(
-                "[install_plugin] ERROR: {} installed but not discoverable (manifest id={:?})",
-                request.plugin_id,
-                fallback_id
-            );
-            bail!(
-                "plugin installed but is not discoverable as '{}{}'",
-                request.plugin_id,
-                fallback_id
-                    .as_deref()
-                    .map(|id| format!(" (plugin.json id is '{id}')"))
-                    .unwrap_or_default()
-            );
-        }
-    };
+    archive::atomic_replace_dir(staging_dir, target_dir)?;
+    let message = format!("Installed catalog revision {}", plugin.revision);
+    logs.push(message.clone());
+    on_log(message);
 
     Ok(InstallPluginResponse {
         success: true,
-        message: format!("Plugin '{}' installed successfully", request.plugin_id),
-        actual_plugin_id: Some(actual_id),
-        logs,
+        message: format!("Plugin '{}' installed successfully", plugin.id),
+        actual_plugin_id: Some(plugin.id.clone()),
+        logs: std::mem::take(logs),
     })
 }
 
@@ -305,19 +181,19 @@ pub(crate) fn check_plugin_status_sync(plugin_id: &str) -> String {
     "installed_not_discoverable".to_string()
 }
 
-fn portable_archive_url(github_url: &str) -> Option<String> {
+fn portable_archive_url(plugin: &resources::PluginDef) -> Option<String> {
     let config = common::config::ensure_loaded();
     if !config.portable_toolchain || cfg!(windows) {
         return None;
     }
     // Portable Git is only bundled on Windows; other portable installs avoid
     // requiring a system Git checkout by using GitHub source archives.
-    archive::github_head_archive_url(github_url)
+    archive::github_revision_archive_url(&plugin.github, &plugin.revision)
 }
 
-async fn install_github_archive_checkout<F, C>(
-    target_dir: &std::path::Path,
-    archive_url: &str,
+async fn acquire_catalog_source<F, C>(
+    plugin: &resources::PluginDef,
+    staging_dir: &std::path::Path,
     logs: &mut Vec<String>,
     on_log: &mut F,
     is_cancelled: &C,
@@ -330,34 +206,102 @@ where
         bail!("install cancelled");
     }
 
-    tracing::info!(
-        "[install_plugin] installing plugin archive {} → {:?}",
-        archive_url,
-        target_dir
-    );
-    let message = format!("Downloading plugin archive: {archive_url}");
-    logs.push(message.clone());
-    on_log(message);
+    if let Some(archive_url) = portable_archive_url(plugin) {
+        let message = format!("Downloading pinned plugin revision {}", plugin.revision);
+        logs.push(message.clone());
+        on_log(message);
+        archive::download_and_extract_strip_root(
+            &archive_url,
+            archive::ArchiveFormat::Zip,
+            staging_dir,
+        )
+        .await
+        .context("downloading pinned plugin archive")?;
+    } else {
+        ensure_portable_git_for_plugin(on_log, is_cancelled).await?;
 
-    let staging_dir = archive::staging_dir_for(target_dir, "plugin")?;
-    archive::recreate_dir(&staging_dir)?;
-    archive::download_and_extract_strip_root(
-        archive_url,
-        archive::ArchiveFormat::Zip,
-        &staging_dir,
-    )
-    .await
-    .context("downloading plugin archive")?;
+        let mut init = common::process::env::command("git");
+        init.args(["init", "--quiet", "."]).current_dir(staging_dir);
+        run_checked_command(
+            "git init",
+            "Preparing plugin checkout".to_string(),
+            init,
+            logs,
+            on_log,
+            is_cancelled,
+        )
+        .await?;
 
-    if is_cancelled() {
-        let _ = std::fs::remove_dir_all(&staging_dir);
-        bail!("install cancelled");
+        let mut remote = common::process::env::command("git");
+        remote
+            .args(["remote", "add", "origin", &plugin.github])
+            .current_dir(staging_dir);
+        run_checked_command(
+            "git remote add",
+            "Configuring catalog source".to_string(),
+            remote,
+            logs,
+            on_log,
+            is_cancelled,
+        )
+        .await?;
+
+        let mut fetch = common::process::env::command("git");
+        fetch
+            .args(["fetch", "--depth", "1", "origin", &plugin.revision])
+            .current_dir(staging_dir);
+        run_checked_command(
+            "git fetch",
+            format!("Fetching catalog revision {}", plugin.revision),
+            fetch,
+            logs,
+            on_log,
+            is_cancelled,
+        )
+        .await?;
+
+        let mut checkout = common::process::env::command("git");
+        checkout
+            .args(["checkout", "--quiet", "--detach", "FETCH_HEAD"])
+            .current_dir(staging_dir);
+        run_checked_command(
+            "git checkout",
+            "Checking out pinned plugin revision".to_string(),
+            checkout,
+            logs,
+            on_log,
+            is_cancelled,
+        )
+        .await?;
     }
 
-    archive::atomic_replace_dir(&staging_dir, target_dir)?;
-    let message = "Plugin archive extracted".to_string();
+    if is_cancelled() {
+        bail!("install cancelled");
+    }
+    Ok(())
+}
+
+async fn run_checked_command<F, C>(
+    step: &str,
+    message: String,
+    command: tokio::process::Command,
+    logs: &mut Vec<String>,
+    on_log: &mut F,
+    is_cancelled: &C,
+) -> anyhow::Result<()>
+where
+    F: FnMut(String),
+    C: Fn() -> bool,
+{
     logs.push(message.clone());
     on_log(message);
+    let output = command_streaming(command, on_log, is_cancelled)
+        .await
+        .with_context(|| step.to_string())?;
+    push_output_logs(logs, step, &output);
+    if !output.status.success() {
+        bail!("{step} failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
     Ok(())
 }
 
@@ -429,6 +373,12 @@ fn catalog_plugin(plugin_id: &str) -> anyhow::Result<&'static resources::PluginD
         .ok_or_else(|| anyhow::anyhow!("unknown managed plugin '{plugin_id}'"))?;
     if !valid_catalog_name(plugin.install_dir_name()) {
         bail!("plugin catalog contains an invalid install directory");
+    }
+    if !matches!(plugin.kind.as_str(), "channel" | "search") {
+        bail!("plugin catalog contains an unsupported kind");
+    }
+    if archive::github_revision_archive_url(&plugin.github, &plugin.revision).is_none() {
+        bail!("plugin catalog contains an invalid source or revision");
     }
     Ok(plugin)
 }
@@ -505,46 +455,81 @@ fn package_json_has_dependency(package_json: &serde_json::Value, dependency: &st
     })
 }
 
-fn installed_tree_complete(target_dir: &std::path::Path, plugin_kind: &str) -> bool {
-    if !target_dir.join("plugin.json").exists() {
-        return false;
-    }
-    !requires_built_entry(plugin_kind)
-        || plugin_entry_path(target_dir)
-            .unwrap_or_else(|| target_dir.join("dist/main.js"))
-            .exists()
-}
+fn validate_plugin_manifest(
+    plugin: &resources::PluginDef,
+    staging_dir: &std::path::Path,
+) -> anyhow::Result<plugins::PluginManifest> {
+    let manifest_path = staging_dir.join("plugin.json");
+    let raw = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("reading {}", manifest_path.display()))?;
+    let manifest: plugins::PluginManifest = serde_json::from_str(&raw)
+        .with_context(|| format!("parsing {}", manifest_path.display()))?;
 
-fn discover_installed_plugin(
-    plugin_id: &str,
-    plugin_kind: &str,
-) -> Option<plugins::DiscoveredPlugin> {
-    match plugin_kind {
-        "channel" => plugins::channel::find(plugin_id),
-        _ => plugins::find(plugin_id),
+    if manifest.id != plugin.id {
+        bail!(
+            "plugin manifest id '{}' does not match catalog id '{}'",
+            manifest.id,
+            plugin.id
+        );
     }
+    if manifest.kind != plugin.kind {
+        bail!(
+            "plugin manifest kind '{}' does not match catalog kind '{}'",
+            manifest.kind,
+            plugin.kind
+        );
+    }
+
+    Ok(manifest)
 }
 
 fn requires_built_entry(plugin_kind: &str) -> bool {
     matches!(plugin_kind, "channel" | "search")
 }
 
+fn validate_built_entry(
+    manifest: &plugins::PluginManifest,
+    staging_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    if !requires_built_entry(&manifest.kind) {
+        return Ok(());
+    }
+    let entry = safe_plugin_entry_path(staging_dir, &manifest.entry)
+        .ok_or_else(|| anyhow::anyhow!("plugin manifest contains an invalid entry path"))?;
+    if !entry.is_file() {
+        bail!(
+            "{} plugin install did not produce {}",
+            manifest.kind,
+            entry.strip_prefix(staging_dir).unwrap_or(&entry).display()
+        );
+    }
+    Ok(())
+}
+
 fn plugin_entry_path(target_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let raw = std::fs::read_to_string(target_dir.join("plugin.json")).ok()?;
     let manifest = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
-    manifest
+    let entry = manifest
         .get("entry")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
-        .filter(|entry| !entry.is_empty())
-        .map(|entry| target_dir.join(entry))
+        .filter(|entry| !entry.is_empty())?;
+    safe_plugin_entry_path(target_dir, entry)
 }
 
-fn plugin_manifest_id(target_dir: &std::path::Path) -> Option<String> {
-    std::fs::read_to_string(target_dir.join("plugin.json"))
-        .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|v| v.get("id").and_then(|id| id.as_str()).map(String::from))
+fn safe_plugin_entry_path(plugin_dir: &std::path::Path, entry: &str) -> Option<std::path::PathBuf> {
+    let relative = std::path::Path::new(entry);
+    if relative.as_os_str().is_empty()
+        || relative.components().any(|component| {
+            !matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    {
+        return None;
+    }
+    Some(plugin_dir.join(relative))
 }
 
 fn push_output_logs(logs: &mut Vec<String>, step: &str, output: &std::process::Output) {
@@ -678,6 +663,94 @@ mod tests {
         let error = catalog_plugin("not-in-catalog").unwrap_err();
         assert!(error.to_string().contains("unknown managed plugin"));
         assert!(catalog_plugin("../../tmp").is_err());
+    }
+
+    #[test]
+    fn all_catalog_plugins_have_pinned_sources() {
+        for plugin in resources::PLUGINS.iter() {
+            assert!(catalog_plugin(&plugin.id).is_ok(), "{}", plugin.id);
+        }
+    }
+
+    #[test]
+    fn validates_manifest_identity_and_entry() {
+        let root = test_dir("manifest");
+        std::fs::create_dir_all(root.join("dist")).unwrap();
+        std::fs::write(root.join("dist/main.js"), "export {};").unwrap();
+        write_test_manifest(&root, "telegram", "channel", "0.1.0", "dist/main.js");
+        let plugin = test_plugin("telegram", "channel");
+
+        let manifest = validate_plugin_manifest(&plugin, &root).unwrap();
+        validate_built_entry(&manifest, &root).unwrap();
+
+        write_test_manifest(&root, "other", "channel", "0.1.0", "dist/main.js");
+        assert!(validate_plugin_manifest(&plugin, &root)
+            .unwrap_err()
+            .to_string()
+            .contains("does not match catalog id"));
+
+        write_test_manifest(&root, "telegram", "search", "0.1.0", "dist/main.js");
+        assert!(validate_plugin_manifest(&plugin, &root)
+            .unwrap_err()
+            .to_string()
+            .contains("does not match catalog kind"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_manifest_entry_outside_staging() {
+        let root = test_dir("entry");
+        std::fs::create_dir_all(&root).unwrap();
+        write_test_manifest(&root, "telegram", "channel", "0.1.0", "../outside.js");
+        let plugin = test_plugin("telegram", "channel");
+        let manifest = validate_plugin_manifest(&plugin, &root).unwrap();
+
+        assert!(validate_built_entry(&manifest, &root)
+            .unwrap_err()
+            .to_string()
+            .contains("invalid entry path"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn test_dir(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("va-plugin-{label}-{}", uuid::Uuid::new_v4()))
+    }
+
+    fn test_plugin(id: &str, kind: &str) -> resources::PluginDef {
+        resources::PluginDef {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            slug: None,
+            name: id.to_string(),
+            description: String::new(),
+            github: "https://github.com/acme/plugin".to_string(),
+            revision: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            install_steps: default_install_steps(),
+        }
+    }
+
+    fn write_test_manifest(
+        root: &std::path::Path,
+        id: &str,
+        kind: &str,
+        min_host_version: &str,
+        entry: &str,
+    ) {
+        let manifest = serde_json::json!({
+            "id": id,
+            "name": id,
+            "version": "1.0.0",
+            "kind": kind,
+            "runtime": "node",
+            "entry": entry,
+            "minHostVersion": min_host_version
+        });
+        std::fs::write(
+            root.join("plugin.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
     }
 
     #[test]

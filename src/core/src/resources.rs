@@ -382,6 +382,8 @@ pub struct PluginDef {
     pub name: String,
     pub description: String,
     pub github: String,
+    /// Immutable source commit used by the managed plugin installer.
+    pub revision: String,
     #[serde(default)]
     pub install_steps: Vec<String>,
 }
