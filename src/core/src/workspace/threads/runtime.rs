@@ -1,7 +1,9 @@
 //! Runtime owner for one workspace thread.
 
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
@@ -103,6 +105,32 @@ pub trait SubagentCompletionValidator: Send + Sync + 'static {
 const SUBAGENT_START_MAX_ATTEMPTS: usize = 2;
 const SUBAGENT_PROMPT_MAX_ATTEMPTS: usize = 2;
 const SUBAGENT_RETRY_DELAY: Duration = Duration::from_millis(750);
+/// Grace period for an ACP prompt to return its real response after cancel.
+/// Supervisor process shutdown has its own separate two-second contract.
+const ACP_CANCEL_GRACE: Duration = Duration::from_secs(30);
+
+async fn await_cancelled_prompt<F, S, SF>(
+    mut prompt: Pin<&mut F>,
+    grace: Duration,
+    shutdown: S,
+) -> F::Output
+where
+    F: Future,
+    S: FnOnce() -> SF,
+    SF: Future<Output = ()>,
+{
+    match tokio::time::timeout(grace, prompt.as_mut()).await {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!(
+                grace_seconds = grace.as_secs(),
+                "ACP prompt did not finish after cancel; forcing agent shutdown"
+            );
+            shutdown().await;
+            prompt.await
+        }
+    }
+}
 
 pub struct ThreadRuntime {
     workspace: PathBuf,

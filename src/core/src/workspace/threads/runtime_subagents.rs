@@ -325,16 +325,36 @@ impl ThreadRuntime {
                     let _ = agent
                         .cancel(acp::CancelNotification::new(session_id.clone()))
                         .await;
-                    Err(acp::Error::new(-32800, "subagent prompt cancelled"))
+                    let shutdown_agent = Arc::clone(&agent);
+                    await_cancelled_prompt(
+                        prompt_call.as_mut(),
+                        ACP_CANCEL_GRACE,
+                        move || async move { shutdown_agent.shutdown().await },
+                    )
+                    .await
                 }
                 result = &mut prompt_call => result,
             };
-            if let Err(error) = prompt_finish_handler.prompt_finished(result.is_ok()).await {
+            if let Err(error) = prompt_finish_handler
+                .prompt_finished(result.is_ok() && !cancelled)
+                .await
+            {
                 tracing::warn!(
                     agent_id = %agent_id,
                     error = %error.message,
                     "subagent prompt_finished hook failed"
                 );
+            }
+
+            if cancelled {
+                let message = result
+                    .as_ref()
+                    .err()
+                    .map(|error| error.message.to_string())
+                    .unwrap_or_else(|| "subagent prompt cancelled".to_string());
+                self.set_subagent_error(&agent_id, message, &status_tx)
+                    .await;
+                return;
             }
 
             match result {
@@ -377,11 +397,6 @@ impl ThreadRuntime {
                 },
                 Err(error) => {
                     let message = error.message.to_string();
-                    if cancelled {
-                        self.set_subagent_error(&agent_id, message, &status_tx)
-                            .await;
-                        return;
-                    }
                     if attempt < SUBAGENT_PROMPT_MAX_ATTEMPTS {
                         tracing::info!(
                             agent_id = %agent_id,

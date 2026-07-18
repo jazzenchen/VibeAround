@@ -1,7 +1,52 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::*;
 use crate::workspace::registry::WorkspaceId;
+
+#[tokio::test]
+async fn cancelled_prompt_returns_real_result_without_shutdown_within_grace() {
+    let (reply, result) = oneshot::channel();
+    reply.send(42).unwrap();
+    let prompt = async { result.await.unwrap() };
+    tokio::pin!(prompt);
+    let shutdown_called = Arc::new(AtomicBool::new(false));
+    let shutdown_flag = Arc::clone(&shutdown_called);
+
+    let result = await_cancelled_prompt(
+        prompt.as_mut(),
+        Duration::from_secs(1),
+        move || async move {
+            shutdown_flag.store(true, Ordering::SeqCst);
+        },
+    )
+    .await;
+
+    assert_eq!(result, 42);
+    assert!(!shutdown_called.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn cancelled_prompt_forces_shutdown_after_grace_then_waits_for_result() {
+    let (reply, result) = oneshot::channel();
+    let prompt = async { result.await.unwrap() };
+    tokio::pin!(prompt);
+    let shutdown_called = Arc::new(AtomicBool::new(false));
+    let shutdown_flag = Arc::clone(&shutdown_called);
+
+    let result = await_cancelled_prompt(
+        prompt.as_mut(),
+        Duration::from_millis(1),
+        move || async move {
+            shutdown_flag.store(true, Ordering::SeqCst);
+            reply.send(7).unwrap();
+        },
+    )
+    .await;
+
+    assert_eq!(result, 7);
+    assert!(shutdown_called.load(Ordering::SeqCst));
+}
 
 fn test_thread_agent() -> ThreadAgent {
     ThreadAgent::ready(
