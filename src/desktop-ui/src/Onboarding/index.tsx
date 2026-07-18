@@ -607,10 +607,10 @@ export default function Onboarding() {
   );
 
   const installPlugin = useCallback(
-    async (pluginId: string, githubUrl: string) => {
+    async (pluginId: string) => {
       setInstallingPlugins((prev) => new Set(prev).add(pluginId));
       try {
-        await invoke("install_plugin", { request: { pluginId, githubUrl } });
+        await invoke("install_plugin", { request: { pluginId } });
         const plugins = await invoke<DiscoveredChannelPlugin[]>(
           "list_channel_plugins",
         );

@@ -749,7 +749,7 @@ export function SettingsDialog({
   }, [locale, searchContextSize, searchMaxResults, searchSources]);
 
   const installPlugin = useCallback(
-    async (pluginId: string, _githubUrl: string) => {
+    async (pluginId: string) => {
       setInstallingPlugins((prev) => new Set(prev).add(pluginId));
       try {
         await installManagedPlugin("im", pluginId);

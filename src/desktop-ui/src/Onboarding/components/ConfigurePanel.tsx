@@ -60,7 +60,7 @@ export function ConfigurePanel({
     key: keyof ChannelVerboseConfig,
     value: boolean,
   ) => void;
-  onInstallPlugin: (pluginId: string, githubUrl: string) => void;
+  onInstallPlugin: (pluginId: string) => void;
   onStartAuth: (pluginId: string) => void;
   onCancelAuth: (pluginId: string) => void;
   onProvider: (value: TunnelProvider) => void;

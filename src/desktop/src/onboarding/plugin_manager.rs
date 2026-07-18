@@ -88,7 +88,6 @@ async fn install_im_plugin(plugin_id: &str) -> Result<ManagedPluginSummary, Stri
         .ok_or_else(|| format!("unknown IM plugin '{plugin_id}'"))?;
     run_install_inner(InstallPluginRequest {
         plugin_id: plugin.id.clone(),
-        github_url: plugin.github.clone(),
     })
     .await
     .map_err(|error| error.to_string())?;
@@ -125,7 +124,6 @@ async fn install_search_plugin(plugin_id: &str) -> Result<ManagedPluginSummary, 
     }
     run_install_inner(InstallPluginRequest {
         plugin_id: plugin.id.clone(),
-        github_url: plugin.github.clone(),
     })
     .await
     .map_err(|error| error.to_string())?;
