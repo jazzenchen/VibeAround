@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { formatErrorMessage } from "@va/client";
 
+import { firstSupportedAuthMethod } from "../authMethods";
 import type { AuthFlowState, DiscoveredChannelPlugin } from "../types";
 
 interface UseChannelAuthInput {
@@ -13,12 +14,15 @@ interface UseChannelAuthInput {
 
 interface UseChannelAuthResult {
   authStates: Record<string, AuthFlowState>;
-  startAuth: (pluginId: string) => Promise<void>;
+  startAuth: (
+    pluginId: string,
+    params?: Record<string, unknown>,
+  ) => Promise<void>;
   cancelAuth: (pluginId: string) => Promise<void>;
 }
 
 /**
- * Owns the QR-login auth state machine for channel plugins.
+ * Owns the interactive auth state for channel plugins.
  *
  * Each plugin goes through: generating -> waiting -> connected / error / idle.
  * Also cancels any in-flight auth session if the user navigates away from
@@ -32,6 +36,7 @@ export function useChannelAuth({
 }: UseChannelAuthInput): UseChannelAuthResult {
   const [authStates, setAuthStates] = useState<Record<string, AuthFlowState>>({});
   const authStatesRef = useRef(authStates);
+  const activeOperationsRef = useRef(new Map<string, object>());
   const keepAuthAlive = active === true;
 
   useEffect(() => {
@@ -39,7 +44,11 @@ export function useChannelAuth({
   }, [authStates]);
 
   const startAuth = useCallback(
-    async (pluginId: string) => {
+    async (pluginId: string, params: Record<string, unknown> = {}) => {
+      const operation = {};
+      activeOperationsRef.current.set(pluginId, operation);
+      const isCurrent = () => activeOperationsRef.current.get(pluginId) === operation;
+
       setAuthStates((prev) => ({
         ...prev,
         [pluginId]: { status: "generating", message: "Connecting..." },
@@ -47,15 +56,26 @@ export function useChannelAuth({
 
       try {
         const discovered = discoveredPlugins.find((p) => p.id === pluginId);
+        const authMethod = firstSupportedAuthMethod(
+          discovered?.capabilities.auth?.methods,
+        );
+        if (!authMethod) throw new Error("This plugin has no supported authentication method.");
+
         const schemaProps = discovered?.configSchema?.properties ?? {};
-        const configForAuth: Record<string, string> = {};
-        for (const [key, prop] of Object.entries(schemaProps)) {
-          configForAuth[key] = channelConfigs[pluginId]?.[key] ?? prop.default ?? "";
-        }
+        const configForAuth = Object.fromEntries(
+          Object.entries(schemaProps).map(([key, property]) => [
+            key,
+            channelConfigs[pluginId]?.[key] ?? property.default ?? "",
+          ]),
+        );
 
         const result = await invoke<Record<string, unknown>>("plugin_auth_start", {
-          request: { pluginId, config: configForAuth },
+          request: {
+            pluginId,
+            params: authMethod === "qrcode_login" ? configForAuth : params,
+          },
         });
+        if (!isCurrent()) return;
 
         if (result.alreadyConnected) {
           setAuthStates((prev) => ({
@@ -71,28 +91,37 @@ export function useChannelAuth({
         }
 
         const qrUrl = result.qrcodeUrl as string | undefined;
+        const pairingCode = result.pairingCode as string | undefined;
+        const hasChallenge = authMethod === "qrcode_login" ? !!qrUrl : !!pairingCode;
         setAuthStates((prev) => ({
           ...prev,
           [pluginId]: {
-            status: qrUrl ? "waiting" : "error",
-            message: String(result.message ?? "Scan the QR code."),
+            status: hasChallenge ? "waiting" : "error",
+            message: String(
+              result.message ??
+                (authMethod === "qrcode_login"
+                  ? "Scan the QR code."
+                  : "Enter the pairing code on your phone."),
+            ),
             qrCodeUrl: qrUrl,
+            pairingCode,
             sessionKey: result.sessionKey as string | undefined,
           },
         }));
 
-        if (!qrUrl) return;
+        if (!hasChallenge) return;
 
         try {
           const waitResult = await invoke<Record<string, unknown>>("plugin_auth_wait", {
             request: {
               pluginId,
-              params: {
-                sessionKey: result.sessionKey,
-                timeoutMs: 480000,
-              },
+              params:
+                authMethod === "qrcode_login"
+                  ? { sessionKey: result.sessionKey, timeoutMs: 480000 }
+                  : {},
             },
           });
+          if (!isCurrent()) return;
 
           if (waitResult.connected) {
             setAuthStates((prev) => ({
@@ -117,12 +146,14 @@ export function useChannelAuth({
             }));
           }
         } catch {
+          if (!isCurrent()) return;
           setAuthStates((prev) => ({
             ...prev,
             [pluginId]: { status: "error", message: "Connection lost. Try again." },
           }));
         }
       } catch (error) {
+        if (!isCurrent()) return;
         setAuthStates((prev) => ({
           ...prev,
           [pluginId]: {
@@ -136,6 +167,7 @@ export function useChannelAuth({
   );
 
   const cancelAuth = useCallback(async (pluginId: string) => {
+    activeOperationsRef.current.delete(pluginId);
     setAuthStates((prev) => ({
       ...prev,
       [pluginId]: { status: "idle", message: "Cancelled." },
@@ -151,6 +183,7 @@ export function useChannelAuth({
     if (keepAuthAlive) return;
     for (const [pluginId, state] of Object.entries(authStates)) {
       if (state.status === "generating" || state.status === "waiting") {
+        activeOperationsRef.current.delete(pluginId);
         void invoke("plugin_auth_cancel", { request: { pluginId } }).catch(() => {});
       }
     }
@@ -160,6 +193,7 @@ export function useChannelAuth({
     return () => {
       for (const [pluginId, state] of Object.entries(authStatesRef.current)) {
         if (state.status === "generating" || state.status === "waiting") {
+          activeOperationsRef.current.delete(pluginId);
           void invoke("plugin_auth_cancel", { request: { pluginId } }).catch(() => {});
         }
       }
