@@ -61,7 +61,6 @@ pub(super) fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
         ChannelOutput::SubagentAcp { agent, payload, .. } => {
             ChatEvent::SubagentAcpNotification { agent, payload }
         }
-        ChannelOutput::PromptDone { message_id, .. } => ChatEvent::PromptDone { message_id },
         ChannelOutput::TurnStatus { active, .. } => ChatEvent::TurnStatus { active },
     }
 }

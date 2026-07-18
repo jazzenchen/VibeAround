@@ -53,12 +53,12 @@ export function ChatRuntimeHost({
       multiAgentTurns: connection.multiAgentTurns,
       subagents: connection.subagents,
       subagentMessages: connection.subagentMessages,
-      lastPromptDoneAt: connection.lastPromptDoneAt,
+      lastTurnCompletedAt: connection.lastTurnCompletedAt,
     });
   }, [
     connection.agents,
     connection.connected,
-    connection.lastPromptDoneAt,
+    connection.lastTurnCompletedAt,
     connection.messages,
     connection.meta,
     connection.multiAgentTurns,

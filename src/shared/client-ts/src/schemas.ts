@@ -403,10 +403,6 @@ export const ChatEventSchema = z.discriminatedUnion("kind", [
     payload: z.unknown(),
   }),
   z.object({
-    kind: z.literal("prompt_done"),
-    message_id: z.string().optional(),
-  }),
-  z.object({
     kind: z.literal("turn_status"),
     active: z.boolean(),
   }),

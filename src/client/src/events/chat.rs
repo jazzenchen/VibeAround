@@ -43,9 +43,6 @@ pub enum ChatEvent {
         agent: Value,
         payload: Value,
     },
-    PromptDone {
-        message_id: Option<String>,
-    },
     TurnStatus {
         active: bool,
     },
@@ -286,9 +283,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chat_ws_requires_bearer_token() {
+    fn chat_ws_uses_a_server_assigned_route() {
         let spec = chat_ws();
         assert_eq!(spec.path, "/ws/chat");
+        assert!(!spec.path.contains("chat_id"));
         assert_eq!(spec.auth, AuthRequirement::BearerToken);
     }
 

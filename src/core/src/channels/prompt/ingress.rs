@@ -10,7 +10,7 @@ use crate::workspace::WorkspaceThreadManager;
 
 use super::{
     auto_close_reason_for_prompt_error, effective_input_text, envelope_content_blocks, handler,
-    send_prompt_done, send_system_text, send_system_text_to_target, ChannelEnvelope, ChannelInput,
+    send_system_text, send_system_text_to_target, send_turn_status, ChannelEnvelope, ChannelInput,
     PluginHost, RouteKey,
 };
 
@@ -117,7 +117,8 @@ impl IngressOwner {
             return false;
         }
 
-        if !self.lanes.contains_key(&route) {
+        let new_lane = !self.lanes.contains_key(&route);
+        if new_lane {
             let lane_id = self.next_lane_id;
             self.next_lane_id = self.next_lane_id.wrapping_add(1);
             let (tx, rx) = mpsc::channel(ROUTE_LANE_CAPACITY);
@@ -145,6 +146,9 @@ impl IngressOwner {
         match lane.tx.try_send(queued) {
             Ok(()) => {
                 lane.last_sequence = sequence;
+                if new_lane {
+                    send_turn_status(&ingress.plugin_host, &route, true);
+                }
                 true
             }
             Err(mpsc::error::TrySendError::Full(queued)) => {
@@ -152,7 +156,9 @@ impl IngressOwner {
                 false
             }
             Err(mpsc::error::TrySendError::Closed(queued)) => {
-                self.lanes.remove(&route);
+                if self.lanes.remove(&route).is_some() {
+                    send_turn_status(&ingress.plugin_host, &route, false);
+                }
                 ingress.reject_lane_command(&route, queued.command, true);
                 false
             }
@@ -171,13 +177,20 @@ impl IngressOwner {
         });
     }
 
-    fn lane_completed(&mut self, route: &RouteKey, lane_id: u64, sequence: u64) {
+    fn lane_completed(
+        &mut self,
+        ingress: &ConversationIngress,
+        route: &RouteKey,
+        lane_id: u64,
+        sequence: u64,
+    ) {
         let remove = self
             .lanes
             .get(route)
             .is_some_and(|lane| lane.id == lane_id && lane.last_sequence == sequence);
         if remove {
             self.lanes.remove(route);
+            send_turn_status(&ingress.plugin_host, route, false);
         }
     }
 
@@ -227,13 +240,11 @@ impl ConversationIngress {
         target: ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
     ) -> acp::Result<acp::PromptResponse> {
-        let route = target.route.clone();
-        let message_id = target.reply_to.clone();
         let (reply, response) = oneshot::channel();
-        let result = if self
+        if self
             .command_tx
             .send(IngressCommand::Enqueue {
-                route: route.clone(),
+                route: target.route.clone(),
                 command: LaneCommand::Prompt {
                     reply_to: target.reply_to,
                     content_blocks,
@@ -243,14 +254,11 @@ impl ConversationIngress {
             })
             .is_err()
         {
-            Err(acp::Error::new(-32000, ROUTE_STOPPED_MESSAGE))
-        } else {
-            response
-                .await
-                .unwrap_or_else(|_| Err(acp::Error::new(-32603, "conversation route stopped")))
+            return Err(acp::Error::new(-32000, ROUTE_STOPPED_MESSAGE));
         };
-        send_prompt_done(&self.plugin_host, &route, message_id);
-        result
+        response
+            .await
+            .unwrap_or_else(|_| Err(acp::Error::new(-32603, "conversation route stopped")))
     }
 
     /// Dispatch a channel command. Stop, Close, and log records bypass route queues;
@@ -356,7 +364,12 @@ impl ConversationIngress {
                     route,
                     lane_id,
                     sequence,
-                } => owner.lane_completed(&route, lane_id, sequence),
+                } => {
+                    let Some(ingress) = ingress.upgrade() else {
+                        break;
+                    };
+                    owner.lane_completed(&ingress, &route, lane_id, sequence);
+                }
                 IngressCommand::LaneExited(lane_id) => owner.lane_exited(lane_id),
                 IngressCommand::Shutdown(reply) => {
                     owner.shutdown(reply);
@@ -537,20 +550,15 @@ impl ConversationIngress {
                 send_system_text_to_target(&self.plugin_host, &target, &format!("❌ {}", e));
             }
         }
-        send_prompt_done(&self.plugin_host, &route, message_id);
     }
 
     fn reject_full_lane(&self, route: &RouteKey, input: OrderedInput) {
         let message_id = input.reply_to();
         let target = ChannelTarget::new(route.clone(), message_id.clone());
         send_system_text_to_target(&self.plugin_host, &target, ROUTE_LANE_FULL_MESSAGE);
-        send_prompt_done(&self.plugin_host, route, message_id);
     }
 
-    fn reject_stopped(&self, route: &RouteKey, input: OrderedInput) {
-        let message_id = input.reply_to();
-        send_prompt_done(&self.plugin_host, route, message_id);
-    }
+    fn reject_stopped(&self, _route: &RouteKey, _input: OrderedInput) {}
 
     fn reject_lane_command(&self, route: &RouteKey, command: LaneCommand, stopped: bool) {
         match command {
@@ -623,6 +631,62 @@ fn cancelled_prompt_response() -> acp::Result<acp::PromptResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn closed_lane_is_removed_and_emits_idle_once() {
+        let base = std::env::temp_dir().join(format!(
+            "vibearound-closed-route-lane-{}",
+            std::process::id()
+        ));
+        let workspace_threads = WorkspaceThreadManager::with_paths(
+            base.join("workspaces.jsonl"),
+            base.join("threads.jsonl"),
+            base.join("attachments.jsonl"),
+        );
+        let (input_tx, _input_rx) = mpsc::unbounded_channel();
+        let plugin_host = Arc::new(PluginHost::new(input_tx));
+        let (output_tx, mut output_rx) = mpsc::unbounded_channel();
+        plugin_host.register_websocket_plugin("web", output_tx);
+        let ingress = ConversationIngress::new(workspace_threads, plugin_host);
+        let route = RouteKey::new("web", "chat-a");
+        let (lane_tx, lane_rx) = mpsc::channel(1);
+        drop(lane_rx);
+        let (cancel_tx, _) = watch::channel(false);
+        let mut owner = IngressOwner {
+            lanes: HashMap::from([(
+                route.clone(),
+                RouteLane {
+                    id: 1,
+                    last_sequence: 0,
+                    tx: lane_tx,
+                    cancel_tx,
+                },
+            )]),
+            active_lane_ids: HashSet::new(),
+            next_lane_id: 2,
+            shutting_down: false,
+            shutdown_waiters: Vec::new(),
+        };
+        let (done, _) = oneshot::channel();
+
+        assert!(!owner.enqueue(
+            &ingress,
+            route.clone(),
+            LaneCommand::Probe {
+                work: Box::pin(async {}),
+                done,
+            },
+        ));
+        assert!(!owner.lanes.contains_key(&route));
+        assert_eq!(
+            output_rx.recv().await.unwrap(),
+            super::super::ChannelOutput::TurnStatus {
+                route,
+                active: false,
+            }
+        );
+        assert!(output_rx.try_recv().is_err());
+    }
 
     #[test]
     fn session_cancel_completes_the_prompt_with_cancelled_stop_reason() {

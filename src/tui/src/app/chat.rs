@@ -703,7 +703,6 @@ impl TuiApp {
         self.chat_state.turn_active = false;
         self.chat_state.pending_permission_request_id = None;
         self.chat_state.pending_permission = None;
-        self.chat_state.last_prompt_done_message_id = None;
         self.chat_state.last_error = None;
         self.chat_state.system_messages.clear();
         self.clear_error(ErrorScope::Chat);
@@ -779,9 +778,6 @@ impl TuiApp {
                 self.set_error(ErrorScope::Chat, error.clone());
                 self.end_turn();
                 self.push_notice(format!("Error: {error}"));
-            }
-            ChatEvent::PromptDone { .. } => {
-                self.end_turn();
             }
             ChatEvent::TurnStatus { active } => {
                 if *active {

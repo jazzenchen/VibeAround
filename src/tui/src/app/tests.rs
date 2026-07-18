@@ -1853,7 +1853,7 @@ fn turn_status_drives_the_working_timer() {
     app.apply_chat_event(ChatEvent::TurnStatus { active: true });
     assert!(app.turn_started_at.is_some(), "turn start arms the timer");
 
-    app.apply_chat_event(ChatEvent::PromptDone { message_id: None });
+    app.apply_chat_event(ChatEvent::TurnStatus { active: false });
     assert!(app.turn_started_at.is_none(), "completion clears the timer");
 }
 

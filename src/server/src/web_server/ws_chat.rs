@@ -103,6 +103,13 @@ fn should_replay_initial_route_history(chat_id: &Option<String>) -> bool {
     chat_id.is_some()
 }
 
+fn initial_route(client: ChatSocketClient, chat_id: Option<String>) -> RouteKey {
+    RouteKey::new(
+        client.channel_kind,
+        chat_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+    )
+}
+
 async fn read_config_and_prefs_snapshot() -> Option<(config::Config, agent_state::AgentsPrefsFile)>
 {
     match tokio::task::spawn_blocking(agent_state::read_config_and_prefs).await {
@@ -122,9 +129,9 @@ async fn handle_chat_socket(
 ) {
     let connection_id = Uuid::new_v4().to_string();
     let replay_history = should_replay_initial_route_history(&chat_id);
-    let chat_id = chat_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let mut active_route = initial_route(client, chat_id);
+    let chat_id = active_route.chat_id.clone();
     let channel_id = format!("{}:{}", client.channel_kind, chat_id);
-    let mut active_route = RouteKey::new(client.channel_kind, &chat_id);
 
     // Explicit chat_id attachments are reconnects or existing thread views, so
     // replay the bounded route history independent of runtime lifetime.
@@ -146,7 +153,7 @@ async fn handle_chat_socket(
     let Some((cfg, agent_prefs)) = read_config_and_prefs_snapshot().await else {
         state
             .web_channel
-            .unregister_connection(&active_route.chat_id, &connection_id)
+            .unregister_connection(&active_route, &connection_id)
             .await;
         return;
     };
@@ -160,7 +167,7 @@ async fn handle_chat_socket(
     if send_event(&mut ws_tx, &config_event).await.is_err() {
         state
             .web_channel
-            .unregister_connection(&active_route.chat_id, &connection_id)
+            .unregister_connection(&active_route, &connection_id)
             .await;
         return;
     }
@@ -206,7 +213,6 @@ async fn handle_chat_socket(
                             .await;
                             let mut dispatch_input = true;
                             if let Some(route) = input_route(&input) {
-                                state.web_channel.mark_route_active(&route).await;
                                 remember_web_route_agent(&state, &route, input_agent(&input)).await;
                                 let wait_for_session_ready = should_wait_for_user_message_session(
                                     &state,
@@ -305,25 +311,28 @@ async fn handle_chat_socket(
                             // overtake a message still waiting in input_rx and
                             // cancel an empty route before that message runs.
                             enqueue_channel_input(&state.channel_hub, input);
-                            state.web_channel.mark_route_idle(&active_route).await;
                         }
                         WebChatInput::PermissionResponse {
                             request_id,
                             response,
                         } => {
-                            state
+                            let result = if state
                                 .web_channel
-                                .clear_pending_permission(&request_id)
-                                .await;
-                            if let Err(error) = state
-                                .channel_hub
-                                .respond_permission(
-                                    &active_route.channel_kind,
-                                    &request_id,
-                                    response,
-                                )
+                                .clear_pending_permission(&active_route, &request_id)
                                 .await
                             {
+                                state
+                                    .channel_hub
+                                    .respond_permission(
+                                        &active_route.channel_kind,
+                                        &request_id,
+                                        response,
+                                    )
+                                    .await
+                            } else {
+                                Err("permission request is not pending for this route".to_string())
+                            };
+                            if let Err(error) = result {
                                 tracing::warn!(
                                     request_id = %request_id,
                                     error = %error,
@@ -356,10 +365,7 @@ async fn handle_chat_socket(
                                 {
                                     state
                                         .web_channel
-                                        .unregister_connection(
-                                            &active_route.chat_id,
-                                            &connection_id,
-                                        )
+                                        .unregister_connection(&active_route, &connection_id)
                                         .await;
                                     active_route = route;
                                     state
@@ -407,7 +413,6 @@ async fn handle_chat_socket(
                                     cwd,
                                 )
                                 .await;
-                                task_state.web_channel.mark_route_idle(&task_route).await;
                             }));
                         }
                     }
@@ -424,23 +429,17 @@ async fn handle_chat_socket(
     outbound_task.abort();
     state
         .web_channel
-        .unregister_connection(&active_route.chat_id, &connection_id)
+        .unregister_connection(&active_route, &connection_id)
         .await;
-    if !state
-        .web_channel
-        .route_has_session(&active_route.chat_id)
-        .await
-        && !state
-            .web_channel
-            .route_is_active(&active_route.chat_id)
-            .await
+    if !state.web_channel.route_has_session(&active_route).await
+        && !state.web_channel.route_is_active(&active_route).await
     {
         let _ = state
             .channel_hub
             .workspace_thread_manager()
             .detach_route(&active_route)
             .await;
-        state.web_channel.forget_route(&active_route.chat_id).await;
+        state.web_channel.forget_route(&active_route).await;
     }
 }
 
@@ -467,7 +466,7 @@ async fn abort_direct_resume_task(
         .workspace_thread_manager()
         .detach_route(route)
         .await;
-    state.web_channel.forget_route(&route.chat_id).await;
+    state.web_channel.forget_route(route).await;
 }
 
 fn input_route(input: &ChannelInput) -> Option<RouteKey> {
@@ -496,10 +495,7 @@ fn input_agent(input: &ChannelInput) -> Option<String> {
 
 async fn remember_web_route_agent(state: &AppState, route: &RouteKey, agent: Option<String>) {
     if let Some(agent_id) = resolve_web_session_agent(state, route, agent).await {
-        state
-            .web_channel
-            .set_route_agent(&route.chat_id, agent_id)
-            .await;
+        state.web_channel.set_route_agent(route, agent_id).await;
     }
 }
 
@@ -511,12 +507,7 @@ async fn should_wait_for_user_message_session(
     match session_intent {
         Some(WebChatSessionIntent::New { .. }) => true,
         Some(WebChatSessionIntent::Resume { session_id, .. }) => {
-            state
-                .web_channel
-                .route_session_id(&route.chat_id)
-                .await
-                .as_deref()
-                != Some(session_id.as_str())
+            state.web_channel.route_session_id(route).await.as_deref() != Some(session_id.as_str())
         }
         None => false,
     }
@@ -684,20 +675,14 @@ async fn apply_web_launch_selection(
                         send_web_system_text(state, route, &format!("❌ {}", error));
                         return;
                     }
-                    state
-                        .web_channel
-                        .set_route_agent(&route.chat_id, agent_id)
-                        .await;
+                    state.web_channel.set_route_agent(route, agent_id).await;
                 } else {
                     match workspace_threads
                         .create_thread_in_current_workspace_with_host(route, target)
                         .await
                     {
                         Ok(_) => {
-                            state
-                                .web_channel
-                                .set_route_agent(&route.chat_id, agent_id)
-                                .await;
+                            state.web_channel.set_route_agent(route, agent_id).await;
                         }
                         Err(error) => {
                             send_web_system_text(state, route, &format!("❌ {}", error));
@@ -710,10 +695,7 @@ async fn apply_web_launch_selection(
                 .await
             {
                 Ok(_) => {
-                    state
-                        .web_channel
-                        .set_route_agent(&route.chat_id, agent_id)
-                        .await;
+                    state.web_channel.set_route_agent(route, agent_id).await;
                 }
                 Err(error) => {
                     send_web_system_text(state, route, &format!("❌ {}", error));
@@ -742,7 +724,7 @@ async fn apply_web_session_resume(
 
     state
         .web_channel
-        .set_route_agent(&route.chat_id, resume.agent.clone())
+        .set_route_agent(route, resume.agent.clone())
         .await;
     if let Err(error) = state
         .channel_hub
@@ -793,7 +775,7 @@ async fn apply_web_session_resume_now(
 
     state
         .web_channel
-        .set_route_agent(&route.chat_id, resume.agent.clone())
+        .set_route_agent(route, resume.agent.clone())
         .await;
     let requested_session_id = resume.session_id.clone();
     let runtime = match state
@@ -1096,6 +1078,16 @@ mod tests {
         assert!(super::should_replay_initial_route_history(&Some(
             "ws_thread".to_string()
         )));
+    }
+
+    #[test]
+    fn connections_without_chat_id_receive_distinct_routes() {
+        let first = super::initial_route(web_client(), None);
+        let second = super::initial_route(web_client(), None);
+
+        assert_ne!(first, second);
+        assert_eq!(first.channel_kind, "web");
+        assert_eq!(second.channel_kind, "web");
     }
 
     #[test]
