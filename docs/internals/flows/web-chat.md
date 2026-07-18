@@ -6,7 +6,7 @@ How a message typed in the dashboard's Web Chat reaches an agent. The back half 
 
 Opening Web Chat establishes `/va/ws/chat` (token-authenticated). On connect the server:
 
-1. registers the connection with the `WebChannelManager` under the route's chat id (multiple tabs on one thread = multiple connections, all receiving the same fan-out),
+1. registers the connection with the `WebChannelManager` under the complete route (multiple tabs on one thread = multiple connections, all receiving the same fan-out),
 2. sends a `Config` event (enabled agents, default agent),
 3. replays recent output for the route so a reopened tab shows the tail of the conversation.
 
@@ -44,9 +44,9 @@ Then the message is enqueued as a normal `ChannelInput::Message` into the same `
 
 ## Outbound: fan-out and host residency
 
-Outputs for web routes are dispatched to every registered connection for that chat id; each becomes a JSON `ChatEvent` (message chunks, tool status, permission cards, `PromptDone`).
+Outputs for web routes are dispatched to every connection registered for that complete route; each becomes a JSON `ChatEvent` (message chunks, tool status, permission cards, and `TurnStatus`). An inactive turn status is emitted after the turn's notification outputs and is the public completion boundary.
 
-Web Chat has no route-specific process idle deadline. `PromptDone`, socket disconnect, and closing the tab do not unload the host or close the thread. Its host follows the same warm-thread pool policy as IM: it stays resident unless a later, genuinely new host puts the pool over its soft limit and this thread is the eligible least-recently-active candidate. Eviction retains the `ThreadRuntime` and session; reopening still gets output replay, and the next prompt resumes if needed.
+Web Chat has no route-specific process idle deadline. `TurnStatus { active: false }`, socket disconnect, and closing the tab do not unload the host or close the thread. Its host follows the same warm-thread pool policy as IM: it stays resident unless a later, genuinely new host puts the pool over its soft limit and this thread is the eligible least-recently-active candidate. Eviction retains the `ThreadRuntime` and session; reopening still gets output replay, and the next prompt resumes if needed.
 
 → `ws_chat.rs` (`output_to_chat_event`), `transport_websocket.rs` (connection fan-out), `workspace/manager_routes.rs` (shared warm-thread pool)
 
@@ -59,10 +59,10 @@ The TUI chat registers as its own in-process channel kind (`tui`) over the same 
 The 2026-07-11 refactor was exercised against a real standalone server and Codex ACP adapter:
 
 - invalid token rejected with HTTP 401; authenticated non-upgrade request reached the WebSocket route and returned 400,
-- two sockets on one route received the same `/help` system text and `PromptDone`, then reconnect succeeded,
-- a real Codex ACP turn produced `AgentReady`, `SessionReady`, streamed `WS_ACP_OK`, `PromptDone`, and inactive turn status,
-- Stop sent immediately after `SessionReady` produced `PromptDone` and no agent text chunks,
-- a same-socket Message followed immediately by Stop (without waiting for `SessionReady`) preserved FIFO order, produced `PromptDone`, and emitted zero agent message chunks.
+- two sockets on one route received the same `/help` system text and inactive turn status, then reconnect succeeded,
+- a real Codex ACP turn produced `AgentReady`, `SessionReady`, streamed `WS_ACP_OK`, then emitted inactive turn status,
+- Stop sent immediately after `SessionReady` produced inactive turn status and no agent text chunks,
+- a same-socket Message followed immediately by Stop (without waiting for `SessionReady`) preserved FIFO order, produced inactive turn status, and emitted zero agent message chunks.
 - a real two-turn Codex conversation reused one ACP session and recalled a token supplied only in the first turn.
 
 ---
