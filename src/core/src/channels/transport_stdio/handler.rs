@@ -162,6 +162,7 @@ impl PluginAgentHandler {
         meta.insert("actorId".into(), self.default_actor_id.clone().into());
         meta.insert("config".into(), self.config.clone());
         meta.insert("hostVersion".into(), env!("CARGO_PKG_VERSION").into());
+        meta.insert("promptDone".into(), true.into());
         meta.insert(
             "cacheDir".into(),
             crate::config::data_dir()

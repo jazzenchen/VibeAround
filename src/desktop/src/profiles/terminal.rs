@@ -292,19 +292,13 @@ pub fn read_preference() -> TerminalChoice {
 }
 
 pub fn write_preference(choice: TerminalChoice) -> anyhow::Result<()> {
-    let mut prefs = read_prefs_file();
-    prefs.terminal = Some(choice.id().to_string());
-    write_prefs_file(&prefs)
+    update_prefs_file(|prefs| {
+        prefs.terminal = Some(choice.id().to_string());
+    })
 }
 
 pub fn read_workspace_preference() -> Option<PathBuf> {
     read_prefs_file().workspace
-}
-
-pub fn write_workspace_preference(path: PathBuf) -> anyhow::Result<()> {
-    let mut prefs = read_prefs_file();
-    prefs.workspace = Some(canonical_workspace_path(&path)?);
-    write_prefs_file(&prefs)
 }
 
 pub fn read_compatibility_bridge_preference() -> CompatibilityBridgeMode {
@@ -314,9 +308,9 @@ pub fn read_compatibility_bridge_preference() -> CompatibilityBridgeMode {
 }
 
 pub fn write_compatibility_bridge_preference(mode: CompatibilityBridgeMode) -> anyhow::Result<()> {
-    let mut prefs = read_prefs_file();
-    prefs.compatibility_bridge = Some(mode);
-    write_prefs_file(&prefs)
+    update_prefs_file(|prefs| {
+        prefs.compatibility_bridge = Some(mode);
+    })
 }
 
 pub fn resolve_workspace_preference() -> anyhow::Result<PathBuf> {
@@ -384,7 +378,13 @@ pub fn launch_home_dir() -> anyhow::Result<PathBuf> {
 fn read_prefs_file() -> LauncherPrefsFile {
     config::read_settings_json()
         .ok()
-        .and_then(|root| root.get("launcher").cloned())
+        .map(|root| prefs_from_settings(&root))
+        .unwrap_or_default()
+}
+
+fn prefs_from_settings(root: &Value) -> LauncherPrefsFile {
+    root.get("launcher")
+        .cloned()
         .and_then(
             |launcher| match serde_json::from_value::<LauncherPrefsFile>(launcher) {
                 Ok(prefs) => Some(prefs),
@@ -400,33 +400,38 @@ fn read_prefs_file() -> LauncherPrefsFile {
         .unwrap_or_default()
 }
 
-fn write_prefs_file(prefs: &LauncherPrefsFile) -> anyhow::Result<()> {
-    let value = serde_json::to_value(prefs).context("serialize launcher prefs")?;
+fn update_prefs_file(f: impl FnOnce(&mut LauncherPrefsFile)) -> anyhow::Result<()> {
+    config::mutate_settings_json(|root| update_prefs_in_settings(root, f))
+        .map_err(anyhow::Error::msg)
+}
+
+fn update_prefs_in_settings(
+    root: &mut Value,
+    f: impl FnOnce(&mut LauncherPrefsFile),
+) -> Result<(), String> {
+    let mut prefs = prefs_from_settings(root);
+    f(&mut prefs);
+    let value = serde_json::to_value(prefs).map_err(|error| error.to_string())?;
     let prefs_obj = value.as_object().cloned().unwrap_or_default();
-    config::update_settings_json(|root| {
-        if !root.is_object() {
-            *root = Value::Object(Map::new());
-        }
-        let Some(root_obj) = root.as_object_mut() else {
-            return;
-        };
-        let launcher = root_obj
-            .entry("launcher".to_string())
-            .or_insert_with(|| Value::Object(Map::new()));
-        if !launcher.is_object() {
-            *launcher = Value::Object(Map::new());
-        }
-        let Some(launcher_obj) = launcher.as_object_mut() else {
-            return;
-        };
-        merge_pref_field(launcher_obj, &prefs_obj, "terminal");
-        merge_pref_field(launcher_obj, &prefs_obj, "workspace");
-        merge_pref_field(launcher_obj, &prefs_obj, "compatibility_bridge");
-        if launcher_obj.is_empty() {
-            root_obj.remove("launcher");
-        }
-    })
-    .map_err(anyhow::Error::msg)
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let launcher = root_obj
+        .entry("launcher".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !launcher.is_object() {
+        *launcher = Value::Object(Map::new());
+    }
+    let launcher_obj = launcher
+        .as_object_mut()
+        .ok_or_else(|| "settings.json launcher must be a JSON object".to_string())?;
+    merge_pref_field(launcher_obj, &prefs_obj, "terminal");
+    merge_pref_field(launcher_obj, &prefs_obj, "workspace");
+    merge_pref_field(launcher_obj, &prefs_obj, "compatibility_bridge");
+    if launcher_obj.is_empty() {
+        root_obj.remove("launcher");
+    }
+    Ok(())
 }
 
 fn merge_pref_field(launcher: &mut Map<String, Value>, prefs: &Map<String, Value>, key: &str) {
@@ -463,5 +468,24 @@ mod tests {
         for mode in CompatibilityBridgeMode::ALL {
             assert_eq!(CompatibilityBridgeMode::from_id(mode.id()), Some(*mode));
         }
+    }
+
+    #[test]
+    fn preference_update_uses_latest_settings_value() {
+        let mut settings = serde_json::json!({
+            "launcher": {
+                "terminal": "terminal",
+                "selected_agent": "codex"
+            }
+        });
+
+        update_prefs_in_settings(&mut settings, |prefs| {
+            prefs.compatibility_bridge = Some(CompatibilityBridgeMode::On);
+        })
+        .unwrap();
+
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
+        assert_eq!(settings["launcher"]["selected_agent"], "codex");
+        assert_eq!(settings["launcher"]["compatibility_bridge"], "on");
     }
 }

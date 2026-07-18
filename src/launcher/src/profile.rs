@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context};
 use common::{agent_state, config, profiles};
-use profiles::{normalize_legacy_profile, ProfileDef};
+use profiles::ProfileDef;
 use serde::{Deserialize, Serialize};
 
 use crate::{paths, NativeLaunchArgs, NativeLaunchInput, TerminalChoice};
@@ -84,9 +84,8 @@ impl LaunchProfile {
 
 pub fn load_launch_profile(name: &str) -> anyhow::Result<NativeLaunchInput> {
     paths::validate_launch_name(name, "profile")?;
-    let profile = profiles::schema::load(name)
-        .map(normalize_legacy_profile)
-        .ok_or_else(|| anyhow!("profile '{}' not found", name))?;
+    let profile =
+        profiles::load_profile(name).ok_or_else(|| anyhow!("profile '{}' not found", name))?;
     model_profile_into_native_input(profile)
 }
 
@@ -108,8 +107,7 @@ fn read_profile_file(path: &Path) -> anyhow::Result<LaunchProfile> {
 }
 
 fn model_profile_into_native_input(profile: ProfileDef) -> anyhow::Result<NativeLaunchInput> {
-    let cfg = config::ensure_loaded();
-    let prefs = agent_state::read_prefs();
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
     let launch_target = resolve_launch_target_for_profile(&profile, &prefs, &cfg)?;
     let route = profiles::connections::resolve_profile_agent_route(&profile, &launch_target)
         .ok_or_else(|| anyhow!("profile '{}' cannot launch '{}'", profile.id, launch_target))?;

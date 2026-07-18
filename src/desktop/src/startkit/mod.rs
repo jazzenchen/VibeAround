@@ -392,11 +392,16 @@ pub async fn startkit_scan<R: Runtime>(
 pub async fn start_startkit_install<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, StartkitRunState>,
-    settings: Value,
+    settings_patch: Value,
     choices: StartkitChoices,
     run_id: Option<String>,
-) -> Result<(), String> {
-    common::config::write_settings_json(&settings).map_err(|e| e.to_string())?;
+) -> Result<Value, String> {
+    let settings = tauri::async_runtime::spawn_blocking(move || {
+        common::config::patch_settings_json(&settings_patch)
+    })
+    .await
+    .map_err(|error| error.to_string())??
+    .settings;
 
     let run_id = normalize_run_id(run_id);
     let control = Arc::new(StartkitRunControl {
@@ -414,10 +419,11 @@ pub async fn start_startkit_install<R: Runtime>(
     }
 
     let active = Arc::clone(&state.active);
+    let install_settings = settings.clone();
     tauri::async_runtime::spawn(async move {
         let status = match run_startkit_install(
             app.clone(),
-            settings,
+            install_settings,
             choices,
             Arc::clone(&control.cancelled),
             run_id.clone(),
@@ -450,7 +456,7 @@ pub async fn start_startkit_install<R: Runtime>(
         }
     });
 
-    Ok(())
+    Ok(settings)
 }
 
 #[tauri::command]

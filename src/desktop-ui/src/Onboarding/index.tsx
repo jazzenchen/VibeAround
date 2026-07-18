@@ -26,6 +26,10 @@ import { defaultChannelVerbose } from "./lib/channelConfig";
 import { buildSettings } from "./lib/buildSettings";
 import { useOnboardingInitialLoad } from "./hooks/useOnboardingInitialLoad";
 import {
+  createSettingsPatch,
+  saveSettingsPatch,
+} from "../lib/settingsPatch";
+import {
   agentCheckingReport,
   agentIdFromReport,
   groupReportsFromReports,
@@ -215,6 +219,10 @@ export default function Onboarding() {
       toolchainMode,
       portableToolchain,
     ],
+  );
+  const settingsPatch = useMemo(
+    () => createSettingsPatch(settings, finalSettings),
+    [finalSettings, settings],
   );
 
   const agentStatusChoices = useMemo<StartkitChoices>(
@@ -627,17 +635,31 @@ export default function Onboarding() {
     onConfigChange: updateChannelConfig,
   });
 
+  const startStartkitInstall = useCallback(
+    async (initialReports: StartkitItemReport[]) => {
+      const committedSettings = await startkit.start(
+        settingsPatch,
+        choices,
+        initialReports,
+      );
+      if (committedSettings) {
+        setSettings(committedSettings);
+      }
+    },
+    [choices, settingsPatch, startkit.start],
+  );
+
   const finishOnboarding = useCallback(async () => {
     setFinishing(true);
     setFinishError(null);
     try {
-      await invoke("save_settings", { settings: finalSettings });
+      await saveSettingsPatch(settings, finalSettings);
       await startkit.finish();
     } catch (error) {
       setFinishError(String(error));
       setFinishing(false);
     }
-  }, [finalSettings, startkit.finish]);
+  }, [finalSettings, settings, startkit.finish]);
 
   const cachedInstallReports = useMemo(() => {
     const selectedAgents = new Set(choices.agents);
@@ -788,7 +810,8 @@ export default function Onboarding() {
             label: t("Install anyway"),
             icon: <Download className="h-4 w-4" />,
             disabled: installReportsRunning,
-            run: () => void startkit.start(finalSettings, choices, installReports),
+            run: () =>
+              void startStartkitInstall(installReports),
           };
         }
         return {
@@ -803,7 +826,8 @@ export default function Onboarding() {
           label: t("Install selected"),
           icon: <Download className="h-4 w-4" />,
           disabled: installReportsRunning,
-          run: () => void startkit.start(finalSettings, choices, installReports),
+          run: () =>
+            void startStartkitInstall(installReports),
         };
       }
       if (!hasRunnableInstallWork) {
@@ -851,6 +875,7 @@ export default function Onboarding() {
     installReportsRunning,
     enabledAgents,
     rerunInstallScan,
+    startStartkitInstall,
     startkit,
     t,
   ]);

@@ -1,27 +1,18 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use common::agent_state::{self, AgentExecutablePreference};
 use serde_json::{Map, Value};
 
-use crate::paths;
-
 pub fn resolve_configured_agent_executable(agent_id: &str) -> anyhow::Result<Option<PathBuf>> {
-    let path = paths::settings_path()?;
-    let config = read_settings_config(&path)?;
+    let config = common::config::read_settings_json().map_err(anyhow::Error::msg)?;
     Ok(agent_entry(&config, agent_id).and_then(executable_path_from_entry))
 }
 
 pub fn write_scanned_agent_executable(agent_id: &str, path: &Path) -> anyhow::Result<()> {
-    let config_path = paths::settings_path()?;
-    let mut config = read_settings_config(&config_path)?;
-    let root = ensure_object(&mut config);
-    let launcher = ensure_child_object(root, "launcher");
-    let agents = ensure_child_object(launcher, "agents");
-    let agent = ensure_child_object(agents, agent_id);
-    let executable = executable_object(path);
-    agent.insert("executable".to_string(), Value::Object(executable));
-    write_settings_config(&config_path, &config)
+    agent_state::write_agent_executable(
+        agent_id,
+        Some(AgentExecutablePreference::path_scan(path.to_path_buf())),
+    )
 }
 
 fn agent_entry<'a>(config: &'a Value, agent_id: &str) -> Option<&'a Map<String, Value>> {
@@ -44,87 +35,10 @@ fn executable_path_from_entry(entry: &Map<String, Value>) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn read_settings_config(path: &Path) -> anyhow::Result<Value> {
-    let body = match fs::read_to_string(path) {
-        Ok(body) => body,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Value::Object(Map::new()))
-        }
-        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-    };
-    serde_json::from_str(&body).with_context(|| format!("parse {}", path.display()))
-}
-
-fn write_settings_config(path: &Path, config: &Value) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let body = serde_json::to_string_pretty(config).context("serialize settings config")?;
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
-    set_owner_only(&tmp).ok();
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
-    Ok(())
-}
-
-fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
-    if !value.is_object() {
-        *value = Value::Object(Map::new());
-    }
-    value.as_object_mut().expect("object just inserted")
-}
-
-fn ensure_child_object<'a>(
-    parent: &'a mut Map<String, Value>,
-    key: &str,
-) -> &'a mut Map<String, Value> {
-    let value = parent
-        .entry(key.to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !value.is_object() {
-        *value = Value::Object(Map::new());
-    }
-    value.as_object_mut().expect("object just inserted")
-}
-
-fn executable_object(path: &Path) -> Map<String, Value> {
-    let mut object = Map::new();
-    object.insert(
-        "path".to_string(),
-        Value::String(path.to_string_lossy().to_string()),
-    );
-    if let Ok(realpath) = fs::canonicalize(path) {
-        object.insert(
-            "realpath".to_string(),
-            Value::String(realpath.to_string_lossy().to_string()),
-        );
-    }
-    object.insert("source".to_string(), Value::String("path_scan".to_string()));
-    object.insert(
-        "source_label".to_string(),
-        Value::String("PATH scan".to_string()),
-    );
-    object.insert("rank".to_string(), Value::Number(4000.into()));
-    object
-}
-
-fn set_owner_only(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn reads_configured_executable_from_settings() {
@@ -205,6 +119,38 @@ mod tests {
             "path_scan"
         );
         assert!(!agents_json_exists);
+    }
+
+    #[test]
+    fn reads_settings_from_core_expanded_data_dir() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let home = temp_dir();
+        fs::create_dir_all(&home).expect("create temp home");
+        fs::write(
+            home.join("settings.json"),
+            r#"{
+  "launcher": {
+    "agents": {
+      "codex": {
+        "executable": { "path": "/usr/local/bin/codex" }
+      }
+    }
+  }
+}"#,
+        )
+        .expect("write settings config");
+        let previous_home = std::env::var_os("HOME");
+        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("VIBEAROUND_DATA_DIR", "~");
+
+        let path = resolve_configured_agent_executable("codex").expect("read config");
+
+        restore_env("HOME", previous_home);
+        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
+        let _ = fs::remove_dir_all(&home);
+
+        assert_eq!(path, Some(PathBuf::from("/usr/local/bin/codex")));
     }
 
     fn temp_dir() -> PathBuf {

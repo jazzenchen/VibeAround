@@ -103,6 +103,17 @@ fn should_replay_initial_route_history(chat_id: &Option<String>) -> bool {
     chat_id.is_some()
 }
 
+async fn read_config_and_prefs_snapshot() -> Option<(config::Config, agent_state::AgentsPrefsFile)>
+{
+    match tokio::task::spawn_blocking(agent_state::read_config_and_prefs).await {
+        Ok(snapshot) => Some(snapshot),
+        Err(error) => {
+            tracing::error!(%error, "web chat settings snapshot task failed");
+            None
+        }
+    }
+}
+
 async fn handle_chat_socket(
     socket: WebSocket,
     state: AppState,
@@ -131,9 +142,14 @@ async fn handle_chat_socket(
 
     let (mut ws_tx, mut ws_rx) = socket.split();
 
-    // Load config for initial agent metadata.
-    let cfg = config::ensure_loaded();
-    let agent_prefs = agent_state::read_prefs();
+    // Load one settings snapshot for initial agent metadata.
+    let Some((cfg, agent_prefs)) = read_config_and_prefs_snapshot().await else {
+        state
+            .web_channel
+            .unregister_connection(&active_route.chat_id, &connection_id)
+            .await;
+        return;
+    };
 
     // Send initial config event.
     let config_event = ChatEvent::Config {
@@ -614,8 +630,7 @@ async fn resolve_web_session_agent(
         Some(state) => Some(state.await),
         None => None,
     };
-    let cfg = config::ensure_loaded();
-    let agent_prefs = agent_state::read_prefs();
+    let (cfg, agent_prefs) = read_config_and_prefs_snapshot().await?;
     let agent = agent
         .or_else(|| {
             current_state
@@ -907,8 +922,7 @@ async fn resolve_web_session_resume(
         Some(state) => Some(state.await),
         None => None,
     };
-    let cfg = config::ensure_loaded();
-    let agent_prefs = agent_state::read_prefs();
+    let (cfg, agent_prefs) = read_config_and_prefs_snapshot().await?;
     let agent = agent
         .or_else(|| {
             current_state

@@ -8,6 +8,8 @@ pub mod archive;
 pub mod auth;
 pub mod channels;
 pub mod config;
+mod file_lock;
+pub mod file_replace;
 pub mod launch_sessions;
 pub mod logging;
 pub mod plugins;

@@ -47,8 +47,7 @@ pub fn materialize_profile_for_agent(
     _workspace: &Path,
     _channel_route: &RouteKey,
 ) -> anyhow::Result<AppliedProfile> {
-    let profile = profiles::schema::load(profile_id)
-        .map(profiles::normalize_legacy_profile_and_persist)
+    let profile = profiles::load_profile(profile_id)
         .ok_or_else(|| anyhow!("profile '{}' not found", profile_id))?;
     let route = profiles::connections::resolve_profile_agent_route(&profile, agent_id).ok_or_else(
         || {

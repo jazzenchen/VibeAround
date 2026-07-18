@@ -28,6 +28,50 @@ fn temp_paths() -> (PathBuf, PathBuf, PathBuf) {
     )
 }
 
+#[test]
+fn route_defaults_derive_host_and_workspace_from_one_settings_snapshot() {
+    let default_workspace = std::env::temp_dir().join("vibearound-snapshot-workspace");
+    let settings = serde_json::json!({
+        "default_workspace": default_workspace,
+        "enabled_agents": ["claude", "codex"],
+        "launcher": {
+            "default_agent": "codex",
+            "default_profile_id": "snapshot-profile"
+        },
+        "remote": {
+            "channels": {
+                "telegram": {
+                    "agentId": "claude",
+                    "profileId": "channel-profile"
+                }
+            }
+        }
+    });
+    let cfg = crate::config::config_from_settings_json(&settings);
+    let prefs = agent_state::prefs_from_settings_json(&settings);
+
+    let (web_host, web_workspace) = default_route_binding_and_workspace_from_settings(
+        &RouteKey::new("web", "chat-a"),
+        &cfg,
+        &prefs,
+    );
+    assert_eq!(web_host.agent_id, "codex");
+    assert_eq!(web_host.profile_id.as_deref(), Some("snapshot-profile"));
+    assert_eq!(web_workspace, default_workspace);
+
+    let (telegram_host, telegram_workspace) = default_route_binding_and_workspace_from_settings(
+        &RouteKey::new("telegram", "chat-a"),
+        &cfg,
+        &prefs,
+    );
+    assert_eq!(telegram_host.agent_id, "claude");
+    assert_eq!(telegram_host.profile_id.as_deref(), Some("channel-profile"));
+    assert_eq!(
+        telegram_workspace,
+        default_workspace.join("im").join("telegram")
+    );
+}
+
 async fn seed_session_thread(
     manager: &WorkspaceThreadManager,
     root: PathBuf,

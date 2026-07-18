@@ -3,18 +3,31 @@
 //! Callers load a fresh Config when they need one.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::tunnels::TunnelProvider;
 
 /// Global config cache. Populated on first `ensure_loaded()` call, reloaded
 /// by `reload()` or automatically after `update_settings_json()`.
 static CONFIG_CACHE: RwLock<Option<Arc<Config>>> = RwLock::new(None);
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingsSnapshot {
+    pub settings: serde_json::Value,
+    pub revision: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum SettingsReplaceResult {
+    Replaced(SettingsSnapshot),
+    Conflict(SettingsSnapshot),
+}
 
 /// Default server port for both standalone server and desktop-spawned server.
 pub const DEFAULT_PORT: u16 = 12358;
@@ -119,10 +132,8 @@ fn init_data_dir() {
             "[VibeAround] Creating default settings.json at {:?}",
             settings_path
         );
-        if let Err(e) = std::fs::write(&settings_path, DEFAULT_SETTINGS_JSON) {
-            tracing::info!("[VibeAround] Failed to write settings.json: {}", e);
-        } else if let Err(e) = crate::auth::set_owner_only(&settings_path) {
-            tracing::info!("[VibeAround] Failed to chmod settings.json: {}", e);
+        if let Err(e) = mutate_settings_json_at(&settings_path, |_| Ok(())) {
+            tracing::info!("[VibeAround] Failed to initialize settings.json: {}", e);
         }
     }
     let ws_dir = dir.join("workspaces");
@@ -183,6 +194,24 @@ pub struct Config {
     pub remote: RemoteConfig,
     // --- Raw channels JSON (for dynamic plugin config) ---
     raw_channels: serde_json::Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceSettings {
+    pub default_workspace: PathBuf,
+    pub workspaces: Vec<PathBuf>,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RemoveWorkspaceError {
+    #[error("cannot remove the default workspace")]
+    Default,
+    #[error("cannot remove the built-in workspace")]
+    Builtin,
+    #[error("workspace is not registered")]
+    Unregistered,
+    #[error("{0}")]
+    Storage(String),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -365,17 +394,14 @@ impl Config {
 /// Load config — returns cached version if available, otherwise reads from disk.
 /// Call `reload()` to force a fresh read (e.g. after settings change).
 pub fn ensure_loaded() -> Arc<Config> {
-    // Fast path: return cached config.
     if let Some(cfg) = CONFIG_CACHE.read().as_ref() {
         return Arc::clone(cfg);
     }
-    // Slow path: first call — initialize data dir, read from disk, cache.
+
     ensure_rustls_provider();
     init_data_dir();
     let path = settings_path();
-    let cfg = Arc::new(load_settings_from(&path));
-    *CONFIG_CACHE.write() = Some(Arc::clone(&cfg));
-    cfg
+    cached_or_load(&CONFIG_CACHE, || load_settings_from(&path))
 }
 
 /// Force re-read config from disk and update the cache.
@@ -384,8 +410,29 @@ pub fn reload() -> Arc<Config> {
     ensure_rustls_provider();
     init_data_dir();
     let path = settings_path();
+    // Keep invalidation ordered after the disk read and cache install.
+    let mut cache = CONFIG_CACHE.write();
     let cfg = Arc::new(load_settings_from(&path));
-    *CONFIG_CACHE.write() = Some(Arc::clone(&cfg));
+    *cache = Some(Arc::clone(&cfg));
+    cfg
+}
+
+fn cached_or_load(
+    cache: &RwLock<Option<Arc<Config>>>,
+    load: impl FnOnce() -> Config,
+) -> Arc<Config> {
+    if let Some(cfg) = cache.read().as_ref() {
+        return Arc::clone(cfg);
+    }
+
+    // A writer that persists newer settings must invalidate after this install.
+    let mut cache = cache.write();
+    if let Some(cfg) = cache.as_ref() {
+        return Arc::clone(cfg);
+    }
+
+    let cfg = Arc::new(load());
+    *cache = Some(Arc::clone(&cfg));
     cfg
 }
 
@@ -397,6 +444,10 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         return Config::default();
     };
 
+    config_from_settings_json(&root)
+}
+
+pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
     let tunnel_provider = root
         .get("tunnel")
         .and_then(|t| t.get("provider"))
@@ -447,26 +498,9 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         .cloned()
         .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-    let default_workspace = root
-        .get("default_workspace")
-        .and_then(|v| v.as_str())
-        .map(|s| expand_home(s.trim()))
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(builtin_workspaces_dir);
-
-    // --- Workspaces ---
-    let mut workspaces: Vec<PathBuf> = root
-        .get("workspaces")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| expand_home(s.trim()))
-                .filter(|p| !p.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    workspaces.retain(|workspace| workspace != &default_workspace);
+    let workspace_settings = workspace_settings_from_json(root);
+    let default_workspace = workspace_settings.default_workspace;
+    let workspaces = workspace_settings.workspaces;
 
     let preview_base_url = root
         .get("preview_base_url")
@@ -521,10 +555,10 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         })
         .unwrap_or_default();
 
-    let api_bridge = load_api_bridge_config(&root);
-    let local_agent_api = load_local_agent_api_config(&root);
-    let search_tool = load_search_tool_config(&root);
-    let remote = load_remote_config(&root);
+    let api_bridge = load_api_bridge_config(root);
+    let local_agent_api = load_local_agent_api_config(root);
+    let search_tool = load_search_tool_config(root);
+    let remote = load_remote_config(root);
 
     let proxy = root
         .get("proxy")
@@ -574,6 +608,33 @@ fn load_settings_from(path: &std::path::Path) -> Config {
         search_tool,
         remote,
         raw_channels,
+    }
+}
+
+pub fn workspace_settings_from_json(root: &serde_json::Value) -> WorkspaceSettings {
+    let default_workspace = root
+        .get("default_workspace")
+        .and_then(|value| value.as_str())
+        .map(|value| expand_home(value.trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(builtin_workspaces_dir);
+    let mut workspaces = root
+        .get("workspaces")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(|value| expand_home(value.trim()))
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    workspaces.retain(|workspace| workspace != &default_workspace);
+
+    WorkspaceSettings {
+        default_workspace,
+        workspaces,
     }
 }
 
@@ -822,65 +883,371 @@ pub fn builtin_workspaces_dir() -> PathBuf {
     data_dir().join("workspaces")
 }
 
-/// Read + write settings.json (for API-driven updates).
-/// Automatically reloads the in-memory config cache after writing.
-pub fn update_settings_json(mutator: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
-    let path = settings_path();
-    let data = std::fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_string());
-    let mut root: serde_json::Value = serde_json::from_str(&data).unwrap_or(serde_json::json!({}));
-    mutator(&mut root);
-    write_settings_json_locked(&root)?;
-    // Invalidate cache so next ensure_loaded() picks up the change.
-    *CONFIG_CACHE.write() = None;
-    Ok(())
-}
-
-/// Remove a user workspace registration from settings.json.
+/// Mutate settings.json while holding its cross-process transaction lock.
 ///
-/// This does not delete the directory on disk. Legacy workspace fields are
-/// removed too because they are still read as regular workspace entries.
-pub fn remove_workspace_path(path: &Path) -> Result<bool, String> {
-    let mut removed = false;
-    update_settings_json(|root| {
-        removed = remove_workspace_from_settings_root(root, path);
-    })?;
-    Ok(removed)
-}
-
-/// Replace settings.json with an already-mutated JSON value. Use this for
-/// whole-file settings flows such as onboarding. Incremental updates should
-/// prefer [`update_settings_json`] so they merge against the latest on-disk
-/// content.
-pub fn write_settings_json(root: &serde_json::Value) -> Result<(), String> {
-    write_settings_json_locked(root)?;
+/// The lock covers reading, strict parsing, mutation, and atomic replacement.
+/// A missing file starts from the embedded default. Malformed JSON is returned
+/// as an error and is never replaced. The mutator must not call another
+/// settings writer while the lock is held.
+pub fn mutate_settings_json<T>(
+    mutator: impl FnOnce(&mut serde_json::Value) -> Result<T, String>,
+) -> Result<T, String> {
+    let result = mutate_settings_json_at(&settings_path(), mutator)?;
     *CONFIG_CACHE.write() = None;
-    Ok(())
+    Ok(result)
 }
 
-/// Read the raw settings JSON file after ensuring the data directory exists.
+/// Read and incrementally update the latest settings document.
+pub fn update_settings_json(mutator: impl FnOnce(&mut serde_json::Value)) -> Result<(), String> {
+    mutate_settings_json(|root| {
+        mutator(root);
+        Ok(())
+    })
+}
+
+pub fn register_workspace_path(path: &Path) -> Result<(), String> {
+    mutate_settings_json(|root| add_workspace_to_settings(root, path))
+}
+
+pub fn reorder_workspace_paths(requested: &[PathBuf]) -> Result<(), String> {
+    mutate_settings_json(|root| reorder_workspaces_in_settings(root, requested))
+}
+
+pub fn remove_registered_workspace(path: &Path) -> Result<(), RemoveWorkspaceError> {
+    let mut rejection = None;
+    let result = mutate_settings_json(|root| {
+        remove_registered_workspace_from_settings(root, path).map_err(|error| {
+            rejection = Some(error);
+            "workspace removal rejected".to_string()
+        })
+    });
+    if let Some(error) = rejection {
+        return Err(error);
+    }
+    result.map_err(RemoveWorkspaceError::Storage)
+}
+
+pub fn set_default_workspace_path(path: &Path) -> Result<(), String> {
+    mutate_settings_json(|root| set_default_workspace_in_settings(root, path))
+}
+
+/// Read the raw settings JSON without creating files as a side effect.
+/// A missing file is equivalent to the embedded default settings document.
 pub fn read_settings_json() -> Result<serde_json::Value, String> {
-    ensure_rustls_provider();
-    init_data_dir();
-    let path = settings_path();
-    let data = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    read_settings_json_at(&settings_path())
+}
+
+fn read_settings_json_at(path: &Path) -> Result<serde_json::Value, String> {
+    let data = match std::fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            DEFAULT_SETTINGS_JSON.to_string()
+        }
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
-fn write_settings_json_locked(root: &serde_json::Value) -> Result<(), String> {
-    let path = settings_path();
-    write_settings_json_to_path(&path, root)
+pub fn read_settings_snapshot() -> Result<SettingsSnapshot, String> {
+    settings_snapshot(read_settings_json()?)
+}
+
+/// Apply an RFC 6902 JSON Patch to the latest settings document.
+pub fn patch_settings_json(patch: &serde_json::Value) -> Result<SettingsSnapshot, String> {
+    let snapshot = patch_settings_json_at(&settings_path(), patch)?;
+    *CONFIG_CACHE.write() = None;
+    Ok(snapshot)
+}
+
+/// Replace the complete settings document only when `expected_revision` still
+/// matches the latest value.
+pub fn replace_settings_json_if_revision(
+    expected_revision: &str,
+    replacement: &serde_json::Value,
+) -> Result<SettingsReplaceResult, String> {
+    let result =
+        replace_settings_json_if_revision_at(&settings_path(), expected_revision, replacement)?;
+    if matches!(result, SettingsReplaceResult::Replaced(_)) {
+        *CONFIG_CACHE.write() = None;
+    }
+    Ok(result)
+}
+
+enum SettingsTransaction<T> {
+    Read(T),
+    Write(T),
+}
+
+fn mutate_settings_json_at<T>(
+    path: &Path,
+    mutator: impl FnOnce(&mut serde_json::Value) -> Result<T, String>,
+) -> Result<T, String> {
+    transact_settings_json_at(path, |root| mutator(root).map(SettingsTransaction::Write))
+}
+
+fn transact_settings_json_at<T>(
+    path: &Path,
+    operation: impl FnOnce(&mut serde_json::Value) -> Result<SettingsTransaction<T>, String>,
+) -> Result<T, String> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("create {}: {error}", parent.display()))?;
+
+    let lock_path = settings_lock_path(path);
+    let _lock = crate::file_lock::ExclusiveFileLock::acquire(&lock_path)
+        .map_err(|error| format!("lock {}: {error}", lock_path.display()))?;
+    let data = match std::fs::read_to_string(path) {
+        Ok(data) => data,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            DEFAULT_SETTINGS_JSON.to_string()
+        }
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
+    let mut root: serde_json::Value = serde_json::from_str(&data)
+        .map_err(|error| format!("parse {}: {error}", path.display()))?;
+    if !root.is_object() {
+        return Err(format!("{} must contain a JSON object", path.display()));
+    }
+
+    match operation(&mut root)? {
+        SettingsTransaction::Read(result) => Ok(result),
+        SettingsTransaction::Write(result) => {
+            if !root.is_object() {
+                return Err("settings.json root must remain a JSON object".to_string());
+            }
+            write_settings_json_to_path(path, &root)?;
+            Ok(result)
+        }
+    }
+}
+
+fn patch_settings_json_at(
+    path: &Path,
+    patch: &serde_json::Value,
+) -> Result<SettingsSnapshot, String> {
+    let patch = serde_json::from_value::<json_patch::Patch>(patch.clone())
+        .map_err(|error| format!("invalid settings patch: {error}"))?;
+    mutate_settings_json_at(path, move |settings| {
+        json_patch::patch(settings, &patch)
+            .map_err(|error| format!("settings patch conflict: {error}"))?;
+        if !settings.is_object() {
+            return Err("settings patch must leave the root as a JSON object".to_string());
+        }
+        settings_snapshot(settings.clone())
+    })
+}
+
+fn replace_settings_json_if_revision_at(
+    path: &Path,
+    expected_revision: &str,
+    replacement: &serde_json::Value,
+) -> Result<SettingsReplaceResult, String> {
+    if !replacement.is_object() {
+        return Err("settings.json root must be a JSON object".to_string());
+    }
+    let replacement = replacement.clone();
+    transact_settings_json_at(path, |current| {
+        let current_snapshot = settings_snapshot(current.clone())?;
+        if current_snapshot.revision != expected_revision {
+            return Ok(SettingsTransaction::Read(SettingsReplaceResult::Conflict(
+                current_snapshot,
+            )));
+        }
+
+        *current = replacement;
+        let snapshot = settings_snapshot(current.clone())?;
+        Ok(SettingsTransaction::Write(SettingsReplaceResult::Replaced(
+            snapshot,
+        )))
+    })
+}
+
+fn settings_snapshot(settings: serde_json::Value) -> Result<SettingsSnapshot, String> {
+    let encoded = serde_json::to_vec(&settings).map_err(|error| error.to_string())?;
+    let digest = Sha256::digest(encoded);
+    let mut revision = String::with_capacity(digest.len() * 2);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in digest {
+        revision.push(HEX[(byte >> 4) as usize] as char);
+        revision.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(SettingsSnapshot { settings, revision })
+}
+
+fn settings_lock_path(path: &Path) -> PathBuf {
+    let mut lock_path = path.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    PathBuf::from(lock_path)
 }
 
 fn write_settings_json_to_path(path: &Path, root: &serde_json::Value) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let pretty = serde_json::to_string_pretty(root).map_err(|e| e.to_string())?;
-    fs::write(path, pretty).map_err(|e| e.to_string())?;
-    crate::auth::set_owner_only(path).map_err(|e| e.to_string())
+    crate::file_replace::write_private(path, pretty).map_err(|e| e.to_string())
 }
 
-fn remove_workspace_from_settings_root(root: &mut serde_json::Value, path: &Path) -> bool {
+pub(crate) fn add_workspace_to_settings(
+    root: &mut serde_json::Value,
+    path: &Path,
+) -> Result<(), String> {
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let workspaces = obj
+        .entry("workspaces".to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    let workspaces = workspaces
+        .as_array_mut()
+        .ok_or_else(|| "settings.json workspaces must be an array".to_string())?;
+    if !workspaces.iter().any(|value| {
+        value
+            .as_str()
+            .map(|candidate| settings_path_matches(candidate, path))
+            .unwrap_or(false)
+    }) {
+        workspaces.push(serde_json::Value::String(
+            path.to_string_lossy().to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn reorder_workspaces_in_settings(
+    root: &mut serde_json::Value,
+    requested: &[PathBuf],
+) -> Result<(), String> {
+    let settings = workspace_settings_from_json(root);
+    let builtin = builtin_workspaces_dir();
+    let mut ordered = Vec::new();
+
+    for requested_path in requested {
+        if workspace_paths_equal(requested_path, &settings.default_workspace)
+            || workspace_paths_equal(requested_path, &builtin)
+        {
+            continue;
+        }
+        if let Some(current) = settings
+            .workspaces
+            .iter()
+            .find(|current| workspace_paths_equal(current, requested_path))
+        {
+            push_unique_workspace_path(&mut ordered, current.clone());
+        }
+    }
+    for workspace in settings.workspaces {
+        if !workspace_paths_equal(&workspace, &settings.default_workspace)
+            && !workspace_paths_equal(&workspace, &builtin)
+        {
+            push_unique_workspace_path(&mut ordered, workspace);
+        }
+    }
+
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    obj.insert(
+        "workspaces".to_string(),
+        serde_json::Value::Array(
+            ordered
+                .into_iter()
+                .map(|path| serde_json::Value::String(path.to_string_lossy().to_string()))
+                .collect(),
+        ),
+    );
+    Ok(())
+}
+
+fn remove_registered_workspace_from_settings(
+    root: &mut serde_json::Value,
+    path: &Path,
+) -> Result<(), RemoveWorkspaceError> {
+    let settings = workspace_settings_from_json(root);
+    if workspace_paths_equal(path, &settings.default_workspace) {
+        return Err(RemoveWorkspaceError::Default);
+    }
+    if workspace_paths_equal(path, &builtin_workspaces_dir()) {
+        return Err(RemoveWorkspaceError::Builtin);
+    }
+    if !settings
+        .workspaces
+        .iter()
+        .any(|workspace| workspace_paths_equal(workspace, path))
+    {
+        return Err(RemoveWorkspaceError::Unregistered);
+    }
+
+    remove_workspace_from_settings(root, path);
+    replace_removed_launcher_workspace(root, path, &settings.default_workspace)
+        .map_err(RemoveWorkspaceError::Storage)?;
+    crate::agent_state::remove_workspace_references_from_settings(root, path)
+        .map_err(RemoveWorkspaceError::Storage)
+}
+
+fn replace_removed_launcher_workspace(
+    root: &mut serde_json::Value,
+    removed: &Path,
+    fallback: &Path,
+) -> Result<(), String> {
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let Some(launcher) = obj
+        .get_mut("launcher")
+        .and_then(|value| value.as_object_mut())
+    else {
+        return Ok(());
+    };
+    let uses_removed = launcher
+        .get("workspace")
+        .and_then(|value| value.as_str())
+        .map(|candidate| settings_path_matches(candidate, removed))
+        .unwrap_or(false);
+    if uses_removed {
+        launcher.insert(
+            "workspace".to_string(),
+            serde_json::Value::String(fallback.to_string_lossy().to_string()),
+        );
+    }
+    Ok(())
+}
+
+fn set_default_workspace_in_settings(
+    root: &mut serde_json::Value,
+    path: &Path,
+) -> Result<(), String> {
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    obj.insert(
+        "default_workspace".to_string(),
+        serde_json::Value::String(path.to_string_lossy().to_string()),
+    );
+    if let Some(workspaces) = obj
+        .get_mut("workspaces")
+        .and_then(|value| value.as_array_mut())
+    {
+        workspaces.retain(|value| {
+            value
+                .as_str()
+                .map(|candidate| !settings_path_matches(candidate, path))
+                .unwrap_or(true)
+        });
+    }
+    Ok(())
+}
+
+fn push_unique_workspace_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths
+        .iter()
+        .any(|existing| workspace_paths_equal(existing, &path))
+    {
+        paths.push(path);
+    }
+}
+
+fn remove_workspace_from_settings(root: &mut serde_json::Value, path: &Path) -> bool {
     let Some(obj) = root.as_object_mut() else {
         return false;
     };
@@ -917,10 +1284,10 @@ fn remove_workspace_from_settings_root(root: &mut serde_json::Value, path: &Path
 }
 
 fn settings_path_matches(candidate: &str, target: &Path) -> bool {
-    paths_equal(&expand_home(candidate.trim()), target)
+    workspace_paths_equal(&expand_home(candidate.trim()), target)
 }
 
-fn paths_equal(left: &Path, right: &Path) -> bool {
+pub fn workspace_paths_equal(left: &Path, right: &Path) -> bool {
     left == right
         || std::fs::canonicalize(left)
             .ok()
@@ -962,6 +1329,7 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn unique_test_dir(name: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
@@ -1012,6 +1380,235 @@ mod tests {
             serde_json::json!({ "onboarded": true })
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn missing_settings_read_returns_defaults_without_creating_files() {
+        let dir = unique_test_dir("read-missing");
+        let path = dir.join("settings.json");
+
+        let settings = read_settings_json_at(&path).unwrap();
+
+        assert_eq!(settings, serde_json::json!({ "workspaces": [] }));
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn concurrent_settings_mutations_preserve_disjoint_fields() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = unique_test_dir("concurrent-fields");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, "{}").unwrap();
+        let start = Arc::new(Barrier::new(3));
+        let handles = ["alpha", "beta"].map(|field| {
+            let path = path.clone();
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                start.wait();
+                mutate_settings_json_at(&path, |root| {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    root.as_object_mut()
+                        .expect("validated settings object")
+                        .insert(field.to_string(), serde_json::json!(true));
+                    Ok(())
+                })
+            })
+        });
+
+        start.wait();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(settings["alpha"], true);
+        assert_eq!(settings["beta"], true);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_settings_mutations_serialize_same_field() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = unique_test_dir("concurrent-counter");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "count": 0 }"#).unwrap();
+        let start = Arc::new(Barrier::new(5));
+        let handles = (0..4)
+            .map(|_| {
+                let path = path.clone();
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    mutate_settings_json_at(&path, |root| {
+                        let count = root["count"].as_u64().unwrap();
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        root["count"] = serde_json::json!(count + 1);
+                        Ok(())
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        start.wait();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+
+        let settings: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(settings["count"], 4);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cache_invalidation_cannot_be_overtaken_by_stale_first_load() {
+        use std::sync::mpsc;
+
+        let dir = unique_test_dir("cache-stale-install");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "default_agent": "alpha" }"#).unwrap();
+
+        let cache = Arc::new(RwLock::new(None));
+        let reader_cache = Arc::clone(&cache);
+        let reader_path = path.clone();
+        let (loaded_tx, loaded_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            cached_or_load(&reader_cache, || {
+                let config = load_settings_from(&reader_path);
+                loaded_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                config
+            })
+        });
+
+        loaded_rx.recv().unwrap();
+        fs::write(&path, r#"{ "default_agent": "beta" }"#).unwrap();
+        let invalidated_before_install = if let Some(mut cache) = cache.try_write() {
+            *cache = None;
+            true
+        } else {
+            false
+        };
+
+        resume_tx.send(()).unwrap();
+        let stale = reader.join().unwrap();
+        if !invalidated_before_install {
+            *cache.write() = None;
+        }
+        let current = cached_or_load(&cache, || load_settings_from(&path));
+
+        assert_eq!(stale.default_agent, "alpha");
+        assert!(
+            !invalidated_before_install,
+            "cache invalidation passed a first load before it installed its result"
+        );
+        assert_eq!(current.default_agent, "beta");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_mutation_preserves_malformed_file() {
+        let dir = unique_test_dir("malformed");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let malformed = r#"{ "workspaces": ["#;
+        fs::write(&path, malformed).unwrap();
+
+        let error = mutate_settings_json_at(&path, |_| Ok(())).unwrap_err();
+
+        assert!(error.contains("parse"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), malformed);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_patch_changes_only_named_fields() {
+        let dir = unique_test_dir("json-patch");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "api_bridge": { "enabled": true, "port": 9000, "retry_429": { "max_retries": 10 } }, "onboarded": true }"#,
+        )
+        .unwrap();
+
+        let snapshot = patch_settings_json_at(
+            &path,
+            &serde_json::json!([
+                { "op": "replace", "path": "/api_bridge/port", "value": 9001 },
+                { "op": "replace", "path": "/api_bridge/retry_429/max_retries", "value": null },
+                { "op": "remove", "path": "/onboarded" }
+            ]),
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.settings["api_bridge"]["enabled"], true);
+        assert_eq!(snapshot.settings["api_bridge"]["port"], 9001);
+        assert!(snapshot.settings["api_bridge"]["retry_429"]["max_retries"].is_null());
+        assert!(snapshot.settings.get("onboarded").is_none());
+        assert_eq!(snapshot.revision.len(), 64);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn settings_patch_rejects_non_object_root_without_writing() {
+        let dir = unique_test_dir("json-patch-root");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "onboarded": true }"#).unwrap();
+
+        let error = patch_settings_json_at(
+            &path,
+            &serde_json::json!([{ "op": "replace", "path": "", "value": [] }]),
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with("settings patch must leave"));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap(),
+            serde_json::json!({ "onboarded": true })
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stale_settings_revision_cannot_replace_newer_document() {
+        let dir = unique_test_dir("revision");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, r#"{ "value": 1 }"#).unwrap();
+        let original = settings_snapshot(serde_json::json!({ "value": 1 })).unwrap();
+
+        let first = replace_settings_json_if_revision_at(
+            &path,
+            &original.revision,
+            &serde_json::json!({ "value": 2 }),
+        )
+        .unwrap();
+        assert!(matches!(first, SettingsReplaceResult::Replaced(_)));
+
+        let second = replace_settings_json_if_revision_at(
+            &path,
+            &original.revision,
+            &serde_json::json!({ "value": 3 }),
+        )
+        .unwrap();
+        let SettingsReplaceResult::Conflict(current) = second else {
+            panic!("stale revision unexpectedly replaced settings");
+        };
+
+        assert_eq!(current.settings["value"], 2);
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(persisted["value"], 2);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1423,7 +2020,7 @@ mod tests {
             "working_dir": workspace.to_string_lossy().to_string()
         });
 
-        assert!(remove_workspace_from_settings_root(&mut root, &workspace));
+        assert!(remove_workspace_from_settings(&mut root, &workspace));
 
         let workspaces = root
             .get("workspaces")
@@ -1441,6 +2038,72 @@ mod tests {
         );
         assert!(root.get("working_dir").is_none());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reorder_preserves_workspace_added_after_request_snapshot() {
+        let mut settings = serde_json::json!({
+            "default_workspace": "/tmp/default",
+            "workspaces": ["/tmp/first", "/tmp/second", "/tmp/concurrent"],
+            "enabled_agents": ["codex"]
+        });
+        let requested = vec![
+            PathBuf::from("/tmp/second"),
+            PathBuf::from("/tmp/first"),
+            PathBuf::from("/tmp/unknown"),
+        ];
+
+        reorder_workspaces_in_settings(&mut settings, &requested).unwrap();
+
+        assert_eq!(
+            settings["workspaces"],
+            serde_json::json!(["/tmp/second", "/tmp/first", "/tmp/concurrent"])
+        );
+        assert_eq!(settings["enabled_agents"], serde_json::json!(["codex"]));
+    }
+
+    #[test]
+    fn remove_validates_latest_settings_and_clears_workspace_references() {
+        let mut settings = serde_json::json!({
+            "default_workspace": "/tmp/default",
+            "workspaces": ["/tmp/removed", "/tmp/kept"],
+            "launcher": {
+                "terminal": "terminal",
+                "workspace": "/tmp/removed",
+                "agents": {
+                    "codex": { "workspace": "/tmp/removed" },
+                    "claude": { "workspace": "/tmp/kept" }
+                }
+            }
+        });
+
+        assert_eq!(
+            remove_registered_workspace_from_settings(&mut settings, Path::new("/tmp/default"))
+                .unwrap_err(),
+            RemoveWorkspaceError::Default
+        );
+        assert_eq!(
+            remove_registered_workspace_from_settings(&mut settings, Path::new("/tmp/missing"))
+                .unwrap_err(),
+            RemoveWorkspaceError::Unregistered
+        );
+        assert_eq!(
+            remove_registered_workspace_from_settings(&mut settings, &builtin_workspaces_dir())
+                .unwrap_err(),
+            RemoveWorkspaceError::Builtin
+        );
+
+        remove_registered_workspace_from_settings(&mut settings, Path::new("/tmp/removed"))
+            .unwrap();
+
+        assert_eq!(settings["workspaces"], serde_json::json!(["/tmp/kept"]));
+        assert_eq!(settings["launcher"]["workspace"], "/tmp/default");
+        assert!(settings["launcher"]["agents"].get("codex").is_none());
+        assert_eq!(
+            settings["launcher"]["agents"]["claude"]["workspace"],
+            "/tmp/kept"
+        );
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
     }
 
     #[test]

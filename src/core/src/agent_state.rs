@@ -134,7 +134,21 @@ pub type ProfileConnectionPreferences =
 pub fn read_prefs() -> AgentsPrefsFile {
     config::read_settings_json()
         .ok()
-        .and_then(|root| root.get("launcher").cloned())
+        .map(|root| prefs_from_settings_json(&root))
+        .unwrap_or_default()
+}
+
+pub fn read_config_and_prefs() -> (config::Config, AgentsPrefsFile) {
+    let root = config::read_settings_json().unwrap_or_else(|_| serde_json::json!({}));
+    (
+        config::config_from_settings_json(&root),
+        prefs_from_settings_json(&root),
+    )
+}
+
+pub fn prefs_from_settings_json(root: &Value) -> AgentsPrefsFile {
+    root.get("launcher")
+        .cloned()
         .and_then(
             |launcher| match serde_json::from_value::<AgentsPrefsFile>(launcher) {
                 Ok(prefs) => Some(prefs),
@@ -265,7 +279,24 @@ pub fn write_agent_profile(agent_id: &str, profile_id: Option<String>) -> anyhow
 }
 
 pub fn write_agent_workspace(agent_id: &str, workspace: PathBuf) -> anyhow::Result<()> {
-    update_prefs(|prefs| {
+    config::mutate_settings_json(|root| set_agent_workspace_in_settings(root, agent_id, workspace))
+        .map_err(anyhow::Error::msg)
+}
+
+pub fn write_registered_agent_workspace(agent_id: &str, workspace: PathBuf) -> anyhow::Result<()> {
+    config::mutate_settings_json(|root| {
+        config::add_workspace_to_settings(root, &workspace)?;
+        set_agent_workspace_in_settings(root, agent_id, workspace)
+    })
+    .map_err(anyhow::Error::msg)
+}
+
+fn set_agent_workspace_in_settings(
+    root: &mut Value,
+    agent_id: &str,
+    workspace: PathBuf,
+) -> Result<(), String> {
+    update_prefs_in_settings(root, |prefs| {
         let entry = prefs.agents.entry(agent_id.to_string()).or_default();
         entry.workspace = Some(workspace);
     })
@@ -300,8 +331,11 @@ pub fn write_agent_launch_args(agent_id: &str, launch_args: AgentLaunchArgs) -> 
     })
 }
 
-pub fn remove_profile_references(profile_id: &str) -> anyhow::Result<()> {
-    update_prefs(|prefs| {
+pub(crate) fn remove_profile_references_from_settings(
+    root: &mut Value,
+    profile_id: &str,
+) -> Result<(), String> {
+    update_prefs_in_settings(root, |prefs| {
         if prefs.default_profile_id.as_deref() == Some(profile_id) {
             prefs.default_profile_id = None;
         }
@@ -319,13 +353,16 @@ pub fn remove_profile_references(profile_id: &str) -> anyhow::Result<()> {
     })
 }
 
-pub fn remove_workspace_references(workspace: &std::path::Path) -> anyhow::Result<()> {
-    update_prefs(|prefs| {
+pub(crate) fn remove_workspace_references_from_settings(
+    root: &mut Value,
+    workspace: &std::path::Path,
+) -> Result<(), String> {
+    update_prefs_in_settings(root, |prefs| {
         for preference in prefs.agents.values_mut() {
             if preference
                 .workspace
                 .as_deref()
-                .map(|candidate| paths_equal(candidate, workspace))
+                .map(|candidate| config::workspace_paths_equal(candidate, workspace))
                 .unwrap_or(false)
             {
                 preference.workspace = None;
@@ -340,49 +377,39 @@ pub fn remove_workspace_references(workspace: &std::path::Path) -> anyhow::Resul
     })
 }
 
-fn paths_equal(left: &std::path::Path, right: &std::path::Path) -> bool {
-    left == right
-        || std::fs::canonicalize(left)
-            .ok()
-            .zip(std::fs::canonicalize(right).ok())
-            .map(|(left, right)| left == right)
-            .unwrap_or(false)
-}
-
 fn update_prefs(f: impl FnOnce(&mut AgentsPrefsFile)) -> anyhow::Result<()> {
-    let mut prefs = read_prefs();
-    f(&mut prefs);
-    write_prefs(&prefs)
+    config::mutate_settings_json(|root| update_prefs_in_settings(root, f))
+        .map_err(anyhow::Error::msg)
 }
 
-fn write_prefs(prefs: &AgentsPrefsFile) -> anyhow::Result<()> {
-    let value = serde_json::to_value(prefs)?;
+fn update_prefs_in_settings(
+    root: &mut Value,
+    f: impl FnOnce(&mut AgentsPrefsFile),
+) -> Result<(), String> {
+    let mut prefs = prefs_from_settings_json(root);
+    f(&mut prefs);
+    let value = serde_json::to_value(prefs).map_err(|error| error.to_string())?;
     let prefs_obj = value.as_object().cloned().unwrap_or_default();
-    config::update_settings_json(|root| {
-        if !root.is_object() {
-            *root = Value::Object(Map::new());
-        }
-        let Some(root_obj) = root.as_object_mut() else {
-            return;
-        };
-        let launcher = root_obj
-            .entry("launcher".to_string())
-            .or_insert_with(|| Value::Object(Map::new()));
-        if !launcher.is_object() {
-            *launcher = Value::Object(Map::new());
-        }
-        let Some(launcher_obj) = launcher.as_object_mut() else {
-            return;
-        };
-        merge_pref_field(launcher_obj, &prefs_obj, "selected_agent");
-        merge_pref_field(launcher_obj, &prefs_obj, "default_agent");
-        merge_pref_field(launcher_obj, &prefs_obj, "default_profile_id");
-        merge_pref_field(launcher_obj, &prefs_obj, "agents");
-        if launcher_obj.is_empty() {
-            root_obj.remove("launcher");
-        }
-    })
-    .map_err(anyhow::Error::msg)
+    let root_obj = root
+        .as_object_mut()
+        .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+    let launcher = root_obj
+        .entry("launcher".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !launcher.is_object() {
+        *launcher = Value::Object(Map::new());
+    }
+    let launcher_obj = launcher
+        .as_object_mut()
+        .ok_or_else(|| "settings.json launcher must be a JSON object".to_string())?;
+    merge_pref_field(launcher_obj, &prefs_obj, "selected_agent");
+    merge_pref_field(launcher_obj, &prefs_obj, "default_agent");
+    merge_pref_field(launcher_obj, &prefs_obj, "default_profile_id");
+    merge_pref_field(launcher_obj, &prefs_obj, "agents");
+    if launcher_obj.is_empty() {
+        root_obj.remove("launcher");
+    }
+    Ok(())
 }
 
 fn resolve_agent_candidate(candidate: Option<&str>, cfg: &config::Config) -> Option<String> {
@@ -442,6 +469,19 @@ impl AgentExecutablePreference {
             source: manual_executable_source(),
             source_label: manual_executable_source_label(),
             rank: 0,
+            package: None,
+        }
+    }
+
+    pub fn path_scan(path: PathBuf) -> Self {
+        let realpath = std::fs::canonicalize(&path).ok();
+        Self {
+            path,
+            realpath,
+            version: None,
+            source: "path_scan".to_string(),
+            source_label: "PATH scan".to_string(),
+            rank: 4000,
             package: None,
         }
     }
@@ -655,6 +695,103 @@ mod tests {
             resolve_agent_acp_args(&prefs, "codex"),
             vec!["--strict-config".to_string()]
         );
+    }
+
+    #[test]
+    fn preference_update_uses_latest_settings_value() {
+        let mut settings = serde_json::json!({
+            "launcher": {
+                "selected_agent": "codex",
+                "terminal": "terminal"
+            }
+        });
+
+        update_prefs_in_settings(&mut settings, |prefs| {
+            prefs.default_agent = Some("claude".to_string());
+        })
+        .unwrap();
+
+        assert_eq!(settings["launcher"]["selected_agent"], "codex");
+        assert_eq!(settings["launcher"]["default_agent"], "claude");
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
+    }
+
+    #[test]
+    fn profile_reference_removal_preserves_other_launcher_fields() {
+        let mut settings = serde_json::json!({
+            "launcher": {
+                "default_profile_id": "removed",
+                "terminal": "terminal",
+                "agents": {
+                    "codex": { "profile_id": "removed" },
+                    "claude": {
+                        "profile_id": "kept",
+                        "workspace": "/tmp/work"
+                    }
+                }
+            }
+        });
+
+        remove_profile_references_from_settings(&mut settings, "removed").unwrap();
+
+        assert!(settings["launcher"].get("default_profile_id").is_none());
+        assert!(settings["launcher"]["agents"].get("codex").is_none());
+        assert_eq!(
+            settings["launcher"]["agents"]["claude"]["profile_id"],
+            "kept"
+        );
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
+    }
+
+    #[test]
+    fn workspace_reference_removal_preserves_other_launcher_fields() {
+        let mut settings = serde_json::json!({
+            "launcher": {
+                "terminal": "terminal",
+                "agents": {
+                    "codex": { "workspace": "/tmp/removed" },
+                    "claude": {
+                        "profile_id": "kept",
+                        "workspace": "/tmp/kept"
+                    }
+                }
+            }
+        });
+
+        remove_workspace_references_from_settings(
+            &mut settings,
+            std::path::Path::new("/tmp/removed"),
+        )
+        .unwrap();
+
+        assert!(settings["launcher"]["agents"].get("codex").is_none());
+        assert_eq!(
+            settings["launcher"]["agents"]["claude"]["workspace"],
+            "/tmp/kept"
+        );
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
+    }
+
+    #[test]
+    fn registered_agent_workspace_updates_one_settings_document() {
+        let workspace = std::path::PathBuf::from("/tmp/work");
+        let mut settings = serde_json::json!({
+            "workspaces": ["/tmp/kept"],
+            "launcher": { "terminal": "terminal" }
+        });
+
+        config::add_workspace_to_settings(&mut settings, &workspace).unwrap();
+        set_agent_workspace_in_settings(&mut settings, "codex", workspace).unwrap();
+
+        assert_eq!(
+            settings["workspaces"],
+            serde_json::json!(["/tmp/kept", "/tmp/work"])
+        );
+        assert_eq!(
+            settings["launcher"]["agents"]["codex"]["workspace"],
+            "/tmp/work"
+        );
+        assert_eq!(settings["launcher"]["terminal"], "terminal");
     }
 
     #[test]

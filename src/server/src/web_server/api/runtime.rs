@@ -12,13 +12,16 @@ use common::{agent_state, config};
 use crate::web_server::AppState;
 
 /// GET /api/agents -- list enabled agents and default agent for frontend agent selector.
-pub async fn list_agents_handler() -> Json<crate::api_types::AgentsConfig> {
-    let cfg = config::ensure_loaded();
-    let agent_prefs = agent_state::read_prefs();
-    Json(crate::api_types::AgentsConfig {
-        agents: crate::api_types::AgentInfo::for_ids(&cfg.enabled_agents),
-        default_agent: agent_state::resolve_default_agent(&agent_prefs, &cfg),
+pub async fn list_agents_handler(
+) -> Result<Json<crate::api_types::AgentsConfig>, (StatusCode, String)> {
+    super::run_blocking_io(|| {
+        let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
+        Ok(Json(crate::api_types::AgentsConfig {
+            agents: crate::api_types::AgentInfo::for_ids(&cfg.enabled_agents),
+            default_agent: agent_state::resolve_default_agent(&agent_prefs, &cfg),
+        }))
     })
+    .await
 }
 
 /// GET /api/channels -- live list of channel plugins from `ChannelMonitor`.
@@ -54,9 +57,12 @@ pub async fn sync_channels_handler(State(state): State<AppState>) -> impl IntoRe
 
 /// POST /api/settings/reload -- reload settings.json in the daemon process
 /// without restarting tunnels, channels, or active agent sessions.
-pub async fn reload_settings_handler() -> impl IntoResponse {
-    config::reload();
-    Json(serde_json::json!({ "ok": true }))
+pub async fn reload_settings_handler() -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    super::run_blocking_io(|| {
+        config::reload();
+        Ok(Json(serde_json::json!({ "ok": true })))
+    })
+    .await
 }
 
 /// GET /api/tunnels -- live list of tunnels from `TunnelManager`.

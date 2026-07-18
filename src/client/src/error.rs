@@ -11,6 +11,8 @@ pub enum ClientError {
     Encode(#[source] serde_json::Error),
     #[error("failed to decode response body: {0}")]
     Decode(#[source] serde_json::Error),
+    #[error("invalid server response: {0}")]
+    Protocol(String),
     #[error("server returned HTTP {status}: {body}")]
     UnexpectedStatus { status: u16, body: Value },
 }

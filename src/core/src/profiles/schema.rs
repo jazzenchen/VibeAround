@@ -10,12 +10,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{bail, Context};
 use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
 
 use super::catalog::{self, ContentCapabilities, EndpointDef, ModelDef};
-use crate::{agent_state, auth, config};
+use crate::{agent_state, config};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -176,7 +176,15 @@ pub fn profiles_dir() -> PathBuf {
 }
 
 fn profile_path(id: &str) -> PathBuf {
-    profiles_dir().join(format!("{id}.json"))
+    profile_path_in(&profiles_dir(), id)
+}
+
+fn profile_path_in(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.json"))
+}
+
+fn profile_lock_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!(".{id}.json.lock"))
 }
 
 // ---------------------------------------------------------------------------
@@ -425,27 +433,155 @@ fn load_path(path: &Path) -> anyhow::Result<ProfileDef> {
     Ok(profile)
 }
 
-pub fn save(profile: &ProfileDef) -> anyhow::Result<()> {
+#[cfg(test)]
+fn save_at(dir: &Path, profile: &ProfileDef) -> anyhow::Result<()> {
+    let locked = LockedProfileFile::acquire_at(dir, &profile.id)?;
+    locked.save(profile)
+}
+
+/// Load, mutate, and atomically replace one profile under its per-profile lock.
+///
+/// Returns `None` when the profile does not exist when the lock is acquired.
+/// The mutator must not call another writer for the same profile id.
+pub fn update<T>(
+    id: &str,
+    mutator: impl FnOnce(&mut ProfileDef) -> anyhow::Result<T>,
+) -> anyhow::Result<Option<T>> {
+    update_at(&profiles_dir(), id, mutator)
+}
+
+fn update_at<T>(
+    dir: &Path,
+    id: &str,
+    mutator: impl FnOnce(&mut ProfileDef) -> anyhow::Result<T>,
+) -> anyhow::Result<Option<T>> {
+    if !is_valid_id(id) {
+        bail!("invalid profile id '{}'", id);
+    }
+    if !dir
+        .try_exists()
+        .with_context(|| format!("inspect {:?}", dir))?
+    {
+        return Ok(None);
+    }
+
+    let _lock = LockedProfileFile::acquire_at(dir, id)?;
+    let target = profile_path_in(dir, id);
+    let body = match std::fs::read_to_string(&target) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("read {:?}", target)),
+    };
+    let mut profile: ProfileDef =
+        serde_json::from_str(&body).with_context(|| format!("parse {:?}", target))?;
+    hydrate_api_configs(&mut profile);
+    if profile.id != id {
+        bail!(
+            "profile id '{}' does not match filename stem '{}'",
+            profile.id,
+            id
+        );
+    }
+
+    let result = mutator(&mut profile)?;
+    if profile.id != id {
+        bail!(
+            "profile update cannot change id '{}' to '{}'",
+            id,
+            profile.id
+        );
+    }
+    let body = serialize_profile(&profile)?;
+    crate::file_replace::write_private(&target, body)
+        .with_context(|| format!("save profile '{}'", id))?;
+    Ok(Some(result))
+}
+
+fn serialize_profile(profile: &ProfileDef) -> anyhow::Result<String> {
     let mut profile = profile.clone();
     hydrate_api_configs(&mut profile);
     validate(&profile)?;
-    let dir = profiles_dir();
-    std::fs::create_dir_all(&dir).with_context(|| format!("create {:?}", dir))?;
+    serde_json::to_string_pretty(&profile).context("serialize profile")
+}
+
+fn ensure_profiles_dir(dir: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("create {:?}", dir))?;
     // Lock down the profiles dir on Unix so other local users can't
     // enumerate or read API keys.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(())
+}
+
+fn acquire_profile_lock(
+    dir: &Path,
+    id: &str,
+) -> anyhow::Result<crate::file_lock::ExclusiveFileLock> {
+    let path = profile_lock_path(dir, id);
+    crate::file_lock::ExclusiveFileLock::acquire(&path)
+        .with_context(|| format!("lock profile '{}' at {}", id, path.display()))
+}
+
+/// One profile file held under its existing per-profile lock.
+///
+/// High-level profile operations may keep this guard alive while updating the
+/// profile's settings references so save/delete calls for the same id remain
+/// serializable across both files.
+pub(crate) struct LockedProfileFile {
+    dir: PathBuf,
+    id: String,
+    _lock: crate::file_lock::ExclusiveFileLock,
+}
+
+impl LockedProfileFile {
+    pub(crate) fn acquire(id: &str) -> anyhow::Result<Self> {
+        Self::acquire_at(&profiles_dir(), id)
     }
 
-    let target = profile_path(&profile.id);
-    let tmp = dir.join(format!(".{}.tmp.{}.json", profile.id, std::process::id()));
-    let body = serde_json::to_string_pretty(&profile).context("serialize profile")?;
-    std::fs::write(&tmp, body).with_context(|| format!("write {:?}", tmp))?;
-    auth::set_owner_only(&tmp).ok();
-    std::fs::rename(&tmp, &target).with_context(|| format!("rename to {:?}", target))?;
-    Ok(())
+    fn acquire_at(dir: &Path, id: &str) -> anyhow::Result<Self> {
+        if !is_valid_id(id) {
+            bail!("invalid profile id '{}'", id);
+        }
+        ensure_profiles_dir(dir)?;
+        let lock = acquire_profile_lock(dir, id)?;
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            id: id.to_string(),
+            _lock: lock,
+        })
+    }
+
+    pub(crate) fn save(&self, profile: &ProfileDef) -> anyhow::Result<()> {
+        if profile.id != self.id {
+            bail!(
+                "locked profile id '{}' does not match profile id '{}'",
+                self.id,
+                profile.id
+            );
+        }
+        let body = serialize_profile(profile)?;
+        let target = profile_path_in(&self.dir, &self.id);
+        crate::file_replace::write_private(&target, body)
+            .with_context(|| format!("save profile '{}'", self.id))
+    }
+
+    pub(crate) fn delete(&self) -> anyhow::Result<()> {
+        let path = profile_path_in(&self.dir, &self.id);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error).with_context(|| format!("remove {:?}", path)),
+        }
+        // Best-effort: also drop the per-profile state dir (rendered settings
+        // files, future agent session caches). If the user re-creates a profile
+        // with the same id later, we want a clean slate.
+        let state_dir = config::data_dir().join("profile-state").join(&self.id);
+        let _ = std::fs::remove_dir_all(&state_dir);
+        Ok(())
+    }
 }
 
 pub fn set_connection(
@@ -460,23 +596,6 @@ pub fn set_connection(
     }
 }
 
-pub fn delete(id: &str) -> anyhow::Result<()> {
-    if !is_valid_id(id) {
-        return Err(anyhow!("invalid profile id '{}'", id));
-    }
-    let path = profile_path(id);
-    if !path.exists() {
-        return Ok(());
-    }
-    std::fs::remove_file(&path).with_context(|| format!("remove {:?}", path))?;
-    // Best-effort: also drop the per-profile state dir (rendered settings
-    // files, future agent session caches). If the user re-creates a profile
-    // with the same id later, we want a clean slate.
-    let state_dir = config::data_dir().join("profile-state").join(id);
-    let _ = std::fs::remove_dir_all(&state_dir);
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -484,6 +603,25 @@ pub fn delete(id: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "vibearound-profile-schema-{label}-{}-{}",
+            std::process::id(),
+            nanoid::nanoid!(8)
+        ))
+    }
+
+    fn test_profile(id: &str, label: &str) -> ProfileDef {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "label": label,
+            "provider": "test",
+            "auth_mode": "api_key",
+            "api_types": ["openai-chat"]
+        }))
+        .unwrap()
+    }
 
     #[test]
     fn id_alphabet_accepts_lowercase_alnum_dash_underscore() {
@@ -578,5 +716,149 @@ mod tests {
             Some("https://token.sensenova.cn/v1")
         );
         assert!(chat.headers.is_empty());
+    }
+
+    #[test]
+    fn concurrent_profile_saves_leave_one_complete_private_file() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = test_dir("concurrent-save");
+        let start = Arc::new(Barrier::new(9));
+        let handles = (0..8)
+            .map(|value| {
+                let dir = dir.clone();
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    let mut profile = test_profile("shared", &format!("Profile {value}"));
+                    profile.credentials.insert(
+                        "payload".to_string(),
+                        format!("{value}:{}", "x".repeat(64 * 1024)),
+                    );
+                    start.wait();
+                    save_at(&dir, &profile)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        start.wait();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+
+        let profile = load_path(&profile_path_in(&dir, "shared")).unwrap();
+        let value = profile.label.strip_prefix("Profile ").unwrap();
+        assert!(profile.credentials["payload"].starts_with(&format!("{value}:")));
+        let mut entries = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        entries.sort();
+        assert_eq!(entries, [".shared.json.lock", "shared.json"]);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(profile_path_in(&dir, "shared"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_profile_updates_preserve_every_mutation() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = test_dir("concurrent-update");
+        let mut profile = test_profile("shared", "Shared");
+        profile
+            .credentials
+            .insert("count".to_string(), "0".to_string());
+        save_at(&dir, &profile).unwrap();
+
+        let start = Arc::new(Barrier::new(9));
+        let handles = (0..8)
+            .map(|_| {
+                let dir = dir.clone();
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    update_at(&dir, "shared", |profile| {
+                        let count = profile.credentials["count"].parse::<u8>().unwrap();
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        profile
+                            .credentials
+                            .insert("count".to_string(), (count + 1).to_string());
+                        Ok(())
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+
+        start.wait();
+        for handle in handles {
+            assert_eq!(handle.join().unwrap().unwrap(), Some(()));
+        }
+
+        let profile = load_path(&profile_path_in(&dir, "shared")).unwrap();
+        assert_eq!(profile.credentials["count"], "8");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn profile_lock_can_cover_file_and_followup_updates() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = test_dir("lock-followup");
+        save_at(&dir, &test_profile("shared", "Before")).unwrap();
+        let first = LockedProfileFile::acquire_at(&dir, "shared").unwrap();
+        first.delete().unwrap();
+
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let writer_dir = dir.clone();
+        let writer = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            let locked = LockedProfileFile::acquire_at(&writer_dir, "shared").unwrap();
+            acquired_tx.send(()).unwrap();
+            locked.save(&test_profile("shared", "After")).unwrap();
+        });
+
+        ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(acquired_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(first);
+        acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        writer.join().unwrap();
+
+        assert_eq!(
+            load_path(&profile_path_in(&dir, "shared")).unwrap().label,
+            "After"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_profile_update_leaves_existing_file_unchanged() {
+        let dir = test_dir("failed-update");
+        let profile = test_profile("shared", "Before");
+        save_at(&dir, &profile).unwrap();
+
+        let result: anyhow::Result<Option<()>> = update_at(&dir, "shared", |profile| {
+            profile.label = "After".to_string();
+            bail!("reject update")
+        });
+
+        assert!(result.is_err());
+        assert_eq!(
+            load_path(&profile_path_in(&dir, "shared")).unwrap().label,
+            "Before"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

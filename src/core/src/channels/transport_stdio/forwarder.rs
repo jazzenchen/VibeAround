@@ -8,7 +8,7 @@
 //! - `SessionReady`       → `ext_notification("va/session_ready", ...)`
 //! - `SessionInfo`        → `ext_notification("va/session_info", ...)`
 //! - `CommandMenu`        → `ext_notification("va/command_menu", ...)`
-//! - `PromptDone`         → no-op for stdio plugins (their `prompt()` call already resolves)
+//! - `PromptDone`         → `ext_notification("va/prompt_done", ...)`
 //! - `PermissionRequest`  → real `request_permission` call; response is
 //!   routed back through `PluginHost::pending_permissions`.
 //! - `MultiAgentTurn`     → web-only for now; stdio/IM plugins do not see it.
@@ -166,8 +166,22 @@ pub(super) async fn forward_output_to_plugin(
             )
             .await?;
         }
-        ChannelOutput::PromptDone { .. }
-        | ChannelOutput::TurnStatus { .. }
+        ChannelOutput::PromptDone { route, message_id } => {
+            let target = route_target(&route, message_id.as_deref());
+            // TODO: make this boundary reliable when the bounded stdio output
+            // queue is saturated; today that queue remains best-effort.
+            send_ext_notification(
+                conn,
+                channel_kind,
+                "va/prompt_done",
+                &serde_json::json!({
+                    "chatId": route.chat_id,
+                    "target": target,
+                }),
+            )
+            .await?;
+        }
+        ChannelOutput::TurnStatus { .. }
         | ChannelOutput::MultiAgentTurn { .. }
         | ChannelOutput::SubagentStatus { .. }
         | ChannelOutput::SubagentAcp { .. } => {}

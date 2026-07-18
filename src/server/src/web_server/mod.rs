@@ -241,7 +241,9 @@ pub async fn run_web_server(
         .route("/api/service/info", get(api::info_handler))
         .route(
             "/api/settings",
-            get(api::get_settings_handler).put(api::put_settings_handler),
+            get(api::get_settings_handler)
+                .put(api::put_settings_handler)
+                .patch(api::patch_settings_handler),
         )
         .route(
             "/api/sessions",

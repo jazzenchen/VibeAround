@@ -30,7 +30,6 @@ pub use search_settings::{
 };
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::process::{Output, Stdio};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -80,23 +79,8 @@ pub struct PluginUpdateCheckRequest {
 // Settings helpers
 // ---------------------------------------------------------------------------
 
-fn settings_path() -> PathBuf {
-    config::data_dir().join("settings.json")
-}
-
 fn read_settings_value() -> Value {
-    let path = settings_path();
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}))
-}
-
-fn write_settings_value(val: &Value) -> Result<(), String> {
-    // settings.json holds bot tokens, webhook secrets, and tunnel credentials
-    // in plain text (by design — the user edits this file directly). Ensure
-    // other local users cannot read it. No-op on Windows.
-    config::write_settings_json(val)
+    config::read_settings_json().unwrap_or_else(|_| serde_json::json!({}))
 }
 
 // ---------------------------------------------------------------------------
@@ -155,20 +139,30 @@ pub struct PluginSummary {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_settings() -> Result<Value, String> {
-    Ok(read_settings_value())
+pub async fn get_settings() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(read_settings_value)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn list_channel_plugins() -> Result<Vec<plugins::DiscoveredPluginSummary>, String> {
-    Ok(plugins::channel::list_summaries())
+pub async fn list_channel_plugins() -> Result<Vec<plugins::DiscoveredPluginSummary>, String> {
+    tauri::async_runtime::spawn_blocking(plugins::channel::list_summaries)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn save_settings<R: Runtime>(app: AppHandle<R>, settings: Value) -> Result<(), String> {
-    write_settings_value(&settings)?;
+pub async fn save_settings<R: Runtime>(
+    app: AppHandle<R>,
+    patch: Value,
+) -> Result<config::SettingsSnapshot, String> {
+    let snapshot =
+        tauri::async_runtime::spawn_blocking(move || config::patch_settings_json(&patch))
+            .await
+            .map_err(|error| error.to_string())??;
     let _ = app.emit(crate::tray::LAUNCH_CONFIG_CHANGED_EVENT, ());
-    Ok(())
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -879,11 +873,15 @@ pub async fn finish_onboarding<R: Runtime>(
     }
     drop(sessions);
 
-    let mut settings = read_settings_value();
-    if let Some(obj) = settings.as_object_mut() {
-        obj.insert("onboarded".into(), serde_json::json!(true));
-    }
-    write_settings_value(&settings)?;
+    tauri::async_runtime::spawn_blocking(|| {
+        config::update_settings_json(|settings| {
+            if let Some(obj) = settings.as_object_mut() {
+                obj.insert("onboarded".into(), serde_json::json!(true));
+            }
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())??;
 
     let _ = app.emit("onboarding-complete", ());
 

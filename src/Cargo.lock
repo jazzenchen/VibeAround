@@ -834,6 +834,7 @@ dependencies = [
  "flate2",
  "futures",
  "include_dir",
+ "json-patch",
  "libc",
  "nanoid",
  "ngrok",
@@ -859,6 +860,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
  "winreg 0.55.0",
  "xz2",
  "zip",
@@ -6105,6 +6107,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "url",
 ]
 
 [[package]]

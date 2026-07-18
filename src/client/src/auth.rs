@@ -37,6 +37,22 @@ pub fn parse_auth_file(body: &str) -> Result<AuthFile> {
     serde_json::from_str(body).map_err(crate::ClientError::Decode)
 }
 
+pub fn local_server_port(base_url: &str) -> std::result::Result<Option<u16>, url::ParseError> {
+    let url = url::Url::parse(base_url)?;
+    let is_local_server = url.scheme() == "http"
+        && matches!(url.host(), Some(url::Host::Ipv4(host)) if host == std::net::Ipv4Addr::LOCALHOST);
+    Ok(is_local_server
+        .then(|| url.port_or_known_default())
+        .flatten())
+}
+
+pub fn auth_file_matches_base_url(
+    base_url: &str,
+    auth_file: &AuthFile,
+) -> std::result::Result<bool, url::ParseError> {
+    Ok(local_server_port(base_url)? == Some(auth_file.port))
+}
+
 pub fn bearer_header_value(token: &str) -> String {
     format!("Bearer {}", token.trim())
 }
@@ -72,6 +88,21 @@ mod tests {
         let auth = parse_auth_file(r#"{ "port": 12358, "token": "abc" }"#).expect("auth");
         assert_eq!(auth.base_url(), "http://127.0.0.1:12358/va");
         assert_eq!(auth.bearer_header_value(), "Bearer abc");
+    }
+
+    #[test]
+    fn local_auth_matches_only_the_ipv4_server_socket() {
+        let auth = AuthFile {
+            port: 12358,
+            token: "secret".into(),
+        };
+
+        assert!(auth_file_matches_base_url("http://127.0.0.1:12358/va", &auth).unwrap());
+        assert!(!auth_file_matches_base_url("http://localhost:12358/va", &auth).unwrap());
+        assert!(!auth_file_matches_base_url("http://[::1]:12358/va", &auth).unwrap());
+        assert!(!auth_file_matches_base_url("https://127.0.0.1:12358/va", &auth).unwrap());
+        assert!(!auth_file_matches_base_url("http://127.0.0.1:9000/va", &auth).unwrap());
+        assert!(!auth_file_matches_base_url("https://example.test/va", &auth).unwrap());
     }
 
     #[test]

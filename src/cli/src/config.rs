@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use va_client::auth::AuthFile;
+use va_client::auth::{auth_file_matches_base_url, local_server_port, AuthFile};
 use va_client::endpoint::ServerEndpoint;
 use va_client::http::AuthRequirement;
 
@@ -90,6 +90,7 @@ pub(crate) fn resolve_endpoint_env(
         if matches!(auth, AuthRequirement::BearerToken) {
             if auth_path.exists() {
                 let auth_file = read_auth_file(&auth_path)?;
+                require_matching_local_auth(base_url, &auth_file)?;
                 return Ok(ResolvedEndpoint {
                     endpoint: endpoint.with_token(auth_file.token),
                     base_url_source,
@@ -159,16 +160,25 @@ pub(crate) fn save_auth_file(
 }
 
 pub(crate) fn local_auth_port(base_url: &str) -> Result<u16, CliError> {
-    let url = reqwest::Url::parse(base_url)
-        .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?;
-    let host = url.host_str().unwrap_or_default();
-    if !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+    let Some(port) = local_server_port(base_url)
+        .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?
+    else {
         return Err(CliError::Usage(
             "saving auth files is only supported for local VibeAround servers".into(),
         ));
+    };
+    Ok(port)
+}
+
+fn require_matching_local_auth(base_url: &str, auth_file: &AuthFile) -> Result<(), CliError> {
+    let matches = auth_file_matches_base_url(base_url, auth_file)
+        .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?;
+    if matches {
+        return Ok(());
     }
-    url.port_or_known_default()
-        .ok_or_else(|| CliError::Usage(format!("base url has no port: {base_url}")))
+    Err(CliError::Usage(format!(
+        "refusing to reuse local auth for {base_url}; pass --token explicitly"
+    )))
 }
 
 pub(crate) fn remove_auth_file(options: &Options) -> Result<Option<PathBuf>, CliError> {
@@ -276,7 +286,7 @@ mod tests {
     #[test]
     fn requires_token_for_authenticated_base_url() {
         let options = Options {
-            base_url: Some("http://localhost:12358/va".into()),
+            base_url: Some("http://127.0.0.1:12358/va".into()),
             ..Default::default()
         };
 
@@ -289,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn base_url_reads_token_from_auth_file_when_token_missing() {
+    fn matching_local_base_url_reads_token_from_auth_file_when_token_missing() {
         let path = std::env::temp_dir().join(format!(
             "va-cli-auth-base-url-test-{}-{}.json",
             std::process::id(),
@@ -298,7 +308,7 @@ mod tests {
         let _ = fs::remove_file(&path);
         fs::write(&path, r#"{ "port": 12358, "token": "local-secret" }"#).expect("write auth");
         let options = Options {
-            base_url: Some("http://localhost:9000/va".into()),
+            base_url: Some("http://127.0.0.1:12358/va".into()),
             auth_file: Some(path.clone()),
             ..Default::default()
         };
@@ -309,11 +319,61 @@ mod tests {
             &RuntimeEnv::default(),
         )
         .expect("endpoint");
-        assert_eq!(endpoint.endpoint.base_url(), "http://localhost:9000/va");
+        assert_eq!(endpoint.endpoint.base_url(), "http://127.0.0.1:12358/va");
         assert_eq!(endpoint.endpoint.token(), Some("local-secret"));
         assert_eq!(endpoint.base_url_source, "cli");
         assert_eq!(endpoint.auth_source, "auth-file");
         assert_eq!(endpoint.auth_file.as_deref(), Some(path.as_path()));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn remote_base_url_cannot_reuse_local_auth_file() {
+        let path = std::env::temp_dir().join(format!(
+            "va-cli-auth-remote-test-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, r#"{ "port": 12358, "token": "local-secret" }"#).expect("write auth");
+        let options = Options {
+            base_url: Some("https://example.test/va".into()),
+            auth_file: Some(path.clone()),
+            ..Default::default()
+        };
+
+        let result = resolve_endpoint_env(
+            &options,
+            AuthRequirement::BearerToken,
+            &RuntimeEnv::default(),
+        );
+        assert!(matches!(result, Err(CliError::Usage(_))));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn different_local_port_cannot_reuse_auth_file() {
+        let path = std::env::temp_dir().join(format!(
+            "va-cli-auth-port-test-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, r#"{ "port": 12358, "token": "local-secret" }"#).expect("write auth");
+        let options = Options {
+            base_url: Some("http://127.0.0.1:9000/va".into()),
+            auth_file: Some(path.clone()),
+            ..Default::default()
+        };
+
+        let result = resolve_endpoint_env(
+            &options,
+            AuthRequirement::BearerToken,
+            &RuntimeEnv::default(),
+        );
+        assert!(matches!(result, Err(CliError::Usage(_))));
 
         let _ = fs::remove_file(&path);
     }
@@ -402,10 +462,18 @@ mod tests {
             local_auth_port("http://127.0.0.1:12358/va").expect("port"),
             12358
         );
-        assert_eq!(
-            local_auth_port("http://localhost:3000/va").expect("port"),
-            3000
-        );
+        assert!(matches!(
+            local_auth_port("http://localhost:3000/va"),
+            Err(CliError::Usage(_))
+        ));
+        assert!(matches!(
+            local_auth_port("http://[::1]:3000/va"),
+            Err(CliError::Usage(_))
+        ));
+        assert!(matches!(
+            local_auth_port("https://127.0.0.1:12358/va"),
+            Err(CliError::Usage(_))
+        ));
         assert!(matches!(
             local_auth_port("https://example.test/va"),
             Err(CliError::Usage(_))

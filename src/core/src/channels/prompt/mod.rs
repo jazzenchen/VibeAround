@@ -214,6 +214,18 @@ mod tests {
         };
         assert_eq!(&output_route, route);
         assert_eq!(output_reply_to.as_deref(), Some(reply_to.as_str()));
+
+        let completion = tokio::time::timeout(std::time::Duration::from_secs(1), output_rx.recv())
+            .await
+            .expect("command produced no completion boundary")
+            .expect("command output channel closed");
+        assert_eq!(
+            completion,
+            ChannelOutput::PromptDone {
+                route: route.clone(),
+                message_id: Some(reply_to),
+            }
+        );
         text
     }
 
