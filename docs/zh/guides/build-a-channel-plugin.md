@@ -54,7 +54,7 @@ SDK 封装了 stdio ACP 传输：连接握手、信封/输出类型、心跳发�
 }
 ```
 
-其余可渲染或忽略的输出：`threadReply`（流式 Agent 输出）、`systemText`、`turnStatus`（输入中指示的开/关）、`promptDone`、`sessionInfo` / `sessionMode` / `commandMenu`（更丰富的 UI）、`multiAgentTurn` / `subagentStatus`（多 Agent 进度）。可发送的控制输入：`stop`、`close`、`log`。
+其余可渲染或忽略的输出：`threadReply`（流式 Agent 输出）、`systemText`、`turnStatus`（输入中指示的开/关）、`sessionInfo` / `sessionMode` / `commandMenu`（更丰富的 UI）、`multiAgentTurn` / `subagentStatus`（多 Agent 进度）。可发送的控制输入：`stop`、`close`、`log`。
 
 > 版本规则：依赖已发布的 SDK 版本（`^x.y.z`）。永远不要把插件固定在本地 `file:` 路径上发布。
 

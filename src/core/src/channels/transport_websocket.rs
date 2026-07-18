@@ -13,11 +13,6 @@ pub type WebChatSink = mpsc::UnboundedSender<ChannelOutput>;
 
 const MAX_ROUTE_HISTORY: usize = 4000;
 
-#[derive(Debug, Clone, Copy, Default)]
-struct RouteActivity {
-    active: bool,
-}
-
 #[derive(Debug, Clone)]
 struct PendingUserMessage {
     message_id: String,
@@ -27,7 +22,6 @@ struct PendingUserMessage {
 struct RouteSession {
     agent_id: String,
     session_id: String,
-    route: RouteKey,
 }
 
 /// Internal websocket-backed channel manager used by the browser chat UI.
@@ -39,13 +33,13 @@ type WebChannelCommand = Box<dyn FnOnce(&mut WebChannelState) + Send>;
 
 #[derive(Default)]
 struct WebChannelState {
-    connections: HashMap<String, HashMap<String, WebChatSink>>,
-    route_agents: HashMap<String, String>,
-    route_sessions: HashMap<String, RouteSession>,
-    route_history: HashMap<String, Vec<ChannelOutput>>,
-    route_pending_permissions: HashMap<String, HashMap<String, ChannelOutput>>,
-    route_pending_user_messages: HashMap<String, Vec<PendingUserMessage>>,
-    route_activity: HashMap<String, RouteActivity>,
+    connections: HashMap<RouteKey, HashMap<String, WebChatSink>>,
+    route_agents: HashMap<RouteKey, String>,
+    route_sessions: HashMap<RouteKey, RouteSession>,
+    route_history: HashMap<RouteKey, Vec<ChannelOutput>>,
+    route_pending_permissions: HashMap<RouteKey, HashMap<String, ChannelOutput>>,
+    route_pending_user_messages: HashMap<RouteKey, Vec<PendingUserMessage>>,
+    route_activity: HashMap<RouteKey, bool>,
 }
 
 impl WebChannelManager {
@@ -89,22 +83,21 @@ impl WebChannelManager {
         .await;
     }
 
-    pub async fn unregister_connection(&self, route_chat_id: &str, connection_id: &str) {
-        let route_chat_id = route_chat_id.to_string();
+    pub async fn unregister_connection(&self, route: &RouteKey, connection_id: &str) {
+        let route = route.clone();
         let connection_id = connection_id.to_string();
-        self.request(move |state| state.unregister_connection(&route_chat_id, &connection_id))
+        self.request(move |state| state.unregister_connection(&route, &connection_id))
             .await;
     }
 
-    pub async fn forget_route(&self, route_chat_id: &str) {
-        let route_chat_id = route_chat_id.to_string();
-        self.request(move |state| state.forget_route(&route_chat_id))
-            .await;
+    pub async fn forget_route(&self, route: &RouteKey) {
+        let route = route.clone();
+        self.request(move |state| state.forget_route(&route)).await;
     }
 
-    pub async fn set_route_agent(&self, route_chat_id: &str, agent_id: String) {
-        let route_chat_id = route_chat_id.to_string();
-        self.request(move |state| state.set_route_agent(&route_chat_id, agent_id))
+    pub async fn set_route_agent(&self, route: &RouteKey, agent_id: String) {
+        let route = route.clone();
+        self.request(move |state| state.set_route_agent(&route, agent_id))
             .await;
     }
 
@@ -115,21 +108,21 @@ impl WebChannelManager {
             .await
     }
 
-    pub async fn route_has_session(&self, route_chat_id: &str) -> bool {
-        let route_chat_id = route_chat_id.to_string();
-        self.request(move |state| state.route_has_session(&route_chat_id))
+    pub async fn route_has_session(&self, route: &RouteKey) -> bool {
+        let route = route.clone();
+        self.request(move |state| state.route_has_session(&route))
             .await
     }
 
-    pub async fn route_session_id(&self, route_chat_id: &str) -> Option<String> {
-        let route_chat_id = route_chat_id.to_string();
-        self.request(move |state| state.route_session_id(&route_chat_id))
+    pub async fn route_session_id(&self, route: &RouteKey) -> Option<String> {
+        let route = route.clone();
+        self.request(move |state| state.route_session_id(&route))
             .await
     }
 
-    pub async fn route_is_active(&self, route_chat_id: &str) -> bool {
-        let route_chat_id = route_chat_id.to_string();
-        self.request(move |state| state.route_is_active(&route_chat_id))
+    pub async fn route_is_active(&self, route: &RouteKey) -> bool {
+        let route = route.clone();
+        self.request(move |state| state.route_is_active(&route))
             .await
     }
 
@@ -140,22 +133,11 @@ impl WebChannelManager {
             .await
     }
 
-    pub async fn mark_route_active(&self, route: &RouteKey) {
+    pub async fn clear_pending_permission(&self, route: &RouteKey, request_id: &str) -> bool {
         let route = route.clone();
-        self.request(move |state| state.mark_route_active(&route))
-            .await;
-    }
-
-    pub async fn mark_route_idle(&self, route: &RouteKey) {
-        let route = route.clone();
-        self.request(move |state| state.mark_route_idle(&route))
-            .await;
-    }
-
-    pub async fn clear_pending_permission(&self, request_id: &str) {
         let request_id = request_id.to_string();
-        self.request(move |state| state.clear_pending_permission(&request_id))
-            .await;
+        self.request(move |state| state.clear_pending_permission(&route, &request_id))
+            .await
     }
 
     pub async fn record_user_message(
@@ -195,123 +177,92 @@ impl WebChannelState {
         sink: WebChatSink,
         replay_history: bool,
     ) {
-        let route_chat_id = route.chat_id.clone();
         self.connections
-            .entry(route_chat_id.clone())
+            .entry(route.clone())
             .or_default()
             .insert(connection_id, sink.clone());
 
         if replay_history {
-            let history = self
-                .route_history
-                .get(&route_chat_id)
-                .cloned()
-                .unwrap_or_default();
+            let history = self.route_history.get(route).cloned().unwrap_or_default();
             for output in history {
                 let _ = sink.send(output);
             }
             let pending_permissions = self
                 .route_pending_permissions
-                .get(&route_chat_id)
+                .get(route)
                 .map(|items| items.values().cloned().collect::<Vec<_>>())
                 .unwrap_or_default();
             for output in pending_permissions {
                 let _ = sink.send(output);
             }
         }
-        let active = self.route_activity_state(&route_chat_id);
-        if active.is_some() || self.route_has_session(&route_chat_id) {
+        if let Some(active) = self.route_activity.get(route).copied() {
             let _ = sink.send(ChannelOutput::TurnStatus {
                 route: route.clone(),
-                active: active.unwrap_or(false),
+                active,
             });
         }
     }
 
-    pub fn unregister_connection(&mut self, route_chat_id: &str, connection_id: &str) {
-        let Some(route_connections) = self.connections.get_mut(route_chat_id) else {
+    pub fn unregister_connection(&mut self, route: &RouteKey, connection_id: &str) {
+        let Some(route_connections) = self.connections.get_mut(route) else {
             return;
         };
         route_connections.remove(connection_id);
         if route_connections.is_empty() {
-            self.connections.remove(route_chat_id);
+            self.connections.remove(route);
         }
     }
 
-    pub fn forget_route(&mut self, route_chat_id: &str) {
-        self.route_history.remove(route_chat_id);
-        self.route_agents.remove(route_chat_id);
-        self.route_sessions.remove(route_chat_id);
-        self.clear_route_pending_permissions(route_chat_id);
-        self.clear_route_pending_user_messages(route_chat_id);
-        self.route_activity.remove(route_chat_id);
+    pub fn forget_route(&mut self, route: &RouteKey) {
+        self.route_history.remove(route);
+        self.route_agents.remove(route);
+        self.route_sessions.remove(route);
+        self.clear_route_pending_permissions(route);
+        self.clear_route_pending_user_messages(route);
+        self.route_activity.remove(route);
     }
 
-    pub fn set_route_agent(&mut self, route_chat_id: &str, agent_id: String) {
-        self.route_agents
-            .insert(route_chat_id.to_string(), agent_id);
+    pub fn set_route_agent(&mut self, route: &RouteKey, agent_id: String) {
+        self.route_agents.insert(route.clone(), agent_id);
     }
 
     pub fn route_for_session(&self, agent_id: &str, session_id: &str) -> Option<RouteKey> {
         self.route_sessions
-            .values()
-            .find(|session| session.agent_id == agent_id && session.session_id == session_id)
-            .map(|session| session.route.clone())
+            .iter()
+            .find(|(_, session)| session.agent_id == agent_id && session.session_id == session_id)
+            .map(|(route, _)| route.clone())
     }
 
-    pub fn route_has_session(&self, route_chat_id: &str) -> bool {
-        self.route_sessions.contains_key(route_chat_id)
+    pub fn route_has_session(&self, route: &RouteKey) -> bool {
+        self.route_sessions.contains_key(route)
     }
 
-    pub fn route_session_id(&self, route_chat_id: &str) -> Option<String> {
+    pub fn route_session_id(&self, route: &RouteKey) -> Option<String> {
         self.route_sessions
-            .get(route_chat_id)
+            .get(route)
             .map(|session| session.session_id.clone())
     }
 
-    pub fn route_is_active(&self, route_chat_id: &str) -> bool {
-        self.route_activity
-            .get(route_chat_id)
-            .is_some_and(|activity| activity.active)
+    pub fn route_is_active(&self, route: &RouteKey) -> bool {
+        self.route_activity.get(route).copied().unwrap_or(false)
     }
 
     pub fn session_is_active(&self, agent_id: &str, session_id: &str) -> bool {
         self.route_for_session(agent_id, session_id)
             .as_ref()
-            .is_some_and(|route| self.route_is_active(&route.chat_id))
+            .is_some_and(|route| self.route_is_active(route))
     }
 
-    pub fn mark_route_active(&mut self, route: &RouteKey) {
-        let entry = self
-            .route_activity
-            .entry(route.chat_id.clone())
-            .or_default();
-        entry.active = true;
-        self.send_turn_status(route, true);
-    }
-
-    pub fn mark_route_idle(&mut self, route: &RouteKey) {
-        let entry = self
-            .route_activity
-            .entry(route.chat_id.clone())
-            .or_default();
-        entry.active = false;
-        self.send_turn_status(route, false);
-    }
-
-    pub fn clear_pending_permission(&mut self, request_id: &str) {
-        let mut empty_route = None;
-        for (route_chat_id, pending) in &mut self.route_pending_permissions {
-            if pending.remove(request_id).is_some() {
-                if pending.is_empty() {
-                    empty_route = Some(route_chat_id.clone());
-                }
-                break;
-            }
+    pub fn clear_pending_permission(&mut self, route: &RouteKey, request_id: &str) -> bool {
+        let Some(pending) = self.route_pending_permissions.get_mut(route) else {
+            return false;
+        };
+        let removed = pending.remove(request_id).is_some();
+        if pending.is_empty() {
+            self.route_pending_permissions.remove(route);
         }
-        if let Some(route_chat_id) = empty_route {
-            self.route_pending_permissions.remove(&route_chat_id);
-        }
+        removed
     }
 
     pub fn record_user_message(
@@ -329,15 +280,15 @@ impl WebChannelState {
             content,
         };
         if !wait_for_session_ready {
-            if let Some(session_id) = self.route_session_id(&route.chat_id) {
+            if let Some(session_id) = self.route_session_id(route) {
                 for output in user_message_outputs(route, &session_id, message) {
-                    self.broadcast_output(&route.chat_id, output);
+                    self.broadcast_output(route, output);
                 }
                 return;
             }
         }
         self.route_pending_user_messages
-            .entry(route.chat_id.clone())
+            .entry(route.clone())
             .or_default()
             .push(message);
     }
@@ -347,54 +298,51 @@ impl WebChannelState {
         if matches!(output, ChannelOutput::SessionInfo { .. }) {
             return;
         }
-        let chat_id = route.chat_id.clone();
         let mut follow_up_outputs = Vec::new();
         if let ChannelOutput::SessionReady { session_id, .. } = &output {
             self.bind_route_session(&route, session_id);
             follow_up_outputs = self.take_pending_user_message_outputs(&route, session_id);
         }
         if let ChannelOutput::PermissionRequest { request_id, .. } = &output {
-            self.remember_pending_permission(&chat_id, request_id, &output);
+            self.remember_pending_permission(&route, request_id, &output);
         }
-        if matches!(output, ChannelOutput::PromptDone { .. }) {
-            self.clear_route_pending_permissions(&chat_id);
-            self.clear_route_pending_user_messages(&chat_id);
+        if let ChannelOutput::TurnStatus { active, .. } = &output {
+            self.route_activity.insert(route.clone(), *active);
+            if !*active {
+                self.clear_route_pending_permissions(&route);
+                self.clear_route_pending_user_messages(&route);
+            }
         }
-        self.broadcast_output(&chat_id, output.clone());
+        self.broadcast_output(&route, output);
         for output in follow_up_outputs {
-            self.broadcast_output(&chat_id, output);
-        }
-
-        if matches!(output, ChannelOutput::PromptDone { .. }) {
-            self.mark_route_idle(&route);
+            self.broadcast_output(&route, output);
         }
     }
 
     fn bind_route_session(&mut self, route: &RouteKey, session_id: &str) {
-        let Some(agent_id) = self.route_agents.get(&route.chat_id).cloned() else {
+        let Some(agent_id) = self.route_agents.get(route).cloned() else {
             return;
         };
         self.route_sessions.insert(
-            route.chat_id.clone(),
+            route.clone(),
             RouteSession {
                 agent_id,
                 session_id: session_id.to_string(),
-                route: route.clone(),
             },
         );
     }
 
-    fn broadcast_output(&mut self, route_chat_id: &str, output: ChannelOutput) {
-        self.push_route_history(route_chat_id, output.clone());
+    fn broadcast_output(&mut self, route: &RouteKey, output: ChannelOutput) {
+        self.push_route_history(route, output.clone());
 
         let sinks = self
             .connections
-            .get(route_chat_id)
+            .get(route)
             .map(|connections| connections.values().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
         tracing::info!(
-            "[WebChannelManager] dispatch_output chat_id={} subscribers={}",
-            route_chat_id,
+            "[WebChannelManager] dispatch_output route={} subscribers={}",
+            route,
             sinks.len()
         );
         for sink in sinks {
@@ -402,17 +350,14 @@ impl WebChannelState {
         }
     }
 
-    fn push_route_history(&mut self, route_chat_id: &str, output: ChannelOutput) {
+    fn push_route_history(&mut self, route: &RouteKey, output: ChannelOutput) {
         if matches!(
             output,
             ChannelOutput::PermissionRequest { .. } | ChannelOutput::TurnStatus { .. }
         ) {
             return;
         }
-        let items = self
-            .route_history
-            .entry(route_chat_id.to_string())
-            .or_default();
+        let items = self.route_history.entry(route.clone()).or_default();
         items.push(output);
         if items.len() > MAX_ROUTE_HISTORY {
             let overflow = items.len() - MAX_ROUTE_HISTORY;
@@ -422,22 +367,22 @@ impl WebChannelState {
 
     fn remember_pending_permission(
         &mut self,
-        route_chat_id: &str,
+        route: &RouteKey,
         request_id: &str,
         output: &ChannelOutput,
     ) {
         self.route_pending_permissions
-            .entry(route_chat_id.to_string())
+            .entry(route.clone())
             .or_default()
             .insert(request_id.to_string(), output.clone());
     }
 
-    fn clear_route_pending_permissions(&mut self, route_chat_id: &str) {
-        self.route_pending_permissions.remove(route_chat_id);
+    fn clear_route_pending_permissions(&mut self, route: &RouteKey) {
+        self.route_pending_permissions.remove(route);
     }
 
-    fn clear_route_pending_user_messages(&mut self, route_chat_id: &str) {
-        self.route_pending_user_messages.remove(route_chat_id);
+    fn clear_route_pending_user_messages(&mut self, route: &RouteKey) {
+        self.route_pending_user_messages.remove(route);
     }
 
     fn take_pending_user_message_outputs(
@@ -446,32 +391,11 @@ impl WebChannelState {
         session_id: &str,
     ) -> Vec<ChannelOutput> {
         self.route_pending_user_messages
-            .remove(&route.chat_id)
+            .remove(route)
             .unwrap_or_default()
             .into_iter()
             .flat_map(|message| user_message_outputs(route, session_id, message))
             .collect()
-    }
-
-    fn route_activity_state(&self, route_chat_id: &str) -> Option<bool> {
-        self.route_activity
-            .get(route_chat_id)
-            .map(|activity| activity.active)
-    }
-
-    fn send_turn_status(&self, route: &RouteKey, active: bool) {
-        let output = ChannelOutput::TurnStatus {
-            route: route.clone(),
-            active,
-        };
-        let sinks = self
-            .connections
-            .get(&route.chat_id)
-            .map(|connections| connections.values().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
-        for sink in sinks {
-            let _ = sink.send(output.clone());
-        }
     }
 }
 
@@ -508,7 +432,12 @@ mod tests {
     async fn register_connection_replays_active_turn_status_without_session() {
         let manager = WebChannelManager::new();
         let route = RouteKey::new("web", "chat-1");
-        manager.mark_route_active(&route).await;
+        manager
+            .dispatch_output(ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: true,
+            })
+            .await;
 
         let (tx, mut rx) = manager.sender();
         manager
@@ -525,30 +454,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prompt_done_marks_route_idle_and_emits_turn_status() {
+    async fn turn_status_is_stored_and_forwarded_without_derived_events() {
         let manager = WebChannelManager::new();
         let route = RouteKey::new("web", "chat-1");
         let (tx, mut rx) = manager.sender();
         manager
             .register_connection(&route, "conn-1".to_string(), tx, true)
             .await;
-        manager.mark_route_active(&route).await;
-        assert!(matches!(
-            rx.try_recv().expect("active turn status"),
-            ChannelOutput::TurnStatus { active: true, .. }
-        ));
-
         manager
-            .dispatch_output(ChannelOutput::PromptDone {
+            .dispatch_output(ChannelOutput::TurnStatus {
                 route: route.clone(),
-                message_id: Some("msg-1".to_string()),
+                active: true,
             })
             .await;
+        assert_eq!(
+            rx.try_recv().expect("active turn status"),
+            ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: true,
+            }
+        );
+        assert!(manager.route_is_active(&route).await);
 
-        assert!(matches!(
-            rx.try_recv().expect("prompt done"),
-            ChannelOutput::PromptDone { .. }
-        ));
+        manager
+            .dispatch_output(ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: false,
+            })
+            .await;
         assert_eq!(
             rx.try_recv().expect("idle turn status"),
             ChannelOutput::TurnStatus {
@@ -556,14 +489,15 @@ mod tests {
                 active: false,
             }
         );
-        assert!(!manager.route_is_active(&route.chat_id).await);
+        assert!(!manager.route_is_active(&route).await);
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
     async fn pending_user_message_replays_after_session_ready() {
         let manager = WebChannelManager::new();
         let route = RouteKey::new("web", "chat-1");
-        manager.set_route_agent("chat-1", "codex".to_string()).await;
+        manager.set_route_agent(&route, "codex".to_string()).await;
 
         let (tx, mut rx) = manager.sender();
         manager
@@ -619,21 +553,20 @@ mod tests {
             replay_rx.try_recv().expect("replayed user message"),
             ChannelOutput::RawAcp { .. }
         ));
-        assert_eq!(
-            replay_rx.try_recv().expect("replayed turn status"),
-            ChannelOutput::TurnStatus {
-                route,
-                active: false,
-            }
-        );
+        assert!(replay_rx.try_recv().is_err());
     }
 
     #[tokio::test]
     async fn session_routes_keep_original_channel_kind() {
         let manager = WebChannelManager::new();
         let route = RouteKey::new("tui", "chat-1");
-        manager.set_route_agent("chat-1", "codex".to_string()).await;
-        manager.mark_route_active(&route).await;
+        manager.set_route_agent(&route, "codex".to_string()).await;
+        manager
+            .dispatch_output(ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: true,
+            })
+            .await;
 
         manager
             .dispatch_output(ChannelOutput::SessionReady {
@@ -651,10 +584,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prompt_done_drops_unbound_pending_user_message() {
+    async fn idle_turn_drops_pending_permission_and_unbound_user_message() {
         let manager = WebChannelManager::new();
         let route = RouteKey::new("web", "chat-1");
-        manager.set_route_agent("chat-1", "codex".to_string()).await;
+        manager.set_route_agent(&route, "codex".to_string()).await;
 
         let (tx, mut rx) = manager.sender();
         manager
@@ -669,16 +602,34 @@ mod tests {
             )
             .await;
         manager
-            .dispatch_output(ChannelOutput::PromptDone {
+            .dispatch_output(ChannelOutput::PermissionRequest {
                 route: route.clone(),
-                message_id: Some("msg-1".to_string()),
+                reply_to: None,
+                request_id: "permission-1".to_string(),
+                payload: serde_json::json!({}),
+            })
+            .await;
+        manager
+            .dispatch_output(ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: false,
             })
             .await;
         while rx.try_recv().is_ok() {}
 
+        let (tx, mut replay_rx) = manager.sender();
+        manager
+            .register_connection(&route, "conn-2".to_string(), tx, true)
+            .await;
+        assert!(matches!(
+            replay_rx.try_recv().expect("stored idle status"),
+            ChannelOutput::TurnStatus { active: false, .. }
+        ));
+        assert!(replay_rx.try_recv().is_err());
+
         manager
             .dispatch_output(ChannelOutput::SessionReady {
-                route,
+                route: route.clone(),
                 reply_to: None,
                 session_id: "sid-1".to_string(),
             })
@@ -689,6 +640,39 @@ mod tests {
             ChannelOutput::SessionReady { .. }
         ));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn same_chat_id_routes_keep_independent_state_and_connections() {
+        let manager = WebChannelManager::new();
+        let web_route = RouteKey::new("web", "chat-1");
+        let tui_route = RouteKey::new("tui", "chat-1");
+        let (web_tx, mut web_rx) = manager.sender();
+        let (tui_tx, mut tui_rx) = manager.sender();
+        manager
+            .register_connection(&web_route, "web-conn".to_string(), web_tx, true)
+            .await;
+        manager
+            .register_connection(&tui_route, "tui-conn".to_string(), tui_tx, true)
+            .await;
+
+        manager
+            .dispatch_output(ChannelOutput::TurnStatus {
+                route: web_route.clone(),
+                active: true,
+            })
+            .await;
+
+        assert_eq!(
+            web_rx.try_recv().expect("web turn status"),
+            ChannelOutput::TurnStatus {
+                route: web_route.clone(),
+                active: true,
+            }
+        );
+        assert!(tui_rx.try_recv().is_err());
+        assert!(manager.route_is_active(&web_route).await);
+        assert!(!manager.route_is_active(&tui_route).await);
     }
 
     #[tokio::test]
@@ -703,7 +687,11 @@ mod tests {
                 payload: serde_json::json!({}),
             })
             .await;
-        manager.clear_pending_permission("permission-1").await;
+        assert!(
+            manager
+                .clear_pending_permission(&route, "permission-1")
+                .await
+        );
 
         let (tx, mut replay_rx) = manager.sender();
         manager
@@ -716,11 +704,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn permission_response_cannot_clear_another_route() {
+        let manager = WebChannelManager::new();
+        let owning_route = RouteKey::new("web", "chat-1");
+        let other_route = RouteKey::new("web", "chat-2");
+        manager
+            .dispatch_output(ChannelOutput::PermissionRequest {
+                route: owning_route.clone(),
+                reply_to: None,
+                request_id: "permission-1".to_string(),
+                payload: serde_json::json!({}),
+            })
+            .await;
+
+        assert!(
+            !manager
+                .clear_pending_permission(&other_route, "permission-1")
+                .await
+        );
+        assert!(
+            manager
+                .clear_pending_permission(&owning_route, "permission-1")
+                .await
+        );
+    }
+
+    #[tokio::test]
     async fn forget_route_drops_replay_and_session_state() {
         let manager = WebChannelManager::new();
         let route = RouteKey::new("web", "chat-1");
-        manager.set_route_agent("chat-1", "codex".to_string()).await;
-        manager.mark_route_active(&route).await;
+        manager.set_route_agent(&route, "codex".to_string()).await;
+        manager
+            .dispatch_output(ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: true,
+            })
+            .await;
         manager
             .dispatch_output(ChannelOutput::SessionReady {
                 route: route.clone(),
@@ -749,10 +768,10 @@ mod tests {
             ChannelOutput::SystemText { .. }
         ));
 
-        manager.forget_route(&route.chat_id).await;
-        assert!(!manager.route_has_session(&route.chat_id).await);
+        manager.forget_route(&route).await;
+        assert!(!manager.route_has_session(&route).await);
         assert_eq!(manager.route_for_session("codex", "sid-1").await, None);
-        assert!(!manager.route_is_active(&route.chat_id).await);
+        assert!(!manager.route_is_active(&route).await);
 
         let (tx, mut replay_rx) = manager.sender();
         manager

@@ -306,7 +306,10 @@ impl ThreadOwner {
                 biased;
                 _ = wait_for_signal(&mut turn_cancellation) => {
                     let _ = agent.cancel(acp::CancelNotification::new(session_id.clone())).await;
-                    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                    let shutdown_agent = Arc::clone(&agent);
+                    await_cancelled_prompt(prompt.as_mut(), ACP_CANCEL_GRACE, move || async move {
+                        shutdown_agent.shutdown().await;
+                    }).await
                 }
                 result = &mut prompt => result,
             };

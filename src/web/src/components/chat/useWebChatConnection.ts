@@ -189,11 +189,12 @@ export function useWebChatConnection({
   const [subagentMessages, setSubagentMessages] = useState<
     Record<string, ChatMessage[]>
   >({});
-  const [lastPromptDoneAt, setLastPromptDoneAt] = useState<number | undefined>();
+  const [lastTurnCompletedAt, setLastTurnCompletedAt] = useState<number | undefined>();
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const promptInFlightRef = useRef(false);
+  const turnActiveRef = useRef(false);
   const resumeReplayRef = useRef<ResumeReplayState | null>(null);
   const resumeRequestIdRef = useRef(0);
   const cancelReplayOnNextTurnRef = useRef(false);
@@ -393,6 +394,7 @@ export function useWebChatConnection({
       setStreaming(false);
       setMessages((prev) => settleStreamActivitiesMessage(prev));
       promptInFlightRef.current = false;
+      turnActiveRef.current = false;
       if (clearPermissions) setPendingPermissions([]);
       finishResumeReplay();
     }
@@ -552,27 +554,27 @@ export function useWebChatConnection({
           finishResumeReplay();
           break;
         }
-        case "prompt_done": {
-          settleStreamActivities();
-          setStreaming(false);
-          promptInFlightRef.current = false;
-          if (activeTranscriptCacheRef.current) {
-            activeTranscriptCacheRef.current = {
-              ...activeTranscriptCacheRef.current,
-              updatedAt: Math.max(
-                activeTranscriptCacheRef.current.updatedAt ?? 0,
-                currentUnixSeconds(),
-              ),
-            };
-            cacheTranscript(activeTranscriptCacheRef.current);
-          }
-          setLastPromptDoneAt(Date.now());
-          break;
-        }
         case "turn_status": {
+          const wasActive = turnActiveRef.current;
+          turnActiveRef.current = parsed.active;
           if (parsed.active && cancelReplayOnNextTurnRef.current) {
             cancelReplayOnNextTurnRef.current = false;
             finishResumeReplay(undefined, { cache: false });
+          }
+          if (wasActive && !parsed.active) {
+            settleStreamActivities();
+            setPendingPermissions([]);
+            if (activeTranscriptCacheRef.current) {
+              activeTranscriptCacheRef.current = {
+                ...activeTranscriptCacheRef.current,
+                updatedAt: Math.max(
+                  activeTranscriptCacheRef.current.updatedAt ?? 0,
+                  currentUnixSeconds(),
+                ),
+              };
+              cacheTranscript(activeTranscriptCacheRef.current);
+            }
+            setLastTurnCompletedAt(Date.now());
           }
           setStreaming(parsed.active);
           promptInFlightRef.current = parsed.active;
@@ -993,6 +995,7 @@ export function useWebChatConnection({
     replayMessageBufferRef.current = null;
     cancelReplayOnNextTurnRef.current = false;
     promptInFlightRef.current = false;
+    turnActiveRef.current = false;
     setStreaming(false);
     setPendingPermissions([]);
     updateResumeReplay(null);
@@ -1155,7 +1158,7 @@ export function useWebChatConnection({
     multiAgentTurns,
     subagents,
     subagentMessages,
-    lastPromptDoneAt,
+    lastTurnCompletedAt,
     sendMessage,
     resumeSession,
     clearConversationView,

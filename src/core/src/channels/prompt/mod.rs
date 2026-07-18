@@ -110,10 +110,10 @@ pub(super) fn send_system_text_to_target(
     });
 }
 
-fn send_prompt_done(plugin_host: &Arc<PluginHost>, route: &RouteKey, message_id: Option<String>) {
-    plugin_host.send_output(ChannelOutput::PromptDone {
+fn send_turn_status(plugin_host: &Arc<PluginHost>, route: &RouteKey, active: bool) {
+    plugin_host.send_output(ChannelOutput::TurnStatus {
         route: route.clone(),
-        message_id,
+        active,
     });
 }
 
@@ -200,6 +200,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), output_rx.recv())
+                .await
+                .expect("command produced no active boundary")
+                .expect("command output channel closed"),
+            ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: true,
+            }
+        );
         let output = tokio::time::timeout(std::time::Duration::from_secs(1), output_rx.recv())
             .await
             .expect("command produced no output")
@@ -214,18 +224,17 @@ mod tests {
         };
         assert_eq!(&output_route, route);
         assert_eq!(output_reply_to.as_deref(), Some(reply_to.as_str()));
-
-        let completion = tokio::time::timeout(std::time::Duration::from_secs(1), output_rx.recv())
-            .await
-            .expect("command produced no completion boundary")
-            .expect("command output channel closed");
         assert_eq!(
-            completion,
-            ChannelOutput::PromptDone {
+            tokio::time::timeout(std::time::Duration::from_secs(1), output_rx.recv())
+                .await
+                .expect("command produced no idle boundary")
+                .expect("command output channel closed"),
+            ChannelOutput::TurnStatus {
                 route: route.clone(),
-                message_id: Some(reply_to),
+                active: false,
             }
         );
+
         text
     }
 
@@ -357,11 +366,12 @@ mod tests {
 
     #[tokio::test]
     async fn same_route_lane_is_fifo_and_removed_when_drained() {
-        let ingress = test_ingress();
+        let (ingress, mut output_rx) = test_ingress_with_output();
         let route = RouteKey::new("web", "chat-a");
         let (first_started, first_started_rx) = oneshot::channel();
         let (release_first, release_first_rx) = oneshot::channel();
         let (second_started, mut second_started_rx) = oneshot::channel();
+        let (release_second, release_second_rx) = oneshot::channel();
 
         let first_done = ingress
             .enqueue_probe(route.clone(), async move {
@@ -370,9 +380,17 @@ mod tests {
             })
             .await
             .unwrap();
+        assert_eq!(
+            output_rx.recv().await.unwrap(),
+            ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: true,
+            }
+        );
         let second_done = ingress
-            .enqueue_probe(route, async move {
+            .enqueue_probe(route.clone(), async move {
                 let _ = second_started.send(());
+                let _ = release_second_rx.await;
             })
             .await
             .unwrap();
@@ -386,7 +404,16 @@ mod tests {
         release_first.send(()).unwrap();
         second_started_rx.await.unwrap();
         first_done.await.unwrap();
+        assert!(output_rx.try_recv().is_err(), "first item marked lane idle");
+        release_second.send(()).unwrap();
         second_done.await.unwrap();
+        assert_eq!(
+            output_rx.recv().await.unwrap(),
+            ChannelOutput::TurnStatus {
+                route,
+                active: false,
+            }
+        );
         wait_for_lanes_to_drain(&ingress).await;
     }
 
@@ -534,6 +561,10 @@ mod tests {
             .await
             .unwrap();
         started_rx.await.unwrap();
+        assert!(matches!(
+            output_rx.recv().await.expect("active turn status"),
+            ChannelOutput::TurnStatus { active: true, .. }
+        ));
 
         ingress.dispatch(ChannelInput::SwitchAgent {
             route,
@@ -612,7 +643,7 @@ mod tests {
 
     #[tokio::test]
     async fn route_lane_rejects_work_at_capacity() {
-        let ingress = test_ingress();
+        let (ingress, mut output_rx) = test_ingress_with_output();
         let route = RouteKey::new("web", "chat-a");
         let (started, started_rx) = oneshot::channel();
         let (release, release_rx) = oneshot::channel();
@@ -624,6 +655,13 @@ mod tests {
             .await
             .unwrap();
         started_rx.await.unwrap();
+        assert_eq!(
+            output_rx.recv().await.unwrap(),
+            ChannelOutput::TurnStatus {
+                route: route.clone(),
+                active: true,
+            }
+        );
 
         let mut queued = Vec::new();
         for _ in 0..ROUTE_LANE_CAPACITY {
@@ -634,13 +672,24 @@ mod tests {
                     .unwrap(),
             );
         }
-        assert!(ingress.enqueue_probe(route, async {}).await.is_err());
+        assert!(ingress
+            .enqueue_probe(route.clone(), async {})
+            .await
+            .is_err());
+        assert!(output_rx.try_recv().is_err(), "full lane changed activity");
 
         release.send(()).unwrap();
         first_done.await.unwrap();
         for done in queued {
             done.await.unwrap();
         }
+        assert_eq!(
+            output_rx.recv().await.unwrap(),
+            ChannelOutput::TurnStatus {
+                route,
+                active: false,
+            }
+        );
         wait_for_lanes_to_drain(&ingress).await;
     }
 }

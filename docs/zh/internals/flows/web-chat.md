@@ -6,7 +6,7 @@ Dashboard 的 Web Chat 里输入的一条消息如何到达 agent。后半段和
 
 打开 Web Chat 会建立 `/va/ws/chat`（token-authenticated）。连接时 server 会：
 
-1. 在 `WebChannelManager` 下以 route 的 chat id 注册连接（一个 thread 多个 tab = 多个 connection，都会收到同样的 fan-out），
+1. 在 `WebChannelManager` 下以完整 route 注册连接（一个 thread 多个 tab = 多个 connection，都会收到同样的 fan-out），
 2. 发送 `Config` event（enabled agents、default agent），
 3. replay 该 route 最近的 output，让重新打开的 tab 能看到对话尾部。
 
@@ -44,9 +44,9 @@ Web channel 是**进程内**的：它不是 stdio plugin，而是在同一个 `P
 
 ## 出站：fan-out 与 Host 常驻
 
-Web route 的 output 会派发给该 chat id 下所有已注册 connection；每个 output 变成 JSON `ChatEvent`（message chunks、tool status、permission cards、`PromptDone`）。
+Web route 的 output 会派发给该完整 route 下所有已注册 connection；每个 output 变成 JSON `ChatEvent`（message chunks、tool status、permission cards、`TurnStatus`）。Inactive turn status 会在本 turn 的 notification outputs 之后发出，是公开的完成边界。
 
-Web Chat 没有 route 专属的进程 idle deadline。`PromptDone`、socket 断开和关闭标签页都不会 unload Host，也不会关闭 Thread。它与 IM 共用 warm Thread 池策略：Host 保持常驻；只有以后真正的新 Host 让池超过软上限，且这个 Thread 是符合条件、最近最少活动的候选者时，才会被回收。回收保留 `ThreadRuntime` 与 Session；重新打开仍有 output replay，下一条提示需要时会恢复。
+Web Chat 没有 route 专属的进程 idle deadline。`TurnStatus { active: false }`、socket 断开和关闭标签页都不会 unload Host，也不会关闭 Thread。它与 IM 共用 warm Thread 池策略：Host 保持常驻；只有以后真正的新 Host 让池超过软上限，且这个 Thread 是符合条件、最近最少活动的候选者时，才会被回收。回收保留 `ThreadRuntime` 与 Session；重新打开仍有 output replay，下一条提示需要时会恢复。
 
 → `ws_chat.rs` (`output_to_chat_event`), `transport_websocket.rs`（connection fan-out），`workspace/manager_routes.rs`（共用 warm Thread 池）
 

@@ -13,7 +13,6 @@ pub struct ChatState {
     pub turn_active: bool,
     pub pending_permission_request_id: Option<String>,
     pub pending_permission: Option<PendingPermission>,
-    pub last_prompt_done_message_id: Option<String>,
     pub last_error: Option<String>,
     pub system_messages: Vec<String>,
 }
@@ -89,14 +88,12 @@ impl ChatState {
             ChatEvent::MultiAgentTurn { turn, agents } => {
                 self.multi_agent_turn = Some(ChatMultiAgentTurn { turn, agents });
             }
-            ChatEvent::PromptDone { message_id } => {
-                self.turn_active = false;
-                self.pending_permission_request_id = None;
-                self.pending_permission = None;
-                self.last_prompt_done_message_id = message_id;
-            }
             ChatEvent::TurnStatus { active } => {
                 self.turn_active = active;
+                if !active {
+                    self.pending_permission_request_id = None;
+                    self.pending_permission = None;
+                }
             }
             ChatEvent::SystemText { text } => {
                 self.system_messages.push(text);
@@ -142,16 +139,13 @@ mod tests {
             session_id: "s1".into(),
         });
         state.apply_event(ChatEvent::TurnStatus { active: true });
-        state.apply_event(ChatEvent::PromptDone {
-            message_id: Some("done-1".into()),
-        });
+        state.apply_event(ChatEvent::TurnStatus { active: false });
 
         assert_eq!(state.channel_id.as_deref(), Some("web:1"));
         assert_eq!(state.default_agent.as_deref(), Some("codex"));
         assert_eq!(state.current_agent.as_ref().unwrap().agent, "Codex");
         assert_eq!(state.session_id.as_deref(), Some("s1"));
         assert!(!state.turn_active);
-        assert_eq!(state.last_prompt_done_message_id.as_deref(), Some("done-1"));
     }
 
     #[test]
@@ -211,7 +205,15 @@ mod tests {
             "Read"
         );
 
-        state.apply_event(ChatEvent::PromptDone { message_id: None });
+        state.apply_event(ChatEvent::TurnStatus { active: true });
+
+        assert_eq!(
+            state.pending_permission_request_id.as_deref(),
+            Some("req-1")
+        );
+        assert!(state.pending_permission.is_some());
+
+        state.apply_event(ChatEvent::TurnStatus { active: false });
 
         assert_eq!(state.pending_permission_request_id, None);
         assert_eq!(state.pending_permission, None);

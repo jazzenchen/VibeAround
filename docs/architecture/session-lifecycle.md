@@ -27,7 +27,7 @@ first prompt ──► spawn host ──► create/resume CLI session ──► 
 same ThreadRuntime + session ◄── host evicted ──► next prompt resumes session
 ```
 
-- **No fixed idle shutdown:** finishing a turn, receiving `PromptDone`, or closing a Web tab does not start a process-kill deadline.
+- **No fixed idle shutdown:** finishing a turn, receiving `TurnStatus { active: false }`, or closing a Web tab does not start a process-kill deadline.
 - **Pressure eviction:** only after a genuinely new host successfully starts above the warm-thread pool's [soft limit](../reference/timers-and-limits.md#sizes-and-counts) does the manager consider one least-recently-active candidate. It must meet the idle-age threshold, not be busy or the new thread, and have no resident subagents. If none qualifies, the pool may overflow.
 - **Preserved continuity:** eviction stops only the host generation. The existing `ThreadRuntime`, thread/session records, route attachments, and preview records remain. The next prompt uses that retained runtime to spawn the host and resume the recorded CLI session.
 - **Crash:** agent processes are not auto-respawned mid-turn (restart policy is deliberate: crashes surface as errors instead of silently retrying). The next prompt starts a fresh process and resumes the session.

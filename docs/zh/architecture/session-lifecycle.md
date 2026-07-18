@@ -27,7 +27,7 @@ Thread 在某条 Route 第一次需要它时诞生 —— 聊天的第一条消�
 同一 ThreadRuntime + Session ◄── Host 被回收 ──► 下一条提示恢复 Session
 ```
 
-- **没有固定的闲时关停：** 回合完成、收到 `PromptDone` 或关闭 Web 标签页，都不会启动杀进程 deadline。
+- **没有固定的闲时关停：** 回合完成、收到 `TurnStatus { active: false }` 或关闭 Web 标签页，都不会启动杀进程 deadline。
 - **压力回收：** 只有真正的新 Host 成功启动并超过 warm Thread 池的[软上限](../reference/timers-and-limits.md#大小与数量)后，manager 才考虑一个最近最少活动的候选者。候选者必须达到闲置时长门槛、不在忙、不是新 Thread，且没有常驻子 Agent。没有合格候选者就允许暂时超出上限。
 - **连续性保留：** 回收只停止 Host generation；已有 `ThreadRuntime`、Thread/Session 记录、Route 附着与预览记录都保留。下一条提示复用这个 runtime，重新拉起 Host 并恢复记录的 CLI Session。
 - **崩溃：** Agent 进程在回合中不会被自动重启（重启策略是刻意的：崩溃以错误形式呈现，而不是静默重试）。下一条提示会启动新进程并恢复 Session。

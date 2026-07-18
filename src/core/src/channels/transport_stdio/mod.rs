@@ -37,4 +37,5 @@ mod handler;
 mod runtime;
 
 pub(crate) use bridge::run_acp_plugin_bridge;
+pub(crate) use runtime::StdioBridgeMessage;
 pub use runtime::StdioPluginRuntime;

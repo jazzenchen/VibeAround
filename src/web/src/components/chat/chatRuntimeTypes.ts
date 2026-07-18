@@ -43,7 +43,7 @@ export interface ChatRuntimeSnapshot {
   multiAgentTurns: MultiAgentTurn[];
   subagents: ThreadAgent[];
   subagentMessages: Record<string, ChatMessage[]>;
-  lastPromptDoneAt?: number;
+  lastTurnCompletedAt?: number;
 }
 
 export interface ChatRuntimeActions {
@@ -69,5 +69,5 @@ export const EMPTY_RUNTIME_SNAPSHOT: ChatRuntimeSnapshot = {
   multiAgentTurns: [],
   subagents: [],
   subagentMessages: {},
-  lastPromptDoneAt: undefined,
+  lastTurnCompletedAt: undefined,
 };
