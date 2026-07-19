@@ -323,7 +323,7 @@ mod tests {
     async fn bridge_cleanup_drains_permissions_without_removing_replacement_runtime() {
         let (input_tx, _input_rx) = mpsc::unbounded_channel();
         let host = Arc::new(PluginHost::new(input_tx));
-        let (old_tx, _old_rx) = mpsc::channel(1);
+        let (old_tx, _old_rx) = mpsc::unbounded_channel();
         let old_runtime = Arc::new(StdioPluginRuntime::new("slack-work", old_tx));
         host.replace_stdio_runtime("slack-work", Arc::clone(&old_runtime));
         let cleanup = BridgeCleanup::new(Arc::clone(&host), "slack-work".to_string(), old_runtime);
@@ -335,7 +335,7 @@ mod tests {
             permission_tx,
         );
 
-        let (new_tx, mut new_rx) = mpsc::channel(1);
+        let (new_tx, mut new_rx) = mpsc::unbounded_channel();
         let new_runtime = Arc::new(StdioPluginRuntime::new("slack-work", new_tx));
         host.replace_stdio_runtime("slack-work", new_runtime);
 

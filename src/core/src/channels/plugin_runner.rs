@@ -17,14 +17,11 @@ use crate::process::bridge::{
     BridgeFactory, BridgeFuture, CancelSignal, ProcessBridge, StdioPipes,
 };
 
-/// Small transport buffer only; it is not replayed across bridge/process loss.
-const CHANNEL_OUTPUT_BUFFER: usize = 256;
-
 /// The protocol-side owner for one stdio channel-plugin spawn.
 pub struct ChannelPluginRunner {
     pub manifest: ChannelPluginManifest,
     pub input_tx: mpsc::UnboundedSender<ChannelInput>,
-    pub(crate) output_rx: mpsc::Receiver<StdioBridgeMessage>,
+    pub(crate) output_rx: mpsc::UnboundedReceiver<StdioBridgeMessage>,
     pub ingress: Arc<ConversationIngress>,
     pub plugin_host: Arc<PluginHost>,
     pub runtime: Arc<StdioPluginRuntime>,
@@ -67,7 +64,12 @@ impl ChannelPluginRunnerFactory {
     }
 
     fn create(&self) -> ChannelPluginRunner {
-        let (output_tx, output_rx) = mpsc::channel(CHANNEL_OUTPUT_BUFFER);
+        // One plugin generation owns one ACP connection, so outputs from its
+        // routes and their completion barriers share this transport FIFO.
+        // Route ordering and any future output-volume policy belong to the
+        // route/turn owner; a local hard limit here would only drop wire data
+        // and let a later barrier report false success.
+        let (output_tx, output_rx) = mpsc::unbounded_channel();
         let runtime = Arc::new(StdioPluginRuntime::new(
             self.manifest.instance_id.clone(),
             output_tx,

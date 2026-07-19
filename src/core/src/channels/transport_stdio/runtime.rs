@@ -21,13 +21,13 @@ pub(crate) enum StdioBridgeMessage {
 #[derive(Debug)]
 pub struct StdioPluginRuntime {
     instance_id: String,
-    output_tx: mpsc::Sender<StdioBridgeMessage>,
+    output_tx: mpsc::UnboundedSender<StdioBridgeMessage>,
 }
 
 impl StdioPluginRuntime {
     pub(crate) fn new(
         instance_id: impl Into<String>,
-        output_tx: mpsc::Sender<StdioBridgeMessage>,
+        output_tx: mpsc::UnboundedSender<StdioBridgeMessage>,
     ) -> Self {
         Self {
             instance_id: instance_id.into(),
@@ -41,35 +41,18 @@ impl StdioPluginRuntime {
 
     pub fn send_output_now(&self, output: ChannelOutput) -> Result<(), String> {
         self.output_tx
-            .try_send(StdioBridgeMessage::Output(output))
+            .send(StdioBridgeMessage::Output(output))
             .map_err(|error| {
                 format!("failed to enqueue realtime output for ACP plugin bridge: {error}")
             })
     }
 
     pub(crate) fn enqueue_barrier(&self, reply: oneshot::Sender<Result<(), String>>) {
-        match self.output_tx.try_send(StdioBridgeMessage::Barrier(reply)) {
-            Ok(()) => {}
-            Err(mpsc::error::TrySendError::Full(message)) => {
-                let output_tx = self.output_tx.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = output_tx.send(message).await {
-                        let StdioBridgeMessage::Barrier(reply) = error.0 else {
-                            unreachable!("enqueue_barrier only sends barriers");
-                        };
-                        let _ =
-                            reply
-                                .send(Err("ACP plugin output forwarder closed before the barrier"
-                                    .to_string()));
-                    }
-                });
-            }
-            Err(mpsc::error::TrySendError::Closed(message)) => {
-                let StdioBridgeMessage::Barrier(reply) = message else {
-                    unreachable!("enqueue_barrier only sends barriers");
-                };
-                let _ = reply.send(Err("ACP plugin output forwarder is closed".to_string()));
-            }
+        if let Err(error) = self.output_tx.send(StdioBridgeMessage::Barrier(reply)) {
+            let StdioBridgeMessage::Barrier(reply) = error.0 else {
+                unreachable!("enqueue_barrier only sends barriers");
+            };
+            let _ = reply.send(Err("ACP plugin output forwarder is closed".to_string()));
         }
     }
 }
@@ -87,24 +70,35 @@ mod tests {
         }
     }
 
-    #[test]
-    fn full_transport_buffer_rejects_without_waiting() {
-        let (tx, mut rx) = mpsc::channel(1);
+    #[tokio::test]
+    async fn queued_outputs_are_not_dropped_before_the_barrier() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let runtime = StdioPluginRuntime::new("slack-work", tx);
 
-        runtime.send_output_now(output("first")).unwrap();
-        let error = runtime.send_output_now(output("second")).unwrap_err();
+        for index in 0..1024 {
+            runtime
+                .send_output_now(output(&format!("message-{index}")))
+                .unwrap();
+        }
+        let (reply, done) = oneshot::channel();
+        runtime.enqueue_barrier(reply);
 
-        assert!(error.contains("no available capacity"));
-        let StdioBridgeMessage::Output(first) = rx.try_recv().unwrap() else {
-            panic!("expected output");
+        for index in 0..1024 {
+            let Some(StdioBridgeMessage::Output(next)) = rx.recv().await else {
+                panic!("expected output before barrier");
+            };
+            assert_eq!(next, output(&format!("message-{index}")));
+        }
+        let Some(StdioBridgeMessage::Barrier(reply)) = rx.recv().await else {
+            panic!("expected barrier after queued output");
         };
-        assert_eq!(first, output("first"));
+        reply.send(Ok(())).unwrap();
+        assert_eq!(done.await.unwrap(), Ok(()));
     }
 
     #[tokio::test]
     async fn barrier_follows_prior_output_and_acks_when_forwarded() {
-        let (tx, mut rx) = mpsc::channel(2);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let runtime = StdioPluginRuntime::new("slack-work", tx);
         runtime.send_output_now(output("first")).unwrap();
         let (reply, done) = oneshot::channel();
@@ -122,30 +116,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn full_buffer_waits_to_enqueue_barrier() {
-        let (tx, mut rx) = mpsc::channel(1);
-        let runtime = StdioPluginRuntime::new("slack-work", tx);
-        runtime.send_output_now(output("first")).unwrap();
-        let (reply, mut done) = oneshot::channel();
-        runtime.enqueue_barrier(reply);
-
-        assert!(done.try_recv().is_err());
-        assert!(matches!(
-            rx.recv().await,
-            Some(StdioBridgeMessage::Output(_))
-        ));
-        let Some(StdioBridgeMessage::Barrier(reply)) = rx.recv().await else {
-            panic!("expected queued barrier");
-        };
-        reply.send(Ok(())).unwrap();
-        assert_eq!(done.await.unwrap(), Ok(()));
-    }
-
-    #[tokio::test]
-    async fn closed_buffer_fails_barrier() {
-        let (tx, rx) = mpsc::channel(1);
+    async fn closed_forwarder_rejects_output_and_barrier() {
+        let (tx, rx) = mpsc::unbounded_channel();
         let runtime = StdioPluginRuntime::new("slack-work", tx);
         drop(rx);
+        assert!(runtime.send_output_now(output("lost")).is_err());
         let (reply, done) = oneshot::channel();
         runtime.enqueue_barrier(reply);
 
