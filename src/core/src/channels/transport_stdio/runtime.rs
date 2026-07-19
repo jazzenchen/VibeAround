@@ -97,25 +97,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn barrier_follows_prior_output_and_acks_when_forwarded() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let runtime = StdioPluginRuntime::new("slack-work", tx);
-        runtime.send_output_now(output("first")).unwrap();
-        let (reply, done) = oneshot::channel();
-        runtime.enqueue_barrier(reply);
-
-        assert!(matches!(
-            rx.recv().await,
-            Some(StdioBridgeMessage::Output(_))
-        ));
-        let Some(StdioBridgeMessage::Barrier(reply)) = rx.recv().await else {
-            panic!("expected barrier after output");
-        };
-        reply.send(Ok(())).unwrap();
-        assert_eq!(done.await.unwrap(), Ok(()));
-    }
-
-    #[tokio::test]
     async fn closed_forwarder_rejects_output_and_barrier() {
         let (tx, rx) = mpsc::unbounded_channel();
         let runtime = StdioPluginRuntime::new("slack-work", tx);

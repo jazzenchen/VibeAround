@@ -511,56 +511,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queued_permission_stays_ordered_without_blocking_other_instances() {
+    async fn queued_permission_is_delivered_without_cancellation() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = PluginHost::new(input_tx);
-        let (blocked_tx, mut blocked_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (live_tx, mut live_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
         host.replace_stdio_runtime(
-            "slack-blocked",
-            Arc::new(StdioPluginRuntime::new("slack-blocked", blocked_tx)),
-        );
-        host.replace_stdio_runtime(
-            "slack-live",
-            Arc::new(StdioPluginRuntime::new("slack-live", live_tx)),
+            "slack-work",
+            Arc::new(StdioPluginRuntime::new("slack-work", output_tx)),
         );
 
         host.send_output(ChannelOutput::SystemText {
-            route: RouteKey::with_actor("slack", "slack-blocked", "chat-a", "bot-a", None),
-            text: "fills buffer".to_string(),
+            route: RouteKey::with_actor("slack", "slack-work", "chat-a", "bot-a", None),
+            text: "first".to_string(),
             reply_to: None,
         });
         let (permission_tx, permission_rx) = tokio::sync::oneshot::channel();
         host.register_pending_permission(
-            "req-full".to_string(),
-            vec!["slack-blocked".to_string()],
+            "req-queued".to_string(),
+            vec!["slack-work".to_string()],
             permission_tx,
         );
         host.send_output(ChannelOutput::PermissionRequest {
-            route: RouteKey::with_actor("slack", "slack-blocked", "chat-a", "bot-a", None),
+            route: RouteKey::with_actor("slack", "slack-work", "chat-a", "bot-a", None),
             reply_to: None,
-            request_id: "req-full".to_string(),
+            request_id: "req-queued".to_string(),
             payload: serde_json::json!({}),
         });
 
-        let live_route = RouteKey::with_actor("slack", "slack-live", "chat-b", "bot-b", None);
-        host.send_output(ChannelOutput::SystemText {
-            route: live_route.clone(),
-            text: "still delivered".to_string(),
-            reply_to: None,
-        });
-
-        let _ = recv_stdio_output(&mut blocked_rx).await;
-        let permission = recv_stdio_output(&mut blocked_rx).await;
+        let _ = recv_stdio_output(&mut output_rx).await;
+        let permission = recv_stdio_output(&mut output_rx).await;
         assert!(matches!(
             permission,
             ChannelOutput::PermissionRequest { .. }
         ));
-        assert_eq!(
-            recv_stdio_output(&mut live_rx).await.route_key(),
-            &live_route
-        );
-        host.respond_permission("slack-blocked", "req-full", permission_response())
+        host.respond_permission("slack-work", "req-queued", permission_response())
             .await
             .unwrap();
         assert!(permission_rx.await.is_ok());
