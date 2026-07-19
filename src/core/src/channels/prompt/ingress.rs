@@ -531,7 +531,6 @@ impl ConversationIngress {
         tracing::debug!(
             route = %route,
             cli_kind = ?cli_kind,
-            text = %text,
             "channel input"
         );
 
