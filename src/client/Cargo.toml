@@ -1,6 +1,6 @@
 [package]
 name = "va-client"
-version = "0.7.16"
+version = "0.7.17"
 description = "VibeAround Rust client protocol library"
 edition = "2021"
 rust-version = "1.82"
@@ -9,3 +9,4 @@ rust-version = "1.82"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = "1"
+url = "2.5"

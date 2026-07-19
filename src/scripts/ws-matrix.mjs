@@ -399,7 +399,8 @@ async function sendMatrixTurn(ws, testCase, workspace, baseUrl, turn, newSession
   ws.send(JSON.stringify(message));
 
   const seen = {
-    promptDone: false,
+    turnStarted: false,
+    turnCompleted: false,
     okText: false,
     toolCall: false,
     toolUpdate: false,
@@ -421,7 +422,10 @@ async function sendMatrixTurn(ws, testCase, workspace, baseUrl, turn, newSession
     }
     if (event.kind === "agent_ready") seen.agentReady = true;
     if (event.kind === "session_ready") seen.sessionReady = true;
-    if (event.kind === "prompt_done") seen.promptDone = true;
+    if (event.kind === "turn_status") {
+      if (event.active) seen.turnStarted = true;
+      else if (seen.turnStarted) seen.turnCompleted = true;
+    }
     if (event.kind === "acp_notification") {
       const update = event.payload?.update;
       if (update?.sessionUpdate === "tool_call") seen.toolCall = true;
@@ -449,7 +453,7 @@ async function sendMatrixTurn(ws, testCase, workspace, baseUrl, turn, newSession
         seen.imageSanitized = true;
       }
     }
-    if (seen.promptDone && seen.okText) return seen;
+    if (seen.turnCompleted && seen.okText) return seen;
   }
   throw new Error(`${testCase.name}: timed out waiting for turn ${turn}`);
 }
@@ -470,7 +474,7 @@ function assertTurn(testCase, seen, turn, needsTool) {
   if (turn === 1 && testCase.imageMode === "unsupported" && !seen.imageSanitized) {
     throw new Error(`${testCase.name}: missing unsupported-image sanitization marker`);
   }
-  if (!seen.okText || !seen.promptDone) {
+  if (!seen.okText || !seen.turnCompleted) {
     throw new Error(`${testCase.name}: incomplete websocket turn ${turn}`);
   }
 }

@@ -48,7 +48,8 @@ Token-protected management APIs:
 ```text
 GET  /va/api/service/info
 GET  /va/api/settings
-PUT  /va/api/settings
+PUT  /va/api/settings          # requires If-Match from GET ETag
+PATCH /va/api/settings         # RFC 6902 JSON Patch
 POST /va/api/settings/reload
 
 GET  /va/api/workspaces

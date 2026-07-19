@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use common::agent_state;
-use common::profiles::{normalize_legacy_profile_and_persist, schema};
+use common::profiles::load_profile;
 use common::{config, resources};
 use serde::Serialize;
 
@@ -91,8 +91,7 @@ pub(super) fn launcher_preferences() -> LauncherPreferences {
             installed: true,
         })
         .collect();
-    let cfg = config::ensure_loaded();
-    let agent_prefs = agent_state::read_prefs();
+    let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
     let selected_agent = agent_state::resolve_selected_agent(&agent_prefs, &cfg);
     let default_agent = agent_state::resolve_default_agent(&agent_prefs, &cfg);
     let default_profile_id =
@@ -141,9 +140,8 @@ pub(super) fn validate_agent_profile_selection(
         .filter(|id| !id.is_empty());
 
     if let Some(profile_id) = &profile_id {
-        let profile = schema::load(profile_id)
-            .map(normalize_legacy_profile_and_persist)
-            .ok_or_else(|| format!("profile '{profile_id}' not found"))?;
+        let profile =
+            load_profile(profile_id).ok_or_else(|| format!("profile '{profile_id}' not found"))?;
         if !profile_can_launch_agent(&profile, &agent_id) {
             return Err(format!("profile '{profile_id}' cannot launch '{agent_id}'"));
         }

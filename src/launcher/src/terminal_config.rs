@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{bail, Context};
 use serde_json::{Map, Value};
 
-use crate::{paths, TerminalChoice};
+use crate::TerminalChoice;
 
 pub fn resolve_terminal_choice(explicit: Option<TerminalChoice>) -> anyhow::Result<TerminalChoice> {
     if let Some(choice) = explicit {
@@ -23,8 +23,8 @@ pub fn detect_default_terminal() -> TerminalChoice {
 }
 
 fn read_or_initialize_terminal() -> anyhow::Result<TerminalChoice> {
-    let path = paths::settings_path()?;
-    let mut config = read_settings_config(&path)?;
+    let path = common::config::settings_path();
+    let config = common::config::read_settings_json().map_err(anyhow::Error::msg)?;
     if let Some(value) = config
         .get("launcher")
         .and_then(|launcher| launcher.get("terminal"))
@@ -33,12 +33,24 @@ fn read_or_initialize_terminal() -> anyhow::Result<TerminalChoice> {
     }
 
     let choice = detect_default_terminal();
-    launcher_config_mut(&mut config).insert(
-        "terminal".to_string(),
-        Value::String(choice.id().to_string()),
-    );
-    write_settings_config(&path, &config)?;
-    Ok(choice)
+    common::config::mutate_settings_json(|config| {
+        if let Some(value) = config
+            .get("launcher")
+            .and_then(|launcher| launcher.get("terminal"))
+        {
+            return terminal_from_config_value(value, &path).map_err(|error| error.to_string());
+        }
+
+        let root = config
+            .as_object_mut()
+            .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+        launcher_config_mut(root).insert(
+            "terminal".to_string(),
+            Value::String(choice.id().to_string()),
+        );
+        Ok(choice)
+    })
+    .map_err(anyhow::Error::msg)
 }
 
 fn terminal_from_config_value(value: &Value, path: &Path) -> anyhow::Result<TerminalChoice> {
@@ -67,33 +79,6 @@ fn ensure_terminal_supported(choice: TerminalChoice, source: &str) -> anyhow::Re
             choice.id()
         );
     }
-    Ok(())
-}
-
-fn read_settings_config(path: &Path) -> anyhow::Result<Map<String, Value>> {
-    let body = match fs::read_to_string(path) {
-        Ok(body) => body,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
-        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-    };
-    let value: Value =
-        serde_json::from_str(&body).with_context(|| format!("parse {}", path.display()))?;
-    match value {
-        Value::Object(object) => Ok(object),
-        _ => bail!("settings config {} must be a JSON object", path.display()),
-    }
-}
-
-fn write_settings_config(path: &Path, config: &Map<String, Value>) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let body = serde_json::to_string_pretty(config).context("serialize settings config")?;
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
-    set_owner_only(&tmp).ok();
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
     Ok(())
 }
 
@@ -200,19 +185,6 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-fn set_owner_only(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,6 +276,30 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
 
         assert!(error.contains("unknown launcher.terminal"));
+    }
+
+    #[test]
+    fn existing_terminal_is_not_rewritten() {
+        let _guard = crate::env_test_lock().lock().expect("env test lock");
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let choice = TerminalChoice::default_for_current_platform();
+        let original = format!(
+            "{{\n  \"launcher\": {{ \"terminal\": \"{}\" }},\n  \"workspaces\": []\n}}\n",
+            choice.id()
+        );
+        fs::write(dir.join("settings.json"), &original).expect("write settings config");
+        let previous = std::env::var_os("VIBEAROUND_DATA_DIR");
+        std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
+
+        let resolved = resolve_terminal_choice(None).expect("resolve terminal");
+        let current = fs::read_to_string(dir.join("settings.json")).expect("read settings config");
+
+        restore_env("VIBEAROUND_DATA_DIR", previous);
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(resolved, choice);
+        assert_eq!(current, original);
     }
 
     fn temp_dir() -> PathBuf {

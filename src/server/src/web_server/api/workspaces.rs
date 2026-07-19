@@ -9,31 +9,52 @@ fn workspace_item(
 ) -> crate::api_types::WorkspaceItem {
     crate::api_types::WorkspaceItem {
         path: ws.to_string_lossy().to_string(),
-        is_default: paths_equal(ws, default_workspace),
-        is_builtin: paths_equal(ws, builtin),
+        is_default: config::workspace_paths_equal(ws, default_workspace),
+        is_builtin: config::workspace_paths_equal(ws, builtin),
     }
 }
 
-fn workspaces_response() -> crate::api_types::WorkspacesResponse {
-    let cfg = config::ensure_loaded();
+fn workspaces_response() -> Result<crate::api_types::WorkspacesResponse, String> {
+    let root = config::read_settings_json()?;
+    let settings = config::workspace_settings_from_json(&root);
     let builtin = config::builtin_workspaces_dir();
-    let default_workspace = cfg.resolve_workspace("");
-    let all = cfg.all_workspaces();
+    let default_workspace = settings.default_workspace;
+    let mut all = vec![default_workspace.clone()];
+    if !all
+        .iter()
+        .any(|path| config::workspace_paths_equal(path, &builtin))
+    {
+        all.push(builtin.clone());
+    }
+    for workspace in settings.workspaces {
+        if !all
+            .iter()
+            .any(|path| config::workspace_paths_equal(path, &workspace))
+        {
+            all.push(workspace);
+        }
+    }
 
     let workspaces = all
         .iter()
         .map(|ws| workspace_item(ws, &default_workspace, &builtin))
         .collect();
 
-    crate::api_types::WorkspacesResponse {
+    Ok(crate::api_types::WorkspacesResponse {
         workspaces,
         default_workspace: default_workspace.to_string_lossy().to_string(),
-    }
+    })
 }
 
 /// GET /api/workspaces -- list all workspaces.
-pub async fn list_workspaces_handler() -> Json<crate::api_types::WorkspacesResponse> {
-    Json(workspaces_response())
+pub async fn list_workspaces_handler(
+) -> Result<Json<crate::api_types::WorkspacesResponse>, (StatusCode, String)> {
+    super::run_blocking_io(|| {
+        workspaces_response()
+            .map(Json)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))
+    })
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -69,214 +90,132 @@ fn validate_workspace_name(name: &str) -> Result<String, (StatusCode, String)> {
 pub async fn add_workspace_handler(
     Json(body): Json<WorkspacePathBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let path = common::workspace::normalize_workspace_cwd(std::path::PathBuf::from(&body.path));
-    if !path.exists() || !path.is_dir() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!(
-                "Path does not exist or is not a directory: {}",
-                path.to_string_lossy()
-            ),
-        ));
-    }
-    let path_string = path.to_string_lossy().to_string();
-    config::update_settings_json(|root| {
-        if let Some(obj) = root.as_object_mut() {
-            let workspaces = obj
-                .entry("workspaces")
-                .or_insert_with(|| serde_json::json!([]));
-            if let Some(arr) = workspaces.as_array_mut() {
-                let val = serde_json::Value::String(path_string.clone());
-                if !arr.contains(&val) {
-                    arr.push(val);
-                }
-            }
+    super::run_blocking_io(move || {
+        let path = common::workspace::normalize_workspace_cwd(std::path::PathBuf::from(&body.path));
+        if !path.exists() || !path.is_dir() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Path does not exist or is not a directory: {}",
+                    path.to_string_lossy()
+                ),
+            ));
         }
-    })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        config::register_workspace_path(&path)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        let path_string = path.to_string_lossy().to_string();
 
-    Ok(Json(serde_json::json!({ "added": path_string })))
+        Ok(Json(serde_json::json!({ "added": path_string })))
+    })
+    .await
 }
 
 /// POST /api/workspaces/create -- create and register a workspace under the built-in root.
 pub async fn create_workspace_handler(
     Json(body): Json<CreateWorkspaceBody>,
 ) -> Result<Json<crate::api_types::CreateWorkspaceResponse>, (StatusCode, String)> {
-    let name = validate_workspace_name(&body.name)?;
-    let builtin = config::builtin_workspaces_dir();
-    let cfg = config::ensure_loaded();
-    let default_workspace = cfg.resolve_workspace("");
-    let path = default_workspace.join(name);
+    super::run_blocking_io(move || {
+        let name = validate_workspace_name(&body.name)?;
+        let root = config::read_settings_json()
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        let default_workspace = config::workspace_settings_from_json(&root).default_workspace;
+        let builtin = config::builtin_workspaces_dir();
+        let path = default_workspace.join(name);
 
-    if path.exists() && !path.is_dir() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!("Path exists but is not a directory: {}", path.display()),
-        ));
-    }
-    std::fs::create_dir_all(&path)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let path_string = path.to_string_lossy().to_string();
-    config::update_settings_json(|root| {
-        if let Some(obj) = root.as_object_mut() {
-            let workspaces = obj
-                .entry("workspaces")
-                .or_insert_with(|| serde_json::json!([]));
-            if let Some(arr) = workspaces.as_array_mut() {
-                let val = serde_json::Value::String(path_string.clone());
-                if !arr.contains(&val) {
-                    arr.push(val);
-                }
-            }
+        if path.exists() && !path.is_dir() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("Path exists but is not a directory: {}", path.display()),
+            ));
         }
-    })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        std::fs::create_dir_all(&path)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
-    let response = workspaces_response();
-    Ok(Json(crate::api_types::CreateWorkspaceResponse {
-        workspace: workspace_item(&path, &default_workspace, &builtin),
-        workspaces: response.workspaces,
-        default_workspace: response.default_workspace,
-    }))
+        config::register_workspace_path(&path)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+
+        let response =
+            workspaces_response().map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        Ok(Json(crate::api_types::CreateWorkspaceResponse {
+            workspace: workspace_item(&path, &default_workspace, &builtin),
+            workspaces: response.workspaces,
+            default_workspace: response.default_workspace,
+        }))
+    })
+    .await
 }
 
 /// POST /api/workspaces/remove -- remove a workspace path (cannot remove built-in).
 pub async fn remove_workspace_handler(
     Json(body): Json<WorkspacePathBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let path = std::path::PathBuf::from(&body.path);
-    let builtin = config::builtin_workspaces_dir();
-    let cfg = config::ensure_loaded();
-    let default_workspace = cfg.resolve_workspace("");
-    if paths_equal(&path, &default_workspace) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Cannot remove the default workspace".into(),
-        ));
-    }
-    if paths_equal(&path, &builtin) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Cannot remove the built-in workspace".into(),
-        ));
-    }
+    super::run_blocking_io(move || {
+        let path = std::path::PathBuf::from(&body.path);
+        config::remove_registered_workspace(&path)
+            .map_err(|error| remove_workspace_error(error, &path))?;
 
-    if !cfg
-        .all_workspaces()
-        .iter()
-        .any(|workspace| paths_equal(workspace, &path))
-    {
-        return Err((
-            StatusCode::NOT_FOUND,
-            format!("Workspace is not registered: {}", path.display()),
-        ));
-    }
-
-    config::remove_workspace_path(&path).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    common::agent_state::remove_workspace_references(&path)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    Ok(Json(serde_json::json!({ "removed": body.path })))
+        Ok(Json(serde_json::json!({ "removed": body.path })))
+    })
+    .await
 }
 
 /// PUT /api/workspaces/order -- reorder registered user workspaces.
 pub async fn reorder_workspaces_handler(
     Json(body): Json<WorkspaceOrderBody>,
 ) -> Result<Json<crate::api_types::WorkspacesResponse>, (StatusCode, String)> {
-    let cfg = config::ensure_loaded();
-    let builtin = config::builtin_workspaces_dir();
-    let mut seen = std::collections::HashSet::new();
-    let mut ordered = Vec::new();
-
-    for path in body.paths {
-        let path = std::path::PathBuf::from(path);
-        if paths_equal(&path, &builtin) || paths_equal(&path, &cfg.default_workspace) {
-            continue;
-        }
-        if cfg
-            .workspaces
-            .iter()
-            .any(|workspace| paths_equal(workspace, &path))
-            && seen.insert(path.clone())
-        {
-            ordered.push(path);
-        }
-    }
-
-    for workspace in &cfg.workspaces {
-        if paths_equal(workspace, &builtin) || paths_equal(workspace, &cfg.default_workspace) {
-            continue;
-        }
-        if seen.insert(workspace.clone()) {
-            ordered.push(workspace.clone());
-        }
-    }
-
-    config::update_settings_json(|root| {
-        if !root.is_object() {
-            *root = serde_json::json!({});
-        }
-        if let Some(obj) = root.as_object_mut() {
-            obj.insert(
-                "workspaces".into(),
-                serde_json::Value::Array(
-                    ordered
-                        .iter()
-                        .map(|path| serde_json::Value::String(path.to_string_lossy().to_string()))
-                        .collect(),
-                ),
-            );
-        }
+    super::run_blocking_io(move || {
+        let requested = body
+            .paths
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect::<Vec<_>>();
+        config::reorder_workspace_paths(&requested)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        workspaces_response()
+            .map(Json)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))
     })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    Ok(Json(workspaces_response()))
+    .await
 }
 
 /// PUT /api/workspaces/default -- set the default workspace root.
 pub async fn set_default_workspace_handler(
     Json(body): Json<WorkspacePathBody>,
 ) -> Result<Json<crate::api_types::WorkspacesResponse>, (StatusCode, String)> {
-    let path = common::workspace::normalize_workspace_cwd(std::path::PathBuf::from(&body.path));
-    std::fs::create_dir_all(&path)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let path_string = path.to_string_lossy().to_string();
-
-    config::update_settings_json(|root| {
-        if !root.is_object() {
-            *root = serde_json::json!({});
-        }
-        if let Some(obj) = root.as_object_mut() {
-            obj.insert(
-                "default_workspace".to_string(),
-                serde_json::Value::String(path_string.clone()),
-            );
-            if let Some(workspaces) = obj
-                .get_mut("workspaces")
-                .and_then(|value| value.as_array_mut())
-            {
-                workspaces.retain(|value| {
-                    value
-                        .as_str()
-                        .map(|candidate| !paths_equal(std::path::Path::new(candidate), &path))
-                        .unwrap_or(true)
-                });
-            }
-        }
+    super::run_blocking_io(move || {
+        let path = common::workspace::normalize_workspace_cwd(std::path::PathBuf::from(&body.path));
+        std::fs::create_dir_all(&path)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+        config::set_default_workspace_path(&path)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        workspaces_response()
+            .map(Json)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))
     })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    Ok(Json(workspaces_response()))
+    .await
 }
 
-fn paths_equal(left: &std::path::Path, right: &std::path::Path) -> bool {
-    left == right
-        || std::fs::canonicalize(left)
-            .ok()
-            .zip(std::fs::canonicalize(right).ok())
-            .map(|(left, right)| left == right)
-            .unwrap_or(false)
+fn remove_workspace_error(
+    error: config::RemoveWorkspaceError,
+    path: &std::path::Path,
+) -> (StatusCode, String) {
+    match error {
+        config::RemoveWorkspaceError::Default => (
+            StatusCode::BAD_REQUEST,
+            "Cannot remove the default workspace".to_string(),
+        ),
+        config::RemoveWorkspaceError::Builtin => (
+            StatusCode::BAD_REQUEST,
+            "Cannot remove the built-in workspace".to_string(),
+        ),
+        config::RemoveWorkspaceError::Unregistered => (
+            StatusCode::NOT_FOUND,
+            format!("Workspace is not registered: {}", path.display()),
+        ),
+        config::RemoveWorkspaceError::Storage(message) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, message)
+        }
+    }
 }
 
 #[cfg(test)]

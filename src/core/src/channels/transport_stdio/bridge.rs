@@ -20,6 +20,7 @@ use super::super::plugin_host::PluginHost;
 use super::super::plugin_runner::ChannelPluginRunner;
 use super::forwarder::forward_output_to_plugin;
 use super::handler::PluginAgentHandler;
+use super::StdioBridgeMessage;
 use crate::proc_log;
 use crate::process::acp_transport::notifying_stdio_transport;
 use crate::process::bridge::{BridgeExit, CancelSignal};
@@ -57,6 +58,7 @@ pub(crate) async fn run_acp_plugin_bridge(
         input_tx.clone(),
         ingress,
         plugin_host,
+        Arc::clone(&runtime),
     ));
     let (transport, mut stdio_closed) =
         notifying_stdio_transport(stdin.compat_write(), stdout.compat());
@@ -146,24 +148,35 @@ pub(crate) async fn run_acp_plugin_bridge(
                     label = fwd_channel,
                     event = "forwarder_started"
                 );
-                while let Some(output) = output_rx.recv().await {
-                    if requires_independent_forwarding(&output) {
-                        let permission_conn = forward_conn.clone();
-                        let permission_channel = fwd_channel.clone();
-                        let permission_host = Arc::clone(&forwarder_plugin_host);
-                        forward_conn.spawn(async move {
-                            forward_output(
-                                &permission_conn,
-                                &permission_channel,
-                                &permission_host,
-                                output,
-                            )
-                            .await;
-                            Ok(())
-                        })?;
-                    } else {
-                        forward_output(&forward_conn, &fwd_channel, &forwarder_plugin_host, output)
-                            .await;
+                while let Some(message) = output_rx.recv().await {
+                    match message {
+                        StdioBridgeMessage::Output(output) => {
+                            if requires_independent_forwarding(&output) {
+                                let permission_conn = forward_conn.clone();
+                                let permission_channel = fwd_channel.clone();
+                                let permission_host = Arc::clone(&forwarder_plugin_host);
+                                forward_conn.spawn(async move {
+                                    forward_output(
+                                        &permission_conn,
+                                        &permission_channel,
+                                        &permission_host,
+                                        output,
+                                    )
+                                    .await
+                                })?;
+                            } else {
+                                forward_output(
+                                    &forward_conn,
+                                    &fwd_channel,
+                                    &forwarder_plugin_host,
+                                    output,
+                                )
+                                .await?;
+                            }
+                        }
+                        StdioBridgeMessage::Barrier(reply) => {
+                            let _ = reply.send(Ok(()));
+                        }
                     }
                 }
                 proc_log!(
@@ -257,18 +270,21 @@ async fn forward_output(
     channel_kind: &str,
     plugin_host: &Arc<PluginHost>,
     output: super::super::ChannelOutput,
-) {
+) -> acp::Result<()> {
     let route = output.route_key().clone();
-    if let Err(error) = forward_output_to_plugin(conn, channel_kind, plugin_host, output).await {
-        proc_log!(
-            warn,
-            kind = ProcessKind::ChannelPlugin,
-            label = channel_kind,
-            event = "forward_output_failed",
-            route = %route,
-            error = %error
-        );
-    }
+    forward_output_to_plugin(conn, channel_kind, plugin_host, output)
+        .await
+        .map_err(|error| {
+            proc_log!(
+                warn,
+                kind = ProcessKind::ChannelPlugin,
+                label = channel_kind,
+                event = "forward_output_failed",
+                route = %route,
+                error = %error
+            );
+            acp::Error::new(-32603, error)
+        })
 }
 
 #[cfg(test)]
@@ -279,7 +295,7 @@ mod tests {
 
     use super::{requires_independent_forwarding, BridgeCleanup};
     use crate::channels::plugin_host::PluginHost;
-    use crate::channels::transport_stdio::StdioPluginRuntime;
+    use crate::channels::transport_stdio::{StdioBridgeMessage, StdioPluginRuntime};
     use crate::channels::ChannelOutput;
     use crate::routing::RouteKey;
 
@@ -332,6 +348,9 @@ mod tests {
             reply_to: None,
         };
         host.send_output(output.clone());
-        assert_eq!(new_rx.recv().await, Some(output));
+        let Some(StdioBridgeMessage::Output(received)) = new_rx.recv().await else {
+            panic!("expected replacement runtime output");
+        };
+        assert_eq!(received, output);
     }
 }

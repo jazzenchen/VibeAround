@@ -50,7 +50,7 @@ async fn install_channel_plugin<R: Runtime>(
     cancelled: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     let progress_id = format!("channels.plugins.{channel_id}");
-    if crate::onboarding::check_plugin_status(channel_id.to_string()) == "ready" {
+    if crate::onboarding::plugin_install::check_plugin_status_sync(channel_id) == "ready" {
         emit_progress_event(
             app,
             run_id,
@@ -79,7 +79,6 @@ async fn install_channel_plugin<R: Runtime>(
     let result = crate::onboarding::plugin_install::run_install_inner_with_progress(
         crate::onboarding::plugin_install::InstallPluginRequest {
             plugin_id: channel_id.to_string(),
-            github_url: plugin.github.clone(),
         },
         |line| {
             emit_progress_event(

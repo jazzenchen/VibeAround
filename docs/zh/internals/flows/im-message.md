@@ -35,20 +35,20 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► bo
 **6. Route → thread runtime。** `resolve_route_runtime` 查 route 的 attachment：已附着的 open thread → 对应 runtime；没有 attachment → 创建 default workspace、持久化一个新 thread event、把 route 附着上去。升级旧插件后的第一条 extended-route 消息会在 migration lock 下接管并分离 legacy `(kind, kind, chat)` attachment。不同 instance、actor 与 topic 可映射到不同 thread；host runtime registry 与 SDK renderer 已按扩展 route/target 隔离，但 settings/UI 仍只暴露每种 channel kind 一个配置实例。
 → `src/core/src/workspace/manager.rs` (`resolve_route_runtime`)
 
-**7. Ensure agent + session。** `ThreadRuntime` 将持久 session identity 与 live `AcpSessionRunner` 分开；runner 拥有一代 Agent 与 handler。死掉的一代会整体替换。Agent spawn 注册到 supervisor（restart policy `Never`）；在 ACP initialize 成功前由 cancellation-safe pending owner 持有 registration，Stop/abort 会自动 unregister 并 reap child；之后再创建或 resume 已记录的 CLI session。IM attachment 可 rehydrate，但不会重放旧 output。
+**7. Ensure agent + session。** `ThreadRuntime` 将持久 session identity 与 live `AcpSessionRunner` 分开；runner 拥有一代 Agent 与 handler。死掉的一代会整体替换。Agent spawn 注册到 supervisor（restart policy `Never`）；在 ACP initialize 成功前由 cancellation-safe pending owner 持有 registration，Stop/abort 会自动 unregister 并 reap child；之后再创建或 resume 已记录的 CLI session。IM attachment 可 rehydrate，但不会重放旧 output；warm pool 回收会保留同一个 runtime/thread/profile/session，下一条消息从中恢复。
 → `src/core/src/workspace/threads/runtime.rs` (`ensure_agent`, `ensure_session`)
 
 **8. Prompt。** 文本 + attachment resource links 转成 ACP content blocks，发送 `session/prompt`。完整 route lane 与 thread prompt lock 同时生效。只有拿到 prompt lock 后，`ThreadRuntime` 才安装本 turn 的临时 `ChannelTarget`：持久 route 加入站平台 message id 对应的 `replyTo`；generation guard 会在正常完成、取消、报错或 task drop 时清除它。
 → `runtime.rs` (`prompt`), `src/core/src/channels/prompt/mod.rs` (content blocks)
 
-**9. Notifications → outputs。** Host agent 的每个 ACP `session_notification` 都包成 thread reply，再实时发送给 thread 附着的 routes；即使 turn 中途 attachment 改变，当前 origin 也会保留。只有 origin 携带临时 `replyTo`，其它附着界面只收到 live thread event。SDK 以完整 `(instance, actor, chat, topic, replyTo)` 隔离 renderer 与 delivery state。
+**9. Notifications → outputs。** Host agent 的每个 ACP `session_notification` 都包成 thread reply，再实时发送给 thread 附着的 routes。对于 stdio plugin，这个 wrapper 通过 VibeAround 扩展通知 `va/thread_reply` 发送，并不是标准 ACP `session/update` wire method。即使 turn 中途 attachment 改变，当前 origin 也会保留；只有 origin 携带临时 `replyTo`，其它附着界面只收到 live thread event。stdio prompt 路径会先转发这些通知，再返回对应的 ACP prompt response，SDK 随后才能封口并 drain renderer delivery。SDK 以完整 `(instance, actor, chat, topic, replyTo)` 隔离 renderer 与 delivery state。
 → `src/core/src/channels/bridge_handler.rs` (`session_notification`)
 
 **10. Output → chat。** `PluginHost` 按 `channel_instance_id` 把 output 路由到当前 live plugin runtime。有界内存缓冲负责背压，但 IM 输出不落盘、不在重启后 replay。Runtime 不存在或已断开时，当前 output 被丢弃并记录；无法投递的 permission 会被取消，避免 Agent 永久等待。
 → `src/core/src/channels/plugin_host.rs` (`send_output`), `plugin_runner.rs`
 
-**尾声。** Turn 结束后：`PromptDone`（typing indicator 关闭），错误以 `❌` system text 发送（auth errors 会自动关闭 thread），并为 host agent 安排 10 分钟 idle shutdown。Thread 和 session id 持久保留；下一条消息会透明 respawn。
-→ `src/core/src/channels/prompt/mod.rs` (`handle_prompt_input`), `manager.rs` (idle shutdown)
+**尾声。** Turn 结束后，Web/TUI consumer 收到 `TurnStatus { active: false }`；stdio plugin 则依赖上面的 notification-before-response 边界完成收尾。Host 保持 warm；错误以 `❌` system text 发送（auth errors 会自动关闭 thread）。这里不会安排逐回合 idle-shutdown 计时器。另一个独立步骤是：真正的新 Host 启动后，超软上限的池最多回收一个符合条件、最近最少活动的 Thread；存在任何常驻子 Agent 的 Thread 都不合格，没有候选者就允许 soft overflow。
+→ `src/core/src/channels/prompt/handler.rs`（启动后 reconcile），`workspace/manager_routes.rs`（warm Thread 选择）
 
 ## 路径上的失败行为
 

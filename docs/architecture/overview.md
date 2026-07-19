@@ -98,7 +98,7 @@ Where each responsibility lives. Every runtime module also has a deep-dive page 
 
 7. **Prompt and stream back.** The prompt goes to the agent over ACP. Notifications stream back — text chunks, tool-call summaries, permission requests — and are fanned out to every route attached to the thread. Permission requests render as interactive cards; the tap comes back as a callback and resolves the agent's pending request.
 
-8. **Idle wind-down.** After the turn, a 10-minute idle timer starts. Expiry shuts the agent process down; the thread stays open, and the next message respawns the agent and resumes the same session.
+8. **Keep warm, evict under pressure.** After the turn, the host stays resident for fast reuse; neither Web nor IM starts a fixed idle-shutdown timer. After a genuinely new host starts, an over-limit warm pool may evict at most one eligible least-recently-active host. The thread runtime and CLI session stay intact, so the next message resumes if that host was evicted. See [Timers and limits](../reference/timers-and-limits.md#sizes-and-counts).
 
 ## Journey 2: launching an agent CLI in your terminal
 

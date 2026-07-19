@@ -402,10 +402,10 @@ pub struct PreviewsResponse {
 /// string-sniffing a free-form JSON blob.
 ///
 /// Lifecycle events (config / agent_ready / session_ready /
-/// command_menu / permission_request / system_text / error) are
-/// dashboard meta — our own addition on top of ACP. Streaming tokens /
-/// tool calls / turn completion all arrive as raw ACP
-/// `SessionNotification` payloads under the `acp_notification` kind.
+/// command_menu / permission_request / turn_status / system_text / error)
+/// are dashboard meta — our own addition on top of ACP. Streaming tokens
+/// and tool calls arrive as raw ACP `SessionNotification` payloads under
+/// the `acp_notification` kind.
 /// The frontend imports the matching TS types from
 /// `@agentclientprotocol/sdk`, so there is no hand-written schema on
 /// top of ACP.
@@ -423,7 +423,7 @@ pub struct PreviewsResponse {
 /// { "kind": "subagent_status", "agent": { ... } }
 /// { "kind": "subagent_acp_notification", "agent": { ... }, "payload": { ... } }
 /// { "kind": "command_menu", "system_commands": [...], "agent_commands": [...] }
-/// { "kind": "prompt_done", "message_id": "01HX..." }
+/// { "kind": "turn_status", "active": false }
 /// { "kind": "error", "error": "spawn failed: ..." }
 /// ```
 #[derive(Debug, Clone, Serialize)]
@@ -462,10 +462,6 @@ pub enum ChatEvent {
     SubagentAcpNotification {
         agent: common::workspace::threads::ThreadAgent,
         payload: serde_json::Value,
-    },
-    PromptDone {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        message_id: Option<String>,
     },
     TurnStatus {
         active: bool,

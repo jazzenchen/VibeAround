@@ -183,42 +183,46 @@ impl WorkspaceThreadManager {
         Ok(entries)
     }
 
-    pub async fn schedule_route_host_idle_shutdown(
+    pub(crate) async fn reconcile_warm_thread_pool(
         self: &Arc<Self>,
-        route: &RouteKey,
-    ) -> anyhow::Result<()> {
-        if let Some(runtime) = self.active_runtime_for_route(route).await? {
-            self.schedule_host_idle_shutdown(runtime.state().await.thread_id)
-                .await;
-        }
-        Ok(())
-    }
-
-    pub async fn schedule_host_idle_shutdown(self: &Arc<Self>, thread_id: WorkspaceThreadId) {
-        self.schedule_host_idle_shutdown_after(thread_id, AGENT_HOST_IDLE_SHUTDOWN_DELAY)
-            .await;
-    }
-
-    pub async fn schedule_host_idle_shutdown_after(
-        self: &Arc<Self>,
-        thread_id: WorkspaceThreadId,
-        delay: Duration,
+        protected_thread_id: &WorkspaceThreadId,
     ) {
-        let Some(runtime) = self.runtimes.get(&thread_id).await else {
+        let now = tokio::time::Instant::now();
+        let entries = self.runtimes.entries().await;
+        let resident_count = entries
+            .iter()
+            .filter(|(_, runtime)| runtime.thread_activity().live)
+            .count();
+        if resident_count <= MAX_WARM_THREADS {
+            return;
+        }
+
+        let candidate = oldest_evictable_warm_thread(
+            entries.into_iter().map(|(thread_id, runtime)| {
+                let activity = runtime.thread_activity();
+                (thread_id, runtime, activity)
+            }),
+            protected_thread_id,
+            now,
+        );
+
+        let Some((thread_id, runtime, activity)) = candidate else {
+            tracing::debug!(
+                resident_count,
+                max_warm_threads = MAX_WARM_THREADS,
+                "warm thread pool temporarily exceeds its soft limit"
+            );
             return;
         };
-        let generation = runtime.idle_generation();
-        let manager = Arc::clone(self);
-        tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
-            if !runtime.shutdown_host_if_idle(generation).await {
-                return;
-            }
-            manager
-                .runtimes
-                .remove_if_current(thread_id, Arc::clone(&runtime));
-            manager.notify_change();
-        });
+
+        if runtime.evict_if_idle(activity.generation).await {
+            tracing::info!(
+                thread_id = %thread_id,
+                resident_count,
+                max_warm_threads = MAX_WARM_THREADS,
+                "evicted least-recently-used warm thread"
+            );
+        }
     }
 
     pub async fn shutdown_all(&self) {
@@ -271,5 +275,131 @@ impl WorkspaceThreadManager {
             .context("append route attachment")?;
         self.notify_change();
         Ok(())
+    }
+}
+
+fn oldest_evictable_warm_thread<T>(
+    candidates: impl IntoIterator<
+        Item = (
+            WorkspaceThreadId,
+            T,
+            crate::workspace::threads::runtime::ThreadActivitySnapshot,
+        ),
+    >,
+    protected_thread_id: &WorkspaceThreadId,
+    now: tokio::time::Instant,
+) -> Option<(
+    WorkspaceThreadId,
+    T,
+    crate::workspace::threads::runtime::ThreadActivitySnapshot,
+)> {
+    candidates
+        .into_iter()
+        .filter(|(thread_id, _, activity)| {
+            thread_id != protected_thread_id
+                && activity.live
+                && !activity.busy
+                && !activity.has_subagents
+                && now.duration_since(activity.last_activity_at) >= WARM_THREAD_MIN_IDLE
+        })
+        .min_by_key(|(_, _, activity)| activity.last_activity_at)
+}
+
+#[cfg(test)]
+mod warm_thread_tests {
+    use super::*;
+    use crate::workspace::threads::runtime::ThreadActivitySnapshot;
+
+    fn activity(
+        now: tokio::time::Instant,
+        idle_for: Duration,
+        live: bool,
+        busy: bool,
+        has_subagents: bool,
+    ) -> ThreadActivitySnapshot {
+        ThreadActivitySnapshot {
+            live,
+            busy,
+            has_subagents,
+            generation: 1,
+            last_activity_at: now - idle_for,
+        }
+    }
+
+    #[test]
+    fn warm_thread_eviction_selects_the_oldest_eligible_thread() {
+        let now = tokio::time::Instant::now();
+        let protected = WorkspaceThreadId::from("new");
+        let candidates = vec![
+            (
+                WorkspaceThreadId::from("new"),
+                (),
+                activity(now, Duration::from_secs(30 * 60), true, false, false),
+            ),
+            (
+                WorkspaceThreadId::from("recent"),
+                (),
+                activity(now, Duration::from_secs(9 * 60), true, false, false),
+            ),
+            (
+                WorkspaceThreadId::from("old"),
+                (),
+                activity(now, Duration::from_secs(20 * 60), true, false, false),
+            ),
+            (
+                WorkspaceThreadId::from("oldest"),
+                (),
+                activity(now, Duration::from_secs(30 * 60), true, false, false),
+            ),
+        ];
+
+        let selected = oldest_evictable_warm_thread(candidates, &protected, now)
+            .expect("an old idle host should be eligible");
+
+        assert_eq!(selected.0, WorkspaceThreadId::from("oldest"));
+    }
+
+    #[test]
+    fn warm_thread_eviction_excludes_unsafe_candidates() {
+        let now = tokio::time::Instant::now();
+        let protected = WorkspaceThreadId::from("new");
+        let old = Duration::from_secs(20 * 60);
+        let candidates = vec![
+            (
+                WorkspaceThreadId::from("busy"),
+                (),
+                activity(now, old, true, true, false),
+            ),
+            (
+                WorkspaceThreadId::from("subagents"),
+                (),
+                activity(now, old, true, false, true),
+            ),
+            (
+                WorkspaceThreadId::from("stopped"),
+                (),
+                activity(now, old, false, false, false),
+            ),
+            (
+                WorkspaceThreadId::from("recent"),
+                (),
+                activity(now, Duration::from_secs(9 * 60), true, false, false),
+            ),
+        ];
+
+        assert!(oldest_evictable_warm_thread(candidates, &protected, now).is_none());
+    }
+
+    #[test]
+    fn warm_thread_is_eligible_at_the_idle_threshold() {
+        let now = tokio::time::Instant::now();
+        let protected = WorkspaceThreadId::from("new");
+        let candidates = vec![(
+            WorkspaceThreadId::from("exactly-ten-minutes"),
+            (),
+            activity(now, WARM_THREAD_MIN_IDLE, true, false, false),
+        )];
+
+        assert!(oldest_evictable_warm_thread(candidates, &protected, now).is_some());
     }
 }

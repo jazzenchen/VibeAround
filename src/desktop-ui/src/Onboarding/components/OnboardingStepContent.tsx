@@ -95,8 +95,8 @@ export function OnboardingStepContent({
     key: keyof ChannelVerboseConfig,
     value: boolean,
   ) => void;
-  onInstallPlugin: (pluginId: string, githubUrl: string) => void;
-  onStartAuth: (pluginId: string) => void;
+  onInstallPlugin: (pluginId: string) => void;
+  onStartAuth: (pluginId: string, params?: Record<string, unknown>) => void;
   onCancelAuth: (pluginId: string) => void;
   onNgrokToken: (value: string) => void;
   onNgrokDomain: (value: string) => void;

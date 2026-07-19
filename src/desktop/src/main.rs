@@ -249,9 +249,7 @@ fn main() {
         .manage(OnboardingGate {
             notify: Arc::clone(&gate),
         })
-        .manage(OnboardingSessions {
-            plugin_sessions: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        })
+        .manage(OnboardingSessions::default())
         .manage(OnboardingActive(std::sync::atomic::AtomicBool::new(
             onboarding_needed,
         )))

@@ -139,7 +139,6 @@ export interface DiscoveredChannelPlugin {
   source: "user" | "project";
   /** Directory name on disk; may differ from id when plugin.json declares a different id. */
   dirName: string;
-  supportsQrcodeLogin: boolean;
   configSchema?: ConfigSchema;
   capabilities: PluginCapabilities;
 }
@@ -162,6 +161,7 @@ export interface AuthFlowState {
   status: AuthFlowStatus;
   message: string;
   qrCodeUrl?: string;
+  pairingCode?: string;
   sessionKey?: string;
   resultData?: Record<string, unknown>;
 }
@@ -181,8 +181,8 @@ export interface StepChannelsProps {
     key: keyof ChannelVerboseConfig,
     value: boolean,
   ) => void;
-  onInstallPlugin: (pluginId: string, githubUrl: string) => void;
-  onStartAuth: (pluginId: string) => void;
+  onInstallPlugin: (pluginId: string) => void;
+  onStartAuth: (pluginId: string, params?: Record<string, unknown>) => void;
   onCancelAuth: (pluginId: string) => void;
   switchSize?: "sm" | "default";
   compact?: boolean;

@@ -10,6 +10,7 @@ pub(super) struct TurnState {
     pub(super) host_agent: Option<Arc<Agent>>,
     pub(super) subagents: BTreeMap<ThreadAgentId, SubagentRuntime>,
     pub(super) activity_generation: u64,
+    pub(super) last_activity_at: Instant,
 }
 
 pub(super) struct PromptCommand {
@@ -25,7 +26,7 @@ pub(super) struct StartCommand {
     pub(super) runtime: Arc<ThreadRuntime>,
     pub(super) route: RouteKey,
     pub(super) handler: Arc<dyn AgentClientHandler>,
-    pub(super) reply: oneshot::Sender<acp::Result<String>>,
+    pub(super) reply: oneshot::Sender<acp::Result<ThreadRuntimeStart>>,
 }
 
 pub(super) struct RuntimeCommand<T> {
@@ -57,7 +58,7 @@ pub(super) enum ThreadOwnerCommand {
     Cancel(RuntimeCommand<acp::Result<()>>),
     Close(Box<CloseCommand>),
     ShutdownHost(RuntimeCommand<()>),
-    ShutdownHostIfIdle {
+    EvictIfIdle {
         runtime: Arc<ThreadRuntime>,
         generation: u64,
         reply: oneshot::Sender<bool>,
@@ -94,6 +95,7 @@ pub(super) struct ThreadOwner {
     pub(super) thread: WorkspaceThread,
     pub(super) subagents: BTreeMap<ThreadAgentId, SubagentRuntime>,
     pub(super) activity_generation: u64,
+    pub(super) last_activity_at: Instant,
 }
 
 impl ThreadOwner {
@@ -118,7 +120,7 @@ impl ThreadOwner {
                     command,
                     ThreadOwnerCommand::Prompt(_)
                         | ThreadOwnerCommand::Start(_)
-                        | ThreadOwnerCommand::ShutdownHostIfIdle { .. }
+                        | ThreadOwnerCommand::EvictIfIdle { .. }
                         | ThreadOwnerCommand::SwitchProfile(_)
                 )
             {
@@ -157,12 +159,12 @@ impl ThreadOwner {
                     self.shutdown_host_contents(&command.runtime).await;
                     let _ = command.reply.send(());
                 }
-                ThreadOwnerCommand::ShutdownHostIfIdle {
+                ThreadOwnerCommand::EvictIfIdle {
                     runtime,
                     generation,
                     reply,
                 } => {
-                    let stopped = self.shutdown_host_if_idle(&runtime, generation).await;
+                    let stopped = self.evict_if_idle(&runtime, generation).await;
                     let _ = reply.send(stopped);
                 }
                 ThreadOwnerCommand::SwitchProfile(command) => {
@@ -177,6 +179,7 @@ impl ThreadOwner {
                 ThreadOwnerCommand::PromptFinished { result, reply } => {
                     let result = *result;
                     prompt_active = false;
+                    self.record_activity();
                     self.set_turn_state(
                         false,
                         result.as_ref().err().map(|error| error.message.to_string()),
@@ -205,10 +208,8 @@ impl ThreadOwner {
                     }
                 }
                 ThreadOwnerCommand::Touch => {
-                    self.activity_generation = self.activity_generation.wrapping_add(1);
-                    let mut state = self.state_tx.borrow().clone();
-                    state.activity_generation = self.activity_generation;
-                    self.state_tx.send_replace(state);
+                    self.record_activity();
+                    self.publish_activity();
                 }
                 #[cfg(test)]
                 ThreadOwnerCommand::Probe { started, release } => {
@@ -305,7 +306,10 @@ impl ThreadOwner {
                 biased;
                 _ = wait_for_signal(&mut turn_cancellation) => {
                     let _ = agent.cancel(acp::CancelNotification::new(session_id.clone())).await;
-                    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                    let shutdown_agent = Arc::clone(&agent);
+                    await_cancelled_prompt(prompt.as_mut(), ACP_CANCEL_GRACE, move || async move {
+                        shutdown_agent.shutdown().await;
+                    }).await
                 }
                 result = &mut prompt => result,
             };
@@ -325,7 +329,7 @@ impl ThreadOwner {
     }
 
     async fn finish_prompt_inline(
-        &self,
+        &mut self,
         handler: Arc<dyn AgentClientHandler>,
         result: acp::Result<acp::PromptResponse>,
         reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
@@ -338,6 +342,7 @@ impl ThreadOwner {
                 "host prompt_finished hook failed"
             );
         }
+        self.record_activity();
         self.set_turn_state(
             false,
             result.as_ref().err().map(|error| error.message.to_string()),
@@ -350,9 +355,16 @@ impl ThreadOwner {
         runtime: &ThreadRuntime,
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
-    ) -> acp::Result<String> {
+    ) -> acp::Result<ThreadRuntimeStart> {
+        let host_started = self.host.as_ref().is_none_or(|host| !host.is_live());
         let agent = self.ensure_agent(runtime, route, handler).await?;
-        self.ensure_session(runtime, &agent).await
+        let session_id = self.ensure_session(runtime, &agent).await?;
+        self.record_activity();
+        self.publish_activity();
+        Ok(ThreadRuntimeStart {
+            session_id,
+            host_started,
+        })
     }
 
     fn cancel(&mut self, runtime: &ThreadRuntime, prompt_active: bool) -> acp::Result<()> {
@@ -383,15 +395,23 @@ impl ThreadOwner {
     }
 
     async fn shutdown_host_contents(&mut self, runtime: &ThreadRuntime) {
+        self.shutdown_agent_processes(runtime, true).await;
+    }
+
+    async fn shutdown_agent_processes(&mut self, runtime: &ThreadRuntime, cleanup_previews: bool) {
         runtime.active_turn_target.cancel_current();
-        if let Some(session_id) = &self.session_id {
-            crate::previews::kill_by_session(session_id);
+        if cleanup_previews {
+            if let Some(session_id) = &self.session_id {
+                crate::previews::kill_by_session(session_id);
+            }
         }
         if let Some(host) = self.host.take() {
             host.shutdown().await;
         }
         for (_, subagent) in std::mem::take(&mut self.subagents) {
-            crate::previews::kill_by_session(&subagent.session_id);
+            if cleanup_previews {
+                crate::previews::kill_by_session(&subagent.session_id);
+            }
             subagent.agent.shutdown().await;
         }
         let mut state = self.state_tx.borrow().clone();
@@ -401,14 +421,16 @@ impl ThreadOwner {
         runtime.notify_change();
     }
 
-    async fn shutdown_host_if_idle(&mut self, runtime: &ThreadRuntime, generation: u64) -> bool {
-        if self.activity_generation != generation
-            || self.host.is_none()
-            || !self.subagents.is_empty()
-        {
+    async fn evict_if_idle(&mut self, runtime: &ThreadRuntime, generation: u64) -> bool {
+        let has_live_agent = self.host.as_ref().is_some_and(|host| host.is_live())
+            || self
+                .subagents
+                .values()
+                .any(|subagent| subagent.agent.is_live());
+        if self.activity_generation != generation || !has_live_agent || !self.subagents.is_empty() {
             return false;
         }
-        self.shutdown_host_contents(runtime).await;
+        self.shutdown_agent_processes(runtime, false).await;
         true
     }
 
@@ -651,7 +673,21 @@ impl ThreadOwner {
         let mut state = self.state_tx.borrow().clone();
         state.busy = busy;
         state.failed = failed;
+        state.activity_generation = self.activity_generation;
+        state.last_activity_at = self.last_activity_at;
         self.set_state(state);
+    }
+
+    fn record_activity(&mut self) {
+        self.activity_generation = self.activity_generation.wrapping_add(1);
+        self.last_activity_at = Instant::now();
+    }
+
+    fn publish_activity(&self) {
+        let mut state = self.state_tx.borrow().clone();
+        state.activity_generation = self.activity_generation;
+        state.last_activity_at = self.last_activity_at;
+        self.state_tx.send_replace(state);
     }
 
     fn publish_runtime_state(&self) {
@@ -661,6 +697,7 @@ impl ThreadOwner {
         state.host_agent = self.host.as_ref().map(|host| Arc::clone(&host.agent));
         state.subagents = self.subagents.clone();
         state.activity_generation = self.activity_generation;
+        state.last_activity_at = self.last_activity_at;
         self.set_state(state);
     }
 }

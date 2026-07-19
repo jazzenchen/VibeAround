@@ -32,12 +32,6 @@ pub struct PluginAuthCapabilities {
     pub methods: Vec<String>,
 }
 
-impl PluginAuthCapabilities {
-    pub fn supports_qrcode_login(&self) -> bool {
-        self.methods.iter().any(|method| method == "qrcode_login")
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PluginCapabilities {
     #[serde(default, rename = "interactiveCards")]
@@ -61,15 +55,6 @@ pub enum TopicConversationScope {
     Chat,
     #[default]
     Topic,
-}
-
-impl PluginCapabilities {
-    pub fn supports_qrcode_login(&self) -> bool {
-        self.auth
-            .as_ref()
-            .map(PluginAuthCapabilities::supports_qrcode_login)
-            .unwrap_or(false)
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -129,7 +114,6 @@ pub struct DiscoveredPluginSummary {
     pub source: PluginSource,
     /// Directory name on disk (may differ from `id` in plugin.json).
     pub dir_name: String,
-    pub supports_qrcode_login: bool,
     pub config_schema: Option<serde_json::Value>,
     pub capabilities: PluginCapabilities,
 }
@@ -151,7 +135,6 @@ impl From<&DiscoveredPlugin> for DiscoveredPluginSummary {
             entry: plugin.manifest.entry.clone(),
             source: plugin.source.clone(),
             dir_name,
-            supports_qrcode_login: plugin.manifest.capabilities.supports_qrcode_login(),
             config_schema: plugin.manifest.config_schema.clone(),
             capabilities: plugin.manifest.capabilities.clone(),
         }

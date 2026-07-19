@@ -20,7 +20,7 @@
 
 | 命令 | 效果 |
 |---|---|
-| `/new` | 关闭当前 Thread，在同一 Workspace 开一个新的 |
+| `/new` | 关闭当前 Thread，使用该渠道配置的 Agent/Profile 在同一 Workspace 开一个新的 |
 | `/close` | 关闭 Thread；下一条消息会开始新的 |
 | `/status` | 显示 thread id、Workspace、宿主 Agent、Profile、Session、忙闲状态 |
 | `/help`（或 `/commands`、`/va`） | 显示命令帮助 |

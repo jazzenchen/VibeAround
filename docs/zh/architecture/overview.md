@@ -98,7 +98,7 @@
 
 7. **提示与流式回传。** 提示经 ACP 发给 Agent。通知流回来 —— 文本块、工具调用摘要、权限请求 —— 并扇出到附着在该 Thread 上的每条 Route。权限请求渲染为交互卡片；点按以回调返回，解除 Agent 的等待。
 
-8. **闲时收尾。** 回合结束后启动 10 分钟闲置计时。到期关停 Agent 进程；Thread 保持开启，下一条消息重新拉起 Agent 并恢复同一个 Session。
+8. **保持 warm，压力下回收。** 回合结束后 Host 继续常驻，便于快速复用；Web 和 IM 都不会启动固定的闲置关停计时器。真正的新 Host 启动后，如果 warm pool 超过软上限，最多回收一个符合条件、最近最少活动的 Host。Thread runtime 与 CLI Session 保持完整，被回收的 Host 会在下一条消息时恢复。见[计时器与上限](../reference/timers-and-limits.md#大小与数量)。
 
 ## 旅程二：在你的终端里启动 Agent CLI
 

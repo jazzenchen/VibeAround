@@ -6,6 +6,7 @@
     "name": "Telegram",
     "description": "Use a BotFather token to chat with VibeAround in Telegram.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-telegram",
+    "revision": "02bdeaf2ad0aa173943696505638ed11253953b3",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -15,6 +16,7 @@
     "name": "Feishu (Lark)",
     "description": "Provide app credentials for your Feishu bot integration.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-feishu",
+    "revision": "bb5ff146deae04b237befe61e4c507cd54406e79",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -24,6 +26,7 @@
     "name": "Discord",
     "description": "Use a Discord bot token to chat via @mention or DM.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-discord",
+    "revision": "20e4d33edcdb056ddd27dcaf4c5471c97a074d92",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -33,6 +36,7 @@
     "name": "Slack",
     "description": "Use a Slack bot with Socket Mode to chat via DM.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-slack",
+    "revision": "d5af1ab59590da71f008b3dfe818308240c24b41",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -42,6 +46,7 @@
     "name": "WeChat",
     "description": "Connect via QR code authorization through OpenClaw bridge.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-weixin-openclaw-bridge",
+    "revision": "77ad31ab0353c8023038c88f0ddff9010ec3038c",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -49,8 +54,9 @@
     "kind": "channel",
     "slug": "va-plugin-channel-whatsapp",
     "name": "WhatsApp",
-    "description": "Connect WhatsApp via QR code login.",
+    "description": "Connect WhatsApp with a phone-number pairing code.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-whatsapp",
+    "revision": "6c0980a0f1f9eac1ef550ff9973d8cc74b89ac8a",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -60,6 +66,7 @@
     "name": "DingTalk",
     "description": "Connect DingTalk via Stream API (no public IP required).",
     "github": "https://github.com/jazzenchen/va-plugin-channel-dingtalk",
+    "revision": "736e8a1e852dad506be26c453749c0c03df758c0",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -69,6 +76,7 @@
     "name": "WeCom",
     "description": "Connect WeCom (企业微信) AI Bot via WebSocket persistent connection.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-wecom",
+    "revision": "c377a702c98d959f31ae6046747f091fe3b5475d",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -78,6 +86,7 @@
     "name": "QQ Bot",
     "description": "Connect QQ Guild Bot via WebSocket gateway (no public IP required).",
     "github": "https://github.com/jazzenchen/va-plugin-channel-qqbot",
+    "revision": "334528041fffb594ad3b9c1b7b585fbc12c3b26d",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {
@@ -86,6 +95,7 @@
     "name": "VibeAround Search Tool",
     "description": "Host-side web search runtime for Exa, Tavily, Grok, and Brave.",
     "github": "https://github.com/jazzenchen/va-search-tool",
+    "revision": "b6e5cdc13f92d4397bbe5cb61a900de1865ef07a",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   }
 ]

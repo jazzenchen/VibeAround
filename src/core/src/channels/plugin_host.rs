@@ -58,6 +58,11 @@ enum HostCommand {
         instance_id: ChannelInstanceId,
         runtime: Arc<StdioPluginRuntime>,
     },
+    StdioOutputBarrier {
+        instance_id: ChannelInstanceId,
+        runtime: Arc<StdioPluginRuntime>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     SendOutput(Box<ChannelOutput>),
     RegisterPermission {
         request_id: String,
@@ -186,6 +191,23 @@ impl PluginHost {
             .send(HostCommand::SendOutput(Box::new(output)));
     }
 
+    pub(crate) async fn wait_for_stdio_output(
+        &self,
+        instance_id: &str,
+        runtime: &Arc<StdioPluginRuntime>,
+    ) -> Result<(), String> {
+        let (reply, done) = oneshot::channel();
+        self.command_tx
+            .send(HostCommand::StdioOutputBarrier {
+                instance_id: instance_id.to_string(),
+                runtime: Arc::clone(runtime),
+                reply,
+            })
+            .map_err(|_| "plugin host is shut down".to_string())?;
+        done.await
+            .unwrap_or_else(|_| Err("ACP plugin output barrier was dropped".to_string()))
+    }
+
     pub async fn shutdown_all(&self) {
         let (reply, done) = oneshot::channel();
         let _ = self.command_tx.send(HostCommand::Shutdown(reply));
@@ -268,6 +290,23 @@ impl PluginHostOwner {
                         Some(PluginRuntime::Stdio(current)) if Arc::ptr_eq(current, &runtime)
                     ) {
                         self.runtimes.remove(&instance_id);
+                    }
+                }
+                HostCommand::StdioOutputBarrier {
+                    instance_id,
+                    runtime,
+                    reply,
+                } => {
+                    if matches!(
+                        self.runtimes.get(&instance_id),
+                        Some(PluginRuntime::Stdio(current)) if Arc::ptr_eq(current, &runtime)
+                    ) {
+                        runtime.enqueue_barrier(reply);
+                    } else {
+                        let _ =
+                            reply
+                                .send(Err("ACP plugin runtime changed before the output barrier"
+                                    .to_string()));
                     }
                 }
                 HostCommand::SendOutput(output) => self.send_output(*output),
@@ -403,7 +442,17 @@ struct PendingPermission {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::transport_stdio::StdioBridgeMessage;
     use crate::routing::RouteKey;
+
+    async fn recv_stdio_output(
+        rx: &mut tokio::sync::mpsc::Receiver<StdioBridgeMessage>,
+    ) -> ChannelOutput {
+        let Some(StdioBridgeMessage::Output(output)) = rx.recv().await else {
+            panic!("expected stdio output");
+        };
+        output
+    }
 
     fn permission_response() -> acp::RequestPermissionResponse {
         acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled)
@@ -502,8 +551,11 @@ mod tests {
         });
 
         assert!(permission_rx.await.is_err());
-        assert!(blocked_rx.recv().await.is_some());
-        assert_eq!(live_rx.recv().await.unwrap().route_key(), &live_route);
+        let _ = recv_stdio_output(&mut blocked_rx).await;
+        assert_eq!(
+            recv_stdio_output(&mut live_rx).await.route_key(),
+            &live_route
+        );
     }
 
     #[tokio::test]
@@ -524,7 +576,7 @@ mod tests {
             text: "still live".to_string(),
             reply_to: None,
         });
-        assert!(output_rx.recv().await.is_some());
+        let _ = recv_stdio_output(&mut output_rx).await;
 
         host.remove_stdio_runtime_if_current("feishu", &new_runtime);
         let (permission_tx, permission_rx) = oneshot::channel();
@@ -564,8 +616,57 @@ mod tests {
             reply_to: None,
         });
 
-        assert_eq!(work_rx.recv().await.unwrap().route_key(), &work_route);
+        assert_eq!(
+            recv_stdio_output(&mut work_rx).await.route_key(),
+            &work_route
+        );
         assert!(personal_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn full_runtime_barrier_does_not_block_other_instances() {
+        let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let host = Arc::new(PluginHost::new(input_tx));
+        let (blocked_tx, mut blocked_rx) = tokio::sync::mpsc::channel(1);
+        let blocked_runtime = Arc::new(StdioPluginRuntime::new("slack-blocked", blocked_tx));
+        let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(1);
+        host.replace_stdio_runtime("slack-blocked", Arc::clone(&blocked_runtime));
+        host.replace_stdio_runtime(
+            "slack-live",
+            Arc::new(StdioPluginRuntime::new("slack-live", live_tx)),
+        );
+        host.send_output(ChannelOutput::SystemText {
+            route: RouteKey::with_channel_instance("slack", "slack-blocked", "chat-a"),
+            text: "fills buffer".to_string(),
+            reply_to: None,
+        });
+
+        let barrier_host = Arc::clone(&host);
+        let barrier_runtime = Arc::clone(&blocked_runtime);
+        let barrier = tokio::spawn(async move {
+            barrier_host
+                .wait_for_stdio_output("slack-blocked", &barrier_runtime)
+                .await
+        });
+        host.send_output(ChannelOutput::SystemText {
+            route: RouteKey::with_channel_instance("slack", "slack-live", "chat-b"),
+            text: "still delivered".to_string(),
+            reply_to: None,
+        });
+
+        let live_output = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            recv_stdio_output(&mut live_rx),
+        )
+        .await
+        .expect("barrier blocked the plugin host owner");
+        assert_eq!(live_output.route_key().channel_instance_id(), "slack-live");
+        let _ = recv_stdio_output(&mut blocked_rx).await;
+        let Some(StdioBridgeMessage::Barrier(reply)) = blocked_rx.recv().await else {
+            panic!("expected barrier");
+        };
+        reply.send(Ok(())).unwrap();
+        assert_eq!(barrier.await.unwrap(), Ok(()));
     }
 
     #[tokio::test]

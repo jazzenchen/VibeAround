@@ -501,7 +501,8 @@ pub async fn start_runtime_and_notify(
             .map_err(internal_error)?;
     }
     let handler = bridge_handler(workspace_threads, plugin_host, runtime, &before);
-    let session_id = runtime.start(route, handler).await?;
+    let started = runtime.start(route, handler).await?;
+    let session_id = started.session_id;
     let after = runtime.state().await;
     let session_was_resumed = before.session_id.as_deref() == Some(session_id.as_str());
 
@@ -559,9 +560,11 @@ pub async fn start_runtime_and_notify(
         send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
             .await;
     }
-    workspace_threads
-        .schedule_host_idle_shutdown(after.thread_id)
-        .await;
+    if started.host_started {
+        workspace_threads
+            .reconcile_warm_thread_pool(&after.thread_id)
+            .await;
+    }
     Ok(true)
 }
 
@@ -1050,9 +1053,7 @@ fn validate_profile_for_agent(profile_id: &str, agent_id: &str) -> Result<(), St
     if profile_id == DIRECT_PROFILE_ID {
         return Ok(());
     }
-    let Some(profile) =
-        profiles::schema::load(&profile_id).map(profiles::normalize_legacy_profile_and_persist)
-    else {
+    let Some(profile) = profiles::load_profile(&profile_id) else {
         return Err(format!("Profile '{}' was not found.", profile_id));
     };
     if !connections::profile_can_launch_agent(&profile, agent_id) {

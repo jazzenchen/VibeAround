@@ -6,7 +6,6 @@
 
 use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context};
 use url::Url;
@@ -62,21 +61,59 @@ pub async fn extract_bytes_strip_root(
     .context("joining archive extractor")?
 }
 
-pub fn github_head_archive_url(github_url: &str) -> Option<String> {
+pub fn github_revision_archive_url(github_url: &str, revision: &str) -> Option<String> {
+    let (owner, repo) = github_repository(github_url, revision)?;
+    Some(format!(
+        "https://github.com/{owner}/{repo}/archive/{revision}.zip"
+    ))
+}
+
+pub fn github_revision_raw_file_url(
+    github_url: &str,
+    revision: &str,
+    file_name: &str,
+) -> Option<String> {
+    if file_name.is_empty()
+        || !file_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return None;
+    }
+    let (owner, repo) = github_repository(github_url, revision)?;
+    Some(format!(
+        "https://raw.githubusercontent.com/{owner}/{repo}/{revision}/{file_name}"
+    ))
+}
+
+fn github_repository(github_url: &str, revision: &str) -> Option<(String, String)> {
+    if revision.len() != 40 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
     let parsed = Url::parse(github_url).ok()?;
+    if parsed.scheme() != "https"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.port().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return None;
+    }
     let host = parsed.host_str()?.to_ascii_lowercase();
     if host != "github.com" {
         return None;
     }
-    let mut segments = parsed.path_segments()?;
-    let owner = segments.next()?.trim();
-    let repo = segments.next()?.trim().trim_end_matches(".git");
-    if owner.is_empty() || repo.is_empty() {
+    let segments = parsed.path_segments()?.collect::<Vec<_>>();
+    if segments.len() != 2 {
         return None;
     }
-    Some(format!(
-        "https://github.com/{owner}/{repo}/archive/HEAD.zip"
-    ))
+    let owner = segments[0].trim();
+    let repo = segments[1].trim().trim_end_matches(".git");
+    if owner.is_empty() || repo.is_empty() || repo == "." || repo == ".." {
+        return None;
+    }
+    Some((owner.to_string(), repo.to_string()))
 }
 
 fn extract_bytes_strip_root_blocking(
@@ -174,17 +211,46 @@ pub fn recreate_dir(path: &Path) -> anyhow::Result<()> {
 }
 
 pub fn atomic_replace_dir(staging_dir: &Path, target_dir: &Path) -> anyhow::Result<()> {
-    if target_dir.exists() {
-        std::fs::remove_dir_all(target_dir)
-            .with_context(|| format!("removing {}", target_dir.display()))?;
+    let backup_dir = staging_dir_for(target_dir, "backup")?;
+    let had_target = target_dir.exists();
+    if had_target {
+        std::fs::rename(target_dir, &backup_dir).with_context(|| {
+            format!(
+                "moving current {} to backup {}",
+                target_dir.display(),
+                backup_dir.display()
+            )
+        })?;
     }
-    std::fs::rename(staging_dir, target_dir).with_context(|| {
-        format!(
-            "moving {} to {}",
-            staging_dir.display(),
-            target_dir.display()
-        )
-    })?;
+
+    if let Err(install_error) = std::fs::rename(staging_dir, target_dir) {
+        if had_target {
+            std::fs::rename(&backup_dir, target_dir).with_context(|| {
+                format!(
+                    "install failed ({install_error}); restoring backup {} to {}",
+                    backup_dir.display(),
+                    target_dir.display()
+                )
+            })?;
+        }
+        return Err(install_error).with_context(|| {
+            format!(
+                "moving {} to {}",
+                staging_dir.display(),
+                target_dir.display()
+            )
+        });
+    }
+
+    if had_target {
+        if let Err(error) = std::fs::remove_dir_all(&backup_dir) {
+            tracing::warn!(
+                path = %backup_dir.display(),
+                %error,
+                "installed replacement but could not remove plugin backup"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -196,10 +262,7 @@ pub fn staging_dir_for(target_dir: &Path, label: &str) -> anyhow::Result<PathBuf
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("download");
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+    let unique = uuid::Uuid::new_v4();
     Ok(parent.join(format!(".{file_name}.{label}.{unique}")))
 }
 
@@ -208,12 +271,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_github_archive_urls() {
+    fn parses_pinned_github_archive_urls() {
+        let revision = "0123456789abcdef0123456789abcdef01234567";
         assert_eq!(
-            github_head_archive_url("https://github.com/acme/demo.git").as_deref(),
-            Some("https://github.com/acme/demo/archive/HEAD.zip")
+            github_revision_archive_url("https://github.com/acme/demo.git", revision).as_deref(),
+            Some(
+                "https://github.com/acme/demo/archive/0123456789abcdef0123456789abcdef01234567.zip"
+            )
         );
-        assert!(github_head_archive_url("https://gitlab.com/acme/demo").is_none());
+        assert!(github_revision_archive_url("https://gitlab.com/acme/demo", revision).is_none());
+        assert!(
+            github_revision_archive_url("https://github.com/acme/demo/tree/main", revision)
+                .is_none()
+        );
+        assert!(github_revision_archive_url("https://github.com/acme/demo", "main").is_none());
+        assert_eq!(
+            github_revision_raw_file_url(
+                "https://github.com/acme/demo.git",
+                revision,
+                "plugin.json"
+            )
+            .as_deref(),
+            Some("https://raw.githubusercontent.com/acme/demo/0123456789abcdef0123456789abcdef01234567/plugin.json")
+        );
+        assert!(github_revision_raw_file_url(
+            "https://github.com/acme/demo",
+            revision,
+            "../plugin.json"
+        )
+        .is_none());
     }
 
     #[test]
@@ -224,5 +310,40 @@ mod tests {
         );
         assert!(relative_after_archive_root(Path::new("repo-main/../bad")).is_none());
         assert!(relative_after_archive_root(Path::new("/repo-main/bad")).is_none());
+    }
+
+    #[test]
+    fn restores_existing_directory_when_replacement_fails() {
+        let root = std::env::temp_dir().join(format!("va-dir-replace-{}", uuid::Uuid::new_v4()));
+        let target = root.join("plugin");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("marker"), "current").unwrap();
+
+        let error = atomic_replace_dir(&root.join("missing-staging"), &target).unwrap_err();
+
+        assert!(error.to_string().contains("moving"));
+        assert_eq!(
+            std::fs::read_to_string(target.join("marker")).unwrap(),
+            "current"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn replaces_existing_directory_after_staging_succeeds() {
+        let root = std::env::temp_dir().join(format!("va-dir-replace-{}", uuid::Uuid::new_v4()));
+        let target = root.join("plugin");
+        let staging = root.join("staging");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(target.join("old"), "old").unwrap();
+        std::fs::write(staging.join("new"), "new").unwrap();
+
+        atomic_replace_dir(&staging, &target).unwrap();
+
+        assert!(!target.join("old").exists());
+        assert_eq!(std::fs::read_to_string(target.join("new")).unwrap(), "new");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

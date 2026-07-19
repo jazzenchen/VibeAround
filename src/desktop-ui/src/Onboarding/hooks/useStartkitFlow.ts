@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { SettingsPatch } from "../../lib/settingsPatch";
 
 import type {
   Settings,
@@ -172,10 +173,10 @@ interface UseStartkitFlowResult {
   refreshPlan: (choices: StartkitChoices) => Promise<void>;
   scan: (settings: Settings, choices: StartkitChoices) => Promise<void>;
   start: (
-    settings: Settings,
+    settingsPatch: SettingsPatch,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
-  ) => Promise<void>;
+  ) => Promise<Settings | null>;
   cancel: () => Promise<void>;
   finish: () => Promise<void>;
   reset: () => void;
@@ -264,7 +265,7 @@ export function useStartkitFlow(): UseStartkitFlowResult {
   }, []);
 
   const start = useCallback(async (
-    settings: Settings,
+    settingsPatch: SettingsPatch,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
   ) => {
@@ -307,13 +308,19 @@ export function useStartkitFlow(): UseStartkitFlowResult {
       );
 
       unlistenRefs.current = [unlistenProgress, unlistenComplete];
-      await invoke("start_startkit_install", { settings, choices, runId });
+      const committedSettings = await invoke<Settings>("start_startkit_install", {
+        settingsPatch,
+        choices,
+        runId,
+      });
+      return committedSettings;
     } catch (err) {
       if (activeRunIdRef.current === runId) {
         activeRunIdRef.current = null;
       }
       setError(String(err));
       setRunning(false);
+      return null;
     }
   }, []);
 

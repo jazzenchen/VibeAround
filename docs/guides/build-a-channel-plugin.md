@@ -54,7 +54,7 @@ The permission request you must render as a card (daemon → plugin) — answer 
 }
 ```
 
-Other outputs you render or ignore: `threadReply` (streamed agent output), `systemText`, `turnStatus` (typing indicator on/off), `promptDone`, `sessionInfo` / `sessionMode` / `commandMenu` (richer UI), `multiAgentTurn` / `subagentStatus` (multi-agent progress). Control inputs you can send: `stop`, `close`, `log`.
+Other outputs you render or ignore: `threadReply` (streamed agent output), `systemText`, `turnStatus` (typing indicator on/off), `sessionInfo` / `sessionMode` / `commandMenu` (richer UI), `multiAgentTurn` / `subagentStatus` (multi-agent progress). Control inputs you can send: `stop`, `close`, `log`.
 
 > Version rule: depend on a published SDK version (`^x.y.z`). Never ship a plugin pinned to a local `file:` path.
 

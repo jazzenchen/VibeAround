@@ -137,7 +137,7 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
         .tooltip("VibeAround")
         .on_menu_event(move |app, event| match event.id().as_ref() {
             MENU_LAUNCH_DEFAULT => {
-                if let Err(e) = crate::profiles::profiles_launch_default() {
+                if let Err(e) = crate::profiles::profiles_launch_default_sync() {
                     tracing::warn!("[tray] failed to launch default agent: {}", e);
                 }
             }
@@ -456,14 +456,14 @@ fn handle_profile_launch_menu(menu_id: &str) -> Result<(), String> {
     let (profile_id, agent_id) = payload
         .split_once(':')
         .ok_or_else(|| format!("invalid profile launch menu id: {menu_id}"))?;
-    crate::profiles::profiles_launch(profile_id.to_string(), agent_id.to_string())
+    crate::profiles::profiles_launch_sync(profile_id.to_string(), agent_id.to_string())
 }
 
 fn handle_direct_launch_menu(menu_id: &str) -> Result<(), String> {
     let agent_id = menu_id
         .strip_prefix(MENU_LAUNCH_DIRECT_PREFIX)
         .ok_or_else(|| format!("invalid direct launch menu id: {menu_id}"))?;
-    crate::profiles::profiles_launch_direct(agent_id.to_string())
+    crate::profiles::profiles_launch_direct_sync(agent_id.to_string())
 }
 
 fn profile_provider_counts(

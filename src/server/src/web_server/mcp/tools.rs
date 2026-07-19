@@ -227,9 +227,7 @@ pub(super) async fn mcp_prepare_handover(
             Ok(agent_id) => agent_id,
             Err(error) => return mcp_error_text(id, &error),
         };
-        let Some(profile) = common::profiles::schema::load(&profile_id)
-            .map(common::profiles::normalize_legacy_profile_and_persist)
-        else {
+        let Some(profile) = common::profiles::load_profile(&profile_id) else {
             return mcp_error_text(id, &format!("Profile '{}' was not found.", profile_id));
         };
         if common::profiles::connections::resolve_profile_agent_route(&profile, &agent_id).is_none()
@@ -326,35 +324,49 @@ pub(super) async fn mcp_register_workspace(
         None => return jsonrpc_err(id, -32602, "Missing required argument: cwd"),
     };
 
+    enum RegistrationOutcome {
+        MissingDirectory,
+        AlreadyRegistered,
+        Registered,
+    }
+
     let cwd_path = std::path::PathBuf::from(cwd);
-    if !cwd_path.is_dir() {
-        return mcp_error_text(id, &format!("Directory does not exist: {}", cwd));
-    }
-
-    // Check if already registered
-    let config = common::config::ensure_loaded();
-    let already_registered = config.all_workspaces().iter().any(|ws| ws == &cwd_path);
-
-    if already_registered {
-        return mcp_text(id, &format!("Workspace {} is already registered.", cwd));
-    }
-
-    // Add to settings.json
-    let cwd_owned = cwd.to_string();
-    if let Err(e) = common::config::update_settings_json(move |settings| {
-        if let Some(obj) = settings.as_object_mut() {
-            let workspaces = obj
-                .entry("workspaces")
-                .or_insert_with(|| serde_json::json!([]));
-            if let Some(arr) = workspaces.as_array_mut() {
-                arr.push(serde_json::Value::String(cwd_owned));
-            }
+    let cwd_display = cwd.to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        if !cwd_path.is_dir() {
+            return Ok(RegistrationOutcome::MissingDirectory);
         }
-    }) {
-        return mcp_error_text(id, &format!("Failed to update settings: {}", e));
-    }
+        let settings = common::config::read_settings_json()?;
+        if workspace_is_registered(&settings, &cwd_path) {
+            return Ok(RegistrationOutcome::AlreadyRegistered);
+        }
+        common::config::register_workspace_path(&cwd_path)?;
+        Ok::<_, String>(RegistrationOutcome::Registered)
+    })
+    .await;
 
-    mcp_text(id, &format!("Workspace {} registered successfully.", cwd))
+    match result {
+        Ok(Ok(RegistrationOutcome::MissingDirectory)) => {
+            mcp_error_text(id, &format!("Directory does not exist: {}", cwd_display))
+        }
+        Ok(Ok(RegistrationOutcome::AlreadyRegistered)) => mcp_text(
+            id,
+            &format!("Workspace {} is already registered.", cwd_display),
+        ),
+        Ok(Ok(RegistrationOutcome::Registered)) => mcp_text(
+            id,
+            &format!("Workspace {} registered successfully.", cwd_display),
+        ),
+        Ok(Err(error)) => mcp_error_text(id, &format!("Failed to update settings: {}", error)),
+        Err(error) => mcp_error_text(id, &format!("Failed to update settings: {}", error)),
+    }
+}
+
+fn workspace_is_registered(settings: &serde_json::Value, path: &std::path::Path) -> bool {
+    common::config::config_from_settings_json(settings)
+        .all_workspaces()
+        .iter()
+        .any(|workspace| common::config::workspace_paths_equal(path, workspace))
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,7 +1190,7 @@ fn build_preview_url(state: &AppState, route: &str, slug: &str) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::codex_session_id_from_mcp_metadata;
+    use super::{codex_session_id_from_mcp_metadata, workspace_is_registered};
 
     #[test]
     fn codex_metadata_prefers_turn_thread_id() {
@@ -1231,5 +1243,30 @@ mod tests {
             common::agent::launch::normalize_launch_profile_id(Some("claude-deepseek")),
             "claude-deepseek".to_string()
         );
+    }
+
+    #[test]
+    fn workspace_registration_check_uses_latest_settings_shape() {
+        let settings = json!({
+            "default_workspace": "/tmp/default",
+            "workspaces": ["/tmp/registered"]
+        });
+
+        assert!(workspace_is_registered(
+            &settings,
+            std::path::Path::new("/tmp/default")
+        ));
+        assert!(workspace_is_registered(
+            &settings,
+            std::path::Path::new("/tmp/registered")
+        ));
+        assert!(workspace_is_registered(
+            &settings,
+            &common::config::builtin_workspaces_dir()
+        ));
+        assert!(!workspace_is_registered(
+            &settings,
+            std::path::Path::new("/tmp/missing")
+        ));
     }
 }

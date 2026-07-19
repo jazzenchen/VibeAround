@@ -10,7 +10,7 @@ A full agent conversation in the browser, sharing the same thread model as IM ch
 - **Streaming turns** with tool-call progress, a stop button, and permission cards rendered inline.
 - **Slash commands** from the [IM command reference](im-usage.md) work here too (`/status`, `/new`, `/switch codex`…).
 - **Modes and options.** Agents that expose session modes (e.g. permission modes) or config options show them as chat controls.
-- **Idle behavior.** Web threads unload their agent after inactivity like any thread; reopening the chat replays recent output and resumes transparently.
+- **Warm behavior.** Finishing a turn or closing the tab does not start an idle-shutdown timer. The host stays warm unless it later becomes the eligible least-recently-active candidate when a genuinely new host pushes the shared pool above its [soft limit](../reference/timers-and-limits.md#sizes-and-counts). Reopening the chat replays recent output; an evicted host resumes transparently on the next prompt.
 - **Handover.** A web conversation can be picked up from IM (`/pickup`) or continued on a phone via the mobile dashboard.
 
 ## Web Terminal

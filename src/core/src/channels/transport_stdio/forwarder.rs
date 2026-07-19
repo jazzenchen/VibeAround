@@ -8,7 +8,6 @@
 //! - `SessionReady`       → `ext_notification("va/session_ready", ...)`
 //! - `SessionInfo`        → `ext_notification("va/session_info", ...)`
 //! - `CommandMenu`        → `ext_notification("va/command_menu", ...)`
-//! - `PromptDone`         → no-op for stdio plugins (their `prompt()` call already resolves)
 //! - `PermissionRequest`  → real `request_permission` call; response is
 //!   routed back through `PluginHost::pending_permissions`.
 //! - `MultiAgentTurn`     → web-only for now; stdio/IM plugins do not see it.
@@ -166,8 +165,7 @@ pub(super) async fn forward_output_to_plugin(
             )
             .await?;
         }
-        ChannelOutput::PromptDone { .. }
-        | ChannelOutput::TurnStatus { .. }
+        ChannelOutput::TurnStatus { .. }
         | ChannelOutput::MultiAgentTurn { .. }
         | ChannelOutput::SubagentStatus { .. }
         | ChannelOutput::SubagentAcp { .. } => {}

@@ -173,11 +173,6 @@ pub enum ChannelOutput {
         system_commands: serde_json::Value,
         agent_commands: serde_json::Value,
     },
-    PromptDone {
-        route: RouteKey,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        message_id: Option<MessageId>,
-    },
     TurnStatus {
         route: RouteKey,
         active: bool,
@@ -223,7 +218,6 @@ impl ChannelOutput {
             | Self::SessionInfo { route, .. }
             | Self::SessionMode { route, .. }
             | Self::CommandMenu { route, .. }
-            | Self::PromptDone { route, .. }
             | Self::TurnStatus { route, .. }
             | Self::PermissionRequest { route, .. }
             | Self::MultiAgentTurn { route, .. }

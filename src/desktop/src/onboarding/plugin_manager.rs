@@ -88,7 +88,6 @@ async fn install_im_plugin(plugin_id: &str) -> Result<ManagedPluginSummary, Stri
         .ok_or_else(|| format!("unknown IM plugin '{plugin_id}'"))?;
     run_install_inner(InstallPluginRequest {
         plugin_id: plugin.id.clone(),
-        github_url: plugin.github.clone(),
     })
     .await
     .map_err(|error| error.to_string())?;
@@ -125,7 +124,6 @@ async fn install_search_plugin(plugin_id: &str) -> Result<ManagedPluginSummary, 
     }
     run_install_inner(InstallPluginRequest {
         plugin_id: plugin.id.clone(),
-        github_url: plugin.github.clone(),
     })
     .await
     .map_err(|error| error.to_string())?;
@@ -219,10 +217,7 @@ async fn im_plugin_from_registry(
     let discovered = plugins::channel::find(&plugin.id);
     let version = discovered.as_ref().map(|plugin| plugin.installed_version());
     let latest = if include_latest {
-        super::github_plugin_version(&plugin.github)
-            .await
-            .ok()
-            .flatten()
+        super::github_plugin_version(plugin).await.ok().flatten()
     } else {
         None
     };
@@ -276,10 +271,7 @@ async fn search_plugin_from_registry(
     let discovered = plugins::find(&plugin.id);
     let version = discovered.as_ref().map(|plugin| plugin.installed_version());
     let latest = if include_latest {
-        super::github_plugin_version(&plugin.github)
-            .await
-            .ok()
-            .flatten()
+        super::github_plugin_version(plugin).await.ok().flatten()
     } else {
         None
     };

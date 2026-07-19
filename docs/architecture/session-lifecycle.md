@@ -8,7 +8,7 @@ A thread is born the first time a route needs one — the first message in a cha
 
 | Event | Effect |
 |---|---|
-| `/new` | Closes the current thread, creates a fresh one in the same workspace, re-attaches the route |
+| `/new` | Closes the current thread, creates a fresh one in the same workspace, re-attaches the route; IM routes reload the channel's configured agent/profile |
 | `/close` | Closes the thread; the next message will create a new one |
 | Unrecoverable agent error (e.g. authentication required) | Thread auto-closes with the reason sent to the chat |
 | Daemon shutdown | Threads stay open — thread state is an on-disk event log |
@@ -17,16 +17,19 @@ Closed threads keep their history in the event log; they are never silently dele
 
 ## Agent process lifecycle within a thread
 
-The agent process hosting a thread is deliberately more ephemeral than the thread itself:
+The agent process hosting a thread can be evicted under pool pressure, while the thread itself remains durable:
 
 ```text
-first prompt ──► spawn agent ──► create/resume CLI session ──► turn ──► idle
-                                                                          │ 10 min
-      next prompt ◄── respawn + resume session ◄── agent shut down ◄──────┘
+first prompt ──► spawn host ──► create/resume CLI session ──► turn ──► warm host
+                                                                         ├──► next prompt reuses live host
+                     new host starts above soft limit + eligible LRU ◄───┤
+                                                                         ▼
+same ThreadRuntime + session ◄── host evicted ──► next prompt resumes session
 ```
 
-- **Idle shutdown:** ten minutes after the last activity, the host agent process is stopped. This is invisible in the chat — the thread remains open and the CLI session id is retained.
-- **Transparent resume:** the next prompt respawns the agent and resumes the recorded CLI session, so context carries across the gap.
+- **No fixed idle shutdown:** finishing a turn, receiving `TurnStatus { active: false }`, or closing a Web tab does not start a process-kill deadline.
+- **Pressure eviction:** only after a genuinely new host successfully starts above the warm-thread pool's [soft limit](../reference/timers-and-limits.md#sizes-and-counts) does the manager consider one least-recently-active candidate. It must meet the idle-age threshold, not be busy or the new thread, and have no resident subagents. If none qualifies, the pool may overflow.
+- **Preserved continuity:** eviction stops only the host generation. The existing `ThreadRuntime`, thread/session records, route attachments, and preview records remain. The next prompt uses that retained runtime to spawn the host and resume the recorded CLI session.
 - **Crash:** agent processes are not auto-respawned mid-turn (restart policy is deliberate: crashes surface as errors instead of silently retrying). The next prompt starts a fresh process and resumes the session.
 
 ## What survives a daemon restart
@@ -61,13 +64,13 @@ Pickup codes are one-shot, expire quickly, and live **in memory only** — a dae
 
 A thread can run a multi-agent turn: the host agent uses the `initialize_subagents` / `wait_for_subagents` MCP tools to spawn named subagents (parallel, collaboration, or brainstorming mode) inside the same workspace. Each subagent is a full agent process with its own CLI session, tracked on the thread, with completion reports collected back into the host's turn. Interrupted subagents are recovered when the thread's runtime is rebuilt.
 
-## Timing reference
+## Timing and limit reference
 
-All lifecycle timers (idle shutdown, heartbeat/watchdog, code TTLs, share-link expiry) live in one authoritative table: [Timers and limits](../reference/timers-and-limits.md).
+The warm-pool soft limit and eviction eligibility threshold, plus actual timers such as heartbeat/watchdog, code TTLs, and share-link expiry, live in one authoritative table: [Timers and limits](../reference/timers-and-limits.md).
 
 ---
 
-*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, busy/failed), `src/core/src/workspace/manager.rs` (AGENT_HOST_IDLE_SHUTDOWN_DELAY, attachments), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handover.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (switch_host: new-thread vs preserve-session split), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
+*Source anchors: `src/core/src/workspace/threads/runtime.rs` (agent lifecycle, activity, busy/subagent state), `src/core/src/workspace/manager.rs` + `manager_routes.rs` (warm-pool limits and LRU eviction), `src/core/src/channels/prompt/` (commands, auto-close), `src/core/src/workspace/handover.rs` (in-memory pickup codes), `src/core/src/channels/prompt/handler.rs` (host start and switching), `src/server/src/web_server/mcp/mod.rs` (subagent tools), `src/core/src/process/supervisor.rs` (tick, watchdog).*
 *Last verified: v0.7.11*
 
 <sub>[◀ How it works](overview.md) · [Documentation index](../README.md) · [Channel plugin system ▶](channel-plugin-system.md)</sub>

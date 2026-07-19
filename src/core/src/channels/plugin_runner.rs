@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use super::manifest::ChannelPluginManifest;
 use super::plugin_host::PluginHost;
-use super::transport_stdio::{run_acp_plugin_bridge, StdioPluginRuntime};
+use super::transport_stdio::{run_acp_plugin_bridge, StdioBridgeMessage, StdioPluginRuntime};
 use super::{ChannelInput, ConversationIngress};
 use crate::process::bridge::{
     BridgeFactory, BridgeFuture, CancelSignal, ProcessBridge, StdioPipes,
@@ -24,7 +24,7 @@ const CHANNEL_OUTPUT_BUFFER: usize = 256;
 pub struct ChannelPluginRunner {
     pub manifest: ChannelPluginManifest,
     pub input_tx: mpsc::UnboundedSender<ChannelInput>,
-    pub output_rx: mpsc::Receiver<super::ChannelOutput>,
+    pub(crate) output_rx: mpsc::Receiver<StdioBridgeMessage>,
     pub ingress: Arc<ConversationIngress>,
     pub plugin_host: Arc<PluginHost>,
     pub runtime: Arc<StdioPluginRuntime>,

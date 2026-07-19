@@ -13,6 +13,7 @@ use super::super::manifest::ChannelPluginManifest;
 use super::super::plugin_host::PluginHost;
 use super::super::types::{ChannelInboundContext, CHANNEL_CONTEXT_META_KEY};
 use super::super::{ChannelEnvelope, ChannelInput, ConversationIngress};
+use super::StdioPluginRuntime;
 use crate::plugins::TopicConversationScope;
 use crate::proc_log;
 use crate::process::registry::ProcessKind;
@@ -114,6 +115,7 @@ pub(super) struct PluginAgentHandler {
     input_tx: mpsc::UnboundedSender<ChannelInput>,
     ingress: Arc<ConversationIngress>,
     plugin_host: Arc<PluginHost>,
+    runtime: Arc<StdioPluginRuntime>,
 }
 
 impl PluginAgentHandler {
@@ -122,6 +124,7 @@ impl PluginAgentHandler {
         input_tx: mpsc::UnboundedSender<ChannelInput>,
         ingress: Arc<ConversationIngress>,
         plugin_host: Arc<PluginHost>,
+        runtime: Arc<StdioPluginRuntime>,
     ) -> Self {
         let ChannelPluginManifest {
             channel_kind,
@@ -140,6 +143,7 @@ impl PluginAgentHandler {
             input_tx,
             ingress,
             plugin_host,
+            runtime,
         }
     }
     pub(super) async fn initialize(
@@ -162,12 +166,11 @@ impl PluginAgentHandler {
         meta.insert("actorId".into(), self.default_actor_id.clone().into());
         meta.insert("config".into(), self.config.clone());
         meta.insert("hostVersion".into(), env!("CARGO_PKG_VERSION").into());
+        let runtime_dirs =
+            super::super::plugin_paths::plugin_runtime_dirs(&self.channel_instance_id);
         meta.insert(
             "cacheDir".into(),
-            crate::config::data_dir()
-                .join(".cache")
-                .to_string_lossy()
-                .into(),
+            runtime_dirs.cache.to_string_lossy().into(),
         );
 
         Ok(acp::InitializeResponse::new(ProtocolVersion::V1)
@@ -226,7 +229,20 @@ impl PluginAgentHandler {
         // The shared ingress blocks until the turn completes.
         // Session notifications stream to the plugin via ChannelBridgeHandler
         // → PluginHost → output_tx → output forwarder → conn.session_notification().
-        self.ingress.prompt(target, content_blocks).await
+        let result = self.ingress.prompt(target, content_blocks).await;
+        self.plugin_host
+            .wait_for_stdio_output(&self.channel_instance_id, &self.runtime)
+            .await
+            .map_err(|error| {
+                tracing::warn!(
+                    channel_kind = %self.channel_kind,
+                    channel_instance_id = %self.channel_instance_id,
+                    error = %error,
+                    "failed to establish ACP prompt response output barrier"
+                );
+                acp::Error::new(-32603, error)
+            })?;
+        result
     }
 
     pub(super) async fn cancel(&self, args: acp::CancelNotification) -> acp::Result<()> {

@@ -49,7 +49,7 @@ These sessions appear in the desktop/dashboard resume pickers and can be attache
 | | Launch (your terminal) | Hosted (IM / web chat) |
 |---|---|---|
 | UI | The agent's own full TUI | Chat bubbles + permission cards |
-| Process owner | Your terminal | The daemon (idle-shutdown managed) |
+| Process owner | Your terminal | The daemon (warm-pool managed) |
 | Model routing | Profile-rendered config | Same profiles, same bridge |
 | Continuity | Sessions discoverable, handover via code | Sessions tracked on the thread automatically |
 | Survives daemon stop | CLI keeps running; bridged model calls fail until daemon returns | No (agent is daemon-hosted) |

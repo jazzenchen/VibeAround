@@ -208,7 +208,7 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
 
     finish_text_line(wrote_text_chunk)?;
     Err(CliError::Chat(
-        "chat websocket closed before prompt_done".into(),
+        "chat websocket closed before turn completion".into(),
     ))
 }
 
@@ -348,7 +348,7 @@ enum ChatTerminalEvent {
 
 fn terminal_event(event: &ChatEvent) -> ChatTerminalEvent {
     match event {
-        ChatEvent::PromptDone { .. } => ChatTerminalEvent::Done,
+        ChatEvent::TurnStatus { active: false } => ChatTerminalEvent::Done,
         ChatEvent::Error { error } => ChatTerminalEvent::Error(error.clone()),
         _ => ChatTerminalEvent::Continue,
     }
@@ -518,7 +518,6 @@ fn render_event(
         | ChatEvent::MultiAgentTurn { .. }
         | ChatEvent::SubagentStatus { .. }
         | ChatEvent::SubagentAcpNotification { .. }
-        | ChatEvent::PromptDone { .. }
         | ChatEvent::TurnStatus { .. } => {}
     }
     Ok(())
@@ -553,6 +552,24 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn cli_chat_socket_does_not_pin_a_chat_route() {
+        assert_eq!(chat_ws().path, "/ws/chat");
+        assert!(!chat_ws().path.contains("chat_id"));
+    }
+
+    #[test]
+    fn inactive_turn_status_completes_one_shot_chat() {
+        assert!(matches!(
+            terminal_event(&ChatEvent::TurnStatus { active: false }),
+            ChatTerminalEvent::Done
+        ));
+        assert!(matches!(
+            terminal_event(&ChatEvent::TurnStatus { active: true }),
+            ChatTerminalEvent::Continue
+        ));
+    }
 
     #[test]
     fn chat_send_args_build_resume_message() {

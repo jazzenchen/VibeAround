@@ -1,7 +1,52 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::*;
 use crate::workspace::registry::WorkspaceId;
+
+#[tokio::test]
+async fn cancelled_prompt_returns_real_result_without_shutdown_within_grace() {
+    let (reply, result) = oneshot::channel();
+    reply.send(42).unwrap();
+    let prompt = async { result.await.unwrap() };
+    tokio::pin!(prompt);
+    let shutdown_called = Arc::new(AtomicBool::new(false));
+    let shutdown_flag = Arc::clone(&shutdown_called);
+
+    let result = await_cancelled_prompt(
+        prompt.as_mut(),
+        Duration::from_secs(1),
+        move || async move {
+            shutdown_flag.store(true, Ordering::SeqCst);
+        },
+    )
+    .await;
+
+    assert_eq!(result, 42);
+    assert!(!shutdown_called.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn cancelled_prompt_forces_shutdown_after_grace_then_waits_for_result() {
+    let (reply, result) = oneshot::channel();
+    let prompt = async { result.await.unwrap() };
+    tokio::pin!(prompt);
+    let shutdown_called = Arc::new(AtomicBool::new(false));
+    let shutdown_flag = Arc::clone(&shutdown_called);
+
+    let result = await_cancelled_prompt(
+        prompt.as_mut(),
+        Duration::from_millis(1),
+        move || async move {
+            shutdown_flag.store(true, Ordering::SeqCst);
+            reply.send(7).unwrap();
+        },
+    )
+    .await;
+
+    assert_eq!(result, 7);
+    assert!(shutdown_called.load(Ordering::SeqCst));
+}
 
 fn test_thread_agent() -> ThreadAgent {
     ThreadAgent::ready(
@@ -112,6 +157,53 @@ async fn turn_owner_serializes_busy_state() {
     turn_state.changed().await.unwrap();
 
     assert!(!runtime.state().await.busy);
+}
+
+#[tokio::test]
+async fn prompt_completion_refreshes_thread_activity() {
+    let runtime = Arc::new(ThreadRuntime::new(
+        thread_with_sessions(),
+        PathBuf::from("/tmp/project"),
+        ThreadEventStore::new("/tmp/unused.jsonl"),
+    ));
+    let before = runtime.thread_activity();
+    let (reply_tx, reply_rx) = oneshot::channel();
+
+    runtime
+        .owner_tx
+        .send(ThreadOwnerCommand::PromptFinished {
+            result: Box::new(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))),
+            reply: reply_tx,
+        })
+        .unwrap();
+    reply_rx.await.unwrap().unwrap();
+
+    let after = runtime.thread_activity();
+    assert!(after.generation > before.generation);
+    assert!(after.last_activity_at >= before.last_activity_at);
+}
+
+#[tokio::test]
+async fn touch_does_not_emit_a_global_runtime_change() {
+    let (change_tx, mut change_rx) = broadcast::channel(1);
+    let runtime = Arc::new(ThreadRuntime::with_change_tx(
+        thread_with_sessions(),
+        PathBuf::from("/tmp/project"),
+        ThreadEventStore::new("/tmp/unused.jsonl"),
+        Some(change_tx),
+    ));
+    let before = runtime.thread_activity();
+    runtime.mark_activity();
+    let (ping_tx, ping_rx) = oneshot::channel();
+    runtime
+        .owner_tx
+        .send(ThreadOwnerCommand::Ping(ping_tx))
+        .unwrap();
+    ping_rx.await.unwrap();
+
+    let after = runtime.thread_activity();
+    assert!(after.generation > before.generation);
+    assert!(change_rx.try_recv().is_err());
 }
 
 #[tokio::test]

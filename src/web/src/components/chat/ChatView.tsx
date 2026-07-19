@@ -151,7 +151,7 @@ export function ChatView({
   const [subagentPanelOpen, setSubagentPanelOpen] = useState(true);
   const [selectedSubagentId, setSelectedSubagentId] = useState<string | undefined>();
   const runtimeActionsRef = useRef<Record<string, ChatRuntimeActions>>({});
-  const syncedPromptDoneRef = useRef<Record<string, number>>({});
+  const syncedTurnCompletionRef = useRef<Record<string, number>>({});
   const syncedActiveSessionRef = useRef<Record<string, string | undefined>>({});
   const runtimeThreadInitRef = useRef<Record<string, string>>({});
 
@@ -827,7 +827,7 @@ export function ChatView({
       return next;
     });
     delete runtimeActionsRef.current[runtimeKey];
-    delete syncedPromptDoneRef.current[runtimeKey];
+    delete syncedTurnCompletionRef.current[runtimeKey];
     delete syncedActiveSessionRef.current[runtimeKey];
   }, []);
 
@@ -1027,10 +1027,10 @@ export function ChatView({
   useEffect(() => {
     const agentIds = new Set<string>();
     for (const [runtimeKey, snapshot] of Object.entries(runtimeSnapshots)) {
-      const lastPromptDoneAt = snapshot.lastPromptDoneAt;
-      if (!lastPromptDoneAt) continue;
-      if (syncedPromptDoneRef.current[runtimeKey] === lastPromptDoneAt) continue;
-      syncedPromptDoneRef.current[runtimeKey] = lastPromptDoneAt;
+      const lastTurnCompletedAt = snapshot.lastTurnCompletedAt;
+      if (!lastTurnCompletedAt) continue;
+      if (syncedTurnCompletionRef.current[runtimeKey] === lastTurnCompletedAt) continue;
+      syncedTurnCompletionRef.current[runtimeKey] = lastTurnCompletedAt;
       const agentId = runtimeSpecs[runtimeKey]?.agentId;
       if (agentId) agentIds.add(agentId);
     }
