@@ -33,7 +33,7 @@
 1. **Per-route ordering** 属于 `ConversationIngress`；Web/TUI/stdio 的业务与控制路径都不能绕过它。
 2. **`handle_input` 不等待 agent 工作**：它先经过进程内 async mailbox，再进入 route dispatch。这个 mailbox 不是 durable product message queue，没有 replay/attempt 语义。
 3. **每个 host/subagent-turn permission 都会终止**：请求只发送给 active host target；点按、active-turn cancel、generation replacement、bridge death 与 shutdown 都会完成请求并 drop RAII registration，迟到 response 会被拒绝。
-4. **IM output 只做实时投递**：stdio transport 有有界内存缓冲，但没有 durable queue；连接断开后的 output 不会在重启后 replay。
+4. **IM output 只做实时投递**：stdio transport 为每个 plugin generation 维护一个无界内存 FIFO，但没有 durable queue。FIFO 只保证 output/barrier 顺序，不提供背压，也不会在重启后 replay。
 5. **Runtime ownership 按 instance 隔离**：heartbeat、output、permission cleanup、stop、restart 使用 `channel_instance_id`；discovery 和 platform traits 继续使用 `channel_kind`。
 6. **当前产品范围是 DM/Web**：DM 不要求 @。群聊 mention/callback 解析保留在 adapter/core 内，但延后 release 验收。
 7. `ChannelManager::shutdown_all` 只能停止 channel 自己持有的 supervised IDs，不能 drain 全局 supervisor。
@@ -41,7 +41,7 @@
 
 ## 已知技术债
 
-- 上游 `ChannelManager` async mailbox 仍是 unbounded；route lane 与 stdio plugin output 已有界。这是容量观察，不是 durable MQ 方案；没有数据证明前先不改。
+- 上游 `ChannelManager` async mailbox 与 stdio plugin output FIFO 都是 unbounded；route lane 仍有界。这是容量风险，不代表已经具备端到端背压，也不是 durable MQ 方案。
 - Web-chat session-intent side effects 仍早于 route lane serialization。
 - Route/target contract 与 SDK renderer 已携带 instance/actor/topic 和单消息 `replyTo`，但 settings/UI 仍只暴露每种 channel kind 一个配置实例。
 - `RouteKey::as_key()` 仍是有意保持兼容的有损 display/API key，不能作为 extended route identity。
