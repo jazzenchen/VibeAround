@@ -44,7 +44,7 @@ platform ─1─► plugin ─2─► stdio ─3─► input queue ─4─► bo
 **9. Notifications → outputs。** Host agent 的每个 ACP `session_notification` 都包成 thread reply，再实时发送给 thread 附着的 routes。对于 stdio plugin，这个 wrapper 通过 VibeAround 扩展通知 `va/thread_reply` 发送，并不是标准 ACP `session/update` wire method。即使 turn 中途 attachment 改变，当前 origin 也会保留；只有 origin 携带临时 `replyTo`，其它附着界面只收到 live thread event。stdio prompt 路径会先转发这些通知，再返回对应的 ACP prompt response，SDK 随后才能封口并 drain renderer delivery。SDK 以完整 `(instance, actor, chat, topic, replyTo)` 隔离 renderer 与 delivery state。
 → `src/core/src/channels/bridge_handler.rs` (`session_notification`)
 
-**10. Output → chat。** `PluginHost` 按 `channel_instance_id` 把 output 路由到当前 live plugin runtime。有界内存缓冲负责背压，但 IM 输出不落盘、不在重启后 replay。Runtime 不存在或已断开时，当前 output 被丢弃并记录；无法投递的 permission 会被取消，避免 Agent 永久等待。
+**10. Output → chat。** `PluginHost` 按 `channel_instance_id` 把 output 路由到当前 live plugin runtime。每个 plugin generation 使用一个内存 FIFO，保证 output 与 completion barrier 的 wire 顺序；它目前无界，不提供背压。IM 输出不落盘、不在重启后 replay。Runtime 不存在或已断开时，入队会失败；无法投递的 permission 会被取消，避免 Agent 永久等待。
 → `src/core/src/channels/plugin_host.rs` (`send_output`), `plugin_runner.rs`
 
 **尾声。** Turn 结束后，Web/TUI consumer 收到 `TurnStatus { active: false }`；stdio plugin 则依赖上面的 notification-before-response 边界完成收尾。Host 保持 warm；错误以 `❌` system text 发送（auth errors 会自动关闭 thread）。这里不会安排逐回合 idle-shutdown 计时器。另一个独立步骤是：真正的新 Host 启动后，超软上限的池最多回收一个符合条件、最近最少活动的 Thread；存在任何常驻子 Agent 的 Thread 都不合格，没有候选者就允许 soft overflow。

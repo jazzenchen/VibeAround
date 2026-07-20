@@ -32,7 +32,7 @@ Server 启动时会把它们作为进程内 channel instance 注册到同一个 
 
 - **崩溃重启。** 退出的插件按有上限的指数退避重新拉起。
 - **心跳看门狗。** 插件每 30 秒发一次 `_va/heartbeat` 通知；90 秒没收到就认定插件冻结，杀掉并重启。这抓住了那些挂死但不退出的平台 SDK（数值见[计时器与上限](../reference/timers-and-limits.md#supervision)）。
-- **只做实时输出。** IM 输出只经过一个小型有界内存缓冲；不会落盘，也不会在 plugin 或 daemon 重启后重放。连接已断开的投递会被丢弃并记录日志。
+- **只做实时输出。** 每个 plugin generation 使用一个无界内存 FIFO 保证 output/barrier 的 wire 顺序；它不提供背压，也不会落盘或在 plugin、daemon 重启后重放。
 - **Abort-safe runtime 与权限清理。** Generation-scoped cleanup guard 会在正常退出、取消、panic 或 supervisor task abort 时仅移除本代 runtime，并取消 pending permission waiter；死 plugin 不会留下旧 sender 或卡住 Agent turn。
 - **当前会话范围是 DM/Web。** 群聊解析静默保留在 current-bot mention 防线之后，但不属于 release 验收面。无法可靠识别群与 mention 的插件必须 fail closed；Weixin bridge 当前直接拒绝 `group_id` event，不会把它们路由成 DM。
 - **平台健康租约。** 只有 plugin 的 `healthCheck` 成功时，SDK 才发送 heartbeat。全部官方 plugin 已实现 platform-aware check；真实断连/auth revoke fault injection 与 typed `Starting/Ready/Degraded` 状态仍待后续。

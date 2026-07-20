@@ -66,9 +66,8 @@ impl ChannelPluginRunnerFactory {
     fn create(&self) -> ChannelPluginRunner {
         // One plugin generation owns one ACP connection, so outputs from its
         // routes and their completion barriers share this transport FIFO.
-        // Route ordering and any future output-volume policy belong to the
-        // route/turn owner; a local hard limit here would only drop wire data
-        // and let a later barrier report false success.
+        // It preserves wire order but provides no backpressure; the previous
+        // try_send limit could drop output before a later successful barrier.
         let (output_tx, output_rx) = mpsc::unbounded_channel();
         let runtime = Arc::new(StdioPluginRuntime::new(
             self.manifest.instance_id.clone(),
