@@ -21,6 +21,9 @@ static MCP_TOOLS_JSON: &str = include_str!("../../resources/mcp-tools.json");
 static COMMANDS_JSON: &str = include_str!("../../resources/commands.json");
 static PTY_ENV_JSON: &str = include_str!("../../resources/pty-env.json");
 
+pub const CHATGPT_DESKTOP_MACOS_APP_NAME: &str = "ChatGPT";
+pub const CHATGPT_DESKTOP_MACOS_BUNDLE_ID: &str = "com.openai.codex";
+
 // ---------------------------------------------------------------------------
 // Data types
 // ---------------------------------------------------------------------------
@@ -724,7 +727,7 @@ mod tests {
         assert!(!agent_by_id("codex-desktop").unwrap().supports_acp_runtime());
 
         let error = validate_acp_runtime_agent("codex-desktop").unwrap_err();
-        assert!(error.contains("Codex Desktop can only be opened directly"));
+        assert!(error.contains("ChatGPT Desktop (Codex) can only be opened directly"));
         assert!(error.contains("IM/channel agent"));
     }
 

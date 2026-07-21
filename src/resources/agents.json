@@ -66,18 +66,18 @@
   },
   {
     "id": "codex-desktop",
-    "display_name": "Codex Desktop",
-    "description": "OpenAI Codex desktop app",
-    "aliases": ["codex-desktop", "codex-app"],
+    "display_name": "ChatGPT Desktop (Codex)",
+    "description": "OpenAI ChatGPT desktop app in Codex mode",
+    "aliases": ["codex-desktop", "codex-app", "chatgpt-desktop", "chatgpt-app"],
     "platforms": ["macos", "windows"],
     "direct_only": true,
     "acp": {
       "program": ""
     },
     "pty": {
-      "command": "open -a Codex",
+      "command": "open -b com.openai.codex",
       "platform_commands": {
-        "macos": "open -a Codex",
+        "macos": "open -b com.openai.codex",
         "windows": "Start-Process Codex"
       }
     }
