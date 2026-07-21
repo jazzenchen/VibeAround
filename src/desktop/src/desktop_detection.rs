@@ -338,10 +338,14 @@ fn normalize_app_path(path: &Path) -> String {
 }
 
 async fn windows_start_app_id(app_name: &str) -> Option<String> {
-    let script = format!(
-        "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
-        powershell_string(app_name)
-    );
+    let script = if app_name.eq_ignore_ascii_case("Codex") {
+        common::resources::chatgpt_desktop_windows_start_app_query()
+    } else {
+        format!(
+            "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
+            powershell_string(app_name)
+        )
+    };
     command_stdout_line("powershell.exe", &["-NoProfile", "-Command", &script]).await
 }
 

@@ -875,14 +875,15 @@ mod windows {
     }
 
     fn windows_start_app_id(app: WindowsDesktopApp) -> Option<String> {
-        let app_name = match app {
-            WindowsDesktopApp::Claude => "Claude",
-            WindowsDesktopApp::Codex => "Codex",
+        let script = match app {
+            WindowsDesktopApp::Claude => format!(
+                "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
+                powershell_single_quoted("Claude")
+            ),
+            WindowsDesktopApp::Codex => {
+                common::resources::chatgpt_desktop_windows_start_app_query()
+            }
         };
-        let script = format!(
-            "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
-            powershell_single_quoted(app_name)
-        );
         let output = common::process::env::std_command("powershell.exe")
             .args(["-NoProfile", "-Command", &script])
             .output()
