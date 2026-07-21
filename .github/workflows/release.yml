@@ -11,8 +11,19 @@ permissions:
   contents: write
 
 jobs:
+  verify-channel-catalog:
+    name: Verify channel catalog
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify pinned channel releases
+        run: node src/scripts/verify-channel-catalog.mjs
+
   build-desktop:
     name: Build ${{ matrix.name }}
+    needs: verify-channel-catalog
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
