@@ -875,14 +875,15 @@ mod windows {
     }
 
     fn windows_start_app_id(app: WindowsDesktopApp) -> Option<String> {
-        let app_name = match app {
-            WindowsDesktopApp::Claude => "Claude",
-            WindowsDesktopApp::Codex => "Codex",
+        let script = match app {
+            WindowsDesktopApp::Claude => format!(
+                "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
+                powershell_single_quoted("Claude")
+            ),
+            WindowsDesktopApp::Codex => {
+                common::resources::chatgpt_desktop_windows_start_app_query()
+            }
         };
-        let script = format!(
-            "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
-            powershell_single_quoted(app_name)
-        );
         let output = common::process::env::std_command("powershell.exe")
             .args(["-NoProfile", "-Command", &script])
             .output()
@@ -1366,11 +1367,13 @@ mod tests {
     fn macos_open_commands_pass_plan_env() {
         let mut env = BTreeMap::new();
         env.insert("VA_TEST_ENV".to_string(), "hello world".to_string());
-        let command =
-            macos_open_command_with_env("open -a Codex", &plan(env, "open -a Codex", Vec::new()));
+        let command = macos_open_command_with_env(
+            "open -b com.openai.codex",
+            &plan(env, "open -b com.openai.codex", Vec::new()),
+        );
 
         assert!(command.contains("open --env 'VA_TEST_ENV=hello world'"));
-        assert!(command.ends_with(" -a Codex"));
+        assert!(command.ends_with(" -b com.openai.codex"));
     }
 
     #[test]
@@ -1383,13 +1386,13 @@ mod tests {
 
     #[test]
     fn build_bash_script_waits_for_macos_app_probe() {
-        let mut plan = plan(BTreeMap::new(), "open -a Codex", Vec::new());
-        plan.macos_app_probe = Some("Codex".to_string());
+        let mut plan = plan(BTreeMap::new(), "open -b com.openai.codex", Vec::new());
+        plan.macos_app_probe = Some("ChatGPT".to_string());
 
         let script = build_bash_script(&plan);
 
-        assert!(script.contains("open -a Codex\nstatus=$?"));
-        assert!(script.contains("osascript -e 'application \"Codex\" is running'"));
+        assert!(script.contains("open -b com.openai.codex\nstatus=$?"));
+        assert!(script.contains("osascript -e 'application \"ChatGPT\" is running'"));
         assert!(script.contains("exit \"$status\""));
     }
 

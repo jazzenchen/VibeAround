@@ -615,7 +615,7 @@ fn launch_target_defs() -> &'static [(&'static str, &'static str)] {
         ("claude", "Claude Code"),
         ("claude-desktop", "Claude Desktop"),
         ("codex", "Codex"),
-        ("codex-desktop", "Codex Desktop"),
+        ("codex-desktop", "ChatGPT Desktop (Codex)"),
         ("gemini", "Gemini CLI"),
         ("pi", "Pi"),
         ("opencode", "OpenCode"),

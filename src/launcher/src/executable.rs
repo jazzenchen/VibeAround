@@ -449,7 +449,7 @@ mod tests {
         std::env::set_var("VIBEAROUND_DATA_DIR", &dir);
         std::env::set_var("PATH", &bin_dir);
 
-        let command = resolve_agent_launch_command("codex-desktop", "open -a Codex")
+        let command = resolve_agent_launch_command("codex-desktop", "open -b com.openai.codex")
             .expect("resolve app launch command");
 
         restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
@@ -458,7 +458,7 @@ mod tests {
         let settings_json_exists = dir.join("settings.json").exists();
         let _ = std::fs::remove_dir_all(&dir);
 
-        assert_eq!(command, "open -a Codex");
+        assert_eq!(command, "open -b com.openai.codex");
         assert!(!agents_json_exists);
         assert!(!settings_json_exists);
     }

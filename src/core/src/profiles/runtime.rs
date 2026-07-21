@@ -173,7 +173,11 @@ pub fn launch_targets_for_api_types(
     }
     if has("openai-responses") {
         out.push(("codex", "Codex", "openai-responses"));
-        out.push(("codex-desktop", "Codex Desktop", "openai-responses"));
+        out.push((
+            "codex-desktop",
+            "ChatGPT Desktop (Codex)",
+            "openai-responses",
+        ));
     }
     if has("gemini") {
         out.push(("gemini", "Gemini CLI", "gemini"));

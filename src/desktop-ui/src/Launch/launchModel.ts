@@ -361,7 +361,7 @@ export function agentLabel(agentId: string): string {
     case "codex":
       return "Codex";
     case "codex-desktop":
-      return "Codex Desktop";
+      return "ChatGPT Desktop (Codex)";
     case "pi":
       return "Pi";
     case "gemini":
