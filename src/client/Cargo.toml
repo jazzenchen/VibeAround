@@ -1,6 +1,6 @@
 [package]
 name = "va-client"
-version = "0.7.18"
+version = "0.7.19"
 description = "VibeAround Rust client protocol library"
 edition = "2021"
 rust-version = "1.82"
