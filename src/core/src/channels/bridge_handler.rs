@@ -334,28 +334,18 @@ impl AgentClientHandler for ChannelBridgeHandler {
             return Ok(());
         };
 
-        // Log the update variant so we can tell whether an agent is emitting
-        // real assistant text or only tool/thinking chunks. Claude Agent
-        // v0.25.x sometimes end-turns after only tool_call updates and never
-        // yields a user-visible message; this log surfaces that case.
+        // Log only the update variant. Message content must not be persisted
+        // in daemon logs.
         let update_kind = payload
             .get("update")
             .and_then(|u| u.get("sessionUpdate"))
             .and_then(|v| v.as_str())
             .unwrap_or("<none>");
-        let preview = payload
-            .get("update")
-            .and_then(|u| u.get("content"))
-            .and_then(|c| c.get("text"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.chars().take(60).collect::<String>())
-            .unwrap_or_default();
         tracing::info!(
-            "[ChannelBridgeHandler] session_notification thread={} session={} kind={} preview={:?}",
+            "[ChannelBridgeHandler] session_notification thread={} session={} kind={}",
             self.thread_id,
             args.session_id,
-            update_kind,
-            preview
+            update_kind
         );
 
         let reply = ThreadReply {

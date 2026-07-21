@@ -209,21 +209,11 @@ impl PluginAgentHandler {
             return Err(acp::Error::invalid_params());
         }
 
-        // Extract text preview for logging
-        let text_preview: String = content_blocks
-            .iter()
-            .find_map(|b| match b {
-                acp::ContentBlock::Text(t) => Some(t.text.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
-
         tracing::info!(
-            "[{}] ACP prompt chat_id={} blocks={} text_preview={}",
+            "[{}] ACP prompt chat_id={} blocks={}",
             self.channel_kind,
             chat_id,
-            content_blocks.len(),
-            text_preview.chars().take(80).collect::<String>()
+            content_blocks.len()
         );
 
         // The shared ingress blocks until the turn completes.

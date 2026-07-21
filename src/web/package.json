@@ -1,7 +1,7 @@
 {
   "name": "@vibearound/web",
   "private": true,
-  "version": "0.7.17",
+  "version": "0.7.18",
   "type": "module",
   "scripts": {
     "dev": "vite",

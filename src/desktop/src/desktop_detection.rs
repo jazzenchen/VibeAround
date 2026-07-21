@@ -139,6 +139,14 @@ async fn desktop_app_entry(app_name: &str) -> Option<DesktopAppEntry> {
 fn desktop_app_name(command: &str) -> Option<String> {
     let command = command.trim();
     if cfg!(target_os = "macos") {
+        if command
+            .strip_prefix("open -b ")
+            .map(str::trim)
+            .map(|bundle_id| bundle_id.trim_matches('"'))
+            == Some(common::resources::CHATGPT_DESKTOP_MACOS_BUNDLE_ID)
+        {
+            return Some(common::resources::CHATGPT_DESKTOP_MACOS_APP_NAME.to_string());
+        }
         return command
             .strip_prefix("open -a ")
             .map(str::trim)
@@ -190,11 +198,7 @@ async fn macos_application_entry(app_name: &str) -> Option<(String, String, Stri
         }
     }
 
-    let bundle_name = macos_app_bundle_name(app_name);
-    let query = format!(
-        "kMDItemContentTypeTree == 'com.apple.application-bundle' && kMDItemFSName == {}",
-        mdfind_string(&bundle_name)
-    );
+    let query = macos_spotlight_query(app_name);
     let path = command_stdout_line("mdfind", &[&query])
         .await
         .filter(|path| path.ends_with(".app"))?;
@@ -286,7 +290,12 @@ fn versioned_child_exe_paths(parent: &Path, exe_name: &str) -> Vec<PathBuf> {
 }
 
 fn macos_application_candidate_paths(app_name: &str) -> Vec<PathBuf> {
-    let bundle_name = macos_app_bundle_name(app_name);
+    let bundle_names =
+        if app_name.eq_ignore_ascii_case(common::resources::CHATGPT_DESKTOP_MACOS_APP_NAME) {
+            vec!["ChatGPT.app".to_string(), "Codex.app".to_string()]
+        } else {
+            vec![macos_app_bundle_name(app_name)]
+        };
     let mut roots = vec![
         PathBuf::from("/Applications"),
         PathBuf::from("/Applications/Utilities"),
@@ -296,10 +305,23 @@ fn macos_application_candidate_paths(app_name: &str) -> Vec<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         roots.insert(1, PathBuf::from(home).join("Applications"));
     }
-    roots
+    bundle_names
         .into_iter()
-        .map(|root| root.join(&bundle_name))
+        .flat_map(|bundle_name| roots.iter().map(move |root| root.join(&bundle_name)))
         .collect()
+}
+
+fn macos_spotlight_query(app_name: &str) -> String {
+    if app_name.eq_ignore_ascii_case(common::resources::CHATGPT_DESKTOP_MACOS_APP_NAME) {
+        return format!(
+            "kMDItemContentTypeTree == 'com.apple.application-bundle' && kMDItemCFBundleIdentifier == {}",
+            mdfind_string(common::resources::CHATGPT_DESKTOP_MACOS_BUNDLE_ID)
+        );
+    }
+    format!(
+        "kMDItemContentTypeTree == 'com.apple.application-bundle' && kMDItemFSName == {}",
+        mdfind_string(&macos_app_bundle_name(app_name))
+    )
 }
 
 fn macos_app_bundle_name(app_name: &str) -> String {
@@ -316,10 +338,14 @@ fn normalize_app_path(path: &Path) -> String {
 }
 
 async fn windows_start_app_id(app_name: &str) -> Option<String> {
-    let script = format!(
-        "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
-        powershell_string(app_name)
-    );
+    let script = if app_name.eq_ignore_ascii_case("Codex") {
+        common::resources::chatgpt_desktop_windows_start_app_query()
+    } else {
+        format!(
+            "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
+            powershell_string(app_name)
+        )
+    };
     command_stdout_line("powershell.exe", &["-NoProfile", "-Command", &script]).await
 }
 
@@ -389,9 +415,23 @@ mod tests {
             Some("Claude")
         );
         assert_eq!(
-            desktop_app_name("open -a \"Codex\"").as_deref(),
-            Some("Codex")
+            desktop_app_name("open -b com.openai.codex").as_deref(),
+            Some("ChatGPT")
         );
+    }
+
+    #[test]
+    fn macos_chatgpt_candidates_include_current_and_legacy_app_names() {
+        let paths = macos_application_candidate_paths("ChatGPT");
+        assert!(paths.iter().any(|path| path.ends_with("ChatGPT.app")));
+        assert!(paths.iter().any(|path| path.ends_with("Codex.app")));
+    }
+
+    #[test]
+    fn macos_chatgpt_spotlight_query_uses_bundle_id() {
+        let query = macos_spotlight_query("ChatGPT");
+        assert!(query.contains("kMDItemCFBundleIdentifier == 'com.openai.codex'"));
+        assert!(!query.contains("kMDItemFSName"));
     }
 
     #[test]

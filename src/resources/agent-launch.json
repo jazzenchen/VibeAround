@@ -26,9 +26,9 @@
     }
   },
   "codex-desktop": {
-    "command": "open -a Codex",
+    "command": "open -b com.openai.codex",
     "platform_commands": {
-      "macos": "open -a Codex",
+      "macos": "open -b com.openai.codex",
       "windows": "Start-Process Codex"
     }
   },

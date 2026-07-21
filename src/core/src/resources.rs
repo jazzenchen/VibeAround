@@ -21,6 +21,17 @@ static MCP_TOOLS_JSON: &str = include_str!("../../resources/mcp-tools.json");
 static COMMANDS_JSON: &str = include_str!("../../resources/commands.json");
 static PTY_ENV_JSON: &str = include_str!("../../resources/pty-env.json");
 
+pub const CHATGPT_DESKTOP_MACOS_APP_NAME: &str = "ChatGPT";
+pub const CHATGPT_DESKTOP_MACOS_BUNDLE_ID: &str = "com.openai.codex";
+pub const CHATGPT_DESKTOP_WINDOWS_PACKAGE_FAMILY: &str = "OpenAI.Codex_2p2nqsd0c76g0";
+
+pub fn chatgpt_desktop_windows_start_app_query() -> String {
+    format!(
+        "$app = Get-StartApps | Where-Object {{ $_.AppID -like '{}!*' }} | Select-Object -First 1; if (-not $app) {{ $app = Get-StartApps -Name 'Codex' | Select-Object -First 1 }}; if ($app) {{ $app.AppID }}",
+        CHATGPT_DESKTOP_WINDOWS_PACKAGE_FAMILY
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Data types
 // ---------------------------------------------------------------------------
@@ -724,8 +735,15 @@ mod tests {
         assert!(!agent_by_id("codex-desktop").unwrap().supports_acp_runtime());
 
         let error = validate_acp_runtime_agent("codex-desktop").unwrap_err();
-        assert!(error.contains("Codex Desktop can only be opened directly"));
+        assert!(error.contains("ChatGPT Desktop (Codex) can only be opened directly"));
         assert!(error.contains("IM/channel agent"));
+    }
+
+    #[test]
+    fn chatgpt_windows_lookup_uses_store_identity_with_legacy_fallback() {
+        let query = chatgpt_desktop_windows_start_app_query();
+        assert!(query.contains("OpenAI.Codex_2p2nqsd0c76g0!*"));
+        assert!(query.contains("Get-StartApps -Name 'Codex'"));
     }
 
     #[test]

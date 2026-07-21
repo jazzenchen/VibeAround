@@ -616,7 +616,9 @@ mod tests {
             Err(error) => error,
         };
 
-        assert!(format!("{:#}", error).contains("Codex Desktop can only be opened directly"));
+        assert!(
+            format!("{:#}", error).contains("ChatGPT Desktop (Codex) can only be opened directly")
+        );
         let _ = std::fs::remove_dir_all(&workspace);
     }
 }

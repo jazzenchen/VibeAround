@@ -974,6 +974,10 @@ fn codex_app_paths() -> Vec<PathBuf> {
 fn codex_app_binary_paths() -> Vec<PathBuf> {
     if cfg!(target_os = "macos") {
         [
+            PathBuf::from("/Applications/ChatGPT.app"),
+            crate::config::home_dir()
+                .join("Applications")
+                .join("ChatGPT.app"),
             PathBuf::from("/Applications/Codex.app"),
             crate::config::home_dir()
                 .join("Applications")
@@ -1360,6 +1364,17 @@ mod tests {
     fn codex_app_binary_paths_include_user_applications() {
         let paths = codex_app_binary_paths();
         if cfg!(target_os = "macos") {
+            assert!(paths.contains(&PathBuf::from(
+                "/Applications/ChatGPT.app/Contents/Resources/codex"
+            )));
+            assert!(paths.contains(
+                &crate::config::home_dir()
+                    .join("Applications")
+                    .join("ChatGPT.app")
+                    .join("Contents")
+                    .join("Resources")
+                    .join("codex")
+            ));
             assert!(paths.contains(&PathBuf::from(
                 "/Applications/Codex.app/Contents/Resources/codex"
             )));

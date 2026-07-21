@@ -183,8 +183,8 @@ impl PluginHost {
         });
     }
 
-    /// Best-effort realtime delivery. This method never waits for a plugin:
-    /// a full per-generation transport buffer drops the output and logs it.
+    /// Enqueue realtime delivery into the current plugin generation's FIFO.
+    /// The prompt response waits on a barrier in that same FIFO.
     pub fn send_output(&self, output: ChannelOutput) {
         let _ = self
             .command_tx
@@ -446,7 +446,7 @@ mod tests {
     use crate::routing::RouteKey;
 
     async fn recv_stdio_output(
-        rx: &mut tokio::sync::mpsc::Receiver<StdioBridgeMessage>,
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<StdioBridgeMessage>,
     ) -> ChannelOutput {
         let Some(StdioBridgeMessage::Output(output)) = rx.recv().await else {
             panic!("expected stdio output");
@@ -511,62 +511,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn full_plugin_buffer_cancels_permission_without_blocking_other_instances() {
+    async fn queued_permission_is_delivered_without_cancellation() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = PluginHost::new(input_tx);
-        let (blocked_tx, mut blocked_rx) = tokio::sync::mpsc::channel(1);
-        let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(1);
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
         host.replace_stdio_runtime(
-            "slack-blocked",
-            Arc::new(StdioPluginRuntime::new("slack-blocked", blocked_tx)),
-        );
-        host.replace_stdio_runtime(
-            "slack-live",
-            Arc::new(StdioPluginRuntime::new("slack-live", live_tx)),
+            "slack-work",
+            Arc::new(StdioPluginRuntime::new("slack-work", output_tx)),
         );
 
         host.send_output(ChannelOutput::SystemText {
-            route: RouteKey::with_actor("slack", "slack-blocked", "chat-a", "bot-a", None),
-            text: "fills buffer".to_string(),
+            route: RouteKey::with_actor("slack", "slack-work", "chat-a", "bot-a", None),
+            text: "first".to_string(),
             reply_to: None,
         });
         let (permission_tx, permission_rx) = tokio::sync::oneshot::channel();
         host.register_pending_permission(
-            "req-full".to_string(),
-            vec!["slack-blocked".to_string()],
+            "req-queued".to_string(),
+            vec!["slack-work".to_string()],
             permission_tx,
         );
         host.send_output(ChannelOutput::PermissionRequest {
-            route: RouteKey::with_actor("slack", "slack-blocked", "chat-a", "bot-a", None),
+            route: RouteKey::with_actor("slack", "slack-work", "chat-a", "bot-a", None),
             reply_to: None,
-            request_id: "req-full".to_string(),
+            request_id: "req-queued".to_string(),
             payload: serde_json::json!({}),
         });
 
-        let live_route = RouteKey::with_actor("slack", "slack-live", "chat-b", "bot-b", None);
-        host.send_output(ChannelOutput::SystemText {
-            route: live_route.clone(),
-            text: "still delivered".to_string(),
-            reply_to: None,
-        });
-
-        assert!(permission_rx.await.is_err());
-        let _ = recv_stdio_output(&mut blocked_rx).await;
-        assert_eq!(
-            recv_stdio_output(&mut live_rx).await.route_key(),
-            &live_route
-        );
+        let _ = recv_stdio_output(&mut output_rx).await;
+        let permission = recv_stdio_output(&mut output_rx).await;
+        assert!(matches!(
+            permission,
+            ChannelOutput::PermissionRequest { .. }
+        ));
+        host.respond_permission("slack-work", "req-queued", permission_response())
+            .await
+            .unwrap();
+        assert!(permission_rx.await.is_ok());
     }
 
     #[tokio::test]
     async fn remove_stdio_runtime_only_removes_current_runtime() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = PluginHost::new(input_tx);
-        let (output_tx, _output_rx) = tokio::sync::mpsc::channel(8);
+        let (output_tx, _output_rx) = tokio::sync::mpsc::unbounded_channel();
         let old_runtime = Arc::new(StdioPluginRuntime::new("feishu", output_tx));
         host.replace_stdio_runtime("feishu", Arc::clone(&old_runtime));
 
-        let (output_tx, mut output_rx) = tokio::sync::mpsc::channel(8);
+        let (output_tx, mut output_rx) = tokio::sync::mpsc::unbounded_channel();
         let new_runtime = Arc::new(StdioPluginRuntime::new("feishu", output_tx));
         host.replace_stdio_runtime("feishu", Arc::clone(&new_runtime));
 
@@ -598,8 +590,8 @@ mod tests {
     async fn same_kind_instances_route_to_distinct_runtimes() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = PluginHost::new(input_tx);
-        let (work_tx, mut work_rx) = tokio::sync::mpsc::channel(8);
-        let (personal_tx, mut personal_rx) = tokio::sync::mpsc::channel(8);
+        let (work_tx, mut work_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (personal_tx, mut personal_rx) = tokio::sync::mpsc::unbounded_channel();
         host.replace_stdio_runtime(
             "slack-work",
             Arc::new(StdioPluginRuntime::new("slack-work", work_tx)),
@@ -624,12 +616,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn full_runtime_barrier_does_not_block_other_instances() {
+    async fn runtime_barrier_does_not_block_other_instances() {
         let (input_tx, _input_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = Arc::new(PluginHost::new(input_tx));
-        let (blocked_tx, mut blocked_rx) = tokio::sync::mpsc::channel(1);
+        let (blocked_tx, mut blocked_rx) = tokio::sync::mpsc::unbounded_channel();
         let blocked_runtime = Arc::new(StdioPluginRuntime::new("slack-blocked", blocked_tx));
-        let (live_tx, mut live_rx) = tokio::sync::mpsc::channel(1);
+        let (live_tx, mut live_rx) = tokio::sync::mpsc::unbounded_channel();
         host.replace_stdio_runtime("slack-blocked", Arc::clone(&blocked_runtime));
         host.replace_stdio_runtime(
             "slack-live",

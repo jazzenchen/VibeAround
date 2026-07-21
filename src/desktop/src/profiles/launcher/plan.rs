@@ -266,8 +266,16 @@ fn macos_app_probe_for_direct_agent(agent_id: &str, agent: &resources::AgentDef)
 }
 
 fn open_app_name(command: &str) -> Option<String> {
+    let command = command.trim();
+    if command
+        .strip_prefix("open -b ")
+        .map(str::trim)
+        .map(|bundle_id| bundle_id.trim_matches('"'))
+        == Some(resources::CHATGPT_DESKTOP_MACOS_BUNDLE_ID)
+    {
+        return Some(resources::CHATGPT_DESKTOP_MACOS_APP_NAME.to_string());
+    }
     command
-        .trim()
         .strip_prefix("open -a ")
         .map(str::trim)
         .filter(|name| !name.is_empty())
@@ -480,6 +488,14 @@ mod tests {
     use ::common::profiles::schema::{ApiTypeOverrides, AuthMode, ProfileDef, ProviderSettings};
 
     use super::*;
+
+    #[test]
+    fn chatgpt_bundle_launch_uses_chatgpt_process_probe() {
+        assert_eq!(
+            open_app_name("open -b com.openai.codex").as_deref(),
+            Some("ChatGPT")
+        );
+    }
 
     impl<'a> LaunchPlanBuilder<'a> {
         fn with_launch_id(launch_id: &str) -> Self {

@@ -58,7 +58,7 @@ export const CONNECTION_AGENTS: ConnectionAgentDef[] = [
   },
   {
     id: "codex-desktop",
-    label: "Codex Desktop",
+    label: "ChatGPT Desktop (Codex)",
     supportedApiTypes: ["openai-responses"],
     defaultApiType: "openai-responses",
   },

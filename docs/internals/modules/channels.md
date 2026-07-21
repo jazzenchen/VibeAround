@@ -33,7 +33,7 @@ Host channel plugins (out-of-process stdio and in-process websocket), normalize 
 1. **Per-route ordering** belongs to `ConversationIngress`: the complete `RouteKey` selects one bounded lane. Web/TUI/stdio control paths must not bypass it.
 2. **`handle_input` never waits on agent work** — it crosses an in-process async mailbox before route dispatch. This mailbox is not a durable product message queue and has no replay/attempt semantics.
 3. **Every host/subagent-turn permission terminates**: the request is sent only to the active host target. Tap, active-turn cancellation, generation replacement, bridge death, and shutdown all complete it and drop its RAII registration; late responses are rejected. Add a new exit path for a plugin or prompt and it must preserve this invariant.
-4. **IM output is live-only**: the stdio transport has a bounded in-memory buffer, but no durable queue. Disconnected delivery is dropped and never replayed after restart.
+4. **IM output is live-only**: the stdio transport has one unbounded in-memory FIFO per plugin generation, but no durable queue. The FIFO preserves output/barrier order; it does not provide backpressure or replay after restart.
 5. **Runtime ownership is instance-scoped**: heartbeat, output, permission cleanup, stop, and restart use `channel_instance_id`, while discovery and platform traits continue to use `channel_kind`.
 6. **Current product scope is DM/Web:** direct messages need no mention. Group mention/callback parsing remains dormant in adapters and core, but is deferred from release acceptance.
 7. `ChannelManager::shutdown_all` may stop only channel-owned supervised IDs; it must never drain the global supervisor.
@@ -41,7 +41,7 @@ Host channel plugins (out-of-process stdio and in-process websocket), normalize 
 
 ## Known debt
 
-- The upstream `ChannelManager` async mailbox remains unbounded even though route lanes and stdio plugin output are bounded. This is a capacity observation, not a proposal for a durable message queue; defer until measurements justify a cap.
+- The upstream `ChannelManager` async mailbox and the stdio plugin output FIFO are unbounded; route lanes remain bounded. This is a capacity risk, not a claim of end-to-end backpressure or a proposal for a durable message queue.
 - Web-chat session-intent side effects still run before route-lane serialization and can interleave across WebSocket connections.
 - The route/target contract and SDK renderer now carry instance, actor, topic and per-message `replyTo`, but settings/UI still expose one configured instance per channel kind.
 - `RouteKey::as_key()` remains a deliberately lossy legacy/display key and must not be reused as extended route identity.

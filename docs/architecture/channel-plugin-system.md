@@ -32,7 +32,7 @@ The daemon's process supervisor owns every plugin process:
 
 - **Crash respawn.** An exited plugin is respawned with bounded exponential backoff.
 - **Heartbeat watchdog.** Plugins emit a `_va/heartbeat` notification every 30 seconds; if none arrives for 90 seconds the plugin is presumed frozen, killed, and respawned. This catches hung platform SDKs that never exit (values: [timers and limits](../reference/timers-and-limits.md#supervision)).
-- **Live-only output.** IM output uses a small bounded in-memory transport buffer. It is never persisted or replayed after a plugin or daemon restart; a disconnected delivery is dropped and logged.
+- **Live-only output.** IM output uses one unbounded in-memory FIFO per plugin generation to preserve output/barrier wire order. It provides no backpressure and is never persisted or replayed after a plugin or daemon restart.
 - **Abort-safe runtime and permission drain.** A generation-scoped cleanup guard removes only its own runtime and cancels pending permission waiters on normal exit, cancellation, panic, or supervisor task abort. A dead plugin therefore cannot leave a stale sender or hang an agent turn.
 - **Current conversation scope is DM/Web.** Group parsing remains dormant behind current-bot mention checks, but is not a release acceptance surface. A plugin without reliable group/mention identity must fail closed; the Weixin bridge currently rejects `group_id` events instead of routing them as DMs.
 - **Platform health lease.** The SDK emits heartbeats only while the plugin's `healthCheck` succeeds. All official plugins implement a platform-aware check; real disconnect/auth-revoke fault injection and a typed `Starting/Ready/Degraded` status remain follow-up work.
