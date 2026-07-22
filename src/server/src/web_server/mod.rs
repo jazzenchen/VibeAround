@@ -78,7 +78,7 @@ pub(crate) struct AppState {
     bridge_recorder: bridge_recording::BridgeRecorder,
     /// Local API bridge client token. Scoped `/local-api/...` routes use this
     /// before forwarding with the profile's real upstream credentials.
-    auth_token: Arc<AuthToken>,
+    local_api_token: Arc<AuthToken>,
 }
 
 /// Ensure web dist exists (build web first).
@@ -191,6 +191,7 @@ pub async fn run_web_server(
     channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
     auth_token: Arc<AuthToken>,
+    local_api_token: Arc<AuthToken>,
     host_search_available: bool,
     replace_provider_web_search: bool,
     search_runtime: Option<Arc<SearchToolRuntime>>,
@@ -224,7 +225,7 @@ pub async fn run_web_server(
         replace_provider_web_search,
         search_runtime,
         bridge_recorder: bridge_recording::BridgeRecorder::default(),
-        auth_token: Arc::clone(&auth_token),
+        local_api_token,
     };
 
     let auth_state = AuthState(Arc::clone(&auth_token));

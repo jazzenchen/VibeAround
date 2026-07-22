@@ -12,10 +12,13 @@
 //! ## Design
 //!
 //! - On every daemon start we generate a fresh 32-byte token from `OsRng`.
-//! - The token is hex-encoded (64 chars) and written to `~/.vibearound/auth.json`
-//!   with mode `0600` on Unix.
-//! - The file stores `{ "port": <u16>, "token": "<hex>" }` so the Tauri tray
-//!   and desktop-ui can discover both values without a side channel.
+//! - The dashboard token is hex-encoded (64 chars) and written to
+//!   `~/.vibearound/auth.json` with mode `0600` on Unix.
+//! - A separate daemon-lifetime token in `~/.vibearound/local-api-auth.json`
+//!   authorizes only the local API bridge. Giving an agent that credential
+//!   does not grant access to dashboard or control routes.
+//! - `auth.json` stores `{ "port": <u16>, "token": "<hex>" }` so the Tauri
+//!   tray and desktop-ui can discover both values without a side channel.
 //! - The HTTP layer enforces the token on every protected route via a
 //!   middleware that accepts it as `Authorization: Bearer <token>` or as a
 //!   `?token=<token>` query parameter (for browser initial-load and for
@@ -73,12 +76,25 @@ pub fn token_file_path() -> PathBuf {
     config::data_dir().join("auth.json")
 }
 
+/// Path of the local API bridge token file.
+pub fn local_api_token_file_path() -> PathBuf {
+    config::data_dir().join("local-api-auth.json")
+}
+
 /// Write the auth token file with owner-only permissions on Unix.
 ///
 /// Overwrites any prior file. Callers should invoke this once at daemon
 /// start, after the token has been generated.
 pub fn write_token_file(port: u16, token: &AuthToken) -> std::io::Result<()> {
-    let path = token_file_path();
+    write_auth_file(&token_file_path(), port, token)
+}
+
+/// Write the scoped local API bridge token file.
+pub fn write_local_api_token_file(port: u16, token: &AuthToken) -> std::io::Result<()> {
+    write_auth_file(&local_api_token_file_path(), port, token)
+}
+
+fn write_auth_file(path: &std::path::Path, port: u16, token: &AuthToken) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -87,15 +103,23 @@ pub fn write_token_file(port: u16, token: &AuthToken) -> std::io::Result<()> {
         token: token.as_str().to_string(),
     };
     let body = serde_json::to_string_pretty(&record).map_err(std::io::Error::other)?;
-    fs::write(&path, body)?;
-    set_owner_only(&path)?;
+    fs::write(path, body)?;
+    set_owner_only(path)?;
     Ok(())
 }
 
 /// Read the auth token file, if it exists and is well-formed.
 pub fn read_token_file() -> Option<AuthFile> {
-    let path = token_file_path();
-    let body = fs::read_to_string(&path).ok()?;
+    read_auth_file(&token_file_path())
+}
+
+/// Read the scoped local API bridge token file, if present and well-formed.
+pub fn read_local_api_token_file() -> Option<AuthFile> {
+    read_auth_file(&local_api_token_file_path())
+}
+
+fn read_auth_file(path: &std::path::Path) -> Option<AuthFile> {
+    let body = fs::read_to_string(path).ok()?;
     serde_json::from_str(&body).ok()
 }
 

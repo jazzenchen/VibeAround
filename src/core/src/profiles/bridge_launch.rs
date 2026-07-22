@@ -184,7 +184,7 @@ fn resolve_bridge_settings(
 
 #[cfg(not(test))]
 fn local_bridge_client_key() -> anyhow::Result<String> {
-    auth::read_token_file()
+    auth::read_local_api_token_file()
         .map(|record| record.token.trim().to_string())
         .filter(|token| !token.is_empty())
         .ok_or_else(|| anyhow!("local API bridge auth token is unavailable; restart VibeAround"))

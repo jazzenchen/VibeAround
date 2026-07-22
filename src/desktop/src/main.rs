@@ -221,11 +221,10 @@ fn main() {
     #[cfg(windows)]
     let graceful_exit_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Persist the auth token immediately so the desktop-ui (which runs in
-    // a Tauri webview that starts rendering before the daemon has fully
-    // booted) can read `~/.vibearound/auth.json` from its first render.
-    if let Err(e) = daemon.persist_auth_token() {
-        tracing::info!("[VibeAround] Failed to persist auth token: {}", e);
+    // Persist both daemon-lifetime tokens before the desktop-ui starts
+    // rendering or a bridge-backed agent can be launched.
+    if let Err(e) = daemon.persist_auth_tokens() {
+        tracing::info!("[VibeAround] Failed to persist auth tokens: {}", e);
     }
 
     let onboarding_needed = onboarding::needs_onboarding();
