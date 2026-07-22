@@ -115,6 +115,12 @@ export function StepTunnel({
         </div>
       )}
 
+      {provider === "tailscale" && (
+        <div className="rounded-md border border-border bg-muted/20 px-4 py-4 text-xs text-muted-foreground">
+          {t("Tailscale must be installed and signed in. Funnel publishes the Web Hub to the internet; when approval is required, use the Enable Funnel button in Remote Access.")}
+        </div>
+      )}
+
       {provider === "ngrok" && (
         <div className="space-y-2">
           <label className="block">
@@ -178,6 +184,8 @@ function tunnelIcon(id: string) {
       return Link2;
     case "ngrok":
       return RadioTower;
+    case "tailscale":
+      return Globe2;
     default:
       return Globe2;
   }
@@ -187,8 +195,9 @@ function orderedTunnels(tunnels: StepTunnelProps["tunnels"]) {
   const rank = new Map([
     ["none", 0],
     ["cloudflare", 1],
-    ["localtunnel", 2],
-    ["ngrok", 3],
+    ["tailscale", 2],
+    ["localtunnel", 3],
+    ["ngrok", 4],
   ]);
   return [...tunnels].sort(
     (a, b) => (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99),
@@ -208,6 +217,8 @@ function tunnelSettingsDescription(
       return t("Quick public URL through localtunnel, with no API key.");
     case "ngrok":
       return t("Remote access through an Ngrok account token.");
+    case "tailscale":
+      return t("Public HTTPS access through Tailscale Funnel, with no separate tunnel token.");
     default:
       return t("Remote access provider.");
   }

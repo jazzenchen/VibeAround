@@ -1133,6 +1133,11 @@ fn manual_guidance_for_item(
                 ),
             })
         }
+        "tunnels.tailscale.binary" => Some(ManualGuidance {
+            message: "Install Tailscale, sign in to your tailnet, then scan again.".to_string(),
+            command: None,
+            url: Some("https://tailscale.com/download".to_string()),
+        }),
         _ => None,
     }
 }
@@ -1387,6 +1392,22 @@ mod tests {
         );
         assert!(item_uses_managed_dependency_dir(cloudflare));
         assert!(cloudflare.install.is_some());
+    }
+
+    #[test]
+    fn tailscale_plan_checks_system_cli() {
+        let item_ids = ids(StartkitChoices {
+            agents: Vec::new(),
+            tunnel: "tailscale".to_string(),
+            channels: Vec::new(),
+            source: "global".to_string(),
+            toolchain_mode: "system".to_string(),
+            portable_toolchain: Some(false),
+            shell_path: false,
+        });
+
+        assert!(item_ids.contains(&"tunnels.tailscale.binary".to_string()));
+        assert!(!item_ids.contains(&"tunnels.cloudflare.binary".to_string()));
     }
 
     #[test]

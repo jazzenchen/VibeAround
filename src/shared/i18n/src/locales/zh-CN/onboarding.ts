@@ -103,10 +103,14 @@ export const zhCNOnboarding: Record<string, string> = {
     "通过 Ngrok 账号 token 提供远程访问。",
   "Quick public URL through localtunnel, with no API key.":
     "通过 localtunnel 快速生成公网 URL，不需要 API key。",
+  "Public HTTPS access through Tailscale Funnel, with no separate tunnel token.":
+    "通过 Tailscale Funnel 提供公网 HTTPS 访问，不需要单独的隧道 token。",
   "Local access only; no public tunnel is started.":
     "仅本机访问，不启动公网隧道。",
   "LocalTunnel does not require credentials. Save and restart services to apply this provider.":
     "LocalTunnel 不需要凭据。保存并重启服务后生效。",
+  "Tailscale must be installed and signed in. Funnel publishes the Web Hub to the internet; when approval is required, use the Enable Funnel button in Remote Access.":
+    "需要安装并登录 Tailscale。Funnel 会把 Web Hub 发布到公网；需要授权时，请在远程访问中点击“启用 Funnel”。",
   "Remote access is disabled. VibeAround stays available on this computer only.":
     "远程访问已关闭。VibeAround 只在这台电脑上可用。",
   "Stable named tunnel with a public hostname.":
@@ -115,6 +119,8 @@ export const zhCNOnboarding: Record<string, string> = {
     "已经在用 ngrok 时可以选择它。",
   "Quick temporary public URL for lightweight testing.":
     "临时测试用，地址可能会变化。",
+  "Public HTTPS access through your Tailscale device name.":
+    "通过 Tailscale 设备域名提供公网 HTTPS 访问。",
   "Keep everything local on this computer.": "不开放远程访问，只在本机使用。",
   "Remote access provider.": "远程访问方式。",
   "Installing selected setup": "正在安装",
