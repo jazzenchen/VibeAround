@@ -32,7 +32,7 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
 {
   // --- 隧道（见 ../guides/tunnels-and-remote-access.md） ---
   "tunnel": {
-    "provider": "none",              // none | ngrok | localtunnel | cloudflare
+    "provider": "none",              // none | ngrok | localtunnel | cloudflare | tailscale
     "ngrok":      { "auth_token": "…", "domain": "…" },
     "cloudflare": { "tunnel_token": "…", "hostname": "…" }
   },

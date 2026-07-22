@@ -21,7 +21,7 @@ VibeAround runs a local daemon that hosts your agents and exposes them through e
 
 **Use one model subscription across many CLIs.** Model profiles plus the built-in API bridge let a single provider account (Moonshot/Kimi, DeepSeek, OpenRouter, MiniMax, Z.AI/GLM, Gemini, Azure OpenAI, xAI, and others) power Claude Code, Codex, Gemini CLI, and any OpenAI-compatible client — including protocol translation between API dialects.
 
-**Operate everything from a browser.** The web dashboard serves a real terminal (xterm over WebSocket), a web chat with permission cards, live previews of dev servers, and rendered Markdown previews — locally by default, or anywhere through a built-in tunnel (ngrok, localtunnel, or Cloudflare) protected by pairing codes.
+**Operate everything from a browser.** The web dashboard serves a real terminal (xterm over WebSocket), a web chat with permission cards, live previews of dev servers, and rendered Markdown previews — locally by default, or anywhere through a built-in tunnel (ngrok, localtunnel, Cloudflare, or Tailscale Funnel) protected by pairing codes.
 
 **Launch agents your way.** The desktop app and `va launch` open agent CLIs in your own terminal with a saved profile: credentials materialized, model routing configured, project integrations installed.
 

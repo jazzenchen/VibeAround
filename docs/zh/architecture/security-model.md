@@ -22,7 +22,7 @@ zone 3  IM 平台             只有消息，经插件和权限卡片中介
 
 ## Zone 2：经隧道的远程访问
 
-隧道（ngrok、localtunnel、Cloudflare）把控制台发布到公网 URL。两道门：
+隧道（ngrok、localtunnel、Cloudflare、Tailscale Funnel）把控制台发布到公网 URL。两道门：
 
 1. **配对。** 非本地主机名上的浏览器必须完成配对：控制台显示一个 60 秒过期的 6 位码，必须在已受信的界面上确认 —— 输入到已连接的 IM 聊天（`/pair <code>`）或在本机批准。配对把该浏览器绑定到守护进程当前的认证 token（全部 TTL 见[计时器与上限](../reference/timers-and-limits.md#lifecycles-and-ttls)）。
 2. **Token。** 配对之后，与本地相同的 bearer token 规则适用。

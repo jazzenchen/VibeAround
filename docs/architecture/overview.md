@@ -53,7 +53,7 @@ Every edge in the picture, with its transport and payload shape:
 | agents → daemon (tools) | HTTP `/mcp` | MCP: JSON-RPC over streamable HTTP (+ SSE) |
 | launched CLIs → daemon (models) | HTTP loopback `/va/local-api/…` | the client's provider dialect (OpenAI / Anthropic / Gemini shapes) |
 | daemon → model providers | HTTPS | provider dialect after bridge translation |
-| daemon → tunnels | in-process SDK (ngrok) or child process (`cloudflared`, `npx localtunnel`) | provider-specific |
+| daemon → tunnels | in-process SDK (ngrok) or child process (`cloudflared`, `npx localtunnel`, `tailscale funnel`) | provider-specific |
 | daemon → previewed dev servers | HTTP reverse proxy | pass-through with iframe toolbar injection |
 
 ## Module map
@@ -71,7 +71,7 @@ Where each responsibility lives. Every runtime module also has a deep-dive page 
 | `profiles` | profile schema, catalog, rendering, bridge launch URLs, provider connections |
 | `pty` | PTY session registry and runtime — the web terminal's backend |
 | `previews` | live preview registry, owner/share URLs, port cleanup |
-| `tunnels` | ngrok / localtunnel / cloudflare providers |
+| `tunnels` | ngrok / localtunnel / cloudflare / Tailscale Funnel providers |
 | `auth` | daemon token, pairing codes |
 | `launch_sessions` | native CLI session discovery and archiving |
 | `plugins` | plugin discovery and manifests |

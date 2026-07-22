@@ -32,7 +32,7 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
 {
   // --- Tunnel (see ../guides/tunnels-and-remote-access.md) ---
   "tunnel": {
-    "provider": "none",              // none | ngrok | localtunnel | cloudflare
+    "provider": "none",              // none | ngrok | localtunnel | cloudflare | tailscale
     "ngrok":      { "auth_token": "…", "domain": "…" },
     "cloudflare": { "tunnel_token": "…", "hostname": "…" }
   },
