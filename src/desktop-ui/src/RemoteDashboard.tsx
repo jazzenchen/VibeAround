@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { StatusBanner } from "@/components/page";
-import { apiFetch, DAEMON_PORT, openDashboardUrl } from "@/lib/api";
+import { apiFetch, DAEMON_PORT, openDashboardUrl, openExternalUrl } from "@/lib/api";
 import {
   createSettingsPatch,
   saveSettingsOperations,
@@ -484,7 +484,7 @@ export function RemoteDashboard({
                         title={t("{{provider}} tunnel", {
                           provider: capitalize(tunnel.provider),
                         })}
-                        detail={tunnel.url ?? tunnelDetail(tunnel.status) ?? ""}
+                        detail={tunnel.url ?? tunnelDetail(tunnel.status, t) ?? ""}
                         onClick={() =>
                           setSelection({ kind: "tunnel", id: tunnel.provider })
                         }
@@ -958,7 +958,9 @@ function TunnelRemoteDetail({
 }) {
   const { t } = useI18n();
   const presentation = tunnelPresentation(tunnel.status, t);
-  const detail = tunnelDetail(tunnel.status);
+  const detail = tunnelDetail(tunnel.status, t);
+  const approvalUrl =
+    tunnel.status.state === "awaiting_approval" ? tunnel.status.url : null;
   return (
     <div className="grid gap-4">
       <section className="flex items-start justify-between gap-4">
@@ -991,6 +993,18 @@ function TunnelRemoteDetail({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {approvalUrl && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 px-2 text-[11px]"
+              onClick={() => void openExternalUrl(approvalUrl)}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              {t("Enable Funnel")}
+            </Button>
+          )}
           {tunnel.url && (
             <Button
               type="button"
@@ -1003,7 +1017,8 @@ function TunnelRemoteDetail({
               {t("Open")}
             </Button>
           )}
-          {tunnel.status.state === "running" && (
+          {(tunnel.status.state === "running" ||
+            tunnel.status.state === "awaiting_approval") && (
             <Button
               type="button"
               variant="outline"

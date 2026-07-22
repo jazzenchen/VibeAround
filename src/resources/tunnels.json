@@ -27,5 +27,12 @@
   {
     "id": "ngrok",
     "display_name": "Ngrok"
+  },
+  {
+    "id": "tailscale",
+    "display_name": "Tailscale Funnel",
+    "program": "tailscale",
+    "args": ["funnel", "--yes"],
+    "spawn_error_hint": "Install Tailscale, sign in, and make sure the tailscale CLI is on PATH"
   }
 ]

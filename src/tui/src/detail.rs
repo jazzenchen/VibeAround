@@ -22,6 +22,7 @@ pub(crate) fn channel_status_label(status: ChannelStatus) -> &'static str {
 pub(crate) fn tunnel_status_label(status: &TunnelStatus) -> &'static str {
     match status {
         TunnelStatus::Running => "running",
+        TunnelStatus::AwaitingApproval { .. } => "awaiting-approval",
         TunnelStatus::Stopped { .. } => "stopped",
         TunnelStatus::Failed { .. } => "failed",
     }

@@ -222,6 +222,7 @@ export type PreviewsResponse = z.infer<typeof PreviewsResponseSchema>;
 
 export const TunnelStatusSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("running") }),
+  z.object({ state: z.literal("awaiting_approval"), url: z.string().url() }),
   z.object({ state: z.literal("stopped"), reason: z.string() }),
   z.object({ state: z.literal("failed"), error: z.string() }),
 ]);
