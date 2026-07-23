@@ -149,7 +149,7 @@ impl PtySessionManager {
 
         let buf_clone = Arc::clone(&buffer);
         let tx_clone = live_tx.clone();
-        tokio::spawn(async move {
+        let output_task = tokio::spawn(async move {
             while let Some(data) = pty_rx.recv().await {
                 buf_clone.push(&data);
                 let _ = tx_clone.send(Bytes::from(data));
@@ -158,11 +158,21 @@ impl PtySessionManager {
 
         let rs = Arc::clone(&run_state);
         let changes_tx = self.changes_tx.clone();
-        tokio::spawn(async move {
+        let state_task = tokio::spawn(async move {
             while let Some(new_state) = state_rx.recv().await {
                 if let Ok(mut g) = rs.write() {
                     *g = new_state;
                 }
+                let _ = changes_tx.send(());
+            }
+        });
+
+        let registry = Arc::clone(&self.registry);
+        let changes_tx = self.changes_tx.clone();
+        tokio::spawn(async move {
+            let _ = output_task.await;
+            let _ = state_task.await;
+            if registry.remove(&session_id).is_some() {
                 let _ = changes_tx.send(());
             }
         });
@@ -278,5 +288,38 @@ impl PtySessionManager {
 impl Default for PtySessionManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn natural_exit_removes_session() {
+        let manager = PtySessionManager::new();
+        manager
+            .create_command_session(
+                PtyTool::Generic,
+                "exit 0".to_string(),
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !manager.list_sessions().is_empty() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("naturally exited PTY session should be removed");
     }
 }
