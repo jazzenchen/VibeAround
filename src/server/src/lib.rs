@@ -42,6 +42,8 @@ pub struct ServerDaemon {
     pub auth_token: Arc<AuthToken>,
     /// Scoped credential accepted only by the local API bridge.
     local_api_token: Arc<AuthToken>,
+    /// Scoped credential accepted only by the agent-as-API surface.
+    local_agent_api_token: Arc<AuthToken>,
 }
 
 pub struct RunningDaemon {
@@ -239,6 +241,7 @@ impl ServerDaemon {
             port,
             auth_token: Arc::new(AuthToken::generate()),
             local_api_token: Arc::new(AuthToken::generate()),
+            local_agent_api_token: Arc::new(AuthToken::generate()),
         }
     }
 
@@ -252,7 +255,7 @@ impl ServerDaemon {
         Arc::clone(&self.auth_token)
     }
 
-    /// Write the dashboard and local API token files so their respective
+    /// Write daemon-lifetime token files so their respective
     /// out-of-process clients can authenticate without an IPC round-trip.
     ///
     /// Safe to call before `start_background()` — the file will be
@@ -261,7 +264,8 @@ impl ServerDaemon {
     /// the daemon's start path has finished persisting it.
     pub fn persist_auth_tokens(&self) -> std::io::Result<()> {
         auth::write_token_file(self.port, &self.auth_token)?;
-        auth::write_local_api_token_file(self.port, &self.local_api_token)
+        auth::write_local_api_token_file(self.port, &self.local_api_token)?;
+        auth::write_local_agent_api_token_file(self.port, &self.local_agent_api_token)
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
@@ -356,6 +360,7 @@ impl ServerDaemon {
         let web_channel_manager = Arc::clone(&web_channel);
         let web_auth_token = Arc::clone(&self.auth_token);
         let web_local_api_token = Arc::clone(&self.local_api_token);
+        let web_local_agent_api_token = Arc::clone(&self.local_agent_api_token);
         let web_search_runtime = search_runtime.clone();
         let web_search_available = host_search_available;
         let web_replace_provider_search = replace_provider_web_search;
@@ -371,6 +376,7 @@ impl ServerDaemon {
                 web_channel_manager,
                 web_auth_token,
                 web_local_api_token,
+                web_local_agent_api_token,
                 web_search_available,
                 web_replace_provider_search,
                 web_search_runtime,

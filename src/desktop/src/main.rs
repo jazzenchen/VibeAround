@@ -109,6 +109,12 @@ fn get_auth_token() -> Option<common::auth::AuthFile> {
     common::auth::read_token_file()
 }
 
+/// Return the scoped credential for external agent-as-API clients.
+#[tauri::command]
+fn get_local_agent_api_token() -> Option<common::auth::AuthFile> {
+    common::auth::read_local_agent_api_token_file()
+}
+
 #[tauri::command]
 fn get_app_info() -> AppInfo {
     AppInfo {
@@ -255,6 +261,7 @@ fn main() {
         .manage(StartkitRunState::default())
         .invoke_handler(tauri::generate_handler![
             get_auth_token,
+            get_local_agent_api_token,
             get_app_info,
             rescan_agent_entries,
             rescan_desktop_app_entries,

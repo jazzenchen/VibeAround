@@ -1,4 +1,7 @@
-use axum::http::{HeaderMap, StatusCode};
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{HeaderMap, Request, StatusCode};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use common::config;
@@ -8,6 +11,7 @@ use common::profiles::schema::ProfileDef;
 use common::profiles::{catalog, connections};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use va_ai_api_bridge::{
     DeepSeekBridgeSettings, ProviderBridgeAdapter, ProviderBridgeAdapterConfig, UniversalRequest,
     UniversalResponse,
@@ -1209,6 +1213,54 @@ fn validate_manual_scope(scope: &str) -> Result<(), (StatusCode, String)> {
     Ok(())
 }
 
+#[derive(Clone)]
+pub(crate) struct LocalAgentCredential {
+    token: Arc<common::auth::AuthToken>,
+    owner_token: Arc<common::auth::AuthToken>,
+}
+
+impl LocalAgentCredential {
+    pub(crate) fn new(
+        token: Arc<common::auth::AuthToken>,
+        owner_token: Arc<common::auth::AuthToken>,
+    ) -> Self {
+        Self { token, owner_token }
+    }
+}
+
+pub(crate) async fn require_local_agent_credential(
+    State(state): State<LocalAgentCredential>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if let Some(response) =
+        validate_local_agent_client_token(&state.token, &state.owner_token, request.headers())
+    {
+        return response;
+    }
+    next.run(request).await
+}
+
+fn validate_local_agent_client_token(
+    auth_token: &common::auth::AuthToken,
+    owner_token: &common::auth::AuthToken,
+    headers: &HeaderMap,
+) -> Option<Response> {
+    let Some(candidate) = upstream::inbound_api_key(headers) else {
+        return Some(json_error(
+            StatusCode::UNAUTHORIZED,
+            "missing local agent API client key",
+        ));
+    };
+    if auth_token.matches(&candidate) || owner_token.matches(&candidate) {
+        return None;
+    }
+    Some(json_error(
+        StatusCode::UNAUTHORIZED,
+        "invalid local agent API client key",
+    ))
+}
+
 fn validate_local_bridge_client(state: &AppState, headers: &HeaderMap) -> Option<Response> {
     validate_local_bridge_client_token(&state.local_api_token, headers)
 }
@@ -1293,7 +1345,8 @@ mod tests {
 
     use super::{
         client_api_type_from_scope, has_auth_header, proxy_http_client, render_bridge_headers,
-        validate_local_bridge_client_token, validate_manual_scope,
+        validate_local_agent_client_token, validate_local_bridge_client_token,
+        validate_manual_scope,
     };
 
     #[test]
@@ -1363,6 +1416,42 @@ mod tests {
 
         let response = validate_local_bridge_client_token(&local_api_token, &headers).unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn local_agent_api_rejects_bridge_token() {
+        let local_agent_api_token = AuthToken::generate();
+        let bridge_token = AuthToken::generate();
+        let owner_token = AuthToken::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", bridge_token.as_str())).unwrap(),
+        );
+
+        let response =
+            validate_local_agent_client_token(&local_agent_api_token, &owner_token, &headers)
+                .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn local_agent_api_accepts_scoped_and_owner_tokens() {
+        let local_agent_api_token = AuthToken::generate();
+        let owner_token = AuthToken::generate();
+        for token in [&local_agent_api_token, &owner_token] {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", token.as_str())).unwrap(),
+            );
+            assert!(validate_local_agent_client_token(
+                &local_agent_api_token,
+                &owner_token,
+                &headers,
+            )
+            .is_none());
+        }
     }
 
     #[test]

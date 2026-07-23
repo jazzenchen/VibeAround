@@ -20,7 +20,7 @@
 
 ## 本地 API 路由族
 
-仅回环地址，由本地 bridge 检查把守；请求体最大 64 MB。机制见[本地 API 与 Bridge](../architecture/local-api-and-bridge.md)。
+仅回环地址，并由本地 bridge 检查把守；主路径 `/local-api` 和 `/local-agent` 还分别要求自己的凭证。请求体最大 64 MB。机制见[本地 API 与 Bridge](../architecture/local-api-and-bridge.md)。
 
 ```text
 /va/local-api/{profile}/{scope}/{api_type}/v1/{responses | chat/completions | messages | models}
@@ -32,18 +32,20 @@
 
 ### 可直接复制的示例
 
-本地 bridge 路由**不需要 Authorization 头** —— 门禁是回环对端 + 回环 Host（隧道无法触达它们）。把 profile id 和模型 id 换成你的 Profile 暴露的值。
+把 `LOCAL_API_KEY` 设为 `~/.vibearound/local-api-auth.json` 中的 `token`，把 `LOCAL_AGENT_API_KEY` 设为 `~/.vibearound/local-agent-api-auth.json` 中的 `token`。两者都会在守护进程重启时轮换。桌面端的本地 API 面板也可直接复制 Agent-as-API key。
 
 列出某个 Profile 提供的模型：
 
 ```bash
-curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/models
+curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/models \
+  -H "Authorization: Bearer $LOCAL_API_KEY"
 ```
 
 经 Bridge 的 chat completion（客户端说 OpenAI Chat；守护进程翻译成该 Profile 供应商说的方言）：
 
 ```bash
 curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/chat/completions \
+  -H "Authorization: Bearer $LOCAL_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model": "kimi-k2.7-code", "messages": [{"role": "user", "content": "hello"}]}'
 ```
@@ -52,6 +54,7 @@ Agent-as-API —— 同样的请求形状，但由托管的编程 Agent（带工
 
 ```bash
 curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
+  -H "Authorization: Bearer $LOCAL_AGENT_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model": "claude", "messages": [{"role": "user", "content": "what does this repo do?"}]}'
 ```
