@@ -293,6 +293,7 @@ async function main() {
 
     const results = [];
     for (const testCase of CASES) {
+      console.log(`[matrix] ${testCase.name}`);
       results.push(await runCase({ testCase, token, workspace, baseUrl, upstream }));
     }
 
@@ -412,7 +413,16 @@ async function sendMatrixTurn(ws, testCase, workspace, baseUrl, turn, newSession
   };
   const startedAt = Date.now();
   while (Date.now() - startedAt < MATRIX_TIMEOUT_MS) {
-    const event = await ws.next(MATRIX_TIMEOUT_MS);
+    const remainingMs = MATRIX_TIMEOUT_MS - (Date.now() - startedAt);
+    let event;
+    try {
+      event = await ws.next(remainingMs);
+    } catch (error) {
+      throw new Error(
+        `${testCase.name}: ${error.message} waiting for turn ${turn}`,
+        { cause: error },
+      );
+    }
     seen.events.push(event);
     if (event.kind === "error") {
       throw new Error(`${testCase.name}: websocket error: ${event.error}`);
@@ -431,6 +441,13 @@ async function sendMatrixTurn(ws, testCase, workspace, baseUrl, turn, newSession
       if (update?.sessionUpdate === "tool_call") seen.toolCall = true;
       if (update?.sessionUpdate === "tool_call_update") seen.toolUpdate = true;
       const text = update?.content?.text;
+      if (
+        update?.sessionUpdate === "agent_message_chunk" &&
+        typeof text === "string" &&
+        text.startsWith("MATRIX_ERROR ")
+      ) {
+        throw new Error(`${testCase.name}: fake agent failed: ${text.slice("MATRIX_ERROR ".length)}`);
+      }
       if (
         update?.sessionUpdate === "agent_message_chunk" &&
         typeof text === "string" &&
@@ -544,7 +561,13 @@ async function openChatSocket(token) {
 async function waitForEvent(ws, predicate, label) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < MATRIX_TIMEOUT_MS) {
-    const event = await ws.next(MATRIX_TIMEOUT_MS);
+    const remainingMs = MATRIX_TIMEOUT_MS - (Date.now() - startedAt);
+    let event;
+    try {
+      event = await ws.next(remainingMs);
+    } catch (error) {
+      throw new Error(`${error.message} waiting for ${label}`, { cause: error });
+    }
     if (predicate(event)) return event;
     if (event.kind === "error") throw new Error(`waiting for ${label}: ${event.error}`);
   }
@@ -854,9 +877,9 @@ async function writeMatrixHome(home, workspace, upstreamUrl) {
       mcp_auto_install: false,
       skill_auto_install: false,
     },
-  });
-  await writeJson(path.join(dataDir, "agents.json"), {
-    agents: fakeAgentPreferences(home),
+    launcher: {
+      agents: fakeAgentPreferences(home),
+    },
   });
 
   const profiles = PROVIDER_TARGETS.map((providerDef) => {
