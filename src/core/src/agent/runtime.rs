@@ -619,15 +619,25 @@ fn selected_agent_executable_env(
     if agent_id != "codex"
         || inherited_env
             .keys()
-            .any(|key| key.eq_ignore_ascii_case(CODEX_PATH_ENV))
+            .any(|key| env_key_matches(key, CODEX_PATH_ENV))
         || extra_env
             .iter()
-            .any(|(key, _)| key.eq_ignore_ascii_case(CODEX_PATH_ENV))
+            .any(|(key, _)| env_key_matches(key, CODEX_PATH_ENV))
     {
         return None;
     }
 
     Some((CODEX_PATH_ENV.to_string(), selected_path?.to_string()))
+}
+
+#[cfg(windows)]
+fn env_key_matches(key: &str, expected: &str) -> bool {
+    key.eq_ignore_ascii_case(expected)
+}
+
+#[cfg(not(windows))]
+fn env_key_matches(key: &str, expected: &str) -> bool {
+    key == expected
 }
 
 #[cfg(test)]
@@ -680,6 +690,23 @@ mod tests {
     #[test]
     fn profile_codex_path_is_not_overridden() {
         let extra_env = vec![(
+            "CODEX_PATH".to_string(),
+            r"C:\profile\codex.cmd".to_string(),
+        )];
+        let env = selected_agent_executable_env(
+            "codex",
+            Some(r"C:\detected\codex.cmd"),
+            &std::collections::HashMap::new(),
+            &extra_env,
+        );
+
+        assert_eq!(env, None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_profile_codex_path_is_case_insensitive() {
+        let extra_env = vec![(
             "codex_path".to_string(),
             r"C:\profile\codex.cmd".to_string(),
         )];
@@ -691,6 +718,23 @@ mod tests {
         );
 
         assert_eq!(env, None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_profile_codex_path_is_case_sensitive() {
+        let extra_env = vec![("codex_path".to_string(), "/custom/codex".to_string())];
+        let env = selected_agent_executable_env(
+            "codex",
+            Some("/detected/codex"),
+            &std::collections::HashMap::new(),
+            &extra_env,
+        );
+
+        assert_eq!(
+            env,
+            Some(("CODEX_PATH".to_string(), "/detected/codex".to_string()))
+        );
     }
 
     struct NoopClientHandler;
