@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{anyhow, Context};
 use axum::Json;
 use serde::Deserialize;
@@ -195,6 +196,135 @@ fn string_field(value: &Value, field: &str) -> Option<String> {
 
 fn argument_string(arguments: &Value, field: &str) -> Option<String> {
     string_field(arguments, field)
+}
+
+// ---------------------------------------------------------------------------
+// send_file — deliver one workspace file to the current turn target
+// ---------------------------------------------------------------------------
+
+pub(super) async fn mcp_send_file(
+    id: Option<serde_json::Value>,
+    arguments: &serde_json::Value,
+    state: &AppState,
+) -> Json<serde_json::Value> {
+    let Some(thread_id) = argument_string(arguments, "thread_id") else {
+        return jsonrpc_err(id, -32602, "Missing required argument: thread_id");
+    };
+    let thread_id = common::workspace::threads::WorkspaceThreadId::from(thread_id.as_str());
+    let Some(file) = argument_string(arguments, "file") else {
+        return jsonrpc_err(id, -32602, "Missing required argument: file");
+    };
+
+    let runtime = match state
+        .channel_hub
+        .workspace_thread_manager()
+        .runtime_for_thread_id(&thread_id)
+        .await
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return mcp_error_text(
+                id,
+                &format!("Failed to load thread runtime {}: {:#}", thread_id, error),
+            );
+        }
+    };
+    let Some(target) = runtime.active_turn_target().current() else {
+        return mcp_error_text(
+            id,
+            "send_file can only be called during an active VibeAround turn.",
+        );
+    };
+    let snapshot = runtime.state().await;
+    let Some(session_id) = snapshot.session_id else {
+        return mcp_error_text(id, "The active thread does not have an agent session yet.");
+    };
+    let file_path = match resolve_workspace_file(&snapshot.workspace, &file) {
+        Ok(path) => path,
+        Err(error) => return mcp_error_text(id, &error.to_string()),
+    };
+    let file_name = file_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "attachment".to_string());
+    let file_url = match url::Url::from_file_path(&file_path) {
+        Ok(url) => url.to_string(),
+        Err(()) => {
+            return mcp_error_text(
+                id,
+                &format!("Failed to create a file URI for {}", file_path.display()),
+            );
+        }
+    };
+    let size = std::fs::metadata(&file_path)
+        .ok()
+        .and_then(|metadata| i64::try_from(metadata.len()).ok());
+    let mut link = acp::ResourceLink::new(file_name.clone(), file_url);
+    link.size = size;
+    let notification = acp::SessionNotification::new(
+        session_id.clone(),
+        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+            acp::ContentBlock::ResourceLink(link),
+        )),
+    );
+    let notification = match serde_json::to_value(notification) {
+        Ok(notification) => notification,
+        Err(error) => {
+            return mcp_error_text(
+                id,
+                &format!("Failed to encode the file notification: {}", error),
+            );
+        }
+    };
+
+    state
+        .channel_hub
+        .send_output(common::channels::ChannelOutput::ThreadReply {
+            route: target.route,
+            reply_to: target.reply_to,
+            reply: common::channels::types::ThreadReply {
+                workspace_id: snapshot.workspace_id.to_string(),
+                thread_id: snapshot.thread_id.to_string(),
+                agent: common::channels::types::ThreadReplyAgent {
+                    id: snapshot.host_binding.agent_id,
+                    profile: snapshot.host_binding.profile_id,
+                    session_id,
+                },
+                payload: common::channels::types::ThreadReplyPayload::AcpSessionNotification {
+                    notification,
+                },
+            },
+        });
+
+    mcp_text(
+        id,
+        &format!(
+            "Queued `{}` for delivery to the current VibeAround conversation.",
+            file_name
+        ),
+    )
+}
+
+fn resolve_workspace_file(workspace: &Path, file: &str) -> anyhow::Result<PathBuf> {
+    let workspace = workspace
+        .canonicalize()
+        .with_context(|| format!("Failed to resolve workspace {}", workspace.display()))?;
+    let requested = PathBuf::from(file);
+    let requested = if requested.is_relative() {
+        workspace.join(requested)
+    } else {
+        requested
+    };
+    let resolved = requested
+        .canonicalize()
+        .with_context(|| format!("File not found: {}", requested.display()))?;
+    if !resolved.starts_with(&workspace) {
+        return Err(anyhow!("File must be inside the active workspace."));
+    }
+    if !resolved.is_file() {
+        return Err(anyhow!("Path is not a file: {}", resolved.display()));
+    }
+    Ok(resolved)
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,7 +1320,9 @@ fn build_preview_url(state: &AppState, route: &str, slug: &str) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{codex_session_id_from_mcp_metadata, workspace_is_registered};
+    use super::{
+        codex_session_id_from_mcp_metadata, resolve_workspace_file, workspace_is_registered,
+    };
 
     #[test]
     fn codex_metadata_prefers_turn_thread_id() {
@@ -1268,5 +1400,30 @@ mod tests {
             &settings,
             std::path::Path::new("/tmp/missing")
         ));
+    }
+
+    #[test]
+    fn outbound_file_must_exist_inside_the_active_workspace() {
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let root = std::env::temp_dir().join(format!("vibearound-send-file-{nonce}"));
+        let workspace = root.join("workspace");
+        let outside = root.join("outside.txt");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("report.txt"), "report").unwrap();
+        std::fs::write(&outside, "outside").unwrap();
+
+        let resolved = resolve_workspace_file(&workspace, "report.txt").unwrap();
+        assert_eq!(
+            resolved,
+            workspace.join("report.txt").canonicalize().unwrap()
+        );
+        assert!(
+            resolve_workspace_file(&workspace, outside.to_str().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("inside the active workspace")
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

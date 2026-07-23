@@ -4580,6 +4580,7 @@ dependencies = [
  "tokio",
  "tower-http",
  "tracing",
+ "url",
  "uuid",
  "va-ai-api-bridge",
  "windows-sys 0.61.2",

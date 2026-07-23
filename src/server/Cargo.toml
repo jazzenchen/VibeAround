@@ -27,6 +27,7 @@ agent-client-protocol = { workspace = true }
 async-trait = "0.1"
 anyhow = { workspace = true }
 tracing = "0.1"
+url = "2.5"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
