@@ -28,7 +28,7 @@ Slack 走 Socket Mode —— 不需要公网回调 URL。整个应用定义一�
   "oauth_config": {
     "scopes": {
       "bot": [
-        "files:read", "app_mentions:read", "chat:write", "commands",
+        "files:read", "files:write", "app_mentions:read", "chat:write", "commands",
         "im:history", "im:read", "im:write"
       ]
     },
@@ -69,6 +69,7 @@ Slack 走 Socket Mode —— 不需要公网回调 URL。整个应用定义一�
 
 - Slack 保留了裸的斜杠命令，所以 VibeAround 命令用 `/va` 前缀：`/va new`、`/va switch claude`、`/va status`（[命令参考](../im-usage.md#命令参考) —— 每条命令都能加前缀使用）。
 - 连接一建立就断？确认 Socket Mode 已启用，且 `app_token` 是 `xapp-` 开头的 token，不是 bot token。
+- 发送 workspace 文件需要 bot scope `files:write`。添加 scope 后需重新安装 Slack App，现有 bot token 才会获得该权限。
 
 ---
 
