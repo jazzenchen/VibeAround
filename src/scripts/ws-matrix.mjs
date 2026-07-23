@@ -857,9 +857,6 @@ async function writeMatrixHome(home, workspace, upstreamUrl) {
   });
   await writeJson(path.join(dataDir, "agents.json"), {
     agents: fakeAgentPreferences(home),
-    profileConnections: Object.fromEntries(
-      PROVIDER_TARGETS.map((providerDef) => [providerDef.profile, launchPreferences(providerDef)]),
-    ),
   });
 
   const profiles = PROVIDER_TARGETS.map((providerDef) => {
@@ -872,15 +869,18 @@ async function writeMatrixHome(home, workspace, upstreamUrl) {
         .filter((target) => target.endpointId)
         .map((target) => [target.api, target.endpointId]),
     );
-    return profile(
-      providerDef.profile,
-      providerDef.label,
-      providerDef.provider,
-      apiTypes,
-      upstreamUrl,
-      models,
-      endpointIds,
-    );
+    return {
+      ...profile(
+        providerDef.profile,
+        providerDef.label,
+        providerDef.provider,
+        apiTypes,
+        upstreamUrl,
+        models,
+        endpointIds,
+      ),
+      connections: launchPreferences(providerDef),
+    };
   });
 
   for (const item of profiles) {
@@ -978,9 +978,9 @@ async function writeFakeAgents(home) {
   await linkBin(bin, "gemini", fakeAgent);
   await linkBin(bin, "opencode", fakeAgent);
 
-  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.1.0");
+  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.1.7");
   await writePackage(nodeModules, "pi-acp", "0.0.27");
-  await writePackage(nodeModules, "@agentclientprotocol/claude-agent-acp", "0.0.0");
+  await writePackage(nodeModules, "@agentclientprotocol/claude-agent-acp", "0.61.0");
 }
 
 async function linkBin(bin, name, target) {
@@ -1273,7 +1273,7 @@ class BridgeConversation {
   }
 
   bridgeClientKey() {
-    const authPath = path.join(process.env.HOME, ".vibearound", "auth.json");
+    const authPath = path.join(process.env.HOME, ".vibearound", "local-api-auth.json");
     const key = JSON.parse(readFileSync(authPath, "utf8")).token;
     if (!key) throw new Error("missing local bridge client key");
     return key;
