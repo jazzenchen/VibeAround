@@ -1210,7 +1210,7 @@ fn validate_manual_scope(scope: &str) -> Result<(), (StatusCode, String)> {
 }
 
 fn validate_local_bridge_client(state: &AppState, headers: &HeaderMap) -> Option<Response> {
-    validate_local_bridge_client_token(&state.auth_token, headers)
+    validate_local_bridge_client_token(&state.local_api_token, headers)
 }
 
 fn validate_local_bridge_client_token(
@@ -1330,7 +1330,7 @@ mod tests {
     }
 
     #[test]
-    fn local_bridge_client_key_must_match_daemon_token() {
+    fn local_bridge_client_key_must_match_local_api_token() {
         let token = AuthToken::generate();
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_static("wrong-key"));
@@ -1340,7 +1340,7 @@ mod tests {
     }
 
     #[test]
-    fn local_bridge_accepts_bearer_daemon_token() {
+    fn local_bridge_accepts_bearer_local_api_token() {
         let token = AuthToken::generate();
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1349,6 +1349,20 @@ mod tests {
         );
 
         assert!(validate_local_bridge_client_token(&token, &headers).is_none());
+    }
+
+    #[test]
+    fn local_bridge_rejects_dashboard_owner_token() {
+        let local_api_token = AuthToken::generate();
+        let owner_token = AuthToken::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", owner_token.as_str())).unwrap(),
+        );
+
+        let response = validate_local_bridge_client_token(&local_api_token, &headers).unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[test]

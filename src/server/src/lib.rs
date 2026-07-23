@@ -40,6 +40,8 @@ pub struct ServerDaemon {
     /// Per-session auth token, regenerated on every daemon start.
     /// Exposed so Tauri can append `?token=` when opening the dashboard.
     pub auth_token: Arc<AuthToken>,
+    /// Scoped credential accepted only by the local API bridge.
+    local_api_token: Arc<AuthToken>,
 }
 
 pub struct RunningDaemon {
@@ -236,6 +238,7 @@ impl ServerDaemon {
             pty: common::pty::new_registry(),
             port,
             auth_token: Arc::new(AuthToken::generate()),
+            local_api_token: Arc::new(AuthToken::generate()),
         }
     }
 
@@ -249,16 +252,16 @@ impl ServerDaemon {
         Arc::clone(&self.auth_token)
     }
 
-    /// Write the auth token file to `~/.vibearound/auth.json` so that
-    /// out-of-process consumers (tray, cross-origin desktop-ui) can read
-    /// the current token without an IPC round-trip.
+    /// Write the dashboard and local API token files so their respective
+    /// out-of-process clients can authenticate without an IPC round-trip.
     ///
     /// Safe to call before `start_background()` — the file will be
     /// overwritten there too, but the contents are identical, so the early
     /// write avoids a race where the desktop-ui queries the token before
     /// the daemon's start path has finished persisting it.
-    pub fn persist_auth_token(&self) -> std::io::Result<()> {
-        auth::write_token_file(self.port, &self.auth_token)
+    pub fn persist_auth_tokens(&self) -> std::io::Result<()> {
+        auth::write_token_file(self.port, &self.auth_token)?;
+        auth::write_local_api_token_file(self.port, &self.local_api_token)
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
@@ -277,13 +280,12 @@ impl ServerDaemon {
         let tunnels = Arc::clone(&self.tunnels);
         let pty = Arc::clone(&self.pty);
 
-        // Persist the auth token so the Tauri side (tray, desktop-ui) can
-        // read it without a separate IPC channel. Overwrites any stale file
-        // from a previous run — older tokens are invalidated immediately.
-        if let Err(e) = auth::write_token_file(self.port, &self.auth_token) {
+        // Persist both daemon-lifetime tokens. Overwriting stale files makes
+        // credentials from the previous run invalid immediately.
+        if let Err(e) = self.persist_auth_tokens() {
             tracing::warn!(
                 error = %e,
-                "failed to write auth token file — dashboard will reject requests without it"
+                "failed to write auth token files — authenticated local clients may be unavailable"
             );
         }
 
@@ -353,6 +355,7 @@ impl ServerDaemon {
         let web_channel_hub = Arc::clone(&channel_hub);
         let web_channel_manager = Arc::clone(&web_channel);
         let web_auth_token = Arc::clone(&self.auth_token);
+        let web_local_api_token = Arc::clone(&self.local_api_token);
         let web_search_runtime = search_runtime.clone();
         let web_search_available = host_search_available;
         let web_replace_provider_search = replace_provider_web_search;
@@ -367,6 +370,7 @@ impl ServerDaemon {
                 web_channel_hub,
                 web_channel_manager,
                 web_auth_token,
+                web_local_api_token,
                 web_search_available,
                 web_replace_provider_search,
                 web_search_runtime,
