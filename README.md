@@ -239,7 +239,7 @@ Remote tunnels are used by Web Hub, Web Terminal, Live Preview, and Markdown pre
 | Localtunnel | ✅ Supported | Quick public URL through the managed `localtunnel` npm package or system `npx`. |
 | Cloudflare Tunnel | ✅ Supported | Named tunnel via `cloudflared`, tunnel token, and configured hostname. |
 | ngrok | ✅ Supported | Uses the ngrok SDK with auth token and optional reserved/static domain. |
-| Tailscale Funnel | 🚧 Roadmap | Planned for users who already keep machines connected through Tailscale. |
+| Tailscale Funnel | ✅ Supported | Public `.ts.net` URL through an installed and signed-in Tailscale client. |
 
 ## Live Preview
 

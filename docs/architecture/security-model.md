@@ -22,7 +22,7 @@ Practical consequences:
 
 ## Zone 2: remote access through tunnels
 
-Tunnels (ngrok, localtunnel, Cloudflare) publish the dashboard to a public URL. Two gates apply:
+Tunnels (ngrok, localtunnel, Cloudflare, Tailscale Funnel) publish the dashboard to a public URL. Two gates apply:
 
 1. **Pairing.** A browser on a non-local hostname must complete pairing: the dashboard shows a 6-digit code that expires after 60 seconds, and the code must be confirmed from an already-trusted surface — typed into a connected IM chat (`/pair <code>`) or approved locally. Pairing binds that browser to the daemon's current auth token (all TTLs: [timers and limits](../reference/timers-and-limits.md#lifecycles-and-ttls)).
 2. **Token.** After pairing, the same bearer-token rules apply as locally.

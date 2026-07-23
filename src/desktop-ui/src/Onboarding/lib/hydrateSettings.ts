@@ -105,7 +105,8 @@ export function hydrateTunnel(
     (provider === "none" ||
       provider === "cloudflare" ||
       provider === "ngrok" ||
-      provider === "localtunnel")
+      provider === "localtunnel" ||
+      provider === "tailscale")
   ) {
     setters.setTunnelProvider(provider);
   }

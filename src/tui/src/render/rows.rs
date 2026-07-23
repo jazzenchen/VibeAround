@@ -170,6 +170,7 @@ fn channel_status_color(status: ChannelStatus) -> Color {
 fn tunnel_status_color(status: &TunnelStatus) -> Color {
     match status {
         TunnelStatus::Running => OK,
+        TunnelStatus::AwaitingApproval { .. } => WARN,
         TunnelStatus::Stopped { .. } => NEUTRAL,
         TunnelStatus::Failed { .. } => ERROR,
     }

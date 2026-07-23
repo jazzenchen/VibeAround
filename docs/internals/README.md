@@ -32,7 +32,7 @@ Fixed structure per page: responsibility · key types · interactions · invaria
 | [profiles](modules/profiles.md) | Provider catalog, profile store, launch rendering |
 | [pty](modules/pty.md) | Pseudo-terminal sessions behind the web terminal |
 | [previews](modules/previews.md) | Live preview registry, owner/share URLs |
-| [tunnels](modules/tunnels.md) | ngrok / localtunnel / cloudflare publishing |
+| [tunnels](modules/tunnels.md) | ngrok / localtunnel / cloudflare / Tailscale Funnel publishing |
 | [auth](modules/auth.md) | Daemon token and pairing codes |
 | [server](modules/server.md) | The axum shell: routes, WebSockets, MCP, bridge, boot/shutdown |
 

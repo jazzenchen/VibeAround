@@ -27,7 +27,7 @@ pub struct TunnelEntry {
     /// the backend is still starting up.
     pub url: Option<String>,
     /// `ChildRegistry` id for process-based tunnels (cloudflared /
-    /// localtunnel). `None` for SDK-based tunnels (ngrok) and for the
+    /// localtunnel / tailscale). `None` for SDK-based tunnels (ngrok) and for the
     /// brief window between `register` and the first `set_registry_id`.
     /// Consumed by `kill()` to SIGKILL the child independent of task
     /// abort timing.
@@ -88,6 +88,7 @@ impl TunnelManager {
     pub fn set_url(&self, provider_key: &str, url: &str) {
         if let Some(mut entry) = self.tunnels.get_mut(provider_key) {
             entry.url = Some(url.to_string());
+            entry.meta.running();
         }
         self.notify_change();
     }
@@ -99,6 +100,20 @@ impl TunnelManager {
         if let Some(mut entry) = self.tunnels.get_mut(provider_key) {
             entry.registry_id = Some(registry_id);
         }
+    }
+
+    pub fn set_failed(&self, provider_key: &str, error: String) {
+        if let Some(entry) = self.tunnels.get(provider_key) {
+            entry.meta.fail(error);
+        }
+        self.notify_change();
+    }
+
+    pub fn set_awaiting_approval(&self, provider_key: &str, url: String) {
+        if let Some(entry) = self.tunnels.get(provider_key) {
+            entry.meta.await_approval(url);
+        }
+        self.notify_change();
     }
 
     /// Kill the tunnel matching `provider_key` and remove it from the

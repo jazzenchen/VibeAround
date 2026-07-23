@@ -69,6 +69,8 @@ export function tunnelReportMatchesProvider(
       );
     case "ngrok":
       return report.id === "tunnels.ngrok.sdk";
+    case "tailscale":
+      return report.id === "tunnels.tailscale.binary";
     default:
       return false;
   }

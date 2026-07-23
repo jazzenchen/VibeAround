@@ -72,6 +72,7 @@ pub struct TunnelRuntime {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum TunnelStatus {
     Running,
+    AwaitingApproval { url: String },
     Stopped { reason: String },
     Failed { error: String },
 }

@@ -5,3 +5,4 @@
 pub(super) mod cloudflare;
 pub(super) mod localtunnel;
 pub(super) mod ngrok;
+pub(super) mod tailscale;

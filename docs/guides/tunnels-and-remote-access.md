@@ -1,6 +1,6 @@
 # Tunnels and remote access
 
-A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Three providers are built in; every remote browser must pair before it gets in. The trust rules behind this page are in [Security model](../architecture/security-model.md).
+A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Four providers are built in; every remote browser must pair before it gets in. The trust rules behind this page are in [Security model](../architecture/security-model.md).
 
 ## Choosing a provider
 
@@ -9,9 +9,10 @@ A tunnel publishes your dashboard to a public URL so you can reach it away from 
 | ngrok | `ngrok` | Yes (auth token) | With a reserved domain |
 | localtunnel | `localtunnel` | No | No (random per start) |
 | Cloudflare Tunnel | `cloudflare` | Yes (tunnel token) | Yes (your hostname) |
+| Tailscale Funnel | `tailscale` | Yes (signed-in Tailscale client) | Yes (`*.ts.net`) |
 | disabled | `none` (default) | — | — |
 
-Rules of thumb: **localtunnel** for zero-setup trials; **ngrok** for a personal stable URL with minimal config; **Cloudflare** for a permanent hostname on your own domain.
+Rules of thumb: **localtunnel** for zero-setup trials; **ngrok** for a personal stable URL with minimal config; **Cloudflare** for a permanent hostname on your own domain; **Tailscale Funnel** for a stable public URL when the host already uses Tailscale.
 
 ## Configuration
 
@@ -19,23 +20,41 @@ In [`~/.vibearound/settings.json`](../reference/configuration.md#settingsjson) (
 
 ```jsonc
 {
-  "tunnel_provider": "ngrok",
-  "ngrok_auth_token": "2ab...",
-  "ngrok_domain": "myname.ngrok.app"        // optional reserved domain
+  "tunnel": {
+    "provider": "ngrok",
+    "ngrok": {
+      "auth_token": "2ab...",
+      "domain": "myname.ngrok.app"          // optional reserved domain
+    }
+  }
 }
 ```
 
 ```jsonc
 {
-  "tunnel_provider": "cloudflare",
-  "cloudflare_tunnel_token": "eyJ...",       // from the Zero Trust dashboard
-  "cloudflare_hostname": "va.example.com"
+  "tunnel": {
+    "provider": "cloudflare",
+    "cloudflare": {
+      "tunnel_token": "eyJ...",             // from the Zero Trust dashboard
+      "hostname": "va.example.com"
+    }
+  }
 }
 ```
 
 ```jsonc
-{ "tunnel_provider": "localtunnel" }
+{ "tunnel": { "provider": "localtunnel" } }
 ```
+
+```jsonc
+{ "tunnel": { "provider": "tailscale" } }
+```
+
+### Tailscale Funnel needs a signed-in client
+
+Install Tailscale, sign in to a tailnet, and enable MagicDNS. VibeAround starts `tailscale funnel --yes http://127.0.0.1:12358` as a foreground child process, reads the public `.ts.net` URL, and stops Funnel with the daemon.
+
+The first start may require an owner or admin to approve Funnel in the Tailscale web console. VibeAround shows **Action required** with an **Enable Funnel** button; the approval page opens only when you click it, then startup continues after approval. No terminal command is required. Funnel is public: remote browsers do not need the Tailscale app, and VibeAround pairing remains required. See [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel) for tailnet requirements and platform limitations.
 
 ### Cloudflare needs one manual step
 
@@ -85,11 +104,13 @@ The `va` CLI can target a remote daemon: `va --base-url https://va.example.com -
 | Pairing code always "invalid or expired" | Codes last 60 s — generate and confirm within the window; confirm you typed it in a chat connected to the *same* daemon |
 | Everything 401s after a daemon restart | Expected: tokens regenerate — reload from a trusted entry point and re-pair remote browsers |
 | localtunnel URL changes every start | That is localtunnel; use ngrok reserved domains or Cloudflare for stability |
+| Tailscale shows “Action required” without a URL | Click **Enable Funnel**, complete the Tailscale approval page, and confirm the Tailscale app is signed in |
+| Tailscale exits before showing a URL | Run `tailscale funnel http://127.0.0.1:12358` manually to see whether this client/platform supports Funnel |
 | Web terminal sluggish remotely | Interactive PTY over long-haul tunnels is latency-bound — prefer web chat remotely, terminal locally |
 
 ---
 
-*Source anchors: `src/core/src/tunnels/` (providers: ngrok, localtunnel, cloudflare), `src/core/src/config.rs` (tunnel settings), `src/core/src/auth/pair.rs` (60 s codes), `src/server/src/web_server/auth.rs` (local-origin trust), `src/core/src/previews/store.rs` (share TTL), `src/cli/src/` (pair/tunnel commands).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/tunnels/` (providers: ngrok, localtunnel, cloudflare, tailscale), `src/core/src/config.rs` (tunnel settings), `src/core/src/auth/pair.rs` (60 s codes), `src/server/src/web_server/auth.rs` (local-origin trust), `src/core/src/previews/store.rs` (share TTL), `src/cli/src/` (pair/tunnel commands).*
+*Last verified: v0.7.19*
 
 <sub>[◀ Agent launch guide](agent-launch.md) · [Documentation index](../README.md) · [Build a channel plugin ▶](build-a-channel-plugin.md)</sub>

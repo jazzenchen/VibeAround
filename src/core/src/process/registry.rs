@@ -48,7 +48,7 @@ pub enum ProcessKind {
     AcpAgent,
     /// PTY-hosted interactive shell or CLI tool.
     Pty,
-    /// Tunnel provider subprocess (cloudflared, lt, …). Not ngrok (SDK).
+    /// Tunnel provider subprocess (cloudflared, lt, tailscale, …). Not ngrok (SDK).
     Tunnel,
     /// Host-side search provider subprocess (va-search-tool stdio).
     SearchProvider,

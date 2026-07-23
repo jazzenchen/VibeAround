@@ -381,8 +381,18 @@ impl ServerDaemon {
         tracing::info!(provider = %tunnel_provider.as_str(), "tunnel configured");
         let tunnel_handle = if tunnel_provider.is_enabled() {
             let tunnel_manager = Arc::clone(&tunnels);
+            let approval_manager = Arc::clone(&tunnels);
+            let approval_reporter: tunnels::TunnelApprovalReporter = Arc::new(move |url| {
+                approval_manager.set_awaiting_approval(tunnel_provider.as_str(), url);
+            });
             let handle = tokio::spawn(async move {
-                match tunnels::start_web_tunnel_with_provider(tunnel_provider, &cfg).await {
+                match tunnels::start_web_tunnel_with_provider(
+                    tunnel_provider,
+                    &cfg,
+                    Some(approval_reporter),
+                )
+                .await
+                {
                     Ok((guard, url)) => {
                         tracing::info!(url = %url, "tunnel connected");
                         tunnel_manager.set_url(tunnel_provider.as_str(), &url);
@@ -393,6 +403,7 @@ impl ServerDaemon {
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "tunnel failed");
+                        tunnel_manager.set_failed(tunnel_provider.as_str(), e.to_string());
                     }
                 }
             });

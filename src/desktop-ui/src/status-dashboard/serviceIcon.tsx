@@ -22,6 +22,7 @@ const TUNNEL_ICONS: Record<string, ServiceIconMeta> = {
   cloudflare: { src: "/brand/tunnel-cloudflare.svg", fallback: "C" },
   localtunnel: { src: "/brand/tunnel-localtunnel.svg", fallback: "L" },
   ngrok: { src: "/brand/tunnel-ngrok.svg", fallback: "N" },
+  tailscale: { src: "", fallback: "T" },
 };
 
 export function ServiceIconBadge({

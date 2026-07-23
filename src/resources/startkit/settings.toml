@@ -213,6 +213,22 @@ macos = "scripts/macos/install-cloudflared.sh"
 windows = "scripts/windows/install-cloudflared.ps1"
 
 [[items]]
+id = "tunnels.tailscale.binary"
+label = "Tailscale"
+group = "remote"
+category = "tunnels"
+description = "Tailscale CLI connected to a tailnet with Funnel access."
+platforms = ["macos", "windows"]
+include_if = ["tunnel:tailscale"]
+severity = "blocker"
+program = "tailscale"
+version_arg = "version"
+
+[items.detect]
+macos = "scripts/macos/detect-program.sh"
+windows = "scripts/windows/detect-program.ps1"
+
+[[items]]
 id = "tunnels.cloudflare.token"
 label = "Cloudflare Tunnel Token"
 group = "remote"
