@@ -111,6 +111,6 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 ---
 
 *Source anchors: `src/core/src/tunnels/` (providers: ngrok, localtunnel, cloudflare, tailscale), `src/core/src/config.rs` (tunnel settings), `src/core/src/auth/pair.rs` (60 s codes), `src/server/src/web_server/auth.rs` (local-origin trust), `src/core/src/previews/store.rs` (share TTL), `src/cli/src/` (pair/tunnel commands).*
-*Last verified: v0.7.19*
+*Last verified: v0.7.20*
 
 <sub>[◀ Agent 启动指南](agent-launch.md) · [文档索引](../README.md) · [开发渠道插件 ▶](build-a-channel-plugin.md)</sub>
