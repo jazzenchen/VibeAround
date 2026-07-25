@@ -109,6 +109,12 @@ fn get_auth_token() -> Option<common::auth::AuthFile> {
     common::auth::read_token_file()
 }
 
+/// Return the scoped credential for external agent-as-API clients.
+#[tauri::command]
+fn get_local_agent_api_token() -> Option<common::auth::AuthFile> {
+    common::auth::read_local_agent_api_token_file()
+}
+
 #[tauri::command]
 fn get_app_info() -> AppInfo {
     AppInfo {
@@ -218,7 +224,6 @@ fn main() {
     let port = common::config::DEFAULT_PORT;
     let daemon = Arc::new(server::ServerDaemon::new(port));
     let tunnels = daemon.tunnels();
-    #[cfg(windows)]
     let graceful_exit_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // Persist both daemon-lifetime tokens before the desktop-ui starts
@@ -255,6 +260,7 @@ fn main() {
         .manage(StartkitRunState::default())
         .invoke_handler(tauri::generate_handler![
             get_auth_token,
+            get_local_agent_api_token,
             get_app_info,
             rescan_agent_entries,
             rescan_desktop_app_entries,
@@ -400,16 +406,14 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building VibeAround")
         .run({
-            #[cfg(windows)]
             let graceful_exit_started = Arc::clone(&graceful_exit_started);
-            move |_app, event| {
-                #[cfg(windows)]
+            move |app, event| {
                 if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
                     if *code != Some(tauri::RESTART_EXIT_CODE)
                         && !graceful_exit_started.swap(true, std::sync::atomic::Ordering::SeqCst)
                     {
                         api.prevent_exit();
-                        let app_handle = _app.clone();
+                        let app_handle = app.clone();
                         let exit_code = code.unwrap_or(0);
                         tauri::async_runtime::spawn(async move {
                             if let Err(error) = stop_daemon(&app_handle).await {

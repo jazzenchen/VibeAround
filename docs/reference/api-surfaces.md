@@ -20,7 +20,7 @@ Companion skills installed per agent (`skill_auto_install`): `vibearound` (hando
 
 ## Local API route families
 
-Loopback-only, gated by the local-bridge check; bodies up to 64 MB. Mechanism: [Local API and bridge](../architecture/local-api-and-bridge.md).
+Loopback-only and gated by the local-bridge check; the primary `/local-api` and `/local-agent` families also require their own credentials. Bodies up to 64 MB. Mechanism: [Local API and bridge](../architecture/local-api-and-bridge.md).
 
 ```text
 /va/local-api/{profile}/{scope}/{api_type}/v1/{responses | chat/completions | messages | models}
@@ -32,18 +32,20 @@ Loopback-only, gated by the local-bridge check; bodies up to 64 MB. Mechanism: [
 
 ### Copy-paste examples
 
-Local-bridge routes need **no Authorization header** — the gate is loopback peer + loopback Host (they are unreachable through tunnels). Substitute your profile id and a model id the profile exposes.
+Set `LOCAL_API_KEY` to the `token` in `~/.vibearound/local-api-auth.json`, and `LOCAL_AGENT_API_KEY` to the `token` in `~/.vibearound/local-agent-api-auth.json`. Both rotate on daemon restart. The desktop Local API panel exposes the agent-as-API key for copying.
 
 List the models a profile serves:
 
 ```bash
-curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/models
+curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/models \
+  -H "Authorization: Bearer $LOCAL_API_KEY"
 ```
 
 Chat completion through the bridge (client speaks OpenAI Chat; the daemon translates to whatever the profile's provider speaks):
 
 ```bash
 curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/chat/completions \
+  -H "Authorization: Bearer $LOCAL_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model": "kimi-k2.7-code", "messages": [{"role": "user", "content": "hello"}]}'
 ```
@@ -52,6 +54,7 @@ Agent-as-API — the same request shape, but executed by a hosted coding agent (
 
 ```bash
 curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
+  -H "Authorization: Bearer $LOCAL_AGENT_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model": "claude", "messages": [{"role": "user", "content": "what does this repo do?"}]}'
 ```

@@ -28,7 +28,7 @@ Slack runs over Socket Mode — no public callback URL needed. The whole app def
   "oauth_config": {
     "scopes": {
       "bot": [
-        "files:read", "app_mentions:read", "chat:write", "commands",
+        "files:read", "files:write", "app_mentions:read", "chat:write", "commands",
         "im:history", "im:read", "im:write"
       ]
     },
@@ -69,6 +69,7 @@ Required fields: `bot_token` (xoxb) and `app_token` (xapp).
 
 - Slack reserves bare slash commands, so VibeAround commands use the `/va` prefix: `/va new`, `/va switch claude`, `/va status` ([command reference](../im-usage.md#command-reference) — every command works behind the prefix).
 - Connection dies immediately? Check that Socket Mode is enabled and `app_token` is the `xapp-` token, not the bot token.
+- Sending workspace files requires the bot scope `files:write`. After adding the scope, reinstall the Slack app so the existing bot token receives it.
 
 ---
 

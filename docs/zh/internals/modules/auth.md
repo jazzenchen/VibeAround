@@ -1,6 +1,6 @@
 # Module: auth
 
-`src/core/src/auth/`（当前位置）：server surfaces 使用的 daemon token 与短寿命 pairing codes。策略讨论见[安全模型](../../architecture/security-model.md)。
+`src/core/src/auth/`（当前位置）：server surfaces 使用的 owner token、本地 API scoped token 与短寿命 pairing codes。策略讨论见[安全模型](../../architecture/security-model.md)。
 
 ## 职责
 
@@ -12,6 +12,8 @@
 |---|---|---|
 | `AuthToken` | `token.rs` | 每次 daemon start 都随机生成的 bearer token |
 | `write_token_file` | `mod.rs` | 把 `{port, token}` 持久化到 `~/.vibearound/auth.json`，供进程外消费者使用（tray、CLI、desktop-ui） |
+| `write_local_api_token_file` | `mod.rs` | 持久化仅由 Profile 模型 Bridge 接受的凭据 |
+| `write_local_agent_api_token_file` | `mod.rs` | 持久化仅由 Agent-as-API 接受的凭据 |
 | `pair` | `pair.rs` | 6 位 codes，60 秒 TTL，通过 trusted surface 验证；`validate(code)` 成功时返回 token |
 
 ## 交互

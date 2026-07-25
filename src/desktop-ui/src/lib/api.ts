@@ -43,6 +43,16 @@ async function getToken(): Promise<string | null> {
   return fetchToken();
 }
 
+export async function getLocalAgentApiToken(): Promise<string | null> {
+  try {
+    const file = await invoke<AuthFile | null>("get_local_agent_api_token");
+    return file?.token ?? null;
+  } catch (e) {
+    console.warn("[desktop-ui] get_local_agent_api_token failed:", e);
+    return null;
+  }
+}
+
 /**
  * Authenticated fetch against the daemon. Transparently re-fetches the
  * token on a 401 (daemon restart invalidates the previous token).

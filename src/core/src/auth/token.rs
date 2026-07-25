@@ -14,9 +14,11 @@
 //! - On every daemon start we generate a fresh 32-byte token from `OsRng`.
 //! - The dashboard token is hex-encoded (64 chars) and written to
 //!   `~/.vibearound/auth.json` with mode `0600` on Unix.
-//! - A separate daemon-lifetime token in `~/.vibearound/local-api-auth.json`
-//!   authorizes only the local API bridge. Giving an agent that credential
-//!   does not grant access to dashboard or control routes.
+//! - Separate daemon-lifetime tokens authorize the provider bridge
+//!   (`~/.vibearound/local-api-auth.json`) and agent-as-API
+//!   (`~/.vibearound/local-agent-api-auth.json`) route families. Giving an
+//!   agent a bridge credential does not grant access to dashboard/control
+//!   routes or permission to launch another agent.
 //! - `auth.json` stores `{ "port": <u16>, "token": "<hex>" }` so the Tauri
 //!   tray and desktop-ui can discover both values without a side channel.
 //! - The HTTP layer enforces the token on every protected route via a
@@ -81,6 +83,11 @@ pub fn local_api_token_file_path() -> PathBuf {
     config::data_dir().join("local-api-auth.json")
 }
 
+/// Path of the local agent API token file.
+pub fn local_agent_api_token_file_path() -> PathBuf {
+    config::data_dir().join("local-agent-api-auth.json")
+}
+
 /// Write the auth token file with owner-only permissions on Unix.
 ///
 /// Overwrites any prior file. Callers should invoke this once at daemon
@@ -92,6 +99,11 @@ pub fn write_token_file(port: u16, token: &AuthToken) -> std::io::Result<()> {
 /// Write the scoped local API bridge token file.
 pub fn write_local_api_token_file(port: u16, token: &AuthToken) -> std::io::Result<()> {
     write_auth_file(&local_api_token_file_path(), port, token)
+}
+
+/// Write the scoped local agent API token file.
+pub fn write_local_agent_api_token_file(port: u16, token: &AuthToken) -> std::io::Result<()> {
+    write_auth_file(&local_agent_api_token_file_path(), port, token)
 }
 
 fn write_auth_file(path: &std::path::Path, port: u16, token: &AuthToken) -> std::io::Result<()> {
@@ -116,6 +128,11 @@ pub fn read_token_file() -> Option<AuthFile> {
 /// Read the scoped local API bridge token file, if present and well-formed.
 pub fn read_local_api_token_file() -> Option<AuthFile> {
     read_auth_file(&local_api_token_file_path())
+}
+
+/// Read the scoped local agent API token file, if present and well-formed.
+pub fn read_local_agent_api_token_file() -> Option<AuthFile> {
+    read_auth_file(&local_agent_api_token_file_path())
 }
 
 fn read_auth_file(path: &std::path::Path) -> Option<AuthFile> {

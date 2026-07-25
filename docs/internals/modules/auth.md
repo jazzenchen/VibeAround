@@ -1,6 +1,6 @@
 # Module: auth
 
-`src/core/src/auth/` (current location) — credentials that gate server surfaces: the daemon token and short-lived pairing codes. Policy discussion: [security model](../../architecture/security-model.md).
+`src/core/src/auth/` (current location) — credentials that gate server surfaces: the owner token, local API scoped tokens, and short-lived pairing codes. Policy discussion: [security model](../../architecture/security-model.md).
 
 ## Responsibility
 
@@ -12,6 +12,8 @@ Generate and persist the daemon auth token, and manage the pairing-code table th
 |---|---|---|
 | `AuthToken` | `token.rs` | Random per-daemon-start bearer token |
 | `write_token_file` | `mod.rs` | Persists `{port, token}` to `~/.vibearound/auth.json` for out-of-process consumers (tray, CLI, desktop-ui) |
+| `write_local_api_token_file` | `mod.rs` | Persists the credential accepted only by the profile-backed model bridge |
+| `write_local_agent_api_token_file` | `mod.rs` | Persists the credential accepted only by the agent-as-API surface |
 | `pair` | `pair.rs` | 6-digit codes, 60 s TTL, verified via a trusted surface; `validate(code)` returns the token on success |
 
 ## Interactions

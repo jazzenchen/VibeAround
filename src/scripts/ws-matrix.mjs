@@ -293,6 +293,7 @@ async function main() {
 
     const results = [];
     for (const testCase of CASES) {
+      console.log(`[matrix] ${testCase.name}`);
       results.push(await runCase({ testCase, token, workspace, baseUrl, upstream }));
     }
 
@@ -412,7 +413,16 @@ async function sendMatrixTurn(ws, testCase, workspace, baseUrl, turn, newSession
   };
   const startedAt = Date.now();
   while (Date.now() - startedAt < MATRIX_TIMEOUT_MS) {
-    const event = await ws.next(MATRIX_TIMEOUT_MS);
+    const remainingMs = MATRIX_TIMEOUT_MS - (Date.now() - startedAt);
+    let event;
+    try {
+      event = await ws.next(remainingMs);
+    } catch (error) {
+      throw new Error(
+        `${testCase.name}: ${error.message} waiting for turn ${turn}`,
+        { cause: error },
+      );
+    }
     seen.events.push(event);
     if (event.kind === "error") {
       throw new Error(`${testCase.name}: websocket error: ${event.error}`);
@@ -431,6 +441,13 @@ async function sendMatrixTurn(ws, testCase, workspace, baseUrl, turn, newSession
       if (update?.sessionUpdate === "tool_call") seen.toolCall = true;
       if (update?.sessionUpdate === "tool_call_update") seen.toolUpdate = true;
       const text = update?.content?.text;
+      if (
+        update?.sessionUpdate === "agent_message_chunk" &&
+        typeof text === "string" &&
+        text.startsWith("MATRIX_ERROR ")
+      ) {
+        throw new Error(`${testCase.name}: fake agent failed: ${text.slice("MATRIX_ERROR ".length)}`);
+      }
       if (
         update?.sessionUpdate === "agent_message_chunk" &&
         typeof text === "string" &&
@@ -544,7 +561,13 @@ async function openChatSocket(token) {
 async function waitForEvent(ws, predicate, label) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < MATRIX_TIMEOUT_MS) {
-    const event = await ws.next(MATRIX_TIMEOUT_MS);
+    const remainingMs = MATRIX_TIMEOUT_MS - (Date.now() - startedAt);
+    let event;
+    try {
+      event = await ws.next(remainingMs);
+    } catch (error) {
+      throw new Error(`${error.message} waiting for ${label}`, { cause: error });
+    }
     if (predicate(event)) return event;
     if (event.kind === "error") throw new Error(`waiting for ${label}: ${event.error}`);
   }
@@ -854,12 +877,9 @@ async function writeMatrixHome(home, workspace, upstreamUrl) {
       mcp_auto_install: false,
       skill_auto_install: false,
     },
-  });
-  await writeJson(path.join(dataDir, "agents.json"), {
-    agents: fakeAgentPreferences(home),
-    profileConnections: Object.fromEntries(
-      PROVIDER_TARGETS.map((providerDef) => [providerDef.profile, launchPreferences(providerDef)]),
-    ),
+    launcher: {
+      agents: fakeAgentPreferences(home),
+    },
   });
 
   const profiles = PROVIDER_TARGETS.map((providerDef) => {
@@ -872,15 +892,18 @@ async function writeMatrixHome(home, workspace, upstreamUrl) {
         .filter((target) => target.endpointId)
         .map((target) => [target.api, target.endpointId]),
     );
-    return profile(
-      providerDef.profile,
-      providerDef.label,
-      providerDef.provider,
-      apiTypes,
-      upstreamUrl,
-      models,
-      endpointIds,
-    );
+    return {
+      ...profile(
+        providerDef.profile,
+        providerDef.label,
+        providerDef.provider,
+        apiTypes,
+        upstreamUrl,
+        models,
+        endpointIds,
+      ),
+      connections: launchPreferences(providerDef),
+    };
   });
 
   for (const item of profiles) {
@@ -978,9 +1001,9 @@ async function writeFakeAgents(home) {
   await linkBin(bin, "gemini", fakeAgent);
   await linkBin(bin, "opencode", fakeAgent);
 
-  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.1.0");
+  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.1.7");
   await writePackage(nodeModules, "pi-acp", "0.0.27");
-  await writePackage(nodeModules, "@agentclientprotocol/claude-agent-acp", "0.0.0");
+  await writePackage(nodeModules, "@agentclientprotocol/claude-agent-acp", "0.61.0");
 }
 
 async function linkBin(bin, name, target) {
@@ -1273,7 +1296,7 @@ class BridgeConversation {
   }
 
   bridgeClientKey() {
-    const authPath = path.join(process.env.HOME, ".vibearound", "auth.json");
+    const authPath = path.join(process.env.HOME, ".vibearound", "local-api-auth.json");
     const key = JSON.parse(readFileSync(authPath, "utf8")).token;
     if (!key) throw new Error("missing local bridge client key");
     return key;

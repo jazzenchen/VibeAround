@@ -3,7 +3,7 @@ name = "common"
 version = "0.7.19"
 description = "VibeAround shared logic: PTY, session registry, tunnel, headless CLI, IM (Telegram)"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.88"
 
 [dependencies]
 portable-pty = "0.9"

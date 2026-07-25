@@ -52,7 +52,7 @@ dev server 实时预览和 Markdown 渲染有两种 URL 形式：
 ## 凭据处理
 
 - 供应商 API key 存在 `~/.vibearound/` 下的 Profile 存储里，**由守护进程**注入上游请求。渲染给 Agent 的配置只含本地 Bridge URL —— Agent 配置泄露不会暴露任何供应商 key。
-- Bridge 和 agent-as-API 端点仅监听回环地址，且有本地 bridge 门；隧道无法触达。
+- Bridge 和 agent-as-API 端点仅监听回环地址，且有本地 bridge 门；隧道无法触达。主路径 `/local-api` 和 `/local-agent` 各有独立、随守护进程轮换的 scoped token，因此模型 Bridge 客户端不能启动 Agent。
 - 守护进程自己的 token 文件是家目录里的明文（信任级别等同 `~/.ssh`）；备份时相应对待。
 - 启动弹窗的 Bridge 请求/响应记录只在内存里，从不落盘。
 

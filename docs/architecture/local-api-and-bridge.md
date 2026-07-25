@@ -37,6 +37,8 @@ Each family exposes the standard sub-paths clients expect: `/v1/chat/completions
 
 **Agent-as-API (`local-agent`).** Turns a hosted coding agent itself into an OpenAI/Anthropic-compatible endpoint: requests become prompts to a real agent (with its tools and workspace), responses stream back in the requested dialect. This lets any OpenAI-compatible tool drive a full coding agent.
 
+The primary profile bridge and agent-as-API families use separate daemon-lifetime credentials. A client configured with `local-api-auth.json` can call `/local-api` but cannot start an agent; agent-as-API clients use `local-agent-api-auth.json`.
+
 ## What happens to a request
 
 1. **Decode** from the client dialect into the universal request.
@@ -54,7 +56,7 @@ Authentication to upstream providers is static API key per profile. OAuth/subscr
 
 ## Trust boundary
 
-The bridge binds to the loopback interface and requires the local bridge auth gate; it is not reachable through tunnels. Request bodies up to 64 MB are accepted to accommodate large context payloads. Credentials never appear in rendered client configs — only local URLs do; the daemon injects real keys upstream.
+The bridge binds to the loopback interface and requires the local bridge gate; the primary `/local-api` and `/local-agent` paths additionally require their scoped credentials. It is not reachable through tunnels. Request bodies up to 64 MB are accepted to accommodate large context payloads. Provider credentials never appear in rendered client configs; the daemon injects real keys upstream.
 
 ---
 

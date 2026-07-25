@@ -21,7 +21,7 @@ import { useI18n } from "@va/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, apiFetch, getLocalAgentApiToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   LOCAL_API_PROTOCOLS,
@@ -79,6 +79,7 @@ export function LocalAgentApiPanel({
   const [dragDepth, setDragDepth] = useState(0);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [clientKey, setClientKey] = useState("");
 
   const basePath = localAgentBasePath(target);
   const baseUrl = `${API_BASE}${basePath}`;
@@ -98,6 +99,7 @@ export function LocalAgentApiPanel({
 
   useEffect(() => {
     if (!target) return;
+    let cancelled = false;
     setProtocol("openai-responses");
     setPrompt(DEFAULT_TEST_PROMPT);
     setModel("");
@@ -109,13 +111,18 @@ export function LocalAgentApiPanel({
     setAttachmentError(null);
     setDragDepth(0);
     setTestResult(null);
+    setClientKey("");
+    void getLocalAgentApiToken().then((token) => {
+      if (!cancelled && token) setClientKey(token);
+    });
     if (!serviceEnabled) {
       setModelLoading(false);
       setModelLoadError(true);
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
-    let cancelled = false;
-    void fetch(`${API_BASE}${localAgentBasePath(target)}/models`, {
+    void apiFetch(`${localAgentBasePath(target)}/models`, {
       headers: {
         "x-vibearound-cwd": target.workspacePath,
       },
@@ -296,8 +303,8 @@ export function LocalAgentApiPanel({
     setTesting(true);
     setTestResult(null);
     try {
-      const response = await fetch(
-        `${API_BASE}${basePath}/${selectedProtocol.endpoint}`,
+      const response = await apiFetch(
+        `${basePath}/${selectedProtocol.endpoint}`,
         {
           method: "POST",
           headers: {
@@ -374,6 +381,14 @@ export function LocalAgentApiPanel({
           copied={copiedKey === "models"}
           onCopy={() => copyValue("models", modelsUrl)}
         />
+        {clientKey && (
+          <ManualField
+            label={t("API key")}
+            value={clientKey}
+            copied={copiedKey === "api-key"}
+            onCopy={() => copyValue("api-key", clientKey)}
+          />
+        )}
         <ModelListField
           label={t("Models")}
           models={modelOptions}
