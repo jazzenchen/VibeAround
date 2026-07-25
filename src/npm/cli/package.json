@@ -1,6 +1,6 @@
 {
   "name": "@vibearound/cli",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "VibeAround command-line tools",
   "license": "MIT",
   "type": "module",
