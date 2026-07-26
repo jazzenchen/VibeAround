@@ -22,7 +22,7 @@ Practical consequences:
 
 ## Zone 2: remote access through tunnels
 
-Tunnels (ngrok, localtunnel, Cloudflare) publish the dashboard to a public URL. Two gates apply:
+Tunnels (ngrok, localtunnel, Cloudflare, Tailscale Funnel) publish the dashboard to a public URL. Two gates apply:
 
 1. **Pairing.** A browser on a non-local hostname must complete pairing: the dashboard shows a 6-digit code that expires after 60 seconds, and the code must be confirmed from an already-trusted surface — typed into a connected IM chat (`/pair <code>`) or approved locally. Pairing binds that browser to the daemon's current auth token (all TTLs: [timers and limits](../reference/timers-and-limits.md#lifecycles-and-ttls)).
 2. **Token.** After pairing, the same bearer-token rules apply as locally.
@@ -52,7 +52,7 @@ Share links are the only intentionally unauthenticated surface, scoped to one pr
 ## Credential handling
 
 - Provider API keys are stored in the profile store under `~/.vibearound/` and injected into upstream requests **by the daemon**. Rendered agent configs contain only local bridge URLs — a leaked agent config exposes no provider key.
-- The bridge and agent-as-API endpoints are loopback-only and sit behind a local-bridge gate; they are not reachable through tunnels.
+- The bridge and agent-as-API endpoints are loopback-only and sit behind a local-bridge gate; they are not reachable through tunnels. The primary `/local-api` and `/local-agent` families have separate rotating scoped tokens, so a model bridge client cannot launch an agent.
 - The daemon's own auth token file is plaintext in your home directory (same trust level as `~/.ssh`); treat backups accordingly.
 - Bridge request/response recording for the launch popup is held in memory only and never written to disk.
 

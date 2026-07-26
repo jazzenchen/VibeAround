@@ -145,6 +145,8 @@ function tunnelReportForProvider(
       );
     case "ngrok":
       return reports.find((report) => report.id === "tunnels.ngrok.sdk");
+    case "tailscale":
+      return reports.find((report) => report.id === "tunnels.tailscale.binary");
     default:
       return undefined;
   }

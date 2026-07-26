@@ -12,6 +12,8 @@ Everything lives under `~/.vibearound/` (override with `VIBEAROUND_DATA_DIR`):
 | `agents.json` | desktop Launch UI, `va-launch` (executable discovery) | Per-agent launch preferences — [schema below](#agentsjson) | Yes, carefully |
 | `launch/profiles/<name>.json` | you, desktop (temp materialized copies) | Saved native-launch profiles — [schema below](#launch-profile-json-schema-v1) | **Yes** (that is the point) |
 | `auth.json` | daemon, every start | `{port, token}` for out-of-process clients | No — rewritten each start |
+| `local-api-auth.json` | daemon, every start | Scoped `{port, token}` for profile-backed model bridge clients | No — rewritten each start |
+| `local-agent-api-auth.json` | daemon, every start | Scoped `{port, token}` for agent-as-API clients | No — rewritten each start |
 | `profiles/<profile-id>.json` | desktop/dashboard profile UI | Saved model profiles (provider, endpoint, key, model routes) | Prefer the UI; hand-edits are read on reload |
 | `profile-state/<profile-id>/` | profile rendering | Rendered per-profile agent config files (settings overlays); env pointers reference these ([launch internals](../internals/launch.md#environment-assembly-layer-by-layer)) | No — regenerated per render |
 | `plugins/<kind>/` | desktop plugin manager | Installed channel plugins + manifests | Only during plugin development |
@@ -32,7 +34,7 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
 {
   // --- Tunnel (see ../guides/tunnels-and-remote-access.md) ---
   "tunnel": {
-    "provider": "none",              // none | ngrok | localtunnel | cloudflare
+    "provider": "none",              // none | ngrok | localtunnel | cloudflare | tailscale
     "ngrok":      { "auth_token": "…", "domain": "…" },
     "cloudflare": { "tunnel_token": "…", "hostname": "…" }
   },
@@ -160,6 +162,8 @@ Two "profile" concepts meet here and must not be confused: a **provider profile*
 ~/.vibearound/
 ├── settings.json           # configuration (this page)
 ├── auth.json               # dashboard token, rewritten each daemon start
+├── local-api-auth.json     # profile bridge token, rewritten each daemon start
+├── local-agent-api-auth.json # agent-as-API token, rewritten each daemon start
 ├── agents.json             # resolved agent executables (va-launch cache)
 ├── plugins/<kind>/         # installed channel plugins
 ├── launch/profiles/        # saved launch profile JSON (schema v1)

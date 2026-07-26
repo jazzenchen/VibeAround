@@ -37,6 +37,8 @@ Bridge 把两者解耦。它在本地端点上接受**客户端**方言的请求
 
 **Agent-as-API（`local-agent`）。** 把一个托管的编程 Agent 本身变成 OpenAI/Anthropic 兼容端点：请求变成发给真实 Agent（带工具和 Workspace）的提示，响应以所请求的方言流回。任何 OpenAI 兼容工具都能借此驱动一个完整的编程 Agent。
 
+主路径 Profile Bridge 与 Agent-as-API 使用彼此独立、随守护进程轮换的凭证。拿到 `local-api-auth.json` 的客户端只能调用 `/local-api`，不能启动 Agent；Agent-as-API 客户端使用 `local-agent-api-auth.json`。
+
 ## 一个请求经历了什么
 
 1. **解码**：从客户端方言解码为统一请求。
@@ -54,7 +56,7 @@ Bridge 把两者解耦。它在本地端点上接受**客户端**方言的请求
 
 ## 信任边界
 
-Bridge 绑定回环接口，且要求本地 bridge 认证门；隧道无法触达它。请求体最大接受 64 MB，以容纳大上下文负载。凭据永远不出现在渲染给客户端的配置里 —— 里面只有本地 URL；真正的 key 由守护进程注入上游请求。
+Bridge 绑定回环接口并要求本地 bridge 门禁；主路径 `/local-api` 和 `/local-agent` 还分别要求自己的 scoped credential。隧道无法触达它。请求体最大接受 64 MB，以容纳大上下文负载。供应商凭据不会出现在渲染给客户端的配置里；真正的 key 由守护进程注入上游请求。
 
 ---
 

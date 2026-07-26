@@ -89,6 +89,7 @@ impl crate::tunnels::TunnelBackend for NgrokBackend {
     async fn start_web_tunnel(
         &self,
         config: &crate::config::Config,
+        _approval_reporter: Option<crate::tunnels::TunnelApprovalReporter>,
     ) -> Result<(crate::tunnels::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>>
     {
         start_web_tunnel(config).await

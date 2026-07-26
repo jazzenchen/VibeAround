@@ -13,7 +13,7 @@
 //! ## Module layout
 //!
 //! - [`jsonrpc`] — JSON-RPC 2.0 envelope + MCP content helpers
-//! - [`tools`]   — the five `tools/call` implementations
+//! - [`tools`]   — the `tools/call` implementations
 //! - [`sessions`] — per-agent on-disk session auto-discovery
 //! - [`ports`]   — deny-list of well-known service ports
 
@@ -136,6 +136,7 @@ async fn mcp_tools_call(
         "get_session_id" => {
             tools::mcp_get_session_id(id, arguments, params.get("_meta"), state).await
         }
+        "send_file" => tools::mcp_send_file(id, arguments, state).await,
         "prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
         "register_workspace" => tools::mcp_register_workspace(id, arguments).await,
         "initialize_subagents" => tools::mcp_initialize_subagents(id, arguments, state).await,

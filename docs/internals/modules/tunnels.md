@@ -1,6 +1,6 @@
 # Module: tunnels
 
-`src/core/src/tunnels/` (current location) — publishing the server's web listener to a public URL through three interchangeable providers.
+`src/core/src/tunnels/` (current location) — publishing the server's web listener to a public URL through four interchangeable providers.
 
 ## Responsibility
 
@@ -15,10 +15,11 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 | ngrok provider | `providers/ngrok.rs` | In-process via the ngrok Rust SDK (session + forwarder; optional reserved domain) |
 | cloudflare provider | `providers/cloudflare.rs` | Child process: `cloudflared tunnel run --token …` |
 | localtunnel provider | `providers/localtunnel.rs` | Child process: currently `npx localtunnel --port 12358` (known target-port defect) |
+| tailscale provider | `providers/tailscale.rs` | Child process: `tailscale funnel --yes http://127.0.0.1:12358` |
 
 ## Interactions
 
-- **← server (daemon boot):** starts the configured tunnel; registers the abort handle; `stop()` aborts and clears.
+- **← server (daemon boot):** starts the configured tunnel; reports Tailscale's `awaiting_approval` state; registers the abort handle; `stop()` aborts and clears.
 - **← auth:** a public hostname is what triggers the pairing gate.
 - **← previews / dashboard:** public URL for share links and display (`preview_base_url` can override).
 - **→ resources:** provider program definitions and spawn-error hints (e.g. "is Node/npx installed?").
@@ -27,18 +28,18 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 
 1. **`none` is a first-class provider** — no tunnel code runs, no child spawns; new call sites must tolerate absent URLs.
 2. **The tunnel exposes exactly the web listener** — never bind additional ports through it; loopback-only surfaces (local-api) must stay unreachable.
-3. Provider children are registered for cleanup like every other child; a dead daemon leaves no `cloudflared` behind.
+3. Provider children are registered for cleanup like every other child; a dead daemon leaves no `cloudflared` or `tailscale funnel` process behind.
 4. Public URL is data, not identity: consumers subscribe to changes rather than caching it across restarts.
 
 ## Known debt
 
 - Localtunnel currently hardcodes port 12358 instead of receiving the daemon's actual bound port; custom-port tunnel startup must be rejected until fixed.
-- Provider startup/exit needs a real `Starting/Running/Failed/Stopped` lifecycle with URL invalidation and bounded backoff.
+- Provider startup/exit still needs an explicit `Starting` state, URL invalidation, and bounded backoff; `Running`, `AwaitingApproval`, `Failed`, and `Stopped` are already represented.
 - Move orchestration behind an injected server `TunnelService`; core should not decide what local listener is safe to expose.
 
 ---
 
 *Source anchors: `src/core/src/tunnels/` (mod, providers/), `src/core/src/config.rs` (tunnel settings), `src/server/src/lib.rs` (boot wiring).*
-*Last verified: system review 2026-07-11.*
+*Last verified: 2026-07-22.*
 
 <sub>[◀ Module: previews](previews.md) · [Documentation index](../../README.md) · [Module: auth ▶](auth.md)</sub>

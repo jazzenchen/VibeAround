@@ -239,7 +239,7 @@ Remote tunnels are used by Web Hub, Web Terminal, Live Preview, and Markdown pre
 | Localtunnel | ✅ Supported | Quick public URL through the managed `localtunnel` npm package or system `npx`. |
 | Cloudflare Tunnel | ✅ Supported | Named tunnel via `cloudflared`, tunnel token, and configured hostname. |
 | ngrok | ✅ Supported | Uses the ngrok SDK with auth token and optional reserved/static domain. |
-| Tailscale Funnel | 🚧 Roadmap | Planned for users who already keep machines connected through Tailscale. |
+| Tailscale Funnel | ✅ Supported | Public `.ts.net` URL through an installed and signed-in Tailscale client. |
 
 ## Live Preview
 
@@ -345,13 +345,13 @@ Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki
 
 ### Desktop App
 
-Latest desktop release: [VibeAround v0.7.19](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.19).
+Latest desktop release: [VibeAround v0.7.20](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.20).
 
 | Platform | Recommended download |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.19.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.19/VibeAround-macOS-arm64-0.7.19.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.19/VibeAround-Windows-x64-Setup-0.7.19.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.19/VibeAround-Windows-x64-MSI-0.7.19.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.19/VibeAround-Windows-x64-Portable-0.7.19.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.19/VibeAround-Linux-x64-AppImage-0.7.19.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.19/VibeAround-Linux-x64-DEB-0.7.19.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.20.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.20/VibeAround-macOS-arm64-0.7.20.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.20/VibeAround-Windows-x64-Setup-0.7.20.exe), [MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.20/VibeAround-Windows-x64-MSI-0.7.20.msi), or [portable ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.20/VibeAround-Windows-x64-Portable-0.7.20.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.20/VibeAround-Linux-x64-AppImage-0.7.20.AppImage) or [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.20/VibeAround-Linux-x64-DEB-0.7.20.deb) |
 
 Windows and Linux packages are built by GitHub Actions. The macOS package is currently Apple Silicon only.
 
@@ -371,7 +371,7 @@ va launch --profile codex-work
 
 After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
 
-Latest CLI package: [`@vibearound/cli@0.0.8`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.8](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.8).
+Latest CLI package: [`@vibearound/cli@0.0.9`](https://www.npmjs.com/package/@vibearound/cli). Platform payloads are tracked separately in [VibeAround CLI 0.0.9](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.9).
 
 ## Upgrade Notes
 

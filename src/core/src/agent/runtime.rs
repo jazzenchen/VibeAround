@@ -214,7 +214,8 @@ impl Agent {
             .with_context(|| format!("install project integrations for {}", agent_id))?;
 
         // Resolve program + args + install if needed.
-        let (program, mut resolved_args) = resolve_agent_program(&agent_id).await?;
+        let (program, mut resolved_args, selected_candidate) =
+            resolve_agent_program(&agent_id).await?;
         resolved_args.extend(extra_args);
         tracing::info!(
             "[{}] spawning {} {} in {:?}",
@@ -224,9 +225,18 @@ impl Agent {
             cwd
         );
 
+        let inherited_env = crate::process::env::child_env();
+        let selected_path = selected_candidate
+            .as_ref()
+            .map(|candidate| candidate.path.as_str());
         let mut spec = SpawnSpec::new(program).args(resolved_args).cwd(cwd.clone());
-        if let Some(path_env) = selected_agent_path_env(&agent_id) {
+        if let Some(path_env) = selected_agent_path_env(selected_path, &inherited_env) {
             spec = spec.env(crate::process::env::path_env_key(), path_env);
+        }
+        if let Some((key, value)) =
+            selected_agent_executable_env(&agent_id, selected_path, &inherited_env, &extra_env)
+        {
+            spec = spec.env(key, value);
         }
         for (k, v) in extra_env {
             spec = spec.env(k, v);
@@ -486,8 +496,16 @@ impl Agent {
 // ---------------------------------------------------------------------------
 
 /// Resolve the agent's launch command, lazily installing the binary on
-/// first miss. Returns `(program, args)` ready for a [`SpawnSpec`].
-async fn resolve_agent_program(agent_id: &str) -> anyhow::Result<(String, Vec<String>)> {
+/// first miss. Returns `(program, args, selected_candidate)` ready for a
+/// [`SpawnSpec`]. npm-based ACP adapters receive the candidate separately so
+/// they can launch the same CLI selected by VibeAround.
+async fn resolve_agent_program(
+    agent_id: &str,
+) -> anyhow::Result<(
+    String,
+    Vec<String>,
+    Option<crate::agent_detection::AgentCandidate>,
+)> {
     let agent_def = crate::resources::agent_by_id(agent_id)
         .ok_or_else(|| anyhow!("No resource definition for agent '{}'", agent_id))?;
     let config = crate::config::ensure_loaded();
@@ -519,21 +537,38 @@ async fn resolve_agent_program(agent_id: &str) -> anyhow::Result<(String, Vec<St
         Ok((
             "node".to_string(),
             vec![entry.to_string_lossy().to_string()],
+            selected_candidate,
         ))
     } else if let Some(install_cmd) = &agent_def.acp.install_cmd {
-        if let Some(candidate) = selected_candidate {
-            return Ok((candidate.path, agent_def.acp.args.clone()));
+        if let Some(candidate) = selected_candidate.as_ref() {
+            return Ok((
+                candidate.path.clone(),
+                agent_def.acp.args.clone(),
+                selected_candidate,
+            ));
         }
         if !super::install::is_program_available(&agent_def.acp.program) {
             tracing::info!("[{}-agent] auto-installing via install cmd ...", agent_id);
             super::install::auto_install_agent_cmd(install_cmd, agent_id).await?;
         }
-        Ok((agent_def.acp.program.clone(), agent_def.acp.args.clone()))
+        Ok((
+            agent_def.acp.program.clone(),
+            agent_def.acp.args.clone(),
+            selected_candidate,
+        ))
     } else {
-        if let Some(candidate) = selected_candidate {
-            return Ok((candidate.path, agent_def.acp.args.clone()));
+        if let Some(candidate) = selected_candidate.as_ref() {
+            return Ok((
+                candidate.path.clone(),
+                agent_def.acp.args.clone(),
+                selected_candidate,
+            ));
         }
-        Ok((agent_def.acp.program.clone(), agent_def.acp.args.clone()))
+        Ok((
+            agent_def.acp.program.clone(),
+            agent_def.acp.args.clone(),
+            selected_candidate,
+        ))
     }
 }
 
@@ -556,11 +591,13 @@ async fn resolve_agent_candidate(
     .and_then(|availability| availability.selected)
 }
 
-fn selected_agent_path_env(agent_id: &str) -> Option<String> {
-    let candidate = crate::agent_detection::selected_candidate(agent_id)?;
-    let parent = std::path::Path::new(&candidate.path).parent()?;
+fn selected_agent_path_env(
+    selected_path: Option<&str>,
+    inherited_env: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let parent = std::path::Path::new(selected_path?).parent()?;
     let mut paths = vec![parent.to_path_buf()];
-    if let Some(current) = crate::process::env::path_value(&crate::process::env::child_env()) {
+    if let Some(current) = crate::process::env::path_value(inherited_env) {
         paths.extend(std::env::split_paths(&current));
     }
     std::env::join_paths(paths)
@@ -568,9 +605,137 @@ fn selected_agent_path_env(agent_id: &str) -> Option<String> {
         .map(|value| value.to_string_lossy().to_string())
 }
 
+fn selected_agent_executable_env(
+    agent_id: &str,
+    selected_path: Option<&str>,
+    inherited_env: &std::collections::HashMap<String, String>,
+    extra_env: &[(String, String)],
+) -> Option<(String, String)> {
+    const CODEX_PATH_ENV: &str = "CODEX_PATH";
+
+    // codex-acp bundles its own Codex CLI and does not consult PATH when
+    // CODEX_PATH is absent. Point it at VibeAround's selected CLI, while
+    // preserving an explicit user or profile override.
+    if agent_id != "codex"
+        || inherited_env
+            .keys()
+            .any(|key| env_key_matches(key, CODEX_PATH_ENV))
+        || extra_env
+            .iter()
+            .any(|(key, _)| env_key_matches(key, CODEX_PATH_ENV))
+    {
+        return None;
+    }
+
+    Some((CODEX_PATH_ENV.to_string(), selected_path?.to_string()))
+}
+
+#[cfg(windows)]
+fn env_key_matches(key: &str, expected: &str) -> bool {
+    key.eq_ignore_ascii_case(expected)
+}
+
+#[cfg(not(windows))]
+fn env_key_matches(key: &str, expected: &str) -> bool {
+    key == expected
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_acp_receives_selected_cli_path() {
+        let env = selected_agent_executable_env(
+            "codex",
+            Some(r"C:\tools\codex.cmd"),
+            &std::collections::HashMap::new(),
+            &[],
+        );
+
+        assert_eq!(
+            env,
+            Some(("CODEX_PATH".to_string(), r"C:\tools\codex.cmd".to_string()))
+        );
+    }
+
+    #[test]
+    fn non_codex_acp_does_not_receive_codex_path() {
+        let env = selected_agent_executable_env(
+            "claude",
+            Some(r"C:\tools\claude.cmd"),
+            &std::collections::HashMap::new(),
+            &[],
+        );
+
+        assert_eq!(env, None);
+    }
+
+    #[test]
+    fn explicit_codex_path_is_not_overridden() {
+        let inherited_env = std::collections::HashMap::from([(
+            "CODEX_PATH".to_string(),
+            r"C:\custom\codex.cmd".to_string(),
+        )]);
+        let env = selected_agent_executable_env(
+            "codex",
+            Some(r"C:\detected\codex.cmd"),
+            &inherited_env,
+            &[],
+        );
+
+        assert_eq!(env, None);
+    }
+
+    #[test]
+    fn profile_codex_path_is_not_overridden() {
+        let extra_env = vec![(
+            "CODEX_PATH".to_string(),
+            r"C:\profile\codex.cmd".to_string(),
+        )];
+        let env = selected_agent_executable_env(
+            "codex",
+            Some(r"C:\detected\codex.cmd"),
+            &std::collections::HashMap::new(),
+            &extra_env,
+        );
+
+        assert_eq!(env, None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_profile_codex_path_is_case_insensitive() {
+        let extra_env = vec![(
+            "codex_path".to_string(),
+            r"C:\profile\codex.cmd".to_string(),
+        )];
+        let env = selected_agent_executable_env(
+            "codex",
+            Some(r"C:\detected\codex.cmd"),
+            &std::collections::HashMap::new(),
+            &extra_env,
+        );
+
+        assert_eq!(env, None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_profile_codex_path_is_case_sensitive() {
+        let extra_env = vec![("codex_path".to_string(), "/custom/codex".to_string())];
+        let env = selected_agent_executable_env(
+            "codex",
+            Some("/detected/codex"),
+            &std::collections::HashMap::new(),
+            &extra_env,
+        );
+
+        assert_eq!(
+            env,
+            Some(("CODEX_PATH".to_string(), "/detected/codex".to_string()))
+        );
+    }
 
     struct NoopClientHandler;
 

@@ -5,6 +5,7 @@
 //!
 //! ```json
 //! { "state": "running" }
+//! { "state": "awaiting_approval", "url": "https://login.tailscale.com/f/funnel?..." }
 //! { "state": "stopped", "reason": "killed" }
 //! { "state": "failed",  "error":  "spawn failed" }
 //! ```
@@ -25,13 +26,17 @@ use crate::pty::unix_now_secs;
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum TunnelStatus {
     Running,
+    AwaitingApproval { url: String },
     Stopped { reason: String },
     Failed { error: String },
 }
 
 impl TunnelStatus {
     pub fn is_running(&self) -> bool {
-        matches!(self, TunnelStatus::Running)
+        matches!(
+            self,
+            TunnelStatus::Running | TunnelStatus::AwaitingApproval { .. }
+        )
     }
 }
 
@@ -71,5 +76,48 @@ impl TunnelMeta {
         *s = TunnelStatus::Stopped {
             reason: "killed".into(),
         };
+    }
+
+    pub fn fail(&self, error: String) {
+        *self.status.write() = TunnelStatus::Failed { error };
+    }
+
+    pub fn await_approval(&self, url: String) {
+        *self.status.write() = TunnelStatus::AwaitingApproval { url };
+    }
+
+    pub fn running(&self) {
+        *self.status.write() = TunnelStatus::Running;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TunnelMeta, TunnelStatus};
+
+    #[test]
+    fn records_failed_status() {
+        let meta = TunnelMeta::new(None);
+        meta.fail("setup failed".to_string());
+
+        assert!(matches!(
+            meta.current_status(),
+            TunnelStatus::Failed { error } if error == "setup failed"
+        ));
+    }
+
+    #[test]
+    fn records_awaiting_approval_status() {
+        let meta = TunnelMeta::new(None);
+        meta.await_approval("https://login.tailscale.com/f/funnel?node=abc".to_string());
+
+        assert!(matches!(
+            meta.current_status(),
+            TunnelStatus::AwaitingApproval { url }
+                if url == "https://login.tailscale.com/f/funnel?node=abc"
+        ));
+
+        meta.running();
+        assert!(matches!(meta.current_status(), TunnelStatus::Running));
     }
 }

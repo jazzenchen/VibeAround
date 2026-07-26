@@ -78,7 +78,7 @@ pub(crate) struct AppState {
     bridge_recorder: bridge_recording::BridgeRecorder,
     /// Local API bridge client token. Scoped `/local-api/...` routes use this
     /// before forwarding with the profile's real upstream credentials.
-    auth_token: Arc<AuthToken>,
+    local_api_token: Arc<AuthToken>,
 }
 
 /// Ensure web dist exists (build web first).
@@ -191,6 +191,8 @@ pub async fn run_web_server(
     channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
     auth_token: Arc<AuthToken>,
+    local_api_token: Arc<AuthToken>,
+    local_agent_api_token: Arc<AuthToken>,
     host_search_available: bool,
     replace_provider_web_search: bool,
     search_runtime: Option<Arc<SearchToolRuntime>>,
@@ -224,7 +226,7 @@ pub async fn run_web_server(
         replace_provider_web_search,
         search_runtime,
         bridge_recorder: bridge_recording::BridgeRecorder::default(),
-        auth_token: Arc::clone(&auth_token),
+        local_api_token,
     };
 
     let auth_state = AuthState(Arc::clone(&auth_token));
@@ -399,7 +401,7 @@ pub async fn run_web_server(
     // Preview routes are also un-authed — the 8-char slug itself acts as a
     // short-lived authentication token (10-min TTL, cryptographically random;
     // single source of truth: `common::previews::SHARE_TTL_SECS`).
-    let bridge_routes = Router::new()
+    let local_agent_routes = Router::new()
         .route(
             "/local-agent/{agent_id}/{profile_id}/v1/responses",
             post(api_bridge::local_agent_responses_handler),
@@ -416,6 +418,12 @@ pub async fn run_web_server(
             "/local-agent/{agent_id}/{profile_id}/v1/models",
             get(api_bridge::local_agent_models_handler),
         )
+        .route_layer(axum::middleware::from_fn_with_state(
+            api_bridge::LocalAgentCredential::new(local_agent_api_token, Arc::clone(&auth_token)),
+            api_bridge::require_local_agent_credential,
+        ));
+
+    let bridge_routes = Router::new()
         .route(
             "/bridge/{profile_id}/{target_api_type}/v1/responses",
             post(api_bridge::legacy_responses_handler),
@@ -457,12 +465,16 @@ pub async fn run_web_server(
         .route(
             bridge_url::LOCAL_API_GEMINI_MODELS_ACTION_ROUTE,
             post(api_bridge::local_gemini_generate_content_handler),
-        )
+        );
+
+    let local_api_routes = Router::new()
+        .merge(local_agent_routes)
+        .merge(bridge_routes)
         .route_layer(axum::middleware::from_fn(require_local_bridge))
         .layer(DefaultBodyLimit::max(LOCAL_BRIDGE_BODY_LIMIT_BYTES));
 
     let public = Router::new()
-        .merge(bridge_routes)
+        .merge(local_api_routes)
         .route("/api/service/health", get(api::health_handler))
         // Pairing API: no auth required (pairing IS the auth flow).
         .route("/api/pair/start", post(pair::start_handler))

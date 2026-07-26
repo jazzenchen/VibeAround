@@ -1,6 +1,6 @@
 # 隧道与远程访问
 
-隧道把你的控制台发布到一个公网 URL，让你离开机器也能访问 —— 地铁上的手机、咖啡馆里的笔记本。内置三家隧道供应商；每个远程浏览器进入前都必须配对。本页背后的信任规则见[安全模型](../architecture/security-model.md)。
+隧道把你的控制台发布到一个公网 URL，让你离开机器也能访问 —— 地铁上的手机、咖啡馆里的笔记本。内置四家隧道供应商；每个远程浏览器进入前都必须配对。本页背后的信任规则见[安全模型](../architecture/security-model.md)。
 
 ## 选择供应商
 
@@ -9,9 +9,10 @@
 | ngrok | `ngrok` | 需要（auth token） | 保留域名时有 |
 | localtunnel | `localtunnel` | 不需要 | 无（每次启动随机） |
 | Cloudflare Tunnel | `cloudflare` | 需要（tunnel token） | 有（你自己的主机名） |
+| Tailscale Funnel | `tailscale` | 需要（已登录的 Tailscale 客户端） | 有（`*.ts.net`） |
 | 禁用 | `none`（默认） | — | — |
 
-经验法则：**localtunnel** 零配置试用；**ngrok** 最小配置获得个人稳定 URL；**Cloudflare** 在自己域名上要永久主机名。
+经验法则：**localtunnel** 零配置试用；**ngrok** 最小配置获得个人稳定 URL；**Cloudflare** 在自己域名上使用永久主机名；主机已经在使用 Tailscale 时选 **Tailscale Funnel** 获得稳定公网 URL。
 
 ## 配置
 
@@ -19,23 +20,41 @@
 
 ```jsonc
 {
-  "tunnel_provider": "ngrok",
-  "ngrok_auth_token": "2ab...",
-  "ngrok_domain": "myname.ngrok.app"        // 可选的保留域名
+  "tunnel": {
+    "provider": "ngrok",
+    "ngrok": {
+      "auth_token": "2ab...",
+      "domain": "myname.ngrok.app"          // 可选的保留域名
+    }
+  }
 }
 ```
 
 ```jsonc
 {
-  "tunnel_provider": "cloudflare",
-  "cloudflare_tunnel_token": "eyJ...",       // 来自 Zero Trust 控制台
-  "cloudflare_hostname": "va.example.com"
+  "tunnel": {
+    "provider": "cloudflare",
+    "cloudflare": {
+      "tunnel_token": "eyJ...",             // 来自 Zero Trust 控制台
+      "hostname": "va.example.com"
+    }
+  }
 }
 ```
 
 ```jsonc
-{ "tunnel_provider": "localtunnel" }
+{ "tunnel": { "provider": "localtunnel" } }
 ```
+
+```jsonc
+{ "tunnel": { "provider": "tailscale" } }
+```
+
+### Tailscale Funnel 需要已登录的客户端
+
+安装 Tailscale、登录一个 tailnet，并启用 MagicDNS。VibeAround 会把 `tailscale funnel --yes http://127.0.0.1:12358` 作为前台子进程启动，读取公开的 `.ts.net` URL，并在 daemon 停止时同时关闭 Funnel。
+
+第一次启动可能需要 owner 或 admin 在 Tailscale 网页控制台批准 Funnel。VibeAround 会显示“需要操作”和“启用 Funnel”按钮；只有你点击按钮时才会打开授权页面，批准后启动会继续，不需要运行终端命令。Funnel 是公网入口：远端浏览器不需要安装 Tailscale，VibeAround 配对仍然必需。tailnet 要求和平台限制见 [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)。
 
 ### Cloudflare 需要一步手动操作
 
@@ -85,11 +104,13 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 | 配对码总是"invalid or expired" | 码只活 60 秒 —— 在窗口内生成并确认；确认输入的聊天连的是*同一个*守护进程 |
 | 守护进程重启后全部 401 | 正常现象：token 重新生成了 —— 从受信入口重新打开并重新配对远程浏览器 |
 | localtunnel URL 每次启动都变 | localtunnel 就是这样；要稳定用 ngrok 保留域名或 Cloudflare |
+| Tailscale 显示“需要操作”但没有 URL | 点击“启用 Funnel”、完成 Tailscale 授权页面，并确认 Tailscale App 已登录 |
+| Tailscale 在显示 URL 前退出 | 手动运行 `tailscale funnel http://127.0.0.1:12358`，确认当前客户端和平台支持 Funnel |
 | 远程 Web Terminal 很卡 | 长链路隧道上的交互式 PTY 受延迟支配 —— 远程优先用 Web Chat，终端留在本地 |
 
 ---
 
-*Source anchors: `src/core/src/tunnels/` (providers: ngrok, localtunnel, cloudflare), `src/core/src/config.rs` (tunnel settings), `src/core/src/auth/pair.rs` (60 s codes), `src/server/src/web_server/auth.rs` (local-origin trust), `src/core/src/previews/store.rs` (share TTL), `src/cli/src/` (pair/tunnel commands).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/tunnels/` (providers: ngrok, localtunnel, cloudflare, tailscale), `src/core/src/config.rs` (tunnel settings), `src/core/src/auth/pair.rs` (60 s codes), `src/server/src/web_server/auth.rs` (local-origin trust), `src/core/src/previews/store.rs` (share TTL), `src/cli/src/` (pair/tunnel commands).*
+*Last verified: v0.7.20*
 
 <sub>[◀ Agent 启动指南](agent-launch.md) · [文档索引](../README.md) · [开发渠道插件 ▶](build-a-channel-plugin.md)</sub>

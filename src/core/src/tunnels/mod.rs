@@ -1,5 +1,7 @@
 //! Tunnels module: expose the web dashboard over the internet via a public URL.
-//! Each provider (Localtunnel, Ngrok, Cloudflare) implements TunnelBackend for unified management and dispatch.
+//! Each provider (Localtunnel, Ngrok, Cloudflare, Tailscale) implements TunnelBackend for unified management and dispatch.
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -10,15 +12,18 @@ pub mod status;
 pub use manager::{TunnelInfo, TunnelManager};
 pub use status::{TunnelMeta, TunnelStatus};
 
-/// Tunnel provider: localtunnel (default), ngrok, or cloudflare.
+/// Reports the one interactive setup step a tunnel backend may require.
+pub type TunnelApprovalReporter = Arc<dyn Fn(String) + Send + Sync>;
+
+/// Tunnel provider: localtunnel, ngrok, cloudflare, or tailscale.
 #[derive(Debug, Clone, Copy, Default)]
-#[allow(dead_code)] // Ngrok/Cloudflare for future use
 pub enum TunnelProvider {
     #[default]
     None,
     Localtunnel,
     Ngrok,
     Cloudflare,
+    Tailscale,
 }
 
 impl TunnelProvider {
@@ -28,6 +33,7 @@ impl TunnelProvider {
             TunnelProvider::Localtunnel => "localtunnel",
             TunnelProvider::Ngrok => "ngrok",
             TunnelProvider::Cloudflare => "cloudflare",
+            TunnelProvider::Tailscale => "tailscale",
         }
     }
 
@@ -41,6 +47,7 @@ impl TunnelProvider {
         match s.trim().to_lowercase().as_str() {
             "ngrok" => TunnelProvider::Ngrok,
             "cloudflare" => TunnelProvider::Cloudflare,
+            "tailscale" => TunnelProvider::Tailscale,
             "localtunnel" => TunnelProvider::Localtunnel,
             _ => TunnelProvider::None,
         }
@@ -53,6 +60,7 @@ impl TunnelProvider {
             TunnelProvider::Localtunnel => Some(&providers::localtunnel::LocaltunnelBackend),
             TunnelProvider::Ngrok => Some(&providers::ngrok::NgrokBackend),
             TunnelProvider::Cloudflare => Some(&providers::cloudflare::CloudflareBackend),
+            TunnelProvider::Tailscale => Some(&providers::tailscale::TailscaleBackend),
         }
     }
 }
@@ -67,6 +75,7 @@ pub trait TunnelBackend: Send + Sync {
     async fn start_web_tunnel(
         &self,
         config: &crate::config::Config,
+        approval_reporter: Option<TunnelApprovalReporter>,
     ) -> Result<(TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>>;
 }
 
@@ -122,16 +131,30 @@ impl TunnelGuard {
 pub async fn start_web_tunnel(
 ) -> Result<(TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
     let config = crate::config::ensure_loaded();
-    start_web_tunnel_with_provider(TunnelProvider::default(), &config).await
+    start_web_tunnel_with_provider(TunnelProvider::default(), &config, None).await
 }
 
 /// Start the web tunnel with the given provider and config (unified dispatch via TunnelBackend).
 pub async fn start_web_tunnel_with_provider(
     provider: TunnelProvider,
     config: &crate::config::Config,
+    approval_reporter: Option<TunnelApprovalReporter>,
 ) -> Result<(TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
     match provider.backend() {
-        Some(backend) => backend.start_web_tunnel(config).await,
+        Some(backend) => backend.start_web_tunnel(config, approval_reporter).await,
         Option::None => Err("Tunnel provider is 'none' — no tunnel to start".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TunnelProvider;
+
+    #[test]
+    fn parses_tailscale_provider() {
+        assert_eq!(
+            TunnelProvider::from_config("tailscale").as_str(),
+            "tailscale"
+        );
     }
 }

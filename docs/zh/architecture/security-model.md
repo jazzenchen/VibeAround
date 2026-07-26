@@ -22,7 +22,7 @@ zone 3  IM 平台             只有消息，经插件和权限卡片中介
 
 ## Zone 2：经隧道的远程访问
 
-隧道（ngrok、localtunnel、Cloudflare）把控制台发布到公网 URL。两道门：
+隧道（ngrok、localtunnel、Cloudflare、Tailscale Funnel）把控制台发布到公网 URL。两道门：
 
 1. **配对。** 非本地主机名上的浏览器必须完成配对：控制台显示一个 60 秒过期的 6 位码，必须在已受信的界面上确认 —— 输入到已连接的 IM 聊天（`/pair <code>`）或在本机批准。配对把该浏览器绑定到守护进程当前的认证 token（全部 TTL 见[计时器与上限](../reference/timers-and-limits.md#lifecycles-and-ttls)）。
 2. **Token。** 配对之后，与本地相同的 bearer token 规则适用。
@@ -52,7 +52,7 @@ dev server 实时预览和 Markdown 渲染有两种 URL 形式：
 ## 凭据处理
 
 - 供应商 API key 存在 `~/.vibearound/` 下的 Profile 存储里，**由守护进程**注入上游请求。渲染给 Agent 的配置只含本地 Bridge URL —— Agent 配置泄露不会暴露任何供应商 key。
-- Bridge 和 agent-as-API 端点仅监听回环地址，且有本地 bridge 门；隧道无法触达。
+- Bridge 和 agent-as-API 端点仅监听回环地址，且有本地 bridge 门；隧道无法触达。主路径 `/local-api` 和 `/local-agent` 各有独立、随守护进程轮换的 scoped token，因此模型 Bridge 客户端不能启动 Agent。
 - 守护进程自己的 token 文件是家目录里的明文（信任级别等同 `~/.ssh`）；备份时相应对待。
 - 启动弹窗的 Bridge 请求/响应记录只在内存里，从不落盘。
 

@@ -1,7 +1,7 @@
 use std::path::{Path as StdPath, PathBuf};
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::Path;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde_json::Value;
@@ -15,14 +15,12 @@ mod turn;
 pub use models::local_agent_models_handler;
 
 use super::{json_error, record_json_error, BridgeProtocol};
-use crate::web_server::AppState;
 use prompt::universal_request_to_acp_prompt;
 
 pub(super) const LOCAL_AGENT_CHANNEL_KIND: &str = "api";
 const HEADER_WORKSPACE: &str = "x-vibearound-cwd";
 
 pub async fn local_agent_responses_handler(
-    State(state): State<AppState>,
     Path((agent_id, profile_id)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
@@ -31,7 +29,6 @@ pub async fn local_agent_responses_handler(
         return local_agent_api_disabled_response();
     }
     handle_local_agent_request(
-        state,
         agent_id,
         profile_id,
         BridgeProtocol::OpenAiResponses,
@@ -42,7 +39,6 @@ pub async fn local_agent_responses_handler(
 }
 
 pub async fn local_agent_chat_completions_handler(
-    State(state): State<AppState>,
     Path((agent_id, profile_id)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
@@ -51,7 +47,6 @@ pub async fn local_agent_chat_completions_handler(
         return local_agent_api_disabled_response();
     }
     handle_local_agent_request(
-        state,
         agent_id,
         profile_id,
         BridgeProtocol::OpenAiChat,
@@ -62,7 +57,6 @@ pub async fn local_agent_chat_completions_handler(
 }
 
 pub async fn local_agent_messages_handler(
-    State(state): State<AppState>,
     Path((agent_id, profile_id)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
@@ -71,7 +65,6 @@ pub async fn local_agent_messages_handler(
         return local_agent_api_disabled_response();
     }
     handle_local_agent_request(
-        state,
         agent_id,
         profile_id,
         BridgeProtocol::AnthropicMessages,
@@ -93,7 +86,6 @@ pub(super) fn local_agent_api_disabled_response() -> Response {
 }
 
 async fn handle_local_agent_request(
-    _state: AppState,
     agent_id: String,
     profile_id: String,
     protocol: BridgeProtocol,

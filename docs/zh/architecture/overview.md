@@ -53,7 +53,7 @@
 | agents → 守护进程（工具） | HTTP `/mcp` | MCP：streamable HTTP 上的 JSON-RPC（+ SSE） |
 | 启动的 CLI → 守护进程（模型） | HTTP 回环 `/va/local-api/…` | 客户端的供应商方言（OpenAI / Anthropic / Gemini 形状） |
 | 守护进程 → 模型供应商 | HTTPS | Bridge 转换后的供应商方言 |
-| 守护进程 → 隧道 | 进程内 SDK（ngrok）或子进程（`cloudflared`、`npx localtunnel`） | 供应商特定 |
+| 守护进程 → 隧道 | 进程内 SDK（ngrok）或子进程（`cloudflared`、`npx localtunnel`、`tailscale funnel`） | 供应商特定 |
 | 守护进程 → 被预览的 dev server | HTTP 反向代理 | 透传 + iframe 工具栏注入 |
 
 ## 模块地图
@@ -71,7 +71,7 @@
 | `profiles` | Profile schema、目录、渲染、Bridge 启动 URL、供应商连接 |
 | `pty` | PTY 会话注册表与运行时 —— Web 终端的后端 |
 | `previews` | 实时预览注册表、owner/share URL、端口清理 |
-| `tunnels` | ngrok / localtunnel / cloudflare 各供应商 |
+| `tunnels` | ngrok / localtunnel / cloudflare / Tailscale Funnel 各供应商 |
 | `auth` | 守护进程 token、配对码 |
 | `launch_sessions` | 原生 CLI 会话发现与归档 |
 | `plugins` | 插件发现与清单 |

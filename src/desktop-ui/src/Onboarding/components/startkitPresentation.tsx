@@ -248,10 +248,12 @@ export function tunnelRank(id: string): number {
       return 0;
     case "none":
       return 1;
-    case "ngrok":
+    case "tailscale":
       return 2;
     case "localtunnel":
       return 3;
+    case "ngrok":
+      return 4;
     default:
       return 10;
   }
@@ -265,6 +267,8 @@ export function tunnelDescription(id: string, t: Translate): string {
       return t("Useful when you already have an ngrok account and domain.");
     case "localtunnel":
       return t("Quick temporary public URL for lightweight testing.");
+    case "tailscale":
+      return t("Public HTTPS access through your Tailscale device name.");
     case "none":
       return t("Keep everything local on this computer.");
     default:

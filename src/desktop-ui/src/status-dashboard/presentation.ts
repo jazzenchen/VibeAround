@@ -29,6 +29,8 @@ export function tunnelPresentation(
   switch (status.state) {
     case "running":
       return { label: t("Running"), tone: "good" };
+    case "awaiting_approval":
+      return { label: t("Action required"), tone: "warning" };
     case "failed":
       return { label: t("Failed"), tone: "danger" };
     case "stopped":
@@ -36,12 +38,14 @@ export function tunnelPresentation(
   }
 }
 
-export function tunnelDetail(status: TunnelStatus): string | null {
+export function tunnelDetail(status: TunnelStatus, t: Translate): string | null {
   switch (status.state) {
     case "failed":
       return status.error;
     case "stopped":
       return status.reason;
+    case "awaiting_approval":
+      return t("Tailscale Funnel approval required");
     case "running":
       return null;
   }

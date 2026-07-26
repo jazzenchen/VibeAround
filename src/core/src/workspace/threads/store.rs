@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::storage::jsonl;
@@ -23,6 +25,7 @@ pub use projection::*;
 #[derive(Debug, Clone)]
 pub struct ThreadEventStore {
     path: PathBuf,
+    io_lock: Arc<Mutex<()>>,
 }
 
 impl ThreadEventStore {
@@ -31,7 +34,10 @@ impl ThreadEventStore {
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            io_lock: Arc::new(Mutex::new(())),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -39,10 +45,12 @@ impl ThreadEventStore {
     }
 
     pub async fn append(&self, event: &ThreadEvent) -> jsonl::Result<()> {
+        let _guard = self.io_lock.lock().await;
         jsonl::append(&self.path, event).await
     }
 
     pub async fn read_events(&self) -> jsonl::Result<Vec<ThreadEvent>> {
+        let _guard = self.io_lock.lock().await;
         jsonl::read_all(&self.path).await
     }
 
@@ -63,6 +71,37 @@ pub enum ThreadStoreLoadError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_jsonl_path() -> PathBuf {
+        std::env::temp_dir()
+            .join(format!("vibearound-thread-store-{}", Uuid::new_v4()))
+            .join("workspace-threads.jsonl")
+    }
+
+    #[tokio::test]
+    async fn cloned_stores_serialize_appends() {
+        let path = temp_jsonl_path();
+        let store = ThreadEventStore::new(path.clone());
+        let mut tasks = tokio::task::JoinSet::new();
+        for index in 0..16 {
+            let store = store.clone();
+            tasks.spawn(async move {
+                store
+                    .append(&ThreadEvent::created(
+                        format!("wt_{index}"),
+                        format!("ws_{index}"),
+                        HostBinding::new("codex", None),
+                    ))
+                    .await
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap().unwrap();
+        }
+
+        assert_eq!(store.read_events().await.unwrap().len(), 16);
+        let _ = tokio::fs::remove_dir_all(path.parent().unwrap()).await;
+    }
 
     #[test]
     fn projection_tracks_thread_lifecycle() {

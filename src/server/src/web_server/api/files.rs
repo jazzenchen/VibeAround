@@ -1,17 +1,16 @@
 use axum::body::Body;
 use axum::body::Bytes;
-use axum::extract::{Query, State};
+use axum::extract::Query;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::api_types::ChatUploadResponse;
-use crate::web_server::AppState;
-
 const DEFAULT_UPLOAD_MIME_TYPE: &str = "application/octet-stream";
 
 /// Hard cap on a single chat upload. Larger payloads are rejected with 413
@@ -19,6 +18,8 @@ const DEFAULT_UPLOAD_MIME_TYPE: &str = "application/octet-stream";
 /// at a higher value as a coarse safety net.
 const MAX_UPLOAD_SIZE_BYTES: usize = 20 * 1024 * 1024;
 const UPLOAD_CACHE_DIR: &str = "web-uploads";
+const REMOTE_FILE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REMOTE_FILE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Allowed MIME prefixes for chat uploads. Specific exact types
 /// outside these prefixes are listed in `ALLOWED_EXACT_MIME_TYPES`.
@@ -166,7 +167,6 @@ pub async fn upload_chat_file_handler(
 }
 
 pub async fn download_chat_file_handler(
-    State(state): State<AppState>,
     Query(query): Query<DownloadChatFileQuery>,
 ) -> Result<Response, (StatusCode, String)> {
     let uri = query.uri.trim();
@@ -188,7 +188,7 @@ pub async fn download_chat_file_handler(
         .map(ToOwned::to_owned);
 
     if uri.starts_with("http://") || uri.starts_with("https://") {
-        return proxy_remote_file(&state, uri, &file_name, content_type, query.inline).await;
+        return proxy_remote_file(uri, &file_name, content_type, query.inline).await;
     }
 
     let path = uploaded_file_path_from_uri(uri).await?;
@@ -211,24 +211,19 @@ pub async fn download_chat_file_handler(
 }
 
 async fn proxy_remote_file(
-    state: &AppState,
     uri: &str,
     file_name: &str,
     content_type: Option<String>,
     inline: bool,
 ) -> Result<Response, (StatusCode, String)> {
-    let uri = validate_remote_file_url(uri).await?;
-    let upstream = state
-        .preview_client
-        .get(uri)
-        .send()
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("upstream request failed: {error}"),
-            )
-        })?;
+    let remote = validate_remote_file_url(uri).await?;
+    let client = remote_file_client(&remote)?;
+    let upstream = client.get(remote.url).send().await.map_err(|error| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("upstream request failed: {error}"),
+        )
+    })?;
     if !upstream.status().is_success() {
         return Err((
             StatusCode::BAD_GATEWAY,
@@ -245,13 +240,35 @@ async fn proxy_remote_file(
         })
         .or_else(|| mime_for_file_name(file_name).map(ToOwned::to_owned))
         .unwrap_or_else(|| DEFAULT_UPLOAD_MIME_TYPE.to_string());
-    let bytes = upstream.bytes().await.map_err(|error| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!("failed to read upstream body: {error}"),
-        )
-    })?;
-    Ok(file_response(bytes, file_name, &content_type, inline))
+    Ok(file_response_body(
+        Body::from_stream(upstream.bytes_stream()),
+        file_name,
+        &content_type,
+        inline,
+    ))
+}
+
+#[derive(Debug)]
+struct ResolvedRemoteUrl {
+    url: reqwest::Url,
+    host: String,
+    addrs: Vec<SocketAddr>,
+}
+
+fn remote_file_client(remote: &ResolvedRemoteUrl) -> Result<reqwest::Client, (StatusCode, String)> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .connect_timeout(REMOTE_FILE_CONNECT_TIMEOUT)
+        .read_timeout(REMOTE_FILE_READ_TIMEOUT)
+        .resolve_to_addrs(&remote.host, &remote.addrs)
+        .build()
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to build remote file client: {error}"),
+            )
+        })
 }
 
 async fn uploaded_file_path_from_uri(uri: &str) -> Result<PathBuf, (StatusCode, String)> {
@@ -298,7 +315,7 @@ fn upload_cache_root() -> PathBuf {
         .join(UPLOAD_CACHE_DIR)
 }
 
-async fn validate_remote_file_url(uri: &str) -> Result<reqwest::Url, (StatusCode, String)> {
+async fn validate_remote_file_url(uri: &str) -> Result<ResolvedRemoteUrl, (StatusCode, String)> {
     let parsed = reqwest::Url::parse(uri).map_err(|error| {
         (
             StatusCode::BAD_REQUEST,
@@ -327,37 +344,39 @@ async fn validate_remote_file_url(uri: &str) -> Result<reqwest::Url, (StatusCode
         ));
     }
 
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        reject_disallowed_remote_ip(ip)?;
-        return Ok(parsed);
-    }
-
     let port = parsed.port_or_known_default().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             "remote uri is missing a port".to_string(),
         )
     })?;
-    let addrs = tokio::net::lookup_host((host.as_str(), port))
-        .await
-        .map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("failed to resolve remote file host: {error}"),
-            )
-        })?;
-    let mut resolved_any = false;
-    for addr in addrs {
-        resolved_any = true;
+    let addrs = if let Ok(ip) = host.parse::<IpAddr>() {
+        vec![SocketAddr::new(ip, port)]
+    } else {
+        tokio::net::lookup_host((host.as_str(), port))
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("failed to resolve remote file host: {error}"),
+                )
+            })?
+            .collect::<Vec<_>>()
+    };
+    for addr in &addrs {
         reject_disallowed_remote_ip(addr.ip())?;
     }
-    if !resolved_any {
+    if addrs.is_empty() {
         return Err((
             StatusCode::BAD_GATEWAY,
             "remote file host did not resolve".to_string(),
         ));
     }
-    Ok(parsed)
+    Ok(ResolvedRemoteUrl {
+        url: parsed,
+        host,
+        addrs,
+    })
 }
 
 fn reject_disallowed_remote_ip(ip: IpAddr) -> Result<(), (StatusCode, String)> {
@@ -399,15 +418,24 @@ fn remote_ip_is_disallowed(ip: IpAddr) -> bool {
 }
 
 fn file_response(bytes: Bytes, file_name: &str, content_type: &str, inline: bool) -> Response {
-    let disposition = if inline { "inline" } else { "attachment" };
+    file_response_body(Body::from(bytes), file_name, content_type, inline)
+}
+
+fn file_response_body(body: Body, file_name: &str, content_type: &str, inline: bool) -> Response {
+    let disposition = if inline && is_safe_inline_mime(content_type) {
+        "inline"
+    } else {
+        "attachment"
+    };
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
+        .header("x-content-type-options", "nosniff")
         .header(
             header::CONTENT_DISPOSITION,
             content_disposition(disposition, file_name),
         )
-        .body(Body::from(bytes))
+        .body(body)
         .unwrap_or_else(|error| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -415,6 +443,13 @@ fn file_response(bytes: Bytes, file_name: &str, content_type: &str, inline: bool
             )
                 .into_response()
         })
+}
+
+fn is_safe_inline_mime(mime: &str) -> bool {
+    matches!(
+        normalized_mime(mime).as_str(),
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/avif"
+    )
 }
 
 fn is_allowed_upload_mime(mime: &str) -> bool {
@@ -606,10 +641,12 @@ fn from_hex(c: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        content_disposition, is_allowed_upload_mime, is_generic_upload_mime,
+        content_disposition, file_response, is_allowed_upload_mime, is_generic_upload_mime,
         local_file_path_from_uri, mime_for_file_name, remote_ip_is_disallowed, safe_file_name,
         validate_remote_file_url,
     };
+    use axum::body::Bytes;
+    use axum::http::header;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -698,6 +735,23 @@ mod tests {
     }
 
     #[test]
+    fn only_safe_raster_images_render_inline() {
+        let png = file_response(Bytes::new(), "image.png", "image/png", true);
+        assert!(png.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .starts_with("inline;"));
+        assert_eq!(png.headers()["x-content-type-options"], "nosniff");
+
+        let svg = file_response(Bytes::new(), "image.svg", "image/svg+xml", true);
+        assert!(svg.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment;"));
+        assert_eq!(svg.headers()["x-content-type-options"], "nosniff");
+    }
+
+    #[test]
     fn parses_local_file_uris_without_path_traversal_claims() {
         let file_path = local_file_path_from_uri("file:///tmp/report%20one.md").unwrap();
         assert_eq!(file_path, std::path::PathBuf::from("/tmp/report one.md"));
@@ -743,5 +797,20 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.0, axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn pins_literal_public_remote_urls_to_the_validated_address() {
+        let remote = validate_remote_file_url("https://93.184.216.34/file")
+            .await
+            .unwrap();
+
+        assert_eq!(remote.host, "93.184.216.34");
+        assert_eq!(remote.addrs.len(), 1);
+        assert_eq!(
+            remote.addrs[0].ip(),
+            "93.184.216.34".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(remote.addrs[0].port(), 443);
     }
 }

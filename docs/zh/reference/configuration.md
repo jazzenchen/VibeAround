@@ -12,6 +12,8 @@ VibeAround 读写的每一个文件，可手动编辑的都附完整 schema。�
 | `agents.json` | 桌面 Launch UI、`va-launch`（可执行文件发现） | 按 Agent 的启动偏好 —— [schema 见下](#agentsjson) | 可以，小心改 |
 | `launch/profiles/<name>.json` | 你、桌面（临时物化副本） | 保存的原生启动配置 —— [schema 见下](#launch-profile-json-schema-v1) | **可以**（本来就是给你编辑的） |
 | `auth.json` | 守护进程，每次启动 | 供进程外客户端使用的 `{port, token}` | 不行 —— 每次启动重写 |
+| `local-api-auth.json` | 守护进程，每次启动 | Profile 模型 Bridge 客户端专用的 `{port, token}` | 不行 —— 每次启动重写 |
+| `local-agent-api-auth.json` | 守护进程，每次启动 | Agent-as-API 客户端专用的 `{port, token}` | 不行 —— 每次启动重写 |
 | `profiles/<profile-id>.json` | 桌面/控制台 Profile UI | 保存的模型 Profile（供应商、端点、key、模型路由） | 优先用 UI；手动改动会在重载时读取 |
 | `profile-state/<profile-id>/` | Profile 渲染 | 渲染出的按 Profile 的 Agent 配置文件（设置覆盖层）；环境指针引用这些（[启动内幕](../internals/launch.md#environment-assembly-layer-by-layer)） | 不行 —— 每次渲染重新生成 |
 | `plugins/<kind>/` | 桌面插件管理器 | 已安装的渠道插件 + 清单 | 仅插件开发期间 |
@@ -32,7 +34,7 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
 {
   // --- 隧道（见 ../guides/tunnels-and-remote-access.md） ---
   "tunnel": {
-    "provider": "none",              // none | ngrok | localtunnel | cloudflare
+    "provider": "none",              // none | ngrok | localtunnel | cloudflare | tailscale
     "ngrok":      { "auth_token": "…", "domain": "…" },
     "cloudflare": { "tunnel_token": "…", "hostname": "…" }
   },
@@ -160,6 +162,8 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
 ~/.vibearound/
 ├── settings.json           # 配置（本页）
 ├── auth.json               # 控制台 token，每次守护进程启动重写
+├── local-api-auth.json     # Profile Bridge token，每次守护进程启动重写
+├── local-agent-api-auth.json # Agent-as-API token，每次守护进程启动重写
 ├── agents.json             # 解析出的 Agent 可执行文件（va-launch 缓存）
 ├── plugins/<kind>/         # 已安装的渠道插件
 ├── launch/profiles/        # 保存的启动配置 JSON（schema v1）
