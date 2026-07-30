@@ -97,6 +97,9 @@ export default function Onboarding() {
   const [installingPlugins, setInstallingPlugins] = useState<Set<string>>(
     new Set(),
   );
+  const [skippedInstallReportIds, setSkippedInstallReportIds] = useState<
+    Set<string>
+  >(new Set());
 
   const [tunnelProvider, setTunnelProvider] =
     useState<TunnelProvider>("none");
@@ -315,6 +318,7 @@ export default function Onboarding() {
     setAgentInstallReports([]);
     setPluginUpdateReports([]);
     setTunnelReports([]);
+    setSkippedInstallReportIds(new Set());
     startkit.reset();
   }, [downloadSource, loaded, portableToolchain, startkit.reset, toolchainMode]);
 
@@ -563,6 +567,11 @@ export default function Onboarding() {
       else next.add(id);
       return next;
     });
+    setSkippedInstallReportIds((previous) => {
+      const next = new Set(previous);
+      next.delete(`agents.${id}.cli`);
+      return next;
+    });
   }, []);
 
   const toggleChannel = useCallback((pluginId: string, enabled: boolean) => {
@@ -577,6 +586,22 @@ export default function Onboarding() {
         prev[pluginId] ? prev : { ...prev, [pluginId]: defaultChannelVerbose() },
       );
     }
+    setSkippedInstallReportIds((previous) => {
+      const next = new Set(previous);
+      next.delete(`channels.plugins.${pluginId}`);
+      next.delete("channels.plugins");
+      return next;
+    });
+  }, []);
+
+  const selectTunnelProvider = useCallback((provider: TunnelProvider) => {
+    setTunnelProvider(provider);
+    setSkippedInstallReportIds((previous) => {
+      const next = new Set(
+        Array.from(previous).filter((id) => !id.startsWith("tunnels.")),
+      );
+      return next;
+    });
   }, []);
 
   const updateChannelConfig = useCallback(
@@ -636,11 +661,15 @@ export default function Onboarding() {
   });
 
   const startStartkitInstall = useCallback(
-    async (initialReports: StartkitItemReport[]) => {
+    async (
+      initialReports: StartkitItemReport[],
+      skippedItemIds: string[],
+    ) => {
       const committedSettings = await startkit.start(
         settingsPatch,
         choices,
         initialReports,
+        skippedItemIds,
       );
       if (committedSettings) {
         setSettings(committedSettings);
@@ -685,7 +714,7 @@ export default function Onboarding() {
     pluginUpdateReports,
     tunnelReports,
   ]);
-  const installReports = useMemo(() => {
+  const rawInstallReports = useMemo(() => {
     if (startkit.running || startkit.complete) return startkit.reports;
     if (startkit.scanning) {
       return mergeReportsById(cachedInstallReports, startkit.reports);
@@ -701,6 +730,23 @@ export default function Onboarding() {
     startkit.running,
     startkit.scanning,
   ]);
+  const effectiveSkippedInstallIds = useMemo(
+    () =>
+      expandSkippedInstallIds(
+        skippedInstallReportIds,
+        rawInstallReports,
+        choices,
+      ),
+    [choices, rawInstallReports, skippedInstallReportIds],
+  );
+  const installReports = useMemo(
+    () =>
+      withSkippedInstallReports(
+        rawInstallReports,
+        effectiveSkippedInstallIds,
+      ),
+    [effectiveSkippedInstallIds, rawInstallReports],
+  );
   const groupedReports = useMemo(
     () => groupReportsFromReports(installReports),
     [installReports],
@@ -731,8 +777,12 @@ export default function Onboarding() {
   ]);
   const hasScanned = installReports.some((report) => report.status !== "pending");
   const installReportsRunning = installReports.some((report) => report.status === "running");
-  const hasRunnableInstallWork = installReports.some((report) =>
-    report.actions.includes("install"),
+  const hasRunnableInstallWork = installReports.some(
+    (report) =>
+      report.status !== "ok" &&
+      report.status !== "skipped" &&
+      report.status !== "needs_config" &&
+      report.actions.includes("install"),
   );
   const hasBlockingReport = installReports.some((report) =>
     ["blocked", "error"].includes(report.status),
@@ -743,7 +793,47 @@ export default function Onboarding() {
   const canContinueFromInstall =
     installCompletedSuccessfully ||
     (hasScanned && !installReportsRunning && !hasRunnableInstallWork && !hasBlockingReport);
+  const hasUnresolvedInstallReports = installReports.some(
+    (report) =>
+      report.category !== "config" &&
+      !["ok", "needs_config", "skipped"].includes(report.status),
+  );
   const activeIndex = WIZARD_STEPS.findIndex((step) => step.id === activeStep);
+
+  const skipInstallReport = useCallback((reportId: string) => {
+    setSkippedInstallReportIds((previous) => {
+      const next = new Set(previous);
+      next.add(reportId);
+      return next;
+    });
+  }, []);
+
+  const undoSkipInstallReport = useCallback((reportId: string) => {
+    setSkippedInstallReportIds((previous) => {
+      const next = new Set(previous);
+      next.delete(reportId);
+      return next;
+    });
+  }, []);
+
+  const skipRemainingInstallReports = useCallback(() => {
+    setSkippedInstallReportIds((previous) => {
+      const next = new Set(previous);
+      const hasMessagingChildren = rawInstallReports.some((report) =>
+        report.id.startsWith("channels.plugins."),
+      );
+      for (const report of rawInstallReports) {
+        if (
+          report.category !== "config" &&
+          (report.id !== "channels.plugins" || !hasMessagingChildren) &&
+          !["ok", "needs_config", "skipped"].includes(report.status)
+        ) {
+          next.add(report.id);
+        }
+      }
+      return next;
+    });
+  }, [rawInstallReports]);
 
   const goNext = useCallback(() => {
     if (activeStep === "agents") setActiveStep("im");
@@ -807,11 +897,14 @@ export default function Onboarding() {
       if (hasBlockingReport) {
         if (hasRunnableInstallWork) {
           return {
-            label: t("Install anyway"),
+            label: t("Retry failed"),
             icon: <Download className="h-4 w-4" />,
             disabled: installReportsRunning,
             run: () =>
-              void startStartkitInstall(installReports),
+              void startStartkitInstall(
+                installReports,
+                Array.from(effectiveSkippedInstallIds),
+              ),
           };
         }
         return {
@@ -827,7 +920,10 @@ export default function Onboarding() {
           icon: <Download className="h-4 w-4" />,
           disabled: installReportsRunning,
           run: () =>
-            void startStartkitInstall(installReports),
+            void startStartkitInstall(
+              installReports,
+              Array.from(effectiveSkippedInstallIds),
+            ),
         };
       }
       if (!hasRunnableInstallWork) {
@@ -874,6 +970,7 @@ export default function Onboarding() {
     installReports,
     installReportsRunning,
     enabledAgents,
+    effectiveSkippedInstallIds,
     rerunInstallScan,
     startStartkitInstall,
     startkit,
@@ -885,26 +982,21 @@ export default function Onboarding() {
       activeStep !== "install" ||
       startkit.running ||
       installReportsRunning ||
-      canContinueFromInstall ||
-      !hasBlockingReport ||
-      !hasRunnableInstallWork
+      !hasUnresolvedInstallReports
     ) {
       return null;
     }
     return {
-      label: t("Check again"),
-      icon: <RefreshCw className="h-4 w-4" />,
-      disabled: !hasScanned,
-      run: rerunInstallScan,
+      label: t("Skip remaining"),
+      icon: null,
+      disabled: false,
+      run: skipRemainingInstallReports,
     };
   }, [
     activeStep,
-    canContinueFromInstall,
-    hasBlockingReport,
-    hasRunnableInstallWork,
-    hasScanned,
+    hasUnresolvedInstallReports,
     installReportsRunning,
-    rerunInstallScan,
+    skipRemainingInstallReports,
     startkit.running,
     t,
   ]);
@@ -977,7 +1069,7 @@ export default function Onboarding() {
           tunnels={tunnels}
           tunnelProvider={tunnelProvider}
           tunnelReports={tunnelReports}
-          onTunnelProvider={setTunnelProvider}
+          onTunnelProvider={selectTunnelProvider}
           groupedReports={groupedReports}
           reports={installReports}
           running={startkit.running}
@@ -1003,6 +1095,9 @@ export default function Onboarding() {
           onNgrokDomain={setNgrokDomain}
           onCfToken={setCfToken}
           onCfHostname={setCfHostname}
+          skippedInstallReportIds={skippedInstallReportIds}
+          onSkipInstallReport={skipInstallReport}
+          onUndoSkipInstallReport={undoSkipInstallReport}
         />
       </main>
 
@@ -1018,5 +1113,53 @@ export default function Onboarding() {
         onCancel={() => void startkit.cancel()}
       />
     </div>
+  );
+}
+
+function expandSkippedInstallIds(
+  explicitlySkipped: Set<string>,
+  reports: StartkitItemReport[],
+  choices: StartkitChoices,
+): Set<string> {
+  const expanded = new Set(explicitlySkipped);
+  const skipNode = expanded.has("essentials.node");
+  const skipGit = expanded.has("essentials.git");
+
+  if (skipNode || skipGit) {
+    for (const channelId of choices.channels) {
+      expanded.add(`channels.plugins.${channelId}`);
+    }
+    if (choices.channels.length > 0) {
+      expanded.add("channels.plugins");
+    }
+  }
+
+  const reportById = new Map(reports.map((report) => [report.id, report]));
+  if (
+    choices.channels.length > 0 &&
+    choices.channels.every((channelId) => {
+      const reportId = `channels.plugins.${channelId}`;
+      return expanded.has(reportId) || reportById.get(reportId)?.status === "ok";
+    })
+  ) {
+    expanded.add("channels.plugins");
+  }
+
+  return expanded;
+}
+
+function withSkippedInstallReports(
+  reports: StartkitItemReport[],
+  skippedItemIds: Set<string>,
+): StartkitItemReport[] {
+  return reports.map((report) =>
+    skippedItemIds.has(report.id) && report.status !== "ok"
+      ? {
+          ...report,
+          status: "skipped",
+          message: "Skipped for now",
+          actions: [],
+        }
+      : report,
   );
 }

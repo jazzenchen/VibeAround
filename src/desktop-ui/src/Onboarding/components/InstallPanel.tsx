@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   Bot,
   CheckCircle2,
   ChevronDown,
@@ -48,6 +49,9 @@ export function InstallPanel({
   tunnelProvider,
   pluginRegistry,
   discoveredPlugins,
+  skippedReportIds,
+  onSkipReport,
+  onUndoSkipReport,
 }: {
   groupedReports: Array<{ id: string; reports: StartkitItemReport[] }>;
   reports: StartkitItemReport[];
@@ -60,6 +64,9 @@ export function InstallPanel({
   tunnelProvider: string;
   pluginRegistry: PluginRegistryEntry[];
   discoveredPlugins: DiscoveredChannelPlugin[];
+  skippedReportIds: Set<string>;
+  onSkipReport: (reportId: string) => void;
+  onUndoSkipReport: (reportId: string) => void;
 }) {
   const { t } = useI18n();
   const [showDetails, setShowDetails] = useState(false);
@@ -67,6 +74,12 @@ export function InstallPanel({
     () => reports.filter(isInstallStepReport),
     [reports],
   );
+  const hasVisibleIssues = installReports.some(
+    (report) => report.status === "error" || report.status === "blocked",
+  );
+  const reportError = reports.find(
+    (report) => report.id === "startkit" && report.status === "error",
+  )?.message;
   const groups = useMemo(
     () =>
       GROUP_ORDER.map((id) => ({
@@ -86,13 +99,14 @@ export function InstallPanel({
           group.id === "messaging"
             ? messagingDetailReports(
                 group.reports,
+                reports,
                 choices,
                 pluginRegistry,
                 discoveredPlugins,
               )
             : group.reports,
       })),
-    [choices, discoveredPlugins, groups, pluginRegistry],
+    [choices, discoveredPlugins, groups, pluginRegistry, reports],
   );
   const installReportsSettled =
     installReports.length > 0 &&
@@ -102,6 +116,12 @@ export function InstallPanel({
     reports.every((report) => TERMINAL_INSTALL_STATUSES.has(report.status));
   const displayRunning = running && !allReportsSettled;
   const displayComplete = complete || (running && allReportsSettled);
+  const visibleError =
+    !displayComplete || hasVisibleIssues ? error ?? reportError : null;
+  const effectiveFinalStatus =
+    displayComplete && !hasVisibleIssues
+      ? "complete"
+      : finalStatus ?? (displayComplete ? "complete" : null);
   const headline = displayRunning
     ? installReportsSettled
       ? t("Finalizing setup")
@@ -110,7 +130,7 @@ export function InstallPanel({
         scanning,
         running: false,
         complete: displayComplete,
-        finalStatus: finalStatus ?? (displayComplete ? "complete" : null),
+        finalStatus: effectiveFinalStatus,
         t,
       });
 
@@ -121,6 +141,8 @@ export function InstallPanel({
           <div className="flex items-start gap-3">
             {displayRunning || scanning ? (
               <Loader2 className="mt-0.5 h-5 w-5 animate-spin text-primary" />
+            ) : displayComplete && hasVisibleIssues ? (
+              <AlertCircle className="mt-0.5 h-5 w-5 text-destructive" />
             ) : displayComplete ? (
               <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
             ) : (
@@ -134,9 +156,9 @@ export function InstallPanel({
           </div>
         </section>
 
-        {error && (
+        {visibleError && (
           <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {error}
+            {visibleError}
           </div>
         )}
 
@@ -196,7 +218,14 @@ export function InstallPanel({
                     </div>
                     <div className="divide-y divide-border">
                       {group.reports.map((report) => (
-                        <StartkitReportRow key={report.id} report={report} t={t} />
+                        <StartkitReportRow
+                          key={report.id}
+                          report={report}
+                          t={t}
+                          skippedByUser={skippedReportIds.has(report.id)}
+                          onSkip={onSkipReport}
+                          onUndoSkip={onUndoSkipReport}
+                        />
                       ))}
                     </div>
                   </div>
@@ -251,15 +280,27 @@ function groupStatus(
   reports: StartkitItemReport[],
   t: (key: string, params?: Record<string, string | number>) => string,
 ) {
+  if (reports.every((report) => report.status === "skipped")) {
+    return {
+      label: t("Skipped"),
+      className: "border-border bg-muted text-muted-foreground",
+    };
+  }
   if (reports.some((report) => report.status === "running")) {
     return {
       label: installProgressLabel(reports, t),
       className: "border-primary/30 bg-primary/10 text-primary",
     };
   }
-  if (reports.some((report) => report.status === "error" || report.status === "blocked")) {
+  if (reports.some((report) => report.status === "error")) {
     return {
-      label: t("Needs attention"),
+      label: t("Install failed"),
+      className: "border-destructive/30 bg-destructive/10 text-destructive",
+    };
+  }
+  if (reports.some((report) => report.status === "blocked")) {
+    return {
+      label: t("Action required"),
       className: "border-destructive/30 bg-destructive/10 text-destructive",
     };
   }
@@ -274,7 +315,9 @@ function groupStatus(
       report.status === "missing" ||
       report.status === "outdated" ||
       report.status === "broken" ||
-      report.actions.includes("install"),
+      (report.status !== "ok" &&
+        report.status !== "skipped" &&
+        report.actions.includes("install")),
     )
   ) {
     return {
@@ -282,9 +325,15 @@ function groupStatus(
       className: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
     };
   }
-  if (reports.every((report) => report.status === "ok" || report.status === "skipped")) {
+  if (reports.every((report) => report.status === "ok")) {
     return {
       label: t("Installed"),
+      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    };
+  }
+  if (reports.every((report) => report.status === "ok" || report.status === "skipped")) {
+    return {
+      label: t("Complete"),
       className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
     };
   }
@@ -296,19 +345,42 @@ function groupStatus(
 
 function messagingDetailReports(
   reports: StartkitItemReport[],
+  allReports: StartkitItemReport[],
   choices: StartkitChoices,
   pluginRegistry: PluginRegistryEntry[],
   discoveredPlugins: DiscoveredChannelPlugin[],
 ): StartkitItemReport[] {
   if (choices.channels.length === 0) return reports;
 
-  const rollup = reports.find((report) => report.id === "channels.plugins");
+  const rollup = allReports.find((report) => report.id === "channels.plugins");
   const registryById = new Map(pluginRegistry.map((plugin) => [plugin.id, plugin]));
   const discoveredById = new Map(discoveredPlugins.map((plugin) => [plugin.id, plugin]));
 
   return choices.channels.map((channelId) => {
     const registryEntry = registryById.get(channelId);
     const discovered = discoveredById.get(channelId);
+    const directReport =
+      reports.find((report) => report.id === `channels.plugins.${channelId}`) ??
+      allReports.find(
+        (report) => report.id === `channels.plugins.${channelId}`,
+      );
+    if (directReport) {
+      return {
+        ...directReport,
+        label:
+          registryEntry?.name ??
+          discovered?.name ??
+          directReport.label ??
+          channelId,
+        version: directReport.version ?? discovered?.version,
+        path: directReport.path ?? discovered?.entry,
+        message:
+          directReport.message ??
+          registryEntry?.description ??
+          "Selected messaging app",
+      };
+    }
+
     const status = messagingPluginStatus(rollup, Boolean(discovered));
     return {
       id: `channels.plugins.${channelId}`,
@@ -320,8 +392,10 @@ function messagingDetailReports(
       version: discovered?.version,
       path: discovered?.entry,
       message:
+        (status === "error" || status === "blocked"
+          ? rollup?.message
+          : undefined) ??
         registryEntry?.description ??
-        rollup?.message ??
         "Selected messaging app",
       actions:
         status === "missing" || status === "outdated" || status === "broken"

@@ -8,7 +8,9 @@ import {
   Loader2,
   MessageSquare,
   Settings2,
+  SkipForward,
   TerminalSquare,
+  Undo2,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -23,11 +25,25 @@ export function StartkitReportRow({
   report,
   compact = false,
   t,
+  onSkip,
+  onUndoSkip,
+  skippedByUser = false,
 }: {
   report: StartkitItemReport;
   compact?: boolean;
   t: Translate;
+  onSkip?: (reportId: string) => void;
+  onUndoSkip?: (reportId: string) => void;
+  skippedByUser?: boolean;
 }) {
+  const canSkip =
+    Boolean(onSkip) &&
+    report.status !== "ok" &&
+    report.status !== "running" &&
+    report.status !== "skipped";
+  const canUndoSkip =
+    Boolean(onUndoSkip) && report.status === "skipped" && skippedByUser;
+
   return (
     <div
       className={cn(
@@ -48,7 +64,14 @@ export function StartkitReportRow({
       <StatusPill report={report} t={t} />
       {!compact && (
         <div className="min-w-0 text-xs text-muted-foreground">
-          <div className="truncate">
+          <div
+            className={cn(
+              report.status === "error" || report.status === "blocked"
+                ? "break-words leading-relaxed"
+                : "truncate",
+            )}
+            title={report.message}
+          >
             {report.message ?? report.version ?? t("Waiting for check")}
           </div>
           {report.version && report.message && (
@@ -56,7 +79,10 @@ export function StartkitReportRow({
               {report.version}
             </div>
           )}
-          {(report.manualCommand || report.manualUrl) && (
+          {(report.manualCommand ||
+            report.manualUrl ||
+            canSkip ||
+            canUndoSkip) && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {report.manualCommand && (
                 <button
@@ -78,6 +104,26 @@ export function StartkitReportRow({
                 >
                   <ExternalLink className="h-3 w-3" />
                   {t("Open link")}
+                </button>
+              )}
+              {canSkip && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-foreground hover:bg-muted"
+                  onClick={() => onSkip?.(report.id)}
+                >
+                  <SkipForward className="h-3 w-3" />
+                  {t("Skip for now")}
+                </button>
+              )}
+              {canUndoSkip && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] text-foreground hover:bg-muted"
+                  onClick={() => onUndoSkip?.(report.id)}
+                >
+                  <Undo2 className="h-3 w-3" />
+                  {t("Undo")}
                 </button>
               )}
             </div>
@@ -165,14 +211,37 @@ export function groupSummary(reports: StartkitItemReport[], t: Translate): strin
     acc[report.status] = (acc[report.status] ?? 0) + 1;
     return acc;
   }, {});
-  if (counts.error || counts.blocked) return t("Needs attention");
   if (counts.running) return installProgressLabel(reports, t);
-  if (counts.needs_config) return t("Configure later");
-  if (counts.missing || counts.outdated || counts.broken) return t("Setup available");
-  if (counts.ok && counts.ok === reports.length) return t("Installed");
-  return reports.length === 1
-    ? t("{{count}} item", { count: reports.length })
-    : t("{{count}} items", { count: reports.length });
+  if (counts.ok === reports.length) return t("Installed");
+  if (counts.skipped === reports.length) return t("Skipped");
+
+  const parts: string[] = [];
+  if (counts.error) {
+    parts.push(t("{{count}} failed", { count: counts.error }));
+  }
+  if (counts.blocked) {
+    parts.push(t("{{count}} action required", { count: counts.blocked }));
+  }
+  const ready =
+    (counts.missing ?? 0) +
+    (counts.outdated ?? 0) +
+    (counts.broken ?? 0);
+  if (ready) {
+    parts.push(t("{{count}} ready", { count: ready }));
+  }
+  if (counts.pending) {
+    parts.push(t("{{count}} not attempted", { count: counts.pending }));
+  }
+  if (counts.needs_config) {
+    parts.push(t("{{count}} to configure", { count: counts.needs_config }));
+  }
+  if (counts.ok) {
+    parts.push(t("{{count}} installed", { count: counts.ok }));
+  }
+  if (counts.skipped) {
+    parts.push(t("{{count}} skipped", { count: counts.skipped }));
+  }
+  return parts.join(" · ") || t("Waiting for check");
 }
 
 export function compactReportLabel(report: StartkitItemReport, t: Translate): string {
@@ -330,8 +399,22 @@ function statusLabel(status: StartkitStatus, t: Translate): string {
   switch (status) {
     case "ok":
       return t("Installed");
+    case "pending":
+      return t("Not attempted");
+    case "missing":
+      return t("Ready to install");
+    case "outdated":
+      return t("Update available");
+    case "broken":
+      return t("Needs repair");
     case "needs_config":
-      return t("needs config");
+      return t("Needs config");
+    case "blocked":
+      return t("Action required");
+    case "error":
+      return t("Install failed");
+    case "skipped":
+      return t("Skipped");
     default:
       return t(status.replace("_", " "));
   }
