@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 
 use super::common::LaunchPlan;
 use crate::profiles::terminal;
@@ -58,7 +58,7 @@ pub(super) fn spawn(plan: &LaunchPlan, context: &LaunchContext) -> anyhow::Resul
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "<default>".to_string())
     );
-    let child = Command::new(&launcher)
+    let child = common::process::env::silent_std_command(&launcher)
         .arg("--profile-path")
         .arg(&profile_path)
         .stdin(Stdio::null())
