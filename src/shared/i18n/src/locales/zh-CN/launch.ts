@@ -273,6 +273,11 @@ export const zhCNLaunch: Record<string, string> = {
   "Scanning local CLIs": "正在扫描本地 CLI",
   "Checking update": "正在检查更新",
   "Change agent path": "修改 Agent 路径",
+  "Add desktop agent": "添加桌面端 Agent",
+  "Choose a desktop agent to add manually.":
+    "选择要手动添加的桌面端 Agent。",
+  "All supported desktop agents are already added":
+    "所有支持的桌面端 Agent 都已添加",
   "No executable candidates found": "未找到可执行文件候选项",
   Scan: "扫描",
   Update: "更新",

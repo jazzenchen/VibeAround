@@ -4,7 +4,10 @@ import type {
   AgentSummary,
   DesktopAppDetectionFile,
 } from "../src/Launch/api";
-import { visibleLaunchAgents } from "../src/Launch/desktopAgentVisibility";
+import {
+  addableDesktopAgents,
+  visibleLaunchAgents,
+} from "../src/Launch/desktopAgentVisibility";
 
 function agent(id: string, directOnly: boolean): AgentSummary {
   return {
@@ -86,4 +89,13 @@ test("supports the legacy executable path preference", () => {
   );
 
   expect(visible.map(({ id }) => id)).toEqual(["claude-desktop"]);
+});
+
+test("only offers desktop agents that are not already visible", () => {
+  const addable = addableDesktopAgents(agents, [
+    agent("codex", false),
+    agent("codex-desktop", true),
+  ]);
+
+  expect(addable.map(({ id }) => id)).toEqual(["claude-desktop"]);
 });

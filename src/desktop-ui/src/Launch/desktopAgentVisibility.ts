@@ -29,3 +29,13 @@ export function visibleLaunchAgents(
     );
   });
 }
+
+export function addableDesktopAgents(
+  agents: AgentSummary[],
+  visibleAgents: AgentSummary[],
+): AgentSummary[] {
+  const visibleIds = new Set(visibleAgents.map(({ id }) => id));
+  return agents.filter(
+    (agent) => agent.direct_only && !visibleIds.has(agent.id),
+  );
+}

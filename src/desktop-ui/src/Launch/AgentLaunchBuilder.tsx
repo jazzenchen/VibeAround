@@ -5,6 +5,7 @@ import {
   MessageCircle,
   Monitor,
   Pencil,
+  Plus,
   Rocket,
   Settings2,
   Terminal,
@@ -88,7 +89,11 @@ import type {
   ProfileSummary,
 } from "./types";
 import { AgentExecutablePathDialog } from "./AgentExecutablePathDialog";
-import { visibleLaunchAgents } from "./desktopAgentVisibility";
+import { DesktopAgentAddDialog } from "./DesktopAgentAddDialog";
+import {
+  addableDesktopAgents,
+  visibleLaunchAgents,
+} from "./desktopAgentVisibility";
 
 const AGENT_ORDER = [
   "codex",
@@ -105,6 +110,13 @@ const AGENT_ORDER = [
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function orderedAgents(agents: AgentSummary[]): AgentSummary[] {
+  const rank = new Map(AGENT_ORDER.map((id, index) => [id, index]));
+  return [...agents].sort(
+    (a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999),
+  );
 }
 
 interface Props {
@@ -156,6 +168,7 @@ export function AgentLaunchBuilder({
   const [sessionChoice, setSessionChoice] = useState<SessionChoice>(null);
   const [settingsAgent, setSettingsAgent] = useState<AgentSummary | null>(null);
   const [pathAgent, setPathAgent] = useState<AgentSummary | null>(null);
+  const [desktopAgentAddOpen, setDesktopAgentAddOpen] = useState(false);
   const [agentExecutable, setAgentExecutable] =
     useState<AgentExecutableResolution | null>(null);
   const [agentExecutableLoading, setAgentExecutableLoading] = useState(false);
@@ -178,16 +191,17 @@ export function AgentLaunchBuilder({
       desktopAppEntries,
       prefs?.agentPreferences ?? {},
     );
-    const rank = new Map(AGENT_ORDER.map((id, index) => [id, index]));
-    return [...visible].sort(
-      (a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999),
-    );
+    return orderedAgents(visible);
   }, [
     agentCatalog,
     desktopAppEntries,
     enabledAgents,
     prefs?.agentPreferences,
   ]);
+  const desktopAgentsToAdd = useMemo(
+    () => orderedAgents(addableDesktopAgents(agentCatalog, agents)),
+    [agentCatalog, agents],
+  );
   const viewPrefs = useMemo<LauncherPreferences | null>(() => {
     if (!prefs) return null;
     return {
@@ -812,9 +826,7 @@ export function AgentLaunchBuilder({
     onError(null);
     try {
       await setLauncherAgentExecutablePath(targetAgent.id, path);
-      void refreshPrefs().catch((error) => {
-        onError(error instanceof Error ? error.message : String(error));
-      });
+      await refreshPrefs();
       onToast(t("Agent launch path updated"));
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
@@ -924,6 +936,19 @@ export function AgentLaunchBuilder({
                 onClick={() => void chooseAgent(agent.id)}
               />
             ))}
+            <TooltipButton
+              type="button"
+              variant="outline"
+              size="icon"
+              disabled={desktopAgentsToAdd.length === 0}
+              disabledReason={t("All supported desktop agents are already added")}
+              aria-label={t("Add desktop agent")}
+              title={t("Add desktop agent")}
+              onClick={() => setDesktopAgentAddOpen(true)}
+              className="h-14 w-14 rounded-md border-dashed text-muted-foreground hover:border-primary/40 hover:text-primary"
+            >
+              <Plus className="h-5 w-5" />
+            </TooltipButton>
           </div>
         </aside>
 
@@ -1239,7 +1264,7 @@ export function AgentLaunchBuilder({
         }
         fallbackExecutablePath={
           pathAgent?.direct_only
-            ? (desktopAppPathForAgent(pathAgent.id) ?? pathAgent.pty_command)
+            ? desktopAppEntryForAgent(pathAgent.id)?.path
             : undefined
         }
         busy={busy}
@@ -1251,6 +1276,15 @@ export function AgentLaunchBuilder({
             : Promise.resolve()
         }
         onUpdateAgent={updateAgentExecutable}
+      />
+      <DesktopAgentAddDialog
+        open={desktopAgentAddOpen}
+        agents={desktopAgentsToAdd}
+        onOpenChange={setDesktopAgentAddOpen}
+        onSelect={(agent) => {
+          setDesktopAgentAddOpen(false);
+          openAgentPathDialog(agent);
+        }}
       />
     </TooltipProvider>
   );
