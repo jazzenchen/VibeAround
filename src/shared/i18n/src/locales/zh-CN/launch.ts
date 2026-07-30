@@ -261,6 +261,15 @@ export const zhCNLaunch: Record<string, string> = {
   "Choose agent executable": "选择 Agent 可执行文件",
   "Choose the desktop app executable.": "选择桌面应用的可执行文件。",
   "Choose the desktop app launch target.": "选择桌面应用的启动目标。",
+  "Choose installed app": "选择已安装应用",
+  "Browse .exe": "浏览 .exe",
+  "{{agent}} installed apps": "{{agent}} 已安装应用",
+  "Select an app from the Windows Start menu.":
+    "从 Windows 开始菜单中选择一个应用。",
+  "Search installed apps": "搜索已安装应用",
+  "Loading installed apps…": "正在读取已安装应用…",
+  "No matching installed apps found": "未找到匹配的已安装应用",
+  Recommended: "推荐",
   "Choose the CLI path used by Launch and ACP.":
     "选择 Launch 和 ACP 使用的 CLI 路径。",
   "Choose the agent path.": "选择 Agent 所在的路径。",

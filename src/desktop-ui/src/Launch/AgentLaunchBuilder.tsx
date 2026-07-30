@@ -820,12 +820,15 @@ export function AgentLaunchBuilder({
     }
   }
 
-  async function saveAgentExecutablePath(path: string | null) {
+  async function saveAgentExecutablePath(
+    path: string | null,
+    sourceLabel?: string | null,
+  ) {
     if (!pathAgent) return;
     const targetAgent = pathAgent;
     onError(null);
     try {
-      await setLauncherAgentExecutablePath(targetAgent.id, path);
+      await setLauncherAgentExecutablePath(targetAgent.id, path, sourceLabel);
       await refreshPrefs();
       onToast(t("Agent launch path updated"));
     } catch (error) {
@@ -910,9 +913,15 @@ export function AgentLaunchBuilder({
     (selectedAgentIsDirectOnly
       ? desktopAppPathForAgent(agentId)
       : currentAgentExecutable?.selected?.path);
+  const selectedWindowsStartAppLabel =
+    selectedAgentPreference?.executable?.source ===
+    "windows_start_apps_manual"
+      ? selectedAgentPreference.executable.sourceLabel
+      : null;
   const selectedExecutableLabel = selectedExecutablePath
     ? selectedAgentIsDirectOnly
-      ? desktopAppLaunchTargetLabel(agentId, selectedExecutablePath)
+      ? (selectedWindowsStartAppLabel ??
+        desktopAppLaunchTargetLabel(agentId, selectedExecutablePath))
       : executableDirectoryLabel(selectedExecutablePath)
     : t("Agent path not found");
   const selectedExecutableTitle = selectedExecutablePath

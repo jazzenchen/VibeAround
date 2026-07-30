@@ -200,6 +200,20 @@ export function getDesktopAppEntries(): Promise<DesktopAppDetectionFile | null> 
   return invoke<DesktopAppDetectionFile | null>("get_desktop_app_entries");
 }
 
+export interface WindowsStartAppEntry {
+  name: string;
+  appId: string;
+  recommended: boolean;
+}
+
+export function listWindowsStartApps(
+  agentId: string,
+): Promise<WindowsStartAppEntry[]> {
+  return invoke<WindowsStartAppEntry[]>("list_windows_start_apps", {
+    agentId,
+  });
+}
+
 export async function getDesktopAppEntriesForAgents(
   agents: Pick<AgentSummary, "id" | "direct_only">[],
 ): Promise<DesktopAppDetectionFile | null> {
@@ -358,10 +372,12 @@ export function setLauncherAgentLaunchArgs(
 export function setLauncherAgentExecutablePath(
   agentId: string,
   executablePath: string | null,
+  executableSourceLabel?: string | null,
 ): Promise<void> {
   return invoke<void>("launcher_set_agent_executable_path", {
     agentId,
     executablePath,
+    executableSourceLabel: executableSourceLabel ?? null,
   });
 }
 
