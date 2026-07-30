@@ -88,6 +88,7 @@ import type {
   ProfileSummary,
 } from "./types";
 import { AgentExecutablePathDialog } from "./AgentExecutablePathDialog";
+import { visibleLaunchAgents } from "./desktopAgentVisibility";
 
 const AGENT_ORDER = [
   "codex",
@@ -133,7 +134,7 @@ export function AgentLaunchBuilder({
   onToast,
 }: Props) {
   const { locale, t } = useI18n();
-  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [agentCatalog, setAgentCatalog] = useState<AgentSummary[]>([]);
   const [agentId, setAgentId] = useState<string>("");
   const [profileChoiceAgentId, setProfileChoiceAgentId] = useState<string>("");
   const [profileChoice, setProfileChoice] = useState<ProfileChoice>({
@@ -170,6 +171,23 @@ export function AgentLaunchBuilder({
     () => (prefs ? new Set(prefs.enabledAgents) : null),
     [enabledAgentKey],
   );
+  const agents = useMemo(() => {
+    const visible = visibleLaunchAgents(
+      agentCatalog,
+      enabledAgents,
+      desktopAppEntries,
+      prefs?.agentPreferences ?? {},
+    );
+    const rank = new Map(AGENT_ORDER.map((id, index) => [id, index]));
+    return [...visible].sort(
+      (a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999),
+    );
+  }, [
+    agentCatalog,
+    desktopAppEntries,
+    enabledAgents,
+    prefs?.agentPreferences,
+  ]);
   const viewPrefs = useMemo<LauncherPreferences | null>(() => {
     if (!prefs) return null;
     return {
@@ -184,27 +202,12 @@ export function AgentLaunchBuilder({
       .then(async (items) => {
         const desktopApps = await getDesktopAppEntriesForAgents(items);
         setDesktopAppEntries(desktopApps);
-        const rank = new Map(AGENT_ORDER.map((id, index) => [id, index]));
-        const installedDesktopAgents = new Set(
-          Object.entries(desktopApps?.apps ?? {})
-            .filter(([, app]) => app.installed)
-            .map(([agentId]) => agentId),
-        );
-        const visible = items.filter((agent) => {
-          if (agent.direct_only) {
-            return installedDesktopAgents.has(agent.id);
-          }
-          return enabledAgents ? enabledAgents.has(agent.id) : true;
-        });
-        const ordered = [...visible].sort(
-          (a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999),
-        );
-        setAgents(ordered);
+        setAgentCatalog(items);
       })
       .catch((error) =>
         onError(error instanceof Error ? error.message : String(error)),
       );
-  }, [enabledAgents, onError]);
+  }, [onError]);
 
   useEffect(() => {
     if (!prefs) return;
