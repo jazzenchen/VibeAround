@@ -10,7 +10,7 @@ use crate::{ExecutionPlan, TerminalChoice};
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchHandle {
-    pub script_path: PathBuf,
+    pub script_path: Option<PathBuf>,
 }
 
 const DESKTOP_LAUNCH_TOML: &str = include_str!("../../resources/desktop-launch.toml");
@@ -296,7 +296,9 @@ mod macos {
                 status.code()
             );
         }
-        Ok(LaunchHandle { script_path })
+        Ok(LaunchHandle {
+            script_path: Some(script_path),
+        })
     }
 
     fn append_macos_open_update_suppression_args(command: &mut std::process::Command) {
@@ -323,7 +325,9 @@ mod linux {
             let _ = std::fs::remove_file(&script_path);
             return Err(error);
         }
-        Ok(LaunchHandle { script_path })
+        Ok(LaunchHandle {
+            script_path: Some(script_path),
+        })
     }
 
     fn write_launch_script(plan: &ExecutionPlan) -> anyhow::Result<PathBuf> {
@@ -444,6 +448,15 @@ mod windows {
     mod desktop_app;
 
     pub fn spawn(plan: &ExecutionPlan) -> anyhow::Result<LaunchHandle> {
+        if let Some(invocation) = desktop_app::resolve(
+            &plan.command,
+            &plan.args,
+            plan.windows_executable_path.as_deref(),
+        ) {
+            invocation.open()?;
+            return Ok(LaunchHandle { script_path: None });
+        }
+
         let launch = WindowsTerminalLaunch::from_choice(plan.terminal)?;
         let script_path = write_launch_script(plan)?;
         let keep_open = plan.windows_process_probe.is_none();
@@ -454,7 +467,9 @@ mod windows {
         // launched CLI keeps the daemon's TCP listener handle alive, VibeAround's
         // next start sees 127.0.0.1:12358 as occupied by a stale PID.
         open::with(params, launch.program()).with_context(|| format!("open {}", launch.label()))?;
-        Ok(LaunchHandle { script_path })
+        Ok(LaunchHandle {
+            script_path: Some(script_path),
+        })
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

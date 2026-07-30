@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
+
 use super::{command_stem_eq, command_words_with_args, powershell_single_quoted};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +17,18 @@ pub(super) struct Invocation {
 }
 
 impl Invocation {
+    pub(super) fn open(&self) -> anyhow::Result<()> {
+        match &self.target {
+            Target::Executable(path) => open_program(path, &self.args),
+            Target::StartApp(app_id) => {
+                let mut args = Vec::with_capacity(self.args.len() + 1);
+                args.push(format!(r"shell:AppsFolder\{app_id}"));
+                args.extend(self.args.iter().cloned());
+                open_program(Path::new("explorer.exe"), &args)
+            }
+        }
+    }
+
     pub(super) fn into_powershell_command(self) -> (String, Vec<String>) {
         match self.target {
             Target::Executable(path) => {
@@ -32,6 +46,21 @@ impl Invocation {
             }
         }
     }
+}
+
+fn open_program(program: &Path, args: &[String]) -> anyhow::Result<()> {
+    if args.is_empty() {
+        open::that(program).with_context(|| format!("open {}", program.display()))?;
+    } else {
+        let params = args
+            .iter()
+            .map(|arg| super::quote_windows_process_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        open::with(params, program.to_string_lossy())
+            .with_context(|| format!("open {}", program.display()))?;
+    }
+    Ok(())
 }
 
 pub(super) fn resolve(

@@ -226,7 +226,7 @@ pub fn launch(input: NativeLaunchInput) -> anyhow::Result<LaunchOutput> {
     Ok(LaunchOutput {
         status: LaunchStatus::Launched,
         plan: redacted_execution_plan(&plan),
-        script_path: Some(handle.script_path),
+        script_path: handle.script_path,
     })
 }
 
