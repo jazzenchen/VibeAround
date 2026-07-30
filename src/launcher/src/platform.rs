@@ -441,8 +441,6 @@ mod windows {
 
     use super::*;
 
-    mod desktop_app;
-
     pub fn spawn(plan: &ExecutionPlan) -> anyhow::Result<LaunchHandle> {
         let launch = WindowsTerminalLaunch::from_choice(plan.terminal)?;
         let script_path = write_launch_script(plan)?;
@@ -770,8 +768,10 @@ mod windows {
             return (command.to_string(), args.to_vec());
         };
 
-        if let Some(invocation) = desktop_app::resolve(command, args, executable_path) {
-            return invocation.into_powershell_command();
+        if let Some((desktop_command, desktop_args)) =
+            normalize_windows_desktop_app_launch(program, program_args, executable_path)
+        {
+            return (desktop_command, desktop_args);
         }
 
         if !is_windows_npm_cli_launch(program) {
@@ -804,6 +804,165 @@ mod windows {
 
     fn is_windows_npm_cli_launch(program: &str) -> bool {
         command_stem_eq(program, "claude") || command_stem_eq(program, "codex")
+    }
+
+    fn normalize_windows_desktop_app_launch(
+        program: &str,
+        args: &[String],
+        executable_path: Option<&Path>,
+    ) -> Option<(String, Vec<String>)> {
+        if !program.eq_ignore_ascii_case("Start-Process") {
+            return None;
+        }
+        let (target, rest) = args.split_first()?;
+        let app = windows_desktop_app_kind(target)?;
+        if let Some(app_path) = executable_path
+            .filter(|path| path.exists())
+            .map(Path::to_path_buf)
+        {
+            let mut out = Vec::with_capacity(rest.len() + 2);
+            out.push("-FilePath".to_string());
+            out.push(app_path.to_string_lossy().into_owned());
+            out.extend(rest.iter().cloned());
+            return Some(("Start-Process".to_string(), out));
+        }
+
+        if let Some(app_id) = executable_path.and_then(windows_start_app_id_from_path) {
+            let mut out = Vec::with_capacity(rest.len() + 1);
+            out.push(format!(r"shell:AppsFolder\{app_id}"));
+            out.extend(rest.iter().cloned());
+            return Some(("explorer.exe".to_string(), out));
+        }
+
+        if let Some(app_id) = windows_start_app_id(app) {
+            let mut out = Vec::with_capacity(rest.len() + 1);
+            out.push(format!(r"shell:AppsFolder\{app_id}"));
+            out.extend(rest.iter().cloned());
+            return Some(("explorer.exe".to_string(), out));
+        }
+
+        let app_path = find_windows_desktop_app_exe(app)?;
+        let mut out = Vec::with_capacity(rest.len() + 2);
+        out.push("-FilePath".to_string());
+        out.push(app_path.to_string_lossy().into_owned());
+        out.extend(rest.iter().cloned());
+        Some(("Start-Process".to_string(), out))
+    }
+
+    fn windows_start_app_id_from_path(path: &Path) -> Option<String> {
+        let value = path.to_string_lossy();
+        let value = value.trim();
+        if value.is_empty() || value.contains('\\') || value.contains('/') || !value.contains('!') {
+            return None;
+        }
+        Some(value.to_string())
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum WindowsDesktopApp {
+        Claude,
+        Codex,
+    }
+
+    fn windows_desktop_app_kind(target: &str) -> Option<WindowsDesktopApp> {
+        if command_stem_eq(target, "claude") {
+            Some(WindowsDesktopApp::Claude)
+        } else if command_stem_eq(target, "codex") {
+            Some(WindowsDesktopApp::Codex)
+        } else {
+            None
+        }
+    }
+
+    fn windows_start_app_id(app: WindowsDesktopApp) -> Option<String> {
+        let script = match app {
+            WindowsDesktopApp::Claude => format!(
+                "$app = Get-StartApps -Name {} | Select-Object -First 1; if ($app) {{ $app.AppID }}",
+                powershell_single_quoted("Claude")
+            ),
+            WindowsDesktopApp::Codex => {
+                common::resources::chatgpt_desktop_windows_start_app_query()
+            }
+        };
+        let output = common::process::env::std_command("powershell.exe")
+            .args(["-NoProfile", "-Command", &script])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(str::to_string)
+    }
+
+    fn find_windows_desktop_app_exe(app: WindowsDesktopApp) -> Option<PathBuf> {
+        let mut candidates = match app {
+            WindowsDesktopApp::Claude => claude_desktop_exe_candidates(),
+            WindowsDesktopApp::Codex => codex_desktop_exe_candidates(),
+        };
+        candidates.sort_by_key(|path| {
+            std::fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        });
+        candidates.into_iter().rev().find(|path| path.exists())
+    }
+
+    fn claude_desktop_exe_candidates() -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            let localappdata = Path::new(&localappdata);
+            paths.push(
+                localappdata
+                    .join("Programs")
+                    .join("Claude")
+                    .join("Claude.exe"),
+            );
+            paths.push(
+                localappdata
+                    .join("Anthropic")
+                    .join("Claude")
+                    .join("Claude.exe"),
+            );
+            paths.push(localappdata.join("Claude").join("Claude.exe"));
+            paths.extend(versioned_child_exe_candidates(
+                &localappdata.join("AnthropicClaude"),
+                "Claude.exe",
+            ));
+        }
+        paths
+    }
+
+    fn codex_desktop_exe_candidates() -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            let localappdata = Path::new(&localappdata);
+            paths.push(
+                localappdata
+                    .join("Programs")
+                    .join("Codex")
+                    .join("Codex.exe"),
+            );
+            paths.push(localappdata.join("OpenAI").join("Codex").join("Codex.exe"));
+        }
+        paths
+    }
+
+    fn versioned_child_exe_candidates(parent: &Path, exe_name: &str) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        let Ok(entries) = std::fs::read_dir(parent) else {
+            return paths;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                paths.push(path.join(exe_name));
+            }
+        }
+        paths
     }
 
     fn command_stem_eq(command: &str, expected: &str) -> bool {
