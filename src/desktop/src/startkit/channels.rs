@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ pub(in crate::startkit) async fn run_channel_plugins_item<R: Runtime>(
     item: &StartkitItem,
     choices: &StartkitChoices,
     cancelled: &Arc<AtomicBool>,
+    skipped_item_ids: &HashSet<String>,
 ) -> anyhow::Result<StartkitItemReport> {
     if choices.channels.is_empty() {
         return Ok(StartkitItemReport {
@@ -24,6 +26,9 @@ pub(in crate::startkit) async fn run_channel_plugins_item<R: Runtime>(
         });
     }
 
+    let mut attempted = 0usize;
+    let mut failed = 0usize;
+
     for channel_id in &choices.channels {
         if cancelled.load(Ordering::Relaxed) {
             return Ok(StartkitItemReport {
@@ -32,7 +37,47 @@ pub(in crate::startkit) async fn run_channel_plugins_item<R: Runtime>(
                 ..base_report(item)
             });
         }
-        install_channel_plugin(app, run_id, channel_id, cancelled).await?;
+
+        let progress_id = format!("channels.plugins.{channel_id}");
+        if skipped_item_ids.contains(&progress_id) {
+            emit_progress_event(
+                app,
+                run_id,
+                progress_id,
+                channel_id.to_string(),
+                StartkitItemStatus::Skipped,
+                Some("Skipped for now".to_string()),
+                None,
+            );
+            continue;
+        }
+
+        attempted += 1;
+        if install_channel_plugin(app, run_id, channel_id, cancelled)
+            .await
+            .is_err()
+        {
+            failed += 1;
+        }
+    }
+
+    if failed > 0 {
+        return Ok(StartkitItemReport {
+            status: StartkitItemStatus::Error,
+            message: Some(format!(
+                "{failed} of {attempted} channel plugins failed to install"
+            )),
+            actions: vec!["install".to_string()],
+            ..base_report(item)
+        });
+    }
+
+    if attempted == 0 {
+        return Ok(StartkitItemReport {
+            status: StartkitItemStatus::Skipped,
+            message: Some("All selected channel plugins were skipped".to_string()),
+            ..base_report(item)
+        });
     }
 
     Ok(StartkitItemReport {
@@ -63,8 +108,22 @@ async fn install_channel_plugin<R: Runtime>(
         return Ok(());
     }
 
-    let plugin = common::resources::plugin_by_id(channel_id)
-        .ok_or_else(|| anyhow!("channel plugin '{channel_id}' not found in registry"))?;
+    let plugin = match common::resources::plugin_by_id(channel_id) {
+        Some(plugin) => plugin,
+        None => {
+            let error = anyhow!("channel plugin '{channel_id}' not found in registry");
+            emit_progress_event(
+                app,
+                run_id,
+                progress_id,
+                channel_id.to_string(),
+                StartkitItemStatus::Error,
+                Some(error.to_string()),
+                None,
+            );
+            return Err(error);
+        }
+    };
 
     emit_progress_event(
         app,
