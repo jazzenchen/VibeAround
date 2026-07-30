@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-const DESKTOP_DETECTION_SCHEMA_VERSION: u32 = 1;
+const DESKTOP_DETECTION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,7 +41,14 @@ pub fn detected_desktop_apps_path() -> PathBuf {
 pub fn read_detected_desktop_apps() -> Option<DesktopAppDetectionFile> {
     let path = detected_desktop_apps_path();
     let contents = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&contents).ok()
+    serde_json::from_str(&contents)
+        .ok()
+        .filter(is_compatible_detection_cache)
+}
+
+fn is_compatible_detection_cache(detected: &DesktopAppDetectionFile) -> bool {
+    detected.schema_version == DESKTOP_DETECTION_SCHEMA_VERSION
+        && detected.platform == current_platform()
 }
 
 pub fn refresh_known_agent_and_persist(
@@ -406,6 +413,31 @@ fn now_unix_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn detection_cache(schema_version: u32, platform: &str) -> DesktopAppDetectionFile {
+        DesktopAppDetectionFile {
+            schema_version,
+            platform: platform.to_string(),
+            scanned_at_unix_ms: 0,
+            apps: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn desktop_detection_cache_requires_current_schema_and_platform() {
+        assert!(is_compatible_detection_cache(&detection_cache(
+            DESKTOP_DETECTION_SCHEMA_VERSION,
+            current_platform()
+        )));
+        assert!(!is_compatible_detection_cache(&detection_cache(
+            DESKTOP_DETECTION_SCHEMA_VERSION - 1,
+            current_platform()
+        )));
+        assert!(!is_compatible_detection_cache(&detection_cache(
+            DESKTOP_DETECTION_SCHEMA_VERSION,
+            "another-platform"
+        )));
+    }
 
     #[test]
     #[cfg(target_os = "macos")]
