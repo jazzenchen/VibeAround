@@ -20,6 +20,7 @@ import type {
   AgentSummary,
 } from "./api";
 import type { AgentLaunchPreference } from "./types";
+import { WindowsStartAppPickerDialog } from "./WindowsStartAppPickerDialog";
 
 interface Props {
   agent: AgentSummary | null;
@@ -29,7 +30,10 @@ interface Props {
   fallbackExecutablePath?: string | null;
   busy: boolean;
   onClose: () => void;
-  onSaveExecutablePath: (path: string | null) => Promise<void>;
+  onSaveExecutablePath: (
+    path: string | null,
+    sourceLabel?: string | null,
+  ) => Promise<void>;
   onRefreshExecutableResolution?: () => Promise<void>;
   onCheckLatest?: (path: string) => Promise<AgentExecutableLatest>;
   onUpdateAgent?: (path: string) => Promise<void>;
@@ -134,7 +138,15 @@ export function AgentExecutablePathDialog({
       ),
     [preference, executableResolution, fallbackExecutablePath],
   );
+  const initialSourceLabel =
+    preference?.executable?.source === "windows_start_apps_manual"
+      ? preference.executable.sourceLabel
+      : null;
   const [executablePath, setExecutablePath] = useState(initialPath);
+  const [executableSourceLabel, setExecutableSourceLabel] = useState<
+    string | null
+  >(initialSourceLabel);
+  const [startAppPickerOpen, setStartAppPickerOpen] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [updatingPath, setUpdatingPath] = useState<string | null>(null);
@@ -160,11 +172,13 @@ export function AgentExecutablePathDialog({
 
   useEffect(() => {
     setExecutablePath(initialPath);
+    setExecutableSourceLabel(initialSourceLabel);
+    setStartAppPickerOpen(false);
     setSaveError(null);
     setSaving(false);
     setUpdatingPath(null);
     setLatestByPath({});
-  }, [agent?.id, initialPath]);
+  }, [agent?.id, initialPath, initialSourceLabel]);
 
   useEffect(() => {
     if (!latestAgentId || latestAgentDirectOnly || !onCheckLatest) return;
@@ -258,7 +272,9 @@ export function AgentExecutablePathDialog({
   const clientOs = detectClientOs();
   const isDesktopApp = agent.direct_only;
   const isWindowsDesktopApp = isDesktopApp && clientOs === "windows";
-  const executableDirty = executablePath.trim() !== initialPath;
+  const executableDirty =
+    executablePath.trim() !== initialPath ||
+    executableSourceLabel !== initialSourceLabel;
   const dialogBusy = busy || saving;
 
   async function save() {
@@ -266,7 +282,10 @@ export function AgentExecutablePathDialog({
     setSaveError(null);
     setSaving(true);
     try {
-      await onSaveExecutablePath(executablePath.trim() || null);
+      await onSaveExecutablePath(
+        executablePath.trim() || null,
+        executableSourceLabel,
+      );
       onClose();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : String(error));
@@ -288,7 +307,10 @@ export function AgentExecutablePathDialog({
           : undefined,
     });
     const path = Array.isArray(selected) ? selected[0] : selected;
-    if (path) setExecutablePath(path);
+    if (path) {
+      setExecutablePath(path);
+      setExecutableSourceLabel(null);
+    }
   }
 
   async function updateAgent(path: string) {
@@ -454,6 +476,27 @@ export function AgentExecutablePathDialog({
               </div>
             )}
 
+            {isWindowsDesktopApp && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={dialogBusy}
+                  className="h-8 px-2.5 text-xs"
+                  onClick={() => setStartAppPickerOpen(true)}
+                >
+                  {t("Choose installed app")}
+                </Button>
+                {executableSourceLabel && (
+                  <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-primary">
+                    <Check className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{executableSourceLabel}</span>
+                  </span>
+                )}
+              </div>
+            )}
+
             <div className="space-y-1 pt-1">
               <div className="text-[10px] font-medium text-muted-foreground">
                 {isWindowsDesktopApp
@@ -474,7 +517,10 @@ export function AgentExecutablePathDialog({
                         : "/opt/homebrew/bin/agent"
                   }
                   className="!h-8 min-h-8 max-h-8 font-mono !text-[11px] leading-4 placeholder:!text-[11px] md:!text-[11px] [font-variant-ligatures:none]"
-                  onChange={(event) => setExecutablePath(event.target.value)}
+                  onChange={(event) => {
+                    setExecutablePath(event.target.value);
+                    setExecutableSourceLabel(null);
+                  }}
                 />
                 <Button
                   type="button"
@@ -484,7 +530,7 @@ export function AgentExecutablePathDialog({
                   className="h-8 px-2.5 text-xs"
                   onClick={() => void chooseExecutable()}
                 >
-                  {t("Choose")}
+                  {isWindowsDesktopApp ? t("Browse .exe") : t("Choose")}
                 </Button>
               </div>
             </div>
@@ -533,6 +579,20 @@ export function AgentExecutablePathDialog({
             </Button>
           </div>
         </DialogFooter>
+        {isWindowsDesktopApp && (
+          <WindowsStartAppPickerDialog
+            open={startAppPickerOpen}
+            agentId={agent.id}
+            agentName={agent.display_name}
+            selectedAppId={executablePath}
+            onOpenChange={setStartAppPickerOpen}
+            onSelect={(app) => {
+              setExecutablePath(app.appId);
+              setExecutableSourceLabel(app.name);
+              setStartAppPickerOpen(false);
+            }}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
