@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -32,6 +32,28 @@ pub struct DesktopAppEntry {
     pub path: String,
     pub source: String,
     pub source_label: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsStartAppEntry {
+    pub name: String,
+    pub app_id: String,
+    pub recommended: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PowerShellStartAppEntry {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "AppID")]
+    app_id: String,
+}
+
+pub fn is_windows_start_app_id(path: &Path) -> bool {
+    let value = path.to_string_lossy();
+    let value = value.trim();
+    !value.is_empty() && !value.contains(['\\', '/']) && value.contains('!')
 }
 
 pub fn detected_desktop_apps_path() -> PathBuf {
@@ -118,6 +140,79 @@ pub async fn scan_desktop_apps() -> DesktopAppDetectionFile {
         scanned_at_unix_ms: now_unix_ms(),
         apps,
     }
+}
+
+pub async fn list_windows_start_apps(agent_id: &str) -> anyhow::Result<Vec<WindowsStartAppEntry>> {
+    let Some(agent) = common::resources::agent_by_alias(agent_id) else {
+        anyhow::bail!("unknown agent: '{agent_id}'");
+    };
+    if !agent.direct_only {
+        anyhow::bail!("agent '{}' is not a desktop app", agent.id);
+    }
+    if !cfg!(windows) {
+        return Ok(Vec::new());
+    }
+
+    let script = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $apps = @(Get-StartApps | Select-Object Name, AppID); ConvertTo-Json -InputObject $apps -Compress";
+    let output = tokio::time::timeout(
+        Duration::from_secs(8),
+        common::process::env::command("powershell.exe")
+            .args(["-NoProfile", "-Command", script])
+            .output(),
+    )
+    .await
+    .context("list Windows Start apps timed out")?
+    .context("list Windows Start apps")?;
+    if !output.status.success() {
+        anyhow::bail!("Get-StartApps failed with status {}", output.status);
+    }
+
+    parse_windows_start_apps(&String::from_utf8_lossy(&output.stdout), &agent.id)
+}
+
+fn parse_windows_start_apps(
+    json: &str,
+    agent_id: &str,
+) -> anyhow::Result<Vec<WindowsStartAppEntry>> {
+    let json = json.trim().trim_start_matches('\u{feff}');
+    if json.is_empty() {
+        return Ok(Vec::new());
+    }
+    let parsed: Vec<PowerShellStartAppEntry> =
+        serde_json::from_str(json).context("parse Windows Start apps")?;
+    let mut seen = BTreeSet::new();
+    let mut apps = parsed
+        .into_iter()
+        .filter_map(|entry| {
+            let name = entry.name.trim();
+            let app_id = entry.app_id.trim();
+            if name.is_empty() || app_id.is_empty() || !seen.insert(app_id.to_string()) {
+                return None;
+            }
+            Some(WindowsStartAppEntry {
+                name: name.to_string(),
+                app_id: app_id.to_string(),
+                recommended: windows_start_app_recommended(agent_id, name, app_id),
+            })
+        })
+        .collect::<Vec<_>>();
+    apps.sort_by(|left, right| {
+        right
+            .recommended
+            .cmp(&left.recommended)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(apps)
+}
+
+fn windows_start_app_recommended(agent_id: &str, name: &str, app_id: &str) -> bool {
+    let candidate = format!("{name} {app_id}").to_lowercase();
+    let terms: &[&str] = match agent_id {
+        "codex-desktop" => &["chatgpt", "openai", "codex"],
+        "claude-desktop" => &["claude", "anthropic"],
+        _ => &[],
+    };
+    terms.iter().any(|term| candidate.contains(term))
 }
 
 async fn desktop_app_entry(app_name: &str) -> Option<DesktopAppEntry> {
@@ -459,6 +554,47 @@ mod tests {
         assert!(claude_windows_candidate_paths(&root).iter().any(|path| {
             windows_path_string(path) == r"C:\Users\tester\AppData\Local\Programs\Claude\Claude.exe"
         }));
+    }
+
+    #[test]
+    fn windows_start_apps_are_deduplicated_and_recommended_first() {
+        let apps = parse_windows_start_apps(
+            r#"[
+                {"Name":"Calculator","AppID":"Microsoft.WindowsCalculator!App"},
+                {"Name":"ChatGPT","AppID":"OpenAI.Codex_2p2nqsd0c76g0!App"},
+                {"Name":"ChatGPT duplicate","AppID":"OpenAI.Codex_2p2nqsd0c76g0!App"}
+            ]"#,
+            "codex-desktop",
+        )
+        .expect("parse Start apps");
+
+        assert_eq!(apps.len(), 2);
+        assert_eq!(apps[0].name, "ChatGPT");
+        assert!(apps[0].recommended);
+        assert!(!apps[1].recommended);
+    }
+
+    #[test]
+    fn windows_start_app_recommendations_follow_the_selected_agent() {
+        assert!(windows_start_app_recommended(
+            "claude-desktop",
+            "Anthropic Claude",
+            "Claude.App!Main"
+        ));
+        assert!(!windows_start_app_recommended(
+            "claude-desktop",
+            "ChatGPT",
+            "OpenAI.Codex!App"
+        ));
+    }
+
+    #[test]
+    fn recognizes_windows_start_app_ids_without_accepting_paths() {
+        assert!(is_windows_start_app_id(Path::new(
+            "OpenAI.Codex_2p2nqsd0c76g0!App"
+        )));
+        assert!(!is_windows_start_app_id(Path::new("Codex")));
+        assert!(!is_windows_start_app_id(Path::new(r"C:\Apps\Codex.exe")));
     }
 
     fn windows_path_string(path: &Path) -> String {
