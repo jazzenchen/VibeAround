@@ -57,6 +57,9 @@ export function OnboardingStepContent({
   onNgrokDomain,
   onCfToken,
   onCfHostname,
+  skippedInstallReportIds,
+  onSkipInstallReport,
+  onUndoSkipInstallReport,
 }: {
   activeStep: WizardStepId;
   agents: AgentSummary[];
@@ -102,6 +105,9 @@ export function OnboardingStepContent({
   onNgrokDomain: (value: string) => void;
   onCfToken: (value: string) => void;
   onCfHostname: (value: string) => void;
+  skippedInstallReportIds: Set<string>;
+  onSkipInstallReport: (reportId: string) => void;
+  onUndoSkipInstallReport: (reportId: string) => void;
 }) {
   return (
     <section
@@ -149,6 +155,9 @@ export function OnboardingStepContent({
           tunnelProvider={tunnelProvider}
           pluginRegistry={pluginRegistry}
           discoveredPlugins={discoveredPlugins}
+          skippedReportIds={skippedInstallReportIds}
+          onSkipReport={onSkipInstallReport}
+          onUndoSkipReport={onUndoSkipInstallReport}
         />
       )}
 
