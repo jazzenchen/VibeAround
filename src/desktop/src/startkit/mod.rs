@@ -395,6 +395,7 @@ pub async fn start_startkit_install<R: Runtime>(
     settings_patch: Value,
     choices: StartkitChoices,
     run_id: Option<String>,
+    skipped_item_ids: Option<Vec<String>>,
 ) -> Result<Value, String> {
     let settings = tauri::async_runtime::spawn_blocking(move || {
         common::config::patch_settings_json(&settings_patch)
@@ -420,6 +421,10 @@ pub async fn start_startkit_install<R: Runtime>(
 
     let active = Arc::clone(&state.active);
     let install_settings = settings.clone();
+    let skipped_item_ids = skipped_item_ids
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<HashSet<_>>();
     tauri::async_runtime::spawn(async move {
         let status = match run_startkit_install(
             app.clone(),
@@ -427,6 +432,7 @@ pub async fn start_startkit_install<R: Runtime>(
             choices,
             Arc::clone(&control.cancelled),
             run_id.clone(),
+            skipped_item_ids,
         )
         .await
         {
@@ -819,6 +825,7 @@ async fn run_startkit_install<R: Runtime>(
     choices: StartkitChoices,
     cancelled: Arc<AtomicBool>,
     run_id: String,
+    skipped_item_ids: HashSet<String>,
 ) -> anyhow::Result<String> {
     let manifest = load_manifest()?;
     let platform = current_platform();
@@ -833,6 +840,23 @@ async fn run_startkit_install<R: Runtime>(
         }
 
         let item = find_item(&manifest, item_id)?;
+        if skipped_item_ids.contains(item_id) {
+            blocked_item_ids.insert(item.id.clone());
+            emit_progress(
+                &app,
+                Some(&run_id),
+                item,
+                StartkitItemStatus::Skipped,
+                Some("Skipped for now".to_string()),
+                Some(StartkitItemReport {
+                    status: StartkitItemStatus::Skipped,
+                    message: Some("Skipped for now".to_string()),
+                    ..base_report(item)
+                }),
+            );
+            continue;
+        }
+
         if effective_item_dependencies(item, &choices, platform)
             .iter()
             .any(|dependency| blocked_item_ids.contains(*dependency))
@@ -854,7 +878,15 @@ async fn run_startkit_install<R: Runtime>(
         }
 
         let report = if item.kind.as_deref() == Some("builtin_channel_plugins") {
-            run_channel_plugins_item(&app, Some(&run_id), item, &choices, &cancelled).await
+            run_channel_plugins_item(
+                &app,
+                Some(&run_id),
+                item,
+                &choices,
+                &cancelled,
+                &skipped_item_ids,
+            )
+            .await
         } else if item.kind.as_deref() == Some("managed_npm_package") {
             run_managed_npm_package_item(&app, Some(&run_id), item, &cancelled).await
         } else {
@@ -991,18 +1023,34 @@ async fn scan_item(
     }
 
     if item.kind.as_deref() == Some("builtin_channel_plugins") {
+        let ready_count = choices
+            .channels
+            .iter()
+            .filter(|channel_id| {
+                crate::onboarding::plugin_install::check_plugin_status_sync(channel_id) == "ready"
+            })
+            .count();
+        let missing_count = choices.channels.len().saturating_sub(ready_count);
         let status = if choices.channels.is_empty() {
             StartkitItemStatus::Skipped
+        } else if missing_count == 0 {
+            StartkitItemStatus::Ok
         } else {
-            StartkitItemStatus::Pending
+            StartkitItemStatus::Missing
         };
         return StartkitItemReport {
             status,
-            message: Some(format!(
-                "{} channel plugin(s) selected",
-                choices.channels.len()
-            )),
-            actions: if choices.channels.is_empty() {
+            message: Some(if choices.channels.is_empty() {
+                "No channel plugins selected".to_string()
+            } else if missing_count == 0 {
+                "Channel plugins are ready".to_string()
+            } else {
+                format!(
+                    "{missing_count} of {} channel plugins need installation",
+                    choices.channels.len()
+                )
+            }),
+            actions: if missing_count == 0 {
                 Vec::new()
             } else {
                 vec!["install".to_string()]

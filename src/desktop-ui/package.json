@@ -1,7 +1,7 @@
 {
   "name": "@vibearound/desktop-ui",
   "private": true,
-  "version": "0.7.20",
+  "version": "0.7.21",
   "type": "module",
   "scripts": {
     "dev": "vite",

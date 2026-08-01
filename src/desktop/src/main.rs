@@ -145,6 +145,15 @@ fn get_desktop_app_entries() -> Option<desktop_detection::DesktopAppDetectionFil
 }
 
 #[tauri::command]
+async fn list_windows_start_apps(
+    agent_id: String,
+) -> Result<Vec<desktop_detection::WindowsStartAppEntry>, String> {
+    desktop_detection::list_windows_start_apps(&agent_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn check_selected_launch_entry() -> Result<bool, String> {
     let cfg = common::config::ensure_loaded();
     let prefs = common::agent_state::read_prefs();
@@ -154,10 +163,11 @@ fn check_selected_launch_entry() -> Result<bool, String> {
 
     let configured_path = common::agent_state::resolve_agent_executable_path(&prefs, &agent.id);
     let exists = if agent.direct_only {
-        configured_path.as_deref().is_some_and(Path::is_file)
-            || desktop_detection::refresh_known_agent_and_persist(&agent.id)
-                .map_err(|error| error.to_string())?
-                .is_some()
+        configured_path.as_deref().is_some_and(|path| {
+            path.is_file() || (cfg!(windows) && desktop_detection::is_windows_start_app_id(path))
+        }) || desktop_detection::refresh_known_agent_and_persist(&agent.id)
+            .map_err(|error| error.to_string())?
+            .is_some()
             || selected_desktop_app_cached(&agent.id, configured_path.as_deref())
     } else {
         configured_path.as_deref().is_some_and(Path::is_file)
@@ -265,6 +275,7 @@ fn main() {
             rescan_agent_entries,
             rescan_desktop_app_entries,
             get_desktop_app_entries,
+            list_windows_start_apps,
             check_selected_launch_entry,
             open_external_url,
             restart_services,

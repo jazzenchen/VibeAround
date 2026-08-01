@@ -557,6 +557,7 @@ pub async fn launcher_set_agent_executable_path(
     app: tauri::AppHandle,
     agent_id: String,
     executable_path: Option<String>,
+    executable_source_label: Option<String>,
 ) -> Result<(), String> {
     let agent = resources::agent_by_alias(&agent_id)
         .cloned()
@@ -568,7 +569,7 @@ pub async fn launcher_set_agent_executable_path(
             if agent.direct_only {
                 let path_agent_id = agent_id.clone();
                 tauri::async_runtime::spawn_blocking(move || {
-                    if !is_valid_direct_only_executable_path(&path_agent_id, &path) {
+                    if !is_valid_direct_only_executable_path(&path) {
                         return Err(format!(
                             "agent path is not a valid {}: {}",
                             direct_only_executable_path_label(),
@@ -578,6 +579,7 @@ pub async fn launcher_set_agent_executable_path(
                     Ok::<_, String>(Some(direct_only_executable_preference(
                         &path_agent_id,
                         path,
+                        executable_source_label.as_deref(),
                     )))
                 })
                 .await
@@ -623,11 +625,11 @@ pub async fn launcher_set_agent_executable_path(
     .map_err(|error| error.to_string())?
 }
 
-fn is_valid_direct_only_executable_path(agent_id: &str, path: &std::path::Path) -> bool {
+fn is_valid_direct_only_executable_path(path: &std::path::Path) -> bool {
     if cfg!(target_os = "macos") {
         path.is_dir() || path.is_file()
     } else if cfg!(target_os = "windows") {
-        path.is_file() || matches_detected_windows_start_app(agent_id, path)
+        path.is_file() || crate::desktop_detection::is_windows_start_app_id(path)
     } else {
         path.is_file()
     }
@@ -643,30 +645,23 @@ fn direct_only_executable_path_label() -> &'static str {
     }
 }
 
-fn matches_detected_windows_start_app(agent_id: &str, path: &std::path::Path) -> bool {
-    if !cfg!(target_os = "windows") {
-        return false;
-    }
-    let Some(detected) = crate::desktop_detection::read_detected_desktop_apps() else {
-        return false;
-    };
-    detected
-        .apps
-        .get(agent_id)
-        .and_then(|detection| detection.entry.as_ref())
-        .is_some_and(|entry| {
-            entry.source == "windows_start_apps"
-                && path.to_string_lossy().eq_ignore_ascii_case(&entry.path)
-        })
-}
-
 fn direct_only_executable_preference(
     agent_id: &str,
     path: PathBuf,
+    source_label: Option<&str>,
 ) -> agent_state::AgentExecutablePreference {
     let realpath = path.canonicalize().ok();
     let mut preference = agent_state::AgentExecutablePreference::manual(path.clone());
     preference.realpath = realpath;
+    if crate::desktop_detection::is_windows_start_app_id(&path) {
+        if let Some(source_label) = source_label
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+        {
+            preference.source = "windows_start_apps_manual".to_string();
+            preference.source_label = source_label.to_string();
+        }
+    }
 
     let Some(detected) = crate::desktop_detection::read_detected_desktop_apps() else {
         return preference;

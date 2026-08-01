@@ -55,15 +55,19 @@ function applyProgress(
           ...next[index],
           status: payload.status,
           message: payload.message,
+          actions: progressActions(next[index].actions, payload),
         }
       : {
           id: payload.id,
           label: payload.label,
-          group: "startkit",
-          category: "startkit",
+          ...progressReportLocation(payload.id),
           status: payload.status,
           message: payload.message,
-          actions: [],
+          actions:
+            payload.id.startsWith("channels.plugins.") &&
+            payload.status === "error"
+              ? ["install"]
+              : [],
           secret: false,
         });
   if (index >= 0) next[index] = base;
@@ -71,7 +75,51 @@ function applyProgress(
   return next;
 }
 
+function progressActions(
+  current: string[],
+  payload: StartkitProgressEvent,
+): string[] {
+  if (
+    payload.status === "ok" ||
+    payload.status === "skipped" ||
+    payload.status === "needs_config"
+  ) {
+    return current.filter((action) => action !== "install");
+  }
+  if (
+    payload.status === "error" &&
+    payload.id.startsWith("channels.plugins.") &&
+    !current.includes("install")
+  ) {
+    return [...current, "install"];
+  }
+  return current;
+}
+
+function progressReportLocation(id: string): {
+  group: string;
+  category: string;
+} {
+  if (id.startsWith("channels.plugins.")) {
+    return { group: "messaging", category: "channels" };
+  }
+  if (id.startsWith("agents.")) {
+    return { group: "agents", category: "agents" };
+  }
+  if (id.startsWith("tunnels.")) {
+    return { group: "remote", category: "tunnels" };
+  }
+  return { group: "startkit", category: "startkit" };
+}
+
 function needsInstall(report: StartkitItemReport): boolean {
+  if (
+    report.status === "ok" ||
+    report.status === "skipped" ||
+    report.status === "needs_config"
+  ) {
+    return false;
+  }
   return (
     report.status === "missing" ||
     report.status === "outdated" ||
@@ -89,19 +137,28 @@ function createStartkitRunId(): string {
 
 function reportsForInstallStart(
   reports: StartkitItemReport[],
+  skippedItemIds: Set<string>,
 ): StartkitItemReport[] {
-  return reports.map((report) =>
-    needsInstall(report)
-      ? {
-          ...report,
-          status: "running",
-          message:
-            report.status === "outdated"
-              ? "Queued for update"
-              : "Queued for install",
-        }
-      : report,
-  );
+  return reports.map((report) => {
+    if (skippedItemIds.has(report.id)) {
+      return {
+        ...report,
+        status: "skipped",
+        message: "Skipped for now",
+        actions: [],
+      };
+    }
+    return needsInstall(report)
+        ? {
+            ...report,
+            status: "running",
+            message:
+              report.status === "outdated"
+                ? "Queued for update"
+                : "Queued for install",
+          }
+        : report;
+  });
 }
 
 function finalizeQueuedReports(
@@ -134,6 +191,21 @@ function finalizeQueuedReports(
           : "Install did not finish",
     };
   });
+}
+
+function failRunningReports(
+  reports: StartkitItemReport[],
+  message: string,
+): StartkitItemReport[] {
+  return reports.map((report) =>
+    report.status === "running"
+      ? {
+          ...report,
+          status: "error",
+          message,
+        }
+      : report,
+  );
 }
 
 function inferredFinalStatus(
@@ -176,6 +248,7 @@ interface UseStartkitFlowResult {
     settingsPatch: SettingsPatch,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
+    skippedItemIds?: string[],
   ) => Promise<Settings | null>;
   cancel: () => Promise<void>;
   finish: () => Promise<void>;
@@ -255,6 +328,9 @@ export function useStartkitFlow(): UseStartkitFlowResult {
       setReports(report.reports);
     } catch (err) {
       setError(String(err));
+      setReports((previous) =>
+        failRunningReports(previous, "Environment check did not finish"),
+      );
     } finally {
       scanProgressUnlisten?.();
       unlistenRefs.current = unlistenRefs.current.filter(
@@ -268,6 +344,7 @@ export function useStartkitFlow(): UseStartkitFlowResult {
     settingsPatch: SettingsPatch,
     choices: StartkitChoices,
     initialReports?: StartkitItemReport[],
+    skippedItemIds: string[] = [],
   ) => {
     const runId = createStartkitRunId();
     activeRunIdRef.current = runId;
@@ -278,6 +355,7 @@ export function useStartkitFlow(): UseStartkitFlowResult {
     setReports((previous) =>
       reportsForInstallStart(
         initialReports && initialReports.length > 0 ? initialReports : previous,
+        new Set(skippedItemIds),
       ),
     );
 
@@ -312,6 +390,7 @@ export function useStartkitFlow(): UseStartkitFlowResult {
         settingsPatch,
         choices,
         runId,
+        skippedItemIds,
       });
       return committedSettings;
     } catch (err) {
@@ -319,6 +398,14 @@ export function useStartkitFlow(): UseStartkitFlowResult {
         activeRunIdRef.current = null;
       }
       setError(String(err));
+      setReports((previous) =>
+        failRunningReports(
+          finalizeQueuedReports(previous, "error"),
+          "Install did not finish",
+        ),
+      );
+      setFinalStatus("error");
+      setComplete(true);
       setRunning(false);
       return null;
     }
