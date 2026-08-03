@@ -33,6 +33,7 @@ import {
   agentCheckingReport,
   agentIdFromReport,
   groupReportsFromReports,
+  hasSkippedReport,
   itemCheckSignature,
   localPluginReport,
   markReportsUpdating,
@@ -808,13 +809,27 @@ export default function Onboarding() {
     });
   }, []);
 
-  const undoSkipInstallReport = useCallback((reportId: string) => {
-    setSkippedInstallReportIds((previous) => {
-      const next = new Set(previous);
-      next.delete(reportId);
-      return next;
-    });
-  }, []);
+  const rerunInstallScan = useCallback(() => {
+    checkedAgentLocalSignaturesRef.current.clear();
+    checkedTunnelSignaturesRef.current.clear();
+    setAgentInstallReports([]);
+    setTunnelReports([]);
+    void startkit.scan(finalSettings, choices);
+  }, [choices, finalSettings, startkit.scan]);
+
+  const undoSkipInstallReport = useCallback(
+    (reportId: string) => {
+      setSkippedInstallReportIds((previous) => {
+        const next = new Set(previous);
+        next.delete(reportId);
+        return next;
+      });
+      if (hasSkippedReport(rawInstallReports, reportId)) {
+        rerunInstallScan();
+      }
+    },
+    [rawInstallReports, rerunInstallScan],
+  );
 
   const skipRemainingInstallReports = useCallback(() => {
     setSkippedInstallReportIds((previous) => {
@@ -858,15 +873,6 @@ export default function Onboarding() {
       setActiveStep("install");
     }
   }, [activeStep]);
-
-  const rerunInstallScan = useCallback(() => {
-    checkedInstallScanSignaturesRef.current.clear();
-    checkedAgentLocalSignaturesRef.current.clear();
-    checkedTunnelSignaturesRef.current.clear();
-    setAgentInstallReports([]);
-    setTunnelReports([]);
-    void startkit.scan(finalSettings, choices);
-  }, [choices, finalSettings, startkit]);
 
   const primaryAction = useMemo<PrimaryAction>(() => {
     if (activeStep === "install") {
