@@ -127,7 +127,6 @@ export function emptyConnectionDraft(
               : item.targetApiType,
           upstreamModel: current?.upstreamModel ?? item.upstreamModel,
           fakeModelId: current?.fakeModelId ?? item.fakeModelId,
-          imageResolver: current?.imageResolver ?? null,
           models:
             cleanBridgeModels(current?.models).length > 0
               ? cleanBridgeModels(current?.models)

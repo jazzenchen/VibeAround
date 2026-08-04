@@ -50,7 +50,7 @@ impl ResolverConfig {
     }
 }
 
-struct QwenImageResolver {
+struct ProfileImageResolver {
     config: ResolverConfig,
     client: reqwest::Client,
     endpoint_url: String,
@@ -134,7 +134,7 @@ pub(super) async fn resolve_request_images(
             format!("invalid image resolver endpoint: {message}"),
         )
     })?;
-    let resolver = QwenImageResolver {
+    let resolver = ProfileImageResolver {
         config,
         client,
         endpoint_url,
@@ -166,7 +166,7 @@ pub(super) fn is_enabled(state: &AppState) -> bool {
     state.service_side.image_input.is_configured()
 }
 
-impl QwenImageResolver {
+impl ProfileImageResolver {
     async fn resolve_image(
         &self,
         payload: &ImagePayload,
@@ -217,7 +217,7 @@ impl QwenImageResolver {
         payload: &ImagePayload,
         context: &str,
     ) -> Result<String, (StatusCode, String)> {
-        let body = qwen_request_body(&self.config.model, payload, context);
+        let body = image_description_request_body(&self.config.model, payload, context);
         let body = serde_json::to_vec(&body).map_err(|error| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -272,9 +272,9 @@ impl QwenImageResolver {
 }
 
 #[async_trait]
-impl ServiceSideInputResolver for QwenImageResolver {
+impl ServiceSideInputResolver for ProfileImageResolver {
     fn id(&self) -> &str {
-        "vibearound_qwen_image_description"
+        "vibearound_image_description"
     }
 
     fn input_kind(&self) -> ServiceSideInputKind {
@@ -309,9 +309,9 @@ fn bounded_context(context: &str) -> String {
 fn resolver_service_side_error(error: (StatusCode, String)) -> ServiceSideError {
     let (status, message) = error;
     if status.is_client_error() {
-        ServiceSideError::invalid_input("vibearound_qwen_image_description", message)
+        ServiceSideError::invalid_input("vibearound_image_description", message)
     } else {
-        ServiceSideError::execution("vibearound_qwen_image_description", message)
+        ServiceSideError::execution("vibearound_image_description", message)
     }
 }
 
@@ -408,7 +408,7 @@ fn validated_payload(
     Ok(ImagePayload { bytes, media_type })
 }
 
-fn qwen_request_body(model: &str, payload: &ImagePayload, context: &str) -> Value {
+fn image_description_request_body(model: &str, payload: &ImagePayload, context: &str) -> Value {
     let data_url = format!(
         "data:{};base64,{}",
         payload.media_type,
@@ -577,12 +577,12 @@ mod tests {
     }
 
     #[test]
-    fn qwen_body_contains_fixed_prompt_context_and_image() {
+    fn request_body_contains_fixed_prompt_context_and_image() {
         let payload = ImagePayload {
             bytes: b"image".to_vec(),
             media_type: "image/png".to_string(),
         };
-        let body = qwen_request_body("qwen3.6-plus", &payload, "describe the error");
+        let body = image_description_request_body("qwen3.6-plus", &payload, "describe the error");
 
         assert_eq!(body["model"], "qwen3.6-plus");
         assert_eq!(body["messages"][0]["content"], RESOLVER_SYSTEM_PROMPT);
@@ -711,7 +711,7 @@ mod tests {
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
-        let resolver = QwenImageResolver {
+        let resolver = ProfileImageResolver {
             config: ResolverConfig {
                 profile_id: "dashscope".to_string(),
                 api_type: "openai-chat".to_string(),
@@ -726,7 +726,7 @@ mod tests {
         let mut registry = ServiceSideCapabilityRegistry::new();
         registry
             .register_input_resolver(resolver)
-            .expect("Qwen resolver registers");
+            .expect("image resolver registers");
         let original_request = || UniversalRequest {
             input: vec![UniversalItem::Message {
                 role: Role::User,

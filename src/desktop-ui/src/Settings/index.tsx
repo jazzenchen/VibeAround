@@ -46,6 +46,8 @@ import type {
 } from "../Onboarding/types";
 import { apiFetch } from "../lib/api";
 import { saveSettingsPatch } from "../lib/settingsPatch";
+import { listProfiles } from "../Launch/api";
+import type { ProfileSummary } from "../Launch/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -95,6 +97,7 @@ type SaveState =
   | "idle"
   | "agents"
   | "api-bridge"
+  | "service-side"
   | "web-search"
   | "proxy"
   | "general"
@@ -120,6 +123,12 @@ type SearchSourceForm = {
 };
 
 type SearchContextSize = "low" | "medium" | "high";
+
+type ServiceSideImageProfile = {
+  id: string;
+  label: string;
+  models: string[];
+};
 
 type ManagedPluginCategory = "im" | "acp" | "search";
 type ManagedPluginStatus =
@@ -240,6 +249,10 @@ export function SettingsDialog({
   const [retry429DelaySeconds, setRetry429DelaySeconds] = useState("10");
   const [replaceProviderWebSearch, setReplaceProviderWebSearch] =
     useState(false);
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [serviceSideImageEnabled, setServiceSideImageEnabled] = useState(false);
+  const [serviceSideImageProfileId, setServiceSideImageProfileId] = useState("");
+  const [serviceSideImageModel, setServiceSideImageModel] = useState("");
   const [searchMaxResults, setSearchMaxResults] = useState(
     DEFAULT_SEARCH_MAX_RESULTS,
   );
@@ -302,6 +315,18 @@ export function SettingsDialog({
         : null,
     [apiBridgeRetryForm],
   );
+  const serviceSideImageProfiles = useMemo(
+    () => buildServiceSideImageProfiles(profiles),
+    [profiles],
+  );
+  const selectedServiceSideImageProfile = serviceSideImageProfiles.find(
+    (profile) => profile.id === serviceSideImageProfileId,
+  );
+  const serviceSideImageReady =
+    !serviceSideImageEnabled ||
+    Boolean(
+      selectedServiceSideImageProfile?.models.includes(serviceSideImageModel),
+    );
 
   const hydrateChannels = useCallback(
     (
@@ -430,6 +455,13 @@ export function SettingsDialog({
     });
   }, []);
 
+  const hydrateServiceSide = useCallback((loadedSettings: AppSettings) => {
+    const imageInput = loadedSettings.service_side?.image_input;
+    setServiceSideImageEnabled(Boolean(imageInput?.enabled));
+    setServiceSideImageProfileId(imageInput?.profile_id?.trim() ?? "");
+    setServiceSideImageModel(imageInput?.model?.trim() ?? "");
+  }, []);
+
   const hydrateIntegrations = useCallback((loadedSettings: AppSettings) => {
     const integrations = loadedSettings.integrations;
     setMcpAutoInstall(integrations?.mcp_auto_install ?? true);
@@ -490,6 +522,7 @@ export function SettingsDialog({
         discovered,
         tunnelDefs,
         managedPluginDefs,
+        profileDefs,
         workspaceResponse,
       ] =
         await Promise.all([
@@ -499,6 +532,7 @@ export function SettingsDialog({
           invoke<DiscoveredChannelPlugin[]>("list_channel_plugins"),
           invoke<TunnelSummary[]>("list_tunnels"),
           invoke<ManagedPluginSummary[]>("list_managed_plugins"),
+          listProfiles(),
           apiFetch("/api/workspaces").then(async (response) => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return WorkspacesResponseSchema.parse(await response.json());
@@ -510,6 +544,7 @@ export function SettingsDialog({
       setPluginRegistry(registry);
       setDiscoveredPlugins(discovered);
       setManagedPlugins(managedPluginDefs);
+      setProfiles(profileDefs);
       setTunnels(tunnelDefs);
       hydrateAgents(loadedSettings, orderedAgents);
       hydrateChannels(loadedSettings, registry, discovered);
@@ -517,6 +552,7 @@ export function SettingsDialog({
       hydrateProxy(loadedSettings);
       hydrateApiBridge(loadedSettings);
       hydrateSearchTool(loadedSettings);
+      hydrateServiceSide(loadedSettings);
       hydrateIntegrations(loadedSettings);
       hydrateGeneral(loadedSettings, workspaceResponse.default_workspace);
       await readAuthToken();
@@ -537,6 +573,7 @@ export function SettingsDialog({
     hydrateIntegrations,
     hydrateProxy,
     hydrateSearchTool,
+    hydrateServiceSide,
     hydrateTunnel,
     readAuthToken,
   ]);
@@ -938,6 +975,41 @@ export function SettingsDialog({
     readAuthToken,
   ]);
 
+  const applyServiceSideSettings = useCallback(async () => {
+    if (!serviceSideImageReady) return;
+    setSaving("service-side");
+    setNotice(null);
+    try {
+      const nextSettings = buildServiceSideSettings({
+        settings,
+        imageEnabled: serviceSideImageEnabled,
+        profileId: serviceSideImageProfileId,
+        model: serviceSideImageModel,
+      });
+      const saved = await saveSettingsPatch(settings, nextSettings);
+      setSettings(saved.settings);
+      await invoke("restart_services");
+      await readAuthToken();
+      onServicesRestarted?.();
+      setNotice({ variant: "success", message: "Service-side settings applied." });
+    } catch (error) {
+      setNotice({
+        variant: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSaving("idle");
+    }
+  }, [
+    settings,
+    serviceSideImageEnabled,
+    serviceSideImageModel,
+    serviceSideImageProfileId,
+    serviceSideImageReady,
+    onServicesRestarted,
+    readAuthToken,
+  ]);
+
   const uninstallIntegrations = useCallback(
     async (kind: "mcp" | "skills") => {
       setSaving(kind === "mcp" ? "uninstall-mcp" : "uninstall-skills");
@@ -1224,6 +1296,13 @@ export function SettingsDialog({
               >
                 <Search className="h-3 w-3" />
                 {t("Web Search")}
+              </TabsTrigger>
+              <TabsTrigger
+                value="service-side"
+                className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
+              >
+                <WandSparkles className="h-3 w-3" />
+                {t("Service-Side Functions")}
               </TabsTrigger>
               <TabsTrigger
                 value="plugins"
@@ -1641,6 +1720,48 @@ export function SettingsDialog({
                       onClick={() => void applyWebSearchSettings()}
                     >
                       {saving === "web-search"
+                        ? t("Restarting services…")
+                        : t("Apply & Restart Services")}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent
+              value="service-side"
+              className="min-h-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col"
+            >
+              {loading ? (
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
+                  <LoadingBlock />
+                </div>
+              ) : (
+                <>
+                  <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
+                    <ServiceSideSettingsPanel
+                      imageEnabled={serviceSideImageEnabled}
+                      profileId={serviceSideImageProfileId}
+                      model={serviceSideImageModel}
+                      profiles={serviceSideImageProfiles}
+                      onImageEnabledChange={setServiceSideImageEnabled}
+                      onProfileChange={(profileId) => {
+                        setServiceSideImageProfileId(profileId);
+                        setServiceSideImageModel("");
+                      }}
+                      onModelChange={setServiceSideImageModel}
+                      notice={<SettingsNotice notice={notice} />}
+                    />
+                  </div>
+                  <div className="flex shrink-0 justify-end border-t border-border px-5 py-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className={SETTINGS_BUTTON_CLASS}
+                      disabled={!canSubmit || !serviceSideImageReady}
+                      onClick={() => void applyServiceSideSettings()}
+                    >
+                      {saving === "service-side"
                         ? t("Restarting services…")
                         : t("Apply & Restart Services")}
                     </Button>
@@ -2569,6 +2690,114 @@ function SearchToolSettingsPanel({
   );
 }
 
+function ServiceSideSettingsPanel({
+  imageEnabled,
+  profileId,
+  model,
+  profiles,
+  onImageEnabledChange,
+  onProfileChange,
+  onModelChange,
+  notice,
+}: {
+  imageEnabled: boolean;
+  profileId: string;
+  model: string;
+  profiles: ServiceSideImageProfile[];
+  onImageEnabledChange: (value: boolean) => void;
+  onProfileChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  notice?: ReactNode;
+}) {
+  const { t } = useI18n();
+  const selectedProfile = profiles.find((profile) => profile.id === profileId);
+  const configured = Boolean(selectedProfile?.models.includes(model));
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="flex items-center gap-2 text-base font-semibold">
+          <WandSparkles className="h-4 w-4 text-primary" />
+          {t("Service-Side Functions")}
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t("Add host-provided capabilities to API bridge requests.")}
+        </p>
+        {notice}
+      </div>
+      <div className="rounded-md border border-border">
+        <SettingsActionRow
+          label={t("Image input")}
+          description={t("Describe images with the selected profile and forward text only to the target model.")}
+          action={
+            <Switch
+              checked={imageEnabled}
+              onCheckedChange={onImageEnabledChange}
+              aria-label={t("Image input")}
+              size="sm"
+            />
+          }
+        />
+        <div className="grid gap-4 border-t border-border px-4 py-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-xs text-muted-foreground">{t("Profile")}</span>
+            <Select
+              value={profileId || undefined}
+              disabled={!imageEnabled || profiles.length === 0}
+              onValueChange={onProfileChange}
+            >
+              <SelectTrigger
+                size="sm"
+                className={`mt-1 w-full ${SETTINGS_SELECT_TRIGGER_CLASS}`}
+              >
+                <SelectValue placeholder={t("Select a profile")} />
+              </SelectTrigger>
+              <SelectContent>
+                {profiles.map((profile) => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    {profile.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted-foreground">{t("Vision model")}</span>
+            <Select
+              value={model || undefined}
+              disabled={!imageEnabled || !selectedProfile}
+              onValueChange={onModelChange}
+            >
+              <SelectTrigger
+                size="sm"
+                className={`mt-1 w-full ${SETTINGS_SELECT_TRIGGER_CLASS}`}
+              >
+                <SelectValue placeholder={t("Select a vision model")} />
+              </SelectTrigger>
+              <SelectContent>
+                {(selectedProfile?.models ?? []).map((modelId) => (
+                  <SelectItem key={modelId} value={modelId}>
+                    {modelId}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          {profiles.length === 0 && (
+            <div className="text-[11px] text-amber-700 dark:text-amber-300 sm:col-span-2">
+              {t("Create an OpenAI Chat profile with an image-capable model first.")}
+            </div>
+          )}
+          {imageEnabled && profiles.length > 0 && !configured && (
+            <div className="text-[11px] text-amber-700 dark:text-amber-300 sm:col-span-2">
+              {t("Select both a profile and a vision model before applying.")}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SearchSourceTestResultDialog({
   open,
   sourceId,
@@ -2969,6 +3198,49 @@ function buildWebSearchSettings({
   delete apiBridge.replaceProviderWebSearch;
   result.api_bridge = apiBridge as AppSettings["api_bridge"];
   return result;
+}
+
+function buildServiceSideSettings({
+  settings,
+  imageEnabled,
+  profileId,
+  model,
+}: {
+  settings: AppSettings;
+  imageEnabled: boolean;
+  profileId: string;
+  model: string;
+}): AppSettings {
+  const result: AppSettings = { ...settings };
+  const serviceSide = isRecord(settings.service_side)
+    ? { ...settings.service_side }
+    : {};
+  serviceSide.image_input = {
+    enabled: imageEnabled,
+    profile_id: profileId.trim(),
+    api_type: "openai-chat",
+    model: model.trim(),
+  };
+  result.service_side = serviceSide as AppSettings["service_side"];
+  return result;
+}
+
+function buildServiceSideImageProfiles(
+  profiles: ProfileSummary[],
+): ServiceSideImageProfile[] {
+  return profiles.flatMap((profile) => {
+    const models = Array.from(
+      new Set(
+        (profile.apiTypeModelOptions["openai-chat"] ?? [])
+          .filter((model) => model.capabilities?.image_input)
+          .map((model) => model.id.trim())
+          .filter(Boolean),
+      ),
+    );
+    return models.length > 0
+      ? [{ id: profile.id, label: profile.label, models }]
+      : [];
+  });
 }
 
 function buildSearchToolSettings({

@@ -24,6 +24,21 @@ export const zhCNDesktopPages: Record<string, string> = {
   System: "系统",
   "Web Search": "Web 搜索",
   "Web search": "Web 搜索",
+  "Service-Side Functions": "服务端函数",
+  "Add host-provided capabilities to API bridge requests.":
+    "为 API 转接请求补充由 VibeAround 提供的能力。",
+  "Image input": "图片输入补全",
+  "Describe images with the selected profile and forward text only to the target model.":
+    "使用所选 Profile 描述图片，只向目标模型转发文本。",
+  Profile: "Profile",
+  "Select a profile": "选择 Profile",
+  "Vision model": "视觉模型",
+  "Select a vision model": "选择视觉模型",
+  "Create an OpenAI Chat profile with an image-capable model first.":
+    "请先创建一个包含图片能力模型的 OpenAI Chat Profile。",
+  "Select both a profile and a vision model before applying.":
+    "应用前请选择 Profile 和视觉模型。",
+  "Service-side settings applied.": "服务端函数设置已应用。",
   "Host-side web search is available when at least one search source is enabled.":
     "至少启用一个搜索源后，主机侧 Web 搜索即可使用。",
   "Replace provider web search": "替换服务商 Web 搜索",

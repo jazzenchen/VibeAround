@@ -169,7 +169,6 @@ export function Launch({ refreshToken = 0 }: { refreshToken?: number }) {
       {connectionEditing && (
         <ProfileConnectionDialog
           profile={connectionEditing.profile}
-          profiles={profiles}
           agentId={connectionEditing.agentId}
           connections={prefs?.profileConnections}
           onClose={() => setConnectionEditing(null)}
