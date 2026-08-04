@@ -135,7 +135,7 @@ impl ProfileImageResolverPreference {
     pub fn is_configured(&self) -> bool {
         self.enabled
             && non_empty(&self.profile_id)
-            && non_empty(&self.api_type)
+            && self.api_type.as_deref().map(str::trim) == Some("openai-chat")
             && non_empty(&self.model)
     }
 }
