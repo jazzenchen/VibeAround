@@ -351,6 +351,7 @@ impl ServerDaemon {
         //    starts when at least one host search source is enabled.
         let host_search_available = cfg.search_tool.has_enabled_sources();
         let replace_provider_web_search = cfg.api_bridge.replace_provider_web_search;
+        let service_side = cfg.service_side.clone();
         let search_runtime = SearchToolRuntime::spawn_if_enabled(&cfg.search_tool).await?;
 
         // 5. Web server (Axum)
@@ -379,6 +380,7 @@ impl ServerDaemon {
                 web_local_agent_api_token,
                 web_search_available,
                 web_replace_provider_search,
+                service_side,
                 web_search_runtime,
                 web_shutdown_for_server,
             )

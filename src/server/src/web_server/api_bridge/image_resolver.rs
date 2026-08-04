@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use axum::http::StatusCode;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use base64::Engine;
-use common::agent_state::{ProfileBridgePreference, ProfileImageResolverPreference};
+use common::config::ServiceSideImageInputConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -38,14 +38,14 @@ struct ResolverConfig {
 }
 
 impl ResolverConfig {
-    fn from_preference(preference: &ProfileImageResolverPreference) -> Option<Self> {
-        if !preference.is_configured() {
+    fn from_config(config: &ServiceSideImageInputConfig) -> Option<Self> {
+        if !config.is_configured() {
             return None;
         }
         Some(Self {
-            profile_id: preference.profile_id.as_deref()?.trim().to_string(),
-            api_type: preference.api_type.as_deref()?.trim().to_string(),
-            model: preference.model.as_deref()?.trim().to_string(),
+            profile_id: config.profile_id.as_deref()?.trim().to_string(),
+            api_type: config.api_type.as_deref()?.trim().to_string(),
+            model: config.model.as_deref()?.trim().to_string(),
         })
     }
 }
@@ -84,12 +84,8 @@ struct CachedImageAnalysis {
 pub(super) async fn resolve_request_images(
     state: &AppState,
     request: &mut UniversalRequest,
-    bridge_preference: Option<&ProfileBridgePreference>,
 ) -> Result<ServiceSideResolutionReport, (StatusCode, String)> {
-    let Some(config) = bridge_preference
-        .and_then(|preference| preference.image_resolver.as_ref())
-        .and_then(ResolverConfig::from_preference)
-    else {
+    let Some(config) = ResolverConfig::from_config(&state.service_side.image_input) else {
         return Ok(ServiceSideResolutionReport::default());
     };
     if !request_contains_service_side_input(request, ServiceSideInputKind::Image) {
@@ -166,10 +162,8 @@ pub(super) async fn resolve_request_images(
     Ok(report)
 }
 
-pub(super) fn is_enabled(bridge_preference: Option<&ProfileBridgePreference>) -> bool {
-    bridge_preference
-        .and_then(|preference| preference.image_resolver.as_ref())
-        .is_some_and(ProfileImageResolverPreference::is_configured)
+pub(super) fn is_enabled(state: &AppState) -> bool {
+    state.service_side.image_input.is_configured()
 }
 
 impl QwenImageResolver {

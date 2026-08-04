@@ -111,9 +111,17 @@ pub async fn legacy_messages_handler(
 }
 
 pub async fn legacy_models_handler(
+    State(state): State<AppState>,
     Path((profile_id, target_api_type)): Path<(String, String)>,
 ) -> Response {
-    super::models_handler(profile_id, None, None, target_api_type).await
+    super::models_handler(
+        profile_id,
+        None,
+        None,
+        target_api_type,
+        state.service_side.image_input.is_configured(),
+    )
+    .await
 }
 
 pub async fn legacy_gemini_generate_content_handler(
@@ -171,7 +179,14 @@ pub async fn local_models_handler(
         return response;
     }
     let route_scope = scope.clone();
-    super::models_handler(profile_id, Some(route_scope), Some(scope), target_api_type).await
+    super::models_handler(
+        profile_id,
+        Some(route_scope),
+        Some(scope),
+        target_api_type,
+        state.service_side.image_input.is_configured(),
+    )
+    .await
 }
 
 pub async fn local_gemini_generate_content_handler(

@@ -149,7 +149,7 @@ pub(super) async fn bridge_handler(
             .protocol
             .decode_agent_request(agent_request.clone());
         if let Err(error) = &decoded_content_request {
-            if image_resolver::is_enabled(bridge_preference.as_ref()) {
+            if image_resolver::is_enabled(&state) {
                 return record_json_error(
                     record.as_ref(),
                     StatusCode::UNPROCESSABLE_ENTITY,
@@ -158,18 +158,13 @@ pub(super) async fn bridge_handler(
             }
         }
         if let Ok(mut content_request) = decoded_content_request {
-            let image_resolution = match image_resolver::resolve_request_images(
-                &state,
-                &mut content_request,
-                bridge_preference.as_ref(),
-            )
-            .await
-            {
-                Ok(resolution) => resolution,
-                Err((status, message)) => {
-                    return record_json_error(record.as_ref(), status, &message);
-                }
-            };
+            let image_resolution =
+                match image_resolver::resolve_request_images(&state, &mut content_request).await {
+                    Ok(resolution) => resolution,
+                    Err((status, message)) => {
+                        return record_json_error(record.as_ref(), status, &message);
+                    }
+                };
             let sanitization = sanitize_request_content_with_capabilities(
                 &upstream.profile,
                 &target_api_type,
@@ -308,12 +303,8 @@ pub(super) async fn bridge_handler(
     if let Some(mapping) = &model_mapping {
         universal_request.model = Some(mapping.upstream_model.clone());
     }
-    if let Err((status, message)) = image_resolver::resolve_request_images(
-        &state,
-        &mut universal_request,
-        bridge_preference.as_ref(),
-    )
-    .await
+    if let Err((status, message)) =
+        image_resolver::resolve_request_images(&state, &mut universal_request).await
     {
         return record_json_error(record.as_ref(), status, &message);
     }
@@ -770,6 +761,7 @@ pub(super) async fn models_handler(
     route_scope: Option<String>,
     manual_scope: Option<String>,
     target_api_type: String,
+    service_side_image_input: bool,
 ) -> Response {
     let upstream = match upstream_endpoint(&profile_id, &target_api_type) {
         Ok(endpoint) => endpoint,
@@ -794,10 +786,6 @@ pub(super) async fn models_handler(
         bridge_preference.as_ref(),
         &target_api_type,
     );
-    let service_side_image_input = bridge_preference
-        .as_ref()
-        .and_then(|preference| preference.image_resolver.as_ref())
-        .is_some_and(common::agent_state::ProfileImageResolverPreference::is_configured);
     let data: Vec<_> = models
         .iter()
         .map(|model| {

@@ -103,11 +103,6 @@ pub struct ProfileBridgePreference {
     /// `upstream_model` before calling the provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fake_model_id: Option<String>,
-    /// Optional service-side image resolver. When configured, VibeAround
-    /// converts image inputs to text before forwarding the request to the
-    /// bridge target model.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_resolver: Option<ProfileImageResolverPreference>,
     /// Optional per-route model list. Each entry can expose a fake model id to
     /// the agent while routing to a provider-specific upstream model id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -116,34 +111,6 @@ pub struct ProfileBridgePreference {
     /// remain owned by the provider catalog and cannot be overridden here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProfileImageResolverPreference {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-}
-
-impl ProfileImageResolverPreference {
-    pub fn is_configured(&self) -> bool {
-        self.enabled
-            && non_empty(&self.profile_id)
-            && self.api_type.as_deref().map(str::trim) == Some("openai-chat")
-            && non_empty(&self.model)
-    }
-}
-
-fn non_empty(value: &Option<String>) -> bool {
-    value
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -555,7 +522,6 @@ pub(crate) fn connection_preference_is_empty(preference: &ProfileConnectionPrefe
                     .map(str::trim)
                     .unwrap_or_default()
                     .is_empty()
-                && bridge.image_resolver.is_none()
                 && bridge.models.is_empty()
                 && bridge.headers.is_empty()
         })
@@ -841,29 +807,6 @@ mod tests {
                         fake_model_id: Some("claude-sonnet-4-5".to_string()),
                         capabilities: Default::default(),
                     }],
-                    ..Default::default()
-                },
-            )]
-            .into_iter()
-            .collect(),
-        };
-
-        assert!(!connection_preference_is_empty(&preference));
-    }
-
-    #[test]
-    fn connection_preference_with_image_resolver_is_not_empty() {
-        let preference = ProfileConnectionPreference {
-            selected_api_type: None,
-            bridge: [(
-                "openai-responses".to_string(),
-                ProfileBridgePreference {
-                    image_resolver: Some(ProfileImageResolverPreference {
-                        enabled: true,
-                        profile_id: Some("dashscope".to_string()),
-                        api_type: Some("openai-chat".to_string()),
-                        model: Some("qwen3.6-plus".to_string()),
-                    }),
                     ..Default::default()
                 },
             )]

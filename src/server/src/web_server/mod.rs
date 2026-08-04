@@ -73,6 +73,7 @@ pub(crate) struct AppState {
     /// Replace native provider web search with host-side search even when the
     /// selected upstream model declares native web search support.
     replace_provider_web_search: bool,
+    service_side: common::config::ServiceSideConfig,
     search_runtime: Option<Arc<SearchToolRuntime>>,
     /// Live, non-persistent bridge body recorder for the launch popup.
     bridge_recorder: bridge_recording::BridgeRecorder,
@@ -195,6 +196,7 @@ pub async fn run_web_server(
     local_agent_api_token: Arc<AuthToken>,
     host_search_available: bool,
     replace_provider_web_search: bool,
+    service_side: common::config::ServiceSideConfig,
     search_runtime: Option<Arc<SearchToolRuntime>>,
     shutdown: Arc<Notify>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -224,6 +226,7 @@ pub async fn run_web_server(
         preview_client,
         host_search_available,
         replace_provider_web_search,
+        service_side,
         search_runtime,
         bridge_recorder: bridge_recording::BridgeRecorder::default(),
         local_api_token,
