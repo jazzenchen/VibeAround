@@ -70,6 +70,70 @@ fn bridge_route_enables_agent_for_other_profile_api_type() {
 }
 
 #[test]
+fn sanitizes_complete_image_resolver_configuration() {
+    let profile = profile(&["openai-chat"]);
+    let preference = agent_state::ProfileConnectionPreference {
+        selected_api_type: Some(" openai-responses ".to_string()),
+        bridge: [(
+            "openai-responses".to_string(),
+            agent_state::ProfileBridgePreference {
+                enabled: true,
+                target_api_type: Some("openai-chat".to_string()),
+                image_resolver: Some(agent_state::ProfileImageResolverPreference {
+                    enabled: true,
+                    profile_id: Some(" dashscope-main ".to_string()),
+                    api_type: Some(" openai-chat ".to_string()),
+                    model: Some(" qwen3.6-plus ".to_string()),
+                }),
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let sanitized = sanitize_profile_connection_preference(&profile, "codex", preference)
+        .expect("resolver configuration is valid");
+    let resolver = sanitized.bridge["openai-responses"]
+        .image_resolver
+        .as_ref()
+        .expect("resolver is retained");
+
+    assert_eq!(resolver.profile_id.as_deref(), Some("dashscope-main"));
+    assert_eq!(resolver.api_type.as_deref(), Some("openai-chat"));
+    assert_eq!(resolver.model.as_deref(), Some("qwen3.6-plus"));
+}
+
+#[test]
+fn rejects_incomplete_enabled_image_resolver() {
+    let profile = profile(&["openai-chat"]);
+    let preference = agent_state::ProfileConnectionPreference {
+        selected_api_type: Some("openai-responses".to_string()),
+        bridge: [(
+            "openai-responses".to_string(),
+            agent_state::ProfileBridgePreference {
+                enabled: true,
+                target_api_type: Some("openai-chat".to_string()),
+                image_resolver: Some(agent_state::ProfileImageResolverPreference {
+                    enabled: true,
+                    profile_id: Some("dashscope-main".to_string()),
+                    api_type: Some("openai-chat".to_string()),
+                    model: None,
+                }),
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let error = sanitize_profile_connection_preference(&profile, "codex", preference)
+        .expect_err("incomplete resolver must be rejected");
+
+    assert!(error.contains("profileId, apiType, and model"));
+}
+
+#[test]
 fn bridge_launch_target_carries_bridge_hint() {
     let profile = profile(&["anthropic"]);
     let prefs = connections(
@@ -421,6 +485,46 @@ fn bridge_route_carries_model_list() {
             },
         ]
     );
+}
+
+#[test]
+fn image_resolver_adds_effective_image_input_without_changing_saved_model_capabilities() {
+    let profile = profile(&["openai-chat"]);
+    let saved_model = agent_state::ProfileBridgeModelPreference {
+        upstream_model: Some("deepseek-text".to_string()),
+        fake_model_id: None,
+        capabilities: Default::default(),
+    };
+    let prefs = connections(
+        &profile.id,
+        "codex",
+        agent_state::ProfileConnectionPreference {
+            selected_api_type: Some("openai-responses".to_string()),
+            bridge: [(
+                "openai-responses".to_string(),
+                agent_state::ProfileBridgePreference {
+                    enabled: true,
+                    target_api_type: Some("openai-chat".to_string()),
+                    models: vec![saved_model.clone()],
+                    image_resolver: Some(agent_state::ProfileImageResolverPreference {
+                        enabled: true,
+                        profile_id: Some("dashscope-main".to_string()),
+                        api_type: Some("openai-chat".to_string()),
+                        model: Some("qwen3.6-plus".to_string()),
+                    }),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        },
+    );
+
+    let route = resolve_profile_agent_route_with_connections(&profile, "codex", &prefs)
+        .expect("codex bridge route");
+
+    assert!(route.bridge_models[0].capabilities.image_input);
+    assert!(!saved_model.capabilities.image_input);
 }
 
 #[test]

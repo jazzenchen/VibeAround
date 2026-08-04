@@ -103,6 +103,8 @@ pub fn sanitize_profile_connection_preference(
             .fake_model_id
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
+        let image_resolver =
+            sanitize_image_resolver(bridge_preference.enabled, bridge_preference.image_resolver)?;
         let models = sanitize_bridge_models(bridge_preference.models);
         let headers = if bridge_preference.enabled {
             prune_bridge_headers(bridge_preference.headers)
@@ -113,6 +115,7 @@ pub fn sanitize_profile_connection_preference(
             || target_api_type.is_some()
             || upstream_model.is_some()
             || fake_model_id.is_some()
+            || image_resolver.is_some()
             || !models.is_empty()
             || !headers.is_empty()
         {
@@ -123,6 +126,7 @@ pub fn sanitize_profile_connection_preference(
                     target_api_type,
                     upstream_model,
                     fake_model_id,
+                    image_resolver,
                     models,
                     headers,
                 },
@@ -178,8 +182,17 @@ pub fn resolve_profile_agent_route_with_connections(
             recommended_bridge_target(&enabled_api_types, agent_id, &client_api_type)
         })?;
         if validate_bridge_target(profile, &target_api_type).is_ok() {
-            let bridge_models =
+            let mut bridge_models =
                 bridge_model_routes(profile, Some(bridge_preference), &target_api_type);
+            if bridge_preference
+                .image_resolver
+                .as_ref()
+                .is_some_and(agent_state::ProfileImageResolverPreference::is_configured)
+            {
+                for route in &mut bridge_models {
+                    route.capabilities.image_input = true;
+                }
+            }
             return Some(ProfileAgentRoute {
                 client_api_type,
                 bridge_target_api_type: Some(target_api_type),
@@ -204,6 +217,31 @@ pub fn resolve_profile_agent_route_with_connections(
     }
 
     None
+}
+
+fn sanitize_image_resolver(
+    bridge_enabled: bool,
+    preference: Option<agent_state::ProfileImageResolverPreference>,
+) -> Result<Option<agent_state::ProfileImageResolverPreference>, String> {
+    let Some(preference) = preference.filter(|preference| preference.enabled && bridge_enabled)
+    else {
+        return Ok(None);
+    };
+    let profile_id = clean_optional_string(preference.profile_id.as_deref());
+    let api_type = clean_optional_string(preference.api_type.as_deref());
+    let model = clean_optional_string(preference.model.as_deref());
+    if profile_id.is_none() || api_type.is_none() || model.is_none() {
+        return Err("enabled image resolver requires profileId, apiType, and model".to_string());
+    }
+    if api_type.as_deref() != Some("openai-chat") {
+        return Err("image resolver currently requires apiType 'openai-chat'".to_string());
+    }
+    Ok(Some(agent_state::ProfileImageResolverPreference {
+        enabled: true,
+        profile_id,
+        api_type,
+        model,
+    }))
 }
 
 pub fn bridge_model_routes(

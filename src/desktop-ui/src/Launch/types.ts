@@ -52,8 +52,16 @@ export interface ProfileBridgePreference {
   /** TODO(0.7.x): remove single-model compatibility fields after migration to models[]. */
   upstreamModel?: string | null;
   fakeModelId?: string | null;
+  imageResolver?: ProfileImageResolverPreference | null;
   models?: ProfileBridgeModelPreference[] | null;
   headers?: Record<string, string> | null;
+}
+
+export interface ProfileImageResolverPreference {
+  enabled?: boolean | null;
+  profileId?: string | null;
+  apiType?: string | null;
+  model?: string | null;
 }
 
 export interface ProfileBridgeModelPreference {
