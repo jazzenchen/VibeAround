@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   FileText,
+  ImageIcon,
   Info,
   ListChecks,
   Plug,
@@ -61,6 +62,7 @@ import type {
   ConnectionAgentId,
   ModelDef,
   ProfileBridgeModelPreference,
+  ProfileImageResolverPreference,
   ProfileConnectionPreference,
   ProfileConnections,
   ProfileSummary,
@@ -68,6 +70,7 @@ import type {
 
 interface Props {
   profile: ProfileSummary;
+  profiles: ProfileSummary[];
   agentId: ConnectionAgentId;
   connections?: ProfileConnections;
   onClose: () => void;
@@ -80,6 +83,7 @@ interface Props {
 
 export function ProfileConnectionDialog({
   profile,
+  profiles,
   agentId,
   connections,
   onClose,
@@ -94,6 +98,10 @@ export function ProfileConnectionDialog({
   const [manualSetting, setManualSetting] = useState<ManualSetting | null>(null);
   const [headerSetting, setHeaderSetting] = useState<HeaderSetting | null>(null);
   const [modelSetting, setModelSetting] = useState<ModelSetting | null>(null);
+  const imageResolverCandidates = useMemo(
+    () => buildImageResolverCandidates(profiles),
+    [profiles],
+  );
 
   const resolved = useMemo(
     () => {
@@ -382,6 +390,29 @@ export function ProfileConnectionDialog({
                     );
                     const canBridge = client.targetOptions.length > 0;
                     const bridgeEnabled = Boolean(currentBridge.enabled && canBridge);
+                    const configuredResolverCandidate = currentImageResolverCandidate(
+                      profiles,
+                      currentBridge.imageResolver,
+                    );
+                    const availableResolverCandidates = configuredResolverCandidate &&
+                      !imageResolverCandidates.some(
+                        (candidate) => candidate.key === configuredResolverCandidate.key,
+                      )
+                        ? [configuredResolverCandidate, ...imageResolverCandidates]
+                        : imageResolverCandidates;
+                    const preferredResolverCandidate = preferredImageResolverCandidate(
+                      availableResolverCandidates,
+                    );
+                    const resolverCandidate =
+                      availableResolverCandidates.find(
+                        (candidate) =>
+                          candidate.profileId === currentBridge.imageResolver?.profileId &&
+                          candidate.apiType === currentBridge.imageResolver?.apiType &&
+                          candidate.model === currentBridge.imageResolver?.model,
+                      ) ?? preferredResolverCandidate;
+                    const imageResolverEnabled = Boolean(
+                      currentBridge.imageResolver?.enabled && resolverCandidate,
+                    );
                     const manualConfig =
                       canBridge && bridgeTarget && agentModel
                         ? manualBridgeConfig(
@@ -493,6 +524,91 @@ export function ProfileConnectionDialog({
                                   })
                                 }
                               />
+                            </div>
+                            <div className="grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <ImageIcon className="h-3.5 w-3.5 text-primary" />
+                                <div className="text-[11px] font-medium">
+                                  {t("Service-side image input")}
+                                </div>
+                                <label className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground">
+                                  {t("Enable")}
+                                  <Switch
+                                    checked={imageResolverEnabled}
+                                    disabled={availableResolverCandidates.length === 0 || saving}
+                                    onCheckedChange={(checked) => {
+                                      setDraft((prev) => ({
+                                        ...prev,
+                                        [agent.id]: {
+                                          ...prev[agent.id],
+                                          bridge: {
+                                            ...(prev[agent.id].bridge ?? {}),
+                                            [client.apiType]: {
+                                              ...(prev[agent.id].bridge?.[client.apiType] ?? {}),
+                                              imageResolver:
+                                                checked && resolverCandidate
+                                                  ? imageResolverPreference(resolverCandidate)
+                                                  : null,
+                                            },
+                                          },
+                                        },
+                                      }));
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                              {availableResolverCandidates.length === 0 ? (
+                                <div className="text-[10px] leading-4 text-amber-700 dark:text-amber-300">
+                                  {t("Create an OpenAI Chat profile with an image-capable model first.")}
+                                </div>
+                              ) : (
+                                <>
+                                  <Select
+                                    value={resolverCandidate?.key}
+                                    disabled={!imageResolverEnabled || saving}
+                                    onValueChange={(value) => {
+                                      const candidate = availableResolverCandidates.find(
+                                        (item) => item.key === value,
+                                      );
+                                      if (!candidate) return;
+                                      setDraft((prev) => ({
+                                        ...prev,
+                                        [agent.id]: {
+                                          ...prev[agent.id],
+                                          bridge: {
+                                            ...(prev[agent.id].bridge ?? {}),
+                                            [client.apiType]: {
+                                              ...(prev[agent.id].bridge?.[client.apiType] ?? {}),
+                                              imageResolver: imageResolverPreference(candidate),
+                                            },
+                                          },
+                                        },
+                                      }));
+                                    }}
+                                  >
+                                    <SelectTrigger
+                                      size="sm"
+                                      className="!h-7 min-h-0 w-full px-2.5 py-0 text-[11px] leading-none [&_svg]:h-3.5 [&_svg]:w-3.5"
+                                    >
+                                      <SelectValue placeholder={t("Select a vision model")} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {availableResolverCandidates.map((candidate) => (
+                                        <SelectItem
+                                          key={candidate.key}
+                                          value={candidate.key}
+                                          className="text-xs"
+                                        >
+                                          {candidate.profileLabel} · {candidate.model}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <div className="text-[10px] leading-4 text-muted-foreground">
+                                    {t("VibeAround describes each image with this model, caches the result, and forwards text only to the target model.")}
+                                  </div>
+                                </>
+                              )}
                             </div>
                             <div className="font-mono text-[11px] leading-5 text-primary">
                               {apiTypeProtocolDisplayLabel(client.apiType)} -&gt;{" "}
@@ -675,6 +791,84 @@ interface ModelSetting {
   providerLabel: string;
   models: ProfileBridgeModelPreference[];
   options: ModelDef[];
+}
+
+interface ImageResolverCandidate {
+  key: string;
+  profileId: string;
+  profileLabel: string;
+  provider: string;
+  apiType: "openai-chat";
+  model: string;
+}
+
+function buildImageResolverCandidates(profiles: ProfileSummary[]): ImageResolverCandidate[] {
+  const candidates: ImageResolverCandidate[] = [];
+  const seen = new Set<string>();
+  for (const profile of profiles) {
+    for (const model of profile.apiTypeModelOptions["openai-chat"] ?? []) {
+      if (!model.capabilities?.image_input) continue;
+      const key = imageResolverCandidateKey(profile.id, "openai-chat", model.id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      candidates.push({
+        key,
+        profileId: profile.id,
+        profileLabel: profile.label,
+        provider: profile.provider,
+        apiType: "openai-chat",
+        model: model.id,
+      });
+    }
+  }
+  return candidates;
+}
+
+function currentImageResolverCandidate(
+  profiles: ProfileSummary[],
+  preference: ProfileImageResolverPreference | null | undefined,
+): ImageResolverCandidate | null {
+  const profileId = preference?.profileId?.trim();
+  const model = preference?.model?.trim();
+  if (!profileId || preference?.apiType !== "openai-chat" || !model) return null;
+  const profile = profiles.find((candidate) => candidate.id === profileId);
+  return {
+    key: imageResolverCandidateKey(profileId, "openai-chat", model),
+    profileId,
+    profileLabel: profile?.label ?? profileId,
+    provider: profile?.provider ?? "custom",
+    apiType: "openai-chat",
+    model,
+  };
+}
+
+function preferredImageResolverCandidate(
+  candidates: ImageResolverCandidate[],
+): ImageResolverCandidate | null {
+  return (
+    candidates.find(
+      (candidate) =>
+        candidate.provider === "dashscope" && candidate.model.toLowerCase().startsWith("qwen"),
+    ) ??
+    candidates.find((candidate) => candidate.model.toLowerCase().startsWith("qwen")) ??
+    candidates[0] ??
+    null
+  );
+}
+
+function imageResolverPreference(
+  candidate: ImageResolverCandidate,
+): ProfileImageResolverPreference {
+  return {
+    enabled: true,
+    profileId: candidate.profileId,
+    apiType: candidate.apiType,
+    model: candidate.model,
+  };
+}
+
+function imageResolverCandidateKey(profileId: string, apiType: string, model: string): string {
+  return [profileId, apiType, model].map(encodeURIComponent).join(":");
 }
 
 function ModelSummaryButton({

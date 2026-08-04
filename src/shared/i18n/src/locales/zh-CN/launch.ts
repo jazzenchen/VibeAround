@@ -337,6 +337,13 @@ export const zhCNLaunch: Record<string, string> = {
   "Default route": "默认路径",
   "Selected route": "已选路径",
   "Enable API bridge": "启用 API 转接",
+  "Service-side image input": "服务端图片输入补全",
+  Enable: "启用",
+  "Select a vision model": "选择视觉模型",
+  "Create an OpenAI Chat profile with an image-capable model first.":
+    "请先创建一个包含图片能力模型的 OpenAI Chat 配置。",
+  "VibeAround describes each image with this model, caches the result, and forwards text only to the target model.":
+    "VibeAround 会用该模型描述每张图片并缓存结果，只向目标模型转发文本。",
   'Enable API bridge for "{{profile}}" to launch {{agent}} with {{api}}':
     "为「{{profile}}」启用 API 转接后可用 {{api}} 启动 {{agent}}",
   "Target API": "目标 API",
