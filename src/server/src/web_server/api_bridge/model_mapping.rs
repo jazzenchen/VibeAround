@@ -262,6 +262,7 @@ mod tests {
             target_api_type: Some("openai-chat".to_string()),
             upstream_model: Some("gemini-3.1-pro".to_string()),
             fake_model_id: None,
+            image_resolver: None,
             models: Vec::new(),
             headers: BTreeMap::new(),
         };
@@ -293,6 +294,7 @@ mod tests {
             target_api_type: Some("openai-chat".to_string()),
             upstream_model: Some("gpt-4o".to_string()),
             fake_model_id: None,
+            image_resolver: None,
             models: Vec::new(),
             headers: BTreeMap::new(),
         };
@@ -329,6 +331,7 @@ mod tests {
             target_api_type: Some("openai-chat".to_string()),
             upstream_model: Some("deepseek-v4-pro".to_string()),
             fake_model_id: Some("opus-4.7[1m]".to_string()),
+            image_resolver: None,
             models: vec![agent_state::ProfileBridgeModelPreference {
                 upstream_model: Some("deepseek-v4-pro".to_string()),
                 fake_model_id: Some("opus-4.7[1m]".to_string()),
@@ -390,6 +393,7 @@ mod tests {
             target_api_type: Some("openai-chat".to_string()),
             upstream_model: Some("deepseek-v4-pro".to_string()),
             fake_model_id: Some("GPT-5.5".to_string()),
+            image_resolver: None,
             models: vec![agent_state::ProfileBridgeModelPreference {
                 upstream_model: Some("deepseek-v4-pro".to_string()),
                 fake_model_id: Some("GPT-5.5".to_string()),
@@ -439,6 +443,7 @@ mod tests {
             target_api_type: Some("openai-chat".to_string()),
             upstream_model: Some("deepseek-v4-pro".to_string()),
             fake_model_id: None,
+            image_resolver: None,
             models: vec![
                 agent_state::ProfileBridgeModelPreference {
                     upstream_model: Some("deepseek-v4-pro".to_string()),

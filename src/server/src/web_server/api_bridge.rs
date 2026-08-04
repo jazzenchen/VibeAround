@@ -20,6 +20,7 @@ use va_ai_api_bridge::{
 mod completion;
 mod content_policy;
 mod google_code_assist;
+mod image_resolver;
 mod local_agent;
 mod model_mapping;
 mod normalization;
@@ -144,10 +145,31 @@ pub(super) async fn bridge_handler(
         if let Some(mapping) = &model_mapping {
             apply_wire_model(&mut agent_request, &mapping.upstream_model);
         }
-        if let Ok(mut content_request) = upstream
+        let decoded_content_request = upstream
             .protocol
-            .decode_agent_request(agent_request.clone())
-        {
+            .decode_agent_request(agent_request.clone());
+        if let Err(error) = &decoded_content_request {
+            if image_resolver::is_enabled(bridge_preference.as_ref()) {
+                return record_json_error(
+                    record.as_ref(),
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &format!("image resolver could not inspect the client request: {error}"),
+                );
+            }
+        }
+        if let Ok(mut content_request) = decoded_content_request {
+            let image_resolution = match image_resolver::resolve_request_images(
+                &state,
+                &mut content_request,
+                bridge_preference.as_ref(),
+            )
+            .await
+            {
+                Ok(resolution) => resolution,
+                Err((status, message)) => {
+                    return record_json_error(record.as_ref(), status, &message);
+                }
+            };
             let sanitization = sanitize_request_content_with_capabilities(
                 &upstream.profile,
                 &target_api_type,
@@ -161,7 +183,7 @@ pub(super) async fn bridge_handler(
                 upstream.protocol,
                 sanitization,
             );
-            if sanitization.changed() {
+            if image_resolution.changed() || sanitization.changed() {
                 agent_request = match upstream.protocol.encode_upstream_request(&content_request) {
                     Ok(request) => request,
                     Err(error) => {
@@ -285,6 +307,15 @@ pub(super) async fn bridge_handler(
     };
     if let Some(mapping) = &model_mapping {
         universal_request.model = Some(mapping.upstream_model.clone());
+    }
+    if let Err((status, message)) = image_resolver::resolve_request_images(
+        &state,
+        &mut universal_request,
+        bridge_preference.as_ref(),
+    )
+    .await
+    {
+        return record_json_error(record.as_ref(), status, &message);
     }
     let sanitization = sanitize_request_content_with_capabilities(
         &upstream.profile,
@@ -763,10 +794,15 @@ pub(super) async fn models_handler(
         bridge_preference.as_ref(),
         &target_api_type,
     );
+    let service_side_image_input = bridge_preference
+        .as_ref()
+        .and_then(|preference| preference.image_resolver.as_ref())
+        .is_some_and(common::agent_state::ProfileImageResolverPreference::is_configured);
     let data: Vec<_> = models
         .iter()
         .map(|model| {
-            let metadata = bridge_model_metadata(&upstream.profile, &target_api_type, model);
+            let mut metadata = bridge_model_metadata(&upstream.profile, &target_api_type, model);
+            metadata.image_input |= service_side_image_input;
             let mut input_modalities = vec!["text"];
             if metadata.image_input {
                 input_modalities.push("image");
