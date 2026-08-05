@@ -2727,7 +2727,9 @@ function ServiceSideSettingsPanel({
       <div className="rounded-md border border-border">
         <SettingsActionRow
           label={t("Image input")}
-          description={t("Describe images with the selected profile and forward text only to the target model.")}
+          description={t(
+            "Describe images with the selected profile, cache attachments locally for follow-up inspection, and forward text only to the target model.",
+          )}
           action={
             <Switch
               checked={imageEnabled}

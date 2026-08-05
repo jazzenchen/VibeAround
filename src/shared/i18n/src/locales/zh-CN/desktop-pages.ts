@@ -28,8 +28,8 @@ export const zhCNDesktopPages: Record<string, string> = {
   "Add host-provided capabilities to API bridge requests.":
     "为 API 转接请求补充由 VibeAround 提供的能力。",
   "Image input": "图片输入补全",
-  "Describe images with the selected profile and forward text only to the target model.":
-    "使用所选 Profile 描述图片，只向目标模型转发文本。",
+  "Describe images with the selected profile, cache attachments locally for follow-up inspection, and forward text only to the target model.":
+    "使用所选 Profile 描述图片并在本地缓存附件以支持后续追问，只向目标模型转发文本。",
   Profile: "Profile",
   "Select a profile": "选择 Profile",
   "Vision model": "视觉模型",
