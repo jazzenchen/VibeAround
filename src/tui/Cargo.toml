@@ -1,6 +1,6 @@
 [package]
 name = "va-tui"
-version = "0.7.22"
+version = "0.7.23"
 description = "VibeAround terminal dashboard"
 edition = "2021"
 rust-version = "1.82"
