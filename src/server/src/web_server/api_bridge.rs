@@ -20,6 +20,7 @@ use va_ai_api_bridge::{
 mod completion;
 mod content_policy;
 mod google_code_assist;
+mod image_resolver;
 mod local_agent;
 mod model_mapping;
 mod normalization;
@@ -124,6 +125,12 @@ pub(super) async fn bridge_handler(
     let same_protocol_needs_web_search_discard = requested_web_search_same_protocol
         && !state.host_search_available
         && !target_model_capabilities.web_search;
+    let same_protocol_needs_service_side_image = client_protocol == upstream.protocol
+        && image_resolver::is_enabled(&state)
+        && client_protocol
+            .decode_agent_request(agent_request.clone())
+            .map(|request| image_resolver::request_needs_resolution(&state, &request))
+            .unwrap_or(true);
 
     if same_protocol_needs_web_search_discard {
         tracing::info!(
@@ -139,15 +146,37 @@ pub(super) async fn bridge_handler(
         && !upstream.is_google_code_assist()
         && !same_protocol_needs_web_search_fallback
         && !same_protocol_needs_web_search_discard
+        && !same_protocol_needs_service_side_image
     {
         let original_agent_request = agent_request.clone();
         if let Some(mapping) = &model_mapping {
             apply_wire_model(&mut agent_request, &mapping.upstream_model);
         }
-        if let Ok(mut content_request) = upstream
+        let decoded_content_request = upstream
             .protocol
-            .decode_agent_request(agent_request.clone())
-        {
+            .decode_agent_request(agent_request.clone());
+        if let Err(error) = &decoded_content_request {
+            if image_resolver::is_enabled(&state) {
+                return record_json_error(
+                    record.as_ref(),
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &format!("image resolver could not inspect the client request: {error}"),
+                );
+            }
+        }
+        if let Ok(mut content_request) = decoded_content_request {
+            let image_resolution = match image_resolver::resolve_request_images(
+                &state,
+                &mut content_request,
+                record.as_ref(),
+            )
+            .await
+            {
+                Ok(resolution) => resolution,
+                Err((status, message)) => {
+                    return record_json_error(record.as_ref(), status, &message);
+                }
+            };
             let sanitization = sanitize_request_content_with_capabilities(
                 &upstream.profile,
                 &target_api_type,
@@ -161,7 +190,7 @@ pub(super) async fn bridge_handler(
                 upstream.protocol,
                 sanitization,
             );
-            if sanitization.changed() {
+            if image_resolution.is_some() || sanitization.changed() {
                 agent_request = match upstream.protocol.encode_upstream_request(&content_request) {
                     Ok(request) => request,
                     Err(error) => {
@@ -286,6 +315,18 @@ pub(super) async fn bridge_handler(
     if let Some(mapping) = &model_mapping {
         universal_request.model = Some(mapping.upstream_model.clone());
     }
+    let mut image_tool_runtime = match image_resolver::resolve_request_images(
+        &state,
+        &mut universal_request,
+        record.as_ref(),
+    )
+    .await
+    {
+        Ok(runtime) => runtime,
+        Err((status, message)) => {
+            return record_json_error(record.as_ref(), status, &message);
+        }
+    };
     let sanitization = sanitize_request_content_with_capabilities(
         &upstream.profile,
         &target_api_type,
@@ -346,6 +387,22 @@ pub(super) async fn bridge_handler(
             original_stream = fallback.original_stream,
             "API bridge injected host web search fallback tool"
         );
+    }
+    if web_search_fallback.is_some() {
+        image_tool_runtime = None;
+    } else if image_tool_runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.inject_tool(&mut universal_request))
+    {
+        tracing::info!(
+            target: "server::web_server::api_bridge",
+            request_id = %request_id,
+            profile_id = %profile_id,
+            target_api_type = %target_api_type,
+            "API bridge injected service-side attachment inspection tool"
+        );
+    } else {
+        image_tool_runtime = None;
     }
     let mut upstream_request = match upstream
         .protocol
@@ -466,6 +523,31 @@ pub(super) async fn bridge_handler(
         UpstreamResponseTransform::Identity
     };
 
+    if let Some(runtime) = image_tool_runtime {
+        return translated_image_tool_response(
+            &state,
+            &upstream,
+            bridge_preference.as_ref(),
+            &headers,
+            manual_profile_api_key.as_deref(),
+            record.as_ref(),
+            &request_id,
+            &profile_id,
+            route_scope.as_ref(),
+            manual_scope.as_ref(),
+            &target_api_type,
+            client_protocol,
+            &mut provider_adapter,
+            universal_request,
+            runtime,
+            response,
+            response_transform,
+            model_mapping.map(|mapping| mapping.agent_model),
+            &agent_request,
+        )
+        .await;
+    }
+
     if let Some(fallback) = web_search_fallback {
         return translated_web_search_fallback_response(
             &state,
@@ -512,6 +594,155 @@ pub(super) async fn bridge_handler(
             record.as_ref(),
         )
         .await
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn translated_image_tool_response(
+    state: &AppState,
+    upstream: &upstream::UpstreamEndpoint,
+    bridge_preference: Option<&common::agent_state::ProfileBridgePreference>,
+    headers: &HeaderMap,
+    manual_profile_api_key: Option<&str>,
+    record: Option<&ActiveBridgeRecord>,
+    request_id: &str,
+    profile_id: &str,
+    route_scope: Option<&String>,
+    manual_scope: Option<&String>,
+    target_api_type: &str,
+    client_protocol: BridgeProtocol,
+    provider_adapter: &mut ProviderBridgeAdapter,
+    mut universal_request: UniversalRequest,
+    runtime: image_resolver::ImageToolRuntime,
+    first_response: reqwest::Response,
+    response_transform: UpstreamResponseTransform,
+    agent_model: Option<String>,
+    original_agent_request: &Value,
+) -> Response {
+    let mut response = first_response;
+    let mut inspection_calls = 0usize;
+    loop {
+        let events = match decode_completion_response(
+            response,
+            upstream.protocol,
+            provider_adapter,
+            response_transform,
+            record,
+        )
+        .await
+        {
+            Ok(events) => events,
+            Err(response) => return response,
+        };
+        let upstream_response = UniversalResponse::from_events(&events);
+        let should_continue = match runtime
+            .append_tool_results(&mut universal_request, upstream_response)
+            .await
+        {
+            Ok(value) => value,
+            Err(message) => {
+                return record_json_error(record, StatusCode::BAD_GATEWAY, &message);
+            }
+        };
+        if !should_continue {
+            if runtime.original_stream {
+                return translated_events_stream_response(
+                    events,
+                    client_protocol,
+                    agent_model,
+                    record,
+                );
+            }
+            return translated_completion_events_response(
+                events,
+                client_protocol,
+                agent_model,
+                record,
+            );
+        }
+        if inspection_calls >= 1 {
+            return record_json_error(
+                record,
+                StatusCode::BAD_GATEWAY,
+                "attachment inspection exceeded the maximum internal tool-call rounds",
+            );
+        }
+        inspection_calls += 1;
+        tracing::info!(
+            target: "server::web_server::api_bridge",
+            request_id = %request_id,
+            profile_id = %profile_id,
+            target_api_type = %target_api_type,
+            round = inspection_calls,
+            "API bridge consumed service-side attachment inspection tool call"
+        );
+
+        let (next_body, next_route) = match encode_fallback_upstream_request(
+            upstream,
+            client_protocol,
+            original_agent_request,
+            provider_adapter,
+            &universal_request,
+            record,
+        ) {
+            Ok(value) => value,
+            Err(response) => return response,
+        };
+        let request = match build_upstream_request(
+            state,
+            upstream,
+            &next_route,
+            next_body,
+            bridge_preference,
+            headers,
+            manual_profile_api_key,
+            record,
+            bridge_record_metadata(
+                profile_id,
+                route_scope,
+                manual_scope,
+                target_api_type,
+                client_protocol,
+                Some(upstream.protocol),
+                Some(&next_route),
+                false,
+            ),
+        )
+        .await
+        {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
+        let retry_context = retry_context(
+            request_id,
+            profile_id,
+            route_scope,
+            target_api_type,
+            client_protocol,
+            &next_route,
+        );
+        response = match send_upstream_request_with_rate_limit_retry(request, Some(&retry_context))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return record_json_error(
+                    record,
+                    StatusCode::BAD_GATEWAY,
+                    &format!("failed to reach upstream bridge endpoint: {error}"),
+                );
+            }
+        };
+        if !response.status().is_success() {
+            return upstream_error_response_with_hint(
+                response,
+                record,
+                Some(
+                    "Attachment inspection failed after sending the tool result to the upstream model",
+                ),
+            )
+            .await;
+        }
     }
 }
 
@@ -739,6 +970,7 @@ pub(super) async fn models_handler(
     route_scope: Option<String>,
     manual_scope: Option<String>,
     target_api_type: String,
+    service_side_image_input: bool,
 ) -> Response {
     let upstream = match upstream_endpoint(&profile_id, &target_api_type) {
         Ok(endpoint) => endpoint,
@@ -766,7 +998,8 @@ pub(super) async fn models_handler(
     let data: Vec<_> = models
         .iter()
         .map(|model| {
-            let metadata = bridge_model_metadata(&upstream.profile, &target_api_type, model);
+            let mut metadata = bridge_model_metadata(&upstream.profile, &target_api_type, model);
+            metadata.image_input |= service_side_image_input;
             let mut input_modalities = vec!["text"];
             if metadata.image_input {
                 input_modalities.push("image");

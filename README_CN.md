@@ -347,13 +347,13 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 
 ### Desktop 应用
 
-最新桌面版：[VibeAround v0.7.22](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.22)。
+最新桌面版：[VibeAround v0.7.23](https://github.com/jazzenchen/VibeAround/releases/tag/v0.7.23)。
 
 | 平台 | 推荐下载 |
 |---|---|
-| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.22.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.22/VibeAround-macOS-arm64-0.7.22.dmg) |
-| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.22/VibeAround-Windows-x64-Setup-0.7.22.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.22/VibeAround-Windows-x64-MSI-0.7.22.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.22/VibeAround-Windows-x64-Portable-0.7.22.zip) |
-| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.22/VibeAround-Linux-x64-AppImage-0.7.22.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.22/VibeAround-Linux-x64-DEB-0.7.22.deb) |
+| macOS Apple Silicon | [VibeAround-macOS-arm64-0.7.23.dmg](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.23/VibeAround-macOS-arm64-0.7.23.dmg) |
+| Windows x64 | [Setup EXE](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.23/VibeAround-Windows-x64-Setup-0.7.23.exe)、[MSI](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.23/VibeAround-Windows-x64-MSI-0.7.23.msi) 或 [免安装 ZIP](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.23/VibeAround-Windows-x64-Portable-0.7.23.zip) |
+| Linux x64 | [AppImage](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.23/VibeAround-Linux-x64-AppImage-0.7.23.AppImage) 或 [deb](https://github.com/jazzenchen/VibeAround/releases/download/v0.7.23/VibeAround-Linux-x64-DEB-0.7.23.deb) |
 
 Windows 和 Linux 包由 GitHub Actions 构建。macOS 当前只提供 Apple Silicon 版本。
 
@@ -373,7 +373,7 @@ va launch --profile codex-work
 
 server 启动后，在浏览器访问 `http://127.0.0.1:12358/va/`。
 
-npm 上的最新 CLI 包是 [`@vibearound/cli@0.0.11`](https://www.npmjs.com/package/@vibearound/cli)，对应平台 payload 也已发布在 [VibeAround CLI 0.0.11](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.11)。
+npm 上的最新 CLI 包是 [`@vibearound/cli@0.0.12`](https://www.npmjs.com/package/@vibearound/cli)，对应平台 payload 也已发布在 [VibeAround CLI 0.0.12](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.12)。
 
 ## 升级说明
 

@@ -54,6 +54,8 @@ pub(crate) struct BridgeRecordEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) bridge_response: Option<RecordedPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) service_side: Option<RecordedPayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) search: Option<RecordedPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
@@ -89,6 +91,7 @@ pub(crate) enum BridgeRecordPhase {
     BridgeRequest,
     ServerResponse,
     BridgeResponse,
+    ServiceSide,
     Search,
     Error,
 }
@@ -159,6 +162,7 @@ impl BridgeRecorder {
             bridge_request: None,
             server_response: None,
             bridge_response: None,
+            service_side: None,
             search: None,
             error: None,
             status: None,
@@ -217,6 +221,7 @@ impl ActiveBridgeRecord {
             bridge_request: Some(RecordedPayload::from_json(body)),
             server_response: None,
             bridge_response: None,
+            service_side: None,
             search: None,
             error: None,
             status: None,
@@ -234,6 +239,7 @@ impl ActiveBridgeRecord {
             bridge_request: None,
             server_response: Some(payload),
             bridge_response: None,
+            service_side: None,
             search: None,
             error: None,
             status: Some(status),
@@ -251,6 +257,7 @@ impl ActiveBridgeRecord {
             bridge_request: None,
             server_response: None,
             bridge_response: Some(payload),
+            service_side: None,
             search: None,
             error: None,
             status: Some(status),
@@ -272,7 +279,26 @@ impl ActiveBridgeRecord {
             bridge_request: None,
             server_response: None,
             bridge_response: None,
+            service_side: None,
             search: Some(RecordedPayload::from_json(body)),
+            error: None,
+            status: None,
+        });
+    }
+
+    pub(crate) fn service_side(&self, body: &Value) {
+        self.emit(BridgeRecordEvent {
+            record_id: self.record_id,
+            request_id: self.request_id.clone(),
+            phase: BridgeRecordPhase::ServiceSide,
+            timestamp_ms: timestamp_ms(),
+            metadata: None,
+            original_request: None,
+            bridge_request: None,
+            server_response: None,
+            bridge_response: None,
+            service_side: Some(RecordedPayload::from_json(body)),
+            search: None,
             error: None,
             status: None,
         });
@@ -289,6 +315,7 @@ impl ActiveBridgeRecord {
             bridge_request: None,
             server_response: None,
             bridge_response: None,
+            service_side: None,
             search: None,
             error: Some(message.to_string()),
             status: None,
@@ -454,4 +481,51 @@ fn timestamp_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn service_side_trace_stays_on_parent_bridge_record() {
+        let recorder = BridgeRecorder::default();
+        let mut subscription = recorder.subscribe();
+        let record = recorder
+            .begin(
+                "request-id".to_string(),
+                BridgeRecordMetadata {
+                    profile_id: "deepseek".to_string(),
+                    route_scope: None,
+                    manual_scope: None,
+                    target_api_type: "openai-chat".to_string(),
+                    client_protocol: "anthropic".to_string(),
+                    upstream_protocol: None,
+                    upstream_url: None,
+                    stream: Some(false),
+                    model: Some("deepseek-chat".to_string()),
+                    passthrough: false,
+                },
+                None,
+            )
+            .expect("subscriber enables recording");
+        let _start = subscription.recv().await.expect("start event");
+
+        record.service_side(&json!({
+            "capability": "imageInput",
+            "stage": "request",
+        }));
+        let event = subscription.recv().await.expect("service-side event");
+
+        assert_eq!(event.request_id, "request-id");
+        assert!(matches!(event.phase, BridgeRecordPhase::ServiceSide));
+        assert_eq!(
+            event
+                .service_side
+                .and_then(|payload| payload.json)
+                .and_then(|value| value.get("capability").cloned()),
+            Some(Value::String("imageInput".to_string()))
+        );
+    }
 }

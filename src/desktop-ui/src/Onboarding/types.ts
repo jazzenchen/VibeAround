@@ -82,6 +82,14 @@ export interface Settings {
       }
     >;
   };
+  service_side?: {
+    image_input?: {
+      enabled?: boolean;
+      profile_id?: string;
+      api_type?: string;
+      model?: string;
+    };
+  };
   startkit?: {
     source?: string;
     toolchain_mode?: ToolchainMode | string;

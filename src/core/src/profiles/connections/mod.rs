@@ -145,7 +145,17 @@ pub fn resolve_profile_agent_route(
     agent_id: &str,
 ) -> Option<ProfileAgentRoute> {
     let connections = merged_profile_connections();
-    resolve_profile_agent_route_with_connections(profile, agent_id, &connections)
+    let mut route = resolve_profile_agent_route_with_connections(profile, agent_id, &connections)?;
+    if crate::config::ensure_loaded()
+        .service_side
+        .image_input
+        .is_configured()
+    {
+        for model in &mut route.bridge_models {
+            model.capabilities.image_input = true;
+        }
+    }
+    Some(route)
 }
 
 pub fn resolve_profile_agent_route_with_connections(

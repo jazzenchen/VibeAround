@@ -1,7 +1,7 @@
 {
   "name": "@vibearound/tauri",
   "private": true,
-  "version": "0.7.22",
+  "version": "0.7.23",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",

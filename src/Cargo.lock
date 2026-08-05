@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -4563,12 +4563,13 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "common",
@@ -4577,6 +4578,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tower-http",
  "tracing",
@@ -6078,10 +6080,11 @@ dependencies = [
 
 [[package]]
 name = "va-ai-api-bridge"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0a08fe0fc5aafb782926501b9931dfc7850990d497d3066fb2b8eb6e23d829f"
+checksum = "864d721cea217f453211d92841f7a88206a6d5c307f3302071cbad3aed19cd53"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "serde",
  "serde_json",
@@ -6089,7 +6092,7 @@ dependencies = [
 
 [[package]]
 name = "va-cli"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "clap",
  "crossterm",
@@ -6105,7 +6108,7 @@ dependencies = [
 
 [[package]]
 name = "va-client"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "serde",
  "serde_json",
@@ -6115,7 +6118,7 @@ dependencies = [
 
 [[package]]
 name = "va-launcher"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "anyhow",
  "clap",
@@ -6130,7 +6133,7 @@ dependencies = [
 
 [[package]]
 name = "va-tui"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "clap",
  "crossterm",
@@ -6171,7 +6174,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vibearound-desktop"
-version = "0.7.22"
+version = "0.7.23"
 dependencies = [
  "anyhow",
  "common",

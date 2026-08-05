@@ -31,6 +31,7 @@ type BridgeRecordPhase =
   | "bridgeRequest"
   | "serverResponse"
   | "bridgeResponse"
+  | "serviceSide"
   | "search"
   | "error";
 
@@ -64,6 +65,7 @@ interface BridgeRecordEvent {
   bridgeRequest?: RecordedPayload;
   serverResponse?: RecordedPayload;
   bridgeResponse?: RecordedPayload;
+  serviceSide?: RecordedPayload;
   search?: RecordedPayload;
   error?: string;
   status?: number;
@@ -79,6 +81,7 @@ interface BridgeRecordEntry {
   bridgeRequest?: RecordedPayload;
   serverResponse?: RecordedPayload;
   bridgeResponse?: RecordedPayload;
+  serviceSidePayloads: RecordedPayload[];
   searchPayloads: RecordedPayload[];
   serverStatus?: number;
   bridgeStatus?: number;
@@ -91,6 +94,7 @@ type PayloadTab =
   | "bridgeRequest"
   | "serverResponse"
   | "bridgeResponse"
+  | "serviceSide"
   | "search";
 
 export function BridgeRecordPopup({
@@ -335,23 +339,30 @@ function RecordDetails({ record }: { record: BridgeRecordEntry }) {
   const scopeLabel = metadata?.manualScope ?? metadata?.routeScope;
   const hasStatuses =
     record.serverStatus !== undefined || record.bridgeStatus !== undefined;
+  const serviceSidePayload = useMemo(
+    () => serviceSidePayloadForRecord(record),
+    [record],
+  );
   const searchPayload = useMemo(() => searchPayloadForRecord(record), [record]);
   const visibleTabs = useMemo(
-    () =>
-      searchPayload
-        ? [...payloadTabs, "search" as const]
-        : payloadTabs,
-    [searchPayload],
+    () => [
+      payloadTabs[0],
+      ...(serviceSidePayload ? (["serviceSide"] as const) : []),
+      payloadTabs[1],
+      ...(searchPayload ? (["search"] as const) : []),
+      ...payloadTabs.slice(2),
+    ],
+    [searchPayload, serviceSidePayload],
   );
 
   useEffect(() => {
-    if (!payloadForTab(record, tab, searchPayload)) {
+    if (!payloadForTab(record, tab, serviceSidePayload, searchPayload)) {
       const first = visibleTabs.find((candidate) =>
-        payloadForTab(record, candidate, searchPayload),
+        payloadForTab(record, candidate, serviceSidePayload, searchPayload),
       );
       if (first) setTab(first);
     }
-  }, [record, searchPayload, tab, visibleTabs]);
+  }, [record, searchPayload, serviceSidePayload, tab, visibleTabs]);
 
   return (
     <>
@@ -426,7 +437,12 @@ function RecordDetails({ record }: { record: BridgeRecordEntry }) {
             className="mt-0 min-h-0 overflow-hidden px-4 pb-4 pt-3"
           >
             <PayloadViewer
-              payload={payloadForTab(record, value, searchPayload)}
+              payload={payloadForTab(
+                record,
+                value,
+                serviceSidePayload,
+                searchPayload,
+              )}
               wrap={wrapJson}
               onWrapChange={setWrapJson}
             />
@@ -580,6 +596,7 @@ const payloadTabs: PayloadTab[] = [
 
 const payloadPhases: BridgeRecordPhase[] = [
   "start",
+  "serviceSide",
   "bridgeRequest",
   "search",
   "serverResponse",
@@ -587,8 +604,87 @@ const payloadPhases: BridgeRecordPhase[] = [
 ];
 
 function payloadPhasesForRecord(record: BridgeRecordEntry) {
-  if (record.searchPayloads.length > 0) return payloadPhases;
-  return payloadPhases.filter((phase) => phase !== "search");
+  return payloadPhases.filter((phase) => {
+    if (phase === "serviceSide") return record.serviceSidePayloads.length > 0;
+    if (phase === "search") return record.searchPayloads.length > 0;
+    return true;
+  });
+}
+
+function serviceSidePayloadForRecord(
+  record: BridgeRecordEntry,
+): RecordedPayload | undefined {
+  if (record.serviceSidePayloads.length === 0) return undefined;
+  const json = normalizeServiceSidePayloads(record.serviceSidePayloads);
+  const text = JSON.stringify(json, null, 2);
+  return {
+    byteLength: new TextEncoder().encode(text).length,
+    truncated: record.serviceSidePayloads.some((payload) => payload.truncated),
+    text,
+    json,
+  };
+}
+
+function normalizeServiceSidePayloads(payloads: RecordedPayload[]) {
+  const calls = new Map<string, Record<string, unknown>>();
+  const normalized: Record<string, unknown>[] = [];
+
+  payloads.forEach((payload, eventIndex) => {
+    const raw = payload.json ?? parseJson(payload.text) ?? payload.text;
+    const trace = asRecord(raw);
+    if (!trace) {
+      normalized.push({ index: normalized.length + 1, payload: raw });
+      return;
+    }
+
+    const callId = stringField(trace.callId);
+    const key = callId ?? `event:${eventIndex}`;
+    let call = calls.get(key);
+    if (!call) {
+      call = { index: normalized.length + 1 };
+      calls.set(key, call);
+      normalized.push(call);
+    }
+
+    for (const field of [
+      "callId",
+      "capability",
+      "operation",
+      "cache",
+      "resolver",
+      "input",
+      "instruction",
+    ]) {
+      if (call[field] === undefined) copyIfPresent(call, trace, field);
+    }
+
+    switch (stringField(trace.stage)) {
+      case "request":
+        copyIfPresent(call, trace, "request");
+        break;
+      case "response": {
+        const response: Record<string, unknown> = {};
+        copyIfPresent(response, trace, "status");
+        if (trace.response !== undefined) response.body = trace.response;
+        call.response = response;
+        break;
+      }
+      case "cacheHit":
+        call.response = { source: "cache", body: trace.result };
+        break;
+      case "error": {
+        const error: Record<string, unknown> = {};
+        copyIfPresent(error, trace, "status");
+        if (trace.error !== undefined) error.message = trace.error;
+        call.error = error;
+        break;
+      }
+      default:
+        call.payload = raw;
+    }
+  });
+
+  return normalized;
 }
 
 function searchPayloadForRecord(record: BridgeRecordEntry): RecordedPayload | undefined {
@@ -722,8 +818,10 @@ function stringArray(value: unknown): string[] {
 function payloadForTab(
   record: BridgeRecordEntry,
   tab: PayloadTab,
+  serviceSidePayload?: RecordedPayload,
   searchPayload?: RecordedPayload,
 ) {
+  if (tab === "serviceSide") return serviceSidePayload;
   if (tab === "search") return searchPayload;
   return record[tab];
 }
@@ -738,6 +836,8 @@ function payloadTabLabel(t: (value: string) => string, tab: PayloadTab) {
       return t("Server response");
     case "bridgeResponse":
       return t("Bridge response");
+    case "serviceSide":
+      return t("Multimodal");
     case "search":
       return t("Search");
   }
@@ -820,6 +920,7 @@ function newRecord(event: BridgeRecordEvent): BridgeRecordEntry {
     requestId: event.requestId,
     timestampMs: event.timestampMs,
     updatedAtMs: event.timestampMs,
+    serviceSidePayloads: [],
     searchPayloads: [],
     errors: [],
     phases: new Set(),
@@ -841,6 +942,9 @@ function mergeIntoRecord(
     bridgeRequest: event.bridgeRequest ?? record.bridgeRequest,
     serverResponse: event.serverResponse ?? record.serverResponse,
     bridgeResponse: event.bridgeResponse ?? record.bridgeResponse,
+    serviceSidePayloads: event.serviceSide
+      ? [...record.serviceSidePayloads, event.serviceSide]
+      : record.serviceSidePayloads,
     searchPayloads: event.search
       ? [...record.searchPayloads, event.search]
       : record.searchPayloads,

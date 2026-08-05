@@ -190,6 +190,8 @@ pub struct Config {
     pub local_agent_api: LocalAgentApiConfig,
     // --- Host-side web search fallback ---
     pub search_tool: SearchToolConfig,
+    // --- Host-side model capabilities ---
+    pub service_side: ServiceSideConfig,
     // --- Remote/IM channel defaults ---
     pub remote: RemoteConfig,
     // --- Raw channels JSON (for dynamic plugin config) ---
@@ -256,6 +258,34 @@ pub struct ApiBridgeConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalAgentApiConfig {
     pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServiceSideConfig {
+    pub image_input: ServiceSideImageInputConfig,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServiceSideImageInputConfig {
+    pub enabled: bool,
+    pub profile_id: Option<String>,
+    pub api_type: Option<String>,
+    pub model: Option<String>,
+}
+
+impl ServiceSideImageInputConfig {
+    pub fn is_configured(&self) -> bool {
+        self.enabled
+            && self
+                .profile_id
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+            && self.api_type.as_deref().map(str::trim) == Some("openai-chat")
+            && self
+                .model
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -558,6 +588,7 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
     let api_bridge = load_api_bridge_config(root);
     let local_agent_api = load_local_agent_api_config(root);
     let search_tool = load_search_tool_config(root);
+    let service_side = load_service_side_config(root);
     let remote = load_remote_config(root);
 
     let proxy = root
@@ -606,6 +637,7 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         api_bridge,
         local_agent_api,
         search_tool,
+        service_side,
         remote,
         raw_channels,
     }
@@ -707,6 +739,22 @@ fn load_search_tool_config(root: &serde_json::Value) -> SearchToolConfig {
         search_context_size,
         sources,
     }
+}
+
+fn load_service_side_config(root: &serde_json::Value) -> ServiceSideConfig {
+    let image_input = root
+        .get("service_side")
+        .or_else(|| root.get("serviceSide"))
+        .and_then(|value| value.get("image_input").or_else(|| value.get("imageInput")))
+        .and_then(|value| value.as_object())
+        .map(|settings| ServiceSideImageInputConfig {
+            enabled: bool_setting(settings, &["enabled"]).unwrap_or(false),
+            profile_id: string_setting(settings, &["profile_id", "profileId"]),
+            api_type: string_setting(settings, &["api_type", "apiType"]),
+            model: string_setting(settings, &["model"]),
+        })
+        .unwrap_or_default();
+    ServiceSideConfig { image_input }
 }
 
 fn load_remote_config(root: &serde_json::Value) -> RemoteConfig {
@@ -1320,6 +1368,7 @@ impl Default for Config {
             api_bridge: ApiBridgeConfig::default(),
             local_agent_api: LocalAgentApiConfig::default(),
             search_tool: SearchToolConfig::default(),
+            service_side: ServiceSideConfig::default(),
             remote: RemoteConfig::default(),
             raw_channels: serde_json::Value::Object(serde_json::Map::new()),
         }
@@ -1869,6 +1918,57 @@ mod tests {
         assert_eq!(config.search_tool.search_context_size, None);
         assert!(config.search_tool.sources.is_empty());
         assert!(!config.search_tool.has_enabled_sources());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn service_side_image_input_defaults_to_disabled() {
+        let dir = unique_test_dir("service-side-default");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(&path, "{}").unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(!config.service_side.image_input.is_configured());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn service_side_image_input_uses_global_profile_binding() {
+        let dir = unique_test_dir("service-side-image-input");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{
+              "service_side": {
+                "image_input": {
+                  "enabled": true,
+                  "profile_id": " dashscope-main ",
+                  "api_type": " openai-chat ",
+                  "model": " qwen-vl-max "
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(config.service_side.image_input.is_configured());
+        assert_eq!(
+            config.service_side.image_input.profile_id.as_deref(),
+            Some("dashscope-main")
+        );
+        assert_eq!(
+            config.service_side.image_input.api_type.as_deref(),
+            Some("openai-chat")
+        );
+        assert_eq!(
+            config.service_side.image_input.model.as_deref(),
+            Some("qwen-vl-max")
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -90,6 +90,7 @@ export const zhCNLaunch: Record<string, string> = {
   "Bridge request": "Bridge 请求",
   "Server response": "服务器响应",
   "Bridge response": "Bridge 响应",
+  Multimodal: "多模态",
   "Unknown target": "未知目标",
   "WebSocket error": "WebSocket 错误",
   Truncated: "已截断",
@@ -337,6 +338,7 @@ export const zhCNLaunch: Record<string, string> = {
   "Default route": "默认路径",
   "Selected route": "已选路径",
   "Enable API bridge": "启用 API 转接",
+  Enable: "启用",
   'Enable API bridge for "{{profile}}" to launch {{agent}} with {{api}}':
     "为「{{profile}}」启用 API 转接后可用 {{api}} 启动 {{agent}}",
   "Target API": "目标 API",
