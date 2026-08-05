@@ -991,7 +991,7 @@ export function SettingsDialog({
       await invoke("restart_services");
       await readAuthToken();
       onServicesRestarted?.();
-      setNotice({ variant: "success", message: "Service-side settings applied." });
+      setNotice({ variant: "success", message: "Multimodal settings applied." });
     } catch (error) {
       setNotice({
         variant: "error",
@@ -1302,7 +1302,7 @@ export function SettingsDialog({
                 className="!h-8 w-full justify-start gap-2 px-2 text-sm data-[state=active]:border-transparent data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none [&_svg:not([class*='size-'])]:!size-3.5"
               >
                 <WandSparkles className="h-3 w-3" />
-                {t("Service-Side Functions")}
+                {t("Multimodal")}
               </TabsTrigger>
               <TabsTrigger
                 value="plugins"
@@ -2717,24 +2717,24 @@ function ServiceSideSettingsPanel({
       <div>
         <h2 className="flex items-center gap-2 text-base font-semibold">
           <WandSparkles className="h-4 w-4 text-primary" />
-          {t("Service-Side Functions")}
+          {t("Multimodal")}
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          {t("Add host-provided capabilities to API bridge requests.")}
+          {t("Add image understanding to bridged models through a vision profile.")}
         </p>
         {notice}
       </div>
       <div className="rounded-md border border-border">
         <SettingsActionRow
-          label={t("Image input")}
+          label={t("Image understanding")}
           description={t(
-            "Describe images with the selected profile, cache attachments locally for follow-up inspection, and forward text only to the target model.",
+            "Images are analyzed with this profile. Target models receive text only; attachments stay cached locally for follow-up questions.",
           )}
           action={
             <Switch
               checked={imageEnabled}
               onCheckedChange={onImageEnabledChange}
-              aria-label={t("Image input")}
+              aria-label={t("Image understanding")}
               size="sm"
             />
           }

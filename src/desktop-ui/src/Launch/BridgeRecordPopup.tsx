@@ -348,8 +348,9 @@ function RecordDetails({ record }: { record: BridgeRecordEntry }) {
     () => [
       payloadTabs[0],
       ...(serviceSidePayload ? (["serviceSide"] as const) : []),
-      ...payloadTabs.slice(1),
+      payloadTabs[1],
       ...(searchPayload ? (["search"] as const) : []),
+      ...payloadTabs.slice(2),
     ],
     [searchPayload, serviceSidePayload],
   );
@@ -776,7 +777,7 @@ function payloadTabLabel(t: (value: string) => string, tab: PayloadTab) {
     case "bridgeResponse":
       return t("Bridge response");
     case "serviceSide":
-      return t("Service-side calls");
+      return t("Multimodal");
     case "search":
       return t("Search");
   }
