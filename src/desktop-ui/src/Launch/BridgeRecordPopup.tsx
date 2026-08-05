@@ -615,9 +615,7 @@ function serviceSidePayloadForRecord(
   record: BridgeRecordEntry,
 ): RecordedPayload | undefined {
   if (record.serviceSidePayloads.length === 0) return undefined;
-  const json = record.serviceSidePayloads.map(
-    (payload) => payload.json ?? parseJson(payload.text) ?? payload.text,
-  );
+  const json = normalizeServiceSidePayloads(record.serviceSidePayloads);
   const text = JSON.stringify(json, null, 2);
   return {
     byteLength: new TextEncoder().encode(text).length,
@@ -625,6 +623,68 @@ function serviceSidePayloadForRecord(
     text,
     json,
   };
+}
+
+function normalizeServiceSidePayloads(payloads: RecordedPayload[]) {
+  const calls = new Map<string, Record<string, unknown>>();
+  const normalized: Record<string, unknown>[] = [];
+
+  payloads.forEach((payload, eventIndex) => {
+    const raw = payload.json ?? parseJson(payload.text) ?? payload.text;
+    const trace = asRecord(raw);
+    if (!trace) {
+      normalized.push({ index: normalized.length + 1, payload: raw });
+      return;
+    }
+
+    const callId = stringField(trace.callId);
+    const key = callId ?? `event:${eventIndex}`;
+    let call = calls.get(key);
+    if (!call) {
+      call = { index: normalized.length + 1 };
+      calls.set(key, call);
+      normalized.push(call);
+    }
+
+    for (const field of [
+      "callId",
+      "capability",
+      "operation",
+      "cache",
+      "resolver",
+      "input",
+      "instruction",
+    ]) {
+      if (call[field] === undefined) copyIfPresent(call, trace, field);
+    }
+
+    switch (stringField(trace.stage)) {
+      case "request":
+        copyIfPresent(call, trace, "request");
+        break;
+      case "response": {
+        const response: Record<string, unknown> = {};
+        copyIfPresent(response, trace, "status");
+        if (trace.response !== undefined) response.body = trace.response;
+        call.response = response;
+        break;
+      }
+      case "cacheHit":
+        call.response = { source: "cache", body: trace.result };
+        break;
+      case "error": {
+        const error: Record<string, unknown> = {};
+        copyIfPresent(error, trace, "status");
+        if (trace.error !== undefined) error.message = trace.error;
+        call.error = error;
+        break;
+      }
+      default:
+        call.payload = raw;
+    }
+  });
+
+  return normalized;
 }
 
 function searchPayloadForRecord(record: BridgeRecordEntry): RecordedPayload | undefined {
