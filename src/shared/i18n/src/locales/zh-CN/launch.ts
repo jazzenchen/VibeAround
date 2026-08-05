@@ -90,6 +90,7 @@ export const zhCNLaunch: Record<string, string> = {
   "Bridge request": "Bridge 请求",
   "Server response": "服务器响应",
   "Bridge response": "Bridge 响应",
+  "Service-side calls": "服务端调用",
   "Unknown target": "未知目标",
   "WebSocket error": "WebSocket 错误",
   Truncated: "已截断",

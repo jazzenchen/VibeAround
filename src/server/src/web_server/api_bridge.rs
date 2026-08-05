@@ -158,13 +158,18 @@ pub(super) async fn bridge_handler(
             }
         }
         if let Ok(mut content_request) = decoded_content_request {
-            let image_resolution =
-                match image_resolver::resolve_request_images(&state, &mut content_request).await {
-                    Ok(resolution) => resolution,
-                    Err((status, message)) => {
-                        return record_json_error(record.as_ref(), status, &message);
-                    }
-                };
+            let image_resolution = match image_resolver::resolve_request_images(
+                &state,
+                &mut content_request,
+                record.as_ref(),
+            )
+            .await
+            {
+                Ok(resolution) => resolution,
+                Err((status, message)) => {
+                    return record_json_error(record.as_ref(), status, &message);
+                }
+            };
             let sanitization = sanitize_request_content_with_capabilities(
                 &upstream.profile,
                 &target_api_type,
@@ -304,7 +309,8 @@ pub(super) async fn bridge_handler(
         universal_request.model = Some(mapping.upstream_model.clone());
     }
     if let Err((status, message)) =
-        image_resolver::resolve_request_images(&state, &mut universal_request).await
+        image_resolver::resolve_request_images(&state, &mut universal_request, record.as_ref())
+            .await
     {
         return record_json_error(record.as_ref(), status, &message);
     }

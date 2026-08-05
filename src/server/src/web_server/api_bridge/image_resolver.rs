@@ -14,7 +14,7 @@ use va_ai_api_bridge::{
     ServiceSideResolutionReport, ServiceSideResult, UniversalRequest,
 };
 
-use super::super::AppState;
+use super::super::{bridge_recording::ActiveBridgeRecord, AppState};
 use super::upstream;
 use super::{upstream_http_client, BridgeProtocol};
 
@@ -61,6 +61,7 @@ struct ProfileImageResolver {
     api_key: String,
     headers: reqwest::header::HeaderMap,
     cache_root: PathBuf,
+    record: Option<ActiveBridgeRecord>,
 }
 
 #[derive(Debug)]
@@ -106,6 +107,7 @@ struct CachedImageAnalysis {
 pub(super) async fn resolve_request_images(
     state: &AppState,
     request: &mut UniversalRequest,
+    record: Option<&ActiveBridgeRecord>,
 ) -> Result<ServiceSideResolutionReport, (StatusCode, String)> {
     let Some(mut config) = ResolverConfig::from_config(&state.service_side.image_input) else {
         return Ok(ServiceSideResolutionReport::default());
@@ -167,6 +169,7 @@ pub(super) async fn resolve_request_images(
             .join("cache")
             .join("multimodal")
             .join("image-analysis"),
+        record: record.cloned(),
     };
     let mut registry = ServiceSideCapabilityRegistry::new();
     registry
@@ -208,9 +211,26 @@ impl ProfileImageResolver {
                 resolver_model = %self.config.model,
                 "image resolver cache hit"
             );
+            self.record_service_side(|| {
+                json!({
+                    "callId": uuid::Uuid::new_v4(),
+                    "capability": "imageInput",
+                    "operation": "describeImage",
+                    "stage": "cacheHit",
+                    "cache": {
+                        "hit": true,
+                        "key": analysis_sha256,
+                    },
+                    "resolver": self.resolver_metadata(),
+                    "input": image_metadata(payload, &content_sha256),
+                    "result": cached.analysis,
+                })
+            });
             return Ok(cached);
         }
-        let analysis = self.describe_image(payload).await?;
+        let analysis = self
+            .describe_image(payload, &content_sha256, &analysis_sha256)
+            .await?;
         let cached = CachedImageAnalysis {
             schema_version: 2,
             content_sha256,
@@ -230,15 +250,33 @@ impl ProfileImageResolver {
     async fn describe_image(
         &self,
         payload: &ImagePayload,
+        content_sha256: &str,
+        analysis_sha256: &str,
     ) -> Result<ImageAnalysis, (StatusCode, String)> {
         let body = image_description_request_body(&self.config, payload);
+        let call_id = uuid::Uuid::new_v4().to_string();
+        self.record_service_side(|| {
+            json!({
+                "callId": call_id,
+                "capability": "imageInput",
+                "operation": "describeImage",
+                "stage": "request",
+                "cache": {
+                    "hit": false,
+                    "key": analysis_sha256,
+                },
+                "resolver": self.resolver_metadata(),
+                "input": image_metadata(payload, content_sha256),
+                "request": recorded_image_description_request(&body, payload, content_sha256),
+            })
+        });
         let body = serde_json::to_vec(&body).map_err(|error| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("failed to serialize image resolver request: {error}"),
             )
         })?;
-        let response = self
+        let response = match self
             .client
             .post(&self.endpoint_url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -247,19 +285,56 @@ impl ProfileImageResolver {
             .body(body)
             .send()
             .await
-            .map_err(|error| {
-                (
+        {
+            Ok(response) => response,
+            Err(error) => {
+                self.record_service_side(|| {
+                    json!({
+                        "callId": call_id,
+                        "capability": "imageInput",
+                        "operation": "describeImage",
+                        "stage": "error",
+                        "resolver": self.resolver_metadata(),
+                        "error": format!("failed to reach image resolver: {error}"),
+                    })
+                });
+                return Err((
                     StatusCode::BAD_GATEWAY,
                     format!("failed to reach image resolver: {error}"),
-                )
-            })?;
+                ));
+            }
+        };
         let status = response.status();
-        let response_body = response.text().await.map_err(|error| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("failed to read image resolver response: {error}"),
-            )
-        })?;
+        let response_body = match response.text().await {
+            Ok(body) => body,
+            Err(error) => {
+                self.record_service_side(|| {
+                    json!({
+                        "callId": call_id,
+                        "capability": "imageInput",
+                        "operation": "describeImage",
+                        "stage": "error",
+                        "resolver": self.resolver_metadata(),
+                        "status": status.as_u16(),
+                        "error": format!("failed to read image resolver response: {error}"),
+                    })
+                });
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    format!("failed to read image resolver response: {error}"),
+                ));
+            }
+        };
+        let response_json = serde_json::from_str::<Value>(&response_body);
+        self.record_service_side(|| json!({
+            "callId": call_id,
+            "capability": "imageInput",
+            "operation": "describeImage",
+            "stage": "response",
+            "resolver": self.resolver_metadata(),
+            "status": status.as_u16(),
+            "response": response_json.as_ref().cloned().unwrap_or_else(|_| Value::String(bounded_error_text(&response_body))),
+        }));
         if !status.is_success() {
             return Err((
                 StatusCode::BAD_GATEWAY,
@@ -270,7 +345,7 @@ impl ProfileImageResolver {
                 ),
             ));
         }
-        let response_json: Value = serde_json::from_str(&response_body).map_err(|error| {
+        let response_json = response_json.map_err(|error| {
             (
                 StatusCode::BAD_GATEWAY,
                 format!("image resolver returned invalid JSON: {error}"),
@@ -282,6 +357,23 @@ impl ProfileImageResolver {
                 "image resolver response was not a valid image-analysis JSON object".to_string(),
             )
         })
+    }
+
+    fn resolver_metadata(&self) -> Value {
+        json!({
+            "profileId": self.config.profile_id,
+            "provider": self.config.provider,
+            "apiType": self.config.api_type,
+            "model": self.config.model,
+            "url": upstream::redacted_url(&self.endpoint_url),
+            "promptVersion": PROMPT_VERSION,
+        })
+    }
+
+    fn record_service_side(&self, build: impl FnOnce() -> Value) {
+        if let Some(record) = &self.record {
+            record.service_side(&build());
+        }
     }
 }
 
@@ -448,6 +540,30 @@ fn image_description_request_body(config: &ResolverConfig, payload: &ImagePayloa
         body["thinking"] = json!({ "type": "disabled" });
     }
     body
+}
+
+fn image_metadata(payload: &ImagePayload, content_sha256: &str) -> Value {
+    json!({
+        "sha256": content_sha256,
+        "mediaType": payload.media_type,
+        "size": payload.bytes.len(),
+    })
+}
+
+fn recorded_image_description_request(
+    body: &Value,
+    payload: &ImagePayload,
+    content_sha256: &str,
+) -> Value {
+    let mut recorded = body.clone();
+    if let Some(url) = recorded.pointer_mut("/messages/1/content/1/image_url/url") {
+        *url = Value::String(format!(
+            "<redacted image data: {}; {} bytes; sha256={content_sha256}>",
+            payload.media_type,
+            payload.bytes.len()
+        ));
+    }
+    recorded
 }
 
 fn analysis_identity(content_sha256: &str, media_type: &str, config: &ResolverConfig) -> String {
@@ -649,6 +765,27 @@ mod tests {
     }
 
     #[test]
+    fn recorded_resolver_request_redacts_image_bytes() {
+        let payload = ImagePayload {
+            bytes: b"image".to_vec(),
+            media_type: "image/png".to_string(),
+        };
+        let config = ResolverConfig {
+            profile_id: "minimax".to_string(),
+            provider: "minimax".to_string(),
+            api_type: "openai-chat".to_string(),
+            model: "MiniMax-M3".to_string(),
+        };
+        let body = image_description_request_body(&config, &payload);
+        let recorded = recorded_image_description_request(&body, &payload, "content-hash");
+        let text = recorded.to_string();
+
+        assert!(text.contains("redacted image data"));
+        assert!(text.contains("sha256=content-hash"));
+        assert!(!text.contains(&STANDARD.encode(&payload.bytes)));
+    }
+
+    #[test]
     fn rendered_analysis_never_contains_original_image_data() {
         let cached = CachedImageAnalysis {
             schema_version: 2,
@@ -774,6 +911,7 @@ mod tests {
             api_key: "test-key".to_string(),
             headers: reqwest::header::HeaderMap::new(),
             cache_root: cache_root.clone(),
+            record: None,
         };
         let mut registry = ServiceSideCapabilityRegistry::new();
         registry
