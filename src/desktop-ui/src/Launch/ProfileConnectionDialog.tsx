@@ -94,7 +94,6 @@ export function ProfileConnectionDialog({
   const [manualSetting, setManualSetting] = useState<ManualSetting | null>(null);
   const [headerSetting, setHeaderSetting] = useState<HeaderSetting | null>(null);
   const [modelSetting, setModelSetting] = useState<ModelSetting | null>(null);
-
   const resolved = useMemo(
     () => {
       const agent = CONNECTION_AGENTS.find((item) => item.id === agentId);

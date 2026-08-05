@@ -4569,6 +4569,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "common",
@@ -4577,6 +4578,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tower-http",
  "tracing",
@@ -6079,9 +6081,9 @@ dependencies = [
 [[package]]
 name = "va-ai-api-bridge"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0a08fe0fc5aafb782926501b9931dfc7850990d497d3066fb2b8eb6e23d829f"
+source = "git+https://github.com/jazzenchen/va-ai-api-bridge.git?rev=800742ff8faf542388c50106bb4fd88ae2731161#800742ff8faf542388c50106bb4fd88ae2731161"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "serde",
  "serde_json",

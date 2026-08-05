@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 common = { path = "../core" }
-va-ai-api-bridge = "0.1.7"
+va-ai-api-bridge = { git = "https://github.com/jazzenchen/va-ai-api-bridge.git", rev = "800742ff8faf542388c50106bb4fd88ae2731161" }
 axum = { version = "0.8", features = ["json", "ws", "tokio"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 tokio = { workspace = true, features = ["full"] }
@@ -28,6 +28,8 @@ async-trait = "0.1"
 anyhow = { workspace = true }
 tracing = "0.1"
 url = "2.5"
+base64 = "0.22"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
