@@ -9,10 +9,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use va_ai_api_bridge::{
-    request_contains_service_side_input, ContentBlock, ServiceSideCapabilityRegistry,
-    ServiceSideError, ServiceSideInput, ServiceSideInputKind, ServiceSideInputResolution,
-    ServiceSideInputResolver, ServiceSideResult, ServiceSideTool, ServiceSideToolCall,
-    ServiceSideToolOutput, ToolChoice, UniversalRequest, UniversalResponse, UniversalTool,
+    request_contains_service_side_input, ContentBlock, GenerationConfig, Role,
+    ServiceSideCapabilityRegistry, ServiceSideError, ServiceSideInput, ServiceSideInputKind,
+    ServiceSideInputResolution, ServiceSideInputResolver, ServiceSideResult, ServiceSideTool,
+    ServiceSideToolCall, ServiceSideToolOutput, ToolChoice, UniversalItem, UniversalRequest,
+    UniversalResponse, UniversalTool,
 };
 
 use super::super::{bridge_recording::ActiveBridgeRecord, AppState};
@@ -60,10 +61,13 @@ impl ResolverConfig {
 #[derive(Clone)]
 struct ProfileImageResolver {
     config: ResolverConfig,
+    protocol: BridgeProtocol,
     client: reqwest::Client,
     endpoint_url: String,
     api_key: String,
     headers: reqwest::header::HeaderMap,
+    auth_header: bool,
+    managed_auth: bool,
     cache_root: PathBuf,
     attachment_root: PathBuf,
     record: Option<ActiveBridgeRecord>,
@@ -134,23 +138,8 @@ pub(super) async fn resolve_request_images(
     if !request_contains_service_side_input(request, ServiceSideInputKind::Image) {
         return Ok(None);
     }
-    if config.api_type != "openai-chat" {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "image resolver currently requires an OpenAI Chat profile".to_string(),
-        ));
-    }
     let upstream = upstream::upstream_endpoint(&config.profile_id, &config.api_type)?;
     config.provider = upstream.profile.provider.clone();
-    if upstream.protocol != BridgeProtocol::OpenAiChat {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!(
-                "image resolver profile '{}' does not resolve to OpenAI Chat",
-                config.profile_id
-            ),
-        ));
-    }
     let api_key = upstream
         .profile
         .credentials
@@ -172,19 +161,27 @@ pub(super) async fn resolve_request_images(
         .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let headers = common::profiles::headers::merged_upstream_headers(&upstream.headers, None)
         .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-    let endpoint_url = upstream.request_url(&json!({})).map_err(|message| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("invalid image resolver endpoint: {message}"),
-        )
-    })?;
+    let endpoint_url = upstream
+        .request_url(&json!({
+            "model": config.model.as_str(),
+            "__va_model": config.model.as_str(),
+        }))
+        .map_err(|message| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("invalid image resolver endpoint: {message}"),
+            )
+        })?;
     let multimodal_cache_root = common::config::data_dir().join("cache").join("multimodal");
     let resolver = ProfileImageResolver {
         config,
+        protocol: upstream.protocol,
         client,
         endpoint_url,
         api_key,
         headers,
+        auth_header: upstream.auth_header,
+        managed_auth: upstream.managed_auth,
         cache_root: multimodal_cache_root.join("image-analysis"),
         attachment_root: multimodal_cache_root.join("attachments"),
         record: record.cloned(),
@@ -452,7 +449,14 @@ impl ProfileImageResolver {
         operation: &str,
         instruction: Option<&str>,
     ) -> Result<ImageAnalysis, (StatusCode, String)> {
-        let body = image_description_request_body(&self.config, payload, instruction);
+        let body =
+            image_description_request_body(self.protocol, &self.config, payload, instruction)
+                .map_err(|error| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("failed to build image resolver request: {error}"),
+                    )
+                })?;
         let call_id = uuid::Uuid::new_v4().to_string();
         self.record_service_side(|| {
             json!({
@@ -476,16 +480,25 @@ impl ProfileImageResolver {
                 format!("failed to serialize image resolver request: {error}"),
             )
         })?;
-        let response = match self
-            .client
-            .post(&self.endpoint_url)
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .headers(self.headers.clone())
-            .bearer_auth(&self.api_key)
-            .body(body)
-            .send()
-            .await
-        {
+        let request = upstream::apply_upstream_auth(
+            self.client
+                .post(&self.endpoint_url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .headers(self.headers.clone())
+                .body(body),
+            self.protocol,
+            self.auth_header,
+            self.managed_auth,
+            &axum::http::HeaderMap::new(),
+            Some(&self.api_key),
+        )
+        .map_err(|response| {
+            (
+                response.status(),
+                "failed to apply image resolver authentication".to_string(),
+            )
+        })?;
+        let response = match request.send().await {
             Ok(response) => response,
             Err(error) => {
                 self.record_service_side(|| {
@@ -551,7 +564,7 @@ impl ProfileImageResolver {
                 format!("image resolver returned invalid JSON: {error}"),
             )
         })?;
-        parse_openai_chat_content(&response_json).ok_or_else(|| {
+        parse_image_analysis_response(self.protocol, &response_json).ok_or_else(|| {
             (
                 StatusCode::BAD_GATEWAY,
                 "image resolver response was not a valid image-analysis JSON object".to_string(),
@@ -783,15 +796,11 @@ fn validated_payload(
 }
 
 fn image_description_request_body(
+    protocol: BridgeProtocol,
     config: &ResolverConfig,
     payload: &ImagePayload,
     instruction: Option<&str>,
-) -> Value {
-    let data_url = format!(
-        "data:{};base64,{}",
-        payload.media_type,
-        STANDARD.encode(&payload.bytes)
-    );
+) -> Result<Value, String> {
     let task = instruction
         .map(|instruction| {
             format!(
@@ -799,23 +808,37 @@ fn image_description_request_body(
             )
         })
         .unwrap_or_else(|| "Analyze the attached image and return the JSON result.".to_string());
-    let mut body = json!({
-        "model": config.model,
-        "messages": [
-            { "role": "system", "content": RESOLVER_SYSTEM_PROMPT },
-            {
-                "role": "user",
-                "content": [
-                    { "type": "text", "text": task },
-                    { "type": "image_url", "image_url": { "url": data_url } }
-                ]
-            }
-        ],
-        "temperature": 0.1,
-        "max_tokens": 4096,
-        "stream": false
-    });
-    if config.provider == "dashscope" {
+    let request = UniversalRequest {
+        model: Some(config.model.clone()),
+        instructions: vec![ContentBlock::Text {
+            text: RESOLVER_SYSTEM_PROMPT.to_string(),
+        }],
+        input: vec![UniversalItem::Message {
+            role: Role::User,
+            id: None,
+            content: vec![
+                ContentBlock::Text { text: task },
+                ContentBlock::Image {
+                    media_type: Some(payload.media_type.clone()),
+                    url: None,
+                    data: Some(STANDARD.encode(&payload.bytes)),
+                    extensions: Default::default(),
+                },
+            ],
+            extensions: Default::default(),
+        }],
+        generation: GenerationConfig {
+            temperature: (protocol == BridgeProtocol::OpenAiChat).then_some(0.1),
+            max_output_tokens: Some(4096),
+            ..GenerationConfig::default()
+        },
+        ..UniversalRequest::default()
+    };
+    let mut body = protocol
+        .encode_upstream_request(&request)
+        .map_err(|error| error.to_string())?;
+    super::normalization::normalize_target_request(&mut body, protocol)?;
+    if config.provider == "dashscope" && protocol == BridgeProtocol::OpenAiChat {
         body["response_format"] = json!({ "type": "json_object" });
         body["enable_thinking"] = Value::Bool(false);
     } else if config.provider == "minimax"
@@ -823,7 +846,7 @@ fn image_description_request_body(
     {
         body["thinking"] = json!({ "type": "disabled" });
     }
-    body
+    Ok(body)
 }
 
 fn image_metadata(payload: &ImagePayload, content_sha256: &str) -> Value {
@@ -840,14 +863,38 @@ fn recorded_image_description_request(
     content_sha256: &str,
 ) -> Value {
     let mut recorded = body.clone();
-    if let Some(url) = recorded.pointer_mut("/messages/1/content/1/image_url/url") {
-        *url = Value::String(format!(
+    let encoded = STANDARD.encode(&payload.bytes);
+    let data_url = format!("data:{};base64,{encoded}", payload.media_type);
+    redact_image_payload(
+        &mut recorded,
+        &encoded,
+        &data_url,
+        &format!(
             "<redacted image data: {}; {} bytes; sha256={content_sha256}>",
             payload.media_type,
             payload.bytes.len()
-        ));
-    }
+        ),
+    );
     recorded
+}
+
+fn redact_image_payload(value: &mut Value, encoded: &str, data_url: &str, replacement: &str) {
+    match value {
+        Value::String(text) if text == encoded || text == data_url => {
+            *text = replacement.to_string();
+        }
+        Value::Array(values) => {
+            for value in values {
+                redact_image_payload(value, encoded, data_url, replacement);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values_mut() {
+                redact_image_payload(value, encoded, data_url, replacement);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn analysis_identity(
@@ -1030,18 +1077,26 @@ fn parse_attachment_id(attachment_id: &str) -> Result<String, String> {
     Ok(value)
 }
 
-fn parse_openai_chat_content(response: &Value) -> Option<ImageAnalysis> {
-    let content = response.pointer("/choices/0/message/content")?;
-    let text = if let Some(text) = content.as_str() {
-        text.to_string()
-    } else {
-        content
-            .as_array()?
-            .iter()
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+fn parse_image_analysis_response(
+    protocol: BridgeProtocol,
+    response: &Value,
+) -> Option<ImageAnalysis> {
+    let events = protocol.decode_upstream_response(response.clone()).ok()?;
+    let response = UniversalResponse::from_events(&events);
+    let text = response
+        .output
+        .iter()
+        .filter_map(|item| match item {
+            UniversalItem::Message { content, .. } => Some(content),
+            _ => None,
+        })
+        .flat_map(|content| content.iter())
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     serde_json::from_str::<ImageAnalysis>(text.trim())
         .ok()?
         .normalized()
@@ -1121,7 +1176,9 @@ mod tests {
             api_type: "openai-chat".to_string(),
             model: "qwen3-vl-plus".to_string(),
         };
-        let body = image_description_request_body(&config, &payload, None);
+        let body =
+            image_description_request_body(BridgeProtocol::OpenAiChat, &config, &payload, None)
+                .expect("request encodes");
 
         assert_eq!(body["model"], "qwen3-vl-plus");
         assert_eq!(body["messages"][0]["content"], RESOLVER_SYSTEM_PROMPT);
@@ -1136,6 +1193,58 @@ mod tests {
     }
 
     #[test]
+    fn image_request_uses_selected_wire_protocol() {
+        let payload = ImagePayload {
+            bytes: b"image".to_vec(),
+            media_type: "image/png".to_string(),
+        };
+        let config = ResolverConfig {
+            profile_id: "vision".to_string(),
+            provider: "custom".to_string(),
+            api_type: "openai-responses".to_string(),
+            model: "vision-model".to_string(),
+        };
+
+        let responses = image_description_request_body(
+            BridgeProtocol::OpenAiResponses,
+            &config,
+            &payload,
+            None,
+        )
+        .expect("Responses request encodes");
+        assert_eq!(responses["input"][0]["content"][1]["type"], "input_image");
+        assert!(responses["input"][0]["content"][1]["image_url"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("data:image/png;base64,")));
+
+        let anthropic = image_description_request_body(
+            BridgeProtocol::AnthropicMessages,
+            &config,
+            &payload,
+            None,
+        )
+        .expect("Anthropic request encodes");
+        assert_eq!(anthropic["messages"][0]["content"][1]["type"], "image");
+        assert_eq!(
+            anthropic["messages"][0]["content"][1]["source"]["type"],
+            "base64"
+        );
+
+        let gemini = image_description_request_body(
+            BridgeProtocol::GeminiGenerateContent,
+            &config,
+            &payload,
+            None,
+        )
+        .expect("Gemini request encodes");
+        assert_eq!(
+            gemini["contents"][0]["parts"][1]["inlineData"]["mimeType"],
+            "image/png"
+        );
+        assert!(gemini.get("__va_model").is_none());
+    }
+
+    #[test]
     fn minimax_m3_request_disables_thinking() {
         let config = ResolverConfig {
             profile_id: "minimax".to_string(),
@@ -1144,13 +1253,15 @@ mod tests {
             model: "MiniMax-M3".to_string(),
         };
         let body = image_description_request_body(
+            BridgeProtocol::OpenAiChat,
             &config,
             &ImagePayload {
                 bytes: b"image".to_vec(),
                 media_type: "image/png".to_string(),
             },
             None,
-        );
+        )
+        .expect("request encodes");
 
         assert_eq!(body["thinking"]["type"], "disabled");
         assert!(body.get("response_format").is_none());
@@ -1168,13 +1279,21 @@ mod tests {
             api_type: "openai-chat".to_string(),
             model: "MiniMax-M3".to_string(),
         };
-        let body = image_description_request_body(&config, &payload, None);
-        let recorded = recorded_image_description_request(&body, &payload, "content-hash");
-        let text = recorded.to_string();
+        for protocol in [
+            BridgeProtocol::OpenAiChat,
+            BridgeProtocol::OpenAiResponses,
+            BridgeProtocol::AnthropicMessages,
+            BridgeProtocol::GeminiGenerateContent,
+        ] {
+            let body = image_description_request_body(protocol, &config, &payload, None)
+                .expect("request encodes");
+            let recorded = recorded_image_description_request(&body, &payload, "content-hash");
+            let text = recorded.to_string();
 
-        assert!(text.contains("redacted image data"));
-        assert!(text.contains("sha256=content-hash"));
-        assert!(!text.contains(&STANDARD.encode(&payload.bytes)));
+            assert!(text.contains("redacted image data"));
+            assert!(text.contains("sha256=content-hash"));
+            assert!(!text.contains(&STANDARD.encode(&payload.bytes)));
+        }
     }
 
     #[test]
@@ -1200,18 +1319,75 @@ mod tests {
     }
 
     #[test]
-    fn parses_only_structured_chat_content() {
+    fn parses_only_structured_response_content() {
         let content = serde_json::to_string(&test_analysis(" description ")).unwrap();
-        let parsed = parse_openai_chat_content(&json!({
-            "choices": [{ "message": { "content": content } }]
-        }))
+        let parsed = parse_image_analysis_response(
+            BridgeProtocol::OpenAiChat,
+            &json!({
+                "choices": [{ "message": { "role": "assistant", "content": content } }]
+            }),
+        )
         .expect("structured content parses");
 
         assert_eq!(parsed.description, "description");
-        assert!(parse_openai_chat_content(&json!({
-            "choices": [{ "message": { "content": "<think>reasoning</think> description" } }]
-        }))
-        .is_none());
+        assert!(
+            parse_image_analysis_response(
+                BridgeProtocol::OpenAiChat,
+                &json!({
+                    "choices": [{ "message": { "role": "assistant", "content": "<think>reasoning</think> description" } }]
+                })
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn parses_structured_content_from_supported_protocols() {
+        let content = serde_json::to_string(&test_analysis("protocol response")).unwrap();
+        let cases = [
+            (
+                BridgeProtocol::OpenAiResponses,
+                json!({
+                    "id": "resp_1",
+                    "model": "vision-model",
+                    "output": [{
+                        "type": "message",
+                        "id": "msg_1",
+                        "role": "assistant",
+                        "content": [{ "type": "output_text", "text": content }]
+                    }]
+                }),
+            ),
+            (
+                BridgeProtocol::AnthropicMessages,
+                json!({
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": "vision-model",
+                    "content": [{ "type": "text", "text": content }],
+                    "stop_reason": "end_turn"
+                }),
+            ),
+            (
+                BridgeProtocol::GeminiGenerateContent,
+                json!({
+                    "candidates": [{
+                        "content": {
+                            "role": "model",
+                            "parts": [{ "text": content }]
+                        },
+                        "finishReason": "STOP"
+                    }]
+                }),
+            ),
+        ];
+
+        for (protocol, response) in cases {
+            let parsed = parse_image_analysis_response(protocol, &response)
+                .expect("protocol response parses");
+            assert_eq!(parsed.description, "protocol response");
+        }
     }
 
     #[tokio::test]
@@ -1249,9 +1425,10 @@ mod tests {
     async fn resolves_image_to_text_and_reuses_disk_cache() {
         let calls = Arc::new(AtomicUsize::new(0));
         let handler_calls = calls.clone();
-        let app = axum::Router::new().route(
-            "/v1/chat/completions",
-            axum::routing::post(
+        let app = axum::Router::new()
+            .route(
+                "/v1/chat/completions",
+                axum::routing::post(
                 move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| {
                     let handler_calls = handler_calls.clone();
                     async move {
@@ -1281,14 +1458,73 @@ mod tests {
                         axum::Json(json!({
                             "choices": [{
                                 "message": {
+                                    "role": "assistant",
                                     "content": serde_json::to_string(&analysis).unwrap()
                                 }
                             }]
                         }))
                     }
                 },
-            ),
-        );
+                ),
+            )
+            .route(
+                "/v1/responses",
+                axum::routing::post(
+                    |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| async move {
+                        assert_eq!(
+                            headers
+                                .get(reqwest::header::AUTHORIZATION)
+                                .and_then(|value| value.to_str().ok()),
+                            Some("Bearer test-key")
+                        );
+                        assert_eq!(body["input"][0]["content"][1]["type"], "input_image");
+                        axum::Json(json!({
+                            "id": "resp_1",
+                            "model": "responses-vision",
+                            "output": [{
+                                "type": "message",
+                                "id": "msg_1",
+                                "role": "assistant",
+                                "content": [{
+                                    "type": "output_text",
+                                    "text": serde_json::to_string(&test_analysis("Responses image analysis.")).unwrap()
+                                }]
+                            }]
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/v1/messages",
+                axum::routing::post(
+                    |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| async move {
+                        assert_eq!(
+                            headers
+                                .get("x-api-key")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("test-key")
+                        );
+                        assert_eq!(
+                            headers
+                                .get("anthropic-version")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("2023-06-01")
+                        );
+                        assert_eq!(body["messages"][0]["content"][1]["type"], "image");
+                        axum::Json(json!({
+                            "id": "msg_1",
+                            "type": "message",
+                            "role": "assistant",
+                            "model": "anthropic-vision",
+                            "content": [{
+                                "type": "text",
+                                "text": serde_json::to_string(&test_analysis("Anthropic image analysis.")).unwrap()
+                            }],
+                            "stop_reason": "end_turn"
+                        }))
+                    },
+                ),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("mock resolver binds");
@@ -1310,10 +1546,13 @@ mod tests {
                 api_type: "openai-chat".to_string(),
                 model: "qwen3.6-plus".to_string(),
             },
+            protocol: BridgeProtocol::OpenAiChat,
             client: reqwest::Client::new(),
             endpoint_url: format!("http://{address}/v1/chat/completions"),
             api_key: "test-key".to_string(),
             headers: reqwest::header::HeaderMap::new(),
+            auth_header: false,
+            managed_auth: false,
             cache_root: cache_root.clone(),
             attachment_root: cache_root.join("attachments"),
             record: None,
@@ -1421,6 +1660,61 @@ mod tests {
             .expect("cached inspection executes");
         assert!(cached_inspection);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        for (protocol, api_type, model, path, expected) in [
+            (
+                BridgeProtocol::OpenAiResponses,
+                "openai-responses",
+                "responses-vision",
+                "/v1/responses",
+                "Responses image analysis.",
+            ),
+            (
+                BridgeProtocol::AnthropicMessages,
+                "anthropic",
+                "anthropic-vision",
+                "/v1/messages",
+                "Anthropic image analysis.",
+            ),
+        ] {
+            let resolver = ProfileImageResolver {
+                config: ResolverConfig {
+                    profile_id: format!("{api_type}-profile"),
+                    provider: "custom".to_string(),
+                    api_type: api_type.to_string(),
+                    model: model.to_string(),
+                },
+                protocol,
+                client: reqwest::Client::new(),
+                endpoint_url: format!("http://{address}{path}"),
+                api_key: "test-key".to_string(),
+                headers: reqwest::header::HeaderMap::new(),
+                auth_header: false,
+                managed_auth: false,
+                cache_root: cache_root.join(api_type),
+                attachment_root: cache_root.join(format!("{api_type}-attachments")),
+                record: None,
+            };
+            let mut registry = ServiceSideCapabilityRegistry::new();
+            registry
+                .register_input_resolver(resolver)
+                .expect("protocol resolver registers");
+            let mut request = original_request("Describe this image.");
+
+            let report = registry
+                .resolve_inputs(&mut request)
+                .await
+                .expect("protocol image resolves");
+
+            assert_eq!(report.images_resolved, 1);
+            let UniversalItem::Message { content, .. } = &request.input[0] else {
+                panic!("request contains user message");
+            };
+            let ContentBlock::Text { text } = &content[1] else {
+                panic!("image must be replaced with protocol response text");
+            };
+            assert!(text.contains(expected));
+        }
 
         server.abort();
         std::fs::remove_dir_all(cache_root).expect("test cache cleanup");

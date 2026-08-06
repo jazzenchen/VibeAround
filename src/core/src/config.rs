@@ -280,7 +280,16 @@ impl ServiceSideImageInputConfig {
                 .profile_id
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty())
-            && self.api_type.as_deref().map(str::trim) == Some("openai-chat")
+            && self
+                .api_type
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| {
+                    matches!(
+                        value,
+                        "openai-chat" | "openai-responses" | "anthropic" | "gemini"
+                    )
+                })
             && self
                 .model
                 .as_deref()
@@ -1970,6 +1979,28 @@ mod tests {
             Some("qwen-vl-max")
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn service_side_image_input_accepts_supported_api_types() {
+        for api_type in ["openai-chat", "openai-responses", "anthropic", "gemini"] {
+            let config = ServiceSideImageInputConfig {
+                enabled: true,
+                profile_id: Some("vision-profile".to_string()),
+                api_type: Some(api_type.to_string()),
+                model: Some("vision-model".to_string()),
+            };
+
+            assert!(config.is_configured(), "{api_type} should be supported");
+        }
+
+        let unsupported = ServiceSideImageInputConfig {
+            enabled: true,
+            profile_id: Some("vision-profile".to_string()),
+            api_type: Some("unsupported".to_string()),
+            model: Some("vision-model".to_string()),
+        };
+        assert!(!unsupported.is_configured());
     }
 
     #[test]
