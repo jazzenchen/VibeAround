@@ -150,7 +150,7 @@ fn test_payload(api_type: &str, model: &str) -> Result<Value, String> {
         "openai-responses" => Ok(json!({
             "model": model,
             "input": prompt,
-            "max_output_tokens": 8,
+            "max_output_tokens": 32,
             "stream": false
         })),
         "gemini" => Ok(json!({
@@ -261,4 +261,16 @@ fn compact_error_body(body: &str) -> String {
         return compact;
     }
     compact.chars().take(360).collect::<String>() + "..."
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn responses_test_payload_uses_valid_output_token_limit() {
+        let payload = test_payload("openai-responses", "gpt-test").expect("payload builds");
+
+        assert_eq!(payload["max_output_tokens"], 32);
+    }
 }
