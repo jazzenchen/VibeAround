@@ -51,6 +51,7 @@ async fn render_server_iframe(
         &subtitle,
         remaining_ms,
         r#"<button onclick="document.querySelector('iframe').src=document.querySelector('iframe').src">Refresh</button>"#,
+        None,
     );
     let html = format!(
         r#"<!DOCTYPE html>

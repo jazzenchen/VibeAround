@@ -485,6 +485,10 @@ pub async fn run_web_server(
         //   Server → iframe + `/`-scoped cookie proxy
         //   File   → rendered markdown page
         // /u = owner (loopback or va_owner cookie), /s = temporary share.
+        .route(
+            preview::MARKED_SCRIPT_ROUTE,
+            get(preview::marked_script_handler),
+        )
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
         .route("/preview/s/{slug}", get(preview::share_preview_handler))
         .nest_service("/assets", ServeDir::new(assets_dir))

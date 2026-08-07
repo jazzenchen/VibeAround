@@ -4,10 +4,6 @@
 //! Share pages also receive a countdown; owner pages live with the session and
 //! therefore do not show one.
 
-use axum::body::Body;
-use axum::http::StatusCode;
-use axum::response::Response;
-
 use common::previews::PreviewEntry;
 
 pub(super) fn remaining_millis(entry: &PreviewEntry) -> Option<u128> {
@@ -23,16 +19,6 @@ pub(super) fn escape_html(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
-}
-
-pub(super) fn html_response(html: String) -> Response {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "text/html; charset=utf-8")
-        .header("Cache-Control", "no-store")
-        .header("Referrer-Policy", "no-referrer")
-        .body(Body::from(html))
-        .unwrap()
 }
 
 /// Minimal percent-encoder for query-string values: encodes anything
@@ -56,6 +42,7 @@ pub(super) fn toolbar_and_timer(
     subtitle: &str,
     remaining_ms: Option<u128>,
     extra_buttons: &str,
+    script_nonce: Option<&str>,
 ) -> String {
     let subtitle_html = if subtitle.is_empty() {
         String::new()
@@ -66,9 +53,12 @@ pub(super) fn toolbar_and_timer(
         let total_seconds = remaining_ms / 1000;
         let minutes = total_seconds / 60;
         let seconds = total_seconds % 60;
+        let nonce = script_nonce
+            .map(|nonce| format!(r#" nonce="{}""#, escape_html(nonce)))
+            .unwrap_or_default();
         format!(
             r#"<span class="badge" id="timer">{minutes}:{seconds:02}</span>
-<script>
+<script{nonce}>
 (function() {{
   var expiry = Date.now() + {remaining_ms};
   var el = document.getElementById('timer');

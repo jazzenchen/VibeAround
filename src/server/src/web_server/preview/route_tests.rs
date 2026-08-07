@@ -68,14 +68,36 @@ async fn share_preview_accepts_only_ephemeral_file_share_key() {
     std::fs::write(&file, "# Shared markdown").unwrap();
     let (owner_slug, share_key) = common::previews::ensure_file(file, dir, "share".into());
 
-    let error = share_preview_handler(Path(owner_slug)).await;
+    let error = share_preview_handler(Path(owner_slug.clone())).await;
     assert_eq!(error.status(), StatusCode::NOT_FOUND);
     assert_eq!(error.headers().get("cache-control").unwrap(), "no-store");
 
     let response = share_preview_handler(Path(share_key)).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    let share_csp = response
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(share_csp.contains("default-src 'none'"));
+    assert!(share_csp.contains("script-src-attr 'none'"));
+    assert!(share_csp.contains("img-src https:"));
     assert!(response.headers().get("set-cookie").is_none());
+
+    let owner = owner_preview_handler(Path(owner_slug), local_request("127.0.0.1:12358")).await;
+    assert_eq!(owner.status(), StatusCode::OK);
+    assert_eq!(owner.headers().get("cache-control").unwrap(), "no-store");
+    let owner_csp = owner
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(owner_csp.contains("default-src 'none'"));
+    assert!(owner_csp.contains("script-src-attr 'none'"));
+    assert!(owner_csp.contains("img-src https:"));
 }
 
 #[tokio::test]

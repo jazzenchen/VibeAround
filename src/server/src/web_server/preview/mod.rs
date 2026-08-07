@@ -19,11 +19,13 @@
 //!
 //! ## Module layout
 //!
+//! - [`assets`]        — versioned third-party browser assets
 //! - [`iframe`]        — owner dispatcher + server iframe wrapper
 //! - [`markdown`]      — rendered markdown document page
 //! - [`cookie_proxy`]  — root `/` fallback: dev-server page proxy
 //! - [`toolbar`]       — shared toolbar HTML/CSS + HTML helpers
 
+mod assets;
 mod cookie_proxy;
 mod iframe;
 mod markdown;
@@ -35,6 +37,7 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use common::previews::{PreviewEntry, PreviewTarget};
 
+pub(super) use assets::{marked_script_handler, MARKED_SCRIPT_ROUTE};
 pub use cookie_proxy::cookie_proxy_fallback;
 
 use cookie_proxy::{extract_cookie, owner_routing_cookie};
