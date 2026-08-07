@@ -50,6 +50,8 @@ Live Server 与 Markdown 渲染预览采用不同边界：
 
 Live Server 预览不生成分享链接，也不能通过公网 hostname 代理。Markdown 分享链接是唯一有意不认证的面，作用域限于单个文档、时间盒 10 分钟。隧道上的其他一切仍需配对 + token。
 
+Markdown 解析器随守护进程内置，Preview 不执行远程解析脚本。原始 HTML 以源码文本显示。只有 Markdown 图片语法中的绝对 HTTPS URL 才会发起图片请求。图片主机可以看到访问者的 IP 地址；`Referrer-Policy: no-referrer` 会阻止 Preview URL 随请求发送。
+
 ## 凭据处理
 
 - 供应商 API key 存在 `~/.vibearound/` 下的 Profile 存储里，**由守护进程**注入上游请求。渲染给 Agent 的配置只含本地 Bridge URL —— Agent 配置泄露不会暴露任何供应商 key。

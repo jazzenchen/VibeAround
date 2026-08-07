@@ -7,6 +7,10 @@ description: Preview a markdown file with beautiful GitHub-style rendering. Use 
 
 After you create or update a markdown document, generate a styled preview so the user can read it in their browser or phone with beautiful formatting.
 
+## Rendering and privacy
+
+The parser is bundled with VibeAround. Raw HTML is shown as source text, and only absolute HTTPS Markdown image URLs are loaded. Image hosts can see the viewer's IP address; Preview sends no referrer.
+
 ## When to Use
 
 - You just created or updated a README.md, documentation, or any .md file

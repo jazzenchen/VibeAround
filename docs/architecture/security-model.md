@@ -50,6 +50,8 @@ Live Server and rendered Markdown previews have different boundaries:
 
 Live Server previews do not mint share links and cannot proxy through a public hostname. Markdown share links are the only intentionally unauthenticated surface, scoped to one document and time-boxed to 10 minutes. Everything else on the tunnel still requires pairing + token.
 
+The Markdown parser is bundled with the daemon; Preview does not execute a remote parser script. Raw HTML is displayed as source text. Only absolute HTTPS URLs written with Markdown image syntax become image requests. An image host can see the viewer's IP address, while `Referrer-Policy: no-referrer` prevents the Preview URL from being sent with the request.
+
 ## Credential handling
 
 - Provider API keys are stored in the profile store under `~/.vibearound/` and injected into upstream requests **by the daemon**. Rendered agent configs contain only local bridge URLs — a leaked agent config exposes no provider key.

@@ -206,7 +206,7 @@
   },
   {
     "name": "md_preview",
-    "description": "Preview a markdown file with GitHub-style rendering. Returns owner and share URLs; the share URL expires in 10 minutes.",
+    "description": "Preview a markdown file with GitHub-style rendering. Raw HTML is shown as source text; only absolute HTTPS Markdown images are loaded. Returns owner and share URLs; the share URL expires in 10 minutes.",
     "inputSchema": {
       "type": "object",
       "properties": {
