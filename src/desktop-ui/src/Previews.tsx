@@ -13,7 +13,7 @@ import { useI18n } from "@va/i18n";
 import { EmptyBlock, PageHeader, PageShell, StatusBanner } from "@/components/page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { apiFetch, openDashboardUrl, API_BASE } from "./lib/api";
+import { apiFetch, openDashboardUrl, openExternalUrl, API_BASE } from "./lib/api";
 
 const PREVIEW_SHARE_TTL_MINUTES = Math.round(PREVIEW_SHARE_TTL_SECS / 60);
 
@@ -183,6 +183,7 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
           label={t("Local")}
           url={localOwnerUrl}
           icon={<ExternalLink className="w-3 h-3" />}
+          openUrl={openDashboardUrl}
         />
         {!isServer && (
           <>
@@ -190,12 +191,14 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
               label={t("Tunnel · owner")}
               url={tunnelOwnerUrl}
               icon={<Globe className="w-3 h-3" />}
+              openUrl={openDashboardUrl}
               disabledReason={tunnelOwnerUrl ? null : t("Tunnel not running")}
             />
             <UrlButton
               label={t("Tunnel · share")}
               url={tunnelShareUrl}
               icon={<Globe className="w-3 h-3" />}
+              openUrl={openExternalUrl}
               disabledReason={
                 !tunnelUrl
                   ? t("Tunnel not running")
@@ -215,15 +218,16 @@ interface UrlButtonProps {
   label: string;
   url: string | null;
   icon: React.ReactNode;
+  openUrl: (url: string) => Promise<void>;
   disabledReason?: string | null;
 }
 
-function UrlButton({ label, url, icon, disabledReason }: UrlButtonProps) {
+function UrlButton({ label, url, icon, openUrl, disabledReason }: UrlButtonProps) {
   const { t } = useI18n();
   const disabled = !url || !!disabledReason;
   const onClick = () => {
     if (!url) return;
-    void openDashboardUrl(url);
+    void openUrl(url);
   };
   return (
     <Button
