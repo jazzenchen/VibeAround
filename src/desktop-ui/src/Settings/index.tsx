@@ -47,7 +47,12 @@ import type {
 import { apiFetch } from "../lib/api";
 import { saveSettingsPatch } from "../lib/settingsPatch";
 import { listProfiles } from "../Launch/api";
-import type { ProfileSummary } from "../Launch/types";
+import { apiTypeLabel, type ProfileSummary } from "../Launch/types";
+import {
+  buildServiceSideImageProfiles,
+  buildServiceSideImageSettings,
+  type ServiceSideImageProfile,
+} from "./serviceSideImage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -123,12 +128,6 @@ type SearchSourceForm = {
 };
 
 type SearchContextSize = "low" | "medium" | "high";
-
-type ServiceSideImageProfile = {
-  id: string;
-  label: string;
-  models: string[];
-};
 
 type ManagedPluginCategory = "im" | "acp" | "search";
 type ManagedPluginStatus =
@@ -252,6 +251,7 @@ export function SettingsDialog({
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [serviceSideImageEnabled, setServiceSideImageEnabled] = useState(false);
   const [serviceSideImageProfileId, setServiceSideImageProfileId] = useState("");
+  const [serviceSideImageApiType, setServiceSideImageApiType] = useState("");
   const [serviceSideImageModel, setServiceSideImageModel] = useState("");
   const [searchMaxResults, setSearchMaxResults] = useState(
     DEFAULT_SEARCH_MAX_RESULTS,
@@ -320,7 +320,9 @@ export function SettingsDialog({
     [profiles],
   );
   const selectedServiceSideImageProfile = serviceSideImageProfiles.find(
-    (profile) => profile.id === serviceSideImageProfileId,
+    (profile) =>
+      profile.id === serviceSideImageProfileId &&
+      profile.apiType === serviceSideImageApiType,
   );
   const serviceSideImageReady =
     !serviceSideImageEnabled ||
@@ -459,6 +461,7 @@ export function SettingsDialog({
     const imageInput = loadedSettings.service_side?.image_input;
     setServiceSideImageEnabled(Boolean(imageInput?.enabled));
     setServiceSideImageProfileId(imageInput?.profile_id?.trim() ?? "");
+    setServiceSideImageApiType(imageInput?.api_type?.trim() ?? "");
     setServiceSideImageModel(imageInput?.model?.trim() ?? "");
   }, []);
 
@@ -980,10 +983,11 @@ export function SettingsDialog({
     setSaving("service-side");
     setNotice(null);
     try {
-      const nextSettings = buildServiceSideSettings({
+      const nextSettings = buildServiceSideImageSettings({
         settings,
         imageEnabled: serviceSideImageEnabled,
         profileId: serviceSideImageProfileId,
+        apiType: serviceSideImageApiType,
         model: serviceSideImageModel,
       });
       const saved = await saveSettingsPatch(settings, nextSettings);
@@ -1002,6 +1006,7 @@ export function SettingsDialog({
     }
   }, [
     settings,
+    serviceSideImageApiType,
     serviceSideImageEnabled,
     serviceSideImageModel,
     serviceSideImageProfileId,
@@ -1742,11 +1747,13 @@ export function SettingsDialog({
                     <ServiceSideSettingsPanel
                       imageEnabled={serviceSideImageEnabled}
                       profileId={serviceSideImageProfileId}
+                      apiType={serviceSideImageApiType}
                       model={serviceSideImageModel}
                       profiles={serviceSideImageProfiles}
                       onImageEnabledChange={setServiceSideImageEnabled}
-                      onProfileChange={(profileId) => {
-                        setServiceSideImageProfileId(profileId);
+                      onProfileChange={(profile) => {
+                        setServiceSideImageProfileId(profile.id);
+                        setServiceSideImageApiType(profile.apiType);
                         setServiceSideImageModel("");
                       }}
                       onModelChange={setServiceSideImageModel}
@@ -2693,6 +2700,7 @@ function SearchToolSettingsPanel({
 function ServiceSideSettingsPanel({
   imageEnabled,
   profileId,
+  apiType,
   model,
   profiles,
   onImageEnabledChange,
@@ -2702,15 +2710,18 @@ function ServiceSideSettingsPanel({
 }: {
   imageEnabled: boolean;
   profileId: string;
+  apiType: string;
   model: string;
   profiles: ServiceSideImageProfile[];
   onImageEnabledChange: (value: boolean) => void;
-  onProfileChange: (value: string) => void;
+  onProfileChange: (profile: ServiceSideImageProfile) => void;
   onModelChange: (value: string) => void;
   notice?: ReactNode;
 }) {
   const { t } = useI18n();
-  const selectedProfile = profiles.find((profile) => profile.id === profileId);
+  const selectedProfile = profiles.find(
+    (profile) => profile.id === profileId && profile.apiType === apiType,
+  );
   const configured = Boolean(selectedProfile?.models.includes(model));
   return (
     <div className="space-y-5">
@@ -2743,9 +2754,14 @@ function ServiceSideSettingsPanel({
           <label className="block">
             <span className="text-xs text-muted-foreground">{t("Profile")}</span>
             <Select
-              value={profileId || undefined}
+              value={selectedProfile?.key}
               disabled={!imageEnabled || profiles.length === 0}
-              onValueChange={onProfileChange}
+              onValueChange={(value) => {
+                const profile = profiles.find(
+                  (candidate) => candidate.key === value,
+                );
+                if (profile) onProfileChange(profile);
+              }}
             >
               <SelectTrigger
                 size="sm"
@@ -2755,8 +2771,8 @@ function ServiceSideSettingsPanel({
               </SelectTrigger>
               <SelectContent>
                 {profiles.map((profile) => (
-                  <SelectItem key={profile.id} value={profile.id}>
-                    {profile.label}
+                  <SelectItem key={profile.key} value={profile.key}>
+                    {profile.label} · {t(apiTypeLabel(profile.apiType))}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -2786,7 +2802,7 @@ function ServiceSideSettingsPanel({
           </label>
           {profiles.length === 0 && (
             <div className="text-[11px] text-amber-700 dark:text-amber-300 sm:col-span-2">
-              {t("Create an OpenAI Chat profile with an image-capable model first.")}
+              {t("Create an API key profile with an image-capable model first.")}
             </div>
           )}
           {imageEnabled && profiles.length > 0 && !configured && (
@@ -3200,49 +3216,6 @@ function buildWebSearchSettings({
   delete apiBridge.replaceProviderWebSearch;
   result.api_bridge = apiBridge as AppSettings["api_bridge"];
   return result;
-}
-
-function buildServiceSideSettings({
-  settings,
-  imageEnabled,
-  profileId,
-  model,
-}: {
-  settings: AppSettings;
-  imageEnabled: boolean;
-  profileId: string;
-  model: string;
-}): AppSettings {
-  const result: AppSettings = { ...settings };
-  const serviceSide = isRecord(settings.service_side)
-    ? { ...settings.service_side }
-    : {};
-  serviceSide.image_input = {
-    enabled: imageEnabled,
-    profile_id: profileId.trim(),
-    api_type: "openai-chat",
-    model: model.trim(),
-  };
-  result.service_side = serviceSide as AppSettings["service_side"];
-  return result;
-}
-
-function buildServiceSideImageProfiles(
-  profiles: ProfileSummary[],
-): ServiceSideImageProfile[] {
-  return profiles.flatMap((profile) => {
-    const models = Array.from(
-      new Set(
-        (profile.apiTypeModelOptions["openai-chat"] ?? [])
-          .filter((model) => model.capabilities?.image_input)
-          .map((model) => model.id.trim())
-          .filter(Boolean),
-      ),
-    );
-    return models.length > 0
-      ? [{ id: profile.id, label: profile.label, models }]
-      : [];
-  });
 }
 
 function buildSearchToolSettings({

@@ -34,8 +34,8 @@ export const zhCNDesktopPages: Record<string, string> = {
   "Select a profile": "选择 Profile",
   "Vision model": "视觉模型",
   "Select a vision model": "选择视觉模型",
-  "Create an OpenAI Chat profile with an image-capable model first.":
-    "请先创建一个包含图片能力模型的 OpenAI Chat Profile。",
+  "Create an API key profile with an image-capable model first.":
+    "请先创建一个包含图片能力模型的 API Key Profile。",
   "Select both a profile and a vision model before applying.":
     "应用前请选择 Profile 和视觉模型。",
   "Multimodal settings applied.": "多模态设置已应用。",
