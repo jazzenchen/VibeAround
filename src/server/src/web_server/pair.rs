@@ -6,10 +6,12 @@
 use axum::body::Body;
 use axum::{
     extract::Query,
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
+
+use super::auth::OWNER_COOKIE;
 
 /// POST /va/api/pair/start — generate a pairing code.
 ///
@@ -28,9 +30,6 @@ pub struct StatusQuery {
     sid: String,
 }
 
-/// Cookie name for the authenticated owner session.
-const OWNER_COOKIE: &str = "va_owner";
-
 /// GET /va/api/pair/status?sid={sid} — poll for pairing status.
 ///
 /// Returns:
@@ -38,7 +37,7 @@ const OWNER_COOKIE: &str = "va_owner";
 /// - `{ "status": "expired" }` — code has expired, frontend should refresh
 /// - `{ "status": "verified" }` — paired! Also sets `va_owner` cookie with auth token
 pub async fn status_handler(Query(q): Query<StatusQuery>) -> Response {
-    match common::auth::pair::check_status(&q.sid) {
+    let mut response = match common::auth::pair::check_status(&q.sid) {
         None => {
             // Unknown or expired session.
             Json(serde_json::json!({ "status": "expired" })).into_response()
@@ -51,16 +50,14 @@ pub async fn status_handler(Query(q): Query<StatusQuery>) -> Response {
             // Verified! Consume the session and set the owner cookie.
             match common::auth::pair::consume_verified(&q.sid) {
                 Some(token) => {
-                    let cookie = format!(
-                        "{}={}; Path=/va/; HttpOnly; SameSite=Lax",
-                        OWNER_COOKIE, token
-                    );
+                    let [clear_legacy_cookie, owner_cookie] = owner_cookies(&token);
                     // Return the token in the body so the SPA can store it in
                     // sessionStorage (existing auth mechanism for API calls).
                     Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "application/json")
-                        .header("Set-Cookie", cookie)
+                        .header(header::SET_COOKIE, clear_legacy_cookie)
+                        .header(header::SET_COOKIE, owner_cookie)
                         .body(Body::from(
                             serde_json::json!({
                                 "status": "verified",
@@ -76,5 +73,41 @@ pub async fn status_handler(Query(q): Query<StatusQuery>) -> Response {
                 }
             }
         }
+    };
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "no-store".parse().expect("valid cache-control header"),
+    );
+    response
+}
+
+fn owner_cookies(token: &str) -> [String; 2] {
+    // Releases before the root preview proxy scoped this cookie to `/va/`.
+    // Clear that more-specific cookie so it cannot shadow the new root cookie.
+    [
+        format!(
+            "{}=; Path=/va/; Max-Age=0; HttpOnly; SameSite=Lax",
+            OWNER_COOKIE
+        ),
+        format!(
+            "{}={}; Path=/; Secure; HttpOnly; SameSite=Lax",
+            OWNER_COOKIE, token
+        ),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::owner_cookies;
+
+    #[test]
+    fn owner_cookie_migrates_from_va_path_to_root() {
+        assert_eq!(
+            owner_cookies("test-token"),
+            [
+                "va_owner=; Path=/va/; Max-Age=0; HttpOnly; SameSite=Lax".to_string(),
+                "va_owner=test-token; Path=/; Secure; HttpOnly; SameSite=Lax".to_string(),
+            ]
+        );
     }
 }

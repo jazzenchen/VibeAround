@@ -2,9 +2,9 @@
 //!
 //! When a preview session has a `Server { port }` target, we render a
 //! tiny HTML shell whose `<iframe src="/">` serves dev-server content
-//! through the cookie-based proxy fallback at the root path. The slug
-//! is stashed in a `va_preview` cookie with the same TTL as the share
-//! key, so the proxy can look up the session on each request.
+//! through the cookie-based proxy fallback at the root path. The authorized
+//! owner or share route is stashed in a `va_preview` cookie, so the proxy can
+//! revalidate that boundary on each request.
 
 use axum::body::Body;
 use axum::http::StatusCode;
@@ -16,17 +16,13 @@ use super::cookie_proxy::PREVIEW_COOKIE;
 use super::markdown::render_md_page;
 use super::toolbar::{escape_html, remaining_millis, toolbar_and_timer, TOOLBAR_CSS};
 
-/// Look up a preview by slug and dispatch to the right renderer based on target.
-pub(super) async fn render_preview(slug: &str) -> Result<Response, (StatusCode, String)> {
-    let entry = common::previews::lookup(slug).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            "Preview not found or expired.".to_string(),
-        )
-    })?;
-
+/// Dispatch an already-authorized preview entry to the renderer for its target.
+pub(super) async fn render_preview(
+    entry: PreviewEntry,
+    routing_cookie: &str,
+) -> Result<Response, (StatusCode, String)> {
     match entry.target {
-        PreviewTarget::Server { port } => render_server_iframe(slug, &entry, port).await,
+        PreviewTarget::Server { port } => render_server_iframe(&entry, port, routing_cookie).await,
         PreviewTarget::File => render_md_page(&entry).await,
     }
 }
@@ -34,19 +30,21 @@ pub(super) async fn render_preview(slug: &str) -> Result<Response, (StatusCode, 
 /// Render the iframe wrapper for a Server preview; sets `va_preview` cookie
 /// so the root-level cookie proxy can route requests to `localhost:{port}`.
 async fn render_server_iframe(
-    slug: &str,
     entry: &PreviewEntry,
     port: u16,
+    routing_cookie: &str,
 ) -> Result<Response, (StatusCode, String)> {
     let remaining_ms = remaining_millis(entry);
-    let remaining_secs = (remaining_ms / 1000) as u64;
     let title = escape_html(&entry.title);
     let subtitle = format!(":{}", port);
 
-    let cookie_value = format!(
-        "{}={}; Path=/; Max-Age={}; SameSite=Lax",
-        PREVIEW_COOKIE, slug, remaining_secs
+    let mut cookie = format!(
+        "{}={}; Path=/; HttpOnly; SameSite=Lax",
+        PREVIEW_COOKIE, routing_cookie
     );
+    if let Some(milliseconds) = remaining_ms {
+        cookie.push_str(&format!("; Max-Age={}", milliseconds / 1000));
+    }
 
     let toolbar = toolbar_and_timer(
         &title,
@@ -85,7 +83,9 @@ async fn render_server_iframe(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
-        .header("Set-Cookie", cookie_value)
+        .header("Cache-Control", "no-store")
+        .header("Referrer-Policy", "no-referrer")
+        .header("Set-Cookie", cookie)
         .body(Body::from(html))
         .unwrap())
 }

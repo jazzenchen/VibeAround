@@ -77,7 +77,6 @@ All token-authenticated; see [architecture overview](../architecture/overview.md
 |---|---|---|
 | `/preview/u/{slug}` | Owner token | While the preview exists |
 | `/preview/s/{slug}` | None | 600 s |
-| `/md-preview/{slug}` | Owner token | While it exists |
 
 ---
 

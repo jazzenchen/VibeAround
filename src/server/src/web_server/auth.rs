@@ -31,6 +31,9 @@ use axum::{
 use common::auth::AuthToken;
 use std::net::SocketAddr;
 
+/// Cookie set by the pairing flow for browser owner access.
+pub(crate) const OWNER_COOKIE: &str = "va_owner";
+
 /// Shared handle to the server's current auth token.
 #[derive(Clone)]
 pub struct AuthState(pub Arc<AuthToken>);
@@ -69,13 +72,25 @@ pub(crate) fn is_loopback_host(host: &str) -> bool {
         return true;
     }
 
-    let without_port = host
-        .strip_prefix('[')
-        .and_then(|rest| rest.split_once(']').map(|(addr, _)| addr.to_string()))
-        .or_else(|| host.rsplit_once(':').map(|(addr, _)| addr.to_string()))
-        .unwrap_or(host);
+    if let Some(rest) = host.strip_prefix('[') {
+        let Some((address, suffix)) = rest.split_once(']') else {
+            return false;
+        };
+        return address == "::1" && valid_optional_port(suffix);
+    }
 
-    matches!(without_port.as_str(), "localhost" | "127.0.0.1" | "::1")
+    let Some((name, port)) = host.rsplit_once(':') else {
+        return false;
+    };
+    !name.contains(':') && matches!(name, "localhost" | "127.0.0.1") && valid_port(port)
+}
+
+fn valid_optional_port(suffix: &str) -> bool {
+    suffix.is_empty() || suffix.strip_prefix(':').is_some_and(valid_port)
+}
+
+fn valid_port(port: &str) -> bool {
+    !port.is_empty() && port.parse::<u16>().is_ok()
 }
 
 fn request_host_is_loopback<B>(req: &Request<B>) -> bool {
@@ -98,15 +113,22 @@ fn request_origin_is_local_dashboard<B>(req: &Request<B>) -> bool {
         .is_none_or(|origin| local_dashboard_origin_allowed(origin, None))
 }
 
+/// Preview's local bypass requires both a loopback peer and loopback Host.
+/// Tunnel forwarders also connect over loopback, so peer alone is insufficient.
+pub(crate) fn request_is_loopback<B>(req: &Request<B>) -> bool {
+    request_peer_is_loopback(req) && request_host_is_loopback(req)
+}
+
+fn request_is_local_bridge<B>(req: &Request<B>) -> bool {
+    request_is_loopback(req) && request_origin_is_local_dashboard(req)
+}
+
 /// Allow local API bridge calls only from clients that actually connected via
 /// loopback and targeted a loopback dashboard URL. Tunnel forwarders also
 /// connect to the daemon over loopback, so the Host/Origin checks are needed
 /// to keep `/local-api` off public tunnel URLs while preserving local CLI use.
 pub async fn require_local_bridge(req: Request<Body>, next: Next) -> Response {
-    if request_peer_is_loopback(&req)
-        && request_host_is_loopback(&req)
-        && request_origin_is_local_dashboard(&req)
-    {
+    if request_is_local_bridge(&req) {
         return next.run(req).await;
     }
 
@@ -261,6 +283,18 @@ mod tests {
     use super::*;
     use axum::body::Body;
 
+    fn local_request(host: &str, peer: &str) -> Request<Body> {
+        let mut request = Request::builder()
+            .uri("/preview/u/test")
+            .header(header::HOST, host)
+            .body(Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(ConnectInfo(
+            peer.parse::<SocketAddr>().expect("valid peer address"),
+        ));
+        request
+    }
+
     fn req_with_header(value: &str) -> Request<Body> {
         Request::builder()
             .uri("/api/sessions")
@@ -329,9 +363,30 @@ mod tests {
         assert!(is_loopback_host("127.0.0.1"));
         assert!(is_loopback_host("127.0.0.1:12358"));
         assert!(is_loopback_host("::1"));
+        assert!(is_loopback_host("[::1]"));
         assert!(is_loopback_host("[::1]:12358"));
         assert!(!is_loopback_host("example.com"));
         assert!(!is_loopback_host("example.com:12358"));
+        assert!(!is_loopback_host("[::1].example.com"));
+        assert!(!is_loopback_host("[::1]evil"));
+        assert!(!is_loopback_host("127.0.0.1:not-a-port"));
+        assert!(!is_loopback_host("127.0.0.1:65536"));
+    }
+
+    #[test]
+    fn loopback_request_requires_loopback_peer_and_host() {
+        assert!(request_is_loopback(&local_request(
+            "127.0.0.1:12358",
+            "127.0.0.1:45000"
+        )));
+        assert!(!request_is_loopback(&local_request(
+            "preview.example.com",
+            "127.0.0.1:45000"
+        )));
+        assert!(!request_is_loopback(&local_request(
+            "127.0.0.1:12358",
+            "192.0.2.10:45000"
+        )));
     }
 
     #[test]

@@ -42,8 +42,7 @@ pub use store::SHARE_TTL_SECS;
 pub use types::{PreviewEntry, PreviewKind, PreviewSnapshot, PreviewTarget};
 
 use store::{
-    canonical, entry_from, generate_share_key, slug_from_path, PreviewSession, OWNER_FAR_FUTURE,
-    SESSIONS, SHARE_TTL,
+    canonical, entry_from, generate_share_key, slug_from_path, PreviewSession, SESSIONS, SHARE_TTL,
 };
 
 // ---------------------------------------------------------------------------
@@ -137,7 +136,7 @@ pub fn lookup_owner(slug: &str) -> Option<PreviewEntry> {
     sessions
         .values()
         .find(|s| s.slug == slug)
-        .map(|s| entry_from(s, Instant::now() + OWNER_FAR_FUTURE))
+        .map(|s| entry_from(s, None))
 }
 
 /// Look up a session by its ephemeral share key. Expired keys return `None`.
@@ -150,15 +149,7 @@ pub fn lookup_share(key: &str) -> Option<PreviewEntry> {
             (Some(k), Some(exp)) => k == key && exp > now,
             _ => false,
         })
-        .map(|s| entry_from(s, s.share_expires_at.unwrap_or(now)))
-}
-
-/// Unified lookup: tries owner slug then share key.
-///
-/// Used by the cookie-proxy fallback, which only knows the cookie value
-/// and not which kind of slug it came from.
-pub fn lookup(slug: &str) -> Option<PreviewEntry> {
-    lookup_owner(slug).or_else(|| lookup_share(slug))
+        .map(|s| entry_from(s, s.share_expires_at))
 }
 
 // ---------------------------------------------------------------------------
@@ -402,14 +393,14 @@ mod tests {
     }
 
     #[test]
-    fn lookup_resolves_owner_and_share() {
+    fn lookups_preserve_owner_and_share_boundaries() {
         let path = std::env::temp_dir().join("va-preview-test-lookup");
         std::fs::create_dir_all(&path).unwrap();
 
         let (slug, share) = ensure_server(4100, path.clone(), "x".into(), None);
         assert!(lookup_owner(&slug).is_some());
         assert!(lookup_share(&share).is_some());
-        assert!(lookup(&slug).is_some());
-        assert!(lookup(&share).is_some());
+        assert!(lookup_owner(&share).is_none());
+        assert!(lookup_share(&slug).is_none());
     }
 }

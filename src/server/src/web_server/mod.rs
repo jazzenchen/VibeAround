@@ -401,9 +401,8 @@ pub async fn run_web_server(
     // The SPA shell + static assets are intentionally un-authed so the initial
     // page load can boot and read the `?token=` parameter from its own URL.
     //
-    // Preview routes are also un-authed — the 8-char slug itself acts as a
-    // short-lived authentication token (10-min TTL, cryptographically random;
-    // single source of truth: `common::previews::SHARE_TTL_SECS`).
+    // Preview routes perform their own owner/share authorization because the
+    // browser loads them as top-level pages without an Authorization header.
     let local_agent_routes = Router::new()
         .route(
             "/local-agent/{agent_id}/{profile_id}/v1/responses",
@@ -485,11 +484,9 @@ pub async fn run_web_server(
         // Preview pages dispatch by session target:
         //   Server → iframe + `/`-scoped cookie proxy
         //   File   → rendered markdown page
-        // /u = owner (requires va_owner cookie), /s = share (slug is auth).
+        // /u = owner (loopback or va_owner cookie), /s = temporary share.
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
         .route("/preview/s/{slug}", get(preview::share_preview_handler))
-        // Legacy markdown route (kept for backward compatibility).
-        .route("/md-preview/{slug}", get(preview::md_preview_handler))
         .nest_service("/assets", ServeDir::new(assets_dir))
         .nest_service("/brand", ServeDir::new(brand_dir))
         .route_service("/favicon.ico", ServeFile::new(web_dist.join("favicon.ico")))

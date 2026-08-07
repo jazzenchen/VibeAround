@@ -29,9 +29,9 @@ pub struct PreviewEntry {
     pub target: PreviewTarget,
     /// When the session was created.
     pub created_at: Instant,
-    /// When the current share key expires. For owner-slug lookups, a
-    /// far-future sentinel (sessions themselves never expire until daemon exit).
-    pub expires_at: Instant,
+    /// When the current share key expires. Owner access lives with the
+    /// preview session and therefore has no expiry here.
+    pub expires_at: Option<Instant>,
 }
 
 /// Serializable snapshot of a session for API responses.

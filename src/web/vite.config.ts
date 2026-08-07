@@ -27,10 +27,6 @@ const backendProxy = {
     target: backendTarget,
     changeOrigin: true,
   },
-  "/va/md-preview": {
-    target: backendTarget,
-    changeOrigin: true,
-  },
 };
 
 function manualChunks(id: string) {

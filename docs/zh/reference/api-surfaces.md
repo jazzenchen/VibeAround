@@ -77,7 +77,6 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 |---|---|---|
 | `/preview/u/{slug}` | Owner token | 预览存在期间 |
 | `/preview/s/{slug}` | 无 | 600 秒 |
-| `/md-preview/{slug}` | Owner token | 存在期间 |
 
 ---
 

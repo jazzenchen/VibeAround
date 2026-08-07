@@ -29,14 +29,9 @@ pub(super) struct PreviewSession {
     pub(super) created_at: Instant,
 }
 
-/// TTL for `/s/{key}` preview share links, in seconds. Also referenced
-/// in the "preview expired" HTML page via `format!`, so the copy can't
-/// drift from this value. Consumers (dashboard, desktop-ui) keep their
-/// own hand-maintained copy of this number — see the TS reference in
-/// `src/shared/client-ts/src/schemas.ts`.
+/// TTL for `/s/{key}` preview share links, in seconds.
 pub const SHARE_TTL_SECS: u64 = 600;
 pub(super) const SHARE_TTL: Duration = Duration::from_secs(SHARE_TTL_SECS);
-pub(super) const OWNER_FAR_FUTURE: Duration = Duration::from_secs(86_400);
 
 /// Alphabet for random share keys: uppercase + digits, with ambiguous
 /// I/O/0/1 removed.
@@ -88,7 +83,7 @@ pub(super) fn canonical(p: &Path) -> PathBuf {
     p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
-pub(super) fn entry_from(session: &PreviewSession, expires_at: Instant) -> PreviewEntry {
+pub(super) fn entry_from(session: &PreviewSession, expires_at: Option<Instant>) -> PreviewEntry {
     PreviewEntry {
         id: session.id.clone(),
         workspace: session.workspace.clone(),

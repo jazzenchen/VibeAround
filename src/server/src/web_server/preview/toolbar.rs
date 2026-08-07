@@ -1,9 +1,8 @@
 //! Toolbar + shared HTML helpers for preview pages.
 //!
-//! Every preview page renders a sticky top toolbar with the title, a
-//! countdown badge, and optional extra buttons (e.g. `Refresh` for the
-//! server-iframe preview). The toolbar CSS and the countdown-timer
-//! script are shared across all renderers.
+//! Preview pages render a sticky toolbar with the title and optional controls.
+//! Share pages also receive a countdown; owner pages live with the session and
+//! therefore do not show one.
 
 use axum::body::Body;
 use axum::http::StatusCode;
@@ -11,11 +10,12 @@ use axum::response::Response;
 
 use common::previews::PreviewEntry;
 
-pub(super) fn remaining_millis(entry: &PreviewEntry) -> u128 {
-    entry
-        .expires_at
-        .saturating_duration_since(std::time::Instant::now())
-        .as_millis()
+pub(super) fn remaining_millis(entry: &PreviewEntry) -> Option<u128> {
+    entry.expires_at.map(|expires_at| {
+        expires_at
+            .saturating_duration_since(std::time::Instant::now())
+            .as_millis()
+    })
 }
 
 pub(super) fn escape_html(s: &str) -> String {
@@ -29,6 +29,8 @@ pub(super) fn html_response(html: String) -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
+        .header("Cache-Control", "no-store")
+        .header("Referrer-Policy", "no-referrer")
         .body(Body::from(html))
         .unwrap()
 }
@@ -52,7 +54,7 @@ pub(super) fn url_encode_query(s: &str) -> String {
 pub(super) fn toolbar_and_timer(
     title: &str,
     subtitle: &str,
-    remaining_ms: u128,
+    remaining_ms: Option<u128>,
     extra_buttons: &str,
 ) -> String {
     let subtitle_html = if subtitle.is_empty() {
@@ -60,14 +62,12 @@ pub(super) fn toolbar_and_timer(
     } else {
         format!(r#"<span class="subtitle">{}</span>"#, subtitle)
     };
-    format!(
-        r#"<div class="toolbar">
-  <span class="title">{title}</span>
-  {subtitle_html}
-  <span class="badge" id="timer">5:00</span>
-  <span class="spacer"></span>
-  {extra_buttons}
-</div>
+    let timer_html = remaining_ms.map_or_else(String::new, |remaining_ms| {
+        let total_seconds = remaining_ms / 1000;
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        format!(
+            r#"<span class="badge" id="timer">{minutes}:{seconds:02}</span>
 <script>
 (function() {{
   var expiry = Date.now() + {remaining_ms};
@@ -85,9 +85,19 @@ pub(super) fn toolbar_and_timer(
   }}, 1000);
 }})();
 </script>"#,
+        )
+    });
+    format!(
+        r#"<div class="toolbar">
+  <span class="title">{title}</span>
+  {subtitle_html}
+  {timer_html}
+  <span class="spacer"></span>
+  {extra_buttons}
+</div>"#,
         title = title,
         subtitle_html = subtitle_html,
-        remaining_ms = remaining_ms,
+        timer_html = timer_html,
         extra_buttons = extra_buttons,
     )
 }
