@@ -3,7 +3,7 @@
 //! When a preview session has a `Server { port }` target, we render a
 //! tiny HTML shell whose `<iframe src="/">` serves dev-server content
 //! through the cookie-based proxy fallback at the root path. The authorized
-//! owner or share route is stashed in a `va_preview` cookie, so the proxy can
+//! owner route is stashed in a `va_preview` cookie, so the proxy can
 //! revalidate that boundary on each request.
 
 use axum::body::Body;
@@ -16,8 +16,8 @@ use super::cookie_proxy::PREVIEW_COOKIE;
 use super::markdown::render_md_page;
 use super::toolbar::{escape_html, remaining_millis, toolbar_and_timer, TOOLBAR_CSS};
 
-/// Dispatch an already-authorized preview entry to the renderer for its target.
-pub(super) async fn render_preview(
+/// Dispatch an already-authorized owner preview to its target renderer.
+pub(super) async fn render_owner_preview(
     entry: PreviewEntry,
     routing_cookie: &str,
 ) -> Result<Response, (StatusCode, String)> {

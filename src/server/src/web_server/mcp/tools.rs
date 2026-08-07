@@ -1166,10 +1166,11 @@ pub(super) async fn mcp_preview_start(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    let (owner_slug, share_slug) =
-        common::previews::ensure_server(port, cwd_path, title, session_id.clone());
-    let owner_url = build_preview_url(state, "preview/u", &owner_slug);
-    let share_url = build_preview_url(state, "preview/s", &share_slug);
+    let owner_slug = common::previews::ensure_server(port, cwd_path, title, session_id.clone());
+    let owner_url = format!(
+        "http://127.0.0.1:{}/va/preview/u/{}",
+        state.port, owner_slug
+    );
 
     let session_hint = if session_id.is_none() {
         "\n\n\u{26a0}\u{fe0f} No session_id provided. Use /va-session skill to resolve it and pass session_id for automatic dev-server cleanup."
@@ -1181,11 +1182,10 @@ pub(super) async fn mcp_preview_start(
         id,
         &format!(
             "Preview ready.\n\n\
-         Owner: `{}`\n\
-         Share: `{}`\n\
+         Local owner: `{}`\n\
          Port: {}\n\
-         Share expires: 10 minutes{}",
-            owner_url, share_url, port, session_hint
+         Public sharing is unavailable for live server previews.{}",
+            owner_url, port, session_hint
         ),
     )
 }

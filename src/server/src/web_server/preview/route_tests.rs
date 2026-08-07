@@ -62,50 +62,63 @@ fn owner_preview_does_not_trust_non_loopback_hosts() {
 }
 
 #[tokio::test]
-async fn share_preview_accepts_only_ephemeral_share_key() {
+async fn share_preview_accepts_only_ephemeral_file_share_key() {
     let dir = unique_temp_dir("share");
-    let (owner_slug, share_key) = common::previews::ensure_server(4211, dir, "share".into(), None);
+    let file = dir.join("share.md");
+    std::fs::write(&file, "# Shared markdown").unwrap();
+    let (owner_slug, share_key) = common::previews::ensure_file(file, dir, "share".into());
 
     let error = share_preview_handler(Path(owner_slug)).await;
     assert_eq!(error.status(), StatusCode::NOT_FOUND);
     assert_eq!(error.headers().get("cache-control").unwrap(), "no-store");
 
-    let response = share_preview_handler(Path(share_key.clone())).await;
+    let response = share_preview_handler(Path(share_key)).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
-    assert!(response
-        .headers()
-        .get("set-cookie")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .contains(&format!("va_preview=share:{share_key}")));
+    assert!(response.headers().get("set-cookie").is_none());
 }
 
 #[tokio::test]
-async fn owner_preview_accepts_only_owner_slug() {
+async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     let dir = unique_temp_dir("owner");
-    let (owner_slug, share_key) = common::previews::ensure_server(4212, dir, "owner".into(), None);
+    let owner_slug = common::previews::ensure_server(4212, dir.clone(), "owner".into(), None);
+    let file = dir.join("other.md");
+    std::fs::write(&file, "other").unwrap();
+    let (_, share_key) = common::previews::ensure_file(file, dir, "other".into());
 
     let error = owner_preview_handler(Path(share_key), local_request("127.0.0.1:12358")).await;
     assert_eq!(error.status(), StatusCode::NOT_FOUND);
 
-    let response =
+    let local =
         owner_preview_handler(Path(owner_slug.clone()), local_request("127.0.0.1:12358")).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(response
+    assert_eq!(local.status(), StatusCode::OK);
+    assert!(local
         .headers()
         .get("set-cookie")
         .unwrap()
         .to_str()
         .unwrap()
         .contains(&format!("va_preview=owner:{owner_slug}")));
+
+    let public = owner_preview_handler(
+        Path(owner_slug.clone()),
+        local_request("preview.example.com"),
+    )
+    .await;
+    assert_eq!(public.status(), StatusCode::FORBIDDEN);
+    assert!(public.headers().get("location").is_none());
+    assert!(public.headers().get("set-cookie").is_none());
+
+    let share_route = share_preview_handler(Path(owner_slug)).await;
+    assert_eq!(share_route.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn nested_owner_redirect_preserves_full_path_and_query() {
     let dir = unique_temp_dir("nested-owner");
-    let (owner_slug, _) = common::previews::ensure_server(4214, dir, "nested".into(), None);
+    let file = dir.join("nested.md");
+    std::fs::write(&file, "nested").unwrap();
+    let (owner_slug, _) = common::previews::ensure_file(file, dir, "nested".into());
     let app = Router::new().nest(
         "/va",
         Router::new().route("/preview/u/{slug}", get(owner_preview_handler)),

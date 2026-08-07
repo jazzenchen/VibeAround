@@ -11,13 +11,13 @@
 //! - `slug`      — stable, readable URL segment derived from `id`.
 //!   Full-path-based (slashes → `-`), so slugs are globally
 //!   unique and collision-proof.
-//! - `share_key` — ephemeral random token with 10-min TTL. Regenerated
-//!   once the previous key expires.
+//! - `share_key` — ephemeral random token with 10-min TTL for File previews.
+//!   Server previews stay local-only until they can run on an isolated origin.
 //!
 //! URL structure (all routes under `/va/`):
 //!
 //! - Owner: `/preview/u/{slug}`        — permanent for the daemon lifetime
-//! - Share: `/preview/s/{share_key}`   — 10-minute rotating token
+//! - File share: `/preview/s/{share_key}` — 10-minute rotating token
 //!
 //! One `HashMap<PathBuf, PreviewSession>` backs everything. Lookups by
 //! `slug` or `share_key` scan values — `n` is tiny (<20 typical).
@@ -49,26 +49,26 @@ use store::{
 // Public API — create / refresh
 // ---------------------------------------------------------------------------
 
-/// Ensure a Server preview session exists for `(workspace, port)`.
-/// Returns `(owner_slug, share_key)`. Calling twice for the same
-/// `(workspace, port)` reuses the owner slug; the share key is refreshed
-/// if expired. Different ports under the same workspace coexist as
-/// independent sessions.
+/// Ensure a local-only Server preview session exists for `(workspace, port)`.
+/// Calling twice for the same `(workspace, port)` reuses the owner slug.
+/// Different ports under the same workspace coexist as independent sessions.
 pub fn ensure_server(
     port: u16,
     workspace: PathBuf,
     title: String,
     owner_session: Option<String>,
-) -> (String, String) {
+) -> String {
     let workspace = canonical(&workspace);
     let id = workspace.join(format!(":port:{port}"));
-    ensure_session(
+    let (slug, share_key) = ensure_session(
         id,
         workspace,
         title,
         PreviewTarget::Server { port },
         owner_session,
-    )
+    );
+    debug_assert!(share_key.is_none());
+    slug
 }
 
 /// Ensure a File preview session exists for `file`. Returns
@@ -76,7 +76,11 @@ pub fn ensure_server(
 pub fn ensure_file(file: PathBuf, workspace: PathBuf, title: String) -> (String, String) {
     let file = canonical(&file);
     let workspace = canonical(&workspace);
-    ensure_session(file, workspace, title, PreviewTarget::File, None)
+    let (slug, share_key) = ensure_session(file, workspace, title, PreviewTarget::File, None);
+    (
+        slug,
+        share_key.expect("File previews always receive a share key"),
+    )
 }
 
 fn ensure_session(
@@ -85,7 +89,7 @@ fn ensure_session(
     title: String,
     target: PreviewTarget,
     owner_session: Option<String>,
-) -> (String, String) {
+) -> (String, Option<String>) {
     let slug = slug_from_path(&id);
     let now = Instant::now();
 
@@ -112,18 +116,28 @@ fn ensure_session(
         session.owner_session = owner_session;
     }
 
-    // Reuse share key if still valid; otherwise rotate.
-    let share_key = match (&session.share_key, session.share_expires_at) {
-        (Some(k), Some(exp)) if exp > now => k.clone(),
-        _ => {
-            let k = generate_share_key();
-            session.share_key = Some(k.clone());
-            session.share_expires_at = Some(now + SHARE_TTL);
-            k
-        }
+    // Only File previews are shareable. Reuse a live key or rotate it.
+    let share_key = if target_is_shareable(&session.target) {
+        Some(match (&session.share_key, session.share_expires_at) {
+            (Some(k), Some(exp)) if exp > now => k.clone(),
+            _ => {
+                let k = generate_share_key();
+                session.share_key = Some(k.clone());
+                session.share_expires_at = Some(now + SHARE_TTL);
+                k
+            }
+        })
+    } else {
+        session.share_key = None;
+        session.share_expires_at = None;
+        None
     };
 
     (slug, share_key)
+}
+
+fn target_is_shareable(target: &PreviewTarget) -> bool {
+    matches!(target, PreviewTarget::File)
 }
 
 // ---------------------------------------------------------------------------
@@ -145,9 +159,12 @@ pub fn lookup_share(key: &str) -> Option<PreviewEntry> {
     let now = Instant::now();
     sessions
         .values()
-        .find(|s| match (&s.share_key, s.share_expires_at) {
-            (Some(k), Some(exp)) => k == key && exp > now,
-            _ => false,
+        .find(|s| {
+            target_is_shareable(&s.target)
+                && matches!(
+                    (&s.share_key, s.share_expires_at),
+                    (Some(k), Some(exp)) if k == key && exp > now
+                )
         })
         .map(|s| entry_from(s, s.share_expires_at))
 }
@@ -169,15 +186,15 @@ pub fn list_snapshots() -> Vec<PreviewSnapshot> {
                 PreviewTarget::Server { port } => ("server", Some(port)),
                 PreviewTarget::File => ("file", None),
             };
-            let share_expires_at_ms = match (&s.share_key, s.share_expires_at) {
-                (Some(_), Some(exp)) if exp > now_inst => {
-                    Some(instant_to_unix_ms(exp, now_inst, now_sys))
+            let active_share = match (&s.share_key, s.share_expires_at) {
+                (Some(key), Some(exp)) if target_is_shareable(&s.target) && exp > now_inst => {
+                    Some((key.clone(), exp))
                 }
                 _ => None,
             };
-            let share_key = match (&s.share_key, s.share_expires_at) {
-                (Some(k), Some(exp)) if exp > now_inst => Some(k.clone()),
-                _ => None,
+            let (share_key, share_expires_at_ms) = match active_share {
+                Some((key, exp)) => (Some(key), Some(instant_to_unix_ms(exp, now_inst, now_sys))),
+                None => (None, None),
             };
             let created_at_ms = instant_to_unix_ms(s.created_at, now_inst, now_sys);
             PreviewSnapshot {
@@ -345,10 +362,16 @@ mod tests {
         let path = std::env::temp_dir().join("va-preview-test-server");
         std::fs::create_dir_all(&path).unwrap();
 
-        let (slug_a, share_a) = ensure_server(3000, path.clone(), "t".into(), None);
-        let (slug_b, share_b) = ensure_server(3000, path.clone(), "t".into(), None);
+        let slug_a = ensure_server(3000, path.clone(), "t".into(), None);
+        let slug_b = ensure_server(3000, path.clone(), "t".into(), None);
         assert_eq!(slug_a, slug_b);
-        assert_eq!(share_a, share_b);
+
+        let snapshot = list_snapshots()
+            .into_iter()
+            .find(|preview| preview.slug == slug_a)
+            .expect("server preview is listed");
+        assert!(snapshot.share_key.is_none());
+        assert!(snapshot.share_expires_at_ms.is_none());
     }
 
     #[test]
@@ -356,8 +379,8 @@ mod tests {
         let path = std::env::temp_dir().join("va-preview-test-multiport");
         std::fs::create_dir_all(&path).unwrap();
 
-        let (slug_a, _) = ensure_server(3456, path.clone(), "liquid".into(), None);
-        let (slug_b, _) = ensure_server(5000, path.clone(), "python".into(), None);
+        let slug_a = ensure_server(3456, path.clone(), "liquid".into(), None);
+        let slug_b = ensure_server(5000, path.clone(), "python".into(), None);
 
         assert_ne!(
             slug_a, slug_b,
@@ -383,7 +406,7 @@ mod tests {
         let file = dir.join("README.md");
         std::fs::write(&file, "hi").unwrap();
 
-        let (srv_slug, _) = ensure_server(4000, dir.clone(), "srv".into(), None);
+        let srv_slug = ensure_server(4000, dir.clone(), "srv".into(), None);
         let (file_slug_a, file_share_a) = ensure_file(file.clone(), dir.clone(), "md".into());
         let (file_slug_b, file_share_b) = ensure_file(file.clone(), dir.clone(), "md".into());
 
@@ -394,13 +417,19 @@ mod tests {
 
     #[test]
     fn lookups_preserve_owner_and_share_boundaries() {
-        let path = std::env::temp_dir().join("va-preview-test-lookup");
-        std::fs::create_dir_all(&path).unwrap();
+        let dir = std::env::temp_dir().join("va-preview-test-lookup");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("share.md");
+        std::fs::write(&file, "share").unwrap();
 
-        let (slug, share) = ensure_server(4100, path.clone(), "x".into(), None);
-        assert!(lookup_owner(&slug).is_some());
+        let server_slug = ensure_server(4100, dir.clone(), "server".into(), None);
+        let (file_slug, share) = ensure_file(file, dir, "file".into());
+
+        assert!(lookup_owner(&server_slug).is_some());
+        assert!(lookup_owner(&file_slug).is_some());
         assert!(lookup_share(&share).is_some());
         assert!(lookup_owner(&share).is_none());
-        assert!(lookup_share(&slug).is_none());
+        assert!(lookup_share(&server_slug).is_none());
+        assert!(lookup_share(&file_slug).is_none());
     }
 }

@@ -180,7 +180,7 @@
   },
   {
     "name": "preview",
-    "description": "Start a live preview for a running local server. Returns owner and share URLs. Pass session_id (use /va-session skill) for proper lifecycle management.",
+    "description": "Start a local-only live preview for a running server. Returns the local owner URL. Pass session_id (use /va-session skill) for proper lifecycle management.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -206,7 +206,7 @@
   },
   {
     "name": "md_preview",
-    "description": "Preview a markdown file with beautiful GitHub-style rendering. Returns a shareable URL. The URL expires in 5 minutes.",
+    "description": "Preview a markdown file with GitHub-style rendering. Returns owner and share URLs; the share URL expires in 10 minutes.",
     "inputSchema": {
       "type": "object",
       "properties": {

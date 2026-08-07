@@ -1,35 +1,36 @@
 ---
 name: va-preview
-description: Exposes a local dev server or HTML file as a live preview via a shareable public URL, enabling browser and mobile device testing. Use after starting a dev server or creating HTML/CSS/JS files, or when the user asks to "preview this", "show me on my phone", "share a preview link", "open in browser", or "mobile preview". Only available when the VibeAround MCP server is connected.
+description: Start a local-only live preview for a running development server. Use after starting a dev server or when the user asks to preview a browsable artifact. Only available when the VibeAround MCP server is connected.
 ---
 
 # VibeAround Live Preview
 
-Exposes a local dev server or static files as a live preview via a shareable URL, so the user can view the result in their browser or on a mobile device.
+Start a local live preview for a running development server so the user can inspect the result in the browser on the same machine.
 
 ## When to Use
 
-- After starting a dev server (`next dev`, `vite`, `python -m http.server`, etc.)
-- After creating HTML/CSS/JS files the user should see
-- The user asks to "show me", "preview", "let me see it on my phone", or "share a preview link"
+- You started a dev server such as Next.js, Vite, or `python -m http.server`
+- You created a browsable artifact and are serving it locally
+- The user asked to preview or open the result
+- The VibeAround MCP server is connected
 
-**Proactive behavior**: After starting a dev server or creating a web artifact, ask the user if they'd like a preview link (e.g. "Want me to generate a preview link so you can see it on your phone?"). Only call `preview` after the user confirms.
+**Proactive behavior**: Ask before calling `preview`. Do not call the tool without the user's confirmation.
 
 ## Prerequisites
 
-The VibeAround MCP server must be connected (server name: `vibearound`). If not available, tell the user to start the VibeAround desktop app.
+The VibeAround desktop app and MCP server must be running.
 
 ## Steps
 
-### 1. Ensure the server is listening
+### 1. Verify the server
 
-- Verify the port is free: `lsof -i :<port>` should return nothing before starting
-- Wait for the server's "Listening on..." message before proceeding
-- Use `--host 0.0.0.0` when available for broader network compatibility
+- Confirm the selected port is free before starting
+- Wait until the server reports that it is listening
+- Keep the server on a loopback interface when possible
 
 ### 2. Resolve the session ID
 
-Use the `/va-session` skill to get the current session ID.
+Use the `va-session` skill to resolve the current session ID so VibeAround can clean up the dev server with the session.
 
 ### 3. Call preview
 
@@ -37,36 +38,20 @@ Use the `/va-session` skill to get the current session ID.
 Tool: preview
 Server: vibearound
 Arguments:
-  port: <the port your server is running on>
+  port: <the local server port>
   cwd: "<current working directory>"
-  session_id: "<session_id from step 2>"  (pass if available)
-  title: "<short description of what you built>"  (optional)
+  session_id: "<session_id from va-session>"  (pass if available)
+  title: "<short description>"  (optional)
 ```
 
-If the workspace is not registered, call `register_workspace` with the `cwd` first, then retry.
+If the workspace is not registered, call `register_workspace` with `cwd`, then retry.
 
-### 4. Present BOTH links to the user
+### 4. Relay the returned link
 
-The tool returns an Owner link and a Share link. Always show **both** in this format:
-
-```
-Preview 已就绪：
-- 你的预览: <owner_url>
-- 分享链接: <share_url>（10 分钟有效）
-```
-
-Or in English:
-
-```
-Preview ready:
-- Owner: <owner_url>
-- Share: <share_url> (expires in 10 min)
-```
-
-**Never omit either link.** The owner link is permanent (requires browser pairing). The share link is temporary and needs no auth — ideal for sending to others or testing on mobile.
+The tool returns one local owner URL. Present that URL and state that live-server previews are local-only. Do not construct a tunnel or share URL; public live-server sharing is paused until previews can run on an isolated origin.
 
 ## Error Handling
 
-- **MCP server not available**: The VibeAround desktop app may not be running.
-- **Workspace not registered**: Call `register_workspace` first, then retry.
-- **Port in use**: Check with `lsof -i :<port>` and choose a different port.
+- **MCP server unavailable**: Ask the user to start the VibeAround desktop app.
+- **Workspace not registered**: Register it, then retry.
+- **Server unavailable**: Verify that the reported port is listening.

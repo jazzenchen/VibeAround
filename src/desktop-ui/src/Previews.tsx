@@ -64,7 +64,7 @@ export function Previews() {
       <PageHeader
         icon={<Eye className="w-4 h-4 text-primary" />}
         title={t("Previews")}
-        description={t("Active dev-server previews and markdown previews. Owner links are permanent; share links rotate every {{minutes}} minutes.", {
+        description={t("Live server previews are local-only. Markdown owner links are permanent; share links rotate every {{minutes}} minutes.", {
           minutes: PREVIEW_SHARE_TTL_MINUTES,
         })}
         actions={(
@@ -117,13 +117,14 @@ interface PreviewRowProps {
 
 function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: PreviewRowProps) {
   const { t } = useI18n();
+  const isServer = preview.kind === "server";
   const ownerPath = `/va/preview/u/${encodeURIComponent(preview.slug)}`;
-  const sharePath = preview.share_key
+  const sharePath = !isServer && preview.share_key
     ? `/va/preview/s/${encodeURIComponent(preview.share_key)}`
     : null;
 
   const localOwnerUrl = `${localBase}${ownerPath}`;
-  const tunnelOwnerUrl = tunnelUrl ? `${tunnelUrl}${ownerPath}` : null;
+  const tunnelOwnerUrl = !isServer && tunnelUrl ? `${tunnelUrl}${ownerPath}` : null;
   const tunnelShareUrl = tunnelUrl && sharePath ? `${tunnelUrl}${sharePath}` : null;
 
   const Icon = preview.kind === "server" ? Server : FileText;
@@ -145,6 +146,11 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
               >
                 {preview.kind}
               </Badge>
+              {isServer && (
+                <Badge variant="secondary" className="text-[10px]">
+                  {t("Local only")}
+                </Badge>
+              )}
               {preview.port != null && (
                 <Badge variant="secondary" className="text-[10px] font-mono">
                   :{preview.port}
@@ -178,24 +184,28 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
           url={localOwnerUrl}
           icon={<ExternalLink className="w-3 h-3" />}
         />
-        <UrlButton
-          label={t("Tunnel · owner")}
-          url={tunnelOwnerUrl}
-          icon={<Globe className="w-3 h-3" />}
-          disabledReason={tunnelOwnerUrl ? null : t("Tunnel not running")}
-        />
-        <UrlButton
-          label={t("Tunnel · share")}
-          url={tunnelShareUrl}
-          icon={<Globe className="w-3 h-3" />}
-          disabledReason={
-            !tunnelUrl
-              ? t("Tunnel not running")
-              : !sharePath
-                ? t("Share key expired")
-                : null
-          }
-        />
+        {!isServer && (
+          <>
+            <UrlButton
+              label={t("Tunnel · owner")}
+              url={tunnelOwnerUrl}
+              icon={<Globe className="w-3 h-3" />}
+              disabledReason={tunnelOwnerUrl ? null : t("Tunnel not running")}
+            />
+            <UrlButton
+              label={t("Tunnel · share")}
+              url={tunnelShareUrl}
+              icon={<Globe className="w-3 h-3" />}
+              disabledReason={
+                !tunnelUrl
+                  ? t("Tunnel not running")
+                  : !sharePath
+                    ? t("Share key expired")
+                    : null
+              }
+            />
+          </>
+        )}
       </div>
     </div>
   );

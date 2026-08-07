@@ -1,7 +1,7 @@
 //! Cookie-based page proxy: the root `/` fallback handler.
 //!
 //! Once a preview iframe has set the `va_preview` cookie with an explicit
-//! owner or share capability, every sub-resource request the iframe makes
+//! owner capability, every sub-resource request the iframe makes
 //! lands at `/` on the dashboard server. This handler validates that
 //! capability, proxies to the dev server on `localhost:{port}` (trying IPv4
 //! then IPv6 loopback), and forwards most response headers except the
@@ -27,14 +27,9 @@ use super::iframe::server_not_running_page;
 pub(super) const PREVIEW_COOKIE: &str = "va_preview";
 
 const OWNER_PREVIEW_PREFIX: &str = "owner:";
-const SHARE_PREVIEW_PREFIX: &str = "share:";
 
 pub(super) fn owner_routing_cookie(slug: &str) -> String {
     format!("{OWNER_PREVIEW_PREFIX}{slug}")
-}
-
-pub(super) fn share_routing_cookie(key: &str) -> String {
-    format!("{SHARE_PREVIEW_PREFIX}{key}")
 }
 
 /// Fallback handler for root `/` — the cookie-based dev-server proxy.
@@ -134,6 +129,10 @@ async fn proxy_request_inner(
         }
     };
 
+    if !super::preview_target_available(&req, &entry) {
+        return super::server_preview_local_only().into_response();
+    }
+
     let port = match &entry.target {
         PreviewTarget::Server { port } => *port,
         PreviewTarget::File => return Redirect::temporary("/va/").into_response(),
@@ -223,8 +222,6 @@ fn lookup_preview_cookie(req: &Request, cookie: &str) -> Option<PreviewEntry> {
         } else {
             None
         }
-    } else if let Some(key) = cookie.strip_prefix(SHARE_PREVIEW_PREFIX) {
-        common::previews::lookup_share(key)
     } else {
         None
     }

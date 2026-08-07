@@ -1,10 +1,10 @@
 //! Live preview routes.
 //!
-//! **Preview iframe** (cookie-based page proxy inside iframe):
-//! - GET /preview/u/:slug            — owner preview (iframe + set cookie)
-//! - GET /preview/s/:slug            — share preview (iframe + set cookie)
-//!   Both set a `va_preview` cookie and render an iframe with `src="/"`.
-//!   The iframe content is served by the cookie proxy fallback at root.
+//! **Preview pages**:
+//! - GET /preview/u/:slug            — owner preview
+//! - GET /preview/s/:slug            — Markdown share preview
+//!   Local Server owner previews set a `va_preview` cookie and render an
+//!   iframe with `src="/"`; Markdown previews render directly.
 //!
 //! **Cookie proxy fallback** (root `/` handler):
 //!   - Has cookie + page/asset GET or HEAD → proxy to dev server
@@ -12,13 +12,14 @@
 //!   - Has cookie + direct navigation (`Sec-Fetch-Dest: document`) → dashboard
 //!   - No cookie → redirect to `/va/`
 //!
-//! Share keys are short-lived (TTL: `common::previews::SHARE_TTL_SECS`)
-//! and act as authentication. Owner slugs remain stable and require owner
-//! access through a loopback request or the `va_owner` cookie.
+//! Markdown share keys are short-lived (TTL:
+//! `common::previews::SHARE_TTL_SECS`) and act as authentication. Owner slugs
+//! remain stable and require owner access through a loopback request or the
+//! `va_owner` cookie. Server previews are local-only.
 //!
 //! ## Module layout
 //!
-//! - [`iframe`]        — `render_preview` dispatcher + server iframe wrapper
+//! - [`iframe`]        — owner dispatcher + server iframe wrapper
 //! - [`markdown`]      — rendered markdown document page
 //! - [`cookie_proxy`]  — root `/` fallback: dev-server page proxy
 //! - [`toolbar`]       — shared toolbar HTML/CSS + HTML helpers
@@ -32,11 +33,13 @@ use axum::body::Body;
 use axum::extract::{Path, Request};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
+use common::previews::{PreviewEntry, PreviewTarget};
 
 pub use cookie_proxy::cookie_proxy_fallback;
 
-use cookie_proxy::{extract_cookie, owner_routing_cookie, share_routing_cookie};
-use iframe::render_preview;
+use cookie_proxy::{extract_cookie, owner_routing_cookie};
+use iframe::render_owner_preview;
+use markdown::render_md_page;
 use toolbar::url_encode_query;
 
 // ===========================================================================
@@ -52,14 +55,18 @@ use toolbar::url_encode_query;
 /// missing or invalid cookie redirects through the pairing gate and then back
 /// to the requested preview.
 pub async fn owner_preview_handler(Path(slug): Path<String>, req: Request) -> Response {
-    let response = if !owner_access_allowed(&req) {
-        owner_pairing_redirect(&req, format!("/preview/u/{}", slug))
-    } else if let Some(entry) = common::previews::lookup_owner(&slug) {
-        render_preview(entry, &owner_routing_cookie(&slug))
-            .await
-            .unwrap_or_else(IntoResponse::into_response)
-    } else {
-        preview_not_found().into_response()
+    let response = match common::previews::lookup_owner(&slug) {
+        Some(entry) if !preview_target_available(&req, &entry) => {
+            server_preview_local_only().into_response()
+        }
+        Some(entry) if owner_access_allowed(&req) => {
+            render_owner_preview(entry, &owner_routing_cookie(&slug))
+                .await
+                .unwrap_or_else(IntoResponse::into_response)
+        }
+        Some(_) => owner_pairing_redirect(&req, format!("/preview/u/{}", slug)),
+        None if owner_access_allowed(&req) => preview_not_found().into_response(),
+        None => owner_pairing_redirect(&req, format!("/preview/u/{}", slug)),
     };
     no_store(response)
 }
@@ -68,19 +75,33 @@ pub(super) fn owner_access_allowed(req: &Request) -> bool {
     owner_cookie_valid(req) || crate::web_server::auth::request_is_loopback(req)
 }
 
-/// GET /preview/s/{slug} — share preview. Slug itself is the auth.
+/// GET /preview/s/{slug} — Markdown share preview. Slug itself is the auth.
 ///
-/// Dispatches by session target: Server → iframe + cookie proxy,
-/// File → rendered markdown. No pairing required — the random share
-/// key (10-min TTL) gates access.
+/// No pairing is required — the random share key (10-min TTL) gates access.
+/// Server previews do not mint share keys.
 pub async fn share_preview_handler(Path(slug): Path<String>) -> Response {
     let response = match common::previews::lookup_share(&slug) {
-        Some(entry) => render_preview(entry, &share_routing_cookie(&slug))
+        Some(entry) => render_md_page(&entry)
             .await
             .unwrap_or_else(IntoResponse::into_response),
         None => preview_not_found().into_response(),
     };
     no_store(response)
+}
+
+/// Whether this target may be served in the current request context.
+/// Markdown can be remote; live Server content requires a real loopback
+/// connection and loopback Host header.
+pub(super) fn preview_target_available(req: &Request, entry: &PreviewEntry) -> bool {
+    !matches!(entry.target, PreviewTarget::Server { .. })
+        || crate::web_server::auth::request_is_loopback(req)
+}
+
+pub(super) fn server_preview_local_only() -> (StatusCode, &'static str) {
+    (
+        StatusCode::FORBIDDEN,
+        "Live server previews are only available on localhost.",
+    )
 }
 
 fn no_store(mut response: Response) -> Response {

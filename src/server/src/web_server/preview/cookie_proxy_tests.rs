@@ -7,10 +7,7 @@ use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::{
-    lookup_preview_cookie, owner_routing_cookie, proxy_request, share_routing_cookie,
-    PREVIEW_COOKIE,
-};
+use super::{lookup_preview_cookie, owner_routing_cookie, proxy_request, PREVIEW_COOKIE};
 
 fn request_with_host(host: &str) -> Request<Body> {
     request(host, "ignored", Method::GET, "document")
@@ -34,25 +31,22 @@ fn request(host: &str, cookie: &str, method: Method, destination: &str) -> Reque
 }
 
 #[test]
-fn preview_cookie_preserves_owner_and_share_boundaries() {
+fn preview_cookie_accepts_only_typed_owner_capabilities() {
     let dir = std::env::temp_dir().join(format!(
         "vibearound-preview-cookie-{}",
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let (owner_slug, share_key) = common::previews::ensure_server(4213, dir, "cookie".into(), None);
-
+    let owner_slug = common::previews::ensure_server(4213, dir.clone(), "cookie".into(), None);
     let loopback = request_with_host("127.0.0.1:12358");
     let public = request_with_host("preview.example.com");
     let owner_cookie = owner_routing_cookie(&owner_slug);
-    let share_cookie = share_routing_cookie(&share_key);
 
     assert!(lookup_preview_cookie(&loopback, &owner_cookie).is_some());
     assert!(lookup_preview_cookie(&public, &owner_cookie).is_none());
-    assert!(lookup_preview_cookie(&public, &share_cookie).is_some());
+    assert!(lookup_preview_cookie(&loopback, "share:forged").is_none());
     assert!(lookup_preview_cookie(&loopback, &owner_slug).is_none());
-    assert!(lookup_preview_cookie(&loopback, &owner_routing_cookie(&share_key)).is_none());
-    assert!(lookup_preview_cookie(&public, &share_routing_cookie(&owner_slug)).is_none());
+    assert!(lookup_preview_cookie(&public, &format!("share:{owner_slug}")).is_none());
 }
 
 #[tokio::test]
@@ -78,7 +72,7 @@ async fn api_and_write_requests_are_rejected_before_upstream() {
 }
 
 #[tokio::test]
-async fn public_owner_cookie_cannot_reach_preview_upstream() {
+async fn public_owner_cookie_is_rejected_and_local_owner_reaches_upstream() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let upstream_hit = Arc::new(AtomicBool::new(false));
@@ -97,8 +91,7 @@ async fn public_owner_cookie_cannot_reach_preview_upstream() {
     let dir =
         std::env::temp_dir().join(format!("vibearound-preview-proxy-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
-    let (owner_slug, share_key) =
-        common::previews::ensure_server(port, dir.clone(), "proxy".into(), None);
+    let owner_slug = common::previews::ensure_server(port, dir.clone(), "proxy".into(), None);
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -115,11 +108,10 @@ async fn public_owner_cookie_cannot_reach_preview_upstream() {
     assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
     assert!(!upstream_hit.load(Ordering::SeqCst));
 
-    let valid_share = share_routing_cookie(&share_key);
     let response = proxy_request(
         &client,
         &dir,
-        request("preview.example.com", &valid_share, Method::GET, "script"),
+        request("127.0.0.1:12358", &forged_owner, Method::GET, "script"),
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
