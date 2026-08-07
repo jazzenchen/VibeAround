@@ -21,7 +21,7 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 
 - **← server (daemon boot):** starts the configured tunnel; reports Tailscale's `awaiting_approval` state; registers the abort handle; `stop()` aborts and clears.
 - **← auth:** a public hostname is what triggers the pairing gate.
-- **← previews / dashboard:** public URL for share links and display (`preview_base_url` can override).
+- **← Markdown previews / dashboard:** public URL for Markdown owner/share links and display (`preview_base_url` can override); live Server previews do not consume it.
 - **→ resources:** provider program definitions and spawn-error hints (e.g. "is Node/npx installed?").
 
 ## Invariants — do not break

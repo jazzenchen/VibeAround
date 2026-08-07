@@ -1,6 +1,6 @@
 # Tunnels and remote access
 
-A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Four providers are built in; every remote browser must pair before it gets in. The trust rules behind this page are in [Security model](../architecture/security-model.md).
+A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Four providers are built in; remote browsers must pair before entering protected dashboard and owner surfaces. A current Markdown share link is the only no-pairing exception. The trust rules behind this page are in [Security model](../architecture/security-model.md).
 
 ## Choosing a provider
 
@@ -74,7 +74,7 @@ The tunnel starts with the daemon. Status and the public URL show in the dashboa
 
 ## First visit from a remote browser: pairing
 
-Opening the public URL on a new device shows the pairing gate:
+Opening the dashboard or an owner URL on a new device shows the pairing gate:
 
 1. The browser displays a 6-digit code (valid 60 seconds, refreshable).
 2. Confirm it from a surface you already trust:
@@ -87,7 +87,7 @@ Pairing survives browser restarts but not daemon restarts (tokens are regenerate
 
 ## What a tunnel exposes — and what it never does
 
-Through the tunnel, after pairing: the dashboard SPA, web chat, web terminal, previews, and the WebSocket endpoints — everything token-gated. Preview **share links** (`/preview/s/<slug>`) are the one deliberate exception: no pairing, no token, single preview, 10-minute expiry.
+Through the tunnel, after pairing: the dashboard SPA, web chat, web terminal, Markdown owner previews, and the WebSocket endpoints — everything token-gated. Markdown **share links** (`/preview/s/<slug>`) are the one deliberate exception: no pairing, no token, one document, 10-minute expiry. Live Server preview routes are local-only and return `403` on public hostnames.
 
 Never reachable through a tunnel: the local API bridge and agent-as-API endpoints (loopback-only), the MCP endpoint's local-bridge surface, and provider credentials in any form.
 

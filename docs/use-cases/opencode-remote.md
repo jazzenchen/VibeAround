@@ -15,7 +15,7 @@ The scenario: OpenCode is running next to your repository and tools on the host 
 - Teams that want one workspace model around several coding agents — OpenCode beside Claude Code, Codex CLI, Gemini CLI, and others.
 - Developers who want OpenCode reachable from a phone or a browser terminal.
 - Workflows that need local dev servers, local package caches, or private network access.
-- Sessions that benefit from preview links for generated web, Markdown, or HTML outputs ([Live Preview](../guides/web-dashboard.md)).
+- Sessions that benefit from local web/HTML previews or remotely shareable rendered Markdown ([Live Preview](../guides/web-dashboard.md)).
 
 ## Limitations To Verify
 

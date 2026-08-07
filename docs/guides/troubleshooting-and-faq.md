@@ -55,8 +55,8 @@ Codes are one-shot and short-lived — issue a fresh one and use it immediately.
 **`/session --switch` can't find my terminal session.**
 `va launch sessions` shows what discovery sees. The session must belong to the same agent and workspace the chat is bound to; archived sessions are hidden (unarchive with `va launch unarchive`).
 
-**A preview share link stopped working after a few minutes.**
-Share links expire after 600 seconds by design. Re-share, or use the owner link where you are authenticated. See [Security model](../architecture/security-model.md).
+**A Markdown preview share link stopped working after a few minutes.**
+Markdown share links expire after 600 seconds by design. Re-share, or use the owner link where you are authenticated. Live Server previews are local-only. See [Security model](../architecture/security-model.md).
 
 ## Models and profiles
 

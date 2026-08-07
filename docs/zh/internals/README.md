@@ -31,7 +31,7 @@ Flow 经过某个模块的地方会互相交叉链接。面向读者的“为什
 | [agent](modules/agent.md) | 到一个编程 CLI 的 ACP 连接，以及启动准备 |
 | [profiles](modules/profiles.md) | Provider catalog、profile 存储、启动渲染 |
 | [pty](modules/pty.md) | Web 终端背后的 pseudo-terminal session |
-| [previews](modules/previews.md) | Live Preview 注册表、owner/share URL |
+| [previews](modules/previews.md) | 本地 Server 预览与 Markdown owner/share URL |
 | [tunnels](modules/tunnels.md) | ngrok / localtunnel / cloudflare / Tailscale Funnel 发布 |
 | [auth](modules/auth.md) | Daemon token 和配对码 |
 | [server](modules/server.md) | axum 外壳：routes、WebSockets、MCP、bridge、启动/关闭 |

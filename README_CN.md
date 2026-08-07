@@ -29,7 +29,7 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量�
 - 直接启动 Agent，或通过第三方 AI API 运行 Agent，不用在不同 Agent 配置文件之间来回手改。
 - 桥接不同 AI API 协议，让 Agent 和模型 provider 即使原生 API 不匹配也能配合工作。
 - 在桌面、CLI、消息应用、手机浏览器、网页浏览器和 Web Terminal 之间继续同一个会话。
-- 远程预览 Agent 生成的网站服务、Markdown 和 HTML，同时执行环境仍留在你的电脑上。
+- 在本机预览 dev server 和 HTML，并远程查看渲染后的 Markdown，同时执行环境仍留在你的电脑上。
 - 当所选模型 provider 不提供原生搜索时，为 Agent 补上 Web Search 等 host-side 工具能力。
 - 在现有配置、项目权限和工作流之外增加能力，尽量保持原有环境干净、少改动。
 
@@ -66,7 +66,7 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量�
 | IM Chat | ✅ 通过 [Remote Messaging & Session Continuity](#remote-messaging--session-continuity) 接入飞书/Lark、Discord、Slack 等 | ❌ 当前不支持 |
 | Web Terminal | ✅ 通过 [Web Terminal](#web-terminal) 远程控制 CLI | ❌ 当前不支持 |
 | Web Hub | ✅ 通过 [Web Hub](#web-hub) 在电脑或手机浏览器 launch、continue sessions 和 chat | ❌ 当前不支持 |
-| Remote preview | ✅ 通过 [Live Preview](#live-preview) 预览 dev server / Markdown / HTML 链接 | ❌ 当前不支持 |
+| Remote preview | ✅ 本地 dev-server/HTML 预览 + 远程 Markdown 链接 | ❌ 当前不支持 |
 | Host-side web search | ✅ provider 不提供原生搜索时，通过 [Host-side Web Search](#host-side-web-search) / `va-search-tool` 补上 | ❌ 当前不支持 |
 | MCP 和 Skills | ❌ 当前不支持 | ✅ 在 supported apps 之间统一管理 MCP 和 Skills |
 | Usage / cost tracking | 🚧 Roadmap | ✅ 内置 usage dashboard |
@@ -188,7 +188,7 @@ IM 接入是通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plu
 | Session commands | ✅ `/session --list`、`/session --switch`、`/new` 和 `/pickup` | ✅ `/new`、`/list`、`/switch` 和 `/current` |
 | Agent / profile switch | ✅ `/switch`、`/agent --switch` 和 `/profile --switch` | ❌ 当前不支持 |
 | Workspace commands | ✅ `/workspace --list` 和 `/workspace --switch` | ✅ `/dir` 和 `/cd` |
-| Remote preview | ✅ 发送 dev server、Markdown、HTML 的 Live Preview 链接 | ❌ 当前不支持 |
+| Remote preview | ✅ 发送本地 Web/HTML 预览和可远程分享的 Markdown 链接 | ❌ 当前不支持 |
 | IM file attachments | ⚠️ 只支持发送；暂不支持从 IM 接收文件 | ✅ 在支持的平台上可发送和接收 files/images |
 | Web Terminal | ✅ 用浏览器远程控制本地 AI Agent CLI | ❌ 当前不支持 |
 | Web Hub | ✅ 从浏览器 launch、continue sessions 和 chat | ⚠️ 提供 Web admin/config dashboard；service 需要单独运行 |
@@ -231,7 +231,7 @@ VibeAround Web Hub 提供浏览器入口，用来选择 Agent、API Profile、Wo
 
 只在你明确开启时，才把 VibeAround 的本地 Web 入口暴露出去。
 
-Remote tunnel 会被 Web Hub、Web Terminal、Live Preview 和 Markdown preview 链接使用。VibeAround 仍然让 daemon 留在本地运行，只负责启动你选择的 tunnel provider，并且公网 tunnel URL 需要浏览器配对后才能访问。
+Remote tunnel 会被 Web Hub、Web Terminal 和 Markdown preview 链接使用。VibeAround 仍然让 daemon 留在本地运行，只负责启动你选择的 tunnel provider；owner 界面需要浏览器配对，当前 Markdown share 链接是限时例外。Live Server 预览始终仅限回环地址。
 
 | Tunnel 选项 | 状态 | 说明 |
 |---|---|---|
@@ -245,15 +245,15 @@ Remote tunnel 会被 Web Hub、Web Terminal、Live Preview 和 Markdown preview 
 
 预览 AI Agent 执行任务生成的结果。
 
-VibeAround 可以把网站服务、Markdown 文件、HTML 文件等生成产物变成可打开的预览链接。你可以从电脑或手机浏览器、消息应用里直接查看结果。
+VibeAround 在同一台机器上打开本地 dev server，并为 Markdown 文件提供已配对 owner 链接，以及供持有当前 key 的人访问的 10 分钟 share 链接。
 
 <p align="center">
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/preview-in-a-row-zh.webp" alt="从消息应用发起预览、配对浏览器、打开网页预览和 Markdown 预览" width="92%" />
 </p>
 
-- 生成可预览的链接和限时的分享链接。
-- 通过 tunnel 可以实现远程访问预览链接。
-- 可以预览网站服务、Markdown 文件、HTML 文件。
+- 在本机预览 dev server，不把预览路由变成公网开发隧道。
+- 为 Markdown 文件生成 owner 链接和限时 share 链接。
+- 通过 tunnel 远程访问 Markdown 预览。
 
 <details>
 <summary><strong>支持的 AI Agent</strong></summary>
@@ -324,8 +324,8 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 - Provider 密钥保存在 VibeAround 本地的设置和 Profile 存储中。
 - Daemon 默认只监听 loopback，除非你显式开启 tunnel。
 - Dashboard API 和 WebSocket 路由需要本地授权 token。
-- 公网 tunnel URL 需要浏览器配对，不会直接暴露。
-- Preview 链接有明确的作用域，并且短期有效。
+- 公网 tunnel 上受保护的界面需要浏览器配对；10 分钟 Markdown share 链接是明确的例外。
+- Preview 按目标采用不同边界：Live Server 仅限回环地址；Markdown owner 需要 owner 权限，Markdown share 链接 10 分钟过期。
 - Agent CLI 使用你本机的项目权限，不越界。
 
 </details>

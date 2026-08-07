@@ -1,6 +1,6 @@
 # 隧道与远程访问
 
-隧道把你的控制台发布到一个公网 URL，让你离开机器也能访问 —— 地铁上的手机、咖啡馆里的笔记本。内置四家隧道供应商；每个远程浏览器进入前都必须配对。本页背后的信任规则见[安全模型](../architecture/security-model.md)。
+隧道把你的控制台发布到一个公网 URL，让你离开机器也能访问 —— 地铁上的手机、咖啡馆里的笔记本。内置四家隧道供应商；远程浏览器进入受保护的控制台与 owner 界面前必须配对，持有当前 key 的 Markdown share 链接是唯一免配对例外。本页背后的信任规则见[安全模型](../architecture/security-model.md)。
 
 ## 选择供应商
 
@@ -74,7 +74,7 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 
 ## 远程浏览器首次访问：配对
 
-在新设备上打开公网 URL 会看到配对门：
+在新设备上打开控制台或 owner URL 会看到配对门：
 
 1. 浏览器显示一个 6 位码（60 秒有效，可刷新）。
 2. 在你已经信任的界面上确认它：
@@ -87,7 +87,7 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 
 ## 隧道暴露什么 —— 永远不暴露什么
 
-配对之后，通过隧道可达：控制台 SPA、Web Chat、Web Terminal、预览和各 WebSocket 端点 —— 全部有 token 把守。预览的**分享链接**（`/preview/s/<slug>`）是唯一有意的例外：不用配对、不用 token、只开放单个预览、10 分钟过期。
+配对之后，通过隧道可达：控制台 SPA、Web Chat、Web Terminal、Markdown owner 预览和各 WebSocket 端点 —— 全部有 token 把守。Markdown **分享链接**（`/preview/s/<slug>`）是唯一有意的例外：不用配对、不用 token、只开放一个文档、10 分钟过期。Live Server 预览仅限本机，公网 hostname 请求会返回 `403`。
 
 永远不会通过隧道可达：本地 API Bridge 和 agent-as-API 端点（仅回环地址）、MCP 端点的本地 Bridge 面，以及任何形式的供应商凭据。
 

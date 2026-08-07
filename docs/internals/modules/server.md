@@ -30,7 +30,7 @@ Expose core's managers over the wire and own daemon composition: `ServerDaemon::
 
 ## Invariants — do not break
 
-1. **Route protection layout**: everything is token-gated except the deliberate open set (SPA shell/assets, share previews, pairing entry). New routes default to protected; adding an open route is a security-model change.
+1. **Route protection layout**: everything is token-gated except the deliberate open set (SPA shell/assets, Markdown share previews, pairing entry). Live Server previews are loopback-only. New routes default to protected; adding an open route is a security-model change.
 2. **Local-bridge gate on model surfaces**: local-api / local-agent / legacy bridge routes must stay loopback-only and outside the tunnel's reach.
 3. **Shutdown order matters** (`RunningDaemon::stop`): stop accepting Web/input → drain `ConversationIngress` → stop channel-owned processes → stop workspace hosts/search → safety-net registry kill → previews/PTY/listeners. A queued prompt must never run after workspace teardown.
 4. **`ws_domains` protocol is snapshot-replace** — clients treat the last message as the state; do not introduce incremental diffs on these endpoints (that is what the design rejects to avoid schema drift).

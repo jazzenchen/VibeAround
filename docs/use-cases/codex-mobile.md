@@ -25,7 +25,7 @@ Prerequisites: VibeAround installed with Codex enabled ([install and onboarding]
    /new           abandon course, start a fresh thread
    ```
 
-5. **Review outputs visually** with [Live Preview](../guides/web-dashboard.md) when the result is a dev server, Markdown, or HTML — the preview link opens fine in a phone browser.
+5. **Review outputs visually** with [Live Preview](../guides/web-dashboard.md): rendered Markdown can open on the phone, while dev-server and HTML previews stay on the host's local browser.
 
 ## What Phones Are Good At
 

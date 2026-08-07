@@ -9,7 +9,7 @@
 | 10 分钟 | 常驻 warm Thread 可因池压力被回收前的最短闲置时长；它不是计时器 | `src/core/src/workspace/manager.rs`（`WARM_THREAD_MIN_IDLE`） |
 | 120 秒 | 交接接续码 TTL（4 字符码，一次性） | `src/core/src/workspace/handover.rs` |
 | 60 秒 | 浏览器配对码 TTL（6 位码，可刷新） | `src/core/src/auth/pair.rs`（`CODE_TTL`） |
-| 600 秒 | 预览**分享**链接寿命（owner 链接永不过期） | `src/core/src/previews/store.rs`（`SHARE_TTL_SECS`） |
+| 600 秒 | Markdown 预览**分享**链接寿命（owner 链接永不过期；Server 预览不生成分享链接） | `src/core/src/previews/store.rs`（`SHARE_TTL_SECS`） |
 | 每次守护进程启动 | 控制台认证 token 轮换 —— 每次重启让之前所有 URL 失效 | `src/core/src/auth/token.rs` |
 
 ## 监督

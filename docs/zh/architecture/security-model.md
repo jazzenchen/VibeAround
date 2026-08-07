@@ -38,16 +38,17 @@ IM 消息经渠道插件到达。平台永远拿不到 shell，它拿到的是�
 - **附件卫生。** 来自插件的 file key 在成为文件引用前会做路径穿越校验（`..`、分隔符）；不安全的 key 被丢弃。
 - **Bot 凭据**（平台 token）存在你机器上的 `settings.json` 里，只传给拥有它的那个插件进程。
 
-## 预览：分享而不暴露
+## 预览：本地 Server、受限 Markdown 分享
 
-dev server 实时预览和 Markdown 渲染有两种 URL 形式：
+Live Server 与 Markdown 渲染预览采用不同边界：
 
-| URL | 受众 | 寿命 |
+| 目标与 URL | 受众 | 寿命 |
 |---|---|---|
-| `/preview/u/<slug>` | 所有者（token 认证） | 预览存在期间 |
-| `/preview/s/<slug>` | 任何拿到链接的人 | 600 秒后过期 |
+| Server `/preview/u/<slug>` | 仅回环浏览器 | 预览存在期间 |
+| Markdown `/preview/u/<slug>` | 回环浏览器或已配对 owner | 预览存在期间 |
+| Markdown `/preview/s/<slug>` | 任何拿到当前分享链接的人 | 600 秒后过期 |
 
-分享链接是唯一有意不认证的面，作用域限于单个预览、时间盒 10 分钟。隧道上的其他一切仍需配对 + token。
+Live Server 预览不生成分享链接，也不能通过公网 hostname 代理。Markdown 分享链接是唯一有意不认证的面，作用域限于单个文档、时间盒 10 分钟。隧道上的其他一切仍需配对 + token。
 
 ## 凭据处理
 

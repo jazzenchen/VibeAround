@@ -38,16 +38,17 @@ IM messages arrive through channel plugins. The platform never gets a shell; it 
 - **Attachment hygiene.** File keys from plugins are validated against path traversal (`..`, separators) before becoming file references; unsafe keys are dropped.
 - **Bot credentials** (platform tokens) live in `settings.json` on your machine and are passed only to the owning plugin process.
 
-## Previews: sharing without exposing
+## Previews: local servers, scoped Markdown sharing
 
-Live previews of dev servers and rendered Markdown get two URL forms:
+Live Server and rendered Markdown previews have different boundaries:
 
-| URL | Audience | Lifetime |
+| Target and URL | Audience | Lifetime |
 |---|---|---|
-| `/preview/u/<slug>` | Owner (token-authenticated) | While the preview exists |
-| `/preview/s/<slug>` | Anyone with the link | 600 seconds, then expires |
+| Server `/preview/u/<slug>` | Loopback browser only | While the preview exists |
+| Markdown `/preview/u/<slug>` | Loopback browser or paired owner | While the preview exists |
+| Markdown `/preview/s/<slug>` | Anyone with the current share link | 600 seconds, then expires |
 
-Share links are the only intentionally unauthenticated surface, scoped to one preview and time-boxed to 10 minutes. Everything else on the tunnel still requires pairing + token.
+Live Server previews do not mint share links and cannot proxy through a public hostname. Markdown share links are the only intentionally unauthenticated surface, scoped to one document and time-boxed to 10 minutes. Everything else on the tunnel still requires pairing + token.
 
 ## Credential handling
 

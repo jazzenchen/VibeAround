@@ -21,7 +21,7 @@
 
 - **← server (daemon boot)：** 启动配置的 tunnel，上报 Tailscale 的 `awaiting_approval` 状态，注册 abort handle；`stop()` abort 并清空。
 - **← auth：** 存在 public hostname 时触发 pairing gate。
-- **← previews / dashboard：** share links 和展示使用 public URL（`preview_base_url` 可覆盖）。
+- **← Markdown previews / dashboard：** Markdown owner/share links 和展示使用 public URL（`preview_base_url` 可覆盖）；Live Server previews 不使用它。
 - **→ resources：** provider program definitions 和 spawn-error hints（例如“is Node/npx installed?”）。
 
 ## 不变量：不要破坏

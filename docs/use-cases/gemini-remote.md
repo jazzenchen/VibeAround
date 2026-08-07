@@ -10,7 +10,7 @@ Gemini is a Google product. VibeAround is independent software for coordinating 
 2. **Enable Gemini in VibeAround** during onboarding or from the desktop agent screen ([install and onboarding](../guides/install-and-onboarding.md)).
 3. **Start or continue a session.** Desktop **Launch** screen (Gemini + workspace + profile) or `va launch --profile <name>` for your own terminal; or message a connected channel / Web Chat to spawn a hosted session ([agent launch guide](../guides/agent-launch.md)).
 4. **Add the remote surface.** Connect a messaging channel ([connect channels](../guides/connect-channels.md)), then move a terminal session to it with `/vibearound handover` in the CLI and `/pickup <code>` in the chat — or just keep steering the hosted session from the same chat.
-5. **Review outputs** — generated Markdown, HTML, or a dev server — through [Live Preview](../guides/web-dashboard.md), which works fine from a phone browser.
+5. **Review outputs** through [Live Preview](../guides/web-dashboard.md): rendered Markdown works from the phone, while HTML and dev-server previews stay on the host's local browser.
 
 ## Common Use Cases
 

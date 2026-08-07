@@ -13,7 +13,7 @@ Served at `/mcp` (JSON-RPC over streamable HTTP, token-authenticated). Auto-inje
 | `register_workspace` | Register the current project directory as a workspace |
 | `initialize_subagents` | Start a multi-agent turn — modes: `parallel`, `collaboration`, `brainstorming` |
 | `wait_for_subagents` | Block until subagents report completion; returns their reports |
-| `preview` | Create a live preview for a dev server port |
+| `preview` | Create a local-only live preview for a dev server port |
 | `md_preview` | Create a rendered Markdown preview |
 
 Companion skills installed per agent (`skill_auto_install`): `vibearound` (handover), `va-session`, `va-preview`, `va-md-preview`, `agent-collaboration`.
@@ -73,10 +73,11 @@ All token-authenticated; see [architecture overview](../architecture/overview.md
 
 ## Preview URLs
 
-| URL | Auth | Lifetime |
-|---|---|---|
-| `/preview/u/{slug}` | Owner token | While the preview exists |
-| `/preview/s/{slug}` | None | 600 s |
+| URL | Target | Auth | Lifetime |
+|---|---|---|---|
+| `/preview/u/{slug}` | Server | Loopback only | While the preview exists |
+| `/preview/u/{slug}` | Markdown | Loopback or paired owner cookie | While the preview exists |
+| `/preview/s/{slug}` | Markdown | Current share key | 600 s |
 
 ---
 

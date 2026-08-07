@@ -30,7 +30,7 @@
 
 ## 不变量：不要破坏
 
-1. **Route protection layout**：除有意开放的集合（SPA shell/assets、share previews、pairing entry）外，所有东西都 token-gated。新 routes 默认 protected；新增 open route 是安全模型变更。
+1. **Route protection layout**：除有意开放的集合（SPA shell/assets、Markdown share previews、pairing entry）外，所有东西都 token-gated。Live Server previews 仅限回环地址。新 routes 默认 protected；新增 open route 是安全模型变更。
 2. **模型 surface 上的 local-bridge gate**：local-api / local-agent / legacy bridge routes 必须保持 loopback-only，不能被 tunnel 访问。
 3. **Shutdown order matters**：先停 Web/input ingress，再 drain `ConversationIngress`，然后停止 channel、workspace hosts、search，最后 safety-net registry kill、previews、PTY 和 listeners。teardown 后不能再执行排队 prompt。
 4. **`ws_domains` protocol 是 snapshot-replace**：client 把最后一条消息当作当前 state；不要在这些 endpoints 引入 incremental diffs（设计上就是为了避免 schema drift）。

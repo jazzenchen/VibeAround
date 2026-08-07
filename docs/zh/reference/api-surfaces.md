@@ -13,7 +13,7 @@
 | `register_workspace` | 把当前项目目录注册为 Workspace |
 | `initialize_subagents` | 开始多 Agent 回合 —— 模式：`parallel`、`collaboration`、`brainstorming` |
 | `wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
-| `preview` | 为某个 dev server 端口创建实时预览 |
+| `preview` | 为某个 dev server 端口创建仅限本机的实时预览 |
 | `md_preview` | 创建 Markdown 渲染预览 |
 
 按 Agent 安装的配套技能（`skill_auto_install`）：`vibearound`（交接）、`va-session`、`va-preview`、`va-md-preview`、`agent-collaboration`。
@@ -73,10 +73,11 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 
 ## 预览 URL
 
-| URL | 认证 | 寿命 |
-|---|---|---|
-| `/preview/u/{slug}` | Owner token | 预览存在期间 |
-| `/preview/s/{slug}` | 无 | 600 秒 |
+| URL | 目标 | 认证 | 寿命 |
+|---|---|---|---|
+| `/preview/u/{slug}` | Server | 仅回环地址 | 预览存在期间 |
+| `/preview/u/{slug}` | Markdown | 回环地址或已配对 owner cookie | 预览存在期间 |
+| `/preview/s/{slug}` | Markdown | 当前 share key | 600 秒 |
 
 ---
 

@@ -24,11 +24,10 @@
 
 ## Live Preview
 
-不用部署，就能分享你机器上正在运行的东西：
+无需把 VibeAround 变成通用开发隧道，也能审阅本地工作：
 
-- **Dev server 预览。** 注册一个本地端口，得到一个反向代理它的预览页，带 iframe 工具栏。Agent 启动 dev server 时会自动创建这些预览（通过 `va-preview` 技能 / MCP `preview` 工具 —— [工具参考](../reference/api-surfaces.md#mcp-tools)）。
-- **Markdown 预览。** 任何 markdown 文件按 GitHub 风格渲染（`md_preview` 工具或 `va-md-preview` 技能）。
-- **每个预览有两条链接：** owner URL（token 认证，与预览同寿命）和 share URL（10 分钟过期、无需认证 —— 可以放心贴到群聊里）。见[安全模型](../architecture/security-model.md)。
+- **Dev server 预览仅限本机。** 注册一个本地端口，得到同机预览页；它只反向代理页面与静态资源的 GET/HEAD 请求，并带 iframe 工具栏。Agent 通过 `va-preview` 技能 / MCP `preview` 工具创建它（[工具参考](../reference/api-surfaces.md#mcp-tools)）。Fetch/XHR、写请求、WebSocket、HMR 和公网 hostname 都不在这条预览边界内。
+- **Markdown 预览。** 任何 Markdown 文件都有 owner URL 和 10 分钟过期的 share URL（`md_preview` 工具或 `va-md-preview` 技能）。见[安全模型](../architecture/security-model.md)。
 - `va previews` / `va preview delete <slug>` 从 CLI 管理它们；为你代启的预览进程会随守护进程停止而被杀掉。
 
 ## 运行时管理

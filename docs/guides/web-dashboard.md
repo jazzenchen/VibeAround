@@ -24,11 +24,10 @@ A real terminal (xterm.js) attached to a PTY on your machine:
 
 ## Live Preview
 
-Share what is running on your machine without deploying:
+Inspect local work without turning VibeAround into a general development tunnel:
 
-- **Dev server previews.** Register a local port and get a preview page that reverse-proxies it, with an iframe toolbar. Agents create these automatically when they start dev servers (via the `va-preview` skill / MCP `preview` tool — [tool reference](../reference/api-surfaces.md#mcp-tools)).
-- **Markdown preview.** Any markdown file rendered GitHub-style (`md_preview` tool or the `va-md-preview` skill).
-- **Two links per preview:** the owner URL (token-authenticated, lives as long as the preview) and a share URL that expires after 10 minutes and needs no auth — safe to paste in a group chat. See [Security model](../architecture/security-model.md).
+- **Dev server previews are local-only.** Register a local port and get a same-machine preview page that reverse-proxies page and static-resource GET/HEAD requests, with an iframe toolbar. Agents create these via the `va-preview` skill / MCP `preview` tool ([tool reference](../reference/api-surfaces.md#mcp-tools)). Fetch/XHR, writes, WebSockets, HMR, and public-host access are outside this preview boundary.
+- **Markdown preview.** Any Markdown file gets an owner URL and a share URL that expires after 10 minutes (`md_preview` tool or the `va-md-preview` skill). See [Security model](../architecture/security-model.md).
 - `va previews` / `va preview delete <slug>` manage them from the CLI; preview processes started for you are killed when the daemon stops.
 
 ## Runtime management
