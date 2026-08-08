@@ -154,6 +154,7 @@ async fn markdown_page_loads_local_sanitizer_and_carries_source_as_inert_json() 
     let nonce = assert_security_headers(&headers, "'none'");
     assert_all_scripts_use_nonce(&body, &nonce);
     assert!(body.contains("href=\"/va/preview/assets/theme-"));
+    assert!(body.contains(".css?v="));
     assert!(body.contains("src=\"/va/brand/vibearound-mark.svg\""));
     assert!(body.contains("color: var(--primary)"));
     let source_position = body.find("id=\"markdown-source\"").unwrap();

@@ -32,6 +32,10 @@ pub(in crate::web_server) async fn theme_stylesheet_handler() -> Response {
         .unwrap()
 }
 
+pub(super) fn theme_stylesheet_href() -> String {
+    format!("/va{THEME_STYLESHEET_ROUTE}?v={}", std::process::id())
+}
+
 fn script_response(script: &'static str) -> Response {
     Response::builder()
         .status(StatusCode::OK)
@@ -94,6 +98,10 @@ mod tests {
         assert_eq!(
             THEME_STYLESHEET_ROUTE,
             format!("/preview/assets/theme-{}.css", env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            theme_stylesheet_href(),
+            format!("/va{THEME_STYLESHEET_ROUTE}?v={}", std::process::id())
         );
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let css = std::str::from_utf8(&body).unwrap();

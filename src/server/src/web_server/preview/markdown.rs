@@ -10,7 +10,7 @@ use axum::response::Response;
 
 use common::previews::{PreviewEntry, PreviewTarget};
 
-use super::assets::{DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE, THEME_STYLESHEET_ROUTE};
+use super::assets::{theme_stylesheet_href, DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE};
 use super::toolbar::{escape_html, remaining_millis, toolbar_and_timer, TOOLBAR_CSS};
 
 const MARKDOWN_CLIENT_JS: &str = include_str!("markdown_client.js");
@@ -87,7 +87,7 @@ async fn render_md(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<link rel="stylesheet" href="/va{theme_stylesheet_route}">
+<link rel="stylesheet" href="{theme_stylesheet_href}">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css">
 <style>
   {toolbar_css}
@@ -131,7 +131,7 @@ async fn render_md(
         markdown_client_js = MARKDOWN_CLIENT_JS,
         dompurify_script_route = DOMPURIFY_SCRIPT_ROUTE,
         marked_script_route = MARKED_SCRIPT_ROUTE,
-        theme_stylesheet_route = THEME_STYLESHEET_ROUTE,
+        theme_stylesheet_href = theme_stylesheet_href(),
     );
     Ok(markdown_response(html, &nonce, standalone))
 }

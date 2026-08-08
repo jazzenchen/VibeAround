@@ -5,7 +5,7 @@ use axum::http::{header, HeaderValue, Request, StatusCode};
 use axum::response::Response;
 use common::previews::PreviewEntry;
 
-use super::assets::THEME_STYLESHEET_ROUTE;
+use super::assets::theme_stylesheet_href;
 use super::toolbar::remaining_millis;
 
 pub(super) const SHARE_COOKIE_PREFIX: &str = "va_preview_share_";
@@ -84,7 +84,7 @@ pub(super) fn render_access_gate(entry: &PreviewEntry, error: Option<AccessGateE
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VibeAround Preview</title>
-<link rel="stylesheet" href="/va{theme_stylesheet_route}">
+<link rel="stylesheet" href="{theme_stylesheet_href}">
 <style>
   * {{ box-sizing: border-box; }}
   body {{
@@ -234,7 +234,7 @@ pub(super) fn render_access_gate(entry: &PreviewEntry, error: Option<AccessGateE
 </script>
 </body>
 </html>"#,
-        theme_stylesheet_route = THEME_STYLESHEET_ROUTE,
+        theme_stylesheet_href = theme_stylesheet_href(),
     );
 
     let csp = format!(

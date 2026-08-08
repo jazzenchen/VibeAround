@@ -13,7 +13,7 @@ use axum::response::Response;
 
 use common::previews::{PreviewEntry, PreviewSnapshot, PreviewTarget};
 
-use super::assets::THEME_STYLESHEET_ROUTE;
+use super::assets::theme_stylesheet_href;
 use super::markdown::render_md_content;
 use super::toolbar::escape_html;
 
@@ -42,7 +42,7 @@ pub(super) fn render_owner_shell(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Preview — {title}</title>
-<link rel="stylesheet" href="/va{theme_stylesheet_route}">
+<link rel="stylesheet" href="{theme_stylesheet_href}">
 <style>
   * {{ box-sizing: border-box; }}
   html, body {{ width: 100%; height: 100%; margin: 0; overflow: hidden; }}
@@ -123,7 +123,7 @@ pub(super) fn render_owner_shell(
         initial_src = initial_src,
         nonce = nonce,
         owner_client_js = OWNER_CLIENT_JS,
-        theme_stylesheet_route = THEME_STYLESHEET_ROUTE,
+        theme_stylesheet_href = theme_stylesheet_href(),
     );
 
     let csp = format!(

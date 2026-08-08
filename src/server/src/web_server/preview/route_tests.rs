@@ -125,6 +125,7 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
     let gate_body = String::from_utf8(gate_body.to_vec()).unwrap();
     assert!(gate_body.contains("Enter access code"));
     assert!(gate_body.contains("href=\"/va/preview/assets/theme-"));
+    assert!(gate_body.contains(".css?v="));
     assert!(gate_body.contains("src=\"/va/brand/vibearound-mark.svg\""));
     assert!(gate_body.contains("background: var(--primary)"));
     assert!(!gate_body.contains("#0969da"));

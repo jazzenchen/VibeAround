@@ -61,6 +61,7 @@ async fn owner_shell_groups_previews_without_rendering_share_credentials() {
     assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
     assert!(csp.contains("img-src 'self'"));
     assert!(body.contains("href=\"/va/preview/assets/theme-"));
+    assert!(body.contains(".css?v="));
     assert!(body.contains("src=\"/va/brand/vibearound-mark.svg\""));
     assert!(body.contains("background: var(--background)"));
     assert!(!body.contains("background: #111"));
