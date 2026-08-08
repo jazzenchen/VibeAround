@@ -104,9 +104,9 @@ async function authedDashboardUrl(url: string): Promise<string> {
 }
 
 /**
- * Open a daemon URL (loopback dashboard or tunnel) in the user's default
- * external browser, with the auth token automatically appended. Use this
- * instead of a raw `<a href>` anywhere the target is a daemon-backed page.
+ * Open the dashboard SPA in the user's default external browser with the auth
+ * token appended. Preview URLs must use `openExternalUrl`: local Preview has a
+ * loopback bypass, while tunnel owner Preview uses the pairing flow.
  *
  * Goes through the `open_external_url` Tauri command rather than
  * `window.open`, because `window.open` inside a Tauri webview creates a

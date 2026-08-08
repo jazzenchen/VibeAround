@@ -2,7 +2,8 @@
 //!
 //! **Preview pages**:
 //! - GET /preview/u/:slug            — owner preview
-//! - GET /preview/s/:slug            — Markdown share preview
+//! - GET /preview/s/:share_id        — Markdown share gate or document
+//! - POST /preview/s/:share_id       — verify reusable access code
 //!   Local Server owner previews set a `va_preview` cookie and render an
 //!   iframe with `src="/"`; Markdown previews render directly.
 //!
@@ -12,8 +13,9 @@
 //!   - Has cookie + direct navigation (`Sec-Fetch-Dest: document`) → dashboard
 //!   - No cookie → redirect to `/va/`
 //!
-//! Markdown share keys are short-lived (TTL:
-//! `common::previews::SHARE_TTL_SECS`) and act as authentication. Owner slugs
+//! Markdown shares use a public opaque link ID plus a reusable six-digit
+//! access code. Successful public verification receives a path-scoped browser
+//! grant with the same TTL (`common::previews::SHARE_TTL_SECS`). Owner slugs
 //! remain stable and require owner access through a loopback request or the
 //! `va_owner` cookie. Server previews are local-only.
 //!
@@ -25,6 +27,7 @@
 //! - [`cookie_proxy`]  — root `/` fallback: dev-server page proxy
 //! - [`toolbar`]       — shared toolbar HTML/CSS + HTML helpers
 
+mod access;
 mod assets;
 mod cookie_proxy;
 mod iframe;
@@ -32,14 +35,20 @@ mod markdown;
 mod toolbar;
 
 use axum::body::Body;
-use axum::extract::{Path, Request};
+use axum::extract::rejection::FormRejection;
+use axum::extract::{Form, Path, Request};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
-use common::previews::{PreviewEntry, PreviewTarget};
+use common::previews::{PreviewEntry, PreviewTarget, ShareCodeError};
+use serde::Deserialize;
 
 pub(super) use assets::{marked_script_handler, MARKED_SCRIPT_ROUTE};
 pub use cookie_proxy::cookie_proxy_fallback;
 
+use access::{
+    clear_share_cookie, render_access_gate, share_cookie_name, share_grant_cookie,
+    with_retry_after, AccessGateError,
+};
 use cookie_proxy::{extract_cookie, owner_routing_cookie};
 use iframe::render_owner_preview;
 use markdown::render_md_page;
@@ -75,19 +84,80 @@ pub async fn owner_preview_handler(Path(slug): Path<String>, req: Request) -> Re
 }
 
 pub(super) fn owner_access_allowed(req: &Request) -> bool {
-    owner_cookie_valid(req) || crate::web_server::auth::request_is_loopback(req)
+    owner_cookie_valid(req) || crate::web_server::auth::request_is_local_dashboard(req)
 }
 
-/// GET /preview/s/{slug} — Markdown share preview. Slug itself is the auth.
-///
-/// No pairing is required — the random share key (10-min TTL) gates access.
-/// Server previews do not mint share keys.
-pub async fn share_preview_handler(Path(slug): Path<String>) -> Response {
-    let response = match common::previews::lookup_share(&slug) {
-        Some(entry) => render_md_page(&entry)
-            .await
-            .unwrap_or_else(IntoResponse::into_response),
+/// GET /preview/s/{share_id} — public Markdown gate or authorized document.
+pub async fn share_preview_handler(Path(share_id): Path<String>, req: Request) -> Response {
+    let response = match common::previews::lookup_share_link(&share_id) {
+        Some(entry) if crate::web_server::auth::request_is_local_dashboard(&req) => {
+            render_md_page(&entry)
+                .await
+                .unwrap_or_else(IntoResponse::into_response)
+        }
+        Some(entry) => match extract_cookie(&req, &share_cookie_name(&share_id)) {
+            Some(grant) => match common::previews::authorize_share_grant(&share_id, &grant) {
+                Some(authorized) => render_md_page(&authorized)
+                    .await
+                    .unwrap_or_else(IntoResponse::into_response),
+                None => {
+                    let mut gate = render_access_gate(&entry, None);
+                    gate.headers_mut().insert(
+                        header::SET_COOKIE,
+                        clear_share_cookie(&share_id)
+                            .parse()
+                            .expect("valid share cookie"),
+                    );
+                    gate
+                }
+            },
+            None => render_access_gate(&entry, None),
+        },
         None => preview_not_found().into_response(),
+    };
+    no_store(response)
+}
+
+#[derive(Deserialize)]
+pub(super) struct ShareCodeForm {
+    code: String,
+}
+
+/// POST /preview/s/{share_id} — verify the reusable access code.
+pub async fn verify_share_code_handler(
+    Path(share_id): Path<String>,
+    form: Result<Form<ShareCodeForm>, FormRejection>,
+) -> Response {
+    let code = form
+        .map(|Form(form)| form.code.trim().to_string())
+        .unwrap_or_default();
+    let response = match common::previews::verify_share_code(&share_id, &code) {
+        Ok((entry, grant)) => Response::builder()
+            .status(StatusCode::SEE_OTHER)
+            .header(header::LOCATION, format!("/va/preview/s/{share_id}"))
+            .header(
+                header::SET_COOKIE,
+                share_grant_cookie(&share_id, &grant, &entry),
+            )
+            .body(Body::empty())
+            .expect("valid access-code redirect"),
+        Err(ShareCodeError::Invalid) => common::previews::lookup_share_link(&share_id)
+            .map(|entry| render_access_gate(&entry, Some(AccessGateError::Incorrect)))
+            .unwrap_or_else(|| preview_not_found().into_response()),
+        Err(ShareCodeError::RateLimited { retry_after_secs }) => {
+            common::previews::lookup_share_link(&share_id)
+                .map(|entry| {
+                    with_retry_after(
+                        render_access_gate(
+                            &entry,
+                            Some(AccessGateError::RateLimited(retry_after_secs)),
+                        ),
+                        retry_after_secs,
+                    )
+                })
+                .unwrap_or_else(|| preview_not_found().into_response())
+        }
+        Err(ShareCodeError::NotFound) => preview_not_found().into_response(),
     };
     no_store(response)
 }

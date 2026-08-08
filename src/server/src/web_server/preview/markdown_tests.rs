@@ -206,4 +206,6 @@ async fn owner_and_share_markdown_pages_use_equivalent_security_policy() {
     );
     assert!(!owner_body.contains("id=\"timer\""));
     assert!(share_body.contains("id=\"timer\""));
+    assert!(owner_body.contains("preview.md"));
+    assert!(!share_body.contains("preview.md"));
 }

@@ -38,19 +38,26 @@ pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (St
     let title = escape_html(&entry.title);
     let nonce = uuid::Uuid::new_v4().simple().to_string();
 
-    let ws_name = entry
-        .workspace
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
-    let subtitle = if let Ok(relative) = file_path.strip_prefix(&entry.workspace) {
-        format!(
-            "{} / {}",
-            escape_html(ws_name),
-            escape_html(&relative.display().to_string())
-        )
+    // Owner entries have no expiry and may show local path context. Shared
+    // entries carry the transaction expiry and must not disclose workspace
+    // or file paths to public viewers.
+    let subtitle = if entry.expires_at.is_some() {
+        String::new()
     } else {
-        escape_html(ws_name).to_string()
+        let ws_name = entry
+            .workspace
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if let Ok(relative) = file_path.strip_prefix(&entry.workspace) {
+            format!(
+                "{} / {}",
+                escape_html(ws_name),
+                escape_html(&relative.display().to_string())
+            )
+        } else {
+            escape_html(ws_name).to_string()
+        }
     };
 
     let markdown_json = json_for_html_script(&content);

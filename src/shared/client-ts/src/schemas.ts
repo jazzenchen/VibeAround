@@ -37,13 +37,6 @@ export type AgentId = (typeof AGENT_IDS)[number];
 export const AgentIdSchema = z.enum(AGENT_IDS);
 
 // ---------------------------------------------------------------------------
-// Constants mirrored from Rust
-// ---------------------------------------------------------------------------
-
-/** Mirror of `common::previews::SHARE_TTL_SECS`. */
-export const PREVIEW_SHARE_TTL_SECS = 600;
-
-// ---------------------------------------------------------------------------
 // GET /api/agents — enabled agent list + default
 // ---------------------------------------------------------------------------
 
@@ -203,7 +196,8 @@ export const PreviewSnapshotSchema = z.object({
   title: z.string(),
   kind: z.enum(["server", "file"]),
   port: z.number().nullable(),
-  share_key: z.string().nullable(),
+  share_id: z.string().nullable(),
+  share_code: z.string().nullable(),
   share_expires_at_ms: z.number().nullable(),
   created_at_ms: z.number(),
 });

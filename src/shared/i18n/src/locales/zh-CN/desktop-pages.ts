@@ -1,6 +1,4 @@
 export const zhCNDesktopPages: Record<string, string> = {
-  "Live server previews are local-only. Markdown owner links are permanent; share links rotate every {{minutes}} minutes.":
-    "开发服务器预览仅限本机。Markdown owner 链接长期有效，分享链接每 {{minutes}} 分钟轮换一次。",
   "No active previews. Ask your coding agent to run preview or md_preview.":
     "没有活跃预览。让你的 Coding Agent 运行 preview 或 md_preview。",
   "API Bridge": "API 转接",
@@ -93,7 +91,13 @@ export const zhCNDesktopPages: Record<string, string> = {
   "Tunnel · owner": "隧道 · owner",
   "Tunnel · share": "隧道 · 分享",
   "Tunnel not running": "隧道未运行",
-  "Share key expired": "分享 key 已过期",
+  "Access code": "访问码",
+  "Access code expired": "访问码已过期",
+  "Copy share message": "复制分享消息",
+  "Live server previews are local-only. Markdown owner links require owner access; share links and access codes expire together.":
+    "实时服务预览仅限本机。Markdown owner 链接需要 owner 授权；分享链接和访问码会同时过期。",
+  "Access code: {{code}} (reusable by multiple viewers until expiry)\nVibeAround Preview: {{title}}\n{{url}}\nExpires: {{expires}}":
+    "访问码：{{code}}（到期前可供多人使用）\nVibeAround 预览：{{title}}\n{{url}}\n有效期至：{{expires}}",
   "Close (kills dev server)": "关闭（会终止开发服务器）",
   Close: "关闭",
   "Workspace folders where agents build projects. The default workspace can be changed in Settings.":

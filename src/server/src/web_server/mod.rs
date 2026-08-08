@@ -490,7 +490,10 @@ pub async fn run_web_server(
             get(preview::marked_script_handler),
         )
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
-        .route("/preview/s/{slug}", get(preview::share_preview_handler))
+        .route(
+            "/preview/s/{share_id}",
+            get(preview::share_preview_handler).post(preview::verify_share_code_handler),
+        )
         .nest_service("/assets", ServeDir::new(assets_dir))
         .nest_service("/brand", ServeDir::new(brand_dir))
         .route_service("/favicon.ico", ServeFile::new(web_dist.join("favicon.ico")))

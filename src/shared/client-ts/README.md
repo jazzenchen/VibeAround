@@ -9,8 +9,7 @@ and the Tauri desktop-ui (`src/desktop-ui/`).
   that encodes the daemon's route layout (matches
   `.nest("/va", ...)` in `src/server/src/web_server/mod.rs`).
 - `src/schemas.ts` — zod schemas + inferred types for all HTTP/WS
-  wire shapes, plus hand-maintained constants (`AGENT_IDS`,
-  `PREVIEW_SHARE_TTL_SECS`).
+  wire shapes, plus the hand-maintained `AGENT_IDS` constant.
 - `src/index.ts` — barrel.
 
 ## Relationship to core

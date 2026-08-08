@@ -113,6 +113,13 @@ fn request_origin_is_local_dashboard<B>(req: &Request<B>) -> bool {
         .is_none_or(|origin| local_dashboard_origin_allowed(origin, None))
 }
 
+/// Local browser access may bypass Preview authentication only when the
+/// connection and Host are loopback and any browser Origin is also local.
+/// Top-level navigations normally omit Origin and remain allowed.
+pub(crate) fn request_is_local_dashboard<B>(req: &Request<B>) -> bool {
+    request_is_loopback(req) && request_origin_is_local_dashboard(req)
+}
+
 /// Preview's local bypass requires both a loopback peer and loopback Host.
 /// Tunnel forwarders also connect over loopback, so peer alone is insufficient.
 pub(crate) fn request_is_loopback<B>(req: &Request<B>) -> bool {
@@ -120,7 +127,7 @@ pub(crate) fn request_is_loopback<B>(req: &Request<B>) -> bool {
 }
 
 fn request_is_local_bridge<B>(req: &Request<B>) -> bool {
-    request_is_loopback(req) && request_origin_is_local_dashboard(req)
+    request_is_local_dashboard(req)
 }
 
 /// Allow local API bridge calls only from clients that actually connected via

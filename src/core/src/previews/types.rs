@@ -29,9 +29,27 @@ pub struct PreviewEntry {
     pub target: PreviewTarget,
     /// When the session was created.
     pub created_at: Instant,
-    /// When the current share key expires. Owner access lives with the
-    /// preview session and therefore has no expiry here.
+    /// When the current share transaction expires. Owner access lives with
+    /// the preview session and therefore has no expiry here.
     pub expires_at: Option<Instant>,
+}
+
+/// Public share details returned to the owner who created a File preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewShare {
+    /// Opaque identifier carried by the public URL.
+    pub id: String,
+    /// Six-digit access code entered by viewers.
+    pub code: String,
+    /// Shared deadline for the link, access code, and browser grant.
+    pub expires_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareCodeError {
+    NotFound,
+    Invalid,
+    RateLimited { retry_after_secs: u64 },
 }
 
 /// Serializable snapshot of a session for API responses.
@@ -44,8 +62,9 @@ pub struct PreviewSnapshot {
     /// Kind tag + port (for Server previews).
     pub kind: &'static str,
     pub port: Option<u16>,
-    pub share_key: Option<String>,
-    /// Unix millis; `null` for owner-only sessions (no share key generated).
+    pub share_id: Option<String>,
+    pub share_code: Option<String>,
+    /// Unix millis; `null` for owner-only sessions (no share generated).
     pub share_expires_at_ms: Option<u64>,
     pub created_at_ms: u64,
 }

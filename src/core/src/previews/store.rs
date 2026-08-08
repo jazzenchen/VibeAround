@@ -21,31 +21,67 @@ pub(super) struct PreviewSession {
     pub(super) title: String,
     pub(super) target: PreviewTarget,
     pub(super) slug: String,
-    pub(super) share_key: Option<String>,
-    pub(super) share_expires_at: Option<Instant>,
+    pub(super) share: Option<ShareTransaction>,
     /// Agent session ID that registered this preview. Used for cleanup
     /// when the session closes. `None` if the agent didn't provide it.
     pub(super) owner_session: Option<String>,
     pub(super) created_at: Instant,
 }
 
-/// TTL for `/s/{key}` preview share links, in seconds.
-pub const SHARE_TTL_SECS: u64 = 600;
-pub(super) const SHARE_TTL: Duration = Duration::from_secs(SHARE_TTL_SECS);
+#[derive(Debug, Clone)]
+pub(super) struct ShareTransaction {
+    /// Opaque public identifier carried by the share URL.
+    pub(super) id: String,
+    /// Human-entered reusable access code.
+    pub(super) code: String,
+    /// High-entropy browser credential issued after code verification.
+    pub(super) grant: String,
+    pub(super) expires_at: Instant,
+    pub(super) attempt_tokens: u8,
+    pub(super) attempts_refilled_at: Instant,
+}
 
-/// Alphabet for random share keys: uppercase + digits, with ambiguous
-/// I/O/0/1 removed.
-const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+/// Lifetime of one reusable access-code transaction, in seconds.
+pub const SHARE_TTL_SECS: u64 = 600;
+pub const SHARE_CODE_LENGTH: usize = 6;
+pub const SHARE_CODE_ATTEMPT_BURST: u8 = 10;
+pub(super) const SHARE_TTL: Duration = Duration::from_secs(SHARE_TTL_SECS);
+pub(super) const SHARE_ATTEMPT_REFILL: Duration = Duration::from_secs(6);
+
+const ACCESS_CODE_SPACE: u32 = 10_u32.pow(SHARE_CODE_LENGTH as u32);
 
 pub(super) static SESSIONS: LazyLock<Mutex<HashMap<PathBuf, PreviewSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Random 8-char share key (for `/s/{key}` URLs).
-pub(super) fn generate_share_key() -> String {
+pub(super) fn generate_share_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+/// Random six-digit access code, including leading zeroes.
+pub(super) fn generate_share_code(previous: Option<&str>) -> String {
     let mut rng = OsRng;
-    (0..8)
-        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
-        .collect()
+    loop {
+        let code = format!(
+            "{:0width$}",
+            rng.gen_range(0..ACCESS_CODE_SPACE),
+            width = SHARE_CODE_LENGTH
+        );
+        if previous != Some(code.as_str()) {
+            return code;
+        }
+    }
+}
+
+pub(super) fn generate_share_grant() -> String {
+    use std::fmt::Write;
+
+    let mut bytes = [0_u8; 32];
+    rand::RngCore::fill_bytes(&mut OsRng, &mut bytes);
+    let mut grant = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut grant, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    grant
 }
 
 /// Derive a stable, collision-free owner slug from a full path.

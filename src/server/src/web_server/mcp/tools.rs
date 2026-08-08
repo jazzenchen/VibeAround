@@ -1246,20 +1246,38 @@ pub(super) async fn mcp_md_preview(
                 .to_string()
         });
 
-    let (owner_slug, share_slug) = common::previews::ensure_file(file_path, cwd_path, title);
-    let owner_url = build_preview_url(state, "preview/u", &owner_slug);
-    let share_url = build_preview_url(state, "preview/s", &share_slug);
-
-    mcp_text(
-        id,
-        &format!(
+    let (owner_slug, share) = common::previews::ensure_file(file_path, cwd_path, title);
+    let tunnel_url = state.tunnels.first_url();
+    let owner_base = tunnel_url
+        .clone()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", state.port));
+    let owner_url = build_preview_url(&owner_base, "preview/u", &owner_slug);
+    let message = match tunnel_url {
+        Some(base) => {
+            let share_url = build_preview_url(&base, "preview/s", &share.id);
+            let remaining = share
+                .expires_at
+                .saturating_duration_since(std::time::Instant::now());
+            let remaining_secs = remaining.as_secs();
+            format!(
+                "Markdown preview ready.\n\n\
+                 Owner: `{owner_url}`\n\
+                 Share: `{share_url}`\n\
+                 Access code: `{}`\n\
+                 Link and code expire together in {}:{:02}.",
+                share.code,
+                remaining_secs / 60,
+                remaining_secs % 60
+            )
+        }
+        None => format!(
             "Markdown preview ready.\n\n\
-         Owner: `{}`\n\
-         Share: `{}`\n\
-         Share expires: 10 minutes",
-            owner_url, share_url
+             Owner: `{owner_url}`\n\
+             Public sharing is unavailable until a tunnel is running."
         ),
-    )
+    };
+
+    mcp_text(id, &message)
 }
 
 // ---------------------------------------------------------------------------
@@ -1306,13 +1324,9 @@ fn derive_title(arguments: &serde_json::Value, cwd_path: &std::path::Path) -> St
         })
 }
 
-/// Build a full preview URL from the tunnel (or localhost fallback).
+/// Build a full preview URL from an already-selected base URL.
 /// All preview routes live under `/va/` to avoid conflicts with dev servers.
-fn build_preview_url(state: &AppState, route: &str, slug: &str) -> String {
-    let base = state
-        .tunnels
-        .first_url()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", state.port));
+fn build_preview_url(base: &str, route: &str, slug: &str) -> String {
     format!("{}/va/{}/{}", base.trim_end_matches('/'), route, slug)
 }
 

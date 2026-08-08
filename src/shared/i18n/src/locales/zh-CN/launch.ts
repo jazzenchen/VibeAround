@@ -96,7 +96,6 @@ export const zhCNLaunch: Record<string, string> = {
   Truncated: "已截断",
   Empty: "空",
   Clear: "清空",
-  Copy: "复制",
   client: "客户端",
   upstream: "上游",
   "server {{status}}": "服务器 {{status}}",
@@ -392,7 +391,6 @@ export const zhCNLaunch: Record<string, string> = {
   "Click a value to copy.": "点击字段值即可复制。",
   "Use any non-empty API key value when the local API bridge is already running with a saved profile key.":
     "本地 API 转接已使用保存的配置 key 运行时，此处填写任意非空值即可。",
-  Copied: "已复制",
   "Manual setting": "手动配置",
   "{{agent}} manual setting": "{{agent}} 手动配置",
   "Copy this snippet into the CLI config file yourself. VibeAround does not edit the file automatically.":
