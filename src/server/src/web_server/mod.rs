@@ -497,6 +497,10 @@ pub async fn run_web_server(
             preview::DOMPURIFY_SCRIPT_ROUTE,
             get(preview::dompurify_script_handler),
         )
+        .route(
+            preview::THEME_STYLESHEET_ROUTE,
+            get(preview::theme_stylesheet_handler),
+        )
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
         .route(
             "/preview/u/{slug}/content",

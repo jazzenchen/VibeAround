@@ -68,8 +68,7 @@ pub(super) fn toolbar_and_timer(
     el.textContent = m + ':' + (s < 10 ? '0' : '') + s;
     if (left <= 0) {{
       el.textContent = 'Expired';
-      el.style.background = '#6b2020';
-      el.style.color = '#e5a5a5';
+      el.classList.add('expired');
     }}
   }}, 1000);
 }})();
@@ -78,6 +77,7 @@ pub(super) fn toolbar_and_timer(
     });
     format!(
         r#"<div class="toolbar">
+  <img class="mark" src="/va/brand/vibearound-mark.svg" alt="">
   <span class="title">{title}</span>
   {subtitle_html}
   {timer_html}
@@ -98,48 +98,61 @@ pub(super) const TOOLBAR_CSS: &str = r#"
     position: sticky;
     top: 0;
     z-index: 100;
-    height: 40px;
+    height: 44px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 0 16px;
-    background: #1a1a1a;
-    border-bottom: 1px solid #333;
+    gap: 10px;
+    padding: 0 14px;
+    background: var(--popover);
+    border-bottom: 1px solid var(--border);
     font-size: 13px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    color: var(--popover-foreground);
+  }
+  .toolbar .mark {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
   }
   .toolbar .title {
     font-weight: 600;
-    color: #fff;
+    color: var(--popover-foreground);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .toolbar .subtitle {
-    color: #999;
+    color: var(--muted-foreground);
     font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .toolbar .badge {
-    background: #2d6a4f;
-    color: #b7e4c7;
+    background: color-mix(in oklab, var(--primary) 12%, transparent);
+    color: var(--primary);
     padding: 2px 8px;
     border-radius: 10px;
     font-size: 11px;
     flex-shrink: 0;
   }
+  .toolbar .badge.expired {
+    background: color-mix(in oklab, var(--destructive) 12%, transparent);
+    color: var(--destructive);
+  }
   .toolbar .spacer { flex: 1; }
   .toolbar button {
-    background: #333;
-    color: #ccc;
-    border: 1px solid #444;
+    background: var(--background);
+    color: var(--foreground);
+    border: 1px solid var(--border);
     padding: 4px 12px;
-    border-radius: 4px;
+    border-radius: calc(var(--radius) - 2px);
     cursor: pointer;
     font-size: 12px;
   }
-  .toolbar button:hover { background: #444; color: #fff; }
+  .toolbar button:hover { background: var(--accent); color: var(--accent-foreground); }
+  .toolbar button:focus-visible {
+    outline: 3px solid color-mix(in oklab, var(--ring) 35%, transparent);
+    outline-offset: 1px;
+  }
 "#;

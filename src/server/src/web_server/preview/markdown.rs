@@ -10,7 +10,7 @@ use axum::response::Response;
 
 use common::previews::{PreviewEntry, PreviewTarget};
 
-use super::assets::{DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE};
+use super::assets::{DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE, THEME_STYLESHEET_ROUTE};
 use super::toolbar::{escape_html, remaining_millis, toolbar_and_timer, TOOLBAR_CSS};
 
 const MARKDOWN_CLIENT_JS: &str = include_str!("markdown_client.js");
@@ -87,18 +87,29 @@ async fn render_md(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+<link rel="stylesheet" href="/va{theme_stylesheet_route}">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.min.css">
 <style>
   {toolbar_css}
-  body {{ background: #fff; color: #1f2328; }}
+  body {{
+    background: var(--background);
+    color: var(--foreground);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  }}
   .markdown-body {{ max-width: 880px; margin: 0 auto; padding: 32px 24px 64px; }}
   @media (max-width: 767px) {{ .markdown-body {{ padding: 16px; }} }}
-  .markdown-body pre {{ background: #f6f8fa; border-radius: 6px; padding: 16px; overflow-x: auto; }}
+  .markdown-body {{ color: var(--foreground); background: transparent; }}
+  .markdown-body a {{ color: var(--primary); }}
+  .markdown-body h1, .markdown-body h2 {{ border-bottom-color: var(--border); }}
+  .markdown-body hr {{ background-color: var(--border); }}
+  .markdown-body blockquote {{ color: var(--muted-foreground); border-left-color: var(--border); }}
+  .markdown-body pre {{ background: var(--muted); border-radius: calc(var(--radius) - 4px); padding: 16px; overflow-x: auto; }}
   .markdown-body code {{ font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 85%; }}
   .markdown-body pre code {{ background: transparent; padding: 0; }}
   .markdown-body table {{ border-collapse: collapse; width: 100%; }}
-  .markdown-body table th, .markdown-body table td {{ border: 1px solid #d0d7de; padding: 6px 13px; }}
-  .markdown-body table tr:nth-child(2n) {{ background: #f6f8fa; }}
+  .markdown-body table th, .markdown-body table td {{ border: 1px solid var(--border); padding: 6px 13px; }}
+  .markdown-body table tr {{ background: transparent; border-top-color: var(--border); }}
+  .markdown-body table tr:nth-child(2n) {{ background: var(--muted); }}
 </style>
 </head>
 <body>
@@ -120,6 +131,7 @@ async fn render_md(
         markdown_client_js = MARKDOWN_CLIENT_JS,
         dompurify_script_route = DOMPURIFY_SCRIPT_ROUTE,
         marked_script_route = MARKED_SCRIPT_ROUTE,
+        theme_stylesheet_route = THEME_STYLESHEET_ROUTE,
     );
     Ok(markdown_response(html, &nonce, standalone))
 }
@@ -135,7 +147,7 @@ fn json_for_html_script(content: &str) -> String {
 fn markdown_response(html: String, nonce: &str, standalone: bool) -> Response {
     let frame_ancestors = if standalone { "'none'" } else { "'self'" };
     let csp = format!(
-        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'unsafe-inline' https://cdn.jsdelivr.net; img-src https:; base-uri 'none'; form-action 'none'; frame-ancestors {frame_ancestors}"
+        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' https:; base-uri 'none'; form-action 'none'; frame-ancestors {frame_ancestors}"
     );
     Response::builder()
         .status(StatusCode::OK)

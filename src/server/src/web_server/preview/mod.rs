@@ -37,7 +37,8 @@ use common::previews::{PreviewEntry, PreviewTarget, ShareCodeError};
 use serde::Deserialize;
 
 pub(super) use assets::{
-    dompurify_script_handler, marked_script_handler, DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE,
+    dompurify_script_handler, marked_script_handler, theme_stylesheet_handler,
+    DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE, THEME_STYLESHEET_ROUTE,
 };
 
 use access::{

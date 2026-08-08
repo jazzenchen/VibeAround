@@ -5,6 +5,7 @@ use axum::http::{header, HeaderValue, Request, StatusCode};
 use axum::response::Response;
 use common::previews::PreviewEntry;
 
+use super::assets::THEME_STYLESHEET_ROUTE;
 use super::toolbar::remaining_millis;
 
 pub(super) const SHARE_COOKIE_PREFIX: &str = "va_preview_share_";
@@ -83,6 +84,7 @@ pub(super) fn render_access_gate(entry: &PreviewEntry, error: Option<AccessGateE
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VibeAround Preview</title>
+<link rel="stylesheet" href="/va{theme_stylesheet_route}">
 <style>
   * {{ box-sizing: border-box; }}
   body {{
@@ -91,22 +93,25 @@ pub(super) fn render_access_gate(entry: &PreviewEntry, error: Option<AccessGateE
     display: grid;
     place-items: center;
     padding: 24px;
-    background: #f6f8fa;
-    color: #1f2328;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   }}
   main {{
-    width: min(100%, 420px);
-    padding: 32px;
-    border: 1px solid #d0d7de;
-    border-radius: 14px;
-    background: #fff;
-    box-shadow: 0 8px 28px rgba(140, 149, 159, 0.18);
-    text-align: center;
+    width: min(100%, 448px);
+    display: grid;
+    gap: 24px;
   }}
-  .brand {{ color: #0969da; font-size: 13px; font-weight: 700; letter-spacing: .02em; }}
-  h1 {{ margin: 12px 0 8px; font-size: 24px; }}
-  .hint {{ margin: 0 0 24px; color: #57606a; font-size: 14px; line-height: 1.5; }}
+  .intro {{ display: flex; align-items: center; gap: 12px; }}
+  .mark {{ width: 40px; height: 40px; flex: 0 0 auto; }}
+  h1 {{ margin: 0 0 3px; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }}
+  .hint {{ margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }}
+  form {{
+    padding: 24px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--card) 50%, transparent);
+  }}
   .otp {{ position: relative; margin: 0 auto 18px; }}
   .otp input {{
     position: absolute;
@@ -126,31 +131,41 @@ pub(super) fn render_access_gate(entry: &PreviewEntry, error: Option<AccessGateE
     display: grid;
     place-items: center;
     aspect-ratio: 1;
-    border: 1px solid #d0d7de;
-    border-radius: 9px;
-    background: #f6f8fa;
-    font: 600 24px ui-monospace, SFMono-Regular, Menlo, monospace;
+    border: 1px solid var(--input);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--background);
+    color: var(--foreground);
+    font: 600 24px "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }}
-  .slot.filled {{ border-color: #8c959f; background: #fff; }}
-  .otp:focus-within .slot.active {{ border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,.15); }}
-  .otp.invalid .slot {{ border-color: #cf222e; }}
+  .slot.filled {{ border-color: var(--muted-foreground); background: var(--card); }}
+  .otp:focus-within .slot.active {{
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 25%, transparent);
+  }}
+  .otp.invalid .slot {{ border-color: var(--destructive); }}
   button {{
     width: 100%;
-    min-height: 42px;
+    min-height: 36px;
     border: 0;
-    border-radius: 8px;
-    background: #0969da;
-    color: #fff;
-    font-size: 15px;
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
+    transition: opacity 120ms ease;
   }}
   button:disabled {{ opacity: .5; cursor: not-allowed; }}
-  .error {{ min-height: 20px; margin: 0 0 12px; color: #cf222e; font-size: 13px; }}
-  .expiry {{ margin: 16px 0 0; color: #6e7781; font-size: 12px; }}
+  button:focus-visible {{
+    outline: 3px solid color-mix(in oklab, var(--ring) 35%, transparent);
+    outline-offset: 1px;
+  }}
+  .error {{ min-height: 20px; margin: 0 0 12px; color: var(--destructive); font-size: 12px; }}
+  .expiry {{ margin: 16px 0 0; color: var(--muted-foreground); font-size: 12px; text-align: center; }}
   @media (max-width: 480px) {{
     body {{ padding: 16px; }}
-    main {{ padding: 24px 18px; }}
+    main {{ gap: 20px; }}
+    form {{ padding: 20px 18px; }}
     .slots {{ gap: 6px; }}
     .slot {{ font-size: 21px; }}
   }}
@@ -158,9 +173,13 @@ pub(super) fn render_access_gate(entry: &PreviewEntry, error: Option<AccessGateE
 </head>
 <body>
 <main>
-  <div class="brand">VibeAround Preview</div>
-  <h1>Enter access code</h1>
-  <p class="hint">Use the {code_length}-digit code shared by the owner.</p>
+  <header class="intro">
+    <img class="mark" src="/va/brand/vibearound-mark.svg" alt="">
+    <div>
+      <h1>Enter access code</h1>
+      <p class="hint">Use the {code_length}-digit code shared by the owner.</p>
+    </div>
+  </header>
   <form method="post">
     <div class="otp{invalid_class}">
       <input id="access-code" name="code" type="text" inputmode="numeric"
@@ -215,10 +234,11 @@ pub(super) fn render_access_gate(entry: &PreviewEntry, error: Option<AccessGateE
 </script>
 </body>
 </html>"#,
+        theme_stylesheet_route = THEME_STYLESHEET_ROUTE,
     );
 
     let csp = format!(
-        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     );
     Response::builder()
         .status(status)

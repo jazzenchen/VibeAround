@@ -58,6 +58,12 @@ async fn owner_shell_groups_previews_without_rendering_share_credentials() {
     assert!(csp.contains("http://localhost:5173"));
     assert!(csp.contains("frame-ancestors 'none'"));
     assert!(csp.contains("script-src-attr 'none'"));
+    assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
+    assert!(csp.contains("img-src 'self'"));
+    assert!(body.contains("href=\"/va/preview/assets/theme-"));
+    assert!(body.contains("src=\"/va/brand/vibearound-mark.svg\""));
+    assert!(body.contains("background: var(--background)"));
+    assert!(!body.contains("background: #111"));
     assert_eq!(body.matches("<optgroup").count(), 2);
     assert!(body.find("label=\"alpha\"").unwrap() < body.find("label=\"beta\"").unwrap());
     assert!(body.contains(

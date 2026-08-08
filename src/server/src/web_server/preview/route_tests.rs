@@ -118,10 +118,16 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
         .unwrap();
     assert!(gate_csp.contains("form-action 'self'"));
     assert!(gate_csp.contains("frame-ancestors 'none'"));
+    assert!(gate_csp.contains("style-src 'self' 'unsafe-inline'"));
+    assert!(gate_csp.contains("img-src 'self'"));
     assert!(gate.headers().get("set-cookie").is_none());
     let gate_body = to_bytes(gate.into_body(), usize::MAX).await.unwrap();
     let gate_body = String::from_utf8(gate_body.to_vec()).unwrap();
     assert!(gate_body.contains("Enter access code"));
+    assert!(gate_body.contains("href=\"/va/preview/assets/theme-"));
+    assert!(gate_body.contains("src=\"/va/brand/vibearound-mark.svg\""));
+    assert!(gate_body.contains("background: var(--primary)"));
+    assert!(!gate_body.contains("#0969da"));
     assert!(gate_body.contains("inputmode=\"numeric\""));
     assert!(gate_body.contains("autocomplete=\"one-time-code\""));
     assert!(gate_body.contains("pattern=\"[0-9]{6}\""));
@@ -275,7 +281,7 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
         .unwrap()
         .to_str()
         .unwrap();
-    assert!(content_csp.contains("img-src https:"));
+    assert!(content_csp.contains("img-src 'self' https:"));
     assert!(content_csp.contains("frame-ancestors 'self'"));
     let content_body = to_bytes(owner_content.into_body(), usize::MAX)
         .await

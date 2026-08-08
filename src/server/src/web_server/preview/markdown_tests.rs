@@ -66,8 +66,8 @@ fn assert_security_headers(headers: &HeaderMap, frame_ancestors: &str) -> String
         .unwrap();
     assert!(csp.contains("default-src 'none'"));
     assert!(csp.contains("script-src-attr 'none'"));
-    assert!(csp.contains("style-src 'unsafe-inline' https://cdn.jsdelivr.net"));
-    assert!(csp.contains("img-src https:"));
+    assert!(csp.contains("style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net"));
+    assert!(csp.contains("img-src 'self' https:"));
     assert!(csp.contains("base-uri 'none'"));
     assert!(csp.contains("form-action 'none'"));
     assert!(csp.contains(&format!("frame-ancestors {frame_ancestors}")));
@@ -153,6 +153,9 @@ async fn markdown_page_loads_local_sanitizer_and_carries_source_as_inert_json() 
 
     let nonce = assert_security_headers(&headers, "'none'");
     assert_all_scripts_use_nonce(&body, &nonce);
+    assert!(body.contains("href=\"/va/preview/assets/theme-"));
+    assert!(body.contains("src=\"/va/brand/vibearound-mark.svg\""));
+    assert!(body.contains("color: var(--primary)"));
     let source_position = body.find("id=\"markdown-source\"").unwrap();
     let dompurify_position = body
         .find("src=\"/va/preview/assets/dompurify-3.4.12.min.js\"")

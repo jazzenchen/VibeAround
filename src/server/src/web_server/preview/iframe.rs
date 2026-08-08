@@ -13,6 +13,7 @@ use axum::response::Response;
 
 use common::previews::{PreviewEntry, PreviewSnapshot, PreviewTarget};
 
+use super::assets::THEME_STYLESHEET_ROUTE;
 use super::markdown::render_md_content;
 use super::toolbar::escape_html;
 
@@ -41,21 +42,26 @@ pub(super) fn render_owner_shell(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Preview — {title}</title>
+<link rel="stylesheet" href="/va{theme_stylesheet_route}">
 <style>
   * {{ box-sizing: border-box; }}
   html, body {{ width: 100%; height: 100%; margin: 0; overflow: hidden; }}
-  body {{ background: #111; color: #eee; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
-  iframe {{ width: 100%; height: 100%; border: 0; background: #fff; }}
+  body {{
+    background: var(--background);
+    color: var(--foreground);
+    font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  }}
+  iframe {{ width: 100%; height: 100%; border: 0; background: var(--background); }}
   .switcher {{
     position: fixed;
     top: 12px;
     left: 12px;
     z-index: 100;
     width: min(440px, calc(100vw - 24px));
-    border: 1px solid #3a3a3a;
-    border-radius: 10px;
-    background: rgba(26, 26, 26, 0.96);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--popover) 96%, transparent);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.10);
     backdrop-filter: blur(12px);
   }}
   .switcher:not([open]) {{ width: auto; max-width: calc(100vw - 24px); }}
@@ -69,23 +75,27 @@ pub(super) fn render_owner_shell(
     user-select: none;
   }}
   summary::-webkit-details-marker {{ display: none; }}
-  summary::before {{ content: "▸"; color: #999; }}
+  summary::before {{ content: "▸"; color: var(--muted-foreground); }}
   details[open] summary::before {{ content: "▾"; }}
-  .brand {{ color: #fff; font-weight: 650; white-space: nowrap; }}
-  .current {{ color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-  .controls {{ display: flex; gap: 8px; padding: 0 10px 10px; }}
+  .mark {{ width: 22px; height: 22px; flex: 0 0 auto; }}
+  .brand {{ color: var(--popover-foreground); font-weight: 600; white-space: nowrap; }}
+  .current {{ color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .controls {{ display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--border); }}
   select, button {{
     min-height: 34px;
-    border: 1px solid #484848;
-    border-radius: 6px;
-    background: #292929;
-    color: #eee;
+    border: 1px solid var(--input);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--background);
+    color: var(--foreground);
     font: inherit;
   }}
   select {{ min-width: 0; flex: 1; padding: 0 9px; }}
   button {{ padding: 0 12px; cursor: pointer; }}
-  button:hover {{ background: #343434; }}
-  select:focus-visible, button:focus-visible, summary:focus-visible {{ outline: 2px solid #73a7ff; outline-offset: 2px; }}
+  button:hover {{ background: var(--accent); color: var(--accent-foreground); }}
+  select:focus-visible, button:focus-visible, summary:focus-visible {{
+    outline: 3px solid color-mix(in oklab, var(--ring) 30%, transparent);
+    outline-offset: 1px;
+  }}
   @media (max-width: 480px) {{
     .switcher {{ top: 8px; left: 8px; width: calc(100vw - 16px); }}
     .controls {{ flex-wrap: wrap; }}
@@ -96,7 +106,7 @@ pub(super) fn render_owner_shell(
 </head>
 <body>
 <details class="switcher">
-  <summary><span class="brand">VibeAround Preview</span><span class="current" id="current-preview">{title}</span></summary>
+  <summary><img class="mark" src="/va/brand/vibearound-mark.svg" alt=""><span class="brand">VibeAround Preview</span><span class="current" id="current-preview">{title}</span></summary>
   <div class="controls">
     <select id="preview-picker" aria-label="Workspace and preview">{options}</select>
     <button type="button" id="refresh-preview">Refresh</button>
@@ -113,10 +123,11 @@ pub(super) fn render_owner_shell(
         initial_src = initial_src,
         nonce = nonce,
         owner_client_js = OWNER_CLIENT_JS,
+        theme_stylesheet_route = THEME_STYLESHEET_ROUTE,
     );
 
     let csp = format!(
-        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; frame-src {frame_sources}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; frame-src {frame_sources}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     Response::builder()
         .status(StatusCode::OK)
