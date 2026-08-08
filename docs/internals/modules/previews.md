@@ -4,7 +4,7 @@
 
 ## Responsibility
 
-Track preview sessions (dev-server ports and rendered files), mint local Server owner URLs and Markdown owner/share transactions, enforce the shared access deadline, and clean up preview-related processes. The HTTP serving side (page proxy, iframe toolbar, Markdown rendering) lives in [server](server.md)'s `preview` submodule.
+Track preview sessions (dev-server ports and rendered files), mint local Server owner URLs and Markdown owner/share transactions, enforce the shared access deadline, and clean up preview-related processes. The HTTP side (owner shell, direct Server iframe selection, and Markdown rendering) lives in [server](server.md)'s `preview` submodule.
 
 ## Key types
 
@@ -17,7 +17,7 @@ Track preview sessions (dev-server ports and rendered files), mint local Server 
 ## Interactions
 
 - **← server (MCP `preview` / `md_preview`):** agents create previews via tools; skills (`va-preview`, `va-md-preview`) wrap them.
-- **← server (`preview/` handlers):** resolve slugs, proxy requests, render markdown.
+- **← server (`preview/` handlers):** resolve slugs, render the owner picker and Markdown content; the browser loads Server origins directly.
 - **← workspace:** closing a thread kills previews bound to its session.
 - **← cli / dashboard:** list and delete.
 
@@ -33,7 +33,7 @@ Track preview sessions (dev-server ports and rendered files), mint local Server 
 
 ---
 
-*Source anchors: `src/core/src/previews/` (mod, store), `src/server/src/web_server/preview/` (proxy, iframe, markdown, cookie_proxy), `src/server/src/web_server/mcp/tools.rs` (preview tools).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/previews/` (mod, store), `src/server/src/web_server/preview/` (iframe, markdown, access), `src/server/src/web_server/mcp/tools.rs` (preview tools).*
+*Last verified: v0.7.24*
 
 <sub>[◀ Module: pty](pty.md) · [Documentation index](../../README.md) · [Module: tunnels ▶](tunnels.md)</sub>

@@ -245,13 +245,14 @@ Remote tunnels are used by Web Hub, Web Terminal, and Markdown preview links. Vi
 
 Preview what AI agents are building.
 
-VibeAround opens local dev servers in a same-machine preview and gives Markdown files owner links for loopback or paired browsers, plus 10-minute public share transactions protected by reusable six-digit access codes.
+VibeAround opens local dev servers in a same-machine owner page with one iframe and a collapsible workspace/Preview picker. Server targets load directly from their own loopback origin, while Markdown stays inside VibeAround's bundled renderer and can also mint 10-minute public share transactions protected by reusable six-digit access codes.
 
 <p align="center">
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/preview-in-a-row.webp" alt="Ask for previews from messaging apps, pair a browser, and open web or Markdown previews" width="92%" />
 </p>
 
-- Preview dev servers locally without turning the preview route into a public dev tunnel.
+- Preview dev servers on their native loopback origin, preserving their own fetch, WebSocket, and HMR behavior without turning VibeAround into a public dev tunnel.
+- Switch between workspace previews from the same owner page; Server targets remain local-only.
 - Generate owner links and copyable Markdown share messages containing the public URL, access code, and expiry.
 - Use tunnels to access Markdown previews remotely.
 

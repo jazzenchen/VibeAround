@@ -75,8 +75,8 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 
 | URL | 目标 | 认证 | 寿命 |
 |---|---|---|---|
-| `/preview/u/{slug}` | Server | 仅回环地址 | 预览存在期间 |
-| `/preview/u/{slug}` | Markdown | 回环地址或已配对 owner cookie | 预览存在期间 |
+| `/preview/u/{slug}` | Owner shell；选择 Server 时直接加载其准确 loopback origin | Server slug 仅限回环地址；Markdown 为回环地址或已配对 owner | 预览存在期间 |
+| `/preview/u/{slug}/content` | Owner iframe 内的 Markdown 内容 | 与 owner shell 相同 | 预览存在期间 |
 | `/preview/s/{share_id}` | Markdown | 六位访问码，随后使用按路径限定的浏览器授信 | 共用 600 秒期限 |
 
 ---

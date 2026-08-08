@@ -75,8 +75,8 @@ All token-authenticated; see [architecture overview](../architecture/overview.md
 
 | URL | Target | Auth | Lifetime |
 |---|---|---|---|
-| `/preview/u/{slug}` | Server | Loopback only | While the preview exists |
-| `/preview/u/{slug}` | Markdown | Loopback or paired owner cookie | While the preview exists |
+| `/preview/u/{slug}` | Owner shell; Server selection loads its exact loopback origin directly | Loopback only for a Server slug; loopback or paired owner for Markdown | While the preview exists |
+| `/preview/u/{slug}/content` | Markdown content inside the owner iframe | Same owner boundary as the shell | While the preview exists |
 | `/preview/s/{share_id}` | Markdown | Six-digit access code, then path-scoped browser grant | One shared 600 s deadline |
 
 ---

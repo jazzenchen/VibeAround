@@ -49,7 +49,7 @@ If the workspace is not registered, call `register_workspace` with `cwd`, then r
 
 ### 4. Relay the returned link
 
-The tool returns one local owner URL. Present that URL and state that live-server previews are local-only. Do not construct a tunnel or share URL; public live-server sharing is paused until previews can run on an isolated origin.
+The tool returns one local owner URL. Present that URL and state that live-server previews are local-only. The owner iframe loads the server's loopback origin directly, so the app keeps its native API, WebSocket, and HMR behavior. Do not construct a tunnel or Share URL; use `va-md-preview` when the user needs a public document share.
 
 ## Error Handling
 

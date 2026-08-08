@@ -26,8 +26,9 @@ A real terminal (xterm.js) attached to a PTY on your machine:
 
 Inspect local work without turning VibeAround into a general development tunnel:
 
-- **Dev server previews are local-only.** Register a local port and get a same-machine preview page that reverse-proxies page and static-resource GET/HEAD requests, with an iframe toolbar. Agents create these via the `va-preview` skill / MCP `preview` tool ([tool reference](../reference/api-surfaces.md#mcp-tools)). Fetch/XHR, writes, WebSockets, HMR, and public-host access are outside this preview boundary.
-- **Markdown preview.** Any Markdown file gets an owner URL. With a public tunnel, it also gets a copyable Share URL plus a reusable six-digit access code; both expire together after 10 minutes (`md_preview` tool or the `va-md-preview` skill). See [Security model](../architecture/security-model.md).
+- **One owner page.** A collapsible picker groups the current workspace and Preview list while one iframe shows the selected target. Switching targets updates the owner URL; Refresh reloads the page and current inventory.
+- **Dev server previews are local-only.** Register a local port and the iframe loads that server's loopback origin directly. Relative APIs, fetch, WebSockets, and HMR therefore behave exactly as the app defines them; VibeAround does not proxy those requests. Public hosts return `403`, and the dev server's own `X-Frame-Options` / CSP can still refuse embedding. Agents create these via the `va-preview` skill / MCP `preview` tool ([tool reference](../reference/api-surfaces.md#mcp-tools)).
+- **Markdown preview.** Any Markdown file gets an owner URL rendered with VibeAround's bundled `marked` script. With a public tunnel, it also gets a copyable Share URL plus a reusable six-digit access code; the URL, code, and browser grant expire together after 10 minutes (`md_preview` tool or the `va-md-preview` skill). See [Security model](../architecture/security-model.md).
 - `va previews` / `va preview delete <slug>` manage them from the CLI; preview processes started for you are killed when the daemon stops.
 
 ## Runtime management
@@ -41,6 +42,6 @@ The dashboard is responsive; the chat surface includes mobile command controls s
 ---
 
 *Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`, `src/skills/va-md-preview/`.*
-*Last verified: v0.7.11*
+*Last verified: v0.7.24*
 
 <sub>[◀ Desktop app guide](desktop-app.md) · [Documentation index](../README.md) · [IM usage ▶](im-usage.md)</sub>

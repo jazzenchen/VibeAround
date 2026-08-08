@@ -48,7 +48,7 @@ Live Server 与 Markdown 渲染预览采用不同边界：
 | Markdown `/preview/u/<slug>` | 回环浏览器或已配对 owner | 预览存在期间 |
 | Markdown `/preview/s/<share_id>` | 持有 Share URL 和六位访问码的人 | URL、访问码和浏览器授信共用 600 秒期限 |
 
-Live Server 预览不生成分享链接，也不能通过公网 hostname 代理。Markdown 分享不使用 owner 配对：不透明 URL 先显示访问码门，验证成功后签发 `Secure`、`HttpOnly`、按路径限定的浏览器授信。URL、可重复使用的六位访问码和授信只对应一个文档，并在 10 分钟后同时过期。隧道上的其他一切仍需配对 + token。
+Live Server 预览不生成分享链接，也不能通过公网 hostname 加载。在 loopback 上，owner shell 直接 iframe 准确的 dev-server origin；它不会转发 owner bearer token，也不代理应用的 Fetch、WebSocket 或 HMR 流量。不同端口把子页面与 owner 的 DOM、storage 隔离开，但 dev server 自己的 iframe 策略和浏览器能力仍然生效。Markdown 分享不使用 owner 配对：不透明 URL 先显示访问码门，验证成功后签发 `Secure`、`HttpOnly`、按路径限定的浏览器授信。URL、可重复使用的六位访问码和授信只对应一个文档，并在 10 分钟后同时过期。隧道上的其他一切仍需配对 + token。
 
 Markdown 解析器随守护进程内置，Preview 不执行远程解析脚本。原始 HTML 以源码文本显示。只有 Markdown 图片语法中的绝对 HTTPS URL 才会发起图片请求。图片主机可以看到访问者的 IP 地址；`Referrer-Policy: no-referrer` 会阻止 Preview URL 随请求发送。
 

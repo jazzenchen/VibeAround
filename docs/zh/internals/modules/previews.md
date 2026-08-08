@@ -4,7 +4,7 @@
 
 ## 职责
 
-跟踪 preview sessions（dev-server ports 和 rendered files），为 Server 铸造本地 owner URL、为 Markdown 铸造 owner/share 事务，执行共享访问期限，并清理 preview 相关进程。HTTP serving side（page proxy、iframe toolbar、Markdown rendering）在 [server](server.md) 的 `preview` 子模块里。
+跟踪 preview sessions（dev-server ports 和 rendered files），为 Server 铸造本地 owner URL、为 Markdown 铸造 owner/share 事务，执行共享访问期限，并清理 preview 相关进程。HTTP 侧（owner shell、direct Server iframe selection、Markdown rendering）在 [server](server.md) 的 `preview` 子模块里。
 
 ## 关键类型
 
@@ -17,7 +17,7 @@
 ## 交互
 
 - **← server (MCP `preview` / `md_preview`)：** agents 通过 tools 创建 previews；skills（`va-preview`、`va-md-preview`）包装它们。
-- **← server (`preview/` handlers)：** resolve slugs、proxy requests、render markdown。
+- **← server (`preview/` handlers)：** resolve slugs、render owner picker 与 Markdown content；Server origin 由浏览器直接加载。
 - **← workspace：** 关闭 thread 会 kill 绑定到其 session 的 previews。
 - **← cli / dashboard：** list 和 delete。
 
@@ -33,7 +33,7 @@
 
 ---
 
-*Source anchors: `src/core/src/previews/` (mod, store), `src/server/src/web_server/preview/` (proxy, iframe, markdown, cookie_proxy), `src/server/src/web_server/mcp/tools.rs` (preview tools).*
-*Last verified: v0.7.11*
+*Source anchors: `src/core/src/previews/` (mod, store), `src/server/src/web_server/preview/` (iframe, markdown, access), `src/server/src/web_server/mcp/tools.rs` (preview tools).*
+*Last verified: v0.7.24*
 
 <sub>[◀ Module: pty](pty.md) · [文档索引](../../README.md) · [Module: tunnels ▶](tunnels.md)</sub>

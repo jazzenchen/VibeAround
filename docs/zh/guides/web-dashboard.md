@@ -26,8 +26,9 @@
 
 无需把 VibeAround 变成通用开发隧道，也能审阅本地工作：
 
-- **Dev server 预览仅限本机。** 注册一个本地端口，得到同机预览页；它只反向代理页面与静态资源的 GET/HEAD 请求，并带 iframe 工具栏。Agent 通过 `va-preview` 技能 / MCP `preview` 工具创建它（[工具参考](../reference/api-surfaces.md#mcp-tools)）。Fetch/XHR、写请求、WebSocket、HMR 和公网 hostname 都不在这条预览边界内。
-- **Markdown 预览。** 任何 Markdown 文件都有 owner URL；公网隧道运行时，还会得到可复制的 Share URL 和可重复使用的六位访问码，两者在 10 分钟后同时过期（`md_preview` 工具或 `va-md-preview` 技能）。见[安全模型](../architecture/security-model.md)。
+- **一个 owner 页面。** 可收起的选择器按 Workspace 汇总当前 Preview 清单，一个 iframe 显示选中的目标。切换目标会同步 owner URL；Refresh 会重载页面和最新清单。
+- **Dev server 预览仅限本机。** 注册本地端口后，iframe 直接加载该 Server 的 loopback origin。相对 API、Fetch、WebSocket 和 HMR 都按应用原本的方式运行，VibeAround 不代理这些请求。公网 Host 返回 `403`；Dev server 自己的 `X-Frame-Options` / CSP 仍可能拒绝被 iframe 嵌入。Agent 通过 `va-preview` 技能 / MCP `preview` 工具创建它（[工具参考](../reference/api-surfaces.md#mcp-tools)）。
+- **Markdown 预览。** 任何 Markdown 文件都有使用 VibeAround 内置 `marked` 脚本渲染的 owner URL；公网隧道运行时，还会得到可复制的 Share URL 和可重复使用的六位访问码，URL、访问码和浏览器授信在 10 分钟后同时过期（`md_preview` 工具或 `va-md-preview` 技能）。见[安全模型](../architecture/security-model.md)。
 - `va previews` / `va preview delete <slug>` 从 CLI 管理它们；为你代启的预览进程会随守护进程停止而被杀掉。
 
 ## 运行时管理
@@ -41,6 +42,6 @@
 ---
 
 *Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`, `src/skills/va-md-preview/`.*
-*Last verified: v0.7.11*
+*Last verified: v0.7.24*
 
 <sub>[◀ 桌面应用指南](desktop-app.md) · [文档索引](../README.md) · [IM 使用 ▶](im-usage.md)</sub>
