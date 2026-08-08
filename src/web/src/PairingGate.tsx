@@ -3,7 +3,7 @@
  *
  * Shown when the user opens the dashboard without a valid auth token.
  * Displays a 6-digit pairing code that the user sends via IM `/pair`
- * command. The page polls for verification and auto-reloads on success.
+ * command. The page polls for verification and continues on success.
  *
  * Also keeps the legacy "paste token" fallback for advanced users.
  */
@@ -15,6 +15,7 @@ import { useI18n } from "@va/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LanguageMenu } from "@/components/LanguageMenu";
+import { pairingDestination } from "@/lib/auth";
 
 const STORAGE_KEY = "vibearound.auth.token";
 const POLL_INTERVAL_MS = 2000;
@@ -34,15 +35,6 @@ async function copyText(text: string) {
     document.execCommand("copy");
     document.body.removeChild(textarea);
   }
-}
-
-/**
- * Only allow same-origin redirects after pairing. Anything else (absolute
- * URL, protocol-relative, or scheme like `javascript:`) is rejected to
- * prevent open-redirect / phishing.
- */
-function isSafeNext(next: string): boolean {
-  return next.startsWith("/") && !next.startsWith("//");
 }
 
 type PairStatus = "loading" | "pending" | "expired" | "verified";
@@ -116,8 +108,10 @@ export function PairingGate() {
             // Honor ?next=<url> from the gate URL so the user lands on
             // the page they originally tried to open. Default to dashboard.
             const params = new URLSearchParams(window.location.search);
-            const nextRaw = params.get("next");
-            const next = nextRaw && isSafeNext(nextRaw) ? nextRaw : "/va/";
+            const next = pairingDestination(
+              params.get("next"),
+              window.location.origin,
+            );
             setTimeout(() => {
               window.location.replace(next);
             }, 500);
@@ -157,7 +151,7 @@ export function PairingGate() {
     copyTimerRef.current = setTimeout(() => setPairCommandCopied(false), 1500);
   }, [pairCommand]);
 
-  const submitToken = (e: React.FormEvent) => {
+  const submitToken = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = pasted.trim();
     if (!trimmed) {
@@ -168,8 +162,23 @@ export function PairingGate() {
       setTokenError(t("That doesn't look like a VibeAround auth token."));
       return;
     }
-    window.sessionStorage.setItem(STORAGE_KEY, trimmed);
-    window.location.reload();
+    try {
+      const response = await fetch("/va/api/pair/complete", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${trimmed}` },
+      });
+      if (!response.ok) {
+        setTokenError(t("The VibeAround auth token was rejected."));
+        return;
+      }
+      window.sessionStorage.setItem(STORAGE_KEY, trimmed);
+      const params = new URLSearchParams(window.location.search);
+      window.location.replace(
+        pairingDestination(params.get("next"), window.location.origin),
+      );
+    } catch {
+      setTokenError(t("The VibeAround auth token was rejected."));
+    }
   };
 
   return (
@@ -246,7 +255,7 @@ export function PairingGate() {
 
           {status === "verified" && (
             <p className="text-sm font-medium text-primary">
-              {t("✓ Paired! Loading dashboard…")}
+              {t("✓ Paired! Continuing…")}
             </p>
           )}
         </div>
@@ -334,7 +343,7 @@ export function PairingGate() {
                 size="sm"
                 className="w-full text-xs"
               >
-                {t("Unlock dashboard")}
+                {t("Continue")}
               </Button>
             </form>
           </details>

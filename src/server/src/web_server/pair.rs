@@ -1,7 +1,8 @@
 //! Browser pairing API endpoints.
 //!
-//! - POST /va/api/pair/start  — generate a 6-digit code + session ID
-//! - GET  /va/api/pair/status — poll for verification + receive auth token
+//! - POST /va/api/pair/start    — generate a 6-digit code + session ID
+//! - GET  /va/api/pair/status   — poll for verification + receive auth token
+//! - POST /va/api/pair/complete — finish pairing with a valid bearer token
 
 use axum::body::Body;
 use axum::{
@@ -11,7 +12,7 @@ use axum::{
     Json,
 };
 
-use super::auth::owner_cookie_headers;
+use super::auth::{extract_bearer_token, owner_cookie_headers};
 
 /// POST /va/api/pair/start — generate a pairing code.
 ///
@@ -83,9 +84,38 @@ pub async fn status_handler(Query(q): Query<StatusQuery>, req: Request) -> Respo
     response
 }
 
+/// POST /va/api/pair/complete — finish the Desktop-token fallback flow.
+///
+/// The protected router validates the bearer token before this handler runs.
+/// Requiring the credential in the header keeps query-string tokens from
+/// minting an owner cookie.
+pub async fn complete_handler(req: Request) -> Response {
+    let Some(token) = extract_bearer_token(req.headers()) else {
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header(header::CACHE_CONTROL, "no-store")
+            .body(Body::empty())
+            .expect("valid unauthorized response");
+    };
+    let [clear_legacy_cookie, owner_cookie] =
+        owner_cookie_headers((!super::auth::request_is_loopback(&req)).then_some(token.as_str()));
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::SET_COOKIE, clear_legacy_cookie)
+        .header(header::SET_COOKIE, owner_cookie)
+        .body(Body::empty())
+        .expect("valid pairing response")
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::web_server::auth::owner_cookie_headers;
+    use std::{net::SocketAddr, sync::Arc};
+
+    use axum::{http::header, middleware, routing::post, Router};
+    use common::auth::AuthToken;
+
+    use crate::web_server::auth::{owner_cookie_headers, require_auth, AuthState};
 
     #[test]
     fn owner_cookie_is_scoped_to_vibearound_routes() {
@@ -107,5 +137,99 @@ mod tests {
                 "va_owner=; Path=/va/; Max-Age=0; Secure; HttpOnly; SameSite=Lax".to_string(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn desktop_token_completion_sets_only_valid_owner_credentials() {
+        let auth = Arc::new(AuthToken::generate());
+        let token = auth.as_str().to_string();
+        let app = Router::new()
+            .route("/", post(super::complete_handler))
+            .route_layer(middleware::from_fn_with_state(
+                AuthState(auth),
+                require_auth,
+            ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://{address}/");
+
+        let public = client
+            .post(&url)
+            .header(header::HOST, "preview.example")
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(public.status(), reqwest::StatusCode::NO_CONTENT);
+        assert_eq!(
+            public.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        let public_cookies = public
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(public_cookies.len(), 2);
+        assert_eq!(
+            public_cookies[0],
+            "va_owner=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax"
+        );
+        assert_eq!(
+            public_cookies[1],
+            format!("va_owner={token}; Path=/va/; Secure; HttpOnly; SameSite=Lax")
+        );
+
+        let local = client.post(&url).bearer_auth(&token).send().await.unwrap();
+        assert_eq!(local.status(), reqwest::StatusCode::NO_CONTENT);
+        let local_cookies = local
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            local_cookies,
+            [
+                "va_owner=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+                "va_owner=; Path=/va/; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+            ]
+        );
+
+        for response in [
+            client
+                .post(&url)
+                .header(header::HOST, "preview.example")
+                .bearer_auth("wrong-token")
+                .send()
+                .await
+                .unwrap(),
+            client
+                .post(format!("{url}?token={token}"))
+                .header(header::HOST, "preview.example")
+                .send()
+                .await
+                .unwrap(),
+        ] {
+            assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+            assert!(response
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .next()
+                .is_none());
+        }
+
+        server.abort();
     }
 }

@@ -38,3 +38,15 @@ export function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.sessionStorage.getItem(STORAGE_KEY);
 }
+
+/** Return a same-origin VibeAround destination, or the dashboard fallback. */
+export function pairingDestination(raw: string | null, origin: string): string {
+  if (!raw) return "/va/";
+  try {
+    const url = new URL(raw, origin);
+    if (url.origin !== origin || !url.pathname.startsWith("/va/")) return "/va/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/va/";
+  }
+}

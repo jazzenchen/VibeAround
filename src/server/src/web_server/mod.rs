@@ -370,6 +370,7 @@ pub async fn run_web_server(
         .route("/api/pty/{session_id}", delete(api::kill_pty_handler))
         .route("/api/previews", get(api::list_previews_handler))
         .route("/api/previews/{slug}", delete(api::delete_preview_handler))
+        .route("/api/pair/complete", post(pair::complete_handler))
         .route(
             "/api/workspaces",
             get(api::list_workspaces_handler).post(api::add_workspace_handler),

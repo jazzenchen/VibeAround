@@ -60,10 +60,8 @@ pub(crate) fn owner_cookie_headers(token: Option<&str>) -> [String; 2] {
 #[derive(Clone)]
 pub struct AuthState(pub Arc<AuthToken>);
 
-/// Extract a bearer token from the request — header first, then `?token=`.
-fn extract_token<B>(req: &Request<B>) -> Option<String> {
-    // 1. Authorization: Bearer <token>
-    if let Some(value) = req.headers().get(header::AUTHORIZATION) {
+pub(crate) fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = headers.get(header::AUTHORIZATION) {
         if let Ok(s) = value.to_str() {
             if let Some(rest) = s.strip_prefix("Bearer ") {
                 return Some(rest.trim().to_string());
@@ -73,6 +71,15 @@ fn extract_token<B>(req: &Request<B>) -> Option<String> {
             }
         }
     }
+    None
+}
+
+/// Extract an auth token from the request — bearer header first, then `?token=`.
+fn extract_token<B>(req: &Request<B>) -> Option<String> {
+    if let Some(token) = extract_bearer_token(req.headers()) {
+        return Some(token);
+    }
+
     // 2. ?token=<token>  (brittle but good enough — we only look for the
     //    exact key; real parsing happens via url::form_urlencoded)
     if let Some(query) = req.uri().query() {
