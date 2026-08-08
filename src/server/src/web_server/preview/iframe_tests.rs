@@ -64,6 +64,9 @@ async fn owner_shell_groups_previews_without_rendering_share_credentials() {
     assert!(body.contains(".css?v="));
     assert!(body.contains("src=\"/va/brand/vibearound-mark.svg\""));
     assert!(body.contains("background: var(--background)"));
+    assert!(body.contains("appearance: none"));
+    assert!(body.contains("right: 12px"));
+    assert!(body.contains("<svg class=\"picker-icon\""));
     assert!(!body.contains("background: #111"));
     assert_eq!(body.matches("<optgroup").count(), 2);
     assert!(body.find("label=\"alpha\"").unwrap() < body.find("label=\"beta\"").unwrap());

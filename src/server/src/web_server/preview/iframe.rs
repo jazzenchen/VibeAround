@@ -81,6 +81,7 @@ pub(super) fn render_owner_shell(
   .brand {{ color: var(--popover-foreground); font-weight: 600; white-space: nowrap; }}
   .current {{ color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   .controls {{ display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--border); }}
+  .picker {{ position: relative; min-width: 0; flex: 1; }}
   select, button {{
     min-height: 34px;
     border: 1px solid var(--input);
@@ -89,7 +90,17 @@ pub(super) fn render_owner_shell(
     color: var(--foreground);
     font: inherit;
   }}
-  select {{ min-width: 0; flex: 1; padding: 0 9px; }}
+  select {{ display: block; width: 100%; min-width: 0; padding: 0 36px 0 12px; appearance: none; cursor: pointer; }}
+  .picker-icon {{
+    position: absolute;
+    top: 50%;
+    right: 12px;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    color: var(--muted-foreground);
+    pointer-events: none;
+  }}
   button {{ padding: 0 12px; cursor: pointer; }}
   button:hover {{ background: var(--accent); color: var(--accent-foreground); }}
   select:focus-visible, button:focus-visible, summary:focus-visible {{
@@ -99,7 +110,7 @@ pub(super) fn render_owner_shell(
   @media (max-width: 480px) {{
     .switcher {{ top: 8px; left: 8px; width: calc(100vw - 16px); }}
     .controls {{ flex-wrap: wrap; }}
-    select {{ flex-basis: 100%; }}
+    .picker {{ flex-basis: 100%; }}
     button {{ width: 100%; }}
   }}
 </style>
@@ -108,7 +119,12 @@ pub(super) fn render_owner_shell(
 <details class="switcher">
   <summary><img class="mark" src="/va/brand/vibearound-mark.svg" alt=""><span class="brand">VibeAround Preview</span><span class="current" id="current-preview">{title}</span></summary>
   <div class="controls">
-    <select id="preview-picker" aria-label="Workspace and preview">{options}</select>
+    <div class="picker">
+      <select id="preview-picker" aria-label="Workspace and preview">{options}</select>
+      <svg class="picker-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m6 9 6 6 6-6"></path>
+      </svg>
+    </div>
     <button type="button" id="refresh-preview">Refresh</button>
   </div>
 </details>
