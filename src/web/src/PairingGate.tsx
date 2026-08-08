@@ -15,9 +15,8 @@ import { useI18n } from "@va/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LanguageMenu } from "@/components/LanguageMenu";
-import { pairingDestination } from "@/lib/auth";
+import { pairingDestination, setAuthToken } from "@/lib/auth";
 
-const STORAGE_KEY = "vibearound.auth.token";
 const POLL_INTERVAL_MS = 2000;
 const CODE_TTL_SECS = 60;
 
@@ -103,7 +102,7 @@ export function PairingGate() {
             // Store the token in sessionStorage for API/WS auth.
             // The cookie is also set (by the status endpoint) for /u preview routes.
             if (d.token) {
-              window.sessionStorage.setItem(STORAGE_KEY, d.token);
+              setAuthToken(d.token);
             }
             // Honor ?next=<url> from the gate URL so the user lands on
             // the page they originally tried to open. Default to dashboard.
@@ -171,7 +170,7 @@ export function PairingGate() {
         setTokenError(t("The VibeAround auth token was rejected."));
         return;
       }
-      window.sessionStorage.setItem(STORAGE_KEY, trimmed);
+      setAuthToken(trimmed);
       const params = new URLSearchParams(window.location.search);
       window.location.replace(
         pairingDestination(params.get("next"), window.location.origin),

@@ -51,9 +51,8 @@ pub async fn status_handler(Query(q): Query<StatusQuery>, req: Request) -> Respo
             // Verified! Consume the session and set the owner cookie.
             match common::auth::pair::consume_verified(&q.sid) {
                 Some(token) => {
-                    let [clear_legacy_cookie, owner_cookie] = owner_cookie_headers(
-                        (!super::auth::request_is_loopback(&req)).then_some(token.as_str()),
-                    );
+                    let [clear_legacy_cookie, owner_cookie] =
+                        owner_cookie_headers_for_request(&req, &token);
                     // Return the token in the body so the SPA can store it in
                     // sessionStorage (existing auth mechanism for API calls).
                     Response::builder()
@@ -97,8 +96,7 @@ pub async fn complete_handler(req: Request) -> Response {
             .body(Body::empty())
             .expect("valid unauthorized response");
     };
-    let [clear_legacy_cookie, owner_cookie] =
-        owner_cookie_headers((!super::auth::request_is_loopback(&req)).then_some(token.as_str()));
+    let [clear_legacy_cookie, owner_cookie] = owner_cookie_headers_for_request(&req, &token);
     Response::builder()
         .status(StatusCode::NO_CONTENT)
         .header(header::CACHE_CONTROL, "no-store")
@@ -106,6 +104,10 @@ pub async fn complete_handler(req: Request) -> Response {
         .header(header::SET_COOKIE, owner_cookie)
         .body(Body::empty())
         .expect("valid pairing response")
+}
+
+fn owner_cookie_headers_for_request(req: &Request, token: &str) -> [String; 2] {
+    owner_cookie_headers((!super::auth::request_is_loopback(req)).then_some(token))
 }
 
 #[cfg(test)]
