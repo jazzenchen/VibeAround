@@ -131,7 +131,7 @@ fn normalized_csp_without_frame_ancestors(headers: &HeaderMap) -> String {
 }
 
 #[tokio::test]
-async fn markdown_page_keeps_client_renderer_and_carries_source_as_inert_json() {
+async fn markdown_page_loads_local_sanitizer_and_carries_source_as_inert_json() {
     let markdown = r#"# Safe heading
 
 ~~removed~~
@@ -153,12 +153,22 @@ async fn markdown_page_keeps_client_renderer_and_carries_source_as_inert_json() 
 
     let nonce = assert_security_headers(&headers, "'none'");
     assert_all_scripts_use_nonce(&body, &nonce);
+    let source_position = body.find("id=\"markdown-source\"").unwrap();
+    let dompurify_position = body
+        .find("src=\"/va/preview/assets/dompurify-3.4.12.min.js\"")
+        .unwrap();
+    let marked_position = body
+        .find("src=\"/va/preview/assets/marked-15.0.12.min.js\"")
+        .unwrap();
+    assert!(source_position < dompurify_position);
+    assert!(dompurify_position < marked_position);
     assert!(body.contains("src=\"/va/preview/assets/marked-15.0.12.min.js\""));
     assert!(!body.contains("marked@15"));
     assert!(!body.contains("integrity="));
-    assert!(body.contains("marked.parse(raw, { gfm: true, renderer })"));
-    assert!(body.contains("renderer.html"));
-    assert!(body.contains("renderer.image"));
+    assert!(body.contains("marked.parse(raw, { gfm: true })"));
+    assert!(body.contains("DOMPurify.sanitize"));
+    assert!(body.contains("RETURN_DOM_FRAGMENT: true"));
+    assert!(body.contains("content.replaceChildren(fragment)"));
     assert!(body.contains("linkUrl"));
     assert!(body.contains("<title>&lt;/title&gt;&lt;script&gt;title-broke&lt;/script&gt;</title>"));
 

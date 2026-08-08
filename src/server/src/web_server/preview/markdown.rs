@@ -1,8 +1,8 @@
 //! Markdown-target preview: rendered document page.
 //!
-//! Markdown stays browser-rendered with `marked.js`. The source is carried as
-//! inert JSON, and the client renderer treats raw HTML as text while allowing
-//! only absolute HTTPS Markdown images.
+//! Markdown stays browser-rendered with local `marked.js` and DOMPurify. The
+//! source is carried as inert JSON; rendered HTML is allowlisted before it is
+//! attached to the document.
 
 use axum::body::Body;
 use axum::http::StatusCode;
@@ -10,7 +10,7 @@ use axum::response::Response;
 
 use common::previews::{PreviewEntry, PreviewTarget};
 
-use super::assets::MARKED_SCRIPT_ROUTE;
+use super::assets::{DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE};
 use super::toolbar::{escape_html, remaining_millis, toolbar_and_timer, TOOLBAR_CSS};
 
 const MARKDOWN_CLIENT_JS: &str = include_str!("markdown_client.js");
@@ -105,6 +105,7 @@ async fn render_md(
 {toolbar}
 <article class="markdown-body" id="content"></article>
 <script nonce="{nonce}" id="markdown-source" type="application/json">{markdown_json}</script>
+<script nonce="{nonce}" src="/va{dompurify_script_route}"></script>
 <script nonce="{nonce}" src="/va{marked_script_route}"></script>
 <script nonce="{nonce}">
 {markdown_client_js}
@@ -117,6 +118,7 @@ async fn render_md(
         nonce = nonce,
         markdown_json = markdown_json,
         markdown_client_js = MARKDOWN_CLIENT_JS,
+        dompurify_script_route = DOMPURIFY_SCRIPT_ROUTE,
         marked_script_route = MARKED_SCRIPT_ROUTE,
     );
     Ok(markdown_response(html, &nonce, standalone))

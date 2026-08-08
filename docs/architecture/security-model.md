@@ -50,7 +50,7 @@ Live Server and rendered Markdown previews have different boundaries:
 
 Live Server previews do not mint share links and cannot load through a public hostname. On loopback, the owner shell frames the exact dev-server origin directly; it does not forward an owner bearer token or proxy the app's fetch, WebSocket, or HMR traffic. The different port isolates the child from the owner's DOM and storage, while the dev server's own framing policy and browser capabilities still apply. A Markdown share does not use owner pairing: its opaque URL opens an access-code gate, and successful verification issues a Secure, HttpOnly, path-scoped browser grant. The URL, reusable six-digit code, and grant belong to one document and expire together after 10 minutes. Everything else on the tunnel still requires pairing + token.
 
-The Markdown parser is bundled with the daemon; Preview does not execute a remote parser script. Raw HTML is displayed as source text. Only absolute HTTPS URLs written with Markdown image syntax become image requests. An image host can see the viewer's IP address, while `Referrer-Policy: no-referrer` prevents the Preview URL from being sent with the request.
+The Markdown parser and sanitizer are bundled with the daemon; Preview does not execute remote parser scripts. GitHub-style raw HTML is rendered only through an allowlist that removes scripts, styles, frames, forms, event handlers, and unsupported attributes. Images written with Markdown syntax or allowed raw HTML must use an absolute HTTPS URL. An image host can see the viewer's IP address, while `Referrer-Policy: no-referrer` prevents the Preview URL from being sent with the request.
 
 ## Credential handling
 

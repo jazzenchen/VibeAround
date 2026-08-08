@@ -36,7 +36,9 @@ use axum::response::{IntoResponse, Response};
 use common::previews::{PreviewEntry, PreviewTarget, ShareCodeError};
 use serde::Deserialize;
 
-pub(super) use assets::{marked_script_handler, MARKED_SCRIPT_ROUTE};
+pub(super) use assets::{
+    dompurify_script_handler, marked_script_handler, DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE,
+};
 
 use access::{
     clear_share_cookie, extract_cookie, render_access_gate, share_cookie_name, share_grant_cookie,

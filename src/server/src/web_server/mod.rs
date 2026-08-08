@@ -493,6 +493,10 @@ pub async fn run_web_server(
             preview::MARKED_SCRIPT_ROUTE,
             get(preview::marked_script_handler),
         )
+        .route(
+            preview::DOMPURIFY_SCRIPT_ROUTE,
+            get(preview::dompurify_script_handler),
+        )
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
         .route(
             "/preview/u/{slug}/content",
