@@ -522,9 +522,7 @@ pub async fn run_web_server(
     // dashboard instead of acting as a second routing surface.
     let dashboard = Router::new().merge(protected).merge(public);
 
-    let app = Router::new()
-        .nest("/va", dashboard)
-        .fallback(any(redirect_to_dashboard))
+    let app = mount_dashboard(dashboard)
         .with_state(state)
         .layer(build_cors_layer(port));
 
@@ -541,6 +539,15 @@ pub async fn run_web_server(
     })
     .await?;
     Ok(())
+}
+
+fn mount_dashboard<S>(dashboard: Router<S>) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new()
+        .nest("/va/", dashboard)
+        .fallback(any(redirect_to_dashboard))
 }
 
 async fn redirect_to_dashboard() -> Redirect {
@@ -566,37 +573,5 @@ fn build_cors_layer(_port: u16) -> tower_http::cors::CorsLayer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{is_dashboard_api_path, redirect_to_dashboard};
-
-    #[tokio::test]
-    async fn root_fallback_redirects_to_dashboard() {
-        let response = axum::response::IntoResponse::into_response(redirect_to_dashboard().await);
-        assert_eq!(
-            response.status(),
-            axum::http::StatusCode::TEMPORARY_REDIRECT
-        );
-        assert_eq!(response.headers().get("location").unwrap(), "/va/");
-    }
-
-    #[test]
-    fn recognizes_dashboard_api_fallback_paths() {
-        assert!(is_dashboard_api_path(
-            "/va/local-api/deepseek/scope/extra/openai-chat/v1/responses"
-        ));
-        assert!(is_dashboard_api_path(
-            "/va/local-agent/claude/direct/v1/responses"
-        ));
-        assert!(is_dashboard_api_path(
-            "/local-api/deepseek/scope/extra/openai-chat/v1/responses"
-        ));
-        assert!(is_dashboard_api_path(
-            "/local-agent/claude/direct/v1/responses"
-        ));
-        assert!(is_dashboard_api_path(
-            "/va/bridge/profile/openai-chat/v1/responses"
-        ));
-        assert!(!is_dashboard_api_path("/va/"));
-        assert!(!is_dashboard_api_path("/va/assets/index.css"));
-    }
-}
+#[path = "dashboard_tests.rs"]
+mod tests;
