@@ -6,7 +6,8 @@ use axum::Router;
 use std::net::SocketAddr;
 
 use super::{
-    owner_preview_handler, share_preview_handler, verify_share_code_handler, ShareCodeForm,
+    owner_preview_content_handler, owner_preview_handler, owner_preview_snapshots,
+    share_preview_handler, verify_share_code_handler, ShareCodeForm,
 };
 
 fn request_with_host_and_peer(host: &str, peer: &str) -> Request<Body> {
@@ -82,6 +83,12 @@ fn local_preview_bypass_rejects_external_browser_origins() {
     assert!(!crate::web_server::auth::request_is_local_dashboard(
         &local_request_with_origin("127.0.0.1:12358", "https://evil.example")
     ));
+    assert!(!crate::web_server::auth::request_is_local_dashboard(
+        &local_request_with_origin("127.0.0.1:12358", "http://127.0.0.1:5173")
+    ));
+    assert!(!crate::web_server::auth::request_is_local_dashboard(
+        &local_request_with_origin("127.0.0.1:12358", "http://localhost:5181")
+    ));
 }
 
 #[tokio::test]
@@ -110,6 +117,7 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
         .to_str()
         .unwrap();
     assert!(gate_csp.contains("form-action 'self'"));
+    assert!(gate_csp.contains("frame-ancestors 'none'"));
     assert!(gate.headers().get("set-cookie").is_none());
     let gate_body = to_bytes(gate.into_body(), usize::MAX).await.unwrap();
     let gate_body = String::from_utf8(gate_body.to_vec()).unwrap();
@@ -179,6 +187,7 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
         .to_str()
         .unwrap();
     assert!(share_csp.contains("form-action 'none'"));
+    assert!(share_csp.contains("frame-ancestors 'none'"));
     let response_body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let response_body = String::from_utf8(response_body.to_vec()).unwrap();
     assert!(response_body.contains("# Shared markdown"));
@@ -208,7 +217,8 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
     assert!(cross_body.contains("Enter access code"));
     assert!(!cross_body.contains("# Other markdown"));
 
-    let local_share = share_preview_handler(Path(share.id), local_request("127.0.0.1:12358")).await;
+    let local_share =
+        share_preview_handler(Path(share.id.clone()), local_request("127.0.0.1:12358")).await;
     assert_eq!(local_share.status(), StatusCode::OK);
     let local_body = to_bytes(local_share.into_body(), usize::MAX).await.unwrap();
     assert!(String::from_utf8(local_body.to_vec())
@@ -234,7 +244,8 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
     .await;
     assert_eq!(external_owner.status(), StatusCode::FOUND);
 
-    let owner = owner_preview_handler(Path(owner_slug), local_request("127.0.0.1:12358")).await;
+    let owner =
+        owner_preview_handler(Path(owner_slug.clone()), local_request("127.0.0.1:12358")).await;
     assert_eq!(owner.status(), StatusCode::OK);
     assert_eq!(owner.headers().get("cache-control").unwrap(), "no-store");
     let owner_csp = owner
@@ -245,7 +256,33 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
         .unwrap();
     assert!(owner_csp.contains("default-src 'none'"));
     assert!(owner_csp.contains("script-src-attr 'none'"));
-    assert!(owner_csp.contains("img-src https:"));
+    assert!(owner_csp.contains("frame-src 'self'"));
+    assert!(owner_csp.contains("frame-ancestors 'none'"));
+    let owner_body = to_bytes(owner.into_body(), usize::MAX).await.unwrap();
+    let owner_body = String::from_utf8(owner_body.to_vec()).unwrap();
+    assert!(owner_body.contains("id=\"preview-picker\""));
+    assert!(owner_body.contains(&format!("/va/preview/u/{owner_slug}/content")));
+    assert!(!owner_body.contains("# Shared markdown"));
+    assert!(!owner_body.contains(&share.id));
+    assert!(!owner_body.contains(&share.code));
+
+    let owner_content =
+        owner_preview_content_handler(Path(owner_slug), local_request("127.0.0.1:12358")).await;
+    assert_eq!(owner_content.status(), StatusCode::OK);
+    let content_csp = owner_content
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(content_csp.contains("img-src https:"));
+    assert!(content_csp.contains("frame-ancestors 'self'"));
+    let content_body = to_bytes(owner_content.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let content_body = String::from_utf8(content_body.to_vec()).unwrap();
+    assert!(content_body.contains("# Shared markdown"));
+    assert!(!content_body.contains("class=\"toolbar\""));
 }
 
 #[tokio::test]
@@ -336,21 +373,56 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     let owner_slug = common::previews::ensure_server(4212, dir.clone(), "owner".into(), None);
     let file = dir.join("other.md");
     std::fs::write(&file, "other").unwrap();
-    let (_, share) = common::previews::ensure_file(file, dir, "other".into());
+    let (file_owner_slug, share) = common::previews::ensure_file(file, dir, "other".into());
 
-    let error = owner_preview_handler(Path(share.id), local_request("127.0.0.1:12358")).await;
+    let error =
+        owner_preview_handler(Path(share.id.clone()), local_request("127.0.0.1:12358")).await;
     assert_eq!(error.status(), StatusCode::NOT_FOUND);
 
     let local =
         owner_preview_handler(Path(owner_slug.clone()), local_request("127.0.0.1:12358")).await;
     assert_eq!(local.status(), StatusCode::OK);
-    assert!(local
+    let local_cookies = local
         .headers()
-        .get("set-cookie")
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(local_cookies.len(), 3);
+    assert!(local_cookies
+        .iter()
+        .any(|cookie| cookie.starts_with("va_owner=; Path=/;")));
+    assert!(local_cookies
+        .iter()
+        .any(|cookie| cookie.starts_with("va_owner=; Path=/va/;")));
+    assert!(local_cookies
+        .iter()
+        .any(|cookie| cookie.starts_with("va_preview=; Path=/;")));
+    let local_csp = local
+        .headers()
+        .get("content-security-policy")
         .unwrap()
         .to_str()
         .unwrap()
-        .contains(&format!("va_preview=owner:{owner_slug}")));
+        .to_string();
+    let local_body = to_bytes(local.into_body(), usize::MAX).await.unwrap();
+    let local_body = String::from_utf8(local_body.to_vec()).unwrap();
+    assert!(local_body.contains("id=\"preview-picker\""));
+    assert!(local_body.contains("src=\"http://127.0.0.1:4212/\""));
+    assert!(local_csp.contains("frame-src 'self' http://127.0.0.1:4212"));
+    assert!(local_body.contains(&format!("value=\"{file_owner_slug}\"")));
+    assert!(!local_body.contains(&share.id));
+    assert!(!local_body.contains(&share.code));
+
+    let content =
+        owner_preview_content_handler(Path(owner_slug.clone()), local_request("127.0.0.1:12358"))
+            .await;
+    assert_eq!(content.status(), StatusCode::BAD_REQUEST);
+    assert!(content.headers().get("set-cookie").is_none());
+    let content_body = to_bytes(content.into_body(), usize::MAX).await.unwrap();
+    assert!(String::from_utf8(content_body.to_vec())
+        .unwrap()
+        .contains("load directly from their local origin"));
 
     let public = owner_preview_handler(
         Path(owner_slug.clone()),
@@ -361,9 +433,43 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     assert!(public.headers().get("location").is_none());
     assert!(public.headers().get("set-cookie").is_none());
 
+    let public_content = owner_preview_content_handler(
+        Path(owner_slug.clone()),
+        local_request("preview.example.com"),
+    )
+    .await;
+    assert_eq!(public_content.status(), StatusCode::FORBIDDEN);
+    assert!(public_content.headers().get("set-cookie").is_none());
+
     let share_route =
         share_preview_handler(Path(owner_slug), local_request("preview.example.com")).await;
     assert_eq!(share_route.status(), StatusCode::NOT_FOUND);
+
+    let remote_options = owner_preview_snapshots(false);
+    assert!(remote_options.iter().all(|preview| preview.kind == "file"));
+    assert!(remote_options
+        .iter()
+        .any(|preview| preview.slug == file_owner_slug));
+}
+
+#[tokio::test]
+async fn unauthorized_owner_content_pairs_back_to_the_owner_shell() {
+    let dir = unique_temp_dir("content-pairing");
+    let file = dir.join("paired.md");
+    std::fs::write(&file, "paired").unwrap();
+    let (owner_slug, _) = common::previews::ensure_file(file, dir, "paired".into());
+
+    let response = owner_preview_content_handler(
+        Path(owner_slug.clone()),
+        local_request("preview.example.com"),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::FOUND);
+    assert_eq!(
+        response.headers().get("location").unwrap(),
+        format!("/va/?next=%2Fva%2Fpreview%2Fu%2F{owner_slug}").as_str()
+    );
 }
 
 #[tokio::test]

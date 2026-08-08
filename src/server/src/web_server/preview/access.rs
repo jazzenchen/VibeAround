@@ -1,13 +1,26 @@
-//! Public Markdown share gate and path-scoped viewer cookie helpers.
+//! Preview cookie parsing plus the public Markdown share gate and grant cookie.
 
 use axum::body::Body;
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{header, HeaderValue, Request, StatusCode};
 use axum::response::Response;
 use common::previews::PreviewEntry;
 
 use super::toolbar::remaining_millis;
 
 pub(super) const SHARE_COOKIE_PREFIX: &str = "va_preview_share_";
+
+pub(super) fn extract_cookie<B>(req: &Request<B>, name: &str) -> Option<String> {
+    req.headers()
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .map(str::trim)
+        .find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key.trim() == name).then(|| value.trim().to_string())
+        })
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum AccessGateError {
@@ -205,7 +218,7 @@ pub(super) fn render_access_gate(entry: &PreviewEntry, error: Option<AccessGateE
     );
 
     let csp = format!(
-        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'"
+        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     );
     Response::builder()
         .status(status)

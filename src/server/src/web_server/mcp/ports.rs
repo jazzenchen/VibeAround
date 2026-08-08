@@ -1,10 +1,10 @@
 //! Port deny-list for preview security.
 //!
-//! Well-known service ports must never be exposed through the preview proxy —
-//! a dev agent pointing the preview at e.g. Postgres or SSH would be a
-//! significant data-exfiltration vector.
+//! Well-known service ports must never be opened as browser Preview targets —
+//! a dev agent pointing Preview at e.g. Postgres or SSH would expose a
+//! sensitive local service to browser traffic.
 
-/// Well-known service ports that must not be exposed through the preview proxy.
+/// Well-known service ports that must not be opened as Preview targets.
 const DENIED_PORTS: &[u16] = &[
     22,    // SSH
     25,    // SMTP

@@ -8,7 +8,8 @@
 //! 4. User sends `/pair 847291` in any IM channel connected to VibeAround
 //! 5. IM handler calls [`validate`] — on match, marks session as verified
 //! 6. Frontend polls `GET /va/api/pair/status?sid=...` → detects verified
-//! 7. Status endpoint returns auth token → frontend stores it in cookie
+//! 7. Status endpoint returns the auth token → frontend stores it for API calls;
+//!    public hosts also receive a `/va/`-scoped owner cookie
 //!
 //! Codes expire after 1 minute. The frontend shows a countdown and a
 //! "refresh" button to generate a new code when the old one expires.

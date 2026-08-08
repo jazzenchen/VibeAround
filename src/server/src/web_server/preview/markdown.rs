@@ -15,8 +15,22 @@ use super::toolbar::{escape_html, remaining_millis, toolbar_and_timer, TOOLBAR_C
 
 const MARKDOWN_CLIENT_JS: &str = include_str!("markdown_client.js");
 
-/// Render a Markdown file preview with a browser-side Markdown renderer.
+/// Render a standalone shared Markdown page with its title/timer toolbar.
 pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (StatusCode, String)> {
+    render_md(entry, true).await
+}
+
+/// Render owner Markdown content inside the owner shell iframe.
+pub(super) async fn render_md_content(
+    entry: &PreviewEntry,
+) -> Result<Response, (StatusCode, String)> {
+    render_md(entry, false).await
+}
+
+async fn render_md(
+    entry: &PreviewEntry,
+    standalone: bool,
+) -> Result<Response, (StatusCode, String)> {
     let file_path = match &entry.target {
         PreviewTarget::File => &entry.id,
         PreviewTarget::Server { .. } => {
@@ -41,7 +55,7 @@ pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (St
     // Owner entries have no expiry and may show local path context. Shared
     // entries carry the transaction expiry and must not disclose workspace
     // or file paths to public viewers.
-    let subtitle = if entry.expires_at.is_some() {
+    let subtitle = if !standalone || entry.expires_at.is_some() {
         String::new()
     } else {
         let ws_name = entry
@@ -61,7 +75,11 @@ pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (St
     };
 
     let markdown_json = json_for_html_script(&content);
-    let toolbar = toolbar_and_timer(&title, &subtitle, remaining_ms, "", Some(&nonce));
+    let toolbar = if standalone {
+        toolbar_and_timer(&title, &subtitle, remaining_ms, "", Some(&nonce))
+    } else {
+        String::new()
+    };
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -101,7 +119,7 @@ pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (St
         markdown_client_js = MARKDOWN_CLIENT_JS,
         marked_script_route = MARKED_SCRIPT_ROUTE,
     );
-    Ok(markdown_response(html, &nonce))
+    Ok(markdown_response(html, &nonce, standalone))
 }
 
 fn json_for_html_script(content: &str) -> String {
@@ -112,9 +130,10 @@ fn json_for_html_script(content: &str) -> String {
         .replace('>', "\\u003e")
 }
 
-fn markdown_response(html: String, nonce: &str) -> Response {
+fn markdown_response(html: String, nonce: &str, standalone: bool) -> Response {
+    let frame_ancestors = if standalone { "'none'" } else { "'self'" };
     let csp = format!(
-        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'unsafe-inline' https://cdn.jsdelivr.net; img-src https:; base-uri 'none'; form-action 'none'"
+        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'unsafe-inline' https://cdn.jsdelivr.net; img-src https:; base-uri 'none'; form-action 'none'; frame-ancestors {frame_ancestors}"
     );
     Response::builder()
         .status(StatusCode::OK)

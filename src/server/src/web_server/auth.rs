@@ -34,6 +34,28 @@ use std::net::SocketAddr;
 /// Cookie set by the pairing flow for browser owner access.
 pub(crate) const OWNER_COOKIE: &str = "va_owner";
 
+/// Owner browser cookie headers. Pairing clears the legacy root-scoped cookie
+/// before setting the current `/va/` cookie. Local Preview shells pass `None`
+/// because loopback access does not need an owner credential and a cookie must
+/// not be sent to a dev server on another port of the same host.
+pub(crate) fn owner_cookie_headers(token: Option<&str>) -> [String; 2] {
+    let legacy = format!(
+        "{}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+        OWNER_COOKIE
+    );
+    let scoped = match token {
+        Some(token) => format!(
+            "{}={}; Path=/va/; Secure; HttpOnly; SameSite=Lax",
+            OWNER_COOKIE, token
+        ),
+        None => format!(
+            "{}=; Path=/va/; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+            OWNER_COOKIE
+        ),
+    };
+    [legacy, scoped]
+}
+
 /// Shared handle to the server's current auth token.
 #[derive(Clone)]
 pub struct AuthState(pub Arc<AuthToken>);
@@ -107,10 +129,22 @@ fn request_peer_is_loopback<B>(req: &Request<B>) -> bool {
 }
 
 fn request_origin_is_local_dashboard<B>(req: &Request<B>) -> bool {
-    req.headers()
+    let Some(origin) = req
+        .headers()
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
-        .is_none_or(|origin| local_dashboard_origin_allowed(origin, None))
+    else {
+        return true;
+    };
+    request_host_port(req).is_some_and(|port| local_request_origin_allowed(origin, port))
+}
+
+fn request_host_port<B>(req: &Request<B>) -> Option<u16> {
+    let host = req.headers().get(header::HOST)?.to_str().ok()?.trim();
+    let authority = if host == "::1" { "[::1]" } else { host };
+    reqwest::Url::parse(&format!("http://{authority}"))
+        .ok()?
+        .port_or_known_default()
 }
 
 /// Local browser access may bypass Preview authentication only when the
@@ -130,12 +164,24 @@ fn request_is_local_bridge<B>(req: &Request<B>) -> bool {
     request_is_local_dashboard(req)
 }
 
+fn local_bridge_access_allowed<B>(req: &Request<B>, auth: &AuthToken) -> bool {
+    request_is_local_bridge(req)
+        || (request_is_loopback(req)
+            && extract_token(req).is_some_and(|candidate| auth.matches(&candidate)))
+}
+
 /// Allow local API bridge calls only from clients that actually connected via
 /// loopback and targeted a loopback dashboard URL. Tunnel forwarders also
 /// connect to the daemon over loopback, so the Host/Origin checks are needed
 /// to keep `/local-api` off public tunnel URLs while preserving local CLI use.
-pub async fn require_local_bridge(req: Request<Body>, next: Next) -> Response {
-    if request_is_local_bridge(&req) {
+/// Cross-origin Desktop development requests must additionally carry the
+/// daemon owner token; the fixed Vite port is not itself an authority.
+pub async fn require_local_bridge(
+    State(state): State<AuthState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    if local_bridge_access_allowed(&req, &state.0) {
         return next.run(req).await;
     }
 
@@ -190,7 +236,7 @@ pub(crate) fn headers_have_allowed_ws_origin(
 }
 
 pub(crate) fn dashboard_origin_allowed(origin: &str, port: u16, tunnel_urls: &[String]) -> bool {
-    if local_dashboard_origin_allowed(origin, Some(port)) {
+    if local_dashboard_origin_allowed(origin, port) {
         return true;
     }
 
@@ -204,36 +250,31 @@ pub(crate) fn dashboard_origin_allowed(origin: &str, port: u16, tunnel_urls: &[S
     })
 }
 
-fn local_dashboard_origin_allowed(origin: &str, port: Option<u16>) -> bool {
+fn local_request_origin_allowed(origin: &str, port: u16) -> bool {
     let Some(origin) = parse_origin(origin) else {
         return false;
     };
 
     if matches!(
-        (
-            origin.scheme.as_str(),
-            origin.host.as_str(),
-            origin.port,
-            port
-        ),
-        ("tauri", "localhost", None, _)
-            | ("http", "tauri.localhost", Some(80), _)
-            | ("http", "localhost", Some(5181), _)
+        (origin.scheme.as_str(), origin.host.as_str(), origin.port),
+        ("tauri", "localhost", None) | ("http", "tauri.localhost", Some(80))
     ) {
         return true;
     }
 
-    match port {
-        Some(port) => {
-            origin.scheme == "http"
-                && origin.port == Some(port)
-                && matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1")
-        }
-        None => {
-            origin.scheme == "http"
-                && matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1")
-        }
-    }
+    origin.scheme == "http"
+        && origin.port == Some(port)
+        && matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1")
+}
+
+fn local_dashboard_origin_allowed(origin: &str, port: u16) -> bool {
+    local_request_origin_allowed(origin, port)
+        || parse_origin(origin).is_some_and(|origin| {
+            matches!(
+                (origin.scheme.as_str(), origin.host.as_str(), origin.port),
+                ("http", "localhost", Some(5181))
+            )
+        })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -286,143 +327,5 @@ fn from_hex(c: u8) -> Option<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-
-    fn local_request(host: &str, peer: &str) -> Request<Body> {
-        let mut request = Request::builder()
-            .uri("/preview/u/test")
-            .header(header::HOST, host)
-            .body(Body::empty())
-            .unwrap();
-        request.extensions_mut().insert(ConnectInfo(
-            peer.parse::<SocketAddr>().expect("valid peer address"),
-        ));
-        request
-    }
-
-    fn req_with_header(value: &str) -> Request<Body> {
-        Request::builder()
-            .uri("/api/sessions")
-            .header(header::AUTHORIZATION, value)
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    fn req_with_query(query: &str) -> Request<Body> {
-        Request::builder()
-            .uri(format!("/api/sessions?{query}"))
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    #[test]
-    fn extracts_bearer_header() {
-        let r = req_with_header("Bearer abc123");
-        assert_eq!(extract_token(&r), Some("abc123".into()));
-    }
-
-    #[test]
-    fn extracts_lowercase_bearer_header() {
-        let r = req_with_header("bearer xyz");
-        assert_eq!(extract_token(&r), Some("xyz".into()));
-    }
-
-    #[test]
-    fn ignores_non_bearer_auth_header() {
-        let r = req_with_header("Basic dXNlcjpwYXNz");
-        assert_eq!(extract_token(&r), None);
-    }
-
-    #[test]
-    fn extracts_token_query_param() {
-        let r = req_with_query("token=deadbeef");
-        assert_eq!(extract_token(&r), Some("deadbeef".into()));
-    }
-
-    #[test]
-    fn extracts_token_query_param_among_others() {
-        let r = req_with_query("session_id=abc&token=deadbeef&foo=bar");
-        assert_eq!(extract_token(&r), Some("deadbeef".into()));
-    }
-
-    #[test]
-    fn no_token_returns_none() {
-        let r = Request::builder()
-            .uri("/api/sessions")
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(extract_token(&r), None);
-    }
-
-    #[test]
-    fn url_decode_handles_hex() {
-        assert_eq!(url_decode("hello%20world"), "hello world");
-        assert_eq!(url_decode("plain"), "plain");
-        assert_eq!(url_decode("deadbeef"), "deadbeef");
-    }
-
-    #[test]
-    fn recognizes_loopback_hosts() {
-        assert!(is_loopback_host("localhost"));
-        assert!(is_loopback_host("localhost:12358"));
-        assert!(is_loopback_host("127.0.0.1"));
-        assert!(is_loopback_host("127.0.0.1:12358"));
-        assert!(is_loopback_host("::1"));
-        assert!(is_loopback_host("[::1]"));
-        assert!(is_loopback_host("[::1]:12358"));
-        assert!(!is_loopback_host("example.com"));
-        assert!(!is_loopback_host("example.com:12358"));
-        assert!(!is_loopback_host("[::1].example.com"));
-        assert!(!is_loopback_host("[::1]evil"));
-        assert!(!is_loopback_host("127.0.0.1:not-a-port"));
-        assert!(!is_loopback_host("127.0.0.1:65536"));
-    }
-
-    #[test]
-    fn loopback_request_requires_loopback_peer_and_host() {
-        assert!(request_is_loopback(&local_request(
-            "127.0.0.1:12358",
-            "127.0.0.1:45000"
-        )));
-        assert!(!request_is_loopback(&local_request(
-            "preview.example.com",
-            "127.0.0.1:45000"
-        )));
-        assert!(!request_is_loopback(&local_request(
-            "127.0.0.1:12358",
-            "192.0.2.10:45000"
-        )));
-    }
-
-    #[test]
-    fn validates_static_dashboard_origins() {
-        assert!(dashboard_origin_allowed(
-            "http://127.0.0.1:12358",
-            12358,
-            &[]
-        ));
-        assert!(dashboard_origin_allowed(
-            "http://localhost:12358",
-            12358,
-            &[]
-        ));
-        assert!(dashboard_origin_allowed("tauri://localhost", 12358, &[]));
-        assert!(!dashboard_origin_allowed("http://evil.example", 12358, &[]));
-    }
-
-    #[test]
-    fn validates_tunnel_origins_by_active_url() {
-        assert!(dashboard_origin_allowed(
-            "https://demo.loca.lt",
-            12358,
-            &["https://demo.loca.lt".to_string()]
-        ));
-        assert!(!dashboard_origin_allowed(
-            "https://other.loca.lt",
-            12358,
-            &["https://demo.loca.lt".to_string()]
-        ));
-    }
-}
+#[path = "auth_tests.rs"]
+mod tests;

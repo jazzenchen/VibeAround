@@ -4,7 +4,7 @@ use axum::body::to_bytes;
 use axum::http::{HeaderMap, StatusCode};
 use common::previews::{PreviewEntry, PreviewTarget};
 
-use super::render_md_page;
+use super::{render_md_content, render_md_page};
 
 fn unique_temp_dir() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -35,7 +35,27 @@ async fn render(markdown: &str, title: &str, expires_at: Option<Instant>) -> (He
     (headers, String::from_utf8(body.to_vec()).unwrap())
 }
 
-fn assert_security_headers(headers: &HeaderMap) -> String {
+async fn render_embedded(markdown: &str, title: &str) -> (HeaderMap, String) {
+    let workspace = unique_temp_dir();
+    let file = workspace.join("preview.md");
+    std::fs::write(&file, markdown).unwrap();
+    let entry = PreviewEntry {
+        id: file,
+        workspace,
+        title: title.to_string(),
+        target: PreviewTarget::File,
+        created_at: Instant::now(),
+        expires_at: None,
+    };
+
+    let response = render_md_content(&entry).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let headers = response.headers().clone();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (headers, String::from_utf8(body.to_vec()).unwrap())
+}
+
+fn assert_security_headers(headers: &HeaderMap, frame_ancestors: &str) -> String {
     assert_eq!(headers.get("referrer-policy").unwrap(), "no-referrer");
     assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
 
@@ -50,6 +70,7 @@ fn assert_security_headers(headers: &HeaderMap) -> String {
     assert!(csp.contains("img-src https:"));
     assert!(csp.contains("base-uri 'none'"));
     assert!(csp.contains("form-action 'none'"));
+    assert!(csp.contains(&format!("frame-ancestors {frame_ancestors}")));
 
     let script_source = csp
         .split(';')
@@ -86,13 +107,18 @@ fn markdown_source(body: &str) -> (&str, String) {
     (json, markdown)
 }
 
-fn normalized_csp(headers: &HeaderMap) -> String {
+fn normalized_csp_without_frame_ancestors(headers: &HeaderMap) -> String {
     let csp = headers
         .get("content-security-policy")
         .unwrap()
         .to_str()
         .unwrap();
-    csp.split_whitespace()
+    csp.split(';')
+        .map(str::trim)
+        .filter(|directive| !directive.starts_with("frame-ancestors "))
+        .collect::<Vec<_>>()
+        .join("; ")
+        .split_whitespace()
         .map(|part| {
             if part.starts_with("'nonce-") {
                 "'nonce-<dynamic>'"
@@ -125,7 +151,7 @@ async fn markdown_page_keeps_client_renderer_and_carries_source_as_inert_json() 
     )
     .await;
 
-    let nonce = assert_security_headers(&headers);
+    let nonce = assert_security_headers(&headers, "'none'");
     assert_all_scripts_use_nonce(&body, &nonce);
     assert!(body.contains("src=\"/va/preview/assets/marked-15.0.12.min.js\""));
     assert!(!body.contains("marked@15"));
@@ -174,7 +200,7 @@ async fn markdown_page_encodes_html_breakouts_before_the_browser_parses_the_page
 "#;
     let (headers, body) = render(markdown, "Breakouts", None).await;
 
-    let nonce = assert_security_headers(&headers);
+    let nonce = assert_security_headers(&headers, "'none'");
     assert_all_scripts_use_nonce(&body, &nonce);
     let (json, decoded) = markdown_source(&body);
     assert_eq!(decoded, markdown);
@@ -187,8 +213,8 @@ async fn markdown_page_encodes_html_breakouts_before_the_browser_parses_the_page
 }
 
 #[tokio::test]
-async fn owner_and_share_markdown_pages_use_equivalent_security_policy() {
-    let (owner_headers, owner_body) = render("owner", "Owner", None).await;
+async fn embedded_owner_and_share_markdown_share_content_security_policy() {
+    let (owner_headers, owner_body) = render_embedded("owner", "Owner").await;
     let (share_headers, share_body) = render(
         "share",
         "Share",
@@ -196,16 +222,17 @@ async fn owner_and_share_markdown_pages_use_equivalent_security_policy() {
     )
     .await;
 
-    let owner_nonce = assert_security_headers(&owner_headers);
-    let share_nonce = assert_security_headers(&share_headers);
+    let owner_nonce = assert_security_headers(&owner_headers, "'self'");
+    let share_nonce = assert_security_headers(&share_headers, "'none'");
     assert_all_scripts_use_nonce(&owner_body, &owner_nonce);
     assert_all_scripts_use_nonce(&share_body, &share_nonce);
     assert_eq!(
-        normalized_csp(&owner_headers),
-        normalized_csp(&share_headers)
+        normalized_csp_without_frame_ancestors(&owner_headers),
+        normalized_csp_without_frame_ancestors(&share_headers)
     );
     assert!(!owner_body.contains("id=\"timer\""));
+    assert!(!owner_body.contains("class=\"toolbar\""));
     assert!(share_body.contains("id=\"timer\""));
-    assert!(owner_body.contains("preview.md"));
+    assert!(!owner_body.contains("preview.md"));
     assert!(!share_body.contains("preview.md"));
 }

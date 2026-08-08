@@ -5,13 +5,13 @@
 
 use axum::body::Body;
 use axum::{
-    extract::Query,
+    extract::{Query, Request},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 
-use super::auth::OWNER_COOKIE;
+use super::auth::owner_cookie_headers;
 
 /// POST /va/api/pair/start — generate a pairing code.
 ///
@@ -36,7 +36,7 @@ pub struct StatusQuery {
 /// - `{ "status": "pending" }` — waiting for `/pair` command
 /// - `{ "status": "expired" }` — code has expired, frontend should refresh
 /// - `{ "status": "verified" }` — paired! Also sets `va_owner` cookie with auth token
-pub async fn status_handler(Query(q): Query<StatusQuery>) -> Response {
+pub async fn status_handler(Query(q): Query<StatusQuery>, req: Request) -> Response {
     let mut response = match common::auth::pair::check_status(&q.sid) {
         None => {
             // Unknown or expired session.
@@ -50,7 +50,9 @@ pub async fn status_handler(Query(q): Query<StatusQuery>) -> Response {
             // Verified! Consume the session and set the owner cookie.
             match common::auth::pair::consume_verified(&q.sid) {
                 Some(token) => {
-                    let [clear_legacy_cookie, owner_cookie] = owner_cookies(&token);
+                    let [clear_legacy_cookie, owner_cookie] = owner_cookie_headers(
+                        (!super::auth::request_is_loopback(&req)).then_some(token.as_str()),
+                    );
                     // Return the token in the body so the SPA can store it in
                     // sessionStorage (existing auth mechanism for API calls).
                     Response::builder()
@@ -81,32 +83,28 @@ pub async fn status_handler(Query(q): Query<StatusQuery>) -> Response {
     response
 }
 
-fn owner_cookies(token: &str) -> [String; 2] {
-    // Releases before the root preview proxy scoped this cookie to `/va/`.
-    // Clear that more-specific cookie so it cannot shadow the new root cookie.
-    [
-        format!(
-            "{}=; Path=/va/; Max-Age=0; HttpOnly; SameSite=Lax",
-            OWNER_COOKIE
-        ),
-        format!(
-            "{}={}; Path=/; Secure; HttpOnly; SameSite=Lax",
-            OWNER_COOKIE, token
-        ),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
-    use super::owner_cookies;
+    use crate::web_server::auth::owner_cookie_headers;
 
     #[test]
-    fn owner_cookie_migrates_from_va_path_to_root() {
+    fn owner_cookie_is_scoped_to_vibearound_routes() {
         assert_eq!(
-            owner_cookies("test-token"),
+            owner_cookie_headers(Some("test-token")),
             [
-                "va_owner=; Path=/va/; Max-Age=0; HttpOnly; SameSite=Lax".to_string(),
-                "va_owner=test-token; Path=/; Secure; HttpOnly; SameSite=Lax".to_string(),
+                "va_owner=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax".to_string(),
+                "va_owner=test-token; Path=/va/; Secure; HttpOnly; SameSite=Lax".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn local_pairing_clears_owner_credentials() {
+        assert_eq!(
+            owner_cookie_headers(None),
+            [
+                "va_owner=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax".to_string(),
+                "va_owner=; Path=/va/; Max-Age=0; Secure; HttpOnly; SameSite=Lax".to_string(),
             ]
         );
     }

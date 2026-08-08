@@ -1,8 +1,7 @@
 //! Toolbar + shared HTML helpers for preview pages.
 //!
-//! Preview pages render a sticky toolbar with the title and optional controls.
-//! Share pages also receive a countdown; owner pages live with the session and
-//! therefore do not show one.
+//! Standalone Markdown pages render a sticky toolbar with the title and an
+//! optional countdown. The owner shell has its own floating picker.
 
 use common::previews::PreviewEntry;
 

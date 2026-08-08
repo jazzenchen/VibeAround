@@ -1,5 +1,5 @@
 //! Axum HTTP + WebSocket server: serves Web SPA (from given dist path), WS at /ws for xterm ↔ PTY,
-//! agent chat WS at /ws/chat, live preview (/preview/:slug with iframe wrapper + reverse proxy),
+//! agent chat WS at /ws/chat, owner/share Preview pages,
 //! and MCP endpoint at /mcp.
 
 mod api;
@@ -16,7 +16,7 @@ mod ws_pty;
 use axum::body::Body;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{any, delete, get, post, put};
 use axum::Router;
 use std::net::SocketAddr;
@@ -66,7 +66,7 @@ pub(crate) struct AppState {
     /// loopback URLs use this instead of reaching into a services
     /// facade.
     port: u16,
-    /// Shared HTTP client for preview proxy and API bridge forwarding.
+    /// Shared HTTP client for API bridge forwarding.
     preview_client: reqwest::Client,
     /// True when settings enable at least one host-side search source.
     host_search_available: bool,
@@ -472,7 +472,10 @@ pub async fn run_web_server(
     let local_api_routes = Router::new()
         .merge(local_agent_routes)
         .merge(bridge_routes)
-        .route_layer(axum::middleware::from_fn(require_local_bridge))
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth_state.clone(),
+            require_local_bridge,
+        ))
         .layer(DefaultBodyLimit::max(LOCAL_BRIDGE_BODY_LIMIT_BYTES));
 
     let public = Router::new()
@@ -482,14 +485,18 @@ pub async fn run_web_server(
         .route("/api/pair/start", post(pair::start_handler))
         .route("/api/pair/status", get(pair::status_handler))
         // Preview pages dispatch by session target:
-        //   Server → iframe + `/`-scoped cookie proxy
-        //   File   → rendered markdown page
+        //   Server → direct local dev-server iframe
+        //   File   → owner-only iframe content or shared markdown page
         // /u = owner (loopback or va_owner cookie), /s = temporary share.
         .route(
             preview::MARKED_SCRIPT_ROUTE,
             get(preview::marked_script_handler),
         )
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
+        .route(
+            "/preview/u/{slug}/content",
+            get(preview::owner_preview_content_handler),
+        )
         .route(
             "/preview/s/{share_id}",
             get(preview::share_preview_handler).post(preview::verify_share_code_handler),
@@ -511,14 +518,13 @@ pub async fn run_web_server(
         )
         .fallback(any(spa_fallback_handler));
 
-    // ALL VibeAround routes live under `/va/` — the root `/` namespace is
-    // reserved exclusively for the cookie-based dev-server preview proxy.
+    // ALL VibeAround routes live under `/va/`; other root paths return to the
+    // dashboard instead of acting as a second routing surface.
     let dashboard = Router::new().merge(protected).merge(public);
 
     let app = Router::new()
         .nest("/va", dashboard)
-        // Root fallback: cookie → proxy to dev server, else → /va/.
-        .fallback(any(preview::cookie_proxy_fallback))
+        .fallback(any(redirect_to_dashboard))
         .with_state(state)
         .layer(build_cors_layer(port));
 
@@ -535,6 +541,10 @@ pub async fn run_web_server(
     })
     .await?;
     Ok(())
+}
+
+async fn redirect_to_dashboard() -> Redirect {
+    Redirect::temporary("/va/")
 }
 
 /// Build an open CORS layer for the local daemon API.
@@ -557,7 +567,17 @@ fn build_cors_layer(_port: u16) -> tower_http::cors::CorsLayer {
 
 #[cfg(test)]
 mod tests {
-    use super::is_dashboard_api_path;
+    use super::{is_dashboard_api_path, redirect_to_dashboard};
+
+    #[tokio::test]
+    async fn root_fallback_redirects_to_dashboard() {
+        let response = axum::response::IntoResponse::into_response(redirect_to_dashboard().await);
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::TEMPORARY_REDIRECT
+        );
+        assert_eq!(response.headers().get("location").unwrap(), "/va/");
+    }
 
     #[test]
     fn recognizes_dashboard_api_fallback_paths() {

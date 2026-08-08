@@ -13,7 +13,7 @@
 //!   unique and collision-proof.
 //! - `share`     — one 10-minute File-preview transaction containing the
 //!   public link ID, human access code, and browser grant.
-//!   Server previews stay local-only until they can run on an isolated origin.
+//!   Server previews stay local-only and load from their own localhost origin.
 //!
 //! URL structure (all routes under `/va/`):
 //!
