@@ -38,9 +38,9 @@ Arguments:
 
 If the tool says the workspace is not registered, call `register_workspace` with the `cwd` first, then retry.
 
-### 2. Present BOTH links
+### 2. Relay the returned access details
 
-Always show **both** Owner and Share URLs. Never omit either link.
+Always show the Owner URL. When the tool also returns a Share URL, present that URL together with the six-digit access code and exact remaining lifetime. State that the code can be reused by multiple viewers until the Share URL and code expire together. If public sharing is unavailable, show only the Owner URL and that message; do not invent a localhost Share URL.
 
 ## Error Handling
 

@@ -21,7 +21,7 @@ VibeAround 在本地运行一个守护进程（daemon），托管你的 Agent，
 
 **一份模型订阅供多个 CLI 使用。** 模型 Profile 加上内置的 API Bridge，让单个供应商账号（Moonshot/Kimi、DeepSeek、OpenRouter、MiniMax、Z.AI/GLM、Gemini、Azure OpenAI、xAI 等）驱动 Claude Code、Codex、Gemini CLI 以及任何 OpenAI 兼容客户端 —— 包括不同 API 方言之间的协议转换。
 
-**在浏览器里操作一切。** Web 控制台提供真正的终端（xterm over WebSocket）、带权限卡片的 Web Chat、仅限本机的 dev server 预览和 Markdown 渲染预览。控制台与 Markdown owner 预览可在配对后通过内置隧道（ngrok、localtunnel、Cloudflare 或 Tailscale Funnel）从外部访问；持有当前 key 的 Markdown share 链接是不需要配对、10 分钟有效的例外。
+**在浏览器里操作一切。** Web 控制台提供真正的终端（xterm over WebSocket）、带权限卡片的 Web Chat、仅限本机的 dev server 预览和 Markdown 渲染预览。控制台与 Markdown owner 预览可在配对后通过内置隧道（ngrok、localtunnel、Cloudflare 或 Tailscale Funnel）从外部访问；Markdown 分享改用独立、可重复使用的六位访问码，并共用 10 分钟期限。
 
 **按你的方式启动 Agent。** 桌面应用和 `va launch` 用保存好的 Profile 在你自己的终端里打开 Agent CLI：凭据就位、模型路由配置好、项目集成装好。
 

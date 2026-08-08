@@ -38,14 +38,16 @@ Arguments:
 
 If the tool says the workspace is not registered, call `register_workspace` with the `cwd` first, then retry.
 
-### 2. Present BOTH links to the user
+### 2. Relay the returned access details
 
-The tool returns an Owner link and a Share link. Always show **both** in this format:
+Always show the Owner URL. When the tool also returns a Share URL, present the Share URL, the six-digit access code, and the exact remaining lifetime together:
 
 ```
 Markdown preview 已就绪：
 - 你的预览: <owner_url>
-- 分享链接: <share_url>（10 分钟有效）
+- 分享链接: <share_url>
+- 访问码: <access_code>（到期前可供多人使用）
+- 剩余有效期: <remaining>
 ```
 
 Or in English:
@@ -53,10 +55,12 @@ Or in English:
 ```
 Markdown preview ready:
 - Owner: <owner_url>
-- Share: <share_url> (expires in 10 min)
+- Share: <share_url>
+- Access code: <access_code> (reusable by multiple viewers until expiry)
+- Expires in: <remaining>
 ```
 
-**Never omit either link.** The owner link is permanent. The share link is temporary and needs no auth.
+The Owner URL requires loopback access or browser pairing. The Share URL and access code are one 10-minute transaction and expire together. If the tool says public sharing is unavailable, show only the Owner URL and that message; do not invent a localhost Share URL.
 
 ## Error Handling
 

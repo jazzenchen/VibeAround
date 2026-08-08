@@ -77,11 +77,11 @@ All token-authenticated; see [architecture overview](../architecture/overview.md
 |---|---|---|---|
 | `/preview/u/{slug}` | Server | Loopback only | While the preview exists |
 | `/preview/u/{slug}` | Markdown | Loopback or paired owner cookie | While the preview exists |
-| `/preview/s/{slug}` | Markdown | Current share key | 600 s |
+| `/preview/s/{share_id}` | Markdown | Six-digit access code, then path-scoped browser grant | One shared 600 s deadline |
 
 ---
 
 *Source anchors: `src/server/src/web_server/mcp/mod.rs` (tool dispatch), `src/core/src/workspace/handover.rs` (code TTL), `src/server/src/web_server/api_bridge/routes.rs` + `mod.rs` (route table, body limit), `src/server/src/web_server/ws_domains.rs` (state endpoints), `src/core/src/previews/store.rs` (share TTL).*
-*Last verified: v0.7.11*
+*Last verified: v0.7.24*
 
 <sub>[◀ CLI reference](cli.md) · [Documentation index](../README.md) · [Timers and limits ▶](timers-and-limits.md)</sub>

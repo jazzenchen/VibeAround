@@ -27,7 +27,7 @@
 无需把 VibeAround 变成通用开发隧道，也能审阅本地工作：
 
 - **Dev server 预览仅限本机。** 注册一个本地端口，得到同机预览页；它只反向代理页面与静态资源的 GET/HEAD 请求，并带 iframe 工具栏。Agent 通过 `va-preview` 技能 / MCP `preview` 工具创建它（[工具参考](../reference/api-surfaces.md#mcp-tools)）。Fetch/XHR、写请求、WebSocket、HMR 和公网 hostname 都不在这条预览边界内。
-- **Markdown 预览。** 任何 Markdown 文件都有 owner URL 和 10 分钟过期的 share URL（`md_preview` 工具或 `va-md-preview` 技能）。见[安全模型](../architecture/security-model.md)。
+- **Markdown 预览。** 任何 Markdown 文件都有 owner URL；公网隧道运行时，还会得到可复制的 Share URL 和可重复使用的六位访问码，两者在 10 分钟后同时过期（`md_preview` 工具或 `va-md-preview` 技能）。见[安全模型](../architecture/security-model.md)。
 - `va previews` / `va preview delete <slug>` 从 CLI 管理它们；为你代启的预览进程会随守护进程停止而被杀掉。
 
 ## 运行时管理

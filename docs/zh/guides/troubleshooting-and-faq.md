@@ -56,7 +56,7 @@ Agent CLI 自己需要官方登录（`claude login` 等）—— VibeAround 托�
 `va launch sessions` 显示发现机制能看到什么。会话必须属于聊天绑定的同一个 Agent 和 Workspace；已归档的会话是隐藏的（`va launch unarchive` 取消归档）。
 
 **Markdown 预览分享链接几分钟后失效了。**
-Markdown 分享链接设计上 600 秒过期。重新分享，或用你已认证的 owner 链接。Live Server 预览仅限本机。见[安全模型](../architecture/security-model.md)。
+每笔 Markdown 分享的 URL、六位访问码和浏览器授信设计上共用 600 秒期限。重新分享可创建一笔新事务，或者使用你已认证的 owner 链接。Live Server 预览仅限本机。见[安全模型](../architecture/security-model.md)。
 
 ## 模型与 Profile
 

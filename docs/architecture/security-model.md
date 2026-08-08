@@ -46,9 +46,9 @@ Live Server and rendered Markdown previews have different boundaries:
 |---|---|---|
 | Server `/preview/u/<slug>` | Loopback browser only | While the preview exists |
 | Markdown `/preview/u/<slug>` | Loopback browser or paired owner | While the preview exists |
-| Markdown `/preview/s/<slug>` | Anyone with the current share link | 600 seconds, then expires |
+| Markdown `/preview/s/<share_id>` | Anyone with the Share URL and six-digit access code | One shared 600-second deadline for URL, code, and browser grant |
 
-Live Server previews do not mint share links and cannot proxy through a public hostname. Markdown share links are the only intentionally unauthenticated surface, scoped to one document and time-boxed to 10 minutes. Everything else on the tunnel still requires pairing + token.
+Live Server previews do not mint share links and cannot proxy through a public hostname. A Markdown share does not use owner pairing: its opaque URL opens an access-code gate, and successful verification issues a Secure, HttpOnly, path-scoped browser grant. The URL, reusable six-digit code, and grant belong to one document and expire together after 10 minutes. Everything else on the tunnel still requires pairing + token.
 
 The Markdown parser is bundled with the daemon; Preview does not execute a remote parser script. Raw HTML is displayed as source text. Only absolute HTTPS URLs written with Markdown image syntax become image requests. An image host can see the viewer's IP address, while `Referrer-Policy: no-referrer` prevents the Preview URL from being sent with the request.
 

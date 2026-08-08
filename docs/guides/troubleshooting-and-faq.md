@@ -56,7 +56,7 @@ Codes are one-shot and short-lived — issue a fresh one and use it immediately.
 `va launch sessions` shows what discovery sees. The session must belong to the same agent and workspace the chat is bound to; archived sessions are hidden (unarchive with `va launch unarchive`).
 
 **A Markdown preview share link stopped working after a few minutes.**
-Markdown share links expire after 600 seconds by design. Re-share, or use the owner link where you are authenticated. Live Server previews are local-only. See [Security model](../architecture/security-model.md).
+Each Markdown Share URL, six-digit access code, and browser grant expires after the same 600-second deadline by design. Re-share to create a new transaction, or use the owner link where you are authenticated. Live Server previews are local-only. See [Security model](../architecture/security-model.md).
 
 ## Models and profiles
 

@@ -231,7 +231,7 @@ VibeAround Web Hub gives you a browser interface for choosing agents, API profil
 
 Expose VibeAround's local web surfaces only when you choose to.
 
-Remote tunnels are used by Web Hub, Web Terminal, and Markdown preview links. VibeAround keeps the daemon local and starts the selected tunnel provider; owner surfaces require browser pairing, while the current Markdown share link is the time-scoped exception. Live Server previews remain loopback-only.
+Remote tunnels are used by Web Hub, Web Terminal, and Markdown preview links. VibeAround keeps the daemon local and starts the selected tunnel provider; owner surfaces require browser pairing, while each Markdown share transaction uses its own time-scoped access code. Live Server previews remain loopback-only.
 
 | Tunnel option | Status | Notes |
 |---|---|---|
@@ -245,14 +245,14 @@ Remote tunnels are used by Web Hub, Web Terminal, and Markdown preview links. Vi
 
 Preview what AI agents are building.
 
-VibeAround opens local dev servers in a same-machine preview and gives Markdown files paired-owner links plus 10-minute share links for anyone holding the current key.
+VibeAround opens local dev servers in a same-machine preview and gives Markdown files owner links for loopback or paired browsers, plus 10-minute public share transactions protected by reusable six-digit access codes.
 
 <p align="center">
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/preview-in-a-row.webp" alt="Ask for previews from messaging apps, pair a browser, and open web or Markdown previews" width="92%" />
 </p>
 
 - Preview dev servers locally without turning the preview route into a public dev tunnel.
-- Generate owner and scoped short-lived share links for Markdown files.
+- Generate owner links and copyable Markdown share messages containing the public URL, access code, and expiry.
 - Use tunnels to access Markdown previews remotely.
 
 <details>
@@ -324,8 +324,8 @@ VibeAround keeps AI coding work on your computer by default.
 - Provider credentials stay in local VibeAround settings/profile storage.
 - The daemon listens on loopback unless you explicitly enable a tunnel.
 - Dashboard APIs and WebSocket routes require a local auth token.
-- Protected public tunnel surfaces require browser pairing; the 10-minute Markdown share link is the explicit exception.
-- Preview access is target-specific: live servers stay loopback-only; Markdown owner links require owner access, and Markdown share links expire after 10 minutes.
+- Protected public tunnel surfaces require browser pairing; a Markdown share transaction instead uses its own six-digit access code.
+- Preview access is target-specific: live servers stay loopback-only; Markdown owner links require owner access, while each Markdown share URL, access code, and browser grant expire together after 10 minutes.
 - Agent CLIs use your local project permissions.
 
 </details>

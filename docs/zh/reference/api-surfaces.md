@@ -77,11 +77,11 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 |---|---|---|---|
 | `/preview/u/{slug}` | Server | 仅回环地址 | 预览存在期间 |
 | `/preview/u/{slug}` | Markdown | 回环地址或已配对 owner cookie | 预览存在期间 |
-| `/preview/s/{slug}` | Markdown | 当前 share key | 600 秒 |
+| `/preview/s/{share_id}` | Markdown | 六位访问码，随后使用按路径限定的浏览器授信 | 共用 600 秒期限 |
 
 ---
 
 *Source anchors: `src/server/src/web_server/mcp/mod.rs` (tool dispatch), `src/core/src/workspace/handover.rs` (code TTL), `src/server/src/web_server/api_bridge/routes.rs` + `mod.rs` (route table, body limit), `src/server/src/web_server/ws_domains.rs` (state endpoints), `src/core/src/previews/store.rs` (share TTL).*
-*Last verified: v0.7.11*
+*Last verified: v0.7.24*
 
 <sub>[◀ CLI 参考](cli.md) · [文档索引](../README.md) · [计时器与上限 ▶](timers-and-limits.md)</sub>

@@ -4,14 +4,14 @@
 
 ## 职责
 
-跟踪 preview sessions（dev-server ports 和 rendered files），为 Server 铸造本地 owner URL、为 Markdown 铸造 owner/share URL，执行 Markdown share TTL，并清理 preview 相关进程。HTTP serving side（page proxy、iframe toolbar、Markdown rendering）在 [server](server.md) 的 `preview` 子模块里。
+跟踪 preview sessions（dev-server ports 和 rendered files），为 Server 铸造本地 owner URL、为 Markdown 铸造 owner/share 事务，执行共享访问期限，并清理 preview 相关进程。HTTP serving side（page proxy、iframe toolbar、Markdown rendering）在 [server](server.md) 的 `preview` 子模块里。
 
 ## 关键类型
 
 | Type | File | Role |
 |---|---|---|
 | Preview store / `SESSIONS` | `store.rs` | Slug → preview session；`SHARE_TTL_SECS = 600` |
-| Owner vs share semantics | `mod.rs`、`store.rs` | Server 只有本地 owner；Markdown owner 随 preview 存活，share URL 在 600 秒后过期 |
+| Owner vs share semantics | `mod.rs`、`store.rs` | Server 只有本地 owner；Markdown owner 随 preview 存活，share ID、访问码和授信组成一笔 600 秒事务 |
 | `kill_by_session` / `shutdown_kill_all_ports` | `mod.rs` | 按 agent session / daemon stop 时所有 previewed ports 杀 dev-server processes |
 
 ## 交互
@@ -23,9 +23,9 @@
 
 ## 不变量：不要破坏
 
-1. **只有 Markdown 可以铸造 Share URL**：单个文档、单个 key、硬 TTL。Server preview 保持 loopback-only。不重新审视[安全模型](../../architecture/security-model.md)就不要扩大 target scope 或 lifetime。
+1. **只有 Markdown 可以铸造分享事务**：单个文档、一个不透明 URL ID、一个可重复使用的六位访问码、一个浏览器授信和一个硬 TTL。Server preview 保持 loopback-only。不重新审视[安全模型](../../architecture/security-model.md)就不要扩大 target scope 或 lifetime。
 2. **Preview processes 是 session-scoped**：agent session 的 dev servers 会随 `/close` 和 daemon 一起死，不留下 orphaned `npm run dev`。
-3. 远程 Markdown owner link 需要 daemon token；share expiry 不能影响 owner path。
+3. 远程 Markdown owner link 需要 owner 配对；share expiry 不能影响 owner path。
 
 ## 已知技术债
 

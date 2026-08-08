@@ -1,6 +1,6 @@
 # Tunnels and remote access
 
-A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Four providers are built in; remote browsers must pair before entering protected dashboard and owner surfaces. A current Markdown share link is the only no-pairing exception. The trust rules behind this page are in [Security model](../architecture/security-model.md).
+A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Four providers are built in; remote browsers must pair before entering protected dashboard and owner surfaces. Markdown shares use a separate six-digit access-code gate instead of owner pairing. The trust rules behind this page are in [Security model](../architecture/security-model.md).
 
 ## Choosing a provider
 
@@ -87,7 +87,7 @@ Pairing survives browser restarts but not daemon restarts (tokens are regenerate
 
 ## What a tunnel exposes — and what it never does
 
-Through the tunnel, after pairing: the dashboard SPA, web chat, web terminal, Markdown owner previews, and the WebSocket endpoints — everything token-gated. Markdown **share links** (`/preview/s/<slug>`) are the one deliberate exception: no pairing, no token, one document, 10-minute expiry. Live Server preview routes are local-only and return `403` on public hostnames.
+Through the tunnel, after pairing: the dashboard SPA, web chat, web terminal, Markdown owner previews, and the WebSocket endpoints — everything token-gated. Markdown **shares** (`/preview/s/<share_id>`) are the deliberate exception to owner pairing: viewers enter the reusable six-digit access code, then receive a path-scoped browser grant. The URL, code, and grant cover one document and expire together after 10 minutes. Live Server preview routes are local-only and return `403` on public hostnames.
 
 Never reachable through a tunnel: the local API bridge and agent-as-API endpoints (loopback-only), the MCP endpoint's local-bridge surface, and provider credentials in any form.
 

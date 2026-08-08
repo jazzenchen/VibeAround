@@ -59,7 +59,7 @@ The chat attaches to the terminal session — same context, same workspace, cont
 | Use one provider subscription across agent CLIs | [Model profiles guide](model-profiles.md) |
 | Reach the dashboard away from home | [Tunnels and remote access](tunnels-and-remote-access.md) |
 | The full slash-command list | [IM usage](im-usage.md) |
-| Preview a running dev server locally or share Markdown for 10 minutes | [Web dashboard guide](web-dashboard.md) |
+| Preview a running dev server locally or share Markdown for 10 minutes with a reusable six-digit code | [Web dashboard guide](web-dashboard.md) |
 
 ---
 

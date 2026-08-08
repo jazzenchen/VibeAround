@@ -206,7 +206,7 @@
   },
   {
     "name": "md_preview",
-    "description": "Preview a markdown file with GitHub-style rendering. Raw HTML is shown as source text; only absolute HTTPS Markdown images are loaded. Returns owner and share URLs; the share URL expires in 10 minutes.",
+    "description": "Preview a markdown file with GitHub-style rendering. Raw HTML is shown as source text; only absolute HTTPS Markdown images are loaded. Returns an owner URL and, when a public tunnel is running, a share URL plus a reusable six-digit access code. The share URL and code expire together 10 minutes after the Preview transaction starts; the result reports their current remaining lifetime because an active transaction may be reused.",
     "inputSchema": {
       "type": "object",
       "properties": {
