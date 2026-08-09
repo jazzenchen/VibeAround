@@ -50,6 +50,10 @@ If the workspace is not registered, call `register_workspace` with `cwd`, then r
 
 The tool returns one local owner URL. Present that URL and state that live-server previews are local-only. The owner iframe loads the server's loopback origin directly, so the app keeps its native API, WebSocket, and HMR behavior. Do not construct a tunnel or Share URL; use `va-md-preview` when the user needs a public document share.
 
+### 5. Optional owner review bridge
+
+Only when the user asks to review or comment on the live page, add the exact dev-only `<script>` tag returned by the `preview` tool to the page. It enables owner-side text and element comments without proxying the app. Do not add it proactively, and do not ship it in a production build.
+
 ## Error Handling
 
 - **MCP server unavailable**: Ask the user to start the VibeAround desktop app.
