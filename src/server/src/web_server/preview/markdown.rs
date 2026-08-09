@@ -14,22 +14,26 @@ use super::assets::{theme_stylesheet_href, DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT
 use super::toolbar::{escape_html, remaining_millis, toolbar_and_timer, TOOLBAR_CSS};
 
 const MARKDOWN_CLIENT_JS: &str = include_str!("markdown_client.js");
+const MARKDOWN_SELECTION_JS: &str = include_str!("markdown_selection.js");
+const MARKDOWN_SELECTION_CSS: &str = include_str!("markdown_selection.css");
 
 /// Render a standalone shared Markdown page with its title/timer toolbar.
 pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (StatusCode, String)> {
-    render_md(entry, true).await
+    render_md(entry, true, false).await
 }
 
 /// Render owner Markdown content inside the owner shell iframe.
 pub(super) async fn render_md_content(
     entry: &PreviewEntry,
+    annotations_enabled: bool,
 ) -> Result<Response, (StatusCode, String)> {
-    render_md(entry, false).await
+    render_md(entry, false, annotations_enabled).await
 }
 
 async fn render_md(
     entry: &PreviewEntry,
     standalone: bool,
+    annotations_enabled: bool,
 ) -> Result<Response, (StatusCode, String)> {
     let file_path = match &entry.target {
         PreviewTarget::File => &entry.id,
@@ -80,6 +84,16 @@ async fn render_md(
     } else {
         String::new()
     };
+    let selection_css = if annotations_enabled {
+        MARKDOWN_SELECTION_CSS
+    } else {
+        ""
+    };
+    let selection_script = if annotations_enabled {
+        format!(r#"<script nonce="{nonce}">{MARKDOWN_SELECTION_JS}</script>"#)
+    } else {
+        String::new()
+    };
     let html = format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -110,6 +124,7 @@ async fn render_md(
   .markdown-body table th, .markdown-body table td {{ border: 1px solid var(--border); padding: 6px 13px; }}
   .markdown-body table tr {{ background: transparent; border-top-color: var(--border); }}
   .markdown-body table tr:nth-child(2n) {{ background: var(--muted); }}
+  {selection_css}
 </style>
 </head>
 <body>
@@ -121,6 +136,7 @@ async fn render_md(
 <script nonce="{nonce}">
 {markdown_client_js}
 </script>
+{selection_script}
 </body>
 </html>"#,
         title = title,
@@ -129,6 +145,8 @@ async fn render_md(
         nonce = nonce,
         markdown_json = markdown_json,
         markdown_client_js = MARKDOWN_CLIENT_JS,
+        selection_css = selection_css,
+        selection_script = selection_script,
         dompurify_script_route = DOMPURIFY_SCRIPT_ROUTE,
         marked_script_route = MARKED_SCRIPT_ROUTE,
         theme_stylesheet_href = theme_stylesheet_href(),

@@ -251,6 +251,11 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
     .await;
     assert_eq!(external_owner.status(), StatusCode::FOUND);
 
+    common::previews::bind_owner_conversation(
+        &owner_slug,
+        common::workspace::threads::WorkspaceThreadId::from("wt_route_annotations"),
+    )
+    .unwrap();
     let owner =
         owner_preview_handler(Path(owner_slug.clone()), local_request("127.0.0.1:12358")).await;
     assert_eq!(owner.status(), StatusCode::OK);
@@ -291,6 +296,7 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
     let content_body = String::from_utf8(content_body.to_vec()).unwrap();
     assert!(content_body.contains("# Shared markdown"));
     assert!(!content_body.contains("class=\"toolbar\""));
+    assert!(content_body.contains("va.preview.markdown-selection"));
 }
 
 #[tokio::test]

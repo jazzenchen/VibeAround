@@ -19,6 +19,7 @@ use super::toolbar::escape_html;
 
 const OWNER_CLIENT_JS: &str = include_str!("owner_client.js");
 const OWNER_CHAT_JS: &str = include_str!("owner_chat.js");
+const OWNER_ANNOTATIONS_JS: &str = include_str!("owner_annotations.js");
 const OWNER_SHELL_CSS: &str = include_str!("owner_shell.css");
 
 /// Render the owner-only shell and its workspace/preview picker.
@@ -72,6 +73,25 @@ pub(super) fn render_owner_shell(
     <button type="button" class="icon-button" id="preview-chat-close" aria-label="Close conversation">×</button>
   </header>
   <div class="chat-log" id="preview-chat-log" role="log" aria-live="polite" aria-relevant="additions text"></div>
+  <section class="review-panel" id="preview-review-panel" aria-labelledby="preview-review-title" hidden>
+    <header class="review-header">
+      <strong id="preview-review-title">Draft comments</strong>
+      <span id="preview-review-count"></span>
+    </header>
+    <form class="review-editor" id="preview-review-editor" hidden>
+      <span class="review-context" id="preview-review-context"></span>
+      <blockquote id="preview-review-selection"></blockquote>
+      <label for="preview-review-comment">Comment</label>
+      <textarea id="preview-review-comment" rows="3" maxlength="2000" placeholder="What should change?"></textarea>
+      <div class="review-actions">
+        <button type="button" id="preview-review-cancel">Cancel</button>
+        <button type="submit" class="primary-button">Add</button>
+      </div>
+    </form>
+    <div class="review-drafts" id="preview-review-drafts"></div>
+    <p class="review-feedback" id="preview-review-feedback" role="status" hidden></p>
+    <button type="button" class="primary-button review-send" id="preview-review-send" disabled>Send comments</button>
+  </section>
   <div class="chat-permissions" id="preview-chat-permissions"></div>
   <form class="chat-composer" id="preview-chat-form">
     <label class="sr-only" for="preview-chat-input">Message the AI task</label>
@@ -89,6 +109,9 @@ pub(super) fn render_owner_shell(
 <script nonce="{nonce}">
 {owner_chat_js}
 </script>
+<script nonce="{nonce}">
+{owner_annotations_js}
+</script>
 </body>
 </html>"#,
         title = title,
@@ -97,6 +120,7 @@ pub(super) fn render_owner_shell(
         nonce = nonce,
         owner_client_js = OWNER_CLIENT_JS,
         owner_chat_js = OWNER_CHAT_JS,
+        owner_annotations_js = OWNER_ANNOTATIONS_JS,
         owner_shell_css = OWNER_SHELL_CSS,
         theme_stylesheet_href = theme_stylesheet_href(),
     );
@@ -117,13 +141,14 @@ pub(super) fn render_owner_shell(
 /// Render one already-authorized iframe target.
 pub(super) async fn render_owner_content(
     entry: PreviewEntry,
+    annotations_enabled: bool,
 ) -> Result<Response, (StatusCode, String)> {
     match &entry.target {
         PreviewTarget::Server { .. } => Err((
             StatusCode::BAD_REQUEST,
             "Live server previews load directly from their local origin.".to_string(),
         )),
-        PreviewTarget::File => render_md_content(&entry).await,
+        PreviewTarget::File => render_md_content(&entry, annotations_enabled).await,
     }
 }
 

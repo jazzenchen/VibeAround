@@ -85,7 +85,15 @@ async fn owner_shell_groups_previews_without_rendering_share_credentials() {
     assert!(!body.contains("location.reload()"));
     assert!(body.contains("id=\"preview-chat-drawer\""));
     assert!(body.contains("id=\"preview-chat-input\""));
+    assert!(body.contains("id=\"preview-review-panel\""));
+    assert!(body.contains("id=\"preview-review-comment\""));
+    assert!(body.contains("id=\"preview-review-send\""));
     assert!(body.contains("new WebSocket(socketUrl(option.value))"));
+    assert!(body.contains("event.source !== frame.contentWindow"));
+    assert!(body.contains("chatForm.requestSubmit()"));
+    assert!(body.contains("chatInput.value = \"\""));
+    assert!(body.contains("Your comments are still saved"));
+    assert!(body.contains("draftsBySlug"));
     assert!(!body.contains("innerHTML"));
     assert!(!body.contains("<details class=\"switcher\" open>"));
     assert!(!body.contains("secret-share-id"));

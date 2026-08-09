@@ -98,9 +98,13 @@ pub async fn owner_preview_content_handler(Path(slug): Path<String>, req: Reques
         Some(entry) if !preview_target_available(&req, &entry) => {
             server_preview_local_only().into_response()
         }
-        Some(entry) if owner_access_allowed(&req) => render_owner_content(entry)
-            .await
-            .unwrap_or_else(IntoResponse::into_response),
+        Some(entry) if owner_access_allowed(&req) => {
+            let annotations_enabled =
+                common::previews::owner_conversation_thread_id(&slug).is_some();
+            render_owner_content(entry, annotations_enabled)
+                .await
+                .unwrap_or_else(IntoResponse::into_response)
+        }
         Some(_) => owner_pairing_redirect_to(format!("/va/preview/u/{slug}")),
         None if owner_access_allowed(&req) => preview_not_found().into_response(),
         None => owner_pairing_redirect_to(format!("/va/preview/u/{slug}")),
