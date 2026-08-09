@@ -260,6 +260,8 @@ impl AgentSessionRef {
 pub struct WorkspaceThread {
     pub id: WorkspaceThreadId,
     pub workspace_id: WorkspaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_thread_id: Option<WorkspaceThreadId>,
     pub host_binding: HostBinding,
     pub status: ThreadStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -292,6 +294,8 @@ pub enum ThreadEvent {
         occurred_at: String,
         thread_id: WorkspaceThreadId,
         workspace_id: WorkspaceId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_thread_id: Option<WorkspaceThreadId>,
         host_binding: HostBinding,
     },
     FirstUserPromptSet {
@@ -354,6 +358,7 @@ impl ThreadEvent {
     pub fn created(
         thread_id: impl Into<WorkspaceThreadId>,
         workspace_id: impl Into<WorkspaceId>,
+        parent_thread_id: Option<WorkspaceThreadId>,
         host_binding: HostBinding,
     ) -> Self {
         Self::Created {
@@ -362,6 +367,7 @@ impl ThreadEvent {
             occurred_at: now(),
             thread_id: thread_id.into(),
             workspace_id: workspace_id.into(),
+            parent_thread_id,
             host_binding,
         }
     }

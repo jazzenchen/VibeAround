@@ -393,6 +393,7 @@ impl WorkspaceThreadManager {
             .append(&ThreadEvent::created(
                 thread.id.clone(),
                 thread.workspace_id.clone(),
+                thread.parent_thread_id.clone(),
                 thread.host_binding.clone(),
             ))
             .await
@@ -406,7 +407,8 @@ impl WorkspaceThreadManager {
         workspace_id: WorkspaceId,
         host_binding: HostBinding,
     ) -> WorkspaceThread {
-        let event = ThreadEvent::created(WorkspaceThreadId::new(), workspace_id, host_binding);
+        let event =
+            ThreadEvent::created(WorkspaceThreadId::new(), workspace_id, None, host_binding);
         ThreadProjection::from_events(&[event])
             .expect("single created event should project")
             .all()

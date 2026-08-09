@@ -90,6 +90,7 @@ mod tests {
                     .append(&ThreadEvent::created(
                         format!("wt_{index}"),
                         format!("ws_{index}"),
+                        None,
                         HostBinding::new("codex", None),
                     ))
                     .await
@@ -110,7 +111,7 @@ mod tests {
         let codex = HostBinding::new("codex", Some("profile_a".to_string()));
         let claude = HostBinding::new("claude", None);
         let events = vec![
-            ThreadEvent::created(thread_id.clone(), workspace_id.clone(), codex.clone()),
+            ThreadEvent::created(thread_id.clone(), workspace_id.clone(), None, codex.clone()),
             ThreadEvent::first_user_prompt_set(thread_id.clone(), "build this"),
             ThreadEvent::agent_session_observed(
                 thread_id.clone(),
@@ -144,6 +145,7 @@ mod tests {
         let thread = projection.get(&thread_id).unwrap();
 
         assert_eq!(thread.workspace_id, workspace_id);
+        assert_eq!(thread.parent_thread_id, None);
         assert_eq!(thread.host_binding, claude);
         assert_eq!(thread.status, ThreadStatus::Closed);
         assert_eq!(thread.first_user_prompt.as_deref(), Some("build this"));
@@ -162,6 +164,7 @@ mod tests {
             ThreadEvent::created(
                 thread_id.clone(),
                 WorkspaceId::from("ws_a"),
+                None,
                 HostBinding::new("codex", None),
             ),
             ThreadEvent::first_user_prompt_set(thread_id.clone(), "first"),
@@ -188,6 +191,7 @@ mod tests {
                 ThreadEvent::created(
                     thread_id.clone(),
                     WorkspaceId::from("ws_a"),
+                    None,
                     HostBinding::new("codex", Some("direct".to_string())),
                 ),
                 ThreadEvent::closed(thread_id.clone(), reason.map(str::to_string)),
@@ -212,6 +216,7 @@ mod tests {
             ThreadEvent::created(
                 thread_id.clone(),
                 WorkspaceId::from("ws_a"),
+                None,
                 HostBinding::new("codex", None),
             ),
             ThreadEvent::multi_agent_turn_initialized(
@@ -286,7 +291,12 @@ mod tests {
         let thread_id = WorkspaceThreadId::from("wt_a");
         let codex = HostBinding::new("codex", Some("profile_a".to_string()));
         let events = vec![
-            ThreadEvent::created(thread_id.clone(), WorkspaceId::from("ws_a"), codex.clone()),
+            ThreadEvent::created(
+                thread_id.clone(),
+                WorkspaceId::from("ws_a"),
+                None,
+                codex.clone(),
+            ),
             ThreadEvent::agent_session_observed(
                 thread_id.clone(),
                 "codex",
@@ -305,5 +315,53 @@ mod tests {
         let thread = projection.get(&thread_id).unwrap();
 
         assert_eq!(thread.agent_sessions.get(&codex).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn created_event_round_trips_parent_thread_id() {
+        let parent_thread_id = WorkspaceThreadId::from("wt_parent");
+        let event = ThreadEvent::created(
+            "wt_child",
+            "ws_a",
+            Some(parent_thread_id.clone()),
+            HostBinding::new("codex", None),
+        );
+
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["parent_thread_id"], "wt_parent");
+
+        let decoded: ThreadEvent = serde_json::from_value(json).unwrap();
+        let projection = ThreadProjection::from_events(&[decoded]).unwrap();
+        assert_eq!(
+            projection
+                .get(&WorkspaceThreadId::from("wt_child"))
+                .unwrap()
+                .parent_thread_id
+                .as_ref(),
+            Some(&parent_thread_id)
+        );
+    }
+
+    #[test]
+    fn legacy_created_event_without_parent_projects_as_root_thread() {
+        let event: ThreadEvent = serde_json::from_value(serde_json::json!({
+            "event": "created",
+            "schema_version": 1,
+            "event_id": "evt_legacy",
+            "occurred_at": "2026-01-01T00:00:00.000Z",
+            "thread_id": "wt_legacy",
+            "workspace_id": "ws_a",
+            "host_binding": { "agent_id": "codex" }
+        }))
+        .unwrap();
+
+        let projection = ThreadProjection::from_events(&[event]).unwrap();
+        assert_eq!(
+            projection
+                .get(&WorkspaceThreadId::from("wt_legacy"))
+                .unwrap()
+                .parent_thread_id,
+            None
+        );
     }
 }

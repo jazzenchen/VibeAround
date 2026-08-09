@@ -30,11 +30,13 @@ impl ThreadProjection {
                 occurred_at,
                 thread_id,
                 workspace_id,
+                parent_thread_id,
                 host_binding,
                 ..
             } => self.create(
                 thread_id.clone(),
                 workspace_id.clone(),
+                parent_thread_id.clone(),
                 host_binding.clone(),
                 occurred_at.clone(),
             ),
@@ -187,6 +189,7 @@ impl ThreadProjection {
         &mut self,
         thread_id: WorkspaceThreadId,
         workspace_id: WorkspaceId,
+        parent_thread_id: Option<WorkspaceThreadId>,
         host_binding: HostBinding,
         occurred_at: String,
     ) -> Result<(), ThreadProjectionError> {
@@ -199,6 +202,7 @@ impl ThreadProjection {
             WorkspaceThread {
                 id: thread_id,
                 workspace_id,
+                parent_thread_id,
                 host_binding,
                 status: ThreadStatus::Open,
                 first_user_prompt: None,

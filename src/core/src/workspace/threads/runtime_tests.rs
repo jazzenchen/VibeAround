@@ -84,6 +84,7 @@ fn thread_with_host_session(
     WorkspaceThread {
         id: WorkspaceThreadId::from("wt_a"),
         workspace_id: WorkspaceId::from("ws_a"),
+        parent_thread_id: None,
         host_binding: host,
         status: ThreadStatus::Open,
         first_user_prompt: None,
@@ -339,6 +340,7 @@ fn routes_without_known_session_start_fresh() {
     let thread = WorkspaceThread {
         id: WorkspaceThreadId::from("wt_a"),
         workspace_id: WorkspaceId::from("ws_a"),
+        parent_thread_id: None,
         host_binding: HostBinding::new("codex", Some("direct".to_string())),
         status: ThreadStatus::Open,
         first_user_prompt: None,
