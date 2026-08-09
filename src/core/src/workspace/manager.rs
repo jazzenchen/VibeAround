@@ -20,7 +20,8 @@ use super::threads::attachment::{
     RouteAttachmentEvent, RouteAttachmentEventStore, RouteAttachmentProjection,
     RouteAttachmentVisibility,
 };
-use super::threads::runtime::{ThreadRuntime, ThreadRuntimeState, ThreadSessionFork};
+use super::threads::runtime::ThreadRuntime;
+use super::threads::runtime::ThreadRuntimeState;
 use super::threads::store::{
     HostBinding, MultiAgentTurn, ThreadAgent, ThreadEvent, ThreadEventStore, ThreadProjection,
     ThreadStatus, WorkspaceThread, WorkspaceThreadId,
@@ -432,21 +433,6 @@ impl WorkspaceThreadManager {
         &self,
         thread: WorkspaceThread,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        self.runtime_from_thread_inner(thread, false).await
-    }
-
-    async fn runtime_from_thread_with_required_startup_session(
-        &self,
-        thread: WorkspaceThread,
-    ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        self.runtime_from_thread_inner(thread, true).await
-    }
-
-    async fn runtime_from_thread_inner(
-        &self,
-        thread: WorkspaceThread,
-        require_startup_session: bool,
-    ) -> anyhow::Result<Arc<ThreadRuntime>> {
         if let Some(runtime) = self.runtimes.get(&thread.id).await {
             return Ok(runtime);
         }
@@ -454,21 +440,12 @@ impl WorkspaceThreadManager {
             .workspace(&thread.workspace_id)
             .await?
             .ok_or_else(|| anyhow!("workspace {} not found", thread.workspace_id))?;
-        let runtime = Arc::new(if require_startup_session {
-            ThreadRuntime::with_required_startup_session(
-                thread.clone(),
-                workspace.cwd,
-                self.thread_store.clone(),
-                Some(self.change_tx.clone()),
-            )
-        } else {
-            ThreadRuntime::with_change_tx(
-                thread.clone(),
-                workspace.cwd,
-                self.thread_store.clone(),
-                Some(self.change_tx.clone()),
-            )
-        });
+        let runtime = Arc::new(ThreadRuntime::with_change_tx(
+            thread.clone(),
+            workspace.cwd,
+            self.thread_store.clone(),
+            Some(self.change_tx.clone()),
+        ));
         let registered = self
             .runtimes
             .get_or_insert(thread.id.clone(), Arc::clone(&runtime))

@@ -14,7 +14,6 @@ mod runtime;
 mod service;
 mod sessions;
 mod settings;
-mod workspace_threads;
 mod workspaces;
 
 pub use files::{download_chat_file_handler, upload_chat_file_handler};
@@ -38,12 +37,11 @@ pub use runtime::{
 pub use service::{health_handler, info_handler};
 pub use sessions::{
     archive_launch_session_handler, create_session_handler, delete_session_handler,
-    list_launch_sessions_batch_handler, list_launch_sessions_handler, list_sessions_handler,
-    list_tmux_sessions_handler, unarchive_launch_session_delete_handler,
-    unarchive_launch_session_handler,
+    init_workspace_thread_handler, list_launch_sessions_batch_handler,
+    list_launch_sessions_handler, list_sessions_handler, list_tmux_sessions_handler,
+    unarchive_launch_session_delete_handler, unarchive_launch_session_handler,
 };
 pub use settings::{get_settings_handler, patch_settings_handler, put_settings_handler};
-pub use workspace_threads::{fork_workspace_thread_handler, init_workspace_thread_handler};
 pub use workspaces::{
     add_workspace_handler, create_workspace_handler, list_workspaces_handler,
     remove_workspace_handler, reorder_workspaces_handler, set_default_workspace_handler,

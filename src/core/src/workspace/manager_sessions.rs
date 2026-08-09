@@ -1,46 +1,6 @@
 use super::*;
 
 impl WorkspaceThreadManager {
-    pub async fn fork_thread_to_web(
-        &self,
-        source_thread_id: &WorkspaceThreadId,
-    ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        let source = self.runtime_for_thread(source_thread_id).await?;
-        let fork = source
-            .fork()
-            .await
-            .map_err(|error| anyhow!(error.message.to_string()))?;
-        self.create_web_thread_for_fork(fork).await
-    }
-
-    pub(super) async fn create_web_thread_for_fork(
-        &self,
-        fork: ThreadSessionFork,
-    ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        let thread = self.new_thread_record_with_host(fork.workspace_id.clone(), fork.host_binding);
-        self.ensure_thread_persisted(&thread).await?;
-        self.thread_store
-            .append(&ThreadEvent::agent_session_observed(
-                thread.id.clone(),
-                thread.host_binding.agent_id.clone(),
-                thread.host_binding.profile_id.clone(),
-                fork.session_id,
-            ))
-            .await
-            .context("append forked session")?;
-        self.notify_change();
-
-        let thread = self
-            .thread(&thread.id)
-            .await?
-            .ok_or_else(|| anyhow!("forked thread was not persisted"))?;
-        let route = web_route_for_thread(&thread.id);
-        self.attach_route(route, thread.workspace_id.clone(), thread.id.clone())
-            .await?;
-        self.runtime_from_thread_with_required_startup_session(thread)
-            .await
-    }
-
     pub async fn attach_external_session(
         &self,
         route: &RouteKey,

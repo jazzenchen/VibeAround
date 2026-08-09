@@ -56,7 +56,6 @@ pub(super) enum ThreadOwnerCommand {
     Prompt(Box<PromptCommand>),
     Start(Box<StartCommand>),
     Cancel(RuntimeCommand<acp::Result<()>>),
-    Fork(RuntimeCommand<acp::Result<ThreadSessionFork>>),
     Close(Box<CloseCommand>),
     ShutdownHost(RuntimeCommand<()>),
     EvictIfIdle {
@@ -121,7 +120,6 @@ impl ThreadOwner {
                     command,
                     ThreadOwnerCommand::Prompt(_)
                         | ThreadOwnerCommand::Start(_)
-                        | ThreadOwnerCommand::Fork(_)
                         | ThreadOwnerCommand::EvictIfIdle { .. }
                         | ThreadOwnerCommand::SwitchProfile(_)
                 )
@@ -146,10 +144,6 @@ impl ThreadOwner {
                 }
                 ThreadOwnerCommand::Cancel(command) => {
                     let result = self.cancel(&command.runtime, prompt_active);
-                    let _ = command.reply.send(result);
-                }
-                ThreadOwnerCommand::Fork(command) => {
-                    let result = self.fork(&command.runtime).await;
                     let _ = command.reply.send(result);
                 }
                 ThreadOwnerCommand::Close(command) => {
@@ -389,30 +383,6 @@ impl ThreadOwner {
         }
     }
 
-    async fn fork(&self, runtime: &ThreadRuntime) -> acp::Result<ThreadSessionFork> {
-        let agent = self
-            .host
-            .as_ref()
-            .filter(|host| host.is_live())
-            .map(|host| Arc::clone(&host.agent))
-            .ok_or_else(|| acp::Error::new(-32603, "session fork requires a live agent"))?;
-        let session_id = self
-            .session_id
-            .clone()
-            .ok_or_else(|| acp::Error::new(-32603, "session fork requires an active session"))?;
-        let response = agent
-            .fork_session(acp::ForkSessionRequest::new(
-                session_id,
-                runtime.workspace.clone(),
-            ))
-            .await?;
-        Ok(ThreadSessionFork {
-            session_id: response.session_id.to_string(),
-            workspace_id: self.thread.workspace_id.clone(),
-            host_binding: self.thread.host_binding.clone(),
-        })
-    }
-
     async fn close(&mut self, runtime: &ThreadRuntime, reason: Option<String>) -> acp::Result<()> {
         self.shutdown_host_contents(runtime).await;
         let thread_id = self.thread.id.clone();
@@ -537,12 +507,7 @@ impl ThreadOwner {
             .profile_id
             .clone()
             .unwrap_or_else(|| "default".to_string());
-        let startup_session = host_startup_session(
-            route,
-            self.session_id.clone(),
-            &thread,
-            runtime.require_startup_session,
-        );
+        let startup_session = host_startup_session(route, self.session_id.clone(), &thread);
 
         std::fs::create_dir_all(&runtime.workspace).map_err(|error| {
             acp::Error::new(

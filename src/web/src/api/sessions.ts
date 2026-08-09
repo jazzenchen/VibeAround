@@ -149,18 +149,6 @@ export async function initWorkspaceThread(
   return WorkspaceThreadInitResponseSchema.parse(await res.json());
 }
 
-export async function forkWorkspaceThread(
-  threadId: string,
-): Promise<WorkspaceThreadInitResponse> {
-  const path = `/api/workspace-threads/${encodeURIComponent(threadId)}/fork`;
-  const res = await fetch(`${browserBaseUrl()}${path}`, { method: "POST" });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `POST ${path}: ${res.status}`);
-  }
-  return WorkspaceThreadInitResponseSchema.parse(await res.json());
-}
-
 export async function archiveLaunchSession(
   agentId: string,
   sessionId: string,

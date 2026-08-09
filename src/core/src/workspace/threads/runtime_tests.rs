@@ -160,36 +160,6 @@ async fn turn_owner_serializes_busy_state() {
 }
 
 #[tokio::test]
-async fn fork_waits_for_the_active_turn_to_finish() {
-    let runtime = Arc::new(ThreadRuntime::new(
-        thread_with_sessions(),
-        PathBuf::from("/tmp/project"),
-        ThreadEventStore::new("/tmp/unused.jsonl"),
-    ));
-    let (started_tx, started_rx) = oneshot::channel();
-    let (release_tx, release_rx) = oneshot::channel();
-    runtime
-        .owner_tx
-        .send(ThreadOwnerCommand::Probe {
-            started: started_tx,
-            release: release_rx,
-        })
-        .unwrap();
-    started_rx.await.unwrap();
-
-    let fork_task = tokio::spawn({
-        let runtime = Arc::clone(&runtime);
-        async move { runtime.fork().await }
-    });
-    tokio::task::yield_now().await;
-    assert!(!fork_task.is_finished());
-
-    release_tx.send(()).unwrap();
-    let error = fork_task.await.unwrap().unwrap_err();
-    assert_eq!(error.message, "session fork requires a live agent");
-}
-
-#[tokio::test]
 async fn prompt_completion_refreshes_thread_activity() {
     let runtime = Arc::new(ThreadRuntime::new(
         thread_with_sessions(),
@@ -314,7 +284,7 @@ async fn cancel_signals_active_turn_without_agent_lookup() {
 fn web_routes_load_previous_host_session_for_playback() {
     let route = RouteKey::new("web", "chat-1");
 
-    let startup_session = host_startup_session(&route, None, &thread_with_sessions(), false);
+    let startup_session = host_startup_session(&route, None, &thread_with_sessions());
 
     assert_eq!(
         startup_session,
@@ -326,7 +296,7 @@ fn web_routes_load_previous_host_session_for_playback() {
 fn tui_routes_load_previous_host_session_for_playback() {
     let route = RouteKey::new("tui", "chat-1");
 
-    let startup_session = host_startup_session(&route, None, &thread_with_sessions(), false);
+    let startup_session = host_startup_session(&route, None, &thread_with_sessions());
 
     assert_eq!(
         startup_session,
@@ -339,7 +309,7 @@ fn web_gemini_routes_resume_without_load_fallback() {
     let route = RouteKey::new("web", "chat-1");
     let thread = thread_with_host_session("gemini", None, "gemini-session");
 
-    let startup_session = host_startup_session(&route, None, &thread, false);
+    let startup_session = host_startup_session(&route, None, &thread);
 
     assert_eq!(
         startup_session,
@@ -355,7 +325,6 @@ fn im_routes_resume_previous_host_session_without_playback() {
         &route,
         Some("runtime-session".to_string()),
         &thread_with_sessions(),
-        false,
     );
 
     assert_eq!(
@@ -380,21 +349,9 @@ fn routes_without_known_session_start_fresh() {
         updated_at: "2026-01-01T00:00:00.000Z".to_string(),
     };
 
-    let startup_session = host_startup_session(&route, None, &thread, false);
+    let startup_session = host_startup_session(&route, None, &thread);
 
     assert_eq!(startup_session, StartupSession::Fresh);
-}
-
-#[test]
-fn required_startup_session_does_not_allow_a_fresh_fallback() {
-    let route = RouteKey::new("web", "chat-1");
-
-    let startup_session = host_startup_session(&route, None, &thread_with_sessions(), true);
-
-    assert_eq!(
-        startup_session,
-        StartupSession::LoadRequired("session-old".to_string())
-    );
 }
 
 #[tokio::test]

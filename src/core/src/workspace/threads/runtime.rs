@@ -78,13 +78,6 @@ pub(crate) struct ThreadRuntimeStart {
     pub(crate) host_started: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThreadSessionFork {
-    pub session_id: String,
-    pub workspace_id: WorkspaceId,
-    pub host_binding: HostBinding,
-}
-
 impl AcpSessionRunner {
     fn is_live(&self) -> bool {
         self.agent.is_live()
@@ -141,7 +134,6 @@ where
 
 pub struct ThreadRuntime {
     workspace: PathBuf,
-    require_startup_session: bool,
     active_turn_target: ActiveTurnTarget,
     owner_tx: mpsc::UnboundedSender<ThreadOwnerCommand>,
     turn_state: watch::Receiver<TurnState>,
@@ -159,25 +151,6 @@ impl ThreadRuntime {
         workspace: PathBuf,
         store: ThreadEventStore,
         change_tx: Option<broadcast::Sender<()>>,
-    ) -> Self {
-        Self::build(thread, workspace, store, change_tx, false)
-    }
-
-    pub(crate) fn with_required_startup_session(
-        thread: WorkspaceThread,
-        workspace: PathBuf,
-        store: ThreadEventStore,
-        change_tx: Option<broadcast::Sender<()>>,
-    ) -> Self {
-        Self::build(thread, workspace, store, change_tx, true)
-    }
-
-    fn build(
-        thread: WorkspaceThread,
-        workspace: PathBuf,
-        store: ThreadEventStore,
-        change_tx: Option<broadcast::Sender<()>>,
-        require_startup_session: bool,
     ) -> Self {
         let session_id = latest_session_for_host(&thread);
         let (owner_tx, owner_rx) = mpsc::unbounded_channel();
@@ -208,7 +181,6 @@ impl ThreadRuntime {
         );
         Self {
             workspace,
-            require_startup_session,
             active_turn_target: ActiveTurnTarget::default(),
             owner_tx,
             turn_state,
@@ -323,18 +295,6 @@ impl ThreadRuntime {
         done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
     }
 
-    pub async fn fork(self: &Arc<Self>) -> acp::Result<ThreadSessionFork> {
-        self.mark_activity();
-        let (reply, done) = oneshot::channel();
-        self.owner_tx
-            .send(ThreadOwnerCommand::Fork(RuntimeCommand {
-                runtime: Arc::clone(self),
-                reply,
-            }))
-            .map_err(|_| runtime_stopped_error())?;
-        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
-    }
-
     pub async fn close(self: &Arc<Self>, reason: Option<String>) -> acp::Result<()> {
         self.mark_activity();
         let (reply, done) = oneshot::channel();
@@ -442,14 +402,10 @@ fn host_startup_session(
     route: &RouteKey,
     runtime_session_id: Option<String>,
     thread: &WorkspaceThread,
-    require_startup_session: bool,
 ) -> StartupSession {
     let Some(session_id) = runtime_session_id.or_else(|| latest_session_for_host(thread)) else {
         return StartupSession::Fresh;
     };
-    if require_startup_session {
-        return StartupSession::LoadRequired(session_id);
-    }
     if route_allows_startup_replay(route) {
         if thread.host_binding.agent_id == "gemini" {
             return StartupSession::ResumeOnly(session_id);

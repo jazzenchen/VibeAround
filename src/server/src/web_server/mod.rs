@@ -338,10 +338,6 @@ pub async fn run_web_server(
             "/api/workspace-threads/init",
             post(api::init_workspace_thread_handler),
         )
-        .route(
-            "/api/workspace-threads/{thread_id}/fork",
-            post(api::fork_workspace_thread_handler),
-        )
         .route("/ws", get(ws_pty::ws_handler))
         .route("/ws/chat", get(ws_chat::ws_chat_handler))
         .route("/ws/channels", get(ws_domains::ws_channels_handler))
