@@ -71,21 +71,53 @@ async fn owner_shell_groups_previews_without_rendering_share_credentials() {
     assert_eq!(body.matches("<optgroup").count(), 2);
     assert!(body.find("label=\"alpha\"").unwrap() < body.find("label=\"beta\"").unwrap());
     assert!(body.contains(
-        "value=\"beta-readme\" data-title=\"Read &lt;me&gt;\" data-src=\"/va/preview/u/beta-readme/content\" selected"
+        "value=\"beta-readme\" data-title=\"Read &lt;me&gt;\" data-src=\"/va/preview/u/beta-readme/content\" data-chat-available=\"false\" selected"
     ));
     assert!(body
-        .contains("value=\"beta-server\" data-title=\"Web\" data-src=\"http://localhost:5173/\""));
+        .contains("value=\"beta-server\" data-title=\"Web\" data-src=\"http://localhost:5173/\" data-chat-available=\"false\""));
     assert!(body.contains("Web · :5173"));
     assert!(body.contains("Guide · Markdown"));
     assert!(body.contains("src=\"/va/preview/u/beta-readme/content\""));
     assert!(body.contains("referrerpolicy=\"no-referrer\""));
     assert!(body.contains("aria-label=\"Workspace and preview\""));
     assert!(body.contains("frame.title = \"Preview content — \" + title"));
-    assert!(body.contains("location.reload()"));
+    assert!(body.contains("frame.src = frame.src"));
+    assert!(!body.contains("location.reload()"));
+    assert!(body.contains("id=\"preview-chat-drawer\""));
+    assert!(body.contains("id=\"preview-chat-input\""));
+    assert!(body.contains("new WebSocket(socketUrl(option.value))"));
+    assert!(!body.contains("innerHTML"));
     assert!(!body.contains("<details class=\"switcher\" open>"));
     assert!(!body.contains("secret-share-id"));
     assert!(!body.contains("123456"));
     assert!(!body.contains("Read <me>"));
+}
+
+#[tokio::test]
+async fn owner_shell_marks_only_bound_previews_as_chat_available() {
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let dir = std::env::temp_dir().join(format!("vibearound-owner-shell-{nonce}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("README.md");
+    std::fs::write(&file, "# Bound Preview").unwrap();
+    let (slug, _) = common::previews::ensure_file(file, dir.clone(), "Bound Preview".into());
+    common::previews::bind_owner_conversation(
+        &slug,
+        common::workspace::threads::WorkspaceThreadId::from("wt_bound_preview"),
+    )
+    .unwrap();
+    let entry = common::previews::lookup_owner(&slug).unwrap();
+    let preview = common::previews::list_snapshots()
+        .into_iter()
+        .find(|preview| preview.slug == slug)
+        .unwrap();
+
+    let response = render_owner_shell(&entry, &slug, &[preview], "localhost");
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(body.contains("data-chat-available=\"true\" selected"));
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[tokio::test]

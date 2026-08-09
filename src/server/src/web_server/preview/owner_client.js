@@ -18,6 +18,6 @@
   });
 
   refresh.addEventListener("click", function () {
-    location.reload();
+    frame.src = frame.src;
   });
 })();

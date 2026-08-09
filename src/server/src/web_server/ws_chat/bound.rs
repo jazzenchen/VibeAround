@@ -75,21 +75,28 @@ mod tests {
     }
 
     #[test]
-    fn bound_message_keeps_route_and_text_commands_but_not_host_selection() {
-        let input = parse_bound_chat_input(
-            &route(),
-            "preview-owner",
-            r#"{"type":"message","text":"/new","agent":"claude","profileId":"work","sessionAction":"new","permissionMode":"bypassPermissions"}"#,
-        )
-        .expect("message input");
+    fn bound_messages_keep_existing_text_commands_but_not_host_selection() {
+        for command in ["/new", "/close", "/switch codex"] {
+            let frame = serde_json::json!({
+                "type": "message",
+                "text": command,
+                "agent": "claude",
+                "profileId": "work",
+                "sessionAction": "new",
+                "permissionMode": "bypassPermissions",
+            })
+            .to_string();
+            let input =
+                parse_bound_chat_input(&route(), "preview-owner", &frame).expect("message input");
 
-        let BoundChatInput::Message(ChannelInput::Message { envelope }) = input else {
-            panic!("expected message");
-        };
-        assert_eq!(envelope.route, route());
-        assert_eq!(envelope.sender_id, "preview-owner");
-        assert_eq!(envelope.text, "/new");
-        assert_eq!(envelope.cli_kind, None);
+            let BoundChatInput::Message(ChannelInput::Message { envelope }) = input else {
+                panic!("expected message");
+            };
+            assert_eq!(envelope.route, route());
+            assert_eq!(envelope.sender_id, "preview-owner");
+            assert_eq!(envelope.text, command);
+            assert_eq!(envelope.cli_kind, None);
+        }
     }
 
     #[test]

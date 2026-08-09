@@ -18,6 +18,8 @@ use super::markdown::render_md_content;
 use super::toolbar::escape_html;
 
 const OWNER_CLIENT_JS: &str = include_str!("owner_client.js");
+const OWNER_CHAT_JS: &str = include_str!("owner_chat.js");
+const OWNER_SHELL_CSS: &str = include_str!("owner_shell.css");
 
 /// Render the owner-only shell and its workspace/preview picker.
 pub(super) fn render_owner_shell(
@@ -44,75 +46,7 @@ pub(super) fn render_owner_shell(
 <title>Preview — {title}</title>
 <link rel="stylesheet" href="{theme_stylesheet_href}">
 <style>
-  * {{ box-sizing: border-box; }}
-  html, body {{ width: 100%; height: 100%; margin: 0; overflow: hidden; }}
-  body {{
-    background: var(--background);
-    color: var(--foreground);
-    font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  }}
-  iframe {{ width: 100%; height: 100%; border: 0; background: var(--background); }}
-  .switcher {{
-    position: fixed;
-    top: 12px;
-    left: 12px;
-    z-index: 100;
-    width: min(440px, calc(100vw - 24px));
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: color-mix(in oklab, var(--popover) 96%, transparent);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.10);
-    backdrop-filter: blur(12px);
-  }}
-  .switcher:not([open]) {{ width: auto; max-width: calc(100vw - 24px); }}
-  summary {{
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 38px;
-    padding: 0 12px;
-    cursor: pointer;
-    user-select: none;
-  }}
-  summary::-webkit-details-marker {{ display: none; }}
-  summary::before {{ content: "▸"; color: var(--muted-foreground); }}
-  details[open] summary::before {{ content: "▾"; }}
-  .mark {{ width: 22px; height: 22px; flex: 0 0 auto; }}
-  .brand {{ color: var(--popover-foreground); font-weight: 600; white-space: nowrap; }}
-  .current {{ color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-  .controls {{ display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--border); }}
-  .picker {{ position: relative; min-width: 0; flex: 1; }}
-  select, button {{
-    min-height: 34px;
-    border: 1px solid var(--input);
-    border-radius: calc(var(--radius) - 2px);
-    background: var(--background);
-    color: var(--foreground);
-    font: inherit;
-  }}
-  select {{ display: block; width: 100%; min-width: 0; padding: 0 36px 0 12px; appearance: none; cursor: pointer; }}
-  .picker-icon {{
-    position: absolute;
-    top: 50%;
-    right: 12px;
-    width: 16px;
-    height: 16px;
-    transform: translateY(-50%);
-    color: var(--muted-foreground);
-    pointer-events: none;
-  }}
-  button {{ padding: 0 12px; cursor: pointer; }}
-  button:hover {{ background: var(--accent); color: var(--accent-foreground); }}
-  select:focus-visible, button:focus-visible, summary:focus-visible {{
-    outline: 3px solid color-mix(in oklab, var(--ring) 30%, transparent);
-    outline-offset: 1px;
-  }}
-  @media (max-width: 480px) {{
-    .switcher {{ top: 8px; left: 8px; width: calc(100vw - 16px); }}
-    .controls {{ flex-wrap: wrap; }}
-    .picker {{ flex-basis: 100%; }}
-    button {{ width: 100%; }}
-  }}
+{owner_shell_css}
 </style>
 </head>
 <body>
@@ -128,9 +62,32 @@ pub(super) fn render_owner_shell(
     <button type="button" id="refresh-preview">Refresh</button>
   </div>
 </details>
+<button type="button" class="chat-toggle" id="preview-chat-toggle" aria-controls="preview-chat-drawer" aria-expanded="false">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path></svg>
+  <span>Chat</span><span class="chat-attention" id="preview-chat-attention" hidden></span>
+</button>
+<aside class="chat-drawer" id="preview-chat-drawer" aria-label="Preview conversation" aria-hidden="true">
+  <header class="chat-header">
+    <div><strong>Preview conversation</strong><span class="chat-status" id="preview-chat-status">Connecting…</span></div>
+    <button type="button" class="icon-button" id="preview-chat-close" aria-label="Close conversation">×</button>
+  </header>
+  <div class="chat-log" id="preview-chat-log" role="log" aria-live="polite" aria-relevant="additions text"></div>
+  <div class="chat-permissions" id="preview-chat-permissions"></div>
+  <form class="chat-composer" id="preview-chat-form">
+    <label class="sr-only" for="preview-chat-input">Message the AI task</label>
+    <textarea id="preview-chat-input" rows="3" maxlength="20000" placeholder="Ask for a change…"></textarea>
+    <div class="chat-actions">
+      <button type="button" id="preview-chat-stop" hidden>Stop</button>
+      <button type="submit" class="primary-button" id="preview-chat-send">Send</button>
+    </div>
+  </form>
+</aside>
 <iframe id="preview-frame" title="Preview content — {title}" src="{initial_src}" referrerpolicy="no-referrer"></iframe>
 <script nonce="{nonce}">
 {owner_client_js}
+</script>
+<script nonce="{nonce}">
+{owner_chat_js}
 </script>
 </body>
 </html>"#,
@@ -139,6 +96,8 @@ pub(super) fn render_owner_shell(
         initial_src = initial_src,
         nonce = nonce,
         owner_client_js = OWNER_CLIENT_JS,
+        owner_chat_js = OWNER_CHAT_JS,
+        owner_shell_css = OWNER_SHELL_CSS,
         theme_stylesheet_href = theme_stylesheet_href(),
     );
 
@@ -205,11 +164,14 @@ fn render_preview_options(
             ""
         };
         let src = preview_src(&preview.slug, preview.port, server_host);
+        let chat_available =
+            common::previews::owner_conversation_thread_id(&preview.slug).is_some();
         html.push_str(&format!(
-            r#"<option value="{}" data-title="{}" data-src="{}"{}>{}</option>"#,
+            r#"<option value="{}" data-title="{}" data-src="{}" data-chat-available="{}"{}>{}</option>"#,
             escape_html(&preview.slug),
             escape_html(&preview.title),
             escape_html(&src),
+            chat_available,
             selected,
             escape_html(&label),
         ));
