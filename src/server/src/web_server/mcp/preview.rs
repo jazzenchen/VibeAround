@@ -88,6 +88,11 @@ pub(super) async fn mcp_preview_start(
         "http://127.0.0.1:{}/va/preview/u/{}",
         state.port, owner_slug
     );
+    let review_bridge_url = format!(
+        "http://127.0.0.1:{}{}",
+        state.port,
+        crate::web_server::preview::review_bridge_script_href()
+    );
     let session_hint = if session_id.is_none() {
         "\n\n⚠️ No session_id provided. Use /va-session skill to resolve it and pass session_id for automatic dev-server cleanup."
     } else {
@@ -100,8 +105,10 @@ pub(super) async fn mcp_preview_start(
             "Preview ready.\n\n\
              Local owner: `{}`\n\
              Port: {}\n\
+             Text and element review bridge (optional, dev-only):\n\
+             `<script src=\"{}\"></script>`\n\
              Public sharing is unavailable for live server previews.{}",
-            owner_url, port, session_hint
+            owner_url, port, review_bridge_url, session_hint
         ),
     )
 }

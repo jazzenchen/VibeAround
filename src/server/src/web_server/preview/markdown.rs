@@ -10,12 +10,12 @@ use axum::response::Response;
 
 use common::previews::{PreviewEntry, PreviewTarget};
 
-use super::assets::{theme_stylesheet_href, DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE};
+use super::assets::{
+    review_bridge_script_href, theme_stylesheet_href, DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE,
+};
 use super::toolbar::{escape_html, remaining_millis, toolbar_and_timer, TOOLBAR_CSS};
 
 const MARKDOWN_CLIENT_JS: &str = include_str!("markdown_client.js");
-const MARKDOWN_SELECTION_JS: &str = include_str!("markdown_selection.js");
-const MARKDOWN_SELECTION_CSS: &str = include_str!("markdown_selection.css");
 
 /// Render a standalone shared Markdown page with its title/timer toolbar.
 pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (StatusCode, String)> {
@@ -84,13 +84,11 @@ async fn render_md(
     } else {
         String::new()
     };
-    let selection_css = if annotations_enabled {
-        MARKDOWN_SELECTION_CSS
-    } else {
-        ""
-    };
     let selection_script = if annotations_enabled {
-        format!(r#"<script nonce="{nonce}">{MARKDOWN_SELECTION_JS}</script>"#)
+        format!(
+            r#"<script nonce="{nonce}" src="{}"></script>"#,
+            review_bridge_script_href()
+        )
     } else {
         String::new()
     };
@@ -124,7 +122,6 @@ async fn render_md(
   .markdown-body table th, .markdown-body table td {{ border: 1px solid var(--border); padding: 6px 13px; }}
   .markdown-body table tr {{ background: transparent; border-top-color: var(--border); }}
   .markdown-body table tr:nth-child(2n) {{ background: var(--muted); }}
-  {selection_css}
 </style>
 </head>
 <body>
@@ -145,7 +142,6 @@ async fn render_md(
         nonce = nonce,
         markdown_json = markdown_json,
         markdown_client_js = MARKDOWN_CLIENT_JS,
-        selection_css = selection_css,
         selection_script = selection_script,
         dompurify_script_route = DOMPURIFY_SCRIPT_ROUTE,
         marked_script_route = MARKED_SCRIPT_ROUTE,

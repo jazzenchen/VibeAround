@@ -7,7 +7,6 @@
   var close = document.getElementById("preview-chat-close");
   var status = document.getElementById("preview-chat-status");
   var attention = document.getElementById("preview-chat-attention");
-  var log = document.getElementById("preview-chat-log");
   var permissions = document.getElementById("preview-chat-permissions");
   var form = document.getElementById("preview-chat-form");
   var input = document.getElementById("preview-chat-input");
@@ -18,8 +17,7 @@
   var reconnectAttempt = 0;
   var generation = 0;
   var active = false;
-  var messageNodes = new Map();
-  var currentAssistant = null;
+  var transcript = window.VAPreviewTranscript;
 
   function selectedOption() {
     return picker.options[picker.selectedIndex];
@@ -36,7 +34,7 @@
     if (open) {
       attention.hidden = true;
       input.focus();
-      scrollToEnd();
+      transcript.scrollToEnd();
     } else {
       toggle.focus();
     }
@@ -53,89 +51,10 @@
   }
 
   function clearConversation() {
-    log.replaceChildren();
+    transcript.clear();
     permissions.replaceChildren();
-    messageNodes.clear();
-    currentAssistant = null;
     attention.hidden = true;
     setActive(false);
-  }
-
-  function emptyMessage(text) {
-    var node = document.createElement("p");
-    node.className = "chat-empty";
-    node.textContent = text;
-    log.appendChild(node);
-  }
-
-  function removeEmptyMessage() {
-    var empty = log.querySelector(".chat-empty");
-    if (empty) empty.remove();
-  }
-
-  function appendMessage(role, text, key) {
-    if (!text) return null;
-    removeEmptyMessage();
-    var existing = key && messageNodes.get(key);
-    if (existing) {
-      if (role === "assistant") existing.textContent += text;
-      return existing;
-    }
-    var row = document.createElement("div");
-    var bubble = document.createElement("div");
-    row.className = "chat-message";
-    row.dataset.role = role;
-    bubble.className = "chat-bubble";
-    bubble.textContent = text;
-    row.appendChild(bubble);
-    log.appendChild(row);
-    if (key) messageNodes.set(key, bubble);
-    if (role === "assistant") currentAssistant = bubble;
-    scrollToEnd();
-    return bubble;
-  }
-
-  function scrollToEnd() {
-    log.scrollTop = log.scrollHeight;
-  }
-
-  function contentText(content) {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) return content.map(contentText).join("");
-    if (!content || typeof content !== "object") return "";
-    if (content.type === "text" && typeof content.text === "string") return content.text;
-    return "";
-  }
-
-  function handleAcp(payload) {
-    var update = payload && payload.update;
-    if (!update || typeof update !== "object") return;
-    var kind = update.sessionUpdate;
-    if (kind === "user_message_chunk") {
-      var userText = contentText(update.content);
-      var userKey = update.messageId ? "user:" + update.messageId : null;
-      if (!userKey || !messageNodes.has(userKey)) appendMessage("user", userText, userKey);
-      currentAssistant = null;
-      return;
-    }
-    if (kind === "agent_message_chunk") {
-      var agentText = contentText(update.content);
-      var agentKey = update.messageId ? "agent:" + update.messageId : null;
-      if (agentKey) appendMessage("assistant", agentText, agentKey);
-      else if (currentAssistant) {
-        currentAssistant.textContent += agentText;
-        scrollToEnd();
-      } else appendMessage("assistant", agentText, null);
-      return;
-    }
-    if (kind === "agent_thought_chunk") {
-      setStatus("Thinking…");
-      return;
-    }
-    if (kind === "tool_call" || kind === "tool_call_update") {
-      var label = update.title || (update.toolCall && update.toolCall.title) || "tool";
-      setStatus(update.status === "completed" ? "Working…" : "Using " + label + "…");
-    }
   }
 
   function permissionTitle(request) {
@@ -180,19 +99,21 @@
 
   function handleFrame(frame) {
     if (!frame || typeof frame.kind !== "string") return;
-    if (frame.kind === "acp_notification") handleAcp(frame.payload);
-    else if (frame.kind === "system_text") appendMessage("system", frame.text);
-    else if (frame.kind === "error") appendMessage("error", frame.error);
+    if (frame.kind === "acp_notification") transcript.handleAcp(frame.payload, setStatus);
+    else if (frame.kind === "system_text") transcript.append("system", frame.text);
+    else if (frame.kind === "error") transcript.append("error", frame.error);
     else if (frame.kind === "permission_request") renderPermission(frame);
     else if (frame.kind === "agent_ready") setStatus(frame.agent || "Connected");
     else if (frame.kind === "session_ready") setStatus(active ? "Working…" : "Connected");
     else if (frame.kind === "turn_status") {
+      var wasActive = active;
       setActive(Boolean(frame.active));
       setStatus(frame.active ? "Working…" : "Connected");
       if (!frame.active) {
-        currentAssistant = null;
+        transcript.finishTurn();
         permissions.replaceChildren();
         attention.hidden = true;
+        if (wasActive) document.dispatchEvent(new CustomEvent("va-preview-turn-complete"));
       }
     }
   }
@@ -200,6 +121,21 @@
   function sendFrame(frame) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify(frame));
+    return true;
+  }
+
+  function canSend() {
+    return !active && socket && socket.readyState === WebSocket.OPEN;
+  }
+
+  function sendMessage(text, displayText) {
+    var message = String(text || "").trim();
+    if (!message || !canSend()) return false;
+    var messageId = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : String(Date.now());
+    if (!sendFrame({ type: "message", messageId: messageId, text: message })) return false;
+    transcript.append("user", displayText || message, "user:" + messageId);
+    setActive(true);
+    setStatus("Working…");
     return true;
   }
 
@@ -223,12 +159,12 @@
     var option = selectedOption();
     if (!option || option.dataset.chatAvailable !== "true") {
       setStatus("Unavailable");
-      emptyMessage("This Preview is not linked to an AI task. Recreate it from the current task.");
+      transcript.empty("This Preview is not linked to an AI task. Recreate it from the current task.");
       return;
     }
     var localGeneration = generation;
     setStatus("Connecting…");
-    emptyMessage("No messages yet.");
+    transcript.empty("No messages yet.");
     try {
       socket = new WebSocket(socketUrl(option.value));
     } catch (_) {
@@ -281,14 +217,7 @@
   form.addEventListener("submit", function (event) {
     event.preventDefault();
     var text = input.value.trim();
-    if (!text || active) return;
-    var messageId = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : String(Date.now());
-    if (sendFrame({ type: "message", messageId: messageId, text: text })) {
-      appendMessage("user", text, "user:" + messageId);
-      input.value = "";
-      setActive(true);
-      setStatus("Working…");
-    }
+    if (sendMessage(text)) input.value = "";
   });
   input.addEventListener("keydown", function (event) {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -299,6 +228,8 @@
   stop.addEventListener("click", function () {
     if (sendFrame({ type: "stop" })) setStatus("Stopping…");
   });
+
+  window.VAPreviewChat = Object.freeze({ canSend: canSend, send: sendMessage });
 
   connect();
 })();

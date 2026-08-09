@@ -39,8 +39,9 @@ use common::previews::{PreviewEntry, PreviewTarget, ShareCodeError};
 use serde::Deserialize;
 
 pub(super) use assets::{
-    dompurify_script_handler, marked_script_handler, theme_stylesheet_handler,
-    DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE, THEME_STYLESHEET_ROUTE,
+    dompurify_script_handler, marked_script_handler, review_bridge_script_handler,
+    review_bridge_script_href, theme_stylesheet_handler, DOMPURIFY_SCRIPT_ROUTE,
+    MARKED_SCRIPT_ROUTE, REVIEW_BRIDGE_SCRIPT_ROUTE, THEME_STYLESHEET_ROUTE,
 };
 pub(super) use chat::owner_preview_chat_handler;
 

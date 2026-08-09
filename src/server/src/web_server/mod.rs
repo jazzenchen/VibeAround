@@ -501,6 +501,10 @@ pub async fn run_web_server(
             preview::THEME_STYLESHEET_ROUTE,
             get(preview::theme_stylesheet_handler),
         )
+        .route(
+            preview::REVIEW_BRIDGE_SCRIPT_ROUTE,
+            get(preview::review_bridge_script_handler),
+        )
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
         .route(
             "/preview/u/{slug}/chat",

@@ -253,10 +253,8 @@ async fn embedded_owner_and_share_markdown_share_content_security_policy() {
     );
     assert!(!owner_body.contains("id=\"timer\""));
     assert!(!owner_body.contains("class=\"toolbar\""));
-    assert!(owner_body.contains("va.preview.markdown-selection"));
-    assert!(owner_body.contains("preview-comment-trigger"));
-    assert!(!unbound_owner_body.contains("va.preview.markdown-selection"));
-    assert!(!unbound_owner_body.contains("preview-comment-trigger"));
+    assert!(owner_body.contains("/va/preview/assets/review-bridge-"));
+    assert!(!unbound_owner_body.contains("/va/preview/assets/review-bridge-"));
     assert!(share_body.contains("id=\"timer\""));
     assert!(!share_body.contains("va.preview.markdown-selection"));
     assert!(!share_body.contains("preview-comment-trigger"));

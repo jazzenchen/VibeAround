@@ -9,9 +9,15 @@ pub(in crate::web_server) const DOMPURIFY_SCRIPT_ROUTE: &str =
     "/preview/assets/dompurify-3.4.12.min.js";
 pub(in crate::web_server) const THEME_STYLESHEET_ROUTE: &str =
     concat!("/preview/assets/theme-", env!("CARGO_PKG_VERSION"), ".css");
+pub(in crate::web_server) const REVIEW_BRIDGE_SCRIPT_ROUTE: &str = concat!(
+    "/preview/assets/review-bridge-",
+    env!("CARGO_PKG_VERSION"),
+    ".js"
+);
 const MARKED_SCRIPT: &str = include_str!("vendor/marked-15.0.12.min.js");
 const DOMPURIFY_SCRIPT: &str = include_str!("vendor/dompurify-3.4.12.min.js");
 const THEME_STYLESHEET: &str = include_str!("../../../../shared/ui/src/theme.css");
+const REVIEW_BRIDGE_SCRIPT: &str = include_str!("review_bridge.js");
 
 pub(in crate::web_server) async fn marked_script_handler() -> Response {
     script_response(MARKED_SCRIPT)
@@ -32,8 +38,24 @@ pub(in crate::web_server) async fn theme_stylesheet_handler() -> Response {
         .unwrap()
 }
 
+pub(in crate::web_server) async fn review_bridge_script_handler() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/javascript; charset=utf-8")
+        .header("Cache-Control", "no-cache")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Cross-Origin-Resource-Policy", "cross-origin")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(REVIEW_BRIDGE_SCRIPT))
+        .unwrap()
+}
+
 pub(super) fn theme_stylesheet_href() -> String {
     format!("/va{THEME_STYLESHEET_ROUTE}?v={}", std::process::id())
+}
+
+pub(in crate::web_server) fn review_bridge_script_href() -> String {
+    format!("/va{REVIEW_BRIDGE_SCRIPT_ROUTE}?v={}", std::process::id())
 }
 
 fn script_response(script: &'static str) -> Response {
@@ -95,6 +117,9 @@ mod tests {
             "text/css; charset=utf-8"
         );
         assert_eq!(response.headers().get("cache-control").unwrap(), "no-cache");
+        assert!(
+            review_bridge_script_href().starts_with(&format!("/va{REVIEW_BRIDGE_SCRIPT_ROUTE}?v="))
+        );
         assert_eq!(
             THEME_STYLESHEET_ROUTE,
             format!("/preview/assets/theme-{}.css", env!("CARGO_PKG_VERSION"))
@@ -107,5 +132,37 @@ mod tests {
         let css = std::str::from_utf8(&body).unwrap();
         assert!(css.contains("--primary: oklch(0.55 0.18 180)"));
         assert!(css.contains("--radius: 0.625rem"));
+    }
+
+    #[tokio::test]
+    async fn review_bridge_is_versioned_and_loadable_by_local_dev_servers() {
+        let response = review_bridge_script_handler().await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("cross-origin-resource-policy")
+                .unwrap(),
+            "cross-origin"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .unwrap(),
+            "*"
+        );
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-cache");
+        assert_eq!(
+            REVIEW_BRIDGE_SCRIPT_ROUTE,
+            format!(
+                "/preview/assets/review-bridge-{}.js",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let script = std::str::from_utf8(&body).unwrap();
+        assert!(script.contains("va-preview-review"));
+        assert!(script.contains("Source line") || script.contains("startLine"));
     }
 }

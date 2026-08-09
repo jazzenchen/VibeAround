@@ -296,7 +296,7 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
     let content_body = String::from_utf8(content_body.to_vec()).unwrap();
     assert!(content_body.contains("# Shared markdown"));
     assert!(!content_body.contains("class=\"toolbar\""));
-    assert!(content_body.contains("va.preview.markdown-selection"));
+    assert!(content_body.contains("/va/preview/assets/review-bridge-"));
 }
 
 #[tokio::test]

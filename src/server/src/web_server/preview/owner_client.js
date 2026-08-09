@@ -5,6 +5,12 @@
   var frame = document.getElementById("preview-frame");
   var current = document.getElementById("current-preview");
   var refresh = document.getElementById("refresh-preview");
+  var chatRefresh = document.getElementById("preview-chat-refresh");
+
+  function reloadPreview() {
+    chatRefresh.hidden = true;
+    frame.src = frame.src;
+  }
 
   picker.addEventListener("change", function () {
     var option = picker.options[picker.selectedIndex];
@@ -14,10 +20,13 @@
     frame.title = "Preview content — " + title;
     current.textContent = title;
     document.title = "Preview — " + title;
+    chatRefresh.hidden = true;
     history.replaceState(null, "", "/va/preview/u/" + slug);
   });
 
-  refresh.addEventListener("click", function () {
-    frame.src = frame.src;
+  refresh.addEventListener("click", reloadPreview);
+  chatRefresh.addEventListener("click", reloadPreview);
+  document.addEventListener("va-preview-turn-complete", function () {
+    chatRefresh.hidden = false;
   });
 })();
