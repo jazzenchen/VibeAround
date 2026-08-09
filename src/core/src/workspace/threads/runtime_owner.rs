@@ -537,7 +537,12 @@ impl ThreadOwner {
             .profile_id
             .clone()
             .unwrap_or_else(|| "default".to_string());
-        let startup_session = host_startup_session(route, self.session_id.clone(), &thread);
+        let startup_session = host_startup_session(
+            route,
+            self.session_id.clone(),
+            &thread,
+            runtime.require_startup_session,
+        );
 
         std::fs::create_dir_all(&runtime.workspace).map_err(|error| {
             acp::Error::new(

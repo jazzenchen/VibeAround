@@ -140,7 +140,8 @@ async fn drive_agent_bridge(
             let mut startup_config_options = None;
             let startup_session_id = match startup_session.clone() {
                 StartupSession::Fresh => None,
-                StartupSession::Load(session_id) => {
+                StartupSession::Load(session_id) | StartupSession::LoadRequired(session_id) => {
+                    let required = matches!(startup_session, StartupSession::LoadRequired(_));
                     match conn
                         .send_request(schema::LoadSessionRequest::new(
                             session_id.clone(),
@@ -153,6 +154,15 @@ async fn drive_agent_bridge(
                             startup_modes = response.modes;
                             startup_config_options = response.config_options;
                             Some(session_id)
+                        }
+                        Err(error) if required => {
+                            let _ = ready_tx.send(Err(anyhow!(
+                                "ACP session/load failed for {} session {}: {}",
+                                agent_id_for_run,
+                                session_id,
+                                error
+                            )));
+                            return Err(error);
                         }
                         Err(error) => {
                             tracing::info!(

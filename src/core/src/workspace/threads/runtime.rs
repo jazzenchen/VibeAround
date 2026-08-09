@@ -141,6 +141,7 @@ where
 
 pub struct ThreadRuntime {
     workspace: PathBuf,
+    require_startup_session: bool,
     active_turn_target: ActiveTurnTarget,
     owner_tx: mpsc::UnboundedSender<ThreadOwnerCommand>,
     turn_state: watch::Receiver<TurnState>,
@@ -158,6 +159,25 @@ impl ThreadRuntime {
         workspace: PathBuf,
         store: ThreadEventStore,
         change_tx: Option<broadcast::Sender<()>>,
+    ) -> Self {
+        Self::build(thread, workspace, store, change_tx, false)
+    }
+
+    pub(crate) fn with_required_startup_session(
+        thread: WorkspaceThread,
+        workspace: PathBuf,
+        store: ThreadEventStore,
+        change_tx: Option<broadcast::Sender<()>>,
+    ) -> Self {
+        Self::build(thread, workspace, store, change_tx, true)
+    }
+
+    fn build(
+        thread: WorkspaceThread,
+        workspace: PathBuf,
+        store: ThreadEventStore,
+        change_tx: Option<broadcast::Sender<()>>,
+        require_startup_session: bool,
     ) -> Self {
         let session_id = latest_session_for_host(&thread);
         let (owner_tx, owner_rx) = mpsc::unbounded_channel();
@@ -188,6 +208,7 @@ impl ThreadRuntime {
         );
         Self {
             workspace,
+            require_startup_session,
             active_turn_target: ActiveTurnTarget::default(),
             owner_tx,
             turn_state,
@@ -421,10 +442,14 @@ fn host_startup_session(
     route: &RouteKey,
     runtime_session_id: Option<String>,
     thread: &WorkspaceThread,
+    require_startup_session: bool,
 ) -> StartupSession {
     let Some(session_id) = runtime_session_id.or_else(|| latest_session_for_host(thread)) else {
         return StartupSession::Fresh;
     };
+    if require_startup_session {
+        return StartupSession::LoadRequired(session_id);
+    }
     if route_allows_startup_replay(route) {
         if thread.host_binding.agent_id == "gemini" {
             return StartupSession::ResumeOnly(session_id);

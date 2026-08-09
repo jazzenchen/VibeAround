@@ -314,7 +314,7 @@ async fn cancel_signals_active_turn_without_agent_lookup() {
 fn web_routes_load_previous_host_session_for_playback() {
     let route = RouteKey::new("web", "chat-1");
 
-    let startup_session = host_startup_session(&route, None, &thread_with_sessions());
+    let startup_session = host_startup_session(&route, None, &thread_with_sessions(), false);
 
     assert_eq!(
         startup_session,
@@ -326,7 +326,7 @@ fn web_routes_load_previous_host_session_for_playback() {
 fn tui_routes_load_previous_host_session_for_playback() {
     let route = RouteKey::new("tui", "chat-1");
 
-    let startup_session = host_startup_session(&route, None, &thread_with_sessions());
+    let startup_session = host_startup_session(&route, None, &thread_with_sessions(), false);
 
     assert_eq!(
         startup_session,
@@ -339,7 +339,7 @@ fn web_gemini_routes_resume_without_load_fallback() {
     let route = RouteKey::new("web", "chat-1");
     let thread = thread_with_host_session("gemini", None, "gemini-session");
 
-    let startup_session = host_startup_session(&route, None, &thread);
+    let startup_session = host_startup_session(&route, None, &thread, false);
 
     assert_eq!(
         startup_session,
@@ -355,6 +355,7 @@ fn im_routes_resume_previous_host_session_without_playback() {
         &route,
         Some("runtime-session".to_string()),
         &thread_with_sessions(),
+        false,
     );
 
     assert_eq!(
@@ -379,9 +380,21 @@ fn routes_without_known_session_start_fresh() {
         updated_at: "2026-01-01T00:00:00.000Z".to_string(),
     };
 
-    let startup_session = host_startup_session(&route, None, &thread);
+    let startup_session = host_startup_session(&route, None, &thread, false);
 
     assert_eq!(startup_session, StartupSession::Fresh);
+}
+
+#[test]
+fn required_startup_session_does_not_allow_a_fresh_fallback() {
+    let route = RouteKey::new("web", "chat-1");
+
+    let startup_session = host_startup_session(&route, None, &thread_with_sessions(), true);
+
+    assert_eq!(
+        startup_session,
+        StartupSession::LoadRequired("session-old".to_string())
+    );
 }
 
 #[tokio::test]

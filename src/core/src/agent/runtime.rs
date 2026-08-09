@@ -101,6 +101,8 @@ pub enum StartupSession {
     Fresh,
     /// Attach with startup replay. Web uses this to rebuild visible history.
     Load(String),
+    /// Attach with startup replay and fail startup if the session cannot load.
+    LoadRequired(String),
     /// Attach without startup replay. The bridge uses ACP `session/resume`
     /// where available, and otherwise suppresses startup notifications while
     /// falling back to `session/load`.
@@ -117,9 +119,10 @@ impl StartupSession {
     pub fn session_id(&self) -> Option<&str> {
         match self {
             Self::Fresh => None,
-            Self::Load(session_id) | Self::Resume(session_id) | Self::ResumeOnly(session_id) => {
-                Some(session_id.as_str())
-            }
+            Self::Load(session_id)
+            | Self::LoadRequired(session_id)
+            | Self::Resume(session_id)
+            | Self::ResumeOnly(session_id) => Some(session_id.as_str()),
         }
     }
 }
