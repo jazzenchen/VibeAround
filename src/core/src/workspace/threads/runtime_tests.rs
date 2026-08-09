@@ -160,6 +160,36 @@ async fn turn_owner_serializes_busy_state() {
 }
 
 #[tokio::test]
+async fn fork_waits_for_the_active_turn_to_finish() {
+    let runtime = Arc::new(ThreadRuntime::new(
+        thread_with_sessions(),
+        PathBuf::from("/tmp/project"),
+        ThreadEventStore::new("/tmp/unused.jsonl"),
+    ));
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    runtime
+        .owner_tx
+        .send(ThreadOwnerCommand::Probe {
+            started: started_tx,
+            release: release_rx,
+        })
+        .unwrap();
+    started_rx.await.unwrap();
+
+    let fork_task = tokio::spawn({
+        let runtime = Arc::clone(&runtime);
+        async move { runtime.fork().await }
+    });
+    tokio::task::yield_now().await;
+    assert!(!fork_task.is_finished());
+
+    release_tx.send(()).unwrap();
+    let error = fork_task.await.unwrap().unwrap_err();
+    assert_eq!(error.message, "session fork requires a live agent");
+}
+
+#[tokio::test]
 async fn prompt_completion_refreshes_thread_activity() {
     let runtime = Arc::new(ThreadRuntime::new(
         thread_with_sessions(),

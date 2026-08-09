@@ -336,6 +336,120 @@ impl Agent {
 }
 
 #[cfg(test)]
+mod session_fork_tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use acp::schema::v1 as schema;
+    use agent_client_protocol as acp;
+    use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
+
+    use super::Agent;
+
+    async fn exercise_fork(
+        advertise_fork: bool,
+    ) -> (
+        acp::Result<schema::ForkSessionResponse>,
+        Option<schema::ForkSessionRequest>,
+        schema::ForkSessionRequest,
+        bool,
+    ) {
+        let (client_writer, agent_reader) = tokio::io::duplex(4096);
+        let (agent_writer, client_reader) = tokio::io::duplex(4096);
+        let client_transport =
+            acp::ByteStreams::new(client_writer.compat_write(), client_reader.compat());
+        let agent_transport =
+            acp::ByteStreams::new(agent_writer.compat_write(), agent_reader.compat());
+
+        let observed = Arc::new(Mutex::new(None));
+        let observed_by_agent = Arc::clone(&observed);
+        let agent_task = tokio::spawn(async move {
+            acp::Agent
+                .builder()
+                .on_receive_request(
+                    async move |request: schema::InitializeRequest, responder, _cx| {
+                        let session_capabilities = if advertise_fork {
+                            schema::SessionCapabilities::new()
+                                .fork(schema::SessionForkCapabilities::new())
+                        } else {
+                            schema::SessionCapabilities::new()
+                        };
+                        responder.respond(
+                            schema::InitializeResponse::new(request.protocol_version)
+                                .agent_capabilities(
+                                    schema::AgentCapabilities::new()
+                                        .session_capabilities(session_capabilities),
+                                ),
+                        )
+                    },
+                    acp::on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |request: schema::ForkSessionRequest, responder, _cx| {
+                        *observed_by_agent.lock().unwrap() = Some(request);
+                        responder.respond(schema::ForkSessionResponse::new("forked-session"))
+                    },
+                    acp::on_receive_request!(),
+                )
+                .connect_to(agent_transport)
+                .await
+        });
+
+        let cwd = std::env::temp_dir().join("va-fork-test");
+        let expected = schema::ForkSessionRequest::new("source-session", cwd);
+        let request = expected.clone();
+        let suppressed = Arc::new(AtomicBool::new(true));
+        let suppression_for_agent = Arc::clone(&suppressed);
+        let result = acp::Client
+            .builder()
+            .connect_with(client_transport, async move |conn| {
+                let initialize = conn
+                    .send_request(schema::InitializeRequest::new(
+                        acp::schema::ProtocolVersion::V1,
+                    ))
+                    .block_task()
+                    .await?;
+                let agent = Agent::from_connection(
+                    conn,
+                    "test-agent".to_string(),
+                    initialize,
+                    suppression_for_agent,
+                );
+                agent.fork_session(request).await
+            })
+            .await;
+
+        agent_task.abort();
+        let _ = agent_task.await;
+        let observed = observed.lock().unwrap().clone();
+        (
+            result,
+            observed,
+            expected,
+            suppressed.load(Ordering::SeqCst),
+        )
+    }
+
+    #[tokio::test]
+    async fn fork_session_short_circuits_when_capability_is_absent() {
+        let (result, observed, _, still_suppressed) = exercise_fork(false).await;
+        let error = result.unwrap_err();
+        assert_eq!(error.code, acp::Error::method_not_found().code);
+        assert_eq!(error.message, "agent does not support session/fork");
+        assert!(observed.is_none());
+        assert!(still_suppressed);
+    }
+
+    #[tokio::test]
+    async fn fork_session_sends_exact_request_and_returns_response() {
+        let (result, observed, expected, still_suppressed) = exercise_fork(true).await;
+        assert_eq!(result.unwrap().session_id.to_string(), "forked-session");
+        assert_eq!(observed, Some(expected));
+        assert!(still_suppressed);
+    }
+}
+
+#[cfg(test)]
 mod lifecycle_tests {
     use std::sync::Arc;
 
@@ -459,6 +573,25 @@ impl Agent {
         &self,
         args: schema::LoadSessionRequest,
     ) -> acp::Result<schema::LoadSessionResponse> {
+        self.conn.send_request(args).block_task().await
+    }
+
+    pub async fn fork_session(
+        &self,
+        args: schema::ForkSessionRequest,
+    ) -> acp::Result<schema::ForkSessionResponse> {
+        if self
+            .initialize
+            .agent_capabilities
+            .session_capabilities
+            .fork
+            .is_none()
+        {
+            return Err(acp::Error::new(
+                -32601,
+                "agent does not support session/fork",
+            ));
+        }
         self.conn.send_request(args).block_task().await
     }
 

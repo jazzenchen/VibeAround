@@ -78,6 +78,13 @@ pub(crate) struct ThreadRuntimeStart {
     pub(crate) host_started: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadSessionFork {
+    pub session_id: String,
+    pub workspace_id: WorkspaceId,
+    pub host_binding: HostBinding,
+}
+
 impl AcpSessionRunner {
     fn is_live(&self) -> bool {
         self.agent.is_live()
@@ -288,6 +295,18 @@ impl ThreadRuntime {
         let (reply, done) = oneshot::channel();
         self.owner_tx
             .send(ThreadOwnerCommand::Cancel(RuntimeCommand {
+                runtime: Arc::clone(self),
+                reply,
+            }))
+            .map_err(|_| runtime_stopped_error())?;
+        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
+    }
+
+    pub async fn fork(self: &Arc<Self>) -> acp::Result<ThreadSessionFork> {
+        self.mark_activity();
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::Fork(RuntimeCommand {
                 runtime: Arc::clone(self),
                 reply,
             }))
