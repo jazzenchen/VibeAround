@@ -108,7 +108,7 @@ impl WorkspaceThreadManager {
         let workspace = self
             .ensure_default_workspace_for_route(route, workspace_path)
             .await?;
-        let thread = self.new_thread_record_with_host(workspace.id.clone(), host_binding);
+        let thread = self.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
         self.ensure_thread_persisted(&thread).await?;
         self.attach_route(route.clone(), workspace.id, thread.id.clone())
             .await?;
@@ -138,7 +138,7 @@ impl WorkspaceThreadManager {
             .workspace(&workspace_id)
             .await?
             .ok_or_else(|| anyhow!("workspace {} not found", workspace_id))?;
-        let thread = self.new_thread_record_with_host(workspace.id.clone(), host_binding);
+        let thread = self.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
         self.ensure_thread_persisted(&thread).await?;
         self.attach_route(route.clone(), workspace.id, thread.id.clone())
             .await?;
@@ -405,10 +405,15 @@ impl WorkspaceThreadManager {
     fn new_thread_record_with_host(
         &self,
         workspace_id: WorkspaceId,
+        parent_thread_id: Option<WorkspaceThreadId>,
         host_binding: HostBinding,
     ) -> WorkspaceThread {
-        let event =
-            ThreadEvent::created(WorkspaceThreadId::new(), workspace_id, None, host_binding);
+        let event = ThreadEvent::created(
+            WorkspaceThreadId::new(),
+            workspace_id,
+            parent_thread_id,
+            host_binding,
+        );
         ThreadProjection::from_events(&[event])
             .expect("single created event should project")
             .all()

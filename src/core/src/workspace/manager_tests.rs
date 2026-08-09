@@ -83,7 +83,7 @@ async fn seed_session_thread(
     let workspace = manager.ensure_workspace_for_cwd(root).await.unwrap();
     let profile_id = profile_id.map(ToOwned::to_owned);
     let host_binding = HostBinding::new(agent_id.to_string(), profile_id.clone());
-    let thread = manager.new_thread_record_with_host(workspace.id.clone(), host_binding);
+    let thread = manager.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
     manager.ensure_thread_persisted(&thread).await.unwrap();
     manager
         .thread_store
@@ -182,6 +182,74 @@ async fn explicit_new_preserves_web_selected_host() {
 
     assert_eq!(state.workspace_id, workspace.id);
     assert_eq!(state.host_binding, selected_host);
+}
+
+#[tokio::test]
+async fn child_web_thread_is_fresh_and_keeps_parent_unchanged() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let parent_runtime = manager
+        .create_web_thread_for_cwd_with_host("codex".to_string(), Some("direct".to_string()), root)
+        .await
+        .unwrap();
+    let parent_id = parent_runtime.state().await.thread_id;
+    let parent_before = manager.thread(&parent_id).await.unwrap().unwrap();
+
+    let child_runtime = manager.create_child_web_thread(&parent_id).await.unwrap();
+    let child_id = child_runtime.state().await.thread_id;
+    let child = manager.thread(&child_id).await.unwrap().unwrap();
+
+    assert_ne!(child.id, parent_id);
+    assert_eq!(child.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(child.workspace_id, parent_before.workspace_id);
+    assert_eq!(child.host_binding, parent_before.host_binding);
+    assert!(child.agent_sessions.is_empty());
+    assert_eq!(child.first_user_prompt, None);
+    assert_eq!(
+        manager.thread(&parent_id).await.unwrap().unwrap(),
+        parent_before
+    );
+    assert_eq!(
+        manager
+            .current_attachment(&web_route_for_thread(&parent_id))
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        parent_id
+    );
+    assert_eq!(
+        manager
+            .current_attachment(&web_route_for_thread(&child_id))
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        child_id
+    );
+}
+
+#[tokio::test]
+async fn child_web_thread_rejects_an_unknown_parent_without_writing_events() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+
+    let error = manager
+        .create_child_web_thread(&WorkspaceThreadId::from("wt_missing"))
+        .await
+        .err()
+        .expect("unknown parent should fail");
+
+    assert!(error.to_string().contains("thread wt_missing not found"));
+    assert!(manager.thread_store.read_events().await.unwrap().is_empty());
+    assert!(manager
+        .attachment_store
+        .read_events()
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -671,7 +739,7 @@ async fn subagent_session_ids_for_agent_workspace_reads_thread_agents() {
         .await
         .unwrap();
     let host_binding = HostBinding::new("codex", Some("direct".to_string()));
-    let thread = manager.new_thread_record_with_host(workspace.id.clone(), host_binding);
+    let thread = manager.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
     manager.ensure_thread_persisted(&thread).await.unwrap();
 
     let turn_id = MultiAgentTurnId::from("mat_a");
