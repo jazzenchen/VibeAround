@@ -13,7 +13,9 @@
 //! ## Module layout
 //!
 //! - [`jsonrpc`] — JSON-RPC 2.0 envelope + MCP content helpers
-//! - [`tools`]   — the `tools/call` implementations
+//! - [`tools`]   — session, file, handover, and workspace tool implementations
+//! - [`subagents`] — multi-agent tool handlers and runtime notifications
+//! - [`subagent_worktrees`] — git worktree setup and cleanup
 //! - [`sessions`] — per-agent on-disk session auto-discovery
 //! - [`ports`]   — deny-list of well-known service ports
 
@@ -23,6 +25,8 @@ mod preview;
 mod preview_conversation;
 mod session_identity;
 mod sessions;
+mod subagent_worktrees;
+mod subagents;
 mod tools;
 
 use axum::{
@@ -142,8 +146,8 @@ async fn mcp_tools_call(
         "send_file" => tools::mcp_send_file(id, arguments, state).await,
         "prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
         "register_workspace" => tools::mcp_register_workspace(id, arguments).await,
-        "initialize_subagents" => tools::mcp_initialize_subagents(id, arguments, state).await,
-        "wait_for_subagents" => tools::mcp_wait_for_subagents(id, arguments, state).await,
+        "initialize_subagents" => subagents::mcp_initialize_subagents(id, arguments, state).await,
+        "wait_for_subagents" => subagents::mcp_wait_for_subagents(id, arguments, state).await,
         "preview" => preview::mcp_preview_start(id, arguments, params.get("_meta"), state).await,
         "md_preview" => preview::mcp_md_preview(id, arguments, params.get("_meta"), state).await,
         _ => jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name)),
