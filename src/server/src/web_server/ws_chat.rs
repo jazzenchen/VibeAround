@@ -30,10 +30,12 @@ use crate::api_types::{AgentInfo, ChatEvent};
 
 use super::AppState;
 
+mod bound;
 mod event;
 mod input;
 
-use event::{output_to_chat_event, permission_response_error_event};
+pub(super) use bound::{parse_bound_chat_input, respond_to_web_permission, BoundChatInput};
+pub(super) use event::{output_to_chat_event, permission_response_error_event};
 use input::{parse_web_chat_input, WebChatInput, WebChatSessionIntent};
 
 /// WebSocket upgrade handler for web chat.
@@ -316,22 +318,13 @@ async fn handle_chat_socket(
                             request_id,
                             response,
                         } => {
-                            let result = if state
-                                .web_channel
-                                .clear_pending_permission(&active_route, &request_id)
-                                .await
-                            {
-                                state
-                                    .channel_hub
-                                    .respond_permission(
-                                        &active_route.channel_kind,
-                                        &request_id,
-                                        response,
-                                    )
-                                    .await
-                            } else {
-                                Err("permission request is not pending for this route".to_string())
-                            };
+                            let result = respond_to_web_permission(
+                                &state,
+                                &active_route,
+                                &request_id,
+                                response,
+                            )
+                            .await;
                             if let Err(error) = result {
                                 tracing::warn!(
                                     request_id = %request_id,
@@ -493,7 +486,11 @@ fn input_agent(input: &ChannelInput) -> Option<String> {
     }
 }
 
-async fn remember_web_route_agent(state: &AppState, route: &RouteKey, agent: Option<String>) {
+pub(super) async fn remember_web_route_agent(
+    state: &AppState,
+    route: &RouteKey,
+    agent: Option<String>,
+) {
     if let Some(agent_id) = resolve_web_session_agent(state, route, agent).await {
         state.web_channel.set_route_agent(route, agent_id).await;
     }
@@ -513,7 +510,7 @@ async fn should_wait_for_user_message_session(
     }
 }
 
-async fn remember_web_user_message(
+pub(super) async fn remember_web_user_message(
     state: &AppState,
     route: &RouteKey,
     input: &ChannelInput,
@@ -1020,7 +1017,7 @@ async fn apply_web_session_config_option(
     ;
 }
 
-async fn send_event<S>(ws_tx: &mut S, event: &ChatEvent) -> Result<(), ()>
+pub(super) async fn send_event<S>(ws_tx: &mut S, event: &ChatEvent) -> Result<(), ()>
 where
     S: SinkExt<Message, Error = axum::Error> + Unpin,
 {

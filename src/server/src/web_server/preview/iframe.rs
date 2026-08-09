@@ -143,7 +143,7 @@ pub(super) fn render_owner_shell(
     );
 
     let csp = format!(
-        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; frame-src {frame_sources}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        "default-src 'none'; script-src 'nonce-{nonce}'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; frame-src {frame_sources}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     Response::builder()
         .status(StatusCode::OK)

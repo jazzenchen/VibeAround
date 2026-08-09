@@ -263,6 +263,7 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
         .unwrap();
     assert!(owner_csp.contains("default-src 'none'"));
     assert!(owner_csp.contains("script-src-attr 'none'"));
+    assert!(owner_csp.contains("connect-src 'self'"));
     assert!(owner_csp.contains("frame-src 'self'"));
     assert!(owner_csp.contains("frame-ancestors 'none'"));
     let owner_body = to_bytes(owner.into_body(), usize::MAX).await.unwrap();

@@ -2,6 +2,7 @@
 //!
 //! **Preview pages**:
 //! - GET /preview/u/:slug            — owner shell + preview picker
+//! - GET /preview/u/:slug/chat       — owner-only conversation WebSocket
 //! - GET /preview/u/:slug/content    — owner iframe content
 //! - GET /preview/s/:share_id        — Markdown share gate or document
 //! - POST /preview/s/:share_id       — verify reusable access code
@@ -24,6 +25,7 @@
 
 mod access;
 mod assets;
+mod chat;
 mod iframe;
 mod markdown;
 mod toolbar;
@@ -40,6 +42,7 @@ pub(super) use assets::{
     dompurify_script_handler, marked_script_handler, theme_stylesheet_handler,
     DOMPURIFY_SCRIPT_ROUTE, MARKED_SCRIPT_ROUTE, THEME_STYLESHEET_ROUTE,
 };
+pub(super) use chat::owner_preview_chat_handler;
 
 use access::{
     clear_share_cookie, extract_cookie, render_access_gate, share_cookie_name, share_grant_cookie,
