@@ -21,7 +21,7 @@ use serde_json::Value;
 use crate::web_server::AppState;
 
 use super::jsonrpc::{jsonrpc_err, mcp_error_text, mcp_text};
-use super::ports::is_denied_port;
+use super::session_identity::{argument_string, codex_session_id_from_mcp_metadata};
 use super::sessions::find_latest_session;
 
 // ---------------------------------------------------------------------------
@@ -160,42 +160,6 @@ fn record_mcp_session_observation(
             "failed to record MCP-observed launch session"
         );
     }
-}
-
-fn codex_session_id_from_mcp_metadata(metadata: Option<&Value>) -> Option<String> {
-    let metadata = metadata?;
-    codex_turn_metadata_value(metadata)
-        .as_ref()
-        .and_then(|turn| string_field(turn, "thread_id"))
-        .or_else(|| string_field(metadata, "threadId"))
-        .or_else(|| string_field(metadata, "thread_id"))
-        .or_else(|| {
-            codex_turn_metadata_value(metadata)
-                .as_ref()
-                .and_then(|turn| string_field(turn, "session_id"))
-        })
-}
-
-fn codex_turn_metadata_value(metadata: &Value) -> Option<Value> {
-    let value = metadata.get("x-codex-turn-metadata")?;
-    if value.is_object() {
-        return Some(value.clone());
-    }
-    let text = value.as_str()?;
-    serde_json::from_str(text).ok()
-}
-
-fn string_field(value: &Value, field: &str) -> Option<String> {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-fn argument_string(arguments: &Value, field: &str) -> Option<String> {
-    string_field(arguments, field)
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,173 +1084,12 @@ fn short_id(id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// preview_start — register a live preview for a running local server
-// ---------------------------------------------------------------------------
-
-pub(super) async fn mcp_preview_start(
-    id: Option<serde_json::Value>,
-    arguments: &serde_json::Value,
-    state: &AppState,
-) -> Json<serde_json::Value> {
-    let port = match arguments.get("port").and_then(|v| v.as_u64()) {
-        Some(p) if p > 0 && p <= 65535 => p as u16,
-        _ => {
-            return jsonrpc_err(
-                id,
-                -32602,
-                "Missing or invalid required argument: port (1-65535)",
-            );
-        }
-    };
-
-    if is_denied_port(port) {
-        return mcp_error_text(
-            id,
-            &format!(
-                "Port {} is a well-known service port and cannot be previewed for security reasons. \
-             Use a typical dev server port (e.g. 3000, 5173, 8080).",
-                port
-            ),
-        );
-    }
-
-    let cwd = match arguments.get("cwd").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return jsonrpc_err(id, -32602, "Missing required argument: cwd"),
-    };
-
-    let cwd_path = std::path::PathBuf::from(cwd);
-    if let Err(resp) = validate_workspace(&cwd_path, id.clone()) {
-        return resp;
-    }
-
-    let title = derive_title(arguments, &cwd_path);
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    let owner_slug = common::previews::ensure_server(port, cwd_path, title, session_id.clone());
-    let owner_url = format!(
-        "http://127.0.0.1:{}/va/preview/u/{}",
-        state.port, owner_slug
-    );
-
-    let session_hint = if session_id.is_none() {
-        "\n\n\u{26a0}\u{fe0f} No session_id provided. Use /va-session skill to resolve it and pass session_id for automatic dev-server cleanup."
-    } else {
-        ""
-    };
-
-    mcp_text(
-        id,
-        &format!(
-            "Preview ready.\n\n\
-         Local owner: `{}`\n\
-         Port: {}\n\
-         Public sharing is unavailable for live server previews.{}",
-            owner_url, port, session_hint
-        ),
-    )
-}
-
-// ---------------------------------------------------------------------------
-// md_preview — render a markdown file with styled preview
-// ---------------------------------------------------------------------------
-
-pub(super) async fn mcp_md_preview(
-    id: Option<serde_json::Value>,
-    arguments: &serde_json::Value,
-    state: &AppState,
-) -> Json<serde_json::Value> {
-    let file_str = match arguments.get("file").and_then(|v| v.as_str()) {
-        Some(f) => f,
-        None => return jsonrpc_err(id, -32602, "Missing required argument: file"),
-    };
-    let cwd = match arguments.get("cwd").and_then(|v| v.as_str()) {
-        Some(c) => c,
-        None => return jsonrpc_err(id, -32602, "Missing required argument: cwd"),
-    };
-
-    let cwd_path = std::path::PathBuf::from(cwd);
-    if let Err(resp) = validate_workspace(&cwd_path, id.clone()) {
-        return resp;
-    }
-
-    // Resolve relative paths against cwd.
-    let file_path = {
-        let p = std::path::PathBuf::from(file_str);
-        if p.is_relative() {
-            cwd_path.join(&p)
-        } else {
-            p
-        }
-    };
-    if !file_path.is_file() {
-        return mcp_error_text(id, &format!("File not found: {}", file_path.display()));
-    }
-
-    // Security: file must be inside the workspace.
-    if let (Ok(canon_file), Ok(canon_ws)) = (file_path.canonicalize(), cwd_path.canonicalize()) {
-        if !canon_file.starts_with(&canon_ws) {
-            return mcp_error_text(id, "File must be inside the workspace directory.");
-        }
-    }
-
-    let title = arguments
-        .get("title")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .unwrap_or_else(|| {
-            file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("Preview")
-                .to_string()
-        });
-
-    let (owner_slug, share) = common::previews::ensure_file(file_path, cwd_path, title);
-    let tunnel_url = state.tunnels.first_url();
-    let owner_base = tunnel_url
-        .clone()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", state.port));
-    let owner_url = build_preview_url(&owner_base, "preview/u", &owner_slug);
-    let message = match tunnel_url {
-        Some(base) => {
-            let share_url = build_preview_url(&base, "preview/s", &share.id);
-            let remaining = share
-                .expires_at
-                .saturating_duration_since(std::time::Instant::now());
-            let remaining_secs = remaining.as_secs();
-            format!(
-                "Markdown preview ready.\n\n\
-                 Owner: `{owner_url}`\n\
-                 Share: `{share_url}`\n\
-                 Access code: `{}`\n\
-                 Link and code expire together in {}:{:02}.",
-                share.code,
-                remaining_secs / 60,
-                remaining_secs % 60
-            )
-        }
-        None => format!(
-            "Markdown preview ready.\n\n\
-             Owner: `{owner_url}`\n\
-             Public sharing is unavailable until a tunnel is running."
-        ),
-    };
-
-    mcp_text(id, &message)
-}
-
-// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
 /// Validate that cwd is a registered workspace. Returns Err with a JSON-RPC
 /// error response on failure.
-fn validate_workspace(
+pub(super) fn validate_workspace(
     cwd_path: &std::path::Path,
     id: Option<serde_json::Value>,
 ) -> Result<(), Json<serde_json::Value>> {
@@ -1308,64 +1111,11 @@ fn validate_workspace(
     Ok(())
 }
 
-/// Derive a title from the MCP arguments or the workspace directory name.
-fn derive_title(arguments: &serde_json::Value, cwd_path: &std::path::Path) -> String {
-    arguments
-        .get("title")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .unwrap_or_else(|| {
-            cwd_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("Preview")
-                .to_string()
-        })
-}
-
-/// Build a full preview URL from an already-selected base URL.
-/// All preview routes live under `/va/` to avoid conflicts with dev servers.
-fn build_preview_url(base: &str, route: &str, slug: &str) -> String {
-    format!("{}/va/{}/{}", base.trim_end_matches('/'), route, slug)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{
-        codex_session_id_from_mcp_metadata, resolve_workspace_file, workspace_is_registered,
-    };
-
-    #[test]
-    fn codex_metadata_prefers_turn_thread_id() {
-        let metadata = json!({
-            "threadId": "top-level-thread",
-            "x-codex-turn-metadata": {
-                "session_id": "turn-session",
-                "thread_id": "turn-thread",
-                "turn_id": "turn"
-            }
-        });
-
-        assert_eq!(
-            codex_session_id_from_mcp_metadata(Some(&metadata)).as_deref(),
-            Some("turn-thread")
-        );
-    }
-
-    #[test]
-    fn codex_metadata_accepts_json_encoded_turn_metadata() {
-        let metadata = json!({
-            "x-codex-turn-metadata": "{\"thread_id\":\"encoded-thread\"}"
-        });
-
-        assert_eq!(
-            codex_session_id_from_mcp_metadata(Some(&metadata)).as_deref(),
-            Some("encoded-thread")
-        );
-    }
+    use super::{resolve_workspace_file, workspace_is_registered};
 
     #[test]
     fn handover_profile_id_defaults_external_sessions_to_direct() {

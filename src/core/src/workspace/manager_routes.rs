@@ -35,6 +35,16 @@ impl WorkspaceThreadManager {
         self.runtime_for_thread(thread_id).await
     }
 
+    pub async fn parent_thread_id_for_thread(
+        &self,
+        thread_id: &WorkspaceThreadId,
+    ) -> anyhow::Result<Option<WorkspaceThreadId>> {
+        self.thread(thread_id)
+            .await?
+            .map(|thread| thread.parent_thread_id)
+            .ok_or_else(|| anyhow!("thread {} not found", thread_id))
+    }
+
     pub async fn active_route_runtime(
         &self,
         route: &RouteKey,

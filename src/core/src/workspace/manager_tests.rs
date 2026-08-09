@@ -203,6 +203,14 @@ async fn child_web_thread_is_fresh_and_keeps_parent_unchanged() {
 
     assert_ne!(child.id, parent_id);
     assert_eq!(child.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(
+        manager
+            .parent_thread_id_for_thread(&child_id)
+            .await
+            .unwrap()
+            .as_ref(),
+        Some(&parent_id)
+    );
     assert_eq!(child.workspace_id, parent_before.workspace_id);
     assert_eq!(child.host_binding, parent_before.host_binding);
     assert!(child.agent_sessions.is_empty());

@@ -192,9 +192,17 @@
           "type": "string",
           "description": "Absolute path to the project workspace directory."
         },
+        "thread_id": {
+          "type": "string",
+          "description": "Exact VibeAround workspace thread ID from $VIBEAROUND_THREAD_ID. Enables an owner-only child conversation linked to that task."
+        },
         "session_id": {
           "type": "string",
-          "description": "Your agent session ID (use /va-session skill to resolve). Enables automatic dev-server cleanup when the session ends."
+          "description": "Exact native agent session ID. Enables automatic dev-server cleanup and, with agent_kind, can link an external task to the owner conversation."
+        },
+        "agent_kind": {
+          "type": "string",
+          "description": "Agent kind for an explicitly supplied external session_id. Not needed when thread_id is provided."
         },
         "title": {
           "type": "string",
@@ -217,6 +225,18 @@
         "cwd": {
           "type": "string",
           "description": "Absolute path to the project workspace directory."
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Exact VibeAround workspace thread ID from $VIBEAROUND_THREAD_ID. Enables an owner-only child conversation linked to that task."
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Exact native agent session ID. With agent_kind, links an external task to the owner conversation."
+        },
+        "agent_kind": {
+          "type": "string",
+          "description": "Agent kind for an explicitly supplied external session_id. Not needed when thread_id is provided."
         },
         "title": {
           "type": "string",
