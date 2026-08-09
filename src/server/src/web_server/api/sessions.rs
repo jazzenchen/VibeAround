@@ -6,7 +6,6 @@ use axum::{
 };
 
 use common::pty::{list_tmux_sessions, tmux_available, PtyTool, SessionId};
-use common::workspace::manager::ExternalSessionAttachMode;
 
 use crate::web_server::AppState;
 
@@ -237,54 +236,6 @@ fn profile_provider_label(profile_id: Option<&str>) -> (Option<String>, Option<S
         .map(|provider| provider.label.clone())
         .unwrap_or_else(|| provider_id.clone());
     (Some(provider_id), Some(provider_label))
-}
-
-pub async fn init_workspace_thread_handler(
-    State(state): State<AppState>,
-    Json(body): Json<crate::api_types::WorkspaceThreadInitRequest>,
-) -> Result<Json<crate::api_types::WorkspaceThreadInitResponse>, (StatusCode, String)> {
-    let agent_id = common::resources::resolve_agent_id(&body.agent_id)
-        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
-    let workspace = body
-        .workspace_path
-        .as_deref()
-        .map(std::path::PathBuf::from)
-        .map(common::workspace::normalize_workspace_cwd)
-        .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
-    let manager = state.channel_hub.workspace_thread_manager();
-    let trimmed_session_id = body
-        .session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|session_id| !session_id.is_empty())
-        .map(ToOwned::to_owned);
-    let runtime = if let Some(session_id) = trimmed_session_id {
-        manager
-            .attach_external_session_to_web_thread(
-                agent_id,
-                body.profile_id,
-                session_id,
-                workspace,
-                ExternalSessionAttachMode::ReuseOpenThread,
-            )
-            .await
-    } else {
-        manager
-            .create_web_thread_for_cwd_with_host(agent_id, body.profile_id, workspace)
-            .await
-    }
-    .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-    let runtime_state = runtime.state().await;
-    let thread_id = runtime_state.thread_id.to_string();
-    let chat_id = common::workspace::manager::web_chat_id_for_thread(&runtime_state.thread_id);
-    Ok(Json(crate::api_types::WorkspaceThreadInitResponse {
-        thread_id,
-        chat_id,
-        agent_id: runtime_state.host_binding.agent_id,
-        profile_id: runtime_state.host_binding.profile_id,
-        session_id: runtime_state.session_id,
-        workspace: runtime_state.workspace.to_string_lossy().to_string(),
-    }))
 }
 
 #[derive(serde::Deserialize)]
