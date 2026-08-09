@@ -3,6 +3,8 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use crate::workspace::threads::WorkspaceThreadId;
+
 /// What the preview serves.
 #[derive(Debug, Clone)]
 pub enum PreviewTarget {
@@ -50,6 +52,14 @@ pub enum ShareCodeError {
     NotFound,
     Invalid,
     RateLimited { retry_after_secs: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewConversationBindError {
+    NotFound,
+    Conflict {
+        existing_thread_id: WorkspaceThreadId,
+    },
 }
 
 /// Serializable snapshot of a session for API responses.

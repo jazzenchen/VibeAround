@@ -96,6 +96,41 @@ fn lookups_preserve_owner_and_share_boundaries() {
 }
 
 #[test]
+fn owner_conversation_binding_is_idempotent_and_cannot_be_retargeted() {
+    let dir = std::env::temp_dir().join(format!(
+        "va-preview-test-conversation-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("review.md");
+    std::fs::write(&file, "review").unwrap();
+    let (slug, share) = ensure_file(file, dir, "review".into());
+    let child_id = crate::workspace::threads::WorkspaceThreadId::from("wt_child");
+
+    assert_eq!(owner_conversation_thread_id(&slug), None);
+    assert_eq!(bind_owner_conversation(&slug, child_id.clone()), Ok(()));
+    assert_eq!(bind_owner_conversation(&slug, child_id.clone()), Ok(()));
+    assert_eq!(owner_conversation_thread_id(&slug), Some(child_id));
+    assert_eq!(
+        bind_owner_conversation(
+            &slug,
+            crate::workspace::threads::WorkspaceThreadId::from("wt_other")
+        ),
+        Err(PreviewConversationBindError::Conflict {
+            existing_thread_id: crate::workspace::threads::WorkspaceThreadId::from("wt_child")
+        })
+    );
+    assert_eq!(owner_conversation_thread_id(&share.id), None);
+    assert_eq!(
+        bind_owner_conversation(
+            &share.id,
+            crate::workspace::threads::WorkspaceThreadId::from("wt_share")
+        ),
+        Err(PreviewConversationBindError::NotFound)
+    );
+}
+
+#[test]
 fn access_code_is_reusable_and_bound_to_its_share_link() {
     let dir = std::env::temp_dir().join(format!(
         "va-preview-test-access-code-{}",

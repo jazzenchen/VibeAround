@@ -41,7 +41,8 @@ use std::time::Instant;
 
 pub use store::{SHARE_CODE_ATTEMPT_BURST, SHARE_CODE_LENGTH, SHARE_TTL_SECS};
 pub use types::{
-    PreviewEntry, PreviewKind, PreviewShare, PreviewSnapshot, PreviewTarget, ShareCodeError,
+    PreviewConversationBindError, PreviewEntry, PreviewKind, PreviewShare, PreviewSnapshot,
+    PreviewTarget, ShareCodeError,
 };
 
 use store::{
@@ -104,6 +105,7 @@ fn ensure_session(
             target: target.clone(),
             slug: slug.clone(),
             share: None,
+            conversation_thread_id: None,
             owner_session: owner_session.clone(),
             created_at: now,
         });
@@ -162,6 +164,41 @@ pub fn lookup_owner(slug: &str) -> Option<PreviewEntry> {
         .values()
         .find(|s| s.slug == slug)
         .map(|s| entry_from(s, None))
+}
+
+/// Bind an owner Preview to one conversation task. Repeating the same bind is
+/// idempotent; rebinding an existing Preview to a different task is rejected.
+pub fn bind_owner_conversation(
+    slug: &str,
+    thread_id: crate::workspace::threads::WorkspaceThreadId,
+) -> Result<(), PreviewConversationBindError> {
+    let mut sessions = SESSIONS.lock();
+    let session = sessions
+        .values_mut()
+        .find(|session| session.slug == slug)
+        .ok_or(PreviewConversationBindError::NotFound)?;
+    match session.conversation_thread_id.as_ref() {
+        Some(existing) if existing != &thread_id => Err(PreviewConversationBindError::Conflict {
+            existing_thread_id: existing.clone(),
+        }),
+        Some(_) => Ok(()),
+        None => {
+            session.conversation_thread_id = Some(thread_id);
+            Ok(())
+        }
+    }
+}
+
+/// Return the conversation task bound to this owner slug. Public share IDs do
+/// not resolve through this owner-only lookup.
+pub fn owner_conversation_thread_id(
+    slug: &str,
+) -> Option<crate::workspace::threads::WorkspaceThreadId> {
+    SESSIONS
+        .lock()
+        .values()
+        .find(|session| session.slug == slug)
+        .and_then(|session| session.conversation_thread_id.clone())
 }
 
 /// Look up an active File share by its opaque public link ID.
