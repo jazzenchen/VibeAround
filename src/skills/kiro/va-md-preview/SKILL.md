@@ -26,7 +26,11 @@ The VibeAround MCP server must be connected (server name: `vibearound`). If not 
 
 ## Steps
 
-### 1. Call md_preview
+### 1. Resolve the conversation identity
+
+Read `$VIBEAROUND_THREAD_ID` when present. Also use the `va-session` skill to resolve the current session ID. Prefer `thread_id`; otherwise pass both `agent_kind` and `session_id` so the Preview child is linked to the current task.
+
+### 2. Call md_preview
 
 ```
 Tool: md_preview
@@ -34,12 +38,15 @@ Server: vibearound
 Arguments:
   file: "<path to the markdown file>"  (absolute or relative to cwd)
   cwd: "<current working directory>"
+  thread_id: "<value of $VIBEAROUND_THREAD_ID if present>"
+  agent_kind: "kiro"  (pass with session_id when thread_id is unavailable)
+  session_id: "<session_id from va-session>"  (pass if available)
   title: "<document title>"  (optional, defaults to filename)
 ```
 
 If the tool says the workspace is not registered, call `register_workspace` with the `cwd` first, then retry.
 
-### 2. Relay the returned access details
+### 3. Relay the returned access details
 
 Always show the Owner URL. When the tool also returns a Share URL, present that URL together with the six-digit access code and exact remaining lifetime. State that the code can be reused by multiple viewers until the Share URL and code expire together. If public sharing is unavailable, show only the Owner URL and that message; do not invent a localhost Share URL.
 

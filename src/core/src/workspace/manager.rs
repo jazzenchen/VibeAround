@@ -33,8 +33,12 @@ mod sessions;
 #[path = "manager_routes.rs"]
 mod routes;
 
+#[path = "manager_previews.rs"]
+mod previews;
+
 const MAX_WARM_THREADS: usize = 4;
 const WARM_THREAD_MIN_IDLE: Duration = Duration::from_secs(10 * 60);
+const PREVIEW_WEB_CHAT_ID_PREFIX: &str = "ws_preview_";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExternalSessionAttachMode {
@@ -57,6 +61,20 @@ pub fn web_chat_id_for_thread(thread_id: &WorkspaceThreadId) -> String {
 
 pub fn web_route_for_thread(thread_id: &WorkspaceThreadId) -> RouteKey {
     RouteKey::new("web", web_chat_id_for_thread(thread_id))
+}
+
+pub fn preview_web_route_for_slug(slug: &str) -> RouteKey {
+    RouteKey::new("web", format!("{PREVIEW_WEB_CHAT_ID_PREFIX}{slug}"))
+}
+
+pub fn preview_slug_from_web_route(route: &RouteKey) -> Option<&str> {
+    if route.channel_kind != "web" || route.channel_instance_id != "web" {
+        return None;
+    }
+    route
+        .chat_id
+        .strip_prefix(PREVIEW_WEB_CHAT_ID_PREFIX)
+        .filter(|slug| !slug.is_empty())
 }
 
 pub struct WorkspaceThreadManager {
@@ -102,6 +120,10 @@ impl WorkspaceThreadManager {
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
             return Ok(runtime);
+        }
+
+        if let Some(slug) = preview_slug_from_web_route(route) {
+            return self.resolve_preview_route_runtime(route, slug).await;
         }
 
         let (host_binding, workspace_path) = default_route_binding_and_workspace(route);
@@ -192,6 +214,10 @@ impl WorkspaceThreadManager {
         let current = match self.active_runtime_for_route(route).await? {
             Some(runtime) => {
                 let state = runtime.state().await;
+                let thread = self
+                    .thread(&state.thread_id)
+                    .await?
+                    .ok_or_else(|| anyhow!("thread {} not found", state.thread_id))?;
                 let next_host_binding = host_binding_for_explicit_new(route, state.host_binding);
                 runtime
                     .close(reason)
@@ -199,14 +225,29 @@ impl WorkspaceThreadManager {
                     .map_err(|error| anyhow!(error.to_string()))?;
                 self.runtimes.remove(state.thread_id.clone());
                 self.detach_route(route).await?;
-                Some((state.workspace_id, next_host_binding))
+                Some((thread, next_host_binding))
             }
             None => None,
         };
 
-        if let Some((workspace_id, host_binding)) = current {
-            self.create_thread_for_route_with_host(route, workspace_id, host_binding)
+        if let Some((thread, host_binding)) = current {
+            if let (Some(parent_thread_id), Some(preview_slug)) =
+                (thread.parent_thread_id, thread.preview_slug)
+            {
+                return self
+                    .create_preview_child_for_route(
+                        route,
+                        thread.workspace_id,
+                        parent_thread_id,
+                        preview_slug,
+                        host_binding,
+                    )
+                    .await;
+            }
+            self.create_thread_for_route_with_host(route, thread.workspace_id, host_binding)
                 .await
+        } else if preview_slug_from_web_route(route).is_some() {
+            self.resolve_route_runtime(route).await
         } else {
             self.create_thread_in_current_workspace(route).await
         }
@@ -234,8 +275,9 @@ impl WorkspaceThreadManager {
             .close(reason)
             .await
             .map_err(|error| anyhow!(error.to_string()))?;
-        self.runtimes.remove(thread_id);
-        self.detach_route(route).await
+        self.runtimes.remove(thread_id.clone());
+        self.detach_route(route).await?;
+        Ok(())
     }
 
     pub async fn detach_route(&self, route: &RouteKey) -> anyhow::Result<()> {
@@ -389,13 +431,23 @@ impl WorkspaceThreadManager {
         if self.thread(&thread.id).await?.is_some() {
             return Ok(());
         }
-        self.thread_store
-            .append(&ThreadEvent::created(
+        let event = match (&thread.parent_thread_id, &thread.preview_slug) {
+            (Some(parent_thread_id), Some(preview_slug)) => ThreadEvent::preview_created(
+                thread.id.clone(),
+                thread.workspace_id.clone(),
+                parent_thread_id.clone(),
+                preview_slug.clone(),
+                thread.host_binding.clone(),
+            ),
+            _ => ThreadEvent::created(
                 thread.id.clone(),
                 thread.workspace_id.clone(),
                 thread.parent_thread_id.clone(),
                 thread.host_binding.clone(),
-            ))
+            ),
+        };
+        self.thread_store
+            .append(&event)
             .await
             .context("append workspace thread")?;
         self.notify_change();

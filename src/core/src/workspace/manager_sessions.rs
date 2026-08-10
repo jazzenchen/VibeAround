@@ -62,26 +62,6 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(thread).await
     }
 
-    pub async fn create_child_web_thread(
-        &self,
-        parent_thread_id: &WorkspaceThreadId,
-    ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        let parent = self
-            .thread(parent_thread_id)
-            .await?
-            .ok_or_else(|| anyhow!("thread {} not found", parent_thread_id))?;
-        let child = self.new_thread_record_with_host(
-            parent.workspace_id.clone(),
-            Some(parent.id.clone()),
-            parent.host_binding.clone(),
-        );
-        let route = web_route_for_thread(&child.id);
-        self.ensure_thread_persisted(&child).await?;
-        self.attach_route(route, child.workspace_id.clone(), child.id.clone())
-            .await?;
-        self.runtime_from_thread(child).await
-    }
-
     pub async fn switch_workspace(
         &self,
         route: &RouteKey,

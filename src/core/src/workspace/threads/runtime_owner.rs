@@ -44,6 +44,7 @@ pub(super) struct CloseCommand {
 pub(super) struct SwitchProfileCommand {
     pub(super) runtime: Arc<ThreadRuntime>,
     pub(super) host_binding: HostBinding,
+    pub(super) preserve_session: bool,
     pub(super) reply: oneshot::Sender<acp::Result<()>>,
 }
 
@@ -173,9 +174,12 @@ impl ThreadOwner {
                     let SwitchProfileCommand {
                         runtime,
                         host_binding,
+                        preserve_session,
                         reply,
                     } = *command;
-                    let result = self.switch_profile(&runtime, host_binding).await;
+                    let result = self
+                        .switch_host(&runtime, host_binding, preserve_session)
+                        .await;
                     let _ = reply.send(result);
                 }
                 ThreadOwnerCommand::PromptFinished { result, reply } => {
@@ -490,12 +494,13 @@ impl ThreadOwner {
         true
     }
 
-    async fn switch_profile(
+    async fn switch_host(
         &mut self,
         runtime: &ThreadRuntime,
         host_binding: HostBinding,
+        preserve_session: bool,
     ) -> acp::Result<()> {
-        if self.thread.host_binding.agent_id != host_binding.agent_id {
+        if preserve_session && self.thread.host_binding.agent_id != host_binding.agent_id {
             return Err(acp::Error::new(
                 -32602,
                 "profile switch cannot change agent",
@@ -505,7 +510,7 @@ impl ThreadOwner {
             return Ok(());
         }
 
-        let preserved_session_id = self.session_id.clone();
+        let preserved_session_id = preserve_session.then(|| self.session_id.clone()).flatten();
         if let Some(host) = self.host.take() {
             host.shutdown().await;
         }
@@ -527,6 +532,8 @@ impl ThreadOwner {
                 self.persist_thread_event(runtime, &event).await?;
             }
             self.session_id = Some(session_id);
+        } else {
+            self.session_id = None;
         }
         self.publish_runtime_state();
         runtime.notify_change();

@@ -146,6 +146,7 @@ mod tests {
 
         assert_eq!(thread.workspace_id, workspace_id);
         assert_eq!(thread.parent_thread_id, None);
+        assert_eq!(thread.preview_slug, None);
         assert_eq!(thread.host_binding, claude);
         assert_eq!(thread.status, ThreadStatus::Closed);
         assert_eq!(thread.first_user_prompt.as_deref(), Some("build this"));
@@ -340,6 +341,30 @@ mod tests {
                 .as_ref(),
             Some(&parent_thread_id)
         );
+    }
+
+    #[test]
+    fn preview_created_event_round_trips_slug_and_parent() {
+        let parent_thread_id = WorkspaceThreadId::from("wt_parent");
+        let event = ThreadEvent::preview_created(
+            "wt_preview",
+            "ws_a",
+            parent_thread_id.clone(),
+            "workspace-readme-md",
+            HostBinding::new("codex", None),
+        );
+
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["parent_thread_id"], "wt_parent");
+        assert_eq!(json["preview_slug"], "workspace-readme-md");
+
+        let decoded: ThreadEvent = serde_json::from_value(json).unwrap();
+        let projection = ThreadProjection::from_events(&[decoded]).unwrap();
+        let thread = projection
+            .get(&WorkspaceThreadId::from("wt_preview"))
+            .unwrap();
+        assert_eq!(thread.parent_thread_id.as_ref(), Some(&parent_thread_id));
+        assert_eq!(thread.preview_slug.as_deref(), Some("workspace-readme-md"));
     }
 
     #[test]

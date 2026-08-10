@@ -390,6 +390,26 @@ impl ThreadRuntime {
                 SwitchProfileCommand {
                     runtime: Arc::clone(self),
                     host_binding,
+                    preserve_session: true,
+                    reply,
+                },
+            )))
+            .map_err(|_| runtime_stopped_error())?;
+        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
+    }
+
+    pub async fn switch_host_replacing_session(
+        self: &Arc<Self>,
+        host_binding: HostBinding,
+    ) -> acp::Result<()> {
+        self.mark_activity();
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::SwitchProfile(Box::new(
+                SwitchProfileCommand {
+                    runtime: Arc::clone(self),
+                    host_binding,
+                    preserve_session: false,
                     reply,
                 },
             )))

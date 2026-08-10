@@ -184,80 +184,164 @@ async fn explicit_new_preserves_web_selected_host() {
     assert_eq!(state.host_binding, selected_host);
 }
 
-#[tokio::test]
-async fn child_web_thread_is_fresh_and_keeps_parent_unchanged() {
-    let (workspaces, threads, attachments) = temp_paths();
-    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-    let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+async fn seed_preview_child(
+    manager: &WorkspaceThreadManager,
+    label: &str,
+) -> (String, WorkspaceThreadId, WorkspaceThreadId, RouteKey) {
+    let root = std::env::temp_dir().join(format!(
+        "vibearound-preview-child-{label}-{}",
+        Uuid::new_v4()
+    ));
     std::fs::create_dir_all(&root).unwrap();
-    let parent_runtime = manager
-        .create_web_thread_for_cwd_with_host("codex".to_string(), Some("direct".to_string()), root)
+    let file = root.join("README.md");
+    std::fs::write(&file, "# Preview").unwrap();
+    let parent = manager
+        .create_web_thread_for_cwd_with_host(
+            "codex".to_string(),
+            Some("direct".to_string()),
+            root.clone(),
+        )
         .await
         .unwrap();
-    let parent_id = parent_runtime.state().await.thread_id;
-    let parent_before = manager.thread(&parent_id).await.unwrap().unwrap();
+    let parent_id = parent.state().await.thread_id;
+    let (slug, _) = crate::previews::ensure_file(file, root, label.to_string());
+    let child = manager
+        .ensure_preview_child_web_thread(&parent_id, &slug)
+        .await
+        .unwrap();
+    let child_id = child.state().await.thread_id;
+    let route = preview_web_route_for_slug(&slug);
+    (slug, parent_id, child_id, route)
+}
 
-    let child_runtime = manager.create_child_web_thread(&parent_id).await.unwrap();
-    let child_id = child_runtime.state().await.thread_id;
+#[tokio::test]
+async fn preview_child_reloads_from_history_for_the_same_slug() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(
+        workspaces.clone(),
+        threads.clone(),
+        attachments.clone(),
+    );
+    let (slug, parent_id, child_id, route) = seed_preview_child(&manager, "reload").await;
     let child = manager.thread(&child_id).await.unwrap().unwrap();
-
-    assert_ne!(child.id, parent_id);
     assert_eq!(child.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(child.preview_slug.as_deref(), Some(slug.as_str()));
     assert_eq!(
         manager
-            .parent_thread_id_for_thread(&child_id)
-            .await
-            .unwrap()
-            .as_ref(),
-        Some(&parent_id)
-    );
-    assert_eq!(child.workspace_id, parent_before.workspace_id);
-    assert_eq!(child.host_binding, parent_before.host_binding);
-    assert!(child.agent_sessions.is_empty());
-    assert_eq!(child.first_user_prompt, None);
-    assert_eq!(
-        manager.thread(&parent_id).await.unwrap().unwrap(),
-        parent_before
-    );
-    assert_eq!(
-        manager
-            .current_attachment(&web_route_for_thread(&parent_id))
-            .await
-            .unwrap()
-            .unwrap()
-            .thread_id,
-        parent_id
-    );
-    assert_eq!(
-        manager
-            .current_attachment(&web_route_for_thread(&child_id))
+            .current_attachment(&route)
             .await
             .unwrap()
             .unwrap()
             .thread_id,
         child_id
     );
+
+    let preview = crate::previews::lookup_owner(&slug).unwrap();
+    assert!(crate::previews::delete_session(&slug));
+    let (recreated_slug, _) =
+        crate::previews::ensure_file(preview.id, preview.workspace, preview.title);
+    assert_eq!(recreated_slug, slug);
+    assert_eq!(crate::previews::owner_conversation_thread_id(&slug), None);
+    drop(manager);
+    let reloaded = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let runtime = reloaded
+        .ensure_preview_child_web_thread(&parent_id, &slug)
+        .await
+        .unwrap();
+
+    assert_eq!(runtime.state().await.thread_id, child_id);
+    assert_eq!(
+        crate::previews::owner_conversation_thread_id(&slug),
+        Some(child_id)
+    );
 }
 
 #[tokio::test]
-async fn child_web_thread_rejects_an_unknown_parent_without_writing_events() {
+async fn preview_new_close_and_next_message_keep_parent_and_slug() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let (slug, parent_id, first_id, route) = seed_preview_child(&manager, "commands").await;
 
-    let error = manager
-        .create_child_web_thread(&WorkspaceThreadId::from("wt_missing"))
+    let second = manager
+        .close_route_and_create_thread(&route, Some("test /new".to_string()))
         .await
-        .err()
-        .expect("unknown parent should fail");
+        .unwrap();
+    let second_id = second.state().await.thread_id;
+    let second_thread = manager.thread(&second_id).await.unwrap().unwrap();
+    assert_ne!(second_id, first_id);
+    assert_eq!(second_thread.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(second_thread.preview_slug.as_deref(), Some(slug.as_str()));
+    assert_eq!(
+        crate::previews::owner_conversation_thread_id(&slug),
+        Some(second_id.clone())
+    );
 
-    assert!(error.to_string().contains("thread wt_missing not found"));
-    assert!(manager.thread_store.read_events().await.unwrap().is_empty());
-    assert!(manager
-        .attachment_store
-        .read_events()
+    manager
+        .close_route(&route, Some("test /close".to_string()))
         .await
-        .unwrap()
-        .is_empty());
+        .unwrap();
+    assert_eq!(
+        crate::previews::owner_conversation_thread_id(&slug),
+        Some(second_id.clone())
+    );
+    assert!(manager.current_attachment(&route).await.unwrap().is_none());
+
+    let third = manager.resolve_route_runtime(&route).await.unwrap();
+    let third_id = third.state().await.thread_id;
+    let third_thread = manager.thread(&third_id).await.unwrap().unwrap();
+    assert_ne!(third_id, second_id);
+    assert_eq!(third_thread.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(third_thread.preview_slug.as_deref(), Some(slug.as_str()));
+    assert_eq!(
+        crate::previews::owner_conversation_thread_id(&slug),
+        Some(third_id)
+    );
+}
+
+#[tokio::test]
+async fn preview_host_switch_keeps_the_same_child_and_route() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(
+        workspaces.clone(),
+        threads.clone(),
+        attachments.clone(),
+    );
+    let (slug, parent_id, child_id, route) = seed_preview_child(&manager, "switch").await;
+    let runtime = manager.resolve_route_runtime(&route).await.unwrap();
+
+    runtime
+        .switch_host_replacing_session(HostBinding::new("claude", Some("direct".to_string())))
+        .await
+        .unwrap();
+
+    let state = runtime.state().await;
+    assert_eq!(state.thread_id, child_id);
+    assert_eq!(state.host_binding.agent_id, "claude");
+    let child = manager.thread(&child_id).await.unwrap().unwrap();
+    assert_eq!(child.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(child.preview_slug.as_deref(), Some(slug.as_str()));
+    assert_eq!(
+        manager
+            .current_attachment(&route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        child_id
+    );
+    assert_eq!(
+        crate::previews::owner_conversation_thread_id(&slug),
+        Some(child_id.clone())
+    );
+
+    drop(runtime);
+    drop(manager);
+    let reloaded = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let reloaded_runtime = reloaded.resolve_route_runtime(&route).await.unwrap();
+    let reloaded_state = reloaded_runtime.state().await;
+    assert_eq!(reloaded_state.thread_id, child_id);
+    assert_eq!(reloaded_state.host_binding.agent_id, "claude");
+    assert_eq!(reloaded_state.session_id, None);
 }
 
 #[tokio::test]

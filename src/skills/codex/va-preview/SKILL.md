@@ -28,9 +28,9 @@ The VibeAround desktop app and MCP server must be running.
 - Wait until the server reports that it is listening
 - Keep the server on a loopback interface when possible
 
-### 2. Resolve the session ID
+### 2. Resolve the conversation identity
 
-Use the `va-session` skill to resolve the current session ID so VibeAround can clean up the dev server with the session.
+Read `$VIBEAROUND_THREAD_ID` when present. Also use the `va-session` skill to resolve the current session ID. Prefer `thread_id`; otherwise pass both `agent_kind` and `session_id` so VibeAround can link the Preview child and clean up the dev server.
 
 ### 3. Call preview
 
@@ -40,6 +40,8 @@ Server: vibearound
 Arguments:
   port: <the local server port>
   cwd: "<current working directory>"
+  thread_id: "<value of $VIBEAROUND_THREAD_ID if present>"
+  agent_kind: "codex"  (pass with session_id when thread_id is unavailable)
   session_id: "<session_id from va-session>"  (pass if available)
   title: "<short description>"  (optional)
 ```

@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use uuid::Uuid;
 
 use common::routing::RouteKey;
-use common::workspace::manager::web_route_for_thread;
+use common::workspace::manager::preview_web_route_for_slug;
 
 use crate::api_types::ChatEvent;
 use crate::web_server::ws_chat::{
@@ -58,11 +58,11 @@ fn resolve_owner_chat_route(
     if !preview_target_available(req, &entry) {
         return Err(super::server_preview_local_only());
     }
-    let thread_id = common::previews::owner_conversation_thread_id(slug).ok_or((
+    common::previews::owner_conversation_thread_id(slug).ok_or((
         StatusCode::CONFLICT,
         "Preview conversation is unavailable. Recreate this Preview from the current task.",
     ))?;
-    Ok(web_route_for_thread(&thread_id))
+    Ok(preview_web_route_for_slug(slug))
 }
 
 async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: RouteKey) {

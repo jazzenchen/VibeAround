@@ -189,6 +189,21 @@ pub fn bind_owner_conversation(
     }
 }
 
+/// Replace the latest conversation for an existing owner Preview. A closed
+/// child remains here until the next message creates its successor.
+pub fn replace_owner_conversation(
+    slug: &str,
+    thread_id: crate::workspace::threads::WorkspaceThreadId,
+) -> Result<(), PreviewConversationBindError> {
+    let mut sessions = SESSIONS.lock();
+    let session = sessions
+        .values_mut()
+        .find(|session| session.slug == slug)
+        .ok_or(PreviewConversationBindError::NotFound)?;
+    session.conversation_thread_id = Some(thread_id);
+    Ok(())
+}
+
 /// Return the conversation task bound to this owner slug. Public share IDs do
 /// not resolve through this owner-only lookup.
 pub fn owner_conversation_thread_id(

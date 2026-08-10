@@ -131,6 +131,24 @@ fn owner_conversation_binding_is_idempotent_and_cannot_be_retargeted() {
 }
 
 #[test]
+fn owner_conversation_lifecycle_replaces_the_latest_child() {
+    let dir = std::env::temp_dir().join(format!(
+        "va-preview-test-conversation-lifecycle-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("review.md");
+    std::fs::write(&file, "review").unwrap();
+    let (slug, _) = ensure_file(file, dir, "review".into());
+    let first = crate::workspace::threads::WorkspaceThreadId::from("wt_first");
+    let second = crate::workspace::threads::WorkspaceThreadId::from("wt_second");
+
+    bind_owner_conversation(&slug, first.clone()).unwrap();
+    replace_owner_conversation(&slug, second.clone()).unwrap();
+    assert_eq!(owner_conversation_thread_id(&slug), Some(second));
+}
+
+#[test]
 fn access_code_is_reusable_and_bound_to_its_share_link() {
     let dir = std::env::temp_dir().join(format!(
         "va-preview-test-access-code-{}",

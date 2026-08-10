@@ -85,6 +85,16 @@ async fn handle_command(
     command: ThreadCommand,
 ) -> acp::Result<acp::PromptResponse> {
     let route = &target.route;
+    if crate::workspace::manager::preview_slug_from_web_route(route).is_some()
+        && preview_command_changes_context(&command)
+    {
+        send_system_text_to_target(
+            plugin_host,
+            target,
+            "Preview conversations stay in their workspace and cannot switch sessions.",
+        );
+        return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+    }
     match command {
         ThreadCommand::New => {
             let runtime = workspace_threads
@@ -320,10 +330,20 @@ async fn switch_host(
 ) -> acp::Result<()> {
     let route = &channel_target.route;
     let host_binding = resolve_host_binding(agent, profile.as_deref()).map_err(invalid_params)?;
-    let active_runtime = workspace_threads
-        .active_route_runtime(route)
-        .await
-        .map_err(internal_error)?;
+    let preview_route = crate::workspace::manager::preview_slug_from_web_route(route).is_some();
+    let active_runtime = if preview_route {
+        Some(
+            workspace_threads
+                .resolve_route_runtime(route)
+                .await
+                .map_err(internal_error)?,
+        )
+    } else {
+        workspace_threads
+            .active_route_runtime(route)
+            .await
+            .map_err(internal_error)?
+    };
     if let Some(runtime) = active_runtime {
         if runtime.state().await.host_binding.agent_id == host_binding.agent_id {
             runtime
@@ -349,6 +369,33 @@ async fn switch_host(
                         .profile_id
                         .as_deref()
                         .unwrap_or(DIRECT_PROFILE_ID)
+                ),
+            );
+            return Ok(());
+        }
+
+        if preview_route {
+            runtime
+                .switch_host_replacing_session(host_binding.clone())
+                .await?;
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                channel_target,
+                true,
+            )
+            .await?
+            {
+                return Ok(());
+            }
+            send_system_text_to_target(
+                plugin_host,
+                channel_target,
+                &format!(
+                    "Switched agent to {} in thread {}.",
+                    host_binding.agent_id,
+                    runtime.state().await.thread_id
                 ),
             );
             return Ok(());
@@ -718,6 +765,18 @@ enum ThreadCommand {
     AgentPassThrough(String),
     Help,
     Unknown(String),
+}
+
+fn preview_command_changes_context(command: &ThreadCommand) -> bool {
+    matches!(
+        command,
+        ThreadCommand::Pickup(_)
+            | ThreadCommand::SwitchWorkspace(_)
+            | ThreadCommand::Resource {
+                kind: ResourceKind::Workspace | ResourceKind::Session,
+                action: ResourceAction::Switch(_),
+            }
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1260,5 +1319,27 @@ mod tests {
         assert!(commands_enabled_for_route(&RouteKey::new(
             "feishu", "chat-a"
         )));
+    }
+
+    #[test]
+    fn preview_rejects_only_commands_that_replace_its_workspace_or_session() {
+        assert!(preview_command_changes_context(&ThreadCommand::Pickup(
+            "ABCD".to_string()
+        )));
+        assert!(preview_command_changes_context(
+            &ThreadCommand::SwitchWorkspace("general".to_string())
+        ));
+        assert!(preview_command_changes_context(&ThreadCommand::Resource {
+            kind: ResourceKind::Session,
+            action: ResourceAction::Switch("session-a".to_string()),
+        }));
+        assert!(!preview_command_changes_context(&ThreadCommand::New));
+        assert!(!preview_command_changes_context(&ThreadCommand::Close));
+        assert!(!preview_command_changes_context(
+            &ThreadCommand::SwitchHost {
+                agent: "claude".to_string(),
+                profile: None,
+            }
+        ));
     }
 }

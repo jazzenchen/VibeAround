@@ -180,7 +180,7 @@
   },
   {
     "name": "preview",
-    "description": "Start a local-only live preview for a running server. Returns the local owner URL. Pass session_id (use /va-session skill) for proper lifecycle management.",
+    "description": "Start a local-only live preview for a running server. Returns the local owner URL. Pass thread_id, or agent_kind with session_id (use /va-session skill), to link the owner review child to the current task.",
     "inputSchema": {
       "type": "object",
       "properties": {

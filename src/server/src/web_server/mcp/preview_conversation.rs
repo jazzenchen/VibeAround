@@ -96,44 +96,15 @@ pub(super) async fn ensure_preview_child_thread(
     parent_thread_id: Option<common::workspace::threads::WorkspaceThreadId>,
     state: &AppState,
 ) -> anyhow::Result<()> {
-    let manager = state.channel_hub.workspace_thread_manager();
-    if let Some(existing_child_id) = common::previews::owner_conversation_thread_id(owner_slug) {
-        let existing_parent_id = manager
-            .parent_thread_id_for_thread(&existing_child_id)
-            .await?;
-        return match parent_thread_id {
-            None => Ok(()),
-            Some(parent_thread_id) if existing_parent_id.as_ref() == Some(&parent_thread_id) => {
-                Ok(())
-            }
-            Some(parent_thread_id) => Err(anyhow!(
-                "Preview is already linked to parent task {}; delete it before linking parent task {}",
-                existing_parent_id
-                    .map(|thread_id| thread_id.to_string())
-                    .unwrap_or_else(|| "<none>".to_string()),
-                parent_thread_id
-            )),
-        };
-    }
-
     let Some(parent_thread_id) = parent_thread_id else {
         return Ok(());
     };
-    let child_runtime = manager.create_child_web_thread(&parent_thread_id).await?;
-    let child_thread_id = child_runtime.state().await.thread_id;
-    common::previews::bind_owner_conversation(owner_slug, child_thread_id).map_err(|error| {
-        match error {
-            common::previews::PreviewConversationBindError::NotFound => {
-                anyhow!("Preview {} no longer exists", owner_slug)
-            }
-            common::previews::PreviewConversationBindError::Conflict { existing_thread_id } => {
-                anyhow!(
-                    "Preview was concurrently linked to child task {}",
-                    existing_thread_id
-                )
-            }
-        }
-    })
+    state
+        .channel_hub
+        .workspace_thread_manager()
+        .ensure_preview_child_web_thread(&parent_thread_id, owner_slug)
+        .await
+        .map(|_| ())
 }
 
 #[cfg(test)]

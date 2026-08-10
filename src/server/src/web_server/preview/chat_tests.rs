@@ -48,7 +48,7 @@ fn owner_chat_resolves_only_the_bound_child_route() {
 
     let route =
         resolve_owner_chat_route(&slug, &local_request(), 12358, &[]).expect("owner chat route");
-    assert_eq!(route, web_route_for_thread(&child));
+    assert_eq!(route, preview_web_route_for_slug(&slug));
 
     let share_error = resolve_owner_chat_route(&share.id, &local_request(), 12358, &[])
         .expect_err("share IDs must not resolve an owner chat route");
