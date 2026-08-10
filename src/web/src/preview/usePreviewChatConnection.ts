@@ -16,13 +16,41 @@ import {
 } from "./previewChatMessages";
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000];
+const PREVIEW_THREAD_STORAGE_PREFIX = "vibearound.preview.review-thread.";
 
-function previewSocketUrl(slug: string) {
+function readPreviewThreadId(slug: string): string | null {
+  try {
+    const threadId = window.localStorage.getItem(
+      `${PREVIEW_THREAD_STORAGE_PREFIX}${slug}`,
+    );
+    return threadId?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function writePreviewThreadId(slug: string, threadId: string) {
+  try {
+    window.localStorage.setItem(
+      `${PREVIEW_THREAD_STORAGE_PREFIX}${slug}`,
+      threadId,
+    );
+  } catch {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+export function previewSocketUrl(
+  slug: string,
+  threadId: string | null,
+  pageHref = window.location.href,
+) {
   const url = new URL(
     `/va/preview/u/${encodeURIComponent(slug)}/chat`,
-    window.location.href,
+    pageHref,
   );
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  if (threadId) url.searchParams.set("thread_id", threadId);
   return url.href;
 }
 
@@ -33,6 +61,20 @@ export function isPreviewRefreshEvent(value: unknown): boolean {
     "kind" in value &&
     value.kind === "preview_refresh"
   );
+}
+
+export function previewConversationThreadId(value: unknown): string | null {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("kind" in value) ||
+    value.kind !== "preview_conversation" ||
+    !("thread_id" in value) ||
+    typeof value.thread_id !== "string"
+  ) {
+    return null;
+  }
+  return value.thread_id.trim() || null;
 }
 
 export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
@@ -48,6 +90,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
   const reconnectAttemptRef = useRef(0);
   const turnActiveRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
+  const conversationThreadIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -101,6 +144,21 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
       }
       if (isPreviewRefreshEvent(payload)) {
         setRefreshRequestVersion((version) => version + 1);
+        return;
+      }
+      const conversationThreadId = previewConversationThreadId(payload);
+      if (conversationThreadId) {
+        const previousThreadId = conversationThreadIdRef.current;
+        conversationThreadIdRef.current = conversationThreadId;
+        writePreviewThreadId(slug, conversationThreadId);
+        if (previousThreadId && previousThreadId !== conversationThreadId) {
+          setMessages([]);
+          setPendingPermissions([]);
+          setLastTurnCompletedAt(undefined);
+          sessionIdRef.current = null;
+          turnActiveRef.current = false;
+          setStreaming(false);
+        }
         return;
       }
       let frame;
@@ -180,7 +238,9 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
 
       let socket: WebSocket;
       try {
-        socket = new WebSocket(previewSocketUrl(slug));
+        socket = new WebSocket(
+          previewSocketUrl(slug, conversationThreadIdRef.current),
+        );
       } catch (error) {
         console.warn("[Preview] failed to create chat websocket:", error);
         scheduleReconnect();
@@ -210,6 +270,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
     setLastTurnCompletedAt(undefined);
     setRefreshRequestVersion(0);
     reconnectAttemptRef.current = 0;
+    conversationThreadIdRef.current = readPreviewThreadId(slug);
     if (chatAvailable) connect();
     else {
       closeSocket();

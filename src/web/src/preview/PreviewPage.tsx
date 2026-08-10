@@ -86,13 +86,14 @@ function PreviewWorkspace({
     bootstrap.previews.find((preview) => preview.slug === selectedSlug) ??
     bootstrap.previews[0];
 
-  const refreshPreview = useCallback(() => {
-    setFrameRevision((revision) => revision + 1);
-    setLastRefreshedAt(Date.now());
-  }, []);
-
   const chat = usePreviewChatConnection(selected.slug, selected.chatAvailable);
   const review = usePreviewReviewBridge(frameRef, selected);
+
+  const refreshPreview = useCallback(() => {
+    review.prepareFrame();
+    setFrameRevision((revision) => revision + 1);
+    setLastRefreshedAt(Date.now());
+  }, [review.prepareFrame]);
 
   useEffect(() => {
     if (chat.refreshRequestVersion > 0) refreshPreview();
@@ -113,6 +114,7 @@ function PreviewWorkspace({
 
   const selectPreview = (slug: string) => {
     if (slug === selected.slug) return;
+    review.prepareFrame();
     setSelectedSlug(slug);
     setFrameRevision((revision) => revision + 1);
     setLastRefreshedAt(Date.now());

@@ -56,12 +56,24 @@ fn owner_chat_resolves_only_the_bound_child_route() {
 }
 
 #[test]
-fn owner_chat_requires_an_existing_conversation_binding() {
+fn owner_chat_auth_does_not_require_an_in_memory_conversation_binding() {
     let (slug, _) = preview_file("unbound");
 
-    let error = resolve_owner_chat_route(&slug, &local_request(), 12358, &[])
-        .expect_err("unbound Preview must not create a conversation implicitly");
-    assert_eq!(error.0, StatusCode::CONFLICT);
+    let route = resolve_owner_chat_route(&slug, &local_request(), 12358, &[])
+        .expect("conversation resolution recovers after owner authorization");
+    assert_eq!(route, preview_web_route_for_slug(&slug));
+}
+
+#[test]
+fn preview_conversation_frame_is_preview_only_and_contains_the_thread_id() {
+    let frame = preview_conversation_frame(&WorkspaceThreadId::from("wt_preview_restored"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&frame).unwrap(),
+        serde_json::json!({
+            "kind": "preview_conversation",
+            "thread_id": "wt_preview_restored",
+        })
+    );
 }
 
 #[test]

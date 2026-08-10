@@ -5,7 +5,11 @@ import {
   applyPreviewSessionNotification,
   previewSessionChanged,
 } from "../src/preview/previewChatMessages";
-import { isPreviewRefreshEvent } from "../src/preview/usePreviewChatConnection";
+import {
+  isPreviewRefreshEvent,
+  previewConversationThreadId,
+  previewSocketUrl,
+} from "../src/preview/usePreviewChatConnection";
 import {
   buildPreviewReviewPrompt,
   previewReviewDisplay,
@@ -111,4 +115,44 @@ test("Preview refresh is a local websocket frame outside the shared chat schema"
   expect(isPreviewRefreshEvent({ kind: "preview_refresh" })).toBe(true);
   expect(isPreviewRefreshEvent({ kind: "turn_status", active: false })).toBe(false);
   expect(isPreviewRefreshEvent("preview_refresh")).toBe(false);
+});
+
+test("Preview conversation accepts only a non-empty thread id", () => {
+  expect(
+    previewConversationThreadId({
+      kind: "preview_conversation",
+      thread_id: " wt_review ",
+    }),
+  ).toBe("wt_review");
+  expect(
+    previewConversationThreadId({
+      kind: "preview_conversation",
+      thread_id: "   ",
+    }),
+  ).toBeNull();
+  expect(
+    previewConversationThreadId({ kind: "preview_conversation" }),
+  ).toBeNull();
+  expect(
+    previewConversationThreadId({ kind: "session_ready", thread_id: "wt_other" }),
+  ).toBeNull();
+});
+
+test("Preview websocket carries the saved conversation thread as a hint", () => {
+  expect(
+    previewSocketUrl(
+      "readme cn",
+      "wt_review/1",
+      "https://va.example/va/preview/u/readme-cn",
+    ),
+  ).toBe(
+    "wss://va.example/va/preview/u/readme%20cn/chat?thread_id=wt_review%2F1",
+  );
+  expect(
+    previewSocketUrl(
+      "readme-cn",
+      null,
+      "http://127.0.0.1:12358/va/preview/u/readme-cn",
+    ),
+  ).toBe("ws://127.0.0.1:12358/va/preview/u/readme-cn/chat");
 });

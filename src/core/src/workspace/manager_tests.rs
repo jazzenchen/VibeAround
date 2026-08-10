@@ -290,6 +290,48 @@ async fn preview_child_reuses_global_slug_across_parents_and_reload() {
 }
 
 #[tokio::test]
+async fn preview_thread_hint_only_attaches_an_open_child_for_the_same_slug() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let (slug, _, child_id, route) = seed_preview_child(&manager, "hint-target").await;
+    let (_, _, other_child_id, _) = seed_preview_child(&manager, "hint-other").await;
+    manager.detach_route(&route).await.unwrap();
+
+    let restored = manager
+        .attach_preview_web_thread_hint(&slug, &child_id)
+        .await
+        .unwrap()
+        .expect("matching open Preview child");
+    assert_eq!(restored.state().await.thread_id, child_id);
+    assert_eq!(
+        manager
+            .current_attachment(&route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        child_id
+    );
+    manager.detach_route(&route).await.unwrap();
+
+    assert!(manager
+        .attach_preview_web_thread_hint(&slug, &other_child_id)
+        .await
+        .unwrap()
+        .is_none());
+
+    manager
+        .close_thread(&child_id, Some("closed for hint test".to_string()))
+        .await
+        .unwrap();
+    assert!(manager
+        .attach_preview_web_thread_hint(&slug, &child_id)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn concurrent_preview_ensure_creates_one_child_for_the_slug() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);

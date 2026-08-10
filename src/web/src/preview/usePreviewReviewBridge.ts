@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type RefObject,
@@ -97,19 +98,24 @@ export function usePreviewReviewBridge(
     [post],
   );
 
-  const resetFrame = useCallback(() => {
-    channelIdRef.current = makeId("preview-channel");
+  const clearFrameState = useCallback(() => {
     readyRef.current = false;
     setCapabilities([]);
     setDrafts([]);
     setEditor(null);
     setElementModeState(false);
+  }, []);
+
+  const prepareFrame = useCallback(() => {
+    channelIdRef.current = makeId("preview-channel");
+    clearFrameState();
+  }, [clearFrameState]);
+
+  const handleFrameLoad = useCallback(() => {
     if (preview.chatAvailable) post("init");
   }, [post, preview.chatAvailable]);
 
-  useEffect(() => {
-    resetFrame();
-
+  useLayoutEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const frame = frameRef.current;
       const origin = frameOrigin();
@@ -127,6 +133,7 @@ export function usePreviewReviewBridge(
       }
 
       if (message.type === "hello") {
+        if (readyRef.current) prepareFrame();
         if (preview.chatAvailable) post("init");
         return;
       }
@@ -189,7 +196,7 @@ export function usePreviewReviewBridge(
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [frameOrigin, frameRef, post, preview.chatAvailable, resetFrame]);
+  }, [frameOrigin, frameRef, post, prepareFrame, preview.chatAvailable]);
 
   const closeEditor = useCallback(
     (cancelNewSelection: boolean) => {
@@ -271,7 +278,8 @@ export function usePreviewReviewBridge(
     editor,
     capabilities,
     elementMode,
-    handleFrameLoad: resetFrame,
+    prepareFrame,
+    handleFrameLoad,
     closeEditor,
     saveEditor,
     removeDraft,
