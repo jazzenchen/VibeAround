@@ -86,15 +86,13 @@ pub(super) fn render_owner_shell(
     <div class="review-chips" id="preview-review-chips" aria-label="Draft review comments" hidden></div>
     <p class="review-feedback" id="preview-review-feedback" role="status" hidden></p>
     <label class="sr-only" for="preview-chat-input">Message the AI task</label>
-    <textarea id="preview-chat-input" rows="3" maxlength="20000" placeholder="Ask for a change…"></textarea>
+    <textarea id="preview-chat-input" rows="1" maxlength="20000" placeholder="Ask for a change…"></textarea>
     <div class="chat-actions">
       <button type="button" class="review-tool" id="preview-select-element" hidden>Select element</button>
       <span class="chat-actions-spacer"></span>
-      <button type="button" class="round-button" id="preview-chat-stop" aria-label="Stop" title="Stop" hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"></rect></svg>
-      </button>
-      <button type="submit" class="primary-button round-button" id="preview-chat-send" aria-label="Send" title="Send">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg>
+      <button type="submit" class="primary-button round-button" id="preview-chat-action" aria-label="Send" title="Send">
+        <svg id="preview-chat-send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg>
+        <svg id="preview-chat-stop-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="7" y="7" width="10" height="10" rx="1"></rect></svg>
       </button>
     </div>
   </form>

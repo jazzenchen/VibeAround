@@ -83,6 +83,13 @@ export function ChatMessageList({
   workspacePath,
 }: ChatMessageListProps) {
   const { t } = useI18n();
+  const lastMessage = messages[messages.length - 1];
+  const showWorkingIndicator = Boolean(
+    streaming &&
+      (!lastMessage ||
+        lastMessage.role !== "assistant" ||
+        !messageVisible(lastMessage, displaySettings)),
+  );
 
   return (
     <Conversation
@@ -102,7 +109,7 @@ export function ChatMessageList({
               </span>
             </div>
           )}
-          {messages.length === 0 && !replayLoading ? (
+          {messages.length === 0 && !replayLoading && !streaming ? (
             <ConversationEmptyState
               title={t("Chat with {{agent}}", { agent: agentLabel })}
               description={t("Send a message to start.")}
@@ -116,14 +123,7 @@ export function ChatMessageList({
           ) : (
             messages.map((msg, i) => {
               const isLastStreamingMessage = streaming && i === messages.length - 1;
-              const showWorkingIndicator =
-                msg.role === "assistant" &&
-                isLastStreamingMessage &&
-                !msg.content &&
-                !msg.progress &&
-                !msg.activities?.length &&
-                !msg.parts?.length;
-              if (!messageVisible(msg, displaySettings) && !showWorkingIndicator) {
+              if (!messageVisible(msg, displaySettings)) {
                 return null;
               }
               return (
@@ -137,11 +137,6 @@ export function ChatMessageList({
                           : "w-full px-0 py-1 text-foreground"
                     }
                   >
-                    {showWorkingIndicator && (
-                      <span className="font-mono text-xs text-primary/80 animate-pulse">
-                        {t("AI is working…")}
-                      </span>
-                    )}
                     <MessageRenderErrorBoundary
                       resetKey={messageRenderResetKey(msg, i)}
                     >
@@ -156,6 +151,15 @@ export function ChatMessageList({
                 </Message>
               );
             })
+          )}
+          {showWorkingIndicator && (
+            <Message from="assistant">
+              <MessageContent className="w-full px-0 py-1 text-foreground">
+                <span className="animate-pulse font-mono text-xs text-primary/80">
+                  {t("AI is working…")}
+                </span>
+              </MessageContent>
+            </Message>
           )}
         </div>
       </ConversationContent>

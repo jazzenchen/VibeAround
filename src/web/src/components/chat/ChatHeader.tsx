@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Loader2,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
@@ -9,9 +8,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { useI18n } from "@va/i18n";
-import type { ChatRuntimeStatus } from "@/lib/dashboard-types";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { shortSessionId } from "./chatSessionDisplay";
 import { SessionHostLogo } from "./SessionHostLogo";
 
@@ -26,11 +23,7 @@ interface ChatHeaderProps {
   headerSessionLabel: string | null;
   workspacePath?: string;
   sessionId?: string;
-  chatStatus: ChatRuntimeStatus;
-  statusLabel: string;
   connected: boolean;
-  streaming: boolean;
-  replayLoading: boolean;
   showSessionSidebar: boolean;
   onShowMobileSessions: () => void;
   onToggleSessionSidebar: () => void;
@@ -48,11 +41,7 @@ export function ChatHeader({
   headerSessionLabel,
   workspacePath,
   sessionId,
-  chatStatus,
-  statusLabel,
   connected,
-  streaming,
-  replayLoading,
   showSessionSidebar,
   onShowMobileSessions,
   onToggleSessionSidebar,
@@ -61,11 +50,12 @@ export function ChatHeader({
   const { t } = useI18n();
   const statusIcon = !connected ? (
     <WifiOff className="h-3.5 w-3.5" />
-  ) : streaming || replayLoading ? (
-    <Loader2 className="h-3.5 w-3.5 animate-spin" />
   ) : (
     <Wifi className="h-3.5 w-3.5" />
   );
+  const connectionLabel = connected
+    ? t("Local agent ready")
+    : t("Connecting to local agent");
 
   return (
     <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 bg-background/95 px-3 py-2">
@@ -135,20 +125,15 @@ export function ChatHeader({
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         <div
-          className={cn(
-            "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[10px]",
-            chatStatus === "attention"
-              ? "text-amber-400"
-              : chatStatus === "working"
-                ? "text-primary"
-                : connected
-                  ? "text-emerald-400/80"
-                  : "text-muted-foreground/60",
-          )}
-          title={statusLabel}
+          className={
+            connected
+              ? "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[10px] text-emerald-400/80"
+              : "flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[10px] text-muted-foreground/60"
+          }
+          title={connectionLabel}
         >
           {statusIcon}
-          <span className="hidden sm:inline">{statusLabel}</span>
+          <span className="hidden sm:inline">{connectionLabel}</span>
         </div>
         <Button
           type="button"

@@ -10,8 +10,9 @@
   var permissions = document.getElementById("preview-chat-permissions");
   var form = document.getElementById("preview-chat-form");
   var input = document.getElementById("preview-chat-input");
-  var send = document.getElementById("preview-chat-send");
-  var stop = document.getElementById("preview-chat-stop");
+  var action = document.getElementById("preview-chat-action");
+  var sendIcon = document.getElementById("preview-chat-send-icon");
+  var stopIcon = document.getElementById("preview-chat-stop-icon");
   var socket = null;
   var reconnectTimer = null;
   var reconnectAttempt = 0;
@@ -46,8 +47,20 @@
 
   function setActive(next) {
     active = next;
-    send.disabled = next || !socket || socket.readyState !== WebSocket.OPEN;
-    stop.hidden = !next;
+    action.type = next ? "button" : "submit";
+    action.disabled = !next && (!socket || socket.readyState !== WebSocket.OPEN);
+    action.classList.toggle("primary-button", !next);
+    action.setAttribute("aria-label", next ? "Stop" : "Send");
+    action.title = next ? "Stop" : "Send";
+    sendIcon.hidden = next;
+    stopIcon.hidden = !next;
+  }
+
+  function resizeInput() {
+    input.style.height = "auto";
+    var height = Math.max(72, Math.min(256, input.scrollHeight));
+    input.style.height = height + "px";
+    input.style.overflowY = input.scrollHeight > 256 ? "auto" : "hidden";
   }
 
   function clearConversation() {
@@ -99,16 +112,15 @@
 
   function handleFrame(frame) {
     if (!frame || typeof frame.kind !== "string") return;
-    if (frame.kind === "acp_notification") transcript.handleAcp(frame.payload, setStatus);
+    if (frame.kind === "acp_notification") transcript.handleAcp(frame.payload, active);
     else if (frame.kind === "system_text") transcript.append("system", frame.text);
     else if (frame.kind === "error") transcript.append("error", frame.error);
     else if (frame.kind === "permission_request") renderPermission(frame);
-    else if (frame.kind === "agent_ready") setStatus(frame.agent || "Connected");
-    else if (frame.kind === "session_ready") setStatus(active ? "Working…" : "Connected");
+    else if (frame.kind === "agent_ready" || frame.kind === "session_ready") setStatus("Connected");
     else if (frame.kind === "turn_status") {
       var wasActive = active;
       setActive(Boolean(frame.active));
-      setStatus(frame.active ? "Working…" : "Connected");
+      if (frame.active && !wasActive) transcript.beginTurn();
       if (!frame.active) {
         transcript.finishTurn();
         permissions.replaceChildren();
@@ -135,7 +147,7 @@
     if (!sendFrame({ type: "message", messageId: messageId, text: message })) return false;
     transcript.append("user", displayText || message, "user:" + messageId);
     setActive(true);
-    setStatus("Working…");
+    transcript.beginTurn();
     return true;
   }
 
@@ -217,19 +229,26 @@
   form.addEventListener("submit", function (event) {
     event.preventDefault();
     var text = input.value.trim();
-    if (sendMessage(text)) input.value = "";
+    if (sendMessage(text)) {
+      input.value = "";
+      resizeInput();
+    }
   });
+  input.addEventListener("input", resizeInput);
   input.addEventListener("keydown", function (event) {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       form.requestSubmit();
     }
   });
-  stop.addEventListener("click", function () {
-    if (sendFrame({ type: "stop" })) setStatus("Stopping…");
+  action.addEventListener("click", function (event) {
+    if (!active) return;
+    event.preventDefault();
+    if (sendFrame({ type: "stop" })) transcript.setActivity("Stopping…");
   });
 
   window.VAPreviewChat = Object.freeze({ canSend: canSend, send: sendMessage });
 
+  resizeInput();
   connect();
 })();

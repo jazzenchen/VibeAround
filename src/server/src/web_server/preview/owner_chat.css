@@ -74,6 +74,9 @@
 }
 .chat-message[data-role="system"] .chat-message-content { color: var(--muted-foreground); font-size: 12px; }
 .chat-message[data-role="error"] .chat-message-content { color: var(--destructive); font-size: 12px; }
+.chat-message[data-role="activity"] { margin-bottom: 14px; }
+.chat-activity-content { display: inline-flex; align-items: center; gap: 7px; color: var(--primary); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.chat-activity-content::before { content: ""; width: 12px; height: 12px; border: 2px solid color-mix(in oklab, var(--primary) 25%, transparent); border-top-color: var(--primary); border-radius: 50%; animation: chat-spin 800ms linear infinite; }
 .chat-permissions { display: grid; gap: 8px; padding: 0 12px; }
 .permission-card { padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--muted); }
 .permission-card strong { display: block; margin-bottom: 8px; overflow-wrap: anywhere; }
@@ -85,14 +88,15 @@
   margin: 12px;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: calc(var(--radius) + 2px);
   background: color-mix(in oklab, var(--muted) 30%, var(--background));
 }
+.chat-composer:focus-within { border-color: color-mix(in oklab, var(--primary) 55%, var(--border)); box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 16%, transparent); }
 .chat-composer textarea {
   width: 100%;
-  min-height: 64px;
-  max-height: 180px;
-  resize: vertical;
+  min-height: 72px;
+  max-height: 256px;
+  resize: none;
   padding: 4px 6px;
   border: 0;
   background: transparent;
@@ -136,9 +140,13 @@
 .review-mode { position: fixed; top: 12px; left: 50%; z-index: 190; transform: translateX(-50%); padding: 7px 11px; border: 1px solid var(--primary); border-radius: 999px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
 .primary-button { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
 .primary-button:hover { background: color-mix(in oklab, var(--primary) 90%, black); color: var(--primary-foreground); }
+@keyframes chat-spin { to { transform: rotate(360deg); } }
 @media (max-width: 480px) {
   .chat-toggle { top: 8px; right: 8px; }
   .chat-drawer { width: 100vw; }
   .comment-popover { inset: auto 8px 8px !important; width: auto !important; }
 }
-@media (prefers-reduced-motion: reduce) { .chat-drawer { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-drawer { transition: none; }
+  .chat-activity-content::before { animation: none; }
+}
