@@ -14,7 +14,7 @@ import { ChatMessageParts } from "./ChatMessageParts";
 import { chatPartVisibleForDisplay } from "./ChatTurnDisplay";
 import type { ChatDisplaySettings, ChatMessage } from "./chatTypes";
 
-interface ChatMessageListProps {
+export interface ChatMessageListProps {
   messages: ChatMessage[];
   streaming: boolean;
   agentLabel: string;

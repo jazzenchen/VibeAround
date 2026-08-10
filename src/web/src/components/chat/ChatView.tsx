@@ -17,7 +17,6 @@ import type {
   WorkspaceItem,
 } from "@va/client";
 import { useI18n } from "@va/i18n";
-import { ChatInput } from "./ChatInput";
 import { ChatHeader } from "./ChatHeader";
 import { ChatRuntimeHost } from "./ChatRuntimeHost";
 import {
@@ -57,11 +56,10 @@ import {
   writeStoredSessionSidebarWidth,
 } from "./chatSessionStorage";
 import { shortSessionId } from "./chatSessionDisplay";
-import { ChatMessageList } from "./ChatMessageList";
 import { NewChatAgentPicker } from "./NewChatAgentPicker";
 import { NewChatHome } from "./NewChatHome";
 import { NewChatWorkspacePicker } from "./NewChatWorkspacePicker";
-import { PendingPermissions } from "./PendingPermissions";
+import { ChatInput, ChatMessageList, PendingPermissions } from "./chatUi";
 import { SubagentPanel } from "./SubagentPanel";
 import { currentUnixSeconds } from "./chatTime";
 import type { ChatSessionSelection } from "./chatTypes";

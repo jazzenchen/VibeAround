@@ -7,6 +7,7 @@ import {
   type ChangeEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   ArrowUp,
@@ -64,6 +65,9 @@ export interface ChatInputProps {
   attachmentsUploadingCount?: number;
   attachmentError?: string;
   sendWithModifierEnter?: boolean;
+  showCommands?: boolean;
+  contextContent?: ReactNode;
+  leadingAction?: ReactNode;
   sessionMode?: SessionModeState | null;
   onSessionModeChange?: (value: string) => void;
   onFilesSelected?: (files: File[]) => void;
@@ -88,6 +92,9 @@ export function ChatInput({
   attachmentsUploadingCount = 0,
   attachmentError,
   sendWithModifierEnter = false,
+  showCommands = true,
+  contextContent,
+  leadingAction,
   sessionMode,
   onSessionModeChange,
   onFilesSelected,
@@ -223,6 +230,7 @@ export function ChatInput({
             </div>
           </div>
         )}
+        {contextContent}
         <textarea
           ref={textareaRef}
           value={value}
@@ -292,6 +300,7 @@ export function ChatInput({
           )}
         >
           <div className="flex min-w-0 items-center gap-1.5">
+            {leadingAction}
             {onFilesSelected && (
               <>
                 <input
@@ -323,13 +332,15 @@ export function ChatInput({
                 onChange={onSessionModeChange}
               />
             )}
-            <CommandPicker
-              disabled={disabled}
-              onSelect={(command) => {
-                onChange(command);
-                requestAnimationFrame(() => textareaRef.current?.focus());
-              }}
-            />
+            {showCommands && (
+              <CommandPicker
+                disabled={disabled}
+                onSelect={(command) => {
+                  onChange(command);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              />
+            )}
             <span
               className="min-w-0 truncate px-1 text-xs font-medium text-muted-foreground"
               title={targetLabel}
