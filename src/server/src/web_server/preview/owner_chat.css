@@ -144,7 +144,6 @@
 @media (max-width: 480px) {
   .chat-toggle { top: 8px; right: 8px; }
   .chat-drawer { width: 100vw; }
-  .comment-popover { inset: auto 8px 8px !important; width: auto !important; }
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-drawer { transition: none; }

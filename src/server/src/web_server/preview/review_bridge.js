@@ -205,10 +205,12 @@
     const marker = markers.get(markerId);
     if (!marker) return;
     const target = marker.selection.element || elementFor(marker.selection.range.commonAncestorContainer);
-    if (target && target.isConnected) target.scrollIntoView({ block: "center" });
+    activeAnchor = { id: markerId, selection: marker.selection };
+    if (target && target.isConnected) {
+      target.scrollIntoView({ block: "center", behavior: "instant" });
+    }
     marker.button.classList.add("focus");
     setTimeout(() => marker.button.classList.remove("focus"), 1200);
-    activeAnchor = { id: markerId, selection: marker.selection };
     updateOverlays();
     post("marker-activate", { markerId, rect: messageRect(marker.selection) });
   }
@@ -277,8 +279,10 @@
     } else if (data.type === "set-marker") addMarker(data.markerId, data.selectionId);
     else if (data.type === "remove-marker") removeMarker(data.markerId);
     else if (data.type === "focus-marker") focusMarker(data.markerId);
-    else if (data.type === "cancel") cancelPick(false);
-    else if (data.type === "close-popover") activeAnchor = null;
+    else if (data.type === "cancel"
+        && pending && pending.selectionId === data.anchorId) cancelPick(false);
+    else if (data.type === "close-popover"
+        && activeAnchor && activeAnchor.id === data.anchorId) activeAnchor = null;
   });
   const hello = () => {
     for (const origin of allowedOwnerOrigins) {

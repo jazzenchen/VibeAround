@@ -99,8 +99,10 @@
     setElementMode: function (enabled) {
       return command("element-mode", { enabled: Boolean(enabled) });
     },
-    cancelPick: function () { return command("cancel"); },
-    closePopover: function () { return command("close-popover"); },
+    cancelPick: function (anchorId) { return command("cancel", { anchorId: anchorId }); },
+    closePopover: function (anchorId) {
+      return command("close-popover", { anchorId: anchorId });
+    },
   });
 
   resetFrame();

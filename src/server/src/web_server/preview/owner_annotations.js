@@ -54,8 +54,8 @@
     var previous = editing;
     popover.hidden = true;
     if (previous && window.VAPreviewFrameReview) {
-      if (cancelPick && !previous.id) window.VAPreviewFrameReview.cancelPick();
-      else window.VAPreviewFrameReview.closePopover();
+      if (cancelPick && !previous.id) window.VAPreviewFrameReview.cancelPick(previous.anchorId);
+      else window.VAPreviewFrameReview.closePopover(previous.anchorId);
     }
     editing = null;
   }
@@ -207,6 +207,9 @@
   document.addEventListener("pointerdown", function (event) {
     if (!popover.hidden && !popover.contains(event.target)) hidePopover(true);
   }, true);
+  document.addEventListener("focusin", function (event) {
+    if (!popover.hidden && !popover.contains(event.target)) hidePopover(true);
+  });
   window.addEventListener("blur", function () {
     setTimeout(function () {
       if (!popover.hidden && document.activeElement === frame) hidePopover(true);
