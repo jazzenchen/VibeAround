@@ -213,6 +213,7 @@
     icon.appendChild(iconPath);
     button.appendChild(icon);
     button.addEventListener("click", () => {
+      if (pending) cancelPick(false);
       activeAnchor = { id: markerId, selection };
       post("marker-activate", { markerId, rect: messageRect(selection) });
     });
@@ -266,7 +267,9 @@
     place(hover, element && element !== host ? element.getBoundingClientRect() : null, false);
   }, true);
   document.addEventListener("pointerdown", (event) => {
-    if (elementMode && event.button === 0 && !event.composedPath().includes(host)) {
+    const insideReviewUi = host && event.composedPath().includes(host);
+    if (pending && !activeAnchor && !insideReviewUi) cancelPick(false);
+    if (elementMode && event.button === 0 && !insideReviewUi) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }

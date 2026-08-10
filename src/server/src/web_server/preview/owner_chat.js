@@ -52,8 +52,8 @@
     action.classList.toggle("primary-button", !next);
     action.setAttribute("aria-label", next ? "Stop" : "Send");
     action.title = next ? "Stop" : "Send";
-    sendIcon.hidden = next;
-    stopIcon.hidden = !next;
+    sendIcon.toggleAttribute("hidden", next);
+    stopIcon.toggleAttribute("hidden", !next);
   }
 
   function resizeInput() {
