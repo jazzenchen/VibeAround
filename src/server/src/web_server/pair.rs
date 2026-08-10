@@ -12,18 +12,42 @@ use axum::{
     Json,
 };
 
-use super::auth::{extract_bearer_token, owner_cookie_headers};
+use super::auth::{extract_bearer_token, owner_cookie_headers, AuthState};
 
 /// POST /va/api/pair/start — generate a pairing code.
 ///
 /// Returns `{ "code": "847291", "sid": "uuid" }`.
 /// The code expires in 1 minute.
-pub async fn start_handler() -> Json<serde_json::Value> {
-    let (sid, code) = common::auth::pair::generate();
-    Json(serde_json::json!({
-        "code": code,
-        "sid": sid,
-    }))
+pub async fn start_handler() -> Response {
+    let mut response = match common::auth::pair::generate() {
+        Ok((sid, code)) => Json(serde_json::json!({
+            "code": code,
+            "sid": sid,
+        }))
+        .into_response(),
+        Err(common::auth::pair::GenerateError::TooManyPending) => {
+            let mut response = (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({
+                    "error": "Too many pending pairing requests. Try again shortly."
+                })),
+            )
+                .into_response();
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                common::auth::pair::CODE_TTL_SECS
+                    .to_string()
+                    .parse()
+                    .expect("valid retry-after"),
+            );
+            response
+        }
+    };
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "no-store".parse().expect("valid cache-control header"),
+    );
+    response
 }
 
 #[derive(serde::Deserialize)]
@@ -48,32 +72,26 @@ pub async fn status_handler(Query(q): Query<StatusQuery>, req: Request) -> Respo
             Json(serde_json::json!({ "status": "pending" })).into_response()
         }
         Some(true) => {
-            // Verified! Consume the session and set the owner cookie.
-            match common::auth::pair::consume_verified(&q.sid) {
-                Some(token) => {
-                    let [clear_legacy_cookie, owner_cookie] =
-                        owner_cookie_headers_for_request(&req, &token);
-                    // Return the token in the body so the SPA can store it in
-                    // sessionStorage (existing auth mechanism for API calls).
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header("Content-Type", "application/json")
-                        .header(header::SET_COOKIE, clear_legacy_cookie)
-                        .header(header::SET_COOKIE, owner_cookie)
-                        .body(Body::from(
-                            serde_json::json!({
-                                "status": "verified",
-                                "token": token,
-                            })
-                            .to_string(),
-                        ))
-                        .unwrap()
-                }
-                None => {
-                    // Race: already consumed or token file missing.
-                    Json(serde_json::json!({ "status": "expired" })).into_response()
-                }
-            }
+            let Some(auth) = req.extensions().get::<AuthState>() else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            };
+            let token = auth.0.as_str();
+            let [clear_legacy_cookie, owner_cookie] = owner_cookie_headers_for_request(&req, token);
+            // Return the daemon's in-memory token so the SPA can store it in
+            // sessionStorage. The verified sid remains idempotent until expiry.
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .header(header::SET_COOKIE, clear_legacy_cookie)
+                .header(header::SET_COOKIE, owner_cookie)
+                .body(Body::from(
+                    serde_json::json!({
+                        "status": "verified",
+                        "token": token,
+                    })
+                    .to_string(),
+                ))
+                .unwrap()
         }
     };
     response.headers_mut().insert(
@@ -114,7 +132,14 @@ fn owner_cookie_headers_for_request(req: &Request, token: &str) -> [String; 2] {
 mod tests {
     use std::{net::SocketAddr, sync::Arc};
 
-    use axum::{http::header, middleware, routing::post, Router};
+    use axum::{
+        body::{to_bytes, Body},
+        extract::Query,
+        http::{header, Request, StatusCode},
+        middleware,
+        routing::post,
+        Router,
+    };
     use common::auth::AuthToken;
 
     use crate::web_server::auth::{owner_cookie_headers, require_auth, AuthState};
@@ -139,6 +164,32 @@ mod tests {
                 "va_owner=; Path=/va/; Max-Age=0; Secure; HttpOnly; SameSite=Lax".to_string(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn verified_pairing_status_is_idempotent_and_uses_daemon_token() {
+        let auth = Arc::new(AuthToken::generate());
+        let expected_token = auth.as_str().to_string();
+        let (sid, code) = common::auth::pair::generate().unwrap();
+        assert!(common::auth::pair::validate(&code));
+
+        for _ in 0..2 {
+            let mut request = Request::builder()
+                .header(header::HOST, "preview.example")
+                .body(Body::empty())
+                .unwrap();
+            request
+                .extensions_mut()
+                .insert(AuthState(Arc::clone(&auth)));
+            let response =
+                super::status_handler(Query(super::StatusQuery { sid: sid.clone() }), request)
+                    .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["status"], "verified");
+            assert_eq!(json["token"], expected_token);
+        }
     }
 
     #[tokio::test]

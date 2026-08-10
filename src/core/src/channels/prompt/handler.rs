@@ -114,7 +114,7 @@ async fn handle_command(
             );
         }
         ThreadCommand::Pair(code) => {
-            if crate::auth::pair::validate(&code).is_some() {
+            if crate::auth::pair::validate(&code) {
                 send_system_text_to_target(plugin_host, target, "Session paired.");
             } else {
                 send_system_text_to_target(

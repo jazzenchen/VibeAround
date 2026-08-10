@@ -289,9 +289,9 @@ fn owner_cookie_valid(req: &Request) -> bool {
         Some(t) => t,
         None => return false,
     };
-    common::auth::read_token_file()
-        .map(|f| f.token == token)
-        .unwrap_or(false)
+    req.extensions()
+        .get::<crate::web_server::auth::AuthState>()
+        .is_some_and(|auth| auth.0.matches(&token))
 }
 
 #[cfg(test)]

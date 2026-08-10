@@ -23,9 +23,12 @@ use rand::Rng;
 use uuid::Uuid;
 
 /// How long a pairing code stays valid.
-const CODE_TTL: Duration = Duration::from_secs(60);
+pub const CODE_TTL_SECS: u64 = 60;
+const CODE_TTL: Duration = Duration::from_secs(CODE_TTL_SECS);
 const ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
 const MAX_VALIDATE_ATTEMPTS_PER_WINDOW: usize = 30;
+const MAX_PENDING_SESSIONS: usize = 64;
+const CODE_SPACE: u32 = 1_000_000;
 
 /// In-memory store of pending pair sessions.
 static STORE: LazyLock<Mutex<HashMap<String, PairEntry>>> =
@@ -39,35 +42,43 @@ struct PairEntry {
     expires_at: Instant,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerateError {
+    TooManyPending,
+}
+
 /// Generate a new 6-digit pairing code tied to a fresh session ID.
 ///
 /// Returns `(session_id, code)`. The session ID is a UUID that the
 /// frontend uses to poll for verification status.
-pub fn generate() -> (String, String) {
+pub fn generate() -> Result<(String, String), GenerateError> {
     let session_id = Uuid::new_v4().to_string();
-    let code = random_6_digits();
+    let mut store = STORE.lock().unwrap();
+    purge_expired(&mut store);
+    if store.len() >= MAX_PENDING_SESSIONS {
+        return Err(GenerateError::TooManyPending);
+    }
+    let code = unique_6_digit_code(&store);
     let entry = PairEntry {
         code: code.clone(),
         verified: false,
         expires_at: Instant::now() + CODE_TTL,
     };
 
-    let mut store = STORE.lock().unwrap();
-    purge_expired(&mut store);
     store.insert(session_id.clone(), entry);
 
-    (session_id, code)
+    Ok((session_id, code))
 }
 
 /// Validate a pairing code submitted via IM `/pair` command.
 ///
 /// Searches all pending (non-expired, non-verified) sessions for a
-/// matching code. On match, marks the session as verified and returns
-/// the daemon's auth token. Returns `None` if no match or expired.
-pub fn validate(code: &str) -> Option<String> {
+/// matching code. On match, marks the session as verified. Returns `false`
+/// if no match, expired, or validation is temporarily rate-limited.
+pub fn validate(code: &str) -> bool {
     let code = code.trim();
     if !record_validate_attempt() {
-        return None;
+        return false;
     }
 
     let mut store = STORE.lock().unwrap();
@@ -79,13 +90,15 @@ pub fn validate(code: &str) -> Option<String> {
         .find(|(_, e)| !e.verified && e.code == code)
         .map(|(sid, _)| sid.clone());
 
-    let session_id = session_id?;
-    let entry = store.get_mut(&session_id)?;
+    let Some(session_id) = session_id else {
+        return false;
+    };
+    let Some(entry) = store.get_mut(&session_id) else {
+        return false;
+    };
     entry.verified = true;
     clear_validate_attempts();
-
-    // Return the auth token from disk.
-    super::token::read_token_file().map(|f| f.token)
+    true
 }
 
 /// Check whether a pairing session has been verified.
@@ -101,27 +114,18 @@ pub fn check_status(session_id: &str) -> Option<bool> {
     store.get(session_id).map(|e| e.verified)
 }
 
-/// Consume a verified session, returning the auth token.
-///
-/// Once consumed, the session is removed from the store. This prevents
-/// the token from being retrieved more than once per pairing.
-pub fn consume_verified(session_id: &str) -> Option<String> {
-    let mut store = STORE.lock().unwrap();
-    purge_expired(&mut store);
-
-    let entry = store.get(session_id)?;
-    if !entry.verified {
-        return None;
+/// Generate an active-code-unique six-digit string. Starting from a random
+/// value and scanning the tiny occupied set avoids retry state while keeping
+/// codes unpredictable for a single-user pairing flow.
+fn unique_6_digit_code(store: &HashMap<String, PairEntry>) -> String {
+    let start: u32 = OsRng.gen_range(0..CODE_SPACE);
+    for offset in 0..CODE_SPACE {
+        let code = format!("{:06}", (start + offset) % CODE_SPACE);
+        if store.values().all(|entry| entry.code != code) {
+            return code;
+        }
     }
-    store.remove(session_id);
-
-    super::token::read_token_file().map(|f| f.token)
-}
-
-/// Generate a 6-digit numeric string using the OS CSPRNG.
-fn random_6_digits() -> String {
-    let n: u32 = OsRng.gen_range(0..1_000_000);
-    format!("{:06}", n)
+    unreachable!("pending pairing sessions are capped below the code space")
 }
 
 /// Remove expired entries from the store.
@@ -154,9 +158,18 @@ fn clear_validate_attempts() {
 mod tests {
     use super::*;
 
+    static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn reset_test_state() {
+        STORE.lock().unwrap().clear();
+        VALIDATE_ATTEMPTS.lock().unwrap().clear();
+    }
+
     #[test]
     fn generate_returns_6_digit_code() {
-        let (sid, code) = generate();
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_test_state();
+        let (sid, code) = generate().unwrap();
         assert!(!sid.is_empty());
         assert_eq!(code.len(), 6);
         assert!(code.chars().all(|c| c.is_ascii_digit()));
@@ -164,40 +177,67 @@ mod tests {
 
     #[test]
     fn validate_matches_and_marks_verified() {
-        let (sid, code) = generate();
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_test_state();
+        let (sid, code) = generate().unwrap();
         // Before validation, status is pending.
         assert_eq!(check_status(&sid), Some(false));
 
         // Wrong code should fail.
-        assert!(validate("000000").is_none());
+        assert!(!validate("not-the-code"));
         assert_eq!(check_status(&sid), Some(false));
 
-        // Note: validate() reads token from disk which may not exist in test.
-        // We test the matching logic, not the token retrieval.
-        let _ = validate(&code);
+        assert!(validate(&code));
         assert_eq!(check_status(&sid), Some(true));
     }
 
     #[test]
     fn validate_trims_pairing_code() {
-        let (sid, code) = generate();
-        let _ = validate(&format!("  {code}  "));
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_test_state();
+        let (sid, code) = generate().unwrap();
+        assert!(validate(&format!("  {code}  ")));
         assert_eq!(check_status(&sid), Some(true));
     }
 
     #[test]
-    fn consume_verified_removes_session() {
-        let (sid, code) = generate();
-        let _ = validate(&code);
+    fn verified_session_remains_available_until_expiry() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_test_state();
+        let (sid, code) = generate().unwrap();
+        assert!(validate(&code));
         assert_eq!(check_status(&sid), Some(true));
-
-        // Consume removes the session.
-        let _ = consume_verified(&sid);
-        assert_eq!(check_status(&sid), None);
+        assert_eq!(check_status(&sid), Some(true));
     }
 
     #[test]
     fn unknown_session_returns_none() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_test_state();
         assert_eq!(check_status("nonexistent"), None);
+    }
+
+    #[test]
+    fn active_pairing_codes_are_unique() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_test_state();
+        let mut pairs = Vec::new();
+        for _ in 0..MAX_PENDING_SESSIONS {
+            pairs.push(generate().unwrap());
+        }
+        let mut codes = pairs.into_iter().map(|(_, code)| code).collect::<Vec<_>>();
+        codes.sort();
+        codes.dedup();
+        assert_eq!(codes.len(), MAX_PENDING_SESSIONS);
+    }
+
+    #[test]
+    fn pending_pairing_sessions_are_bounded() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_test_state();
+        for _ in 0..MAX_PENDING_SESSIONS {
+            generate().unwrap();
+        }
+        assert_eq!(generate(), Err(GenerateError::TooManyPending));
     }
 }

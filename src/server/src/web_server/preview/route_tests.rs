@@ -4,10 +4,11 @@ use axum::http::{Request, StatusCode};
 use axum::routing::{get, post};
 use axum::Router;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use super::{
-    owner_preview_content_handler, owner_preview_handler, owner_preview_snapshots,
-    share_preview_handler, verify_share_code_handler, ShareCodeForm,
+    owner_access_allowed, owner_preview_content_handler, owner_preview_handler,
+    owner_preview_snapshots, share_preview_handler, verify_share_code_handler, ShareCodeForm,
 };
 
 fn request_with_host_and_peer(host: &str, peer: &str) -> Request<Body> {
@@ -89,6 +90,25 @@ fn local_preview_bypass_rejects_external_browser_origins() {
     assert!(!crate::web_server::auth::request_is_local_dashboard(
         &local_request_with_origin("127.0.0.1:12358", "http://localhost:5181")
     ));
+}
+
+#[test]
+fn owner_cookie_uses_the_daemon_auth_state() {
+    let auth = Arc::new(common::auth::AuthToken::generate());
+    let mut request = request_with_host_and_peer("preview.example.com", "127.0.0.1:45000");
+    request.headers_mut().insert(
+        "cookie",
+        format!("va_owner={}", auth.as_str()).parse().unwrap(),
+    );
+    request
+        .extensions_mut()
+        .insert(crate::web_server::auth::AuthState(Arc::clone(&auth)));
+    assert!(owner_access_allowed(&request));
+
+    request.extensions_mut().insert(crate::web_server::auth::AuthState(Arc::new(
+        common::auth::AuthToken::generate(),
+    )));
+    assert!(!owner_access_allowed(&request));
 }
 
 #[tokio::test]

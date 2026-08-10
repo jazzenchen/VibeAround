@@ -18,7 +18,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{any, delete, get, post, put};
-use axum::Router;
+use axum::{Extension, Router};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -541,6 +541,7 @@ pub async fn run_web_server(
 
     let app = mount_dashboard(dashboard)
         .with_state(state)
+        .layer(Extension(auth_state))
         .layer(build_cors_layer(port));
 
     println!(
