@@ -108,28 +108,48 @@ const SUBAGENT_RETRY_DELAY: Duration = Duration::from_millis(750);
 /// Grace period for an ACP prompt to return its real response after cancel.
 /// Supervisor process shutdown has its own separate two-second contract.
 const ACP_CANCEL_GRACE: Duration = Duration::from_secs(30);
+/// Final bound for an ACP request to resolve after its process has shut down.
+const ACP_SHUTDOWN_RESPONSE_GRACE: Duration = Duration::from_secs(2);
 
 async fn await_cancelled_prompt<F, S, SF>(
     mut prompt: Pin<&mut F>,
     grace: Duration,
+    shutdown_grace: Duration,
     shutdown: S,
-) -> F::Output
+) -> Option<F::Output>
 where
     F: Future,
     S: FnOnce() -> SF,
     SF: Future<Output = ()>,
 {
     match tokio::time::timeout(grace, prompt.as_mut()).await {
-        Ok(result) => result,
+        Ok(result) => Some(result),
         Err(_) => {
             tracing::warn!(
                 grace_seconds = grace.as_secs(),
                 "ACP prompt did not finish after cancel; forcing agent shutdown"
             );
             shutdown().await;
-            prompt.await
+            match tokio::time::timeout(shutdown_grace, prompt.as_mut()).await {
+                Ok(result) => Some(result),
+                Err(_) => {
+                    tracing::warn!(
+                        grace_seconds = shutdown_grace.as_secs(),
+                        "ACP prompt remained pending after agent shutdown"
+                    );
+                    None
+                }
+            }
         }
     }
+}
+
+pub(crate) fn cancelled_prompt_response() -> acp::Result<acp::PromptResponse> {
+    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+}
+
+fn prompt_completed_successfully(result: &acp::Result<acp::PromptResponse>) -> bool {
+    matches!(result, Ok(response) if response.stop_reason != acp::StopReason::Cancelled)
 }
 
 pub struct ThreadRuntime {
@@ -225,7 +245,8 @@ impl ThreadRuntime {
         self: &Arc<Self>,
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
-    ) -> acp::Result<ThreadRuntimeStart> {
+        cancellation: Option<watch::Receiver<bool>>,
+    ) -> acp::Result<Option<ThreadRuntimeStart>> {
         self.mark_activity();
         let (reply, done) = oneshot::channel();
         self.owner_tx
@@ -233,6 +254,7 @@ impl ThreadRuntime {
                 runtime: Arc::clone(self),
                 route: route.clone(),
                 handler,
+                cancellation,
                 reply,
             })))
             .map_err(|_| runtime_stopped_error())?;

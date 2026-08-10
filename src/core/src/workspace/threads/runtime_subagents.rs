@@ -329,14 +329,16 @@ impl ThreadRuntime {
                     await_cancelled_prompt(
                         prompt_call.as_mut(),
                         ACP_CANCEL_GRACE,
+                        ACP_SHUTDOWN_RESPONSE_GRACE,
                         move || async move { shutdown_agent.shutdown().await },
                     )
                     .await
+                    .unwrap_or_else(cancelled_prompt_response)
                 }
                 result = &mut prompt_call => result,
             };
             if let Err(error) = prompt_finish_handler
-                .prompt_finished(result.is_ok() && !cancelled)
+                .prompt_finished(prompt_completed_successfully(&result) && !cancelled)
                 .await
             {
                 tracing::warn!(
