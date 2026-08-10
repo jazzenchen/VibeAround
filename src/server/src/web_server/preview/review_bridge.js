@@ -96,7 +96,7 @@
     host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none";
     root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>.box{position:fixed;border:2px solid #0d9488;background:#14b8a61f;border-radius:4px;pointer-events:none}
-      .hover{border-style:dashed;background:#14b8a612}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.focus{outline:3px solid #0d948859;outline-offset:2px}</style>
+      .hover{border-style:dashed;background:#14b8a612}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}button[hidden]{display:none}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.focus{outline:3px solid #0d948859;outline-offset:2px}</style>
       <div class="box hover" hidden></div><button class="trigger" type="button" hidden>Comment</button>`;
     hover = root.querySelector(".hover");
     trigger = root.querySelector(".trigger");
@@ -112,20 +112,28 @@
     });
     document.documentElement.appendChild(host);
   }
+  function hiddenByClosedDetails(element) {
+    for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor.tagName !== "DETAILS" || ancestor.open) continue;
+      const summary = ancestor.querySelector(":scope > summary");
+      if (ancestor !== element && (!summary || !summary.contains(element))) return true;
+    }
+    return false;
+  }
   function rectFor(selection) {
-    if (selection.element) return selection.element.isConnected
-      ? selection.element.getBoundingClientRect() : null;
-    const owner = elementFor(selection.range.commonAncestorContainer);
-    return owner && owner.isConnected ? selection.range.getBoundingClientRect() : null;
+    const owner = selection.element || elementFor(selection.range.commonAncestorContainer);
+    if (!owner || !owner.isConnected || hiddenByClosedDetails(owner)) return null;
+    return selection.element ? owner.getBoundingClientRect() : selection.range.getBoundingClientRect();
   }
   const messageRect = (selection) => {
     const rect = rectFor(selection); return rect && { x: rect.x, y: rect.y,
       width: rect.width, height: rect.height };
   };
+  const hasArea = (rect) => rect && (rect.width || rect.height);
   const rectVisible = (rect) => rect && rect.bottom > 0 && rect.top < innerHeight
     && rect.right > 0 && rect.left < innerWidth;
   function place(node, rect, icon) {
-    if (!rect || (!rect.width && !rect.height)) return void (node.hidden = true);
+    if (!hasArea(rect)) return void (node.hidden = true);
     node.hidden = false;
     node.style.left = `${icon ? Math.max(4, rect.right - 13) : rect.left}px`;
     node.style.top = `${icon ? Math.max(4, rect.top - 13) : rect.top}px`;
@@ -136,7 +144,7 @@
   function updateOverlays() {
     if (pending && !trigger.hidden) {
       const rect = rectFor(pending.selection);
-      if (!rect) trigger.hidden = true;
+      if (!hasArea(rect)) trigger.hidden = true;
       else {
         trigger.style.left = `${Math.min(innerWidth - 88, Math.max(4, rect.right - 72))}px`;
         trigger.style.top = `${Math.min(innerHeight - 36, Math.max(4, rect.bottom + 6))}px`;
@@ -148,8 +156,11 @@
     }
     if (activeAnchor && channelId) {
       const rect = rectFor(activeAnchor.selection);
-      if (!rect) activeAnchor = null;
-      else {
+      if (!hasArea(rect)) {
+        const anchorId = activeAnchor.id;
+        activeAnchor = null;
+        post("anchor-position", { anchorId, rect: null });
+      } else {
         const serialized = { x: rect.x, y: rect.y,
           width: rect.width, height: rect.height };
         if (activeAnchor.activateWhenVisible && rectVisible(rect)) {
@@ -224,7 +235,7 @@
     const marker = markers.get(markerId);
     if (!marker) return;
     const rect = rectFor(marker.selection);
-    if (!rect) return;
+    if (!hasArea(rect)) return;
     activeAnchor = { id: markerId, selection: marker.selection, activateWhenVisible: true };
     scrollBy({
       top: rect.top + rect.height / 2 - innerHeight / 2,
@@ -270,6 +281,7 @@
     post("anchor-picked", pending.message);
   }, true);
   document.addEventListener("keydown", (event) => event.key === "Escape" && cancelPick(true), true);
+  document.addEventListener("toggle", () => requestAnimationFrame(updateOverlays), true);
   addEventListener("scroll", updateOverlays, { passive: true, capture: true });
   addEventListener("scrollend", () => {
     updateOverlays();
