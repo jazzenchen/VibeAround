@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::agent::launch::normalize_launch_profile_id;
 use crate::agent_state;
@@ -83,6 +83,7 @@ pub struct WorkspaceThreadManager {
     attachment_store: RouteAttachmentEventStore,
     runtimes: RuntimeRegistry,
     change_tx: broadcast::Sender<()>,
+    preview_lifecycle: Mutex<()>,
 }
 
 impl WorkspaceThreadManager {
@@ -96,6 +97,7 @@ impl WorkspaceThreadManager {
             ),
             runtimes: RuntimeRegistry::new(),
             change_tx,
+            preview_lifecycle: Mutex::new(()),
         })
     }
 
@@ -111,6 +113,7 @@ impl WorkspaceThreadManager {
             attachment_store: RouteAttachmentEventStore::new(attachment_path),
             runtimes: RuntimeRegistry::new(),
             change_tx,
+            preview_lifecycle: Mutex::new(()),
         })
     }
 
@@ -118,12 +121,16 @@ impl WorkspaceThreadManager {
         &self,
         route: &RouteKey,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
-        if let Some(runtime) = self.active_runtime_for_route(route).await? {
-            return Ok(runtime);
+        if let Some(slug) = preview_slug_from_web_route(route) {
+            let _preview_lifecycle = self.preview_lifecycle.lock().await;
+            if let Some(runtime) = self.active_runtime_for_route(route).await? {
+                return Ok(runtime);
+            }
+            return self.resolve_preview_route_runtime_locked(route, slug).await;
         }
 
-        if let Some(slug) = preview_slug_from_web_route(route) {
-            return self.resolve_preview_route_runtime(route, slug).await;
+        if let Some(runtime) = self.active_runtime_for_route(route).await? {
+            return Ok(runtime);
         }
 
         let (host_binding, workspace_path) = default_route_binding_and_workspace(route);
@@ -211,6 +218,12 @@ impl WorkspaceThreadManager {
         route: &RouteKey,
         reason: Option<String>,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        let preview_slug = preview_slug_from_web_route(route).map(str::to_string);
+        let _preview_lifecycle = if preview_slug.is_some() {
+            Some(self.preview_lifecycle.lock().await)
+        } else {
+            None
+        };
         let current = match self.active_runtime_for_route(route).await? {
             Some(runtime) => {
                 let state = runtime.state().await;
@@ -246,8 +259,9 @@ impl WorkspaceThreadManager {
             }
             self.create_thread_for_route_with_host(route, thread.workspace_id, host_binding)
                 .await
-        } else if preview_slug_from_web_route(route).is_some() {
-            self.resolve_route_runtime(route).await
+        } else if let Some(preview_slug) = preview_slug.as_deref() {
+            self.resolve_preview_route_runtime_locked(route, preview_slug)
+                .await
         } else {
             self.create_thread_in_current_workspace(route).await
         }
@@ -267,6 +281,11 @@ impl WorkspaceThreadManager {
         route: &RouteKey,
         reason: Option<String>,
     ) -> anyhow::Result<()> {
+        let _preview_lifecycle = if preview_slug_from_web_route(route).is_some() {
+            Some(self.preview_lifecycle.lock().await)
+        } else {
+            None
+        };
         let Some(runtime) = self.active_runtime_for_route(route).await? else {
             return Ok(());
         };

@@ -215,7 +215,7 @@ async fn seed_preview_child(
 }
 
 #[tokio::test]
-async fn preview_child_reloads_from_history_for_the_same_slug() {
+async fn preview_child_reuses_global_slug_across_parents_and_reload() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(
         workspaces.clone(),
@@ -237,6 +237,30 @@ async fn preview_child_reloads_from_history_for_the_same_slug() {
     );
 
     let preview = crate::previews::lookup_owner(&slug).unwrap();
+    let other_parent = manager
+        .create_web_thread_for_cwd_with_host(
+            "claude".to_string(),
+            Some("direct".to_string()),
+            preview.workspace.clone(),
+        )
+        .await
+        .unwrap();
+    let other_parent_id = other_parent.state().await.thread_id;
+    let reused = manager
+        .ensure_preview_child_web_thread(&other_parent_id, &slug)
+        .await
+        .unwrap();
+    assert_eq!(reused.state().await.thread_id, child_id);
+    assert_eq!(
+        manager
+            .thread(&child_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .parent_thread_id,
+        Some(parent_id.clone())
+    );
+
     assert!(crate::previews::delete_session(&slug));
     let (recreated_slug, _) =
         crate::previews::ensure_file(preview.id, preview.workspace, preview.title);
@@ -245,14 +269,69 @@ async fn preview_child_reloads_from_history_for_the_same_slug() {
     drop(manager);
     let reloaded = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let runtime = reloaded
-        .ensure_preview_child_web_thread(&parent_id, &slug)
+        .ensure_preview_child_web_thread(&other_parent_id, &slug)
         .await
         .unwrap();
 
     assert_eq!(runtime.state().await.thread_id, child_id);
     assert_eq!(
+        reloaded
+            .thread(&child_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .parent_thread_id,
+        Some(parent_id)
+    );
+    assert_eq!(
         crate::previews::owner_conversation_thread_id(&slug),
         Some(child_id)
+    );
+}
+
+#[tokio::test]
+async fn concurrent_preview_ensure_creates_one_child_for_the_slug() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let root = std::env::temp_dir().join(format!(
+        "vibearound-preview-child-concurrent-{}",
+        Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("README.md");
+    std::fs::write(&file, "# Preview").unwrap();
+    let parent = manager
+        .create_web_thread_for_cwd_with_host(
+            "codex".to_string(),
+            Some("direct".to_string()),
+            root.clone(),
+        )
+        .await
+        .unwrap();
+    let parent_id = parent.state().await.thread_id;
+    let (slug, _) = crate::previews::ensure_file(file, root, "concurrent".to_string());
+
+    let (first, second) = tokio::join!(
+        manager.ensure_preview_child_web_thread(&parent_id, &slug),
+        manager.ensure_preview_child_web_thread(&parent_id, &slug),
+    );
+    let first_id = first.unwrap().state().await.thread_id;
+    let second_id = second.unwrap().state().await.thread_id;
+
+    assert_eq!(first_id, second_id);
+    assert_eq!(
+        manager
+            .thread_projection()
+            .await
+            .unwrap()
+            .all()
+            .filter(|thread| thread.preview_slug.as_deref() == Some(slug.as_str()))
+            .count(),
+        1
+    );
+    assert_eq!(
+        crate::previews::owner_conversation_thread_id(&slug),
+        Some(first_id)
     );
 }
 

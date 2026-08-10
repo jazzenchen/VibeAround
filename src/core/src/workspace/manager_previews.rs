@@ -6,77 +6,44 @@ impl WorkspaceThreadManager {
         parent_thread_id: &WorkspaceThreadId,
         preview_slug: &str,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        let _preview_lifecycle = self.preview_lifecycle.lock().await;
+        if crate::previews::lookup_owner(preview_slug).is_none() {
+            return Err(anyhow!("Preview {} no longer exists", preview_slug));
+        }
+        let route = preview_web_route_for_slug(preview_slug);
+        if let Some(bound_thread_id) = crate::previews::owner_conversation_thread_id(preview_slug) {
+            if let Some(bound) = self.thread(&bound_thread_id).await? {
+                if bound.preview_slug.as_deref() != Some(preview_slug) {
+                    return Err(anyhow!(
+                        "Preview {} is linked to unrelated task {}",
+                        preview_slug,
+                        bound_thread_id
+                    ));
+                }
+                return self
+                    .reuse_or_advance_preview_thread(&route, preview_slug, bound)
+                    .await;
+            }
+        }
+
+        if let Some(previous) = self.preferred_preview_thread(preview_slug).await? {
+            return self
+                .reuse_or_advance_preview_thread(&route, preview_slug, previous)
+                .await;
+        }
+
         let parent = self
             .thread(parent_thread_id)
             .await?
             .ok_or_else(|| anyhow!("thread {} not found", parent_thread_id))?;
-        if let Some(bound_thread_id) = crate::previews::owner_conversation_thread_id(preview_slug) {
-            let bound = self
-                .thread(&bound_thread_id)
-                .await?
-                .ok_or_else(|| anyhow!("thread {} not found", bound_thread_id))?;
-            if bound.parent_thread_id.as_ref() != Some(parent_thread_id)
-                || bound.preview_slug.as_deref() != Some(preview_slug)
-            {
-                return Err(anyhow!(
-                    "Preview {} is already linked to task {}",
-                    preview_slug,
-                    bound_thread_id
-                ));
-            }
-            let route = preview_web_route_for_slug(preview_slug);
-            if bound.status == ThreadStatus::Open {
-                self.attach_route(route, bound.workspace_id.clone(), bound.id.clone())
-                    .await?;
-                return self.runtime_from_thread(bound).await;
-            }
-            return self
-                .create_preview_child_for_route(
-                    &route,
-                    bound.workspace_id,
-                    parent_thread_id.clone(),
-                    preview_slug.to_string(),
-                    bound.host_binding,
-                )
-                .await;
-        }
-
-        let existing = self
-            .thread_projection()
-            .await?
-            .all()
-            .filter(|thread| thread.status == ThreadStatus::Open)
-            .filter(|thread| thread.parent_thread_id.as_ref() == Some(parent_thread_id))
-            .filter(|thread| thread.preview_slug.as_deref() == Some(preview_slug))
-            .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
-            .cloned();
-        let runtime = match existing {
-            Some(thread) => {
-                let route = preview_web_route_for_slug(preview_slug);
-                self.attach_route(route, thread.workspace_id.clone(), thread.id.clone())
-                    .await?;
-                self.runtime_from_thread(thread).await?
-            }
-            None => {
-                self.create_preview_child_for_route(
-                    &preview_web_route_for_slug(preview_slug),
-                    parent.workspace_id,
-                    parent.id,
-                    preview_slug.to_string(),
-                    parent.host_binding,
-                )
-                .await?
-            }
-        };
-        let thread_id = runtime.state().await.thread_id;
-        crate::previews::bind_owner_conversation(preview_slug, thread_id).map_err(|error| {
-            anyhow!(
-                "failed to bind Preview {} conversation: {:?}",
-                preview_slug,
-                error
-            )
-        })?;
-        Ok(runtime)
+        self.create_preview_child_for_route(
+            &route,
+            parent.workspace_id,
+            parent.id,
+            preview_slug.to_string(),
+            parent.host_binding,
+        )
+        .await
     }
 
     pub(super) async fn create_preview_child_for_route(
@@ -107,7 +74,7 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(child).await
     }
 
-    pub(super) async fn resolve_preview_route_runtime(
+    pub(super) async fn resolve_preview_route_runtime_locked(
         &self,
         route: &RouteKey,
         preview_slug: &str,
@@ -118,43 +85,53 @@ impl WorkspaceThreadManager {
         if let Some(thread_id) = crate::previews::owner_conversation_thread_id(preview_slug) {
             if let Some(thread) = self.thread(&thread_id).await? {
                 if thread.preview_slug.as_deref() == Some(preview_slug) {
-                    if thread.status == ThreadStatus::Closed {
-                        let parent_thread_id = thread.parent_thread_id.ok_or_else(|| {
-                            anyhow!(
-                                "Preview {} history is missing its parent task",
-                                preview_slug
-                            )
-                        })?;
-                        return self
-                            .create_preview_child_for_route(
-                                route,
-                                thread.workspace_id,
-                                parent_thread_id,
-                                preview_slug.to_string(),
-                                thread.host_binding,
-                            )
-                            .await;
-                    }
-                    self.attach_route(
-                        route.clone(),
-                        thread.workspace_id.clone(),
-                        thread.id.clone(),
-                    )
-                    .await?;
-                    return self.runtime_from_thread(thread).await;
+                    return self
+                        .reuse_or_advance_preview_thread(route, preview_slug, thread)
+                        .await;
                 }
             }
         }
 
         let previous = self
-            .thread_projection()
+            .preferred_preview_thread(preview_slug)
             .await?
+            .ok_or_else(|| anyhow!("Preview {} conversation is not initialized", preview_slug))?;
+        self.reuse_or_advance_preview_thread(route, preview_slug, previous)
+            .await
+    }
+
+    async fn preferred_preview_thread(
+        &self,
+        preview_slug: &str,
+    ) -> anyhow::Result<Option<WorkspaceThread>> {
+        let projection = self.thread_projection().await?;
+        let mut latest_open = None;
+        let mut latest_any = None;
+        for thread in projection
             .all()
             .filter(|thread| thread.preview_slug.as_deref() == Some(preview_slug))
-            .max_by(|left, right| left.updated_at.cmp(&right.updated_at))
-            .cloned()
-            .ok_or_else(|| anyhow!("Preview {} conversation is not initialized", preview_slug))?;
+        {
+            if latest_any
+                .is_none_or(|latest: &WorkspaceThread| latest.updated_at < thread.updated_at)
+            {
+                latest_any = Some(thread);
+            }
+            if thread.status == ThreadStatus::Open
+                && latest_open
+                    .is_none_or(|latest: &WorkspaceThread| latest.updated_at < thread.updated_at)
+            {
+                latest_open = Some(thread);
+            }
+        }
+        Ok(latest_open.or(latest_any).cloned())
+    }
 
+    async fn reuse_or_advance_preview_thread(
+        &self,
+        route: &RouteKey,
+        preview_slug: &str,
+        previous: WorkspaceThread,
+    ) -> anyhow::Result<Arc<ThreadRuntime>> {
         if previous.status == ThreadStatus::Open {
             self.attach_route(
                 route.clone(),
