@@ -85,8 +85,18 @@ function PreviewWorkspace({
   const selected =
     bootstrap.previews.find((preview) => preview.slug === selectedSlug) ??
     bootstrap.previews[0];
+
+  const refreshPreview = useCallback(() => {
+    setFrameRevision((revision) => revision + 1);
+    setLastRefreshedAt(Date.now());
+  }, []);
+
   const chat = usePreviewChatConnection(selected.slug, selected.chatAvailable);
   const review = usePreviewReviewBridge(frameRef, selected);
+
+  useEffect(() => {
+    if (chat.refreshRequestVersion > 0) refreshPreview();
+  }, [chat.refreshRequestVersion, refreshPreview]);
 
   useEffect(() => {
     document.title = `Preview — ${selected.title}`;
@@ -108,11 +118,6 @@ function PreviewWorkspace({
     setLastRefreshedAt(Date.now());
     history.replaceState(null, "", `/va/preview/u/${encodeURIComponent(slug)}`);
   };
-
-  const refreshPreview = useCallback(() => {
-    setFrameRevision((revision) => revision + 1);
-    setLastRefreshedAt(Date.now());
-  }, []);
 
   const activeDraft = review.editor?.draftId
     ? review.drafts.find((draft) => draft.id === review.editor?.draftId)

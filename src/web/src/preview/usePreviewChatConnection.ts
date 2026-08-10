@@ -26,6 +26,15 @@ function previewSocketUrl(slug: string) {
   return url.href;
 }
 
+export function isPreviewRefreshEvent(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "kind" in value &&
+    value.kind === "preview_refresh"
+  );
+}
+
 export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
@@ -33,6 +42,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
   const [agentLabel, setAgentLabel] = useState("AI");
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([]);
   const [lastTurnCompletedAt, setLastTurnCompletedAt] = useState<number>();
+  const [refreshRequestVersion, setRefreshRequestVersion] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -82,9 +92,20 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
 
     const handleMessage = (event: MessageEvent) => {
       if (typeof event.data !== "string") return;
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data);
+      } catch (error) {
+        console.warn("[Preview] bad chat frame, dropping:", error);
+        return;
+      }
+      if (isPreviewRefreshEvent(payload)) {
+        setRefreshRequestVersion((version) => version + 1);
+        return;
+      }
       let frame;
       try {
-        frame = ChatEventSchema.parse(JSON.parse(event.data));
+        frame = ChatEventSchema.parse(payload);
       } catch (error) {
         console.warn("[Preview] bad chat frame, dropping:", error);
         return;
@@ -123,10 +144,10 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
           const wasActive = turnActiveRef.current;
           turnActiveRef.current = frame.active;
           setStreaming(frame.active);
-          if (wasActive && !frame.active) {
+          if (!frame.active) {
             setMessages((current) => settleStreamActivitiesMessage(current));
             setPendingPermissions([]);
-            setLastTurnCompletedAt(Date.now());
+            if (wasActive) setLastTurnCompletedAt(Date.now());
           }
           break;
         }
@@ -187,6 +208,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
     }
 
     setLastTurnCompletedAt(undefined);
+    setRefreshRequestVersion(0);
     reconnectAttemptRef.current = 0;
     if (chatAvailable) connect();
     else {
@@ -298,6 +320,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
     agentLabel,
     pendingPermissions,
     lastTurnCompletedAt,
+    refreshRequestVersion,
     sendMessage,
     stopStreaming,
     sendPermissionResponse,

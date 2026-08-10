@@ -23,6 +23,7 @@ mod jsonrpc;
 mod ports;
 mod preview;
 mod preview_conversation;
+mod preview_refresh;
 mod session_identity;
 mod sessions;
 mod subagent_worktrees;
@@ -150,6 +151,7 @@ async fn mcp_tools_call(
         "wait_for_subagents" => subagents::mcp_wait_for_subagents(id, arguments, state).await,
         "preview" => preview::mcp_preview_start(id, arguments, params.get("_meta"), state).await,
         "md_preview" => preview::mcp_md_preview(id, arguments, params.get("_meta"), state).await,
+        "refresh_preview" => preview_refresh::mcp_refresh_preview(id, arguments, state).await,
         _ => jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name)),
     }
 }
@@ -213,5 +215,21 @@ mod tests {
                 "result": { "prompts": [] }
             })
         );
+    }
+
+    #[test]
+    fn refresh_preview_exposes_only_the_managed_thread_id() {
+        let response = super::mcp_tools_list(Some(json!(4))).0;
+        let refresh = response["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "refresh_preview")
+            .expect("refresh_preview tool");
+        let properties = refresh["inputSchema"]["properties"].as_object().unwrap();
+
+        assert_eq!(properties.len(), 1);
+        assert!(properties.contains_key("thread_id"));
+        assert_eq!(refresh["inputSchema"]["required"], json!(["thread_id"]));
     }
 }

@@ -59,6 +59,20 @@
     }
   },
   {
+    "name": "refresh_preview",
+    "description": "Refresh the open owner Preview after changing its content. This only works from the active child task for that Preview; if the owner page is not open, the request is a silent no-op. Pass $VIBEAROUND_THREAD_ID as thread_id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string",
+          "description": "Value of $VIBEAROUND_THREAD_ID for the active owner Preview child task."
+        }
+      },
+      "required": ["thread_id"]
+    }
+  },
+  {
     "name": "prepare_handover",
     "description": "Prepare a session handover. Returns a /pickup command that the user can send in any IM channel connected to VibeAround to resume the session there.",
     "inputSchema": {

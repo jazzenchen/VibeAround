@@ -143,3 +143,77 @@ async fn unregistering_preview_connection_preserves_route_replay() {
         }
     );
 }
+
+#[tokio::test]
+async fn stale_preview_session_defers_user_message_until_successor_is_ready() {
+    let manager = WebChannelManager::new();
+    let route = RouteKey::new("web", "ws_preview_successor");
+    manager.set_route_agent(&route, "codex".to_string()).await;
+    let (tx, mut rx) = manager.sender();
+    manager
+        .register_connection(&route, "owner".to_string(), tx, false)
+        .await;
+    manager
+        .dispatch_output(ChannelOutput::SessionReady {
+            route: route.clone(),
+            reply_to: None,
+            session_id: "old-session".to_string(),
+        })
+        .await;
+    assert!(matches!(
+        rx.try_recv().expect("old session ready"),
+        ChannelOutput::SessionReady { .. }
+    ));
+
+    let wait_for_session_ready = preview_route_session_is_stale(Some("old-session"), None);
+    assert!(wait_for_session_ready);
+    manager
+        .record_user_message(
+            &route,
+            "successor-message".to_string(),
+            vec![serde_json::json!({"type": "text", "text": "update the preview"})],
+            wait_for_session_ready,
+        )
+        .await;
+    assert!(rx.try_recv().is_err());
+
+    manager
+        .dispatch_output(ChannelOutput::SessionReady {
+            route: route.clone(),
+            reply_to: None,
+            session_id: "new-session".to_string(),
+        })
+        .await;
+    assert!(matches!(
+        rx.try_recv().expect("new session ready"),
+        ChannelOutput::SessionReady { .. }
+    ));
+    let ChannelOutput::RawAcp { payload, .. } = rx.try_recv().expect("successor user message")
+    else {
+        panic!("expected successor user message replay");
+    };
+    assert_eq!(payload["sessionId"], "new-session");
+    assert_eq!(payload["update"]["messageId"], "successor-message");
+
+    assert!(!preview_route_session_is_stale(
+        Some("new-session"),
+        Some("new-session")
+    ));
+    assert!(!preview_route_session_is_stale(None, None));
+}
+
+#[tokio::test]
+async fn preview_refresh_events_are_live_only_and_filtered_by_owner_slug() {
+    let before_subscribe = format!("before-{}", uuid::Uuid::new_v4());
+    request_owner_refresh(&before_subscribe);
+    let mut rx = PREVIEW_REFRESH_EVENTS.subscribe();
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+
+    let target = format!("target-{}", uuid::Uuid::new_v4());
+    request_owner_refresh("another-preview");
+    request_owner_refresh(&target);
+    receive_owner_refresh(&mut rx, &target).await.unwrap();
+}

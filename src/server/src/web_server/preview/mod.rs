@@ -48,6 +48,7 @@ pub(super) use assets::{
     MARKED_SCRIPT_ROUTE, REVIEW_BRIDGE_SCRIPT_ROUTE, THEME_STYLESHEET_ROUTE,
 };
 pub(super) use chat::owner_preview_chat_handler;
+pub(in crate::web_server) use chat::request_owner_refresh;
 
 use access::{
     clear_share_cookie, extract_cookie, render_access_gate, share_cookie_name, share_grant_cookie,

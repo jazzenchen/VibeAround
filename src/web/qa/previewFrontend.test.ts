@@ -5,6 +5,7 @@ import {
   applyPreviewSessionNotification,
   previewSessionChanged,
 } from "../src/preview/previewChatMessages";
+import { isPreviewRefreshEvent } from "../src/preview/usePreviewChatConnection";
 import {
   buildPreviewReviewPrompt,
   previewReviewDisplay,
@@ -104,4 +105,10 @@ test("Preview transcript resets only when the bound agent session changes", () =
   expect(previewSessionChanged(null, "session-1")).toBe(false);
   expect(previewSessionChanged("session-1", "session-1")).toBe(false);
   expect(previewSessionChanged("session-1", "session-2")).toBe(true);
+});
+
+test("Preview refresh is a local websocket frame outside the shared chat schema", () => {
+  expect(isPreviewRefreshEvent({ kind: "preview_refresh" })).toBe(true);
+  expect(isPreviewRefreshEvent({ kind: "turn_status", active: false })).toBe(false);
+  expect(isPreviewRefreshEvent("preview_refresh")).toBe(false);
 });

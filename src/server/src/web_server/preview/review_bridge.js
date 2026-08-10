@@ -156,14 +156,15 @@
     }
     if (activeAnchor && channelId) {
       const rect = rectFor(activeAnchor.selection);
-      if (!hasArea(rect)) {
+      const visible = rectVisible(rect);
+      if (!hasArea(rect) || (!activeAnchor.activateWhenVisible && !visible)) {
         const anchorId = activeAnchor.id;
         activeAnchor = null;
         post("anchor-position", { anchorId, rect: null });
-      } else {
+      } else if (visible) {
         const serialized = { x: rect.x, y: rect.y,
           width: rect.width, height: rect.height };
-        if (activeAnchor.activateWhenVisible && rectVisible(rect)) {
+        if (activeAnchor.activateWhenVisible) {
           activeAnchor.activateWhenVisible = false;
           post("marker-activate", { markerId: activeAnchor.id, rect: serialized });
         }

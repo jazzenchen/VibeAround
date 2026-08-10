@@ -6,7 +6,9 @@ use axum::extract::{
 };
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
+use std::sync::LazyLock;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use common::routing::RouteKey;
@@ -22,6 +24,16 @@ use crate::web_server::AppState;
 
 use super::{owner_access_allowed, preview_target_available};
 
+const PREVIEW_REFRESH_FRAME: &str = r#"{"kind":"preview_refresh"}"#;
+static PREVIEW_REFRESH_EVENTS: LazyLock<broadcast::Sender<String>> = LazyLock::new(|| {
+    let (tx, _) = broadcast::channel(16);
+    tx
+});
+
+pub(in crate::web_server) fn request_owner_refresh(slug: &str) {
+    let _ = PREVIEW_REFRESH_EVENTS.send(slug.to_string());
+}
+
 pub(in crate::web_server) async fn owner_preview_chat_handler(
     State(state): State<AppState>,
     Path(slug): Path<String>,
@@ -34,7 +46,7 @@ pub(in crate::web_server) async fn owner_preview_chat_handler(
         Err(error) => return error.into_response(),
     };
 
-    ws.on_upgrade(move |socket| handle_owner_chat_socket(socket, state, route))
+    ws.on_upgrade(move |socket| handle_owner_chat_socket(socket, state, route, slug))
 }
 
 fn resolve_owner_chat_route(
@@ -65,7 +77,12 @@ fn resolve_owner_chat_route(
     Ok(preview_web_route_for_slug(slug))
 }
 
-async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: RouteKey) {
+async fn handle_owner_chat_socket(
+    socket: WebSocket,
+    state: AppState,
+    route: RouteKey,
+    slug: String,
+) {
     let connection_id = Uuid::new_v4().to_string();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     state
@@ -73,6 +90,7 @@ async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: Rou
         .register_connection(&route, connection_id.clone(), tx, true)
         .await;
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
+    let mut refresh_rx = PREVIEW_REFRESH_EVENTS.subscribe();
     let (mut ws_tx, mut ws_rx) = socket.split();
 
     let outbound_task = tokio::spawn(async move {
@@ -86,6 +104,17 @@ async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: Rou
                 Some(event) = event_rx.recv() => {
                     if send_event(&mut ws_tx, &event).await.is_err() {
                         break;
+                    }
+                }
+                refresh = receive_owner_refresh(&mut refresh_rx, &slug) => {
+                    match refresh {
+                        Ok(()) => {
+                            if ws_tx.send(Message::Text(PREVIEW_REFRESH_FRAME.into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 else => break,
@@ -104,7 +133,10 @@ async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: Rou
                         // SessionReady can bind and replay this user message only
                         // after WebChannelManager knows the route's current agent.
                         remember_web_route_agent(&state, &route, None).await;
-                        remember_web_user_message(&state, &route, &input, false).await;
+                        let wait_for_session_ready =
+                            preview_user_message_waits_for_session(&state, &route).await;
+                        remember_web_user_message(&state, &route, &input, wait_for_session_ready)
+                            .await;
                         state.channel_hub.handle_input(input);
                     }
                     BoundChatInput::Stop(input) => state.channel_hub.handle_input(input),
@@ -138,6 +170,40 @@ async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: Rou
         .web_channel
         .unregister_connection(&route, &connection_id)
         .await;
+}
+
+async fn preview_user_message_waits_for_session(state: &AppState, route: &RouteKey) -> bool {
+    let Some(route_session) = state.web_channel.route_session_id(route).await else {
+        return false;
+    };
+    let active_session = match state
+        .channel_hub
+        .workspace_thread_manager()
+        .active_route_runtime(route)
+        .await
+    {
+        Ok(Some(runtime)) => runtime.state().await.session_id,
+        _ => None,
+    };
+    preview_route_session_is_stale(Some(&route_session), active_session.as_deref())
+}
+
+fn preview_route_session_is_stale(
+    route_session: Option<&str>,
+    active_session: Option<&str>,
+) -> bool {
+    route_session.is_some() && route_session != active_session
+}
+
+async fn receive_owner_refresh(
+    rx: &mut broadcast::Receiver<String>,
+    slug: &str,
+) -> Result<(), broadcast::error::RecvError> {
+    loop {
+        if rx.recv().await? == slug {
+            return Ok(());
+        }
+    }
 }
 
 #[cfg(test)]
