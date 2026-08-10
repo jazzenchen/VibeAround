@@ -86,3 +86,21 @@ test("shared composer can omit dashboard commands", () => {
   expect(compactComposer).toContain("Review note");
   expect(compactComposer).toContain("Select element");
 });
+
+test("shared composer can submit contextual review notes without prompt text", () => {
+  const composer = render(
+    <ChatInput
+      value=""
+      onChange={() => {}}
+      onSubmit={() => {}}
+      showCommands={false}
+      contextCanSubmit
+      contextContent={<span>README review note</span>}
+    />,
+  );
+
+  expect(composer).toContain("README review note");
+  const sendButton = composer.match(/<button[^>]*aria-label="Send"[^>]*>/)?.[0];
+  expect(sendButton).toBeDefined();
+  expect(sendButton).not.toMatch(/\sdisabled(?:=|>)/);
+});

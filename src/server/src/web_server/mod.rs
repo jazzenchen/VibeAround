@@ -507,6 +507,10 @@ pub async fn run_web_server(
         )
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
         .route(
+            "/preview/u/{slug}/bootstrap",
+            get(preview::owner_preview_bootstrap_handler),
+        )
+        .route(
             "/preview/u/{slug}/chat",
             get(preview::owner_preview_chat_handler),
         )

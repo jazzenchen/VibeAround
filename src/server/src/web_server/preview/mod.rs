@@ -1,12 +1,13 @@
 //! Live preview routes.
 //!
 //! **Preview pages**:
-//! - GET /preview/u/:slug            — owner shell + preview picker
+//! - GET /preview/u/:slug            — owner React app
+//! - GET /preview/u/:slug/bootstrap  — owner app data
 //! - GET /preview/u/:slug/chat       — owner-only conversation WebSocket
 //! - GET /preview/u/:slug/content    — owner iframe content
 //! - GET /preview/s/:share_id        — Markdown share gate or document
 //! - POST /preview/s/:share_id       — verify reusable access code
-//!   The owner shell switches one iframe between previews. Markdown content
+//!   The owner app switches one iframe between previews. Markdown content
 //!   renders from the owner-only content route. Local Server content loads
 //!   directly from its own `localhost:{port}` origin.
 //!
@@ -19,12 +20,14 @@
 //! ## Module layout
 //!
 //! - [`assets`]        — versioned third-party browser assets
-//! - [`iframe`]        — owner shell + target-aware iframe picker
+//! - [`bootstrap`]     — owner app target data
+//! - [`iframe`]        — owner app response + iframe target dispatch
 //! - [`markdown`]      — rendered markdown document page
 //! - [`toolbar`]       — shared toolbar HTML/CSS + HTML helpers
 
 mod access;
 mod assets;
+mod bootstrap;
 mod chat;
 mod iframe;
 mod markdown;
@@ -32,9 +35,10 @@ mod toolbar;
 
 use axum::body::Body;
 use axum::extract::rejection::FormRejection;
-use axum::extract::{Form, Path, Request};
+use axum::extract::{Form, Path, Request, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use common::previews::{PreviewEntry, PreviewTarget, ShareCodeError};
 use serde::Deserialize;
 
@@ -49,35 +53,55 @@ use access::{
     clear_share_cookie, extract_cookie, render_access_gate, share_cookie_name, share_grant_cookie,
     with_retry_after, AccessGateError,
 };
-use iframe::{render_owner_content, render_owner_shell};
+use bootstrap::owner_preview_bootstrap;
+use iframe::{render_owner_app, render_owner_content};
 use markdown::render_md_page;
 use toolbar::url_encode_query;
 
 // ===========================================================================
-// Owner Preview shell + iframe content
+// Owner Preview app + iframe content
 // ===========================================================================
 
-/// GET /preview/u/{slug} — owner preview. Requires `va_owner` cookie on
+/// GET /preview/u/{slug} — owner Preview app. Requires `va_owner` cookie on
 /// non-loopback hosts.
 ///
-/// Renders one owner-only shell whose picker lists available workspaces and
-/// previews. Preview performs its own loopback check because these routes are
+/// Serves the Web SPA after validating the selected Preview. Preview performs
+/// its own loopback check because these routes are
 /// outside the auth middleware. For non-loopback hosts, a missing or invalid
 /// cookie redirects through the pairing gate and then back to the requested
 /// preview.
-pub async fn owner_preview_handler(Path(slug): Path<String>, req: Request) -> Response {
+pub async fn owner_preview_handler(
+    State(state): State<crate::web_server::AppState>,
+    Path(slug): Path<String>,
+    req: Request,
+) -> Response {
+    owner_preview_response(Path(slug), req, state.dist_for_fallback).await
+}
+
+pub(super) async fn owner_preview_response(
+    Path(slug): Path<String>,
+    req: Request,
+    web_dist: std::path::PathBuf,
+) -> Response {
     let include_server_previews = crate::web_server::auth::request_is_loopback(&req);
     let response = match common::previews::lookup_owner(&slug) {
         Some(entry) if !preview_target_available(&req, &entry) => {
             server_preview_local_only().into_response()
         }
-        Some(entry) if owner_access_allowed(&req) => {
-            let mut response = render_owner_shell(
-                &entry,
-                &slug,
-                &owner_preview_snapshots(include_server_previews),
-                preview_server_host(&req, include_server_previews),
-            );
+        Some(_) if owner_access_allowed(&req) => {
+            let previews = owner_preview_snapshots(include_server_previews);
+            let mut response = match tokio::fs::read_to_string(web_dist.join("index.html")).await {
+                Ok(html) => render_owner_app(
+                    html,
+                    &previews,
+                    preview_server_host(&req, include_server_previews),
+                ),
+                Err(error) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Failed to load Preview app: {error}"),
+                )
+                    .into_response(),
+            };
             if include_server_previews {
                 clear_local_preview_cookies(&mut response);
             }
@@ -86,6 +110,30 @@ pub async fn owner_preview_handler(Path(slug): Path<String>, req: Request) -> Re
         Some(_) => owner_pairing_redirect(&req, format!("/preview/u/{}", slug)),
         None if owner_access_allowed(&req) => preview_not_found().into_response(),
         None => owner_pairing_redirect(&req, format!("/preview/u/{}", slug)),
+    };
+    no_store(response)
+}
+
+/// GET /preview/u/{slug}/bootstrap — owner-only SPA data.
+pub async fn owner_preview_bootstrap_handler(Path(slug): Path<String>, req: Request) -> Response {
+    let response = if !owner_access_allowed(&req) {
+        StatusCode::UNAUTHORIZED.into_response()
+    } else {
+        match common::previews::lookup_owner(&slug) {
+            Some(entry) if !preview_target_available(&req, &entry) => {
+                server_preview_local_only().into_response()
+            }
+            Some(_) => {
+                let include_server_previews = crate::web_server::auth::request_is_loopback(&req);
+                Json(owner_preview_bootstrap(
+                    &slug,
+                    &owner_preview_snapshots(include_server_previews),
+                    preview_server_host(&req, include_server_previews),
+                ))
+                .into_response()
+            }
+            None => preview_not_found().into_response(),
+        }
     };
     no_store(response)
 }

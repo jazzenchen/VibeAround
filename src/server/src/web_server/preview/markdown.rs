@@ -22,7 +22,7 @@ pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (St
     render_md(entry, true, false).await
 }
 
-/// Render owner Markdown content inside the owner shell iframe.
+/// Render owner Markdown content inside the owner app iframe.
 pub(super) async fn render_md_content(
     entry: &PreviewEntry,
     annotations_enabled: bool,

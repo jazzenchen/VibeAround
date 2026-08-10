@@ -1,0 +1,82 @@
+export interface PreviewItem {
+  slug: string;
+  title: string;
+  workspace: string;
+  kind: string;
+  src: string;
+  chatAvailable: boolean;
+}
+
+export interface PreviewBootstrap {
+  selectedSlug: string;
+  previews: PreviewItem[];
+}
+
+export type PreviewAnchor = {
+  kind: "text" | "element";
+  text: string;
+  heading?: string;
+  startLine?: number;
+  endLine?: number;
+  page?: {
+    path?: string;
+    hash?: string;
+    title?: string;
+  };
+  element?: {
+    tag?: string;
+    id?: string;
+    testId?: string;
+    role?: string;
+    label?: string;
+    selector?: string;
+    text?: string;
+  };
+};
+
+export type PreviewFrameRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type PreviewReviewDraft = {
+  id: string;
+  anchor: PreviewAnchor;
+  comment: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function parsePreviewBootstrap(value: unknown): PreviewBootstrap | null {
+  if (!isRecord(value) || typeof value.selectedSlug !== "string") return null;
+  if (!Array.isArray(value.previews)) return null;
+
+  const previews: PreviewItem[] = [];
+  for (const item of value.previews) {
+    if (
+      !isRecord(item) ||
+      typeof item.slug !== "string" ||
+      typeof item.title !== "string" ||
+      typeof item.workspace !== "string" ||
+      typeof item.kind !== "string" ||
+      typeof item.src !== "string" ||
+      typeof item.chatAvailable !== "boolean"
+    ) {
+      return null;
+    }
+    previews.push({
+      slug: item.slug,
+      title: item.title,
+      workspace: item.workspace,
+      kind: item.kind,
+      src: item.src,
+      chatAvailable: item.chatAvailable,
+    });
+  }
+
+  return { selectedSlug: value.selectedSlug, previews };
+}

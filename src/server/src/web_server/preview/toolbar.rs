@@ -1,7 +1,7 @@
 //! Toolbar + shared HTML helpers for preview pages.
 //!
 //! Standalone Markdown pages render a sticky toolbar with the title and an
-//! optional countdown. The owner shell has its own floating picker.
+//! optional countdown. The owner app provides its own Preview picker.
 
 use common::previews::PreviewEntry;
 

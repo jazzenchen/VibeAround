@@ -67,6 +67,7 @@ export interface ChatInputProps {
   sendWithModifierEnter?: boolean;
   showCommands?: boolean;
   contextContent?: ReactNode;
+  contextCanSubmit?: boolean;
   leadingAction?: ReactNode;
   sessionMode?: SessionModeState | null;
   onSessionModeChange?: (value: string) => void;
@@ -94,6 +95,7 @@ export function ChatInput({
   sendWithModifierEnter = false,
   showCommands = true,
   contextContent,
+  contextCanSubmit = false,
   leadingAction,
   sessionMode,
   onSessionModeChange,
@@ -185,7 +187,7 @@ export function ChatInput({
     !disabled &&
     !submitDisabled &&
     !attachmentsUploading &&
-    (!!value.trim() || attachments.length > 0);
+    (!!value.trim() || attachments.length > 0 || contextCanSubmit);
   const showStop = isStreaming && onStop;
   const showDropTarget =
     dragDepth > 0 && Boolean(onFilesSelected) && !disabled && !attachmentsUploading;

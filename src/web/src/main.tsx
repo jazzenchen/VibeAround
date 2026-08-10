@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { I18nProvider } from "@va/i18n";
 import App from "./App";
@@ -6,7 +6,10 @@ import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { PairingGate } from "./PairingGate";
 import { initTheme } from "./lib/theme";
 import { clearAuthToken, getAuthToken, initAuthFromUrl } from "./lib/auth";
+import { ownerPreviewSlug } from "./preview/previewRoute";
 import "./index.css";
+
+const PreviewPage = lazy(() => import("./preview/PreviewPage"));
 
 initTheme();
 
@@ -79,12 +82,27 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
 // anyone who loads the page without a token sees a clear explanation
 // instead of an empty broken-looking dashboard.
 const hasToken = getAuthToken() !== null;
+const previewSlug = ownerPreviewSlug(window.location.pathname);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <I18nProvider>
       <AppErrorBoundary>
-        {hasToken ? <App /> : <PairingGate />}
+        {previewSlug ? (
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Loading Preview…
+              </div>
+            }
+          >
+            <PreviewPage initialSlug={previewSlug} />
+          </Suspense>
+        ) : hasToken ? (
+          <App />
+        ) : (
+          <PairingGate />
+        )}
       </AppErrorBoundary>
     </I18nProvider>
   </StrictMode>
