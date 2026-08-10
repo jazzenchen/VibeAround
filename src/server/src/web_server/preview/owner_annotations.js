@@ -51,14 +51,22 @@
   }
 
   function hidePopover(cancelPick) {
+    var previous = editing;
     popover.hidden = true;
-    if (cancelPick && editing && !editing.id && window.VAPreviewFrameReview) {
-      window.VAPreviewFrameReview.cancelPick();
+    if (previous && window.VAPreviewFrameReview) {
+      if (cancelPick && !previous.id) window.VAPreviewFrameReview.cancelPick();
+      else window.VAPreviewFrameReview.closePopover();
     }
     editing = null;
   }
 
   function positionPopover(rect) {
+    if (!rect || rect.y + rect.height <= 0 || rect.y >= frame.clientHeight
+        || rect.x + rect.width <= 0 || rect.x >= frame.clientWidth) {
+      hidePopover(true);
+      return;
+    }
+    if (editing) editing.rect = rect;
     var frameRect = frame.getBoundingClientRect();
     var width = Math.min(360, window.innerWidth - 24);
     popover.style.width = width + "px";
@@ -79,6 +87,8 @@
       id: item ? item.id : null,
       anchor: anchor,
       selectionId: selectionId || null,
+      anchorId: item ? item.id : selectionId,
+      rect: rect,
     };
     locationNode.textContent = reviewPrompt.locationText(anchor);
     selectionNode.textContent = excerpt(reviewPrompt.quote(anchor), 320);
@@ -176,14 +186,14 @@
       setFeedback("These review notes are too long for one message.");
       return;
     }
-    var summary = (prompt ? prompt + "\n\n" : "")
-      + (items.length === 1 ? "1 review note" : items.length + " review notes");
+    var summary = reviewPrompt.display(items, prompt);
     if (!chat.send(message, summary)) return;
     items.forEach(function (item) {
       if (window.VAPreviewFrameReview) window.VAPreviewFrameReview.removeMarker(item.id);
     });
     items = [];
     input.value = "";
+    input.dispatchEvent(new Event("input"));
     setFeedback("");
     render();
   }, true);
@@ -194,6 +204,17 @@
     if (!popover.hidden) hidePopover(true);
     if (elementMode) setElementMode(false);
   }, true);
+  document.addEventListener("pointerdown", function (event) {
+    if (!popover.hidden && !popover.contains(event.target)) hidePopover(true);
+  }, true);
+  window.addEventListener("blur", function () {
+    setTimeout(function () {
+      if (!popover.hidden && document.activeElement === frame) hidePopover(true);
+    }, 0);
+  });
+  window.addEventListener("resize", function () {
+    if (editing && editing.rect) positionPopover(editing.rect);
+  });
 
   window.VAPreviewComments = {
     setCapabilities: function (capabilities) {
@@ -211,6 +232,10 @@
     activate: function (id, rect) {
       var item = items.find(function (candidate) { return candidate.id === id; });
       if (item && rect) openPopover(item.anchor, rect, item, null);
+    },
+    reposition: function (anchorId, rect) {
+      if (!editing || editing.anchorId !== anchorId) return;
+      positionPopover(rect);
     },
     cancelPick: function () {
       elementMode = false;

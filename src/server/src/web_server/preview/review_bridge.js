@@ -21,6 +21,7 @@
   let sequence = 0;
   let elementMode = false;
   let pending = null;
+  let activeAnchor = null;
   let host, root, hover, trigger;
 
   function post(type, fields) {
@@ -102,7 +103,11 @@
     trigger.addEventListener("pointerdown", (event) => event.preventDefault());
     trigger.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (pending) post("anchor-picked", pending.message);
+      if (pending) {
+        pending.message.rect = messageRect(pending.selection);
+        activeAnchor = { id: pending.selectionId, selection: pending.selection };
+        post("anchor-picked", pending.message);
+      }
       trigger.hidden = true;
     });
     document.documentElement.appendChild(host);
@@ -139,6 +144,12 @@
       const rect = rectFor(marker.selection);
       place(marker.highlight, rect, false); place(marker.button, rect, true);
     }
+    if (activeAnchor && channelId) {
+      post("anchor-position", {
+        anchorId: activeAnchor.id,
+        rect: messageRect(activeAnchor.selection),
+      });
+    }
   }
   function newSelection(kind, range, element, exact) {
     const selectionId = `selection-${++sequence}`;
@@ -150,13 +161,14 @@
   }
   function setPending(next, showTrigger) {
     if (pending) selections.delete(pending.selectionId);
+    activeAnchor = null;
     pending = next;
     trigger.hidden = !showTrigger;
     updateOverlays();
   }
   function cancelPick(notify) {
     if (pending) selections.delete(pending.selectionId);
-    pending = null; elementMode = false;
+    pending = null; activeAnchor = null; elementMode = false;
     if (hover) hover.hidden = true;
     if (trigger) trigger.hidden = true;
     if (notify && channelId) post("cancel");
@@ -170,10 +182,13 @@
     highlight.className = "box";
     Object.assign(button, { className: "marker", type: "button", textContent: "💬" });
     button.setAttribute("aria-label", "Open comment");
-    button.addEventListener("click", () => post("marker-activate",
-      { markerId, rect: messageRect(selection) }));
+    button.addEventListener("click", () => {
+      activeAnchor = { id: markerId, selection };
+      post("marker-activate", { markerId, rect: messageRect(selection) });
+    });
     root.append(highlight, button);
     markers.set(markerId, { selection, highlight, button });
+    if (activeAnchor && activeAnchor.id === selectionId) activeAnchor = null;
     selections.delete(selectionId);
     if (pending && pending.selectionId === selectionId) pending = null;
     const browserSelection = getSelection(); if (browserSelection) browserSelection.removeAllRanges();
@@ -184,18 +199,18 @@
     if (!marker) return;
     marker.highlight.remove(); marker.button.remove();
     markers.delete(markerId);
+    if (activeAnchor && activeAnchor.id === markerId) activeAnchor = null;
   }
   function focusMarker(markerId) {
     const marker = markers.get(markerId);
     if (!marker) return;
     const target = marker.selection.element || elementFor(marker.selection.range.commonAncestorContainer);
-    if (target && target.isConnected) target.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (target && target.isConnected) target.scrollIntoView({ block: "center" });
     marker.button.classList.add("focus");
     setTimeout(() => marker.button.classList.remove("focus"), 1200);
-    setTimeout(() => {
-      updateOverlays();
-      post("marker-activate", { markerId, rect: messageRect(marker.selection) });
-    }, 350);
+    activeAnchor = { id: markerId, selection: marker.selection };
+    updateOverlays();
+    post("marker-activate", { markerId, rect: messageRect(marker.selection) });
   }
   function captureTextSelection(event) {
     if (!channelId || elementMode || (host && event.composedPath().includes(host))) return;
@@ -229,6 +244,7 @@
     const element = elementFor(event.target);
     if (!element) return;
     setPending(newSelection("element", null, element, safeText(element, 2000)), false);
+    activeAnchor = { id: pending.selectionId, selection: pending.selection };
     post("anchor-picked", pending.message);
   }, true);
   document.addEventListener("keydown", (event) => event.key === "Escape" && cancelPick(true), true);
@@ -262,6 +278,7 @@
     else if (data.type === "remove-marker") removeMarker(data.markerId);
     else if (data.type === "focus-marker") focusMarker(data.markerId);
     else if (data.type === "cancel") cancelPick(false);
+    else if (data.type === "close-popover") activeAnchor = null;
   });
   const hello = () => {
     for (const origin of allowedOwnerOrigins) {

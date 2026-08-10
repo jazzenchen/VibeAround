@@ -8,6 +8,11 @@
       || "Selected element";
   }
 
+  function excerpt(text, limit) {
+    var compact = String(text || "").replace(/\s+/g, " ").trim();
+    return compact.length > limit ? compact.slice(0, limit - 1) + "…" : compact;
+  }
+
   function locationText(anchor) {
     var parts = [];
     if (anchor.page && anchor.page.path) parts.push(anchor.page.path + (anchor.page.hash || ""));
@@ -62,8 +67,22 @@
     return lines.join("\n");
   }
 
+  function display(items, prompt) {
+    var lines = prompt ? [prompt] : [];
+    items.forEach(function (item) {
+      if (lines.length) lines.push("");
+      lines.push(
+        locationText(item.anchor),
+        "“" + excerpt(quote(item.anchor), 160) + "”",
+        "→ " + item.comment,
+      );
+    });
+    return lines.join("\n");
+  }
+
   window.VAPreviewReviewPrompt = Object.freeze({
     build: build,
+    display: display,
     locationText: locationText,
     quote: quote,
   });

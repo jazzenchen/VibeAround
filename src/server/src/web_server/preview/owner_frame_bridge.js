@@ -76,6 +76,8 @@
       comments("pick", [message.anchor, message.rect, message.selectionId]);
     } else if (message.type === "marker-activate") {
       comments("activate", [message.markerId, message.rect]);
+    } else if (message.type === "anchor-position") {
+      comments("reposition", [message.anchorId, message.rect]);
     } else if (message.type === "cancel") {
       comments("cancelPick");
     }
@@ -98,6 +100,7 @@
       return command("element-mode", { enabled: Boolean(enabled) });
     },
     cancelPick: function () { return command("cancel"); },
+    closePopover: function () { return command("close-popover"); },
   });
 
   resetFrame();
