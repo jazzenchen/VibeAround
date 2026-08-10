@@ -51,6 +51,34 @@ function progressVisible(message: ChatMessage, settings: ChatDisplaySettings) {
   return settings.showTools;
 }
 
+function messageHasVisibleActiveWork(
+  message: ChatMessage | undefined,
+  settings: ChatDisplaySettings,
+) {
+  if (!message || message.role !== "assistant") return false;
+  const activePartVisible = message.parts?.some((part) => {
+    if (part.kind === "thought") return part.active === true && settings.showThinking;
+    if (part.kind === "tool_call") return part.active === true && settings.showTools;
+    return (
+      part.kind === "plan" &&
+      part.plan.entries.some((entry) => entry.status === "in_progress")
+    );
+  });
+  if (activePartVisible) return true;
+  const activeActivityVisible = message.activities?.some(
+    (activity) => activity.active === true && activityVisible(activity, settings),
+  );
+  return Boolean(activeActivityVisible || progressVisible(message, settings));
+}
+
+export function shouldShowWorkingIndicator(
+  messages: ChatMessage[],
+  streaming: boolean,
+  settings: ChatDisplaySettings,
+) {
+  return streaming && !messageHasVisibleActiveWork(messages[messages.length - 1], settings);
+}
+
 function messageRenderResetKey(message: ChatMessage, index: number) {
   const partKey =
     message.parts
@@ -83,12 +111,10 @@ export function ChatMessageList({
   workspacePath,
 }: ChatMessageListProps) {
   const { t } = useI18n();
-  const lastMessage = messages[messages.length - 1];
-  const showWorkingIndicator = Boolean(
-    streaming &&
-      (!lastMessage ||
-        lastMessage.role !== "assistant" ||
-        !messageVisible(lastMessage, displaySettings)),
+  const showWorkingIndicator = shouldShowWorkingIndicator(
+    messages,
+    streaming,
+    displaySettings,
   );
 
   return (

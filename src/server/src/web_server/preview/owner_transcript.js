@@ -88,7 +88,8 @@
       if (active) setActivity("Thinking…");
     } else if (kind === "tool_call" || kind === "tool_call_update") {
       var label = update.title || update.toolCall && update.toolCall.title || "tool";
-      if (active) setActivity(update.status === "completed" ? "AI is working…" : "Using " + label + "…");
+      var finished = update.status === "completed" || update.status === "failed";
+      if (active) setActivity(finished ? "AI is working…" : "Using " + label + "…");
     }
   }
 
