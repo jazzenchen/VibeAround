@@ -117,8 +117,7 @@
 .review-chip button { min-height: 28px; border: 0; background: transparent; }
 .review-chip-focus { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 260px; padding: 0 6px 0 9px; }
 .review-chip-focus span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.review-chip-icon { position: relative; width: 13px; height: 10px; flex: 0 0 auto; border: 1.5px solid var(--primary); border-radius: 3px; }
-.review-chip-icon::after { content: ""; position: absolute; left: 2px; bottom: -4px; border: 3px solid transparent; border-top-color: var(--primary); transform: rotate(18deg); }
+.review-chip-icon { width: 14px; height: 14px; flex: 0 0 auto; fill: none; stroke: var(--primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .review-chip-remove { width: 28px; padding: 0; border-left: 1px solid var(--border) !important; border-radius: 0 999px 999px 0; color: var(--muted-foreground); font-size: 17px; }
 .review-feedback { margin: 0 6px; color: var(--destructive); font-size: 12px; line-height: 1.4; }
 .comment-popover {

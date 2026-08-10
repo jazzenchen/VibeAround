@@ -101,15 +101,14 @@
   function createChip(item) {
     var chip = document.createElement("div");
     var focus = document.createElement("button");
-    var icon = document.createElement("span");
+    var icon = toggle.querySelector("svg").cloneNode(true);
     var label = document.createElement("span");
     var remove = document.createElement("button");
     chip.className = "review-chip";
     focus.type = "button";
     focus.className = "review-chip-focus";
     focus.title = reviewPrompt.locationText(item.anchor);
-    icon.className = "review-chip-icon";
-    icon.setAttribute("aria-hidden", "true");
+    icon.setAttribute("class", "review-chip-icon");
     label.textContent = excerpt(reviewPrompt.quote(item.anchor), 54);
     focus.append(icon, label);
     focus.addEventListener("click", function () {
