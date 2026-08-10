@@ -162,7 +162,7 @@
 
   cancel.addEventListener("click", function () { hidePopover(true); });
   commentInput.addEventListener("keydown", function (event) {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       popover.requestSubmit();
     }

@@ -96,7 +96,7 @@
     host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none";
     root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>.box{position:fixed;border:2px solid #0d9488;background:#14b8a61f;border-radius:4px;pointer-events:none}
-      .hover{border-style:dashed;background:#14b8a612}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}.trigger{padding:6px 9px}.marker{width:26px;height:26px;padding:0;font-size:14px}.focus{outline:3px solid #0d948859;outline-offset:2px}</style>
+      .hover{border-style:dashed;background:#14b8a612}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.focus{outline:3px solid #0d948859;outline-offset:2px}</style>
       <div class="box hover" hidden></div><button class="trigger" type="button" hidden>Comment</button>`;
     hover = root.querySelector(".hover");
     trigger = root.querySelector(".trigger");
@@ -122,6 +122,8 @@
     const rect = rectFor(selection); return rect && { x: rect.x, y: rect.y,
       width: rect.width, height: rect.height };
   };
+  const rectVisible = (rect) => rect && rect.bottom > 0 && rect.top < innerHeight
+    && rect.right > 0 && rect.left < innerWidth;
   function place(node, rect, icon) {
     if (!rect || (!rect.width && !rect.height)) return void (node.hidden = true);
     node.hidden = false;
@@ -145,10 +147,20 @@
       place(marker.highlight, rect, false); place(marker.button, rect, true);
     }
     if (activeAnchor && channelId) {
-      post("anchor-position", {
-        anchorId: activeAnchor.id,
-        rect: messageRect(activeAnchor.selection),
-      });
+      const rect = rectFor(activeAnchor.selection);
+      if (!rect) activeAnchor = null;
+      else {
+        const serialized = { x: rect.x, y: rect.y,
+          width: rect.width, height: rect.height };
+        if (activeAnchor.activateWhenVisible && rectVisible(rect)) {
+          activeAnchor.activateWhenVisible = false;
+          post("marker-activate", { markerId: activeAnchor.id, rect: serialized });
+        }
+        post("anchor-position", {
+          anchorId: activeAnchor.id,
+          rect: serialized,
+        });
+      }
     }
   }
   function newSelection(kind, range, element, exact) {
@@ -179,9 +191,16 @@
     removeMarker(markerId);
     const highlight = document.createElement("div");
     const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const iconPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
     highlight.className = "box";
-    Object.assign(button, { className: "marker", type: "button", textContent: "💬" });
+    Object.assign(button, { className: "marker", type: "button" });
     button.setAttribute("aria-label", "Open comment");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("aria-hidden", "true");
+    iconPath.setAttribute("d", "M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z");
+    icon.appendChild(iconPath);
+    button.appendChild(icon);
     button.addEventListener("click", () => {
       activeAnchor = { id: markerId, selection };
       post("marker-activate", { markerId, rect: messageRect(selection) });
@@ -204,15 +223,16 @@
   function focusMarker(markerId) {
     const marker = markers.get(markerId);
     if (!marker) return;
-    const target = marker.selection.element || elementFor(marker.selection.range.commonAncestorContainer);
-    activeAnchor = { id: markerId, selection: marker.selection };
-    if (target && target.isConnected) {
-      target.scrollIntoView({ block: "center", behavior: "instant" });
-    }
+    const rect = rectFor(marker.selection);
+    if (!rect) return;
+    activeAnchor = { id: markerId, selection: marker.selection, activateWhenVisible: true };
+    scrollBy({
+      top: rect.top + rect.height / 2 - innerHeight / 2,
+      behavior: "smooth",
+    });
     marker.button.classList.add("focus");
     setTimeout(() => marker.button.classList.remove("focus"), 1200);
     updateOverlays();
-    post("marker-activate", { markerId, rect: messageRect(marker.selection) });
   }
   function captureTextSelection(event) {
     if (!channelId || elementMode || (host && event.composedPath().includes(host))) return;
@@ -251,6 +271,10 @@
   }, true);
   document.addEventListener("keydown", (event) => event.key === "Escape" && cancelPick(true), true);
   addEventListener("scroll", updateOverlays, { passive: true, capture: true });
+  addEventListener("scrollend", () => {
+    updateOverlays();
+    if (activeAnchor && activeAnchor.activateWhenVisible) activeAnchor = null;
+  }, { passive: true, capture: true });
   addEventListener("resize", updateOverlays, { passive: true });
 
   addEventListener("message", (event) => {

@@ -107,8 +107,9 @@
 .chat-composer textarea:focus-visible { outline: none; }
 .chat-actions { display: flex; align-items: center; gap: 7px; }
 .chat-actions-spacer { flex: 1; }
-.round-button { width: 34px; min-height: 34px; padding: 0; border-radius: 50%; }
-.round-button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; }
+.round-button { display: grid; place-items: center; width: 34px; min-height: 34px; padding: 0; border-radius: 50%; line-height: 0; }
+.round-button svg { display: block; width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; }
+.round-button svg[hidden] { display: none; }
 .review-tool { min-height: 30px; padding: 0 9px; color: var(--muted-foreground); font-size: 12px; }
 .review-tool[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); }
 .review-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -125,18 +126,22 @@
   z-index: 300;
   display: grid;
   gap: 8px;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: calc(var(--radius) + 2px);
   background: var(--popover);
   color: var(--popover-foreground);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
 }
 .comment-popover[hidden] { display: none; }
-.comment-location { color: var(--muted-foreground); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comment-close { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted-foreground); }
+.comment-close:hover { background: transparent; color: var(--foreground); }
+.comment-close svg, .comment-save svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.comment-location { padding-right: 26px; color: var(--muted-foreground); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .comment-popover blockquote { margin: 0; padding-left: 8px; border-left: 2px solid var(--primary); color: var(--muted-foreground); font-size: 12px; line-height: 1.4; }
-.comment-popover textarea { width: 100%; min-height: 72px; resize: vertical; padding: 8px; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); background: var(--background); color: var(--foreground); line-height: 1.45; }
-.comment-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.comment-input-shell { position: relative; }
+.comment-popover textarea { display: block; width: 100%; min-height: 84px; resize: none; padding: 9px 44px 9px 9px; border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); background: var(--background); color: var(--foreground); line-height: 1.45; }
+.comment-save { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 28px; min-height: 28px; padding: 0; border-radius: 50%; }
 .review-mode { position: fixed; top: 12px; left: 50%; z-index: 190; transform: translateX(-50%); padding: 7px 11px; border: 1px solid var(--primary); border-radius: 999px; background: var(--popover); color: var(--popover-foreground); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
 .primary-button { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
 .primary-button:hover { background: color-mix(in oklab, var(--primary) 90%, black); color: var(--primary-foreground); }

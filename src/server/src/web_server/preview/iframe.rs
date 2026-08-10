@@ -98,13 +98,17 @@ pub(super) fn render_owner_shell(
   </form>
 </aside>
 <form class="comment-popover" id="preview-comment-popover" hidden>
+  <button type="button" class="comment-close" id="preview-comment-cancel" aria-label="Cancel comment" title="Cancel">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+  </button>
   <span class="comment-location" id="preview-comment-location"></span>
   <blockquote id="preview-comment-selection"></blockquote>
   <label class="sr-only" for="preview-comment-input">Comment on selected content</label>
-  <textarea id="preview-comment-input" rows="3" maxlength="2000" placeholder="What should change?"></textarea>
-  <div class="comment-actions">
-    <button type="button" id="preview-comment-cancel">Cancel</button>
-    <button type="submit" class="primary-button">Save</button>
+  <div class="comment-input-shell">
+    <textarea id="preview-comment-input" rows="3" maxlength="2000" placeholder="What should change?"></textarea>
+    <button type="submit" class="primary-button comment-save" aria-label="Save comment" title="Save">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"></path></svg>
+    </button>
   </div>
 </form>
 <div class="review-mode" id="preview-review-mode" role="status" hidden>Click an element to comment · Esc to cancel</div>
