@@ -221,6 +221,7 @@ function PreviewWorkspace({
 
       <PreviewChatDrawer
         open={helperView === "chat"}
+        previews={bootstrap.previews}
         preview={selected}
         chat={chat}
         drafts={review.drafts}
@@ -229,6 +230,8 @@ function PreviewWorkspace({
         side={chatSide}
         width={chatWidth}
         onClose={() => setHelperView("expanded")}
+        onSelectPreview={selectPreview}
+        onRefresh={refreshPreview}
         onModeChange={setChatMode}
         onSideChange={changeChatSide}
         onWidthChange={setChatWidth}

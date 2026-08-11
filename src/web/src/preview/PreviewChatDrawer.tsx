@@ -29,6 +29,7 @@ const MAX_PREVIEW_MESSAGE_LENGTH = 20_000;
 
 type PreviewChatDrawerProps = {
   open: boolean;
+  previews: PreviewItem[];
   preview: PreviewItem;
   chat: PreviewChat;
   drafts: PreviewReviewDraft[];
@@ -37,6 +38,8 @@ type PreviewChatDrawerProps = {
   side: PreviewChatSide;
   width: number;
   onClose: () => void;
+  onSelectPreview: (slug: string) => void;
+  onRefresh: () => void;
   onModeChange: (mode: PreviewChatMode) => void;
   onSideChange: (side: PreviewChatSide) => void;
   onWidthChange: (width: number) => void;
@@ -78,6 +81,7 @@ async function uploadReviewScreenshots(
 
 export function PreviewChatDrawer({
   open,
+  previews,
   preview,
   chat,
   drafts,
@@ -86,6 +90,8 @@ export function PreviewChatDrawer({
   side,
   width,
   onClose,
+  onSelectPreview,
+  onRefresh,
   onModeChange,
   onSideChange,
   onWidthChange,
@@ -186,14 +192,11 @@ export function PreviewChatDrawer({
         onWidthChange={onWidthChange}
       />
       <PreviewChatHeader
-        subtitle={
-          !preview.chatAvailable
-            ? "Not linked to an AI task"
-            : chat.connected
-              ? chat.agentLabel
-              : "Connecting…"
-        }
+        previews={previews}
+        selected={preview}
         mode={mode}
+        onSelectPreview={onSelectPreview}
+        onRefresh={onRefresh}
         onModeChange={onModeChange}
         onSideChange={onSideChange}
         onClose={onClose}

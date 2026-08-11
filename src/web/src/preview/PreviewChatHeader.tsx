@@ -2,16 +2,22 @@ import { useRef, type PointerEvent as ReactPointerEvent } from "react";
 import {
   PanelsTopLeft,
   PictureInPicture2,
+  RefreshCw,
   X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { PreviewChatMode, PreviewChatSide } from "./previewChatLayout";
 import { PREVIEW_SURFACE_DRAG_THRESHOLD } from "./previewHelperPosition";
+import { PreviewPicker } from "./PreviewPicker";
+import type { PreviewItem } from "./previewTypes";
 
 type PreviewChatHeaderProps = {
-  subtitle: string;
+  previews: PreviewItem[];
+  selected: PreviewItem;
   mode: PreviewChatMode;
+  onSelectPreview: (slug: string) => void;
+  onRefresh: () => void;
   onModeChange: (mode: PreviewChatMode) => void;
   onSideChange: (side: PreviewChatSide) => void;
   onClose: () => void;
@@ -39,8 +45,11 @@ function clearTitleDragStyles(panel: HTMLElement) {
 }
 
 export function PreviewChatHeader({
-  subtitle,
+  previews,
+  selected,
   mode,
+  onSelectPreview,
+  onRefresh,
   onModeChange,
   onSideChange,
   onClose,
@@ -114,7 +123,7 @@ export function PreviewChatHeader({
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
       <div
-        className="flex min-w-0 flex-1 touch-none select-none items-center gap-2 lg:cursor-grab lg:active:cursor-grabbing"
+        className="flex shrink-0 touch-none select-none items-center gap-2 lg:cursor-grab lg:active:cursor-grabbing"
         title="Drag to move Preview conversation"
         onPointerDown={startTitleDrag}
         onPointerMove={moveTitleDrag}
@@ -127,11 +136,24 @@ export function PreviewChatHeader({
           draggable={false}
           className="pointer-events-none h-6 w-6 shrink-0"
         />
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">Preview conversation</div>
-          <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
-        </div>
+        <span className="hidden text-sm font-semibold sm:inline">Preview</span>
       </div>
+      <PreviewPicker
+        previews={previews}
+        selected={selected}
+        onSelect={onSelectPreview}
+        className="h-8 min-w-0 max-w-56 flex-1 px-2"
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        onClick={onRefresh}
+        aria-label="Refresh preview"
+        title="Refresh preview"
+      >
+        <RefreshCw className="h-4 w-4" />
+      </Button>
       <Button
         type="button"
         variant="ghost"
