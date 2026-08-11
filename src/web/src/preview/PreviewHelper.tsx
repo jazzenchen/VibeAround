@@ -155,10 +155,12 @@ export function PreviewHelper({
       ref={rootRef}
       className={cn(
         "fixed z-50 select-none",
+        view === "collapsed" && !dragPosition &&
+          "opacity-80 hover:opacity-100 focus-within:opacity-100",
         dragPosition
           ? "translate-x-0 translate-y-0 transition-none"
           : cn(
-              "transition-[left,top,translate] duration-200 ease-out",
+              "transition-[left,top,translate,opacity] duration-200 ease-out",
               CORNER_CLASS[corner],
             ),
       )}
@@ -166,15 +168,15 @@ export function PreviewHelper({
     >
       <div
         className={cn(
-          "inline-flex w-fit rounded-2xl border border-border/80 bg-background/95 p-1.5 shadow-lg backdrop-blur",
+          "inline-flex w-fit rounded-xl border border-border/80 bg-background/95 p-1 shadow-2xl shadow-foreground/15 backdrop-blur",
           view === "expanded" && "max-w-[calc(100vw-2.5rem)]",
         )}
       >
         {view === "collapsed" ? (
-          <div className="flex h-9 items-center gap-2">
+          <div className="flex h-8 items-center gap-1">
             <button
               type="button"
-              className="inline-flex h-9 touch-none cursor-grab items-center gap-2 rounded-xl text-base font-medium outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 active:cursor-grabbing"
+              className="inline-flex h-8 touch-none cursor-grab items-center gap-1.5 rounded-lg text-sm font-medium outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 active:cursor-grabbing"
               aria-label="Open Preview helper"
               title="Open Preview helper · drag to move"
               onClick={() => {
@@ -186,7 +188,7 @@ export function PreviewHelper({
               }}
               {...pointerHandlers}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center">
                 <img
                   src="/va/brand/vibearound-mark.svg"
                   alt=""
@@ -194,7 +196,7 @@ export function PreviewHelper({
                   className="pointer-events-none h-5 w-5"
                 />
               </span>
-              <span className="px-1">Preview</span>
+              <span className="px-0.5">Preview</span>
             </button>
             <Button
               type="button"
@@ -209,10 +211,10 @@ export function PreviewHelper({
             </Button>
           </div>
         ) : (
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <div className="flex h-9 min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex h-8 min-w-0 items-center gap-1">
               <div
-                className="flex h-8 w-8 shrink-0 touch-none cursor-grab items-center justify-center rounded-md active:cursor-grabbing"
+                className="flex h-7 w-7 shrink-0 touch-none cursor-grab items-center justify-center rounded-md active:cursor-grabbing"
                 title="Drag to move Preview helper"
                 {...pointerHandlers}
               >
@@ -227,7 +229,7 @@ export function PreviewHelper({
                 previews={previews}
                 selected={selected}
                 onSelect={onSelectPreview}
-                className="h-9 px-3"
+                className="h-8 px-2"
               />
               <Button
                 type="button"
@@ -243,7 +245,7 @@ export function PreviewHelper({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="px-3"
+                className="px-2"
                 onClick={() => onViewChange("chat")}
                 aria-label="Preview conversation"
                 title="Preview conversation"
@@ -264,7 +266,7 @@ export function PreviewHelper({
             </div>
             <PreviewReviewToolbar
               {...reviewToolbar}
-              className="border-t border-border/70 px-1 pt-1.5"
+              className="border-t border-border/70 px-0.5 pt-1"
             />
           </div>
         )}

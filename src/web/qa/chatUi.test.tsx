@@ -75,6 +75,7 @@ test("shared composer can omit dashboard commands", () => {
     <ChatInput
       {...props}
       showCommands={false}
+      compact
       contextContent={<span>Review note</span>}
     />,
   );

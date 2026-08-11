@@ -31,35 +31,33 @@ export function PreviewReviewToolbar({
 
   return (
     <div
-      className={cn("flex min-w-0 items-center gap-2", className)}
+      className={cn("flex min-w-0 items-center gap-1.5", className)}
       aria-label="Preview review tools"
     >
       <Button
         type="button"
         variant={activeTool === "element" ? "secondary" : "outline"}
-        size="sm"
-        className="h-8 gap-1.5 px-2.5"
+        size="xs"
         disabled={!elementAvailable}
         aria-pressed={activeTool === "element"}
         onClick={() => toggle("element")}
       >
-        <Scan className="h-3.5 w-3.5" />
+        <Scan className="size-3" />
         Element
       </Button>
       <Button
         type="button"
         variant={activeTool === "region" ? "secondary" : "outline"}
-        size="sm"
-        className="h-8 gap-1.5 px-2.5"
+        size="xs"
         disabled={!regionAvailable}
         aria-pressed={activeTool === "region"}
         onClick={() => toggle("region")}
       >
-        <ScanLine className="h-3.5 w-3.5" />
+        <ScanLine className="size-3" />
         Region
       </Button>
       {textSelectionAvailable && (
-        <span className="min-w-0 truncate text-xs text-muted-foreground">
+        <span className="min-w-0 truncate text-[11px] text-muted-foreground">
           or select page text
         </span>
       )}

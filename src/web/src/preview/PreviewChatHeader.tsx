@@ -121,7 +121,7 @@ export function PreviewChatHeader({
   };
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
+    <header className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border px-2">
       <div
         className="flex shrink-0 touch-none select-none items-center gap-2 lg:cursor-grab lg:active:cursor-grabbing"
         title="Drag to move Preview conversation"
@@ -134,7 +134,7 @@ export function PreviewChatHeader({
           src="/va/brand/vibearound-mark.svg"
           alt=""
           draggable={false}
-          className="pointer-events-none h-6 w-6 shrink-0"
+        className="pointer-events-none h-5 w-5 shrink-0"
         />
         <span className="hidden text-sm font-semibold sm:inline">Preview</span>
       </div>
@@ -142,7 +142,7 @@ export function PreviewChatHeader({
         previews={previews}
         selected={selected}
         onSelect={onSelectPreview}
-        className="h-8 min-w-0 max-w-56 flex-1 px-2"
+        className="h-8 min-w-0 max-w-52 flex-1 px-2"
       />
       <Button
         type="button"

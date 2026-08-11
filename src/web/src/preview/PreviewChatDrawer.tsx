@@ -171,11 +171,11 @@ export function PreviewChatDrawer({
       aria-label="Preview conversation"
       style={drawerStyle}
       className={cn(
-        "z-40 min-h-0 w-full flex-col overflow-hidden border-border bg-background lg:w-[var(--preview-chat-width)]",
+        "z-40 min-h-0 w-full flex-col overflow-hidden border-border bg-background shadow-2xl shadow-foreground/15 lg:w-[var(--preview-chat-width)]",
         open ? "flex" : "hidden",
         mode === "floating"
-          ? "fixed inset-0 shadow-2xl lg:inset-y-3 lg:h-auto lg:rounded-xl lg:border"
-          : "fixed inset-0 lg:relative lg:inset-auto lg:h-full lg:shrink-0 lg:shadow-none",
+          ? "fixed inset-0 lg:inset-y-3 lg:h-auto lg:rounded-xl lg:border"
+          : "fixed inset-0 lg:relative lg:inset-auto lg:h-full lg:shrink-0",
         mode === "floating" && side === "left" &&
           "lg:left-3 lg:right-auto",
         mode === "floating" && side === "right" &&
@@ -216,7 +216,7 @@ export function PreviewChatDrawer({
       />
       <PreviewReviewToolbar
         {...reviewToolbar}
-        className="shrink-0 border-t border-border px-3 py-2"
+        className="shrink-0 border-t border-border px-2 py-1.5"
       />
       <ChatInput
         value={input}
@@ -232,11 +232,12 @@ export function PreviewChatDrawer({
         attachmentsUploadingCount={drafts.filter((draft) => draft.screenshot).length}
         onStop={chat.stopStreaming}
         showCommands={false}
+        compact
         contextCanSubmit={drafts.length > 0}
         contextContent={
           drafts.length > 0 || submitError ? (
-            <div className="space-y-1.5 px-3 pt-3">
-              <div className="flex flex-wrap gap-1.5">
+            <div className="space-y-1 px-2 pt-2">
+              <div className="flex flex-wrap gap-1">
                 {drafts.map((draft) => (
                   <span
                     key={draft.id}
@@ -244,7 +245,7 @@ export function PreviewChatDrawer({
                   >
                     <button
                       type="button"
-                      className="flex min-w-0 items-center gap-1.5 py-1 pl-2.5 pr-1 hover:text-foreground"
+                      className="flex min-w-0 items-center gap-1.5 py-0.5 pl-2 pr-1 hover:text-foreground"
                       onClick={() => onFocusDraft(draft.id)}
                       title={draft.comment}
                     >

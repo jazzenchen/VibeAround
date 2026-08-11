@@ -47,8 +47,9 @@ export function PreviewPicker({
         <Button
           type="button"
           variant="outline"
+          size="sm"
           className={cn(
-            "min-w-0 max-w-80 flex-initial shrink justify-between gap-3 px-3 font-normal shadow-none",
+            "min-w-0 max-w-72 flex-initial shrink justify-between gap-2 px-2.5 font-normal shadow-none",
             className,
           )}
           aria-label="Workspace and preview"
@@ -57,10 +58,10 @@ export function PreviewPicker({
             <span className="font-medium text-foreground">{selected.title}</span>
             <span className="text-muted-foreground"> · {kindLabel(selected)}</span>
           </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-[min(24rem,calc(100vw-2rem))]">
+      <DropdownMenuContent align="start" className="w-[min(20rem,calc(100vw-2rem))]">
         {Array.from(groups, ([workspace, items]) => (
           <div key={workspace}>
             <DropdownMenuLabel
