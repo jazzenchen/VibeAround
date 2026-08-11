@@ -13,7 +13,7 @@ export interface PreviewBootstrap {
 }
 
 export type PreviewAnchor = {
-  kind: "text" | "element";
+  kind: "text" | "element" | "region";
   text: string;
   heading?: string;
   startLine?: number;
@@ -32,6 +32,10 @@ export type PreviewAnchor = {
     selector?: string;
     text?: string;
   };
+  region?: {
+    width: number;
+    height: number;
+  };
 };
 
 export type PreviewFrameRect = {
@@ -45,6 +49,12 @@ export type PreviewReviewDraft = {
   id: string;
   anchor: PreviewAnchor;
   comment: string;
+  screenshot?: PreviewScreenshot;
+};
+
+export type PreviewScreenshot = {
+  blob: Blob;
+  fileName: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

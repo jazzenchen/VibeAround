@@ -12,7 +12,9 @@ import type {
   PreviewFrameRect,
   PreviewItem,
   PreviewReviewDraft,
+  PreviewScreenshot,
 } from "./previewTypes";
+import type { PreviewReviewTool } from "./PreviewReviewToolbar";
 
 const REVIEW_SCOPE = "va-preview-review";
 const REVIEW_VERSION = 1;
@@ -23,6 +25,7 @@ export type PreviewReviewEditor = {
   draftId?: string;
   anchor: PreviewAnchor;
   rect: PreviewFrameRect;
+  screenshot?: PreviewScreenshot;
 };
 
 function makeId(prefix: string) {
@@ -42,9 +45,23 @@ function isFrameRect(value: unknown): value is PreviewFrameRect {
 function isAnchor(value: unknown): value is PreviewAnchor {
   if (!value || typeof value !== "object") return false;
   const anchor = value as Record<string, unknown>;
+  if (typeof anchor.text !== "string") return false;
+  if (anchor.kind === "text" || anchor.kind === "element") return true;
+  if (anchor.kind !== "region" || !anchor.region || typeof anchor.region !== "object") {
+    return false;
+  }
+  const region = anchor.region as Record<string, unknown>;
+  return [region.width, region.height].every(
+    (size) => typeof size === "number" && Number.isInteger(size) && size > 0,
+  );
+}
+
+function isScreenshot(value: unknown): value is Blob {
   return (
-    (anchor.kind === "text" || anchor.kind === "element") &&
-    typeof anchor.text === "string"
+    value instanceof Blob &&
+    value.type === "image/png" &&
+    value.size > 0 &&
+    value.size <= 20 * 1024 * 1024
   );
 }
 
@@ -55,7 +72,8 @@ export function usePreviewReviewBridge(
   const [drafts, setDrafts] = useState<PreviewReviewDraft[]>([]);
   const [editor, setEditor] = useState<PreviewReviewEditor | null>(null);
   const [capabilities, setCapabilities] = useState<string[]>([]);
-  const [elementMode, setElementModeState] = useState(false);
+  const [pickMode, setPickModeState] = useState<PreviewReviewTool | null>(null);
+  const [captureError, setCaptureError] = useState("");
   const channelIdRef = useRef(makeId("preview-channel"));
   const readyRef = useRef(false);
   const draftsRef = useRef<PreviewReviewDraft[]>([]);
@@ -103,7 +121,8 @@ export function usePreviewReviewBridge(
     setCapabilities([]);
     setDrafts([]);
     setEditor(null);
-    setElementModeState(false);
+    setPickModeState(null);
+    setCaptureError("");
   }, []);
 
   const prepareFrame = useCallback(() => {
@@ -155,12 +174,21 @@ export function usePreviewReviewBridge(
         isAnchor(message.anchor) &&
         isFrameRect(message.rect)
       ) {
-        setElementModeState(false);
+        const screenshot = isScreenshot(message.screenshot)
+          ? {
+              blob: message.screenshot,
+              fileName: `preview-region-${makeId("capture")}.png`,
+            }
+          : undefined;
+        if ((message.anchor.kind === "region") !== Boolean(screenshot)) return;
+        setPickModeState(null);
+        setCaptureError("");
         setEditor({
           anchorId: message.selectionId,
           selectionId: message.selectionId,
           anchor: message.anchor,
           rect: message.rect,
+          screenshot,
         });
       } else if (
         message.type === "marker-activate" &&
@@ -176,6 +204,7 @@ export function usePreviewReviewBridge(
             draftId: draft.id,
             anchor: draft.anchor,
             rect: message.rect,
+            screenshot: draft.screenshot,
           });
         }
       } else if (
@@ -190,7 +219,13 @@ export function usePreviewReviewBridge(
         });
       } else if (message.type === "cancel") {
         setEditor(null);
-        setElementModeState(false);
+        setPickModeState(null);
+      } else if (
+        message.type === "capture-error" &&
+        typeof message.message === "string"
+      ) {
+        setPickModeState(null);
+        setCaptureError(message.message.trim() || "Screenshot capture failed.");
       }
     };
 
@@ -229,6 +264,7 @@ export function usePreviewReviewBridge(
           id: makeId("review"),
           anchor: editor.anchor,
           comment: value,
+          screenshot: editor.screenshot,
         };
         setDrafts((current) => [...current, draft]);
         command("set-marker", {
@@ -256,35 +292,38 @@ export function usePreviewReviewBridge(
     [command],
   );
 
-  const setElementMode = useCallback(
-    (enabled: boolean) => {
-      const next = capabilities.includes("element") && enabled;
-      setElementModeState(next);
-      command("element-mode", { enabled: next });
+  const setPickMode = useCallback(
+    (mode: PreviewReviewTool | null) => {
+      const next = mode && capabilities.includes(mode) ? mode : null;
+      setPickModeState(next);
+      setCaptureError("");
+      command("pick-mode", { mode: next ?? "none" });
     },
     [capabilities, command],
   );
 
   const clearSubmittedDrafts = useCallback(() => {
-    for (const draft of drafts) {
+    for (const draft of draftsRef.current) {
       command("remove-marker", { markerId: draft.id });
     }
     setDrafts([]);
     setEditor(null);
-  }, [command, drafts]);
+  }, [command]);
 
   return {
     drafts,
     editor,
     capabilities,
-    elementMode,
+    pickMode,
+    captureError,
     prepareFrame,
     handleFrameLoad,
     closeEditor,
     saveEditor,
     removeDraft,
     focusDraft,
-    setElementMode,
+    setPickMode,
+    clearCaptureError: () => setCaptureError(""),
     clearSubmittedDrafts,
   };
 }

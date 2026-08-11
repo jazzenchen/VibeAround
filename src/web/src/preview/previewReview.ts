@@ -6,6 +6,7 @@ function compact(value: string | undefined) {
 
 export function previewAnchorQuote(anchor: PreviewAnchor) {
   if (anchor.kind === "text") return anchor.text;
+  if (anchor.kind === "region") return anchor.text;
   return (
     anchor.element?.text ??
     anchor.element?.label ??
@@ -27,6 +28,9 @@ export function previewAnchorLocation(anchor: PreviewAnchor) {
     );
   }
   if (anchor.heading) parts.push(anchor.heading);
+  if (anchor.region) {
+    parts.push(`${anchor.region.width} × ${anchor.region.height} screenshot`);
+  }
   if (anchor.element) {
     parts.push(
       anchor.element.selector ??

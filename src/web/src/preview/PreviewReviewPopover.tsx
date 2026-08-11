@@ -24,6 +24,7 @@ export function PreviewReviewPopover({
 }: PreviewReviewPopoverProps) {
   const [comment, setComment] = useState(initialComment);
   const [position, setPosition] = useState<Position>();
+  const [screenshotUrl, setScreenshotUrl] = useState<string>();
   const popoverRef = useRef<HTMLFormElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -31,6 +32,16 @@ export function PreviewReviewPopover({
     setComment(initialComment);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [editor.anchorId, initialComment]);
+
+  useEffect(() => {
+    if (!editor.screenshot) {
+      setScreenshotUrl(undefined);
+      return;
+    }
+    const next = URL.createObjectURL(editor.screenshot.blob);
+    setScreenshotUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [editor.screenshot]);
 
   useLayoutEffect(() => {
     const positionPopover = () => {
@@ -54,8 +65,13 @@ export function PreviewReviewPopover({
     };
 
     positionPopover();
+    const observer = new ResizeObserver(positionPopover);
+    if (popoverRef.current) observer.observe(popoverRef.current);
     window.addEventListener("resize", positionPopover);
-    return () => window.removeEventListener("resize", positionPopover);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", positionPopover);
+    };
   }, [editor.rect, frameRef]);
 
   useEffect(() => {
@@ -110,6 +126,13 @@ export function PreviewReviewPopover({
       <div className="pr-7 text-[11px] font-medium text-muted-foreground">
         {previewAnchorLocation(editor.anchor)}
       </div>
+      {screenshotUrl && (
+        <img
+          src={screenshotUrl}
+          alt="Captured Preview region"
+          className="mt-1.5 max-h-36 w-full rounded-md border border-border object-contain"
+        />
+      )}
       <blockquote className="mt-1 line-clamp-3 border-l-2 border-border pl-2 text-xs text-muted-foreground">
         {previewAnchorQuote(editor.anchor)}
       </blockquote>

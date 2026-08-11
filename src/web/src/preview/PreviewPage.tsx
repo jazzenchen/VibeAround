@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MousePointer2 } from "lucide-react";
+import { MousePointer2, ScanLine, X } from "lucide-react";
 
 import { PreviewChatDrawer } from "./PreviewChatDrawer";
 import type { PreviewChatMode, PreviewChatSide } from "./previewChatLayout";
@@ -115,13 +115,13 @@ function PreviewWorkspace({
   }, [selected.title]);
 
   useEffect(() => {
-    if (!review.elementMode) return;
+    if (!review.pickMode) return;
     const cancel = (event: KeyboardEvent) => {
-      if (event.key === "Escape") review.setElementMode(false);
+      if (event.key === "Escape") review.setPickMode(null);
     };
     document.addEventListener("keydown", cancel, true);
     return () => document.removeEventListener("keydown", cancel, true);
-  }, [review.elementMode, review.setElementMode]);
+  }, [review.pickMode, review.setPickMode]);
 
   const selectPreview = (slug: string) => {
     if (slug === selected.slug) return;
@@ -152,17 +152,15 @@ function PreviewWorkspace({
     ? review.drafts.find((draft) => draft.id === review.editor?.draftId)
     : undefined;
 
-  const activeReviewTool: PreviewReviewTool | null = review.elementMode
-    ? "element"
-    : null;
+  const activeReviewTool: PreviewReviewTool | null = review.pickMode;
   const reviewToolbar: PreviewReviewToolbarModel = {
     activeTool: activeReviewTool,
     elementAvailable: review.capabilities.includes("element"),
-    regionAvailable: false,
+    regionAvailable: review.capabilities.includes("region"),
     textSelectionAvailable: review.capabilities.includes("text"),
     onToolChange: (tool) => {
       revealPreviewOnCompactScreen();
-      review.setElementMode(tool === "element");
+      review.setPickMode(tool);
     },
   };
 
@@ -192,14 +190,32 @@ function PreviewWorkspace({
         />
       </div>
 
-      {review.elementMode && (
+      {review.pickMode && (
         <button
           type="button"
           className="fixed bottom-5 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-primary/30 bg-background px-3 py-2 text-xs font-medium text-primary shadow-lg"
-          onClick={() => review.setElementMode(false)}
+          onClick={() => review.setPickMode(null)}
         >
-          <MousePointer2 className="h-3.5 w-3.5" />
-          Click an element to comment · Esc to cancel
+          {review.pickMode === "element" ? (
+            <MousePointer2 className="h-3.5 w-3.5" />
+          ) : (
+            <ScanLine className="h-3.5 w-3.5" />
+          )}
+          {review.pickMode === "element"
+            ? "Click an element to comment"
+            : "Drag over a region to capture"}
+          <span className="text-muted-foreground">· Esc to cancel</span>
+        </button>
+      )}
+
+      {review.captureError && (
+        <button
+          type="button"
+          className="fixed bottom-5 left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2 rounded-lg border border-destructive/30 bg-background px-3 py-2 text-xs text-destructive shadow-lg"
+          onClick={review.clearCaptureError}
+        >
+          <span className="truncate">{review.captureError}</span>
+          <X className="h-3.5 w-3.5 shrink-0" />
         </button>
       )}
 
