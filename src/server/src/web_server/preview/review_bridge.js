@@ -22,7 +22,7 @@
   let elementMode = false;
   let pending = null;
   let activeAnchor = null;
-  let host, root, hover, trigger;
+  let host, root, hover, hoverLabel, trigger;
 
   function post(type, fields) {
     parent.postMessage({ scope, version, type, channelId, ...fields }, ownerOrigin);
@@ -96,9 +96,10 @@
     host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none";
     root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>.box{position:fixed;border:2px solid #0d9488;background:#14b8a61f;border-radius:4px;pointer-events:none}
-      .hover{border-style:dashed;background:#14b8a612}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}button[hidden]{display:none}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.focus{outline:3px solid #0d948859;outline-offset:2px}</style>
-      <div class="box hover" hidden></div><button class="trigger" type="button" hidden>Comment</button>`;
+      .hover{border-style:dashed;background:#14b8a612}.hover-label{position:fixed;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:4px;background:#0f766e;color:#fff;padding:3px 7px;font:600 11px system-ui;pointer-events:none}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}button[hidden],.hover-label[hidden]{display:none}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.focus{outline:3px solid #0d948859;outline-offset:2px}</style>
+      <div class="box hover" hidden></div><div class="hover-label" hidden></div><button class="trigger" type="button" hidden>Comment</button>`;
     hover = root.querySelector(".hover");
+    hoverLabel = root.querySelector(".hover-label");
     trigger = root.querySelector(".trigger");
     trigger.addEventListener("pointerdown", (event) => event.preventDefault());
     trigger.addEventListener("click", (event) => {
@@ -194,6 +195,7 @@
     if (pending) selections.delete(pending.selectionId);
     pending = null; activeAnchor = null; elementMode = false;
     if (hover) hover.hidden = true;
+    if (hoverLabel) hoverLabel.hidden = true;
     if (trigger) trigger.hidden = true;
     if (notify && channelId) post("cancel");
   }
@@ -239,10 +241,9 @@
     const rect = rectFor(marker.selection);
     if (!hasArea(rect)) return;
     activeAnchor = { id: markerId, selection: marker.selection, activateWhenVisible: true };
-    scrollBy({
-      top: rect.top + rect.height / 2 - innerHeight / 2,
-      behavior: "smooth",
-    });
+    const owner = marker.selection.element
+      || elementFor(marker.selection.range.startContainer);
+    owner.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
     marker.button.classList.add("focus");
     setTimeout(() => marker.button.classList.remove("focus"), 1200);
     updateOverlays();
@@ -265,7 +266,20 @@
   document.addEventListener("pointermove", (event) => {
     if (!elementMode || (host && event.composedPath().includes(host))) return;
     const element = elementFor(event.target);
-    place(hover, element && element !== host ? element.getBoundingClientRect() : null, false);
+    const target = element && element !== host ? element : null;
+    const rect = target && target.getBoundingClientRect();
+    place(hover, rect, false);
+    if (!target || !hasArea(rect)) {
+      hoverLabel.hidden = true;
+      return;
+    }
+    const summary = elementSummary(target);
+    const detail = summary.id ? `#${summary.id}` : summary.label || summary.text || "";
+    hoverLabel.textContent = clipped(`<${summary.tag}> ${detail}`, 120);
+    hoverLabel.hidden = false;
+    hoverLabel.style.left = `${Math.max(4,
+      Math.min(rect.left, innerWidth - hoverLabel.offsetWidth - 4))}px`;
+    hoverLabel.style.top = `${Math.max(4, rect.top - 24)}px`;
   }, true);
   document.addEventListener("pointerdown", (event) => {
     const insideReviewUi = host && event.composedPath().includes(host);
@@ -279,7 +293,10 @@
     if (!elementMode || event.button !== 0 || event.composedPath().includes(host)) return;
     event.preventDefault(); event.stopImmediatePropagation();
     const element = elementFor(event.target);
-    if (!element) return;
+    if (!element || !hasArea(element.getBoundingClientRect())) return;
+    elementMode = false;
+    hover.hidden = true;
+    hoverLabel.hidden = true;
     setPending(newSelection("element", null, element, safeText(element, 2000)), false);
     activeAnchor = { id: pending.selectionId, selection: pending.selection };
     post("anchor-picked", pending.message);
@@ -313,9 +330,12 @@
     }
     if (!channelId || event.origin !== ownerOrigin || data.channelId !== channelId) return;
     if (data.type === "element-mode") {
-      elementMode = !document.getElementById("markdown-source") && Boolean(data.enabled);
       ensureUi();
-      hover.hidden = !elementMode;
+      const enabled = !markdownSource && Boolean(data.enabled);
+      if (enabled && pending) cancelPick(false);
+      elementMode = enabled;
+      hover.hidden = true;
+      hoverLabel.hidden = true;
     } else if (data.type === "set-marker") addMarker(data.markerId, data.selectionId);
     else if (data.type === "remove-marker") removeMarker(data.markerId);
     else if (data.type === "focus-marker") focusMarker(data.markerId);
@@ -325,9 +345,7 @@
         && activeAnchor && activeAnchor.id === data.anchorId) activeAnchor = null;
   });
   const hello = () => {
-    for (const origin of allowedOwnerOrigins) {
-      parent.postMessage({ scope, version, type: "hello" }, origin);
-    }
+    parent.postMessage({ scope, version, type: "hello" }, "*");
   };
   hello();
   let attempts = 0;
