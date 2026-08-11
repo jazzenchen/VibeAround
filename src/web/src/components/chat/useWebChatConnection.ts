@@ -49,6 +49,7 @@ import {
   readCachedChatSession,
   writeCachedChatSession,
 } from "./chatSessionCache";
+import { chatUserContentBlocks } from "./chatUserContent";
 import {
   parseModeFromConfigOptions,
   parseSessionModeState,
@@ -849,7 +850,7 @@ export function useWebChatConnection({
       const uniqueAttachments = dedupeChatAttachments(attachments);
       promptInFlightRef.current = true;
       const messageId = createMessageId();
-      const contentParts = messageContentBlocks(trimmed, uniqueAttachments).map((block, index) => ({
+      const contentParts = chatUserContentBlocks(trimmed, uniqueAttachments).map((block, index) => ({
         id: `${USER_CONTENT_PART_ID_PREFIX}-${Date.now()}-${index}`,
         kind: "content" as const,
         block,
@@ -1227,23 +1228,4 @@ function dedupeChatAttachments(attachments: ChatAttachment[]): ChatAttachment[] 
     out.push(attachment);
   }
   return out;
-}
-
-function messageContentBlocks(
-  text: string,
-  attachments: ChatAttachment[],
-): ContentBlock[] {
-  const blocks: ContentBlock[] = [];
-  if (text) blocks.push({ type: "text", text });
-  blocks.push(
-    ...attachments.map((attachment) => ({
-      type: "resource_link" as const,
-      name: attachment.name,
-      title: attachment.name,
-      mimeType: attachment.mimeType,
-      size: attachment.size,
-      uri: attachment.uri,
-    })),
-  );
-  return blocks;
 }
