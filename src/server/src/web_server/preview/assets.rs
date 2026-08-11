@@ -17,6 +17,8 @@ pub(in crate::web_server) const REVIEW_BRIDGE_SCRIPT_ROUTE: &str = concat!(
 const MARKED_SCRIPT: &str = include_str!("vendor/marked-15.0.12.min.js");
 const DOMPURIFY_SCRIPT: &str = include_str!("vendor/dompurify-3.4.12.min.js");
 const THEME_STYLESHEET: &str = include_str!("../../../../shared/ui/src/theme.css");
+const HTML2CANVAS_SCRIPT: &str = include_str!("vendor/html2canvas-pro-1.6.6.min.js");
+const REVIEW_REGION_SCRIPT: &str = include_str!("review_region.js");
 const REVIEW_BRIDGE_SCRIPT: &str = include_str!("review_bridge.js");
 
 pub(in crate::web_server) async fn marked_script_handler() -> Response {
@@ -39,6 +41,22 @@ pub(in crate::web_server) async fn theme_stylesheet_handler() -> Response {
 }
 
 pub(in crate::web_server) async fn review_bridge_script_handler() -> Response {
+    let mut script =
+        String::with_capacity(
+            HTML2CANVAS_SCRIPT.len()
+                + REVIEW_REGION_SCRIPT.len()
+                + REVIEW_BRIDGE_SCRIPT.len()
+                + 180,
+        );
+    script.push_str("(()=>{const module={exports:{}};const exports=module.exports;\n");
+    script.push_str(HTML2CANVAS_SCRIPT);
+    script.push_str(
+        "\nconst vaPreviewHtml2canvas=module.exports.default||module.exports.html2canvas;\n",
+    );
+    script.push_str(REVIEW_REGION_SCRIPT);
+    script.push('\n');
+    script.push_str(REVIEW_BRIDGE_SCRIPT);
+    script.push_str("\n})();");
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "text/javascript; charset=utf-8")
@@ -46,7 +64,7 @@ pub(in crate::web_server) async fn review_bridge_script_handler() -> Response {
         .header("Access-Control-Allow-Origin", "*")
         .header("Cross-Origin-Resource-Policy", "cross-origin")
         .header("X-Content-Type-Options", "nosniff")
-        .body(Body::from(REVIEW_BRIDGE_SCRIPT))
+        .body(Body::from(script))
         .unwrap()
 }
 
@@ -162,6 +180,11 @@ mod tests {
         );
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let script = std::str::from_utf8(&body).unwrap();
+        assert!(script.contains("html2canvas-pro 1.6.6"));
+        assert!(script.contains(
+            "const vaPreviewHtml2canvas=module.exports.default||module.exports.html2canvas"
+        ));
+        assert!(script.contains("createPreviewRegionPicker"));
         assert!(script.contains("va-preview-review"));
         assert!(script.contains("Source line") || script.contains("startLine"));
     }

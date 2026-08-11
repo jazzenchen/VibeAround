@@ -19,9 +19,12 @@
   const blockedText = "input,textarea,select,[contenteditable]:not([contenteditable='false'])";
   let channelId = null;
   let sequence = 0;
-  let elementMode = false;
+  let pickMode = "none";
   let pending = null;
   let activeAnchor = null;
+  let overlayFrame = 0;
+  let layoutRevision = 0;
+  let regionPicker = null;
   let host, root, hover, hoverLabel, trigger;
 
   function post(type, fields) {
@@ -95,9 +98,12 @@
     host = document.createElement("div");
     host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none";
     root = host.attachShadow({ mode: "closed" });
+    host.dataset.html2canvasIgnore = "true";
     root.innerHTML = `<style>.box{position:fixed;border:2px solid #0d9488;background:#14b8a61f;border-radius:4px;pointer-events:none}
-      .hover{border-style:dashed;background:#14b8a612}.hover-label{position:fixed;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:4px;background:#0f766e;color:#fff;padding:3px 7px;font:600 11px system-ui;pointer-events:none}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}button[hidden],.hover-label[hidden]{display:none}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.focus{outline:3px solid #0d948859;outline-offset:2px}</style>
-      <div class="box hover" hidden></div><div class="hover-label" hidden></div><button class="trigger" type="button" hidden>Comment</button>`;
+      .hover{border-style:dashed;background:#14b8a612}.hover-label{position:fixed;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:4px;background:#0f766e;color:#fff;padding:3px 7px;font:600 11px system-ui;pointer-events:none}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}button[hidden],.hover-label[hidden]{display:none}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.focus{outline:3px solid #0d948859;outline-offset:2px}
+      .region{position:fixed;inset:0;pointer-events:auto;cursor:crosshair;touch-action:none;background:#14b8a60a}.region[hidden],.region-box[hidden],.region-status[hidden]{display:none}.region-box{position:fixed;border:2px dashed #0d9488;background:#14b8a61a;pointer-events:none}.region-status{position:fixed;left:50%;top:50%;translate:-50% -50%;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 4px 18px #0003;padding:8px 12px;font:600 12px system-ui;pointer-events:none}</style>
+      <div class="box hover" hidden></div><div class="hover-label" hidden></div><button class="trigger" type="button" hidden>Comment</button>
+      <div class="region" hidden><div class="region-box" hidden></div><div class="region-status" hidden>Capturing screenshot…</div></div>`;
     hover = root.querySelector(".hover");
     hoverLabel = root.querySelector(".hover-label");
     trigger = root.querySelector(".trigger");
@@ -111,6 +117,28 @@
       }
       trigger.hidden = true;
     });
+    regionPicker = createPreviewRegionPicker({
+      region: root.querySelector(".region"),
+      regionBox: root.querySelector(".region-box"),
+      regionStatus: root.querySelector(".region-status"),
+      host,
+      renderer: vaPreviewHtml2canvas,
+      getLayoutRevision: () => layoutRevision,
+      onPicked: ({ rect, target, screenshot, documentPoint }) => {
+        pickMode = "none";
+        setPending(newRegionSelection(rect, target, screenshot, documentPoint), false);
+        activeAnchor = { id: pending.selectionId, selection: pending.selection };
+        post("anchor-picked", pending.message);
+      },
+      onError: (message) => {
+        pickMode = "none";
+        post("capture-error", { message });
+      },
+      onCancel: () => {
+        pickMode = "none";
+        if (channelId) post("cancel");
+      },
+    });
     document.documentElement.appendChild(host);
   }
   function hiddenByClosedDetails(element) {
@@ -122,6 +150,16 @@
     return false;
   }
   function rectFor(selection) {
+    if (selection.region) {
+      const saved = selection.region;
+      const left = saved.documentX - scrollX;
+      const top = saved.documentY - scrollY;
+      return {
+        x: left, y: top, left, top,
+        right: left + saved.width, bottom: top + saved.height,
+        width: saved.width, height: saved.height,
+      };
+    }
     const owner = selection.element || elementFor(selection.range.commonAncestorContainer);
     if (!owner || !owner.isConnected || hiddenByClosedDetails(owner)) return null;
     return selection.element ? owner.getBoundingClientRect() : selection.range.getBoundingClientRect();
@@ -176,11 +214,46 @@
       }
     }
   }
+  function scheduleOverlayUpdate() {
+    if (overlayFrame) return;
+    overlayFrame = requestAnimationFrame(() => {
+      overlayFrame = 0;
+      updateOverlays();
+    });
+  }
   function newSelection(kind, range, element, exact) {
     const selectionId = `selection-${++sequence}`;
     const selection = { range, element };
     const message = { selectionId, rect: messageRect(selection),
       anchor: makeAnchor(kind, element || range.commonAncestorContainer, exact) };
+    selections.set(selectionId, selection);
+    return { selectionId, selection, message };
+  }
+  function newRegionSelection(rect, target, screenshot, documentPoint) {
+    const selectionId = `selection-${++sequence}`;
+    const width = Math.round(rect.width);
+    const height = Math.round(rect.height);
+    const selection = {
+      region: {
+        documentX: documentPoint.x,
+        documentY: documentPoint.y,
+        width: rect.width,
+        height: rect.height,
+      },
+    };
+    const anchor = {
+      kind: "region",
+      text: `Screenshot region ${width} × ${height}`,
+      heading: headingFor(target),
+      region: { width, height },
+    };
+    if (!markdownSource) anchor.page = page();
+    const message = {
+      selectionId,
+      rect: messageRect(selection),
+      anchor,
+      screenshot,
+    };
     selections.set(selectionId, selection);
     return { selectionId, selection, message };
   }
@@ -193,10 +266,11 @@
   }
   function cancelPick(notify) {
     if (pending) selections.delete(pending.selectionId);
-    pending = null; activeAnchor = null; elementMode = false;
+    pending = null; activeAnchor = null; pickMode = "none";
     if (hover) hover.hidden = true;
     if (hoverLabel) hoverLabel.hidden = true;
     if (trigger) trigger.hidden = true;
+    if (regionPicker) regionPicker.cancel();
     if (notify && channelId) post("cancel");
   }
   function addMarker(markerId, selectionId) {
@@ -241,6 +315,17 @@
     const rect = rectFor(marker.selection);
     if (!hasArea(rect)) return;
     activeAnchor = { id: markerId, selection: marker.selection, activateWhenVisible: true };
+    if (marker.selection.region) {
+      scrollTo({
+        left: marker.selection.region.documentX - (innerWidth - rect.width) / 2,
+        top: marker.selection.region.documentY - (innerHeight - rect.height) / 2,
+        behavior: "smooth",
+      });
+      marker.button.classList.add("focus");
+      setTimeout(() => marker.button.classList.remove("focus"), 1200);
+      updateOverlays();
+      return;
+    }
     const owner = marker.selection.element
       || elementFor(marker.selection.range.startContainer);
     owner.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
@@ -249,7 +334,7 @@
     updateOverlays();
   }
   function captureTextSelection(event) {
-    if (!channelId || elementMode || (host && event.composedPath().includes(host))) return;
+    if (!channelId || pickMode !== "none" || (host && event.composedPath().includes(host))) return;
     const selection = getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount || editableSelection(selection)) return;
     const exact = selection.toString().trim();
@@ -264,7 +349,7 @@
     }
   }, true);
   document.addEventListener("pointermove", (event) => {
-    if (!elementMode || (host && event.composedPath().includes(host))) return;
+    if (pickMode !== "element" || (host && event.composedPath().includes(host))) return;
     const element = elementFor(event.target);
     const target = element && element !== host ? element : null;
     const rect = target && target.getBoundingClientRect();
@@ -284,17 +369,17 @@
   document.addEventListener("pointerdown", (event) => {
     const insideReviewUi = host && event.composedPath().includes(host);
     if (pending && !activeAnchor && !insideReviewUi) cancelPick(false);
-    if (elementMode && event.button === 0 && !insideReviewUi) {
+    if (pickMode === "element" && event.button === 0 && !insideReviewUi) {
       event.preventDefault();
       event.stopImmediatePropagation();
     }
   }, true);
   document.addEventListener("click", (event) => {
-    if (!elementMode || event.button !== 0 || event.composedPath().includes(host)) return;
+    if (pickMode !== "element" || event.button !== 0 || event.composedPath().includes(host)) return;
     event.preventDefault(); event.stopImmediatePropagation();
     const element = elementFor(event.target);
     if (!element || !hasArea(element.getBoundingClientRect())) return;
-    elementMode = false;
+    pickMode = "none";
     hover.hidden = true;
     hoverLabel.hidden = true;
     setPending(newSelection("element", null, element, safeText(element, 2000)), false);
@@ -302,13 +387,29 @@
     post("anchor-picked", pending.message);
   }, true);
   document.addEventListener("keydown", (event) => event.key === "Escape" && cancelPick(true), true);
-  document.addEventListener("toggle", () => requestAnimationFrame(updateOverlays), true);
-  addEventListener("scroll", updateOverlays, { passive: true, capture: true });
+  const handleLayoutChange = () => {
+    layoutRevision += 1;
+    scheduleOverlayUpdate();
+  };
+  document.addEventListener("toggle", handleLayoutChange, true);
+  document.addEventListener("load", (event) => {
+    if (event.target instanceof HTMLImageElement) handleLayoutChange();
+  }, true);
+  document.addEventListener("transitionend", handleLayoutChange, true);
+  document.addEventListener("animationend", handleLayoutChange, true);
+  addEventListener("scroll", () => {
+    layoutRevision += 1;
+    updateOverlays();
+  }, { passive: true, capture: true });
   addEventListener("scrollend", () => {
     updateOverlays();
     if (activeAnchor && activeAnchor.activateWhenVisible) activeAnchor = null;
   }, { passive: true, capture: true });
-  addEventListener("resize", updateOverlays, { passive: true });
+  addEventListener("resize", handleLayoutChange, { passive: true });
+  const layoutObserver = new ResizeObserver(handleLayoutChange);
+  layoutObserver.observe(document.documentElement);
+  if (document.body) layoutObserver.observe(document.body);
+  if (document.fonts) document.fonts.ready.then(handleLayoutChange);
 
   addEventListener("message", (event) => {
     const data = event.data;
@@ -323,19 +424,21 @@
         channelId = data.channelId;
       }
       ensureUi();
-      const capabilities = markdownSource ? ["text", "markers"]
-        : ["text", "element", "markers"];
+      const capabilities = markdownSource ? ["text", "region", "markers"]
+        : ["text", "element", "region", "markers"];
       post("ready", { capabilities });
       return;
     }
     if (!channelId || event.origin !== ownerOrigin || data.channelId !== channelId) return;
-    if (data.type === "element-mode") {
+    if (data.type === "pick-mode") {
       ensureUi();
-      const enabled = !markdownSource && Boolean(data.enabled);
-      if (enabled && pending) cancelPick(false);
-      elementMode = enabled;
+      const requested = data.mode === "region" ? "region"
+        : data.mode === "element" && !markdownSource ? "element" : "none";
+      if (requested !== "none" && pending) cancelPick(false);
+      pickMode = requested;
       hover.hidden = true;
       hoverLabel.hidden = true;
+      regionPicker.setActive(requested === "region");
     } else if (data.type === "set-marker") addMarker(data.markerId, data.selectionId);
     else if (data.type === "remove-marker") removeMarker(data.markerId);
     else if (data.type === "focus-marker") focusMarker(data.markerId);
