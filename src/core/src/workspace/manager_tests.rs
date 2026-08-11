@@ -206,12 +206,105 @@ async fn seed_preview_child(
     let parent_id = parent.state().await.thread_id;
     let (slug, _) = crate::previews::ensure_file(file, root, label.to_string());
     let child = manager
-        .ensure_preview_child_web_thread(&parent_id, &slug)
+        .ensure_preview_web_thread(Some(&parent_id), &slug)
         .await
         .unwrap();
     let child_id = child.state().await.thread_id;
     let route = preview_web_route_for_slug(&slug);
     (slug, parent_id, child_id, route)
+}
+
+async fn seed_standalone_preview(
+    manager: &WorkspaceThreadManager,
+    label: &str,
+) -> (String, WorkspaceThreadId, RouteKey, PathBuf) {
+    let root = std::env::temp_dir().join(format!(
+        "vibearound-preview-standalone-{label}-{}",
+        Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("README.md");
+    std::fs::write(&file, "# Standalone Preview").unwrap();
+    let (slug, _) = crate::previews::ensure_file(file, root.clone(), label.to_string());
+    let runtime = manager
+        .ensure_preview_web_thread(None, &slug)
+        .await
+        .unwrap();
+    let thread_id = runtime.state().await.thread_id;
+    let route = preview_web_route_for_slug(&slug);
+    (slug, thread_id, route, root)
+}
+
+#[tokio::test]
+async fn preview_without_parent_creates_and_reuses_a_standalone_task() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let (slug, thread_id, route, root) = seed_standalone_preview(&manager, "root").await;
+
+    let thread = manager.thread(&thread_id).await.unwrap().unwrap();
+    assert_eq!(thread.parent_thread_id, None);
+    assert_eq!(thread.preview_slug.as_deref(), Some(slug.as_str()));
+    assert_eq!(
+        manager
+            .current_attachment(&route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        thread_id
+    );
+    assert_eq!(
+        crate::previews::owner_conversation_thread_id(&slug),
+        Some(thread_id.clone())
+    );
+    assert_eq!(
+        manager
+            .runtime_for_thread_id(&thread_id)
+            .await
+            .unwrap()
+            .state()
+            .await
+            .workspace,
+        normalize_workspace_cwd(root)
+    );
+
+    let reused = manager
+        .ensure_preview_web_thread(None, &slug)
+        .await
+        .unwrap();
+    assert_eq!(reused.state().await.thread_id, thread_id);
+}
+
+#[tokio::test]
+async fn standalone_preview_new_close_and_next_message_keep_the_slug() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let (slug, first_id, route, _) = seed_standalone_preview(&manager, "commands").await;
+
+    let second = manager
+        .close_route_and_create_thread(&route, Some("test /new".to_string()))
+        .await
+        .unwrap();
+    let second_id = second.state().await.thread_id;
+    let second_thread = manager.thread(&second_id).await.unwrap().unwrap();
+    assert_ne!(second_id, first_id);
+    assert_eq!(second_thread.parent_thread_id, None);
+    assert_eq!(second_thread.preview_slug.as_deref(), Some(slug.as_str()));
+
+    manager
+        .close_route(&route, Some("test /close".to_string()))
+        .await
+        .unwrap();
+    let third = manager.resolve_route_runtime(&route).await.unwrap();
+    let third_id = third.state().await.thread_id;
+    let third_thread = manager.thread(&third_id).await.unwrap().unwrap();
+    assert_ne!(third_id, second_id);
+    assert_eq!(third_thread.parent_thread_id, None);
+    assert_eq!(third_thread.preview_slug.as_deref(), Some(slug.as_str()));
+    assert_eq!(
+        crate::previews::owner_conversation_thread_id(&slug),
+        Some(third_id)
+    );
 }
 
 #[tokio::test]
@@ -247,7 +340,7 @@ async fn preview_child_reuses_global_slug_across_parents_and_reload() {
         .unwrap();
     let other_parent_id = other_parent.state().await.thread_id;
     let reused = manager
-        .ensure_preview_child_web_thread(&other_parent_id, &slug)
+        .ensure_preview_web_thread(Some(&other_parent_id), &slug)
         .await
         .unwrap();
     assert_eq!(reused.state().await.thread_id, child_id);
@@ -269,7 +362,7 @@ async fn preview_child_reuses_global_slug_across_parents_and_reload() {
     drop(manager);
     let reloaded = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let runtime = reloaded
-        .ensure_preview_child_web_thread(&other_parent_id, &slug)
+        .ensure_preview_web_thread(Some(&other_parent_id), &slug)
         .await
         .unwrap();
 
@@ -332,7 +425,7 @@ async fn preview_thread_hint_only_attaches_an_open_child_for_the_same_slug() {
 }
 
 #[tokio::test]
-async fn concurrent_preview_ensure_creates_one_child_for_the_slug() {
+async fn concurrent_preview_ensure_creates_one_standalone_task_for_the_slug() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let root = std::env::temp_dir().join(format!(
@@ -342,20 +435,11 @@ async fn concurrent_preview_ensure_creates_one_child_for_the_slug() {
     std::fs::create_dir_all(&root).unwrap();
     let file = root.join("README.md");
     std::fs::write(&file, "# Preview").unwrap();
-    let parent = manager
-        .create_web_thread_for_cwd_with_host(
-            "codex".to_string(),
-            Some("direct".to_string()),
-            root.clone(),
-        )
-        .await
-        .unwrap();
-    let parent_id = parent.state().await.thread_id;
     let (slug, _) = crate::previews::ensure_file(file, root, "concurrent".to_string());
 
     let (first, second) = tokio::join!(
-        manager.ensure_preview_child_web_thread(&parent_id, &slug),
-        manager.ensure_preview_child_web_thread(&parent_id, &slug),
+        manager.ensure_preview_web_thread(None, &slug),
+        manager.ensure_preview_web_thread(None, &slug),
     );
     let first_id = first.unwrap().state().await.thread_id;
     let second_id = second.unwrap().state().await.thread_id;

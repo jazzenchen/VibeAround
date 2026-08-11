@@ -36,15 +36,14 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(thread).await.map(Some)
     }
 
-    pub async fn ensure_preview_child_web_thread(
+    pub async fn ensure_preview_web_thread(
         &self,
-        parent_thread_id: &WorkspaceThreadId,
+        parent_thread_id: Option<&WorkspaceThreadId>,
         preview_slug: &str,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
         let _preview_lifecycle = self.preview_lifecycle.lock().await;
-        if crate::previews::lookup_owner(preview_slug).is_none() {
-            return Err(anyhow!("Preview {} no longer exists", preview_slug));
-        }
+        let preview = crate::previews::lookup_owner(preview_slug)
+            .ok_or_else(|| anyhow!("Preview {} no longer exists", preview_slug))?;
         let route = preview_web_route_for_slug(preview_slug);
         if let Some(bound_thread_id) = crate::previews::owner_conversation_thread_id(preview_slug) {
             if let Some(bound) = self.thread(&bound_thread_id).await? {
@@ -67,25 +66,35 @@ impl WorkspaceThreadManager {
                 .await;
         }
 
-        let parent = self
-            .thread(parent_thread_id)
-            .await?
-            .ok_or_else(|| anyhow!("thread {} not found", parent_thread_id))?;
-        self.create_preview_child_for_route(
+        let (workspace_id, parent_thread_id, host_binding) = match parent_thread_id {
+            Some(parent_thread_id) => {
+                let parent = self
+                    .thread(parent_thread_id)
+                    .await?
+                    .ok_or_else(|| anyhow!("thread {} not found", parent_thread_id))?;
+                (parent.workspace_id, Some(parent.id), parent.host_binding)
+            }
+            None => {
+                let workspace = self.ensure_workspace_for_cwd(preview.workspace).await?;
+                let host_binding = default_route_binding_and_workspace(&route).0;
+                (workspace.id, None, host_binding)
+            }
+        };
+        self.create_preview_thread_for_route(
             &route,
-            parent.workspace_id,
-            parent.id,
+            workspace_id,
+            parent_thread_id,
             preview_slug.to_string(),
-            parent.host_binding,
+            host_binding,
         )
         .await
     }
 
-    pub(super) async fn create_preview_child_for_route(
+    pub(super) async fn create_preview_thread_for_route(
         &self,
         route: &RouteKey,
         workspace_id: WorkspaceId,
-        parent_thread_id: WorkspaceThreadId,
+        parent_thread_id: Option<WorkspaceThreadId>,
         preview_slug: String,
         host_binding: HostBinding,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
@@ -96,17 +105,17 @@ impl WorkspaceThreadManager {
             preview_slug.clone(),
             host_binding,
         );
-        let child = ThreadProjection::from_events(&[event])?
+        let task = ThreadProjection::from_events(&[event])?
             .all()
             .next()
             .cloned()
-            .expect("created Preview child");
-        self.ensure_thread_persisted(&child).await?;
-        self.attach_route(route.clone(), child.workspace_id.clone(), child.id.clone())
+            .expect("created Preview task");
+        self.ensure_thread_persisted(&task).await?;
+        self.attach_route(route.clone(), task.workspace_id.clone(), task.id.clone())
             .await?;
-        crate::previews::replace_owner_conversation(&preview_slug, child.id.clone())
+        crate::previews::replace_owner_conversation(&preview_slug, task.id.clone())
             .map_err(|_| anyhow!("Preview {} no longer exists", preview_slug))?;
-        self.runtime_from_thread(child).await
+        self.runtime_from_thread(task).await
     }
 
     pub(super) async fn resolve_preview_route_runtime_locked(
@@ -179,16 +188,10 @@ impl WorkspaceThreadManager {
             return self.runtime_from_thread(previous).await;
         }
 
-        let parent_thread_id = previous.parent_thread_id.ok_or_else(|| {
-            anyhow!(
-                "Preview {} history is missing its parent task",
-                preview_slug
-            )
-        })?;
-        self.create_preview_child_for_route(
+        self.create_preview_thread_for_route(
             route,
             previous.workspace_id,
-            parent_thread_id,
+            previous.parent_thread_id,
             preview_slug.to_string(),
             previous.host_binding,
         )

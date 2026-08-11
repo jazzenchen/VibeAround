@@ -244,14 +244,12 @@ impl WorkspaceThreadManager {
         };
 
         if let Some((thread, host_binding)) = current {
-            if let (Some(parent_thread_id), Some(preview_slug)) =
-                (thread.parent_thread_id, thread.preview_slug)
-            {
+            if let Some(preview_slug) = thread.preview_slug {
                 return self
-                    .create_preview_child_for_route(
+                    .create_preview_thread_for_route(
                         route,
                         thread.workspace_id,
-                        parent_thread_id,
+                        thread.parent_thread_id,
                         preview_slug,
                         host_binding,
                     )
@@ -450,15 +448,15 @@ impl WorkspaceThreadManager {
         if self.thread(&thread.id).await?.is_some() {
             return Ok(());
         }
-        let event = match (&thread.parent_thread_id, &thread.preview_slug) {
-            (Some(parent_thread_id), Some(preview_slug)) => ThreadEvent::preview_created(
+        let event = match &thread.preview_slug {
+            Some(preview_slug) => ThreadEvent::preview_created(
                 thread.id.clone(),
                 thread.workspace_id.clone(),
-                parent_thread_id.clone(),
+                thread.parent_thread_id.clone(),
                 preview_slug.clone(),
                 thread.host_binding.clone(),
             ),
-            _ => ThreadEvent::created(
+            None => ThreadEvent::created(
                 thread.id.clone(),
                 thread.workspace_id.clone(),
                 thread.parent_thread_id.clone(),
