@@ -8,7 +8,7 @@ use crate::web_server::AppState;
 use super::jsonrpc::{jsonrpc_err, mcp_error_text, mcp_text};
 use super::ports::is_denied_port;
 use super::preview_conversation::{
-    ensure_preview_child_thread, resolve_preview_parent_thread, PreviewParentRequest,
+    ensure_preview_conversation_thread, resolve_preview_parent_thread, PreviewParentRequest,
 };
 use super::session_identity::{argument_string, codex_session_id_from_mcp_metadata};
 use super::tools::validate_workspace;
@@ -78,10 +78,12 @@ pub(super) async fn mcp_preview_start(
         .and_then(Value::as_str)
         .map(String::from);
     let owner_slug = common::previews::ensure_server(port, cwd_path, title, session_id.clone());
-    if let Err(error) = ensure_preview_child_thread(&owner_slug, parent_thread_id, state).await {
+    if let Err(error) =
+        ensure_preview_conversation_thread(&owner_slug, parent_thread_id, state).await
+    {
         return mcp_error_text(
             id,
-            &format!("Failed to bind Preview conversation: {error:#}"),
+            &format!("Failed to initialize Preview conversation: {error:#}"),
         );
     }
     let owner_url = format!(
@@ -175,10 +177,12 @@ pub(super) async fn mcp_md_preview(
         };
 
     let (owner_slug, share) = common::previews::ensure_file(file_path, cwd_path, title);
-    if let Err(error) = ensure_preview_child_thread(&owner_slug, parent_thread_id, state).await {
+    if let Err(error) =
+        ensure_preview_conversation_thread(&owner_slug, parent_thread_id, state).await
+    {
         return mcp_error_text(
             id,
-            &format!("Failed to bind Preview conversation: {error:#}"),
+            &format!("Failed to initialize Preview conversation: {error:#}"),
         );
     }
     let tunnel_url = state.tunnels.first_url();

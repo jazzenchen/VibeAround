@@ -55,7 +55,7 @@ fn active_preview_slug(
     let slug = preview_slug_from_web_route(&target.route)
         .ok_or("refresh_preview can only be called during an active VibeAround Preview turn.")?;
     if common::previews::owner_conversation_thread_id(slug).as_ref() != Some(thread_id) {
-        return Err("This task is no longer the active child for its owner Preview.");
+        return Err("This task is no longer active for its owner Preview.");
     }
     Ok(slug.to_string())
 }
@@ -100,7 +100,7 @@ mod tests {
         let parent_id = parent.state().await.thread_id;
         let (slug, _) = common::previews::ensure_file(file, workspace, "Preview".to_string());
         let runtime = manager
-            .ensure_preview_child_web_thread(&parent_id, &slug)
+            .ensure_preview_web_thread(Some(&parent_id), &slug)
             .await
             .unwrap();
         let thread_id = runtime.state().await.thread_id;

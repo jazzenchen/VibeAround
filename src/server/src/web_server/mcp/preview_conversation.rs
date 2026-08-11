@@ -91,18 +91,15 @@ pub(super) async fn resolve_preview_parent_thread(
     Ok(Some(runtime_state.thread_id))
 }
 
-pub(super) async fn ensure_preview_child_thread(
+pub(super) async fn ensure_preview_conversation_thread(
     owner_slug: &str,
     parent_thread_id: Option<common::workspace::threads::WorkspaceThreadId>,
     state: &AppState,
 ) -> anyhow::Result<()> {
-    let Some(parent_thread_id) = parent_thread_id else {
-        return Ok(());
-    };
     state
         .channel_hub
         .workspace_thread_manager()
-        .ensure_preview_child_web_thread(&parent_thread_id, owner_slug)
+        .ensure_preview_web_thread(parent_thread_id.as_ref(), owner_slug)
         .await
         .map(|_| ())
 }
@@ -166,5 +163,10 @@ mod tests {
                 session_id: "claude-native-session".to_string()
             })
         );
+    }
+
+    #[test]
+    fn missing_parent_identity_creates_a_standalone_request() {
+        assert_eq!(PreviewParentRequest::default().identity(), None);
     }
 }
