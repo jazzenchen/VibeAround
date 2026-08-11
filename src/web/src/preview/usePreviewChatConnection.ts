@@ -9,7 +9,12 @@ import {
   setStreamProgressMessage,
   settleStreamActivitiesMessage,
 } from "@/components/chat/chatMessageUpdates";
-import type { ChatMessage, PendingPermission } from "@/components/chat/chatTypes";
+import type {
+  ChatAttachment,
+  ChatMessage,
+  PendingPermission,
+} from "@/components/chat/chatTypes";
+import { chatUserContentBlocks } from "@/components/chat/chatUserContent";
 import {
   applyPreviewSessionNotification,
   previewSessionChanged,
@@ -280,7 +285,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
   }, [chatAvailable, slug]);
 
   const sendMessage = useCallback(
-    (text: string, displayText = text) => {
+    (text: string, displayText = text, attachments: ChatAttachment[] = []) => {
       const message = text.trim();
       const socket = socketRef.current;
       if (
@@ -293,12 +298,32 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
       }
       const messageId = createMessageId();
       try {
-        socket.send(JSON.stringify({ type: "message", messageId, text: message }));
+        socket.send(
+          JSON.stringify({
+            type: "message",
+            messageId,
+            text: message,
+            attachments: attachments.map((attachment) => ({
+              id: attachment.id,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+              uri: attachment.uri,
+            })),
+          }),
+        );
       } catch (error) {
         console.warn("[Preview] failed to send chat message:", error);
         return false;
       }
       const visibleText = displayText.trim() || message;
+      const contentParts = chatUserContentBlocks(visibleText, attachments).map(
+        (block, index) => ({
+          id: `preview-user-${messageId}-${index}`,
+          kind: "content" as const,
+          block,
+        }),
+      );
       setMessages((current) => [
         ...current,
         {
@@ -306,13 +331,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
           content: visibleText,
           messageId,
           optimistic: true,
-          parts: [
-            {
-              id: `preview-user-${messageId}`,
-              kind: "content",
-              block: { type: "text", text: visibleText },
-            },
-          ],
+          parts: contentParts,
         },
       ]);
       turnActiveRef.current = true;
