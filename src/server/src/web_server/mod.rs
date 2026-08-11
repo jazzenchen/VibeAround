@@ -515,6 +515,14 @@ pub async fn run_web_server(
             get(preview::owner_preview_chat_handler),
         )
         .route(
+            "/preview/u/{slug}/chat/uploads",
+            post(api::upload_chat_file_handler)
+                .layer(DefaultBodyLimit::max(LOCAL_BRIDGE_BODY_LIMIT_BYTES))
+                .layer(axum::middleware::from_fn(
+                    preview::require_owner_preview_access,
+                )),
+        )
+        .route(
             "/preview/u/{slug}/content",
             get(preview::owner_preview_content_handler),
         )

@@ -4,6 +4,7 @@
 //! - GET /preview/u/:slug            — owner React app
 //! - GET /preview/u/:slug/bootstrap  — owner app data
 //! - GET /preview/u/:slug/chat       — owner-only conversation WebSocket
+//! - POST /preview/u/:slug/chat/uploads — owner-only chat attachment upload
 //! - GET /preview/u/:slug/content    — owner iframe content
 //! - GET /preview/s/:share_id        — Markdown share gate or document
 //! - POST /preview/s/:share_id       — verify reusable access code
@@ -37,6 +38,7 @@ use axum::body::Body;
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, Path, Request, State};
 use axum::http::{header, StatusCode};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use common::previews::{PreviewEntry, PreviewTarget, ShareCodeError};
@@ -204,6 +206,13 @@ fn clear_local_preview_cookies(response: &mut Response) {
 
 pub(super) fn owner_access_allowed(req: &Request) -> bool {
     owner_cookie_valid(req) || crate::web_server::auth::request_is_local_dashboard(req)
+}
+
+pub(super) async fn require_owner_preview_access(req: Request, next: Next) -> Response {
+    if !owner_access_allowed(&req) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    next.run(req).await
 }
 
 /// GET /preview/s/{share_id} — public Markdown gate or authorized document.
