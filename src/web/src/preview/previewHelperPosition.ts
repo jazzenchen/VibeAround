@@ -1,4 +1,4 @@
-export const PREVIEW_HELPER_DRAG_THRESHOLD = 6;
+export const PREVIEW_SURFACE_DRAG_THRESHOLD = 6;
 
 export type PreviewHelperCorner =
   | "top-left"
@@ -25,7 +25,7 @@ type Viewport = {
 
 export function hasPreviewHelperDragStarted(start: Point, current: Point) {
   return Math.hypot(current.x - start.x, current.y - start.y) >=
-    PREVIEW_HELPER_DRAG_THRESHOLD;
+    PREVIEW_SURFACE_DRAG_THRESHOLD;
 }
 
 export function nearestPreviewHelperCorner(

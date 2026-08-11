@@ -32,7 +32,7 @@ type PreviewChatDrawerProps = {
   mode: PreviewChatMode;
   side: PreviewChatSide;
   width: number;
-  onOpenChange: (open: boolean) => void;
+  onClose: () => void;
   onModeChange: (mode: PreviewChatMode) => void;
   onSideChange: (side: PreviewChatSide) => void;
   onWidthChange: (width: number) => void;
@@ -57,7 +57,7 @@ export function PreviewChatDrawer({
   mode,
   side,
   width,
-  onOpenChange,
+  onClose,
   onModeChange,
   onSideChange,
   onWidthChange,
@@ -134,10 +134,9 @@ export function PreviewChatDrawer({
               : "Connecting…"
         }
         mode={mode}
-        side={side}
         onModeChange={onModeChange}
         onSideChange={onSideChange}
-        onClose={() => onOpenChange(false)}
+        onClose={onClose}
       />
 
       <ChatMessageList

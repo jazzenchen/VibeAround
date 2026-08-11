@@ -3,7 +3,11 @@ import { MousePointer2 } from "lucide-react";
 
 import { PreviewChatDrawer } from "./PreviewChatDrawer";
 import type { PreviewChatMode, PreviewChatSide } from "./previewChatLayout";
-import { PreviewHelper, type PreviewHelperCorner } from "./PreviewHelper";
+import {
+  PreviewHelper,
+  type PreviewHelperCorner,
+  type PreviewHelperView,
+} from "./PreviewHelper";
 import { PreviewReviewPopover } from "./PreviewReviewPopover";
 import { parsePreviewBootstrap, type PreviewBootstrap } from "./previewTypes";
 import { usePreviewChatConnection } from "./usePreviewChatConnection";
@@ -78,12 +82,11 @@ function PreviewWorkspace({
       bootstrap.previews.some((preview) => preview.slug === slug),
     ) ?? bootstrap.previews[0].slug;
   const [selectedSlug, setSelectedSlug] = useState(initialSelectedSlug);
-  const [helperOpen, setHelperOpen] = useState(false);
+  const [helperView, setHelperView] =
+    useState<PreviewHelperView>("collapsed");
   const [helperCorner, setHelperCorner] =
     useState<PreviewHelperCorner>("bottom-right");
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [chatMode, setChatMode] = useState<PreviewChatMode>("impact");
-  const [chatSide, setChatSide] = useState<PreviewChatSide>("right");
   const [chatWidth, setChatWidth] = useState(448);
   const [frameRevision, setFrameRevision] = useState(0);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -124,27 +127,20 @@ function PreviewWorkspace({
     history.replaceState(null, "", `/va/preview/u/${encodeURIComponent(slug)}`);
   };
 
-  const moveHelperAwayFrom = (side: PreviewChatSide) => {
-    setHelperCorner((corner) => {
-      if (!corner.endsWith(side)) return corner;
-      const vertical = corner.startsWith("top") ? "top" : "bottom";
-      return `${vertical}-${side === "left" ? "right" : "left"}`;
-    });
-  };
-
-  const setChatOpen = (open: boolean) => {
-    setDrawerOpen(open);
-    if (open) moveHelperAwayFrom(chatSide);
-  };
+  const chatSide: PreviewChatSide = helperCorner.endsWith("left")
+    ? "left"
+    : "right";
 
   const changeChatSide = (side: PreviewChatSide) => {
-    setChatSide(side);
-    if (drawerOpen) moveHelperAwayFrom(side);
+    setHelperCorner((corner) => {
+      const vertical = corner.startsWith("top") ? "top" : "bottom";
+      return `${vertical}-${side}`;
+    });
   };
 
   const revealPreviewOnCompactScreen = () => {
     if (window.matchMedia("(max-width: 1023px)").matches) {
-      setDrawerOpen(false);
+      setHelperView("collapsed");
     }
   };
 
@@ -166,13 +162,11 @@ function PreviewWorkspace({
         />
 
         <PreviewHelper
-          open={helperOpen}
-          chatOpen={drawerOpen}
+          view={helperView}
           corner={helperCorner}
           previews={bootstrap.previews}
           selected={selected}
-          onOpenChange={setHelperOpen}
-          onChatOpenChange={setChatOpen}
+          onViewChange={setHelperView}
           onCornerChange={setHelperCorner}
           onSelectPreview={selectPreview}
           onRefresh={refreshPreview}
@@ -191,7 +185,7 @@ function PreviewWorkspace({
       )}
 
       <PreviewChatDrawer
-        open={drawerOpen}
+        open={helperView === "chat"}
         preview={selected}
         chat={chat}
         drafts={review.drafts}
@@ -200,7 +194,7 @@ function PreviewWorkspace({
         mode={chatMode}
         side={chatSide}
         width={chatWidth}
-        onOpenChange={setChatOpen}
+        onClose={() => setHelperView("expanded")}
         onModeChange={setChatMode}
         onSideChange={changeChatSide}
         onWidthChange={setChatWidth}
@@ -222,7 +216,7 @@ function PreviewWorkspace({
           frameRef={frameRef}
           initialComment={activeDraft?.comment ?? ""}
           onSave={(comment) => {
-            if (review.saveEditor(comment)) setChatOpen(true);
+            if (review.saveEditor(comment)) setHelperView("chat");
           }}
           onCancel={() => review.closeEditor(true)}
         />

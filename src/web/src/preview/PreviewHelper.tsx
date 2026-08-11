@@ -1,5 +1,5 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { MessageSquare, Minimize2, RefreshCw } from "lucide-react";
+import { Maximize2, MessageSquare, Minimize2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -11,14 +11,14 @@ import {
 import { PreviewPicker } from "./PreviewPicker";
 import type { PreviewItem } from "./previewTypes";
 
+export type PreviewHelperView = "collapsed" | "expanded" | "chat";
+
 type PreviewHelperProps = {
-  open: boolean;
-  chatOpen: boolean;
+  view: PreviewHelperView;
   corner: PreviewHelperCorner;
   previews: PreviewItem[];
   selected: PreviewItem;
-  onOpenChange: (open: boolean) => void;
-  onChatOpenChange: (open: boolean) => void;
+  onViewChange: (view: PreviewHelperView) => void;
   onCornerChange: (corner: PreviewHelperCorner) => void;
   onSelectPreview: (slug: string) => void;
   onRefresh: () => void;
@@ -50,13 +50,11 @@ const CORNER_CLASS: Record<PreviewHelperCorner, string> = {
 };
 
 export function PreviewHelper({
-  open,
-  chatOpen,
+  view,
   corner,
   previews,
   selected,
-  onOpenChange,
-  onChatOpenChange,
+  onViewChange,
   onCornerChange,
   onSelectPreview,
   onRefresh,
@@ -115,11 +113,16 @@ export function PreviewHelper({
 
     const left = session.startLeft + event.clientX - session.startX;
     const top = session.startTop + event.clientY - session.startY;
+    const nearestCorner = nearestPreviewHelperCorner(
+      { left, top, width: session.width, height: session.height },
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    const vertical = nearestCorner.startsWith("top") ? "top" : "bottom";
+    const horizontal = corner.endsWith("left") ? "left" : "right";
     onCornerChange(
-      nearestPreviewHelperCorner(
-        { left, top, width: session.width, height: session.height },
-        { width: window.innerWidth, height: window.innerHeight },
-      ),
+      view === "expanded"
+        ? `${vertical}-${horizontal}`
+        : nearestCorner,
     );
     setDragPosition(undefined);
   };
@@ -139,12 +142,13 @@ export function PreviewHelper({
     onPointerCancel: cancelDrag,
   };
 
+  if (view === "chat") return null;
+
   return (
     <div
       ref={rootRef}
       className={cn(
         "fixed z-50 select-none",
-        chatOpen && "hidden lg:block",
         dragPosition
           ? "translate-x-0 translate-y-0 transition-none"
           : cn(
@@ -154,11 +158,11 @@ export function PreviewHelper({
       )}
       style={dragPosition}
     >
-      {!open ? (
+      {view === "collapsed" ? (
         <Button
           type="button"
           variant="outline"
-          className="h-10 touch-none cursor-grab rounded-full border-border/80 bg-background/95 px-2.5 shadow-lg backdrop-blur active:cursor-grabbing"
+          className="h-11 touch-none cursor-grab rounded-xl border-border/80 bg-background/95 px-3 shadow-lg backdrop-blur active:cursor-grabbing"
           aria-label="Open Preview helper"
           title="Open Preview helper · drag to move"
           onClick={() => {
@@ -166,7 +170,7 @@ export function PreviewHelper({
               didDragRef.current = false;
               return;
             }
-            onOpenChange(true);
+            onViewChange("expanded");
           }}
           {...pointerHandlers}
         >
@@ -176,16 +180,13 @@ export function PreviewHelper({
             draggable={false}
             className="pointer-events-none h-5 w-5"
           />
-          <span>Preview</span>
+          <span className="font-medium">Preview</span>
+          <Maximize2 className="h-4 w-4 text-muted-foreground" />
         </Button>
       ) : (
         <div
-          className={cn(
-            "flex h-11 items-center gap-1 rounded-xl border border-border/80 bg-background/95 p-1.5 shadow-lg backdrop-blur",
-            chatOpen
-              ? "w-[min(24rem,calc(100vw-2rem))]"
-              : "w-[min(34rem,calc(100vw-2rem))]",
-          )}
+          className="flex h-11 items-center gap-1 rounded-xl border border-border/80 bg-background/95 p-1.5 shadow-lg backdrop-blur"
+          style={{ width: "calc(100vw - 2.5rem)" }}
         >
           <div
             className="flex h-8 w-8 shrink-0 touch-none cursor-grab items-center justify-center rounded-md active:cursor-grabbing"
@@ -217,12 +218,11 @@ export function PreviewHelper({
           </Button>
           <Button
             type="button"
-            variant={chatOpen ? "secondary" : "ghost"}
+            variant="ghost"
             size="sm"
             className="px-2"
-            onClick={() => onChatOpenChange(!chatOpen)}
+            onClick={() => onViewChange("chat")}
             aria-label="Preview conversation"
-            aria-pressed={chatOpen}
             title="Preview conversation"
           >
             <MessageSquare className="h-4 w-4" />
@@ -232,7 +232,7 @@ export function PreviewHelper({
             type="button"
             variant="ghost"
             size="icon-sm"
-            onClick={() => onOpenChange(false)}
+            onClick={() => onViewChange("collapsed")}
             aria-label="Collapse Preview helper"
             title="Collapse Preview helper"
           >
