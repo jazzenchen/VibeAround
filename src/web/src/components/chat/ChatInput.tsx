@@ -68,7 +68,6 @@ export interface ChatInputProps {
   showCommands?: boolean;
   contextContent?: ReactNode;
   contextCanSubmit?: boolean;
-  leadingAction?: ReactNode;
   sessionMode?: SessionModeState | null;
   onSessionModeChange?: (value: string) => void;
   onFilesSelected?: (files: File[]) => void;
@@ -96,7 +95,6 @@ export function ChatInput({
   showCommands = true,
   contextContent,
   contextCanSubmit = false,
-  leadingAction,
   sessionMode,
   onSessionModeChange,
   onFilesSelected,
@@ -302,7 +300,6 @@ export function ChatInput({
           )}
         >
           <div className="flex min-w-0 items-center gap-1.5">
-            {leadingAction}
             {onFilesSelected && (
               <>
                 <input

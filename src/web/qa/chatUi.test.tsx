@@ -76,7 +76,6 @@ test("shared composer can omit dashboard commands", () => {
       {...props}
       showCommands={false}
       contextContent={<span>Review note</span>}
-      leadingAction={<button type="button">Select element</button>}
     />,
   );
 
@@ -84,7 +83,6 @@ test("shared composer can omit dashboard commands", () => {
   expect(compactComposer).not.toContain('aria-label="Commands"');
   expect(compactComposer).toContain('aria-label="Send"');
   expect(compactComposer).toContain("Review note");
-  expect(compactComposer).toContain("Select element");
 });
 
 test("shared composer can submit contextual review notes without prompt text", () => {

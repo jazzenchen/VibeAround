@@ -9,6 +9,10 @@ import {
   type PreviewHelperView,
 } from "./PreviewHelper";
 import { PreviewReviewPopover } from "./PreviewReviewPopover";
+import type {
+  PreviewReviewTool,
+  PreviewReviewToolbarModel,
+} from "./PreviewReviewToolbar";
 import { parsePreviewBootstrap, type PreviewBootstrap } from "./previewTypes";
 import { usePreviewChatConnection } from "./usePreviewChatConnection";
 import { usePreviewReviewBridge } from "./usePreviewReviewBridge";
@@ -148,6 +152,20 @@ function PreviewWorkspace({
     ? review.drafts.find((draft) => draft.id === review.editor?.draftId)
     : undefined;
 
+  const activeReviewTool: PreviewReviewTool | null = review.elementMode
+    ? "element"
+    : null;
+  const reviewToolbar: PreviewReviewToolbarModel = {
+    activeTool: activeReviewTool,
+    elementAvailable: review.capabilities.includes("element"),
+    regionAvailable: false,
+    textSelectionAvailable: review.capabilities.includes("text"),
+    onToolChange: (tool) => {
+      revealPreviewOnCompactScreen();
+      review.setElementMode(tool === "element");
+    },
+  };
+
   return (
     <div className="relative flex h-full min-h-0 overflow-hidden bg-muted/20">
       <div className="relative order-1 min-w-0 flex-1">
@@ -170,6 +188,7 @@ function PreviewWorkspace({
           onCornerChange={setHelperCorner}
           onSelectPreview={selectPreview}
           onRefresh={refreshPreview}
+          reviewToolbar={reviewToolbar}
         />
       </div>
 
@@ -189,8 +208,7 @@ function PreviewWorkspace({
         preview={selected}
         chat={chat}
         drafts={review.drafts}
-        supportsElementSelection={review.capabilities.includes("element")}
-        elementSelectionActive={review.elementMode}
+        reviewToolbar={reviewToolbar}
         mode={chatMode}
         side={chatSide}
         width={chatWidth}
@@ -198,10 +216,6 @@ function PreviewWorkspace({
         onModeChange={setChatMode}
         onSideChange={changeChatSide}
         onWidthChange={setChatWidth}
-        onSelectElement={() => {
-          revealPreviewOnCompactScreen();
-          review.setElementMode(!review.elementMode);
-        }}
         onFocusDraft={(id) => {
           revealPreviewOnCompactScreen();
           review.focusDraft(id);

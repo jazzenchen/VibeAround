@@ -1,15 +1,18 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { MessageSquare, MousePointer2, X } from "lucide-react";
+import { MessageSquare, X } from "lucide-react";
 
 import {
   ChatInput,
   ChatMessageList,
   PendingPermissions,
 } from "@/components/chat/chatUi";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { PreviewChatHeader } from "./PreviewChatHeader";
 import { PreviewChatResizeHandle } from "./PreviewChatResizeHandle";
+import {
+  PreviewReviewToolbar,
+  type PreviewReviewToolbarModel,
+} from "./PreviewReviewToolbar";
 import {
   clampPreviewChatWidth,
   type PreviewChatMode,
@@ -27,8 +30,7 @@ type PreviewChatDrawerProps = {
   preview: PreviewItem;
   chat: PreviewChat;
   drafts: PreviewReviewDraft[];
-  supportsElementSelection: boolean;
-  elementSelectionActive: boolean;
+  reviewToolbar: PreviewReviewToolbarModel;
   mode: PreviewChatMode;
   side: PreviewChatSide;
   width: number;
@@ -36,7 +38,6 @@ type PreviewChatDrawerProps = {
   onModeChange: (mode: PreviewChatMode) => void;
   onSideChange: (side: PreviewChatSide) => void;
   onWidthChange: (width: number) => void;
-  onSelectElement: () => void;
   onFocusDraft: (id: string) => void;
   onRemoveDraft: (id: string) => void;
   onClearSubmittedDrafts: () => void;
@@ -52,8 +53,7 @@ export function PreviewChatDrawer({
   preview,
   chat,
   drafts,
-  supportsElementSelection,
-  elementSelectionActive,
+  reviewToolbar,
   mode,
   side,
   width,
@@ -61,7 +61,6 @@ export function PreviewChatDrawer({
   onModeChange,
   onSideChange,
   onWidthChange,
-  onSelectElement,
   onFocusDraft,
   onRemoveDraft,
   onClearSubmittedDrafts,
@@ -151,6 +150,10 @@ export function PreviewChatDrawer({
         onRespond={chat.sendPermissionResponse}
         onCancel={chat.cancelPermissionRequest}
       />
+      <PreviewReviewToolbar
+        {...reviewToolbar}
+        className="shrink-0 border-t border-border px-3 py-2"
+      />
       <ChatInput
         value={input}
         onChange={(value) => {
@@ -197,22 +200,6 @@ export function PreviewChatDrawer({
                 <p className="text-xs text-destructive">{submitError}</p>
               )}
             </div>
-          ) : undefined
-        }
-        leadingAction={
-          supportsElementSelection ? (
-            <Button
-              type="button"
-              variant={elementSelectionActive ? "secondary" : "ghost"}
-              size="icon-sm"
-              onClick={onSelectElement}
-              aria-label="Select element"
-              aria-pressed={elementSelectionActive}
-              title="Select element"
-              className="h-8 w-8 text-muted-foreground"
-            >
-              <MousePointer2 className="h-4 w-4" />
-            </Button>
           ) : undefined
         }
         placeholder="Ask for a change…"
