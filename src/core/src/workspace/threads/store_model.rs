@@ -377,14 +377,14 @@ impl ThreadEvent {
     pub fn preview_created(
         thread_id: impl Into<WorkspaceThreadId>,
         workspace_id: impl Into<WorkspaceId>,
-        parent_thread_id: WorkspaceThreadId,
+        parent_thread_id: Option<WorkspaceThreadId>,
         preview_slug: impl Into<String>,
         host_binding: HostBinding,
     ) -> Self {
         Self::created_with_preview(
             thread_id,
             workspace_id,
-            Some(parent_thread_id),
+            parent_thread_id,
             Some(preview_slug.into()),
             host_binding,
         )

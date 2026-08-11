@@ -349,7 +349,7 @@ mod tests {
         let event = ThreadEvent::preview_created(
             "wt_preview",
             "ws_a",
-            parent_thread_id.clone(),
+            Some(parent_thread_id.clone()),
             "workspace-readme-md",
             HostBinding::new("codex", None),
         );
@@ -365,6 +365,29 @@ mod tests {
             .unwrap();
         assert_eq!(thread.parent_thread_id.as_ref(), Some(&parent_thread_id));
         assert_eq!(thread.preview_slug.as_deref(), Some("workspace-readme-md"));
+    }
+
+    #[test]
+    fn preview_created_event_round_trips_slug_without_parent() {
+        let event = ThreadEvent::preview_created(
+            "wt_preview_root",
+            "ws_a",
+            None,
+            "workspace-standalone",
+            HostBinding::new("codex", None),
+        );
+
+        let json = serde_json::to_value(&event).unwrap();
+        assert!(json.get("parent_thread_id").is_none());
+        assert_eq!(json["preview_slug"], "workspace-standalone");
+
+        let decoded: ThreadEvent = serde_json::from_value(json).unwrap();
+        let projection = ThreadProjection::from_events(&[decoded]).unwrap();
+        let thread = projection
+            .get(&WorkspaceThreadId::from("wt_preview_root"))
+            .unwrap();
+        assert_eq!(thread.parent_thread_id, None);
+        assert_eq!(thread.preview_slug.as_deref(), Some("workspace-standalone"));
     }
 
     #[test]
