@@ -46,12 +46,14 @@ pub(in crate::web_server) async fn review_bridge_script_handler() -> Response {
             HTML2CANVAS_SCRIPT.len()
                 + REVIEW_REGION_SCRIPT.len()
                 + REVIEW_BRIDGE_SCRIPT.len()
-                + 180,
+                + 420,
         );
-    script.push_str("(()=>{const module={exports:{}};const exports=module.exports;\n");
+    script.push_str(
+        "(()=>{const vaPreviewHtml2canvasDescriptor=Object.getOwnPropertyDescriptor(globalThis,\"html2canvas\");const module={exports:{}};const exports=module.exports;\n",
+    );
     script.push_str(HTML2CANVAS_SCRIPT);
     script.push_str(
-        "\nconst vaPreviewHtml2canvas=module.exports.default||module.exports.html2canvas;\n",
+        "\nconst vaPreviewHtml2canvas=module.exports.default||module.exports.html2canvas;if(vaPreviewHtml2canvasDescriptor){Object.defineProperty(globalThis,\"html2canvas\",vaPreviewHtml2canvasDescriptor);}else{delete globalThis.html2canvas;}\n",
     );
     script.push_str(REVIEW_REGION_SCRIPT);
     script.push('\n');
@@ -184,6 +186,7 @@ mod tests {
         assert!(script.contains(
             "const vaPreviewHtml2canvas=module.exports.default||module.exports.html2canvas"
         ));
+        assert!(script.contains("Object.defineProperty(globalThis,\"html2canvas\""));
         assert!(script.contains("createPreviewRegionPicker"));
         assert!(script.contains("va-preview-review"));
         assert!(script.contains("Source line") || script.contains("startLine"));
