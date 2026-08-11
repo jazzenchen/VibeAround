@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { MessageSquare, MousePointer2, RotateCw, X } from "lucide-react";
+import { useEffect, useState, type CSSProperties } from "react";
+import { MessageSquare, MousePointer2, X } from "lucide-react";
 
 import {
   ChatInput,
@@ -8,6 +8,13 @@ import {
 } from "@/components/chat/chatUi";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { PreviewChatHeader } from "./PreviewChatHeader";
+import { PreviewChatResizeHandle } from "./PreviewChatResizeHandle";
+import {
+  clampPreviewChatWidth,
+  type PreviewChatMode,
+  type PreviewChatSide,
+} from "./previewChatLayout";
 import { buildPreviewReviewPrompt, previewReviewDisplay } from "./previewReview";
 import type { PreviewItem, PreviewReviewDraft } from "./previewTypes";
 import type { usePreviewChatConnection } from "./usePreviewChatConnection";
@@ -21,9 +28,14 @@ type PreviewChatDrawerProps = {
   chat: PreviewChat;
   drafts: PreviewReviewDraft[];
   supportsElementSelection: boolean;
-  refreshAvailable: boolean;
+  elementSelectionActive: boolean;
+  mode: PreviewChatMode;
+  side: PreviewChatSide;
+  width: number;
   onOpenChange: (open: boolean) => void;
-  onRefresh: () => void;
+  onModeChange: (mode: PreviewChatMode) => void;
+  onSideChange: (side: PreviewChatSide) => void;
+  onWidthChange: (width: number) => void;
   onSelectElement: () => void;
   onFocusDraft: (id: string) => void;
   onRemoveDraft: (id: string) => void;
@@ -41,9 +53,14 @@ export function PreviewChatDrawer({
   chat,
   drafts,
   supportsElementSelection,
-  refreshAvailable,
+  elementSelectionActive,
+  mode,
+  side,
+  width,
   onOpenChange,
-  onRefresh,
+  onModeChange,
+  onSideChange,
+  onWidthChange,
   onSelectElement,
   onFocusDraft,
   onRemoveDraft,
@@ -79,150 +96,135 @@ export function PreviewChatDrawer({
     if (drafts.length) onClearSubmittedDrafts();
   };
 
+  const drawerStyle = {
+    "--preview-chat-width": `${clampPreviewChatWidth(width)}px`,
+  } as CSSProperties;
+
   return (
-    <>
-      <Button
-        type="button"
-        size="sm"
-        onClick={() => onOpenChange(!open)}
-        className={cn(
-          "fixed bottom-5 right-5 z-30 rounded-full shadow-lg transition-transform",
-          open && "hidden sm:inline-flex sm:right-[29rem]",
-        )}
-        aria-label="Preview conversation"
-        aria-expanded={open}
-      >
-        <MessageSquare className="h-4 w-4" />
-        <span>Chat</span>
-        {drafts.length > 0 && (
-          <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[10px]">
-            {drafts.length}
-          </span>
-        )}
-      </Button>
+    <aside
+      aria-label="Preview conversation"
+      style={drawerStyle}
+      className={cn(
+        "z-40 min-h-0 w-full flex-col overflow-hidden border-border bg-background lg:w-[var(--preview-chat-width)]",
+        open ? "flex" : "hidden",
+        mode === "floating"
+          ? "fixed inset-0 shadow-2xl lg:inset-y-3 lg:h-auto lg:rounded-xl lg:border"
+          : "fixed inset-0 lg:relative lg:inset-auto lg:h-full lg:shrink-0 lg:shadow-none",
+        mode === "floating" && side === "left" &&
+          "lg:left-3 lg:right-auto",
+        mode === "floating" && side === "right" &&
+          "lg:left-auto lg:right-3",
+        mode === "impact" && side === "left" &&
+          "lg:order-first lg:border-r",
+        mode === "impact" && side === "right" &&
+          "lg:order-last lg:border-l",
+      )}
+    >
+      <PreviewChatResizeHandle
+        side={side}
+        width={width}
+        onWidthChange={onWidthChange}
+      />
+      <PreviewChatHeader
+        subtitle={
+          !preview.chatAvailable
+            ? "Not linked to an AI task"
+            : chat.connected
+              ? chat.agentLabel
+              : "Connecting…"
+        }
+        mode={mode}
+        side={side}
+        onModeChange={onModeChange}
+        onSideChange={onSideChange}
+        onClose={() => onOpenChange(false)}
+      />
 
-      <aside
-        aria-label="Preview conversation"
-        aria-hidden={!open}
-        inert={!open}
-        className={cn(
-          "fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-border bg-background shadow-2xl transition-transform duration-200 sm:w-[28rem]",
-          open ? "translate-x-0" : "translate-x-full",
-        )}
-      >
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold">Preview conversation</div>
-            <div className="truncate text-xs text-muted-foreground">
-              {!preview.chatAvailable
-                ? "Not linked to an AI task"
-                : chat.connected
-                  ? chat.agentLabel
-                  : "Connecting…"}
-            </div>
-          </div>
-          {refreshAvailable && (
-            <Button type="button" variant="outline" size="sm" onClick={onRefresh}>
-              <RotateCw className="h-3.5 w-3.5" />
-              Refresh preview
-            </Button>
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => onOpenChange(false)}
-            aria-label="Close conversation"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </header>
-
-        <ChatMessageList
-          messages={chat.messages}
-          streaming={chat.streaming}
-          agentLabel={chat.agentLabel}
-          displaySettings={{ showThinking: true, showTools: true }}
-          workspacePath={preview.workspace}
-        />
-        <PendingPermissions
-          permissions={chat.pendingPermissions}
-          onRespond={chat.sendPermissionResponse}
-          onCancel={chat.cancelPermissionRequest}
-        />
-        <ChatInput
-          value={input}
-          onChange={(value) => {
-            setInput(value);
-            setSubmitError("");
-          }}
-          onSubmit={submit}
-          disabled={!preview.chatAvailable}
-          submitDisabled={!chat.connected || chat.streaming}
-          isStreaming={chat.streaming}
-          onStop={chat.stopStreaming}
-          showCommands={false}
-          contextCanSubmit={drafts.length > 0}
-          contextContent={
-            drafts.length > 0 || submitError ? (
-              <div className="space-y-1.5 px-3 pt-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {drafts.map((draft) => (
-                    <span
-                      key={draft.id}
-                      className="flex max-w-full items-center rounded-full border border-border bg-background text-xs text-muted-foreground"
+      <ChatMessageList
+        messages={chat.messages}
+        streaming={chat.streaming}
+        agentLabel={chat.agentLabel}
+        displaySettings={{ showThinking: true, showTools: true }}
+        workspacePath={preview.workspace}
+      />
+      <PendingPermissions
+        permissions={chat.pendingPermissions}
+        onRespond={chat.sendPermissionResponse}
+        onCancel={chat.cancelPermissionRequest}
+      />
+      <ChatInput
+        value={input}
+        onChange={(value) => {
+          setInput(value);
+          setSubmitError("");
+        }}
+        onSubmit={submit}
+        disabled={!preview.chatAvailable}
+        submitDisabled={!chat.connected || chat.streaming}
+        isStreaming={chat.streaming}
+        onStop={chat.stopStreaming}
+        showCommands={false}
+        contextCanSubmit={drafts.length > 0}
+        contextContent={
+          drafts.length > 0 || submitError ? (
+            <div className="space-y-1.5 px-3 pt-3">
+              <div className="flex flex-wrap gap-1.5">
+                {drafts.map((draft) => (
+                  <span
+                    key={draft.id}
+                    className="flex max-w-full items-center rounded-full border border-border bg-background text-xs text-muted-foreground"
+                  >
+                    <button
+                      type="button"
+                      className="flex min-w-0 items-center gap-1.5 py-1 pl-2.5 pr-1 hover:text-foreground"
+                      onClick={() => onFocusDraft(draft.id)}
+                      title={draft.comment}
                     >
-                      <button
-                        type="button"
-                        className="flex min-w-0 items-center gap-1.5 py-1 pl-2.5 pr-1 hover:text-foreground"
-                        onClick={() => onFocusDraft(draft.id)}
-                        title={draft.comment}
-                      >
-                        <MessageSquare className="h-3 w-3 shrink-0 text-primary" />
-                        <span className="truncate">{draftExcerpt(draft)}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="mr-1 rounded-full p-1 hover:text-foreground"
-                        onClick={() => onRemoveDraft(draft.id)}
-                        aria-label={`Remove comment on ${draftExcerpt(draft)}`}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                {submitError && (
-                  <p className="text-xs text-destructive">{submitError}</p>
-                )}
+                      <MessageSquare className="h-3 w-3 shrink-0 text-primary" />
+                      <span className="truncate">{draftExcerpt(draft)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="mr-1 rounded-full p-1 hover:text-foreground"
+                      onClick={() => onRemoveDraft(draft.id)}
+                      aria-label={`Remove comment on ${draftExcerpt(draft)}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
               </div>
-            ) : undefined
-          }
-          leadingAction={
-            supportsElementSelection ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={onSelectElement}
-                aria-label="Select element"
-                title="Select element"
-                className="h-8 w-8 text-muted-foreground"
-              >
-                <MousePointer2 className="h-4 w-4" />
-              </Button>
-            ) : undefined
-          }
-          placeholder="Ask for a change…"
-          targetLabel={
-            !preview.chatAvailable
-              ? "Preview chat unavailable"
-              : chat.connected
-                ? chat.agentLabel
-                : "Connecting…"
-          }
-        />
-      </aside>
-    </>
+              {submitError && (
+                <p className="text-xs text-destructive">{submitError}</p>
+              )}
+            </div>
+          ) : undefined
+        }
+        leadingAction={
+          supportsElementSelection ? (
+            <Button
+              type="button"
+              variant={elementSelectionActive ? "secondary" : "ghost"}
+              size="icon-sm"
+              onClick={onSelectElement}
+              aria-label="Select element"
+              aria-pressed={elementSelectionActive}
+              title="Select element"
+              className="h-8 w-8 text-muted-foreground"
+            >
+              <MousePointer2 className="h-4 w-4" />
+            </Button>
+          ) : undefined
+        }
+        placeholder="Ask for a change…"
+        targetLabel={
+          !preview.chatAvailable
+            ? "Preview chat unavailable"
+            : chat.connected
+              ? chat.agentLabel
+              : "Connecting…"
+        }
+      />
+    </aside>
   );
 }

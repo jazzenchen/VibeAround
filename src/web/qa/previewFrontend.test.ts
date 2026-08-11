@@ -14,6 +14,10 @@ import {
   buildPreviewReviewPrompt,
   previewReviewDisplay,
 } from "../src/preview/previewReview";
+import {
+  clampPreviewChatWidth,
+  resizePreviewChatWidth,
+} from "../src/preview/previewChatLayout";
 import { ownerPreviewSlug } from "../src/preview/previewRoute";
 import {
   parsePreviewBootstrap,
@@ -29,6 +33,13 @@ const preview: PreviewItem = {
   src: "/va/preview/u/readme-cn-md/content",
   chatAvailable: true,
 };
+
+test("Preview chat width stays bounded on either resize edge", () => {
+  expect(clampPreviewChatWidth(100)).toBe(280);
+  expect(clampPreviewChatWidth(800)).toBe(560);
+  expect(resizePreviewChatWidth(400, 40, "left")).toBe(440);
+  expect(resizePreviewChatWidth(400, 40, "right")).toBe(360);
+});
 
 test("owner Preview route matches only the page shell", () => {
   expect(ownerPreviewSlug("/va/preview/u/readme-cn-md")).toBe("readme-cn-md");

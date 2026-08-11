@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MousePointer2, RefreshCw } from "lucide-react";
+import { MousePointer2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { PreviewChatDrawer } from "./PreviewChatDrawer";
-import { PreviewPicker } from "./PreviewPicker";
+import type { PreviewChatMode, PreviewChatSide } from "./previewChatLayout";
+import { PreviewHelper, type PreviewHelperCorner } from "./PreviewHelper";
 import { PreviewReviewPopover } from "./PreviewReviewPopover";
 import { parsePreviewBootstrap, type PreviewBootstrap } from "./previewTypes";
 import { usePreviewChatConnection } from "./usePreviewChatConnection";
@@ -78,9 +78,14 @@ function PreviewWorkspace({
       bootstrap.previews.some((preview) => preview.slug === slug),
     ) ?? bootstrap.previews[0].slug;
   const [selectedSlug, setSelectedSlug] = useState(initialSelectedSlug);
+  const [helperOpen, setHelperOpen] = useState(false);
+  const [helperCorner, setHelperCorner] =
+    useState<PreviewHelperCorner>("bottom-right");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [chatMode, setChatMode] = useState<PreviewChatMode>("impact");
+  const [chatSide, setChatSide] = useState<PreviewChatSide>("right");
+  const [chatWidth, setChatWidth] = useState(448);
   const [frameRevision, setFrameRevision] = useState(0);
-  const [lastRefreshedAt, setLastRefreshedAt] = useState(Date.now());
   const frameRef = useRef<HTMLIFrameElement>(null);
   const selected =
     bootstrap.previews.find((preview) => preview.slug === selectedSlug) ??
@@ -92,7 +97,6 @@ function PreviewWorkspace({
   const refreshPreview = useCallback(() => {
     review.prepareFrame();
     setFrameRevision((revision) => revision + 1);
-    setLastRefreshedAt(Date.now());
   }, [review.prepareFrame]);
 
   useEffect(() => {
@@ -117,8 +121,31 @@ function PreviewWorkspace({
     review.prepareFrame();
     setSelectedSlug(slug);
     setFrameRevision((revision) => revision + 1);
-    setLastRefreshedAt(Date.now());
     history.replaceState(null, "", `/va/preview/u/${encodeURIComponent(slug)}`);
+  };
+
+  const moveHelperAwayFrom = (side: PreviewChatSide) => {
+    setHelperCorner((corner) => {
+      if (!corner.endsWith(side)) return corner;
+      const vertical = corner.startsWith("top") ? "top" : "bottom";
+      return `${vertical}-${side === "left" ? "right" : "left"}`;
+    });
+  };
+
+  const setChatOpen = (open: boolean) => {
+    setDrawerOpen(open);
+    if (open) moveHelperAwayFrom(chatSide);
+  };
+
+  const changeChatSide = (side: PreviewChatSide) => {
+    setChatSide(side);
+    if (drawerOpen) moveHelperAwayFrom(side);
+  };
+
+  const revealPreviewOnCompactScreen = () => {
+    if (window.matchMedia("(max-width: 1023px)").matches) {
+      setDrawerOpen(false);
+    }
   };
 
   const activeDraft = review.editor?.draftId
@@ -126,39 +153,31 @@ function PreviewWorkspace({
     : undefined;
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-muted/20">
-      <header className="z-20 flex shrink-0 items-center gap-3 border-b border-border bg-background/95 px-3 py-2 shadow-sm backdrop-blur sm:px-4">
-        <div className="hidden shrink-0 items-center gap-2 sm:flex">
-          <img src="/va/brand/vibearound-mark.svg" alt="" className="h-7 w-7" />
-          <span className="text-sm font-semibold">VibeAround Preview</span>
-        </div>
-        <PreviewPicker
+    <div className="relative flex h-full min-h-0 overflow-hidden bg-muted/20">
+      <div className="relative order-1 min-w-0 flex-1">
+        <iframe
+          key={`${selected.slug}:${frameRevision}`}
+          ref={frameRef}
+          src={selected.src}
+          title={`Preview content — ${selected.title}`}
+          referrerPolicy="no-referrer"
+          onLoad={review.handleFrameLoad}
+          className="h-full w-full border-0 bg-white"
+        />
+
+        <PreviewHelper
+          open={helperOpen}
+          chatOpen={drawerOpen}
+          corner={helperCorner}
           previews={bootstrap.previews}
           selected={selected}
-          onSelect={selectPreview}
+          onOpenChange={setHelperOpen}
+          onChatOpenChange={setChatOpen}
+          onCornerChange={setHelperCorner}
+          onSelectPreview={selectPreview}
+          onRefresh={refreshPreview}
         />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={refreshPreview}
-          aria-label="Refresh preview"
-          title="Refresh preview"
-          className="shadow-none"
-        >
-          <RefreshCw className="h-4 w-4" />
-        </Button>
-      </header>
-
-      <iframe
-        key={`${selected.slug}:${frameRevision}`}
-        ref={frameRef}
-        src={selected.src}
-        title={`Preview content — ${selected.title}`}
-        referrerPolicy="no-referrer"
-        onLoad={review.handleFrameLoad}
-        className="min-h-0 flex-1 border-0 bg-white"
-      />
+      </div>
 
       {review.elementMode && (
         <button
@@ -177,18 +196,20 @@ function PreviewWorkspace({
         chat={chat}
         drafts={review.drafts}
         supportsElementSelection={review.capabilities.includes("element")}
-        refreshAvailable={
-          chat.lastTurnCompletedAt !== undefined &&
-          chat.lastTurnCompletedAt > lastRefreshedAt
-        }
-        onOpenChange={setDrawerOpen}
-        onRefresh={refreshPreview}
+        elementSelectionActive={review.elementMode}
+        mode={chatMode}
+        side={chatSide}
+        width={chatWidth}
+        onOpenChange={setChatOpen}
+        onModeChange={setChatMode}
+        onSideChange={changeChatSide}
+        onWidthChange={setChatWidth}
         onSelectElement={() => {
-          setDrawerOpen(false);
-          review.setElementMode(true);
+          revealPreviewOnCompactScreen();
+          review.setElementMode(!review.elementMode);
         }}
         onFocusDraft={(id) => {
-          setDrawerOpen(false);
+          revealPreviewOnCompactScreen();
           review.focusDraft(id);
         }}
         onRemoveDraft={review.removeDraft}
@@ -200,7 +221,9 @@ function PreviewWorkspace({
           editor={review.editor}
           frameRef={frameRef}
           initialComment={activeDraft?.comment ?? ""}
-          onSave={review.saveEditor}
+          onSave={(comment) => {
+            if (review.saveEditor(comment)) setChatOpen(true);
+          }}
           onCancel={() => review.closeEditor(true)}
         />
       )}

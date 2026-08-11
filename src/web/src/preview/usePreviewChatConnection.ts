@@ -83,7 +83,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
   const [streaming, setStreaming] = useState(false);
   const [agentLabel, setAgentLabel] = useState("AI");
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([]);
-  const [lastTurnCompletedAt, setLastTurnCompletedAt] = useState<number>();
   const [refreshRequestVersion, setRefreshRequestVersion] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -154,7 +153,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
         if (previousThreadId && previousThreadId !== conversationThreadId) {
           setMessages([]);
           setPendingPermissions([]);
-          setLastTurnCompletedAt(undefined);
           sessionIdRef.current = null;
           turnActiveRef.current = false;
           setStreaming(false);
@@ -177,7 +175,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
           if (previewSessionChanged(sessionIdRef.current, frame.session_id)) {
             setMessages([]);
             setPendingPermissions([]);
-            setLastTurnCompletedAt(undefined);
             turnActiveRef.current = false;
             setStreaming(false);
           }
@@ -199,13 +196,11 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
           );
           break;
         case "turn_status": {
-          const wasActive = turnActiveRef.current;
           turnActiveRef.current = frame.active;
           setStreaming(frame.active);
           if (!frame.active) {
             setMessages((current) => settleStreamActivitiesMessage(current));
             setPendingPermissions([]);
-            if (wasActive) setLastTurnCompletedAt(Date.now());
           }
           break;
         }
@@ -267,7 +262,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
       };
     }
 
-    setLastTurnCompletedAt(undefined);
     setRefreshRequestVersion(0);
     reconnectAttemptRef.current = 0;
     conversationThreadIdRef.current = readPreviewThreadId(slug);
@@ -380,7 +374,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
     streaming,
     agentLabel,
     pendingPermissions,
-    lastTurnCompletedAt,
     refreshRequestVersion,
     sendMessage,
     stopStreaming,

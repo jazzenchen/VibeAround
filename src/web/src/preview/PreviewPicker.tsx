@@ -8,12 +8,14 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
 import type { PreviewItem } from "./previewTypes";
 
 type PreviewPickerProps = {
   previews: PreviewItem[];
   selected: PreviewItem;
   onSelect: (slug: string) => void;
+  className?: string;
 };
 
 function workspaceLabel(path: string) {
@@ -26,7 +28,12 @@ function kindLabel(preview: PreviewItem) {
   return kind === "file" || kind.includes("markdown") ? "Markdown" : "Web";
 }
 
-export function PreviewPicker({ previews, selected, onSelect }: PreviewPickerProps) {
+export function PreviewPicker({
+  previews,
+  selected,
+  onSelect,
+  className,
+}: PreviewPickerProps) {
   const groups = new Map<string, PreviewItem[]>();
   for (const preview of previews) {
     const group = groups.get(preview.workspace) ?? [];
@@ -40,7 +47,10 @@ export function PreviewPicker({ previews, selected, onSelect }: PreviewPickerPro
         <Button
           type="button"
           variant="outline"
-          className="min-w-0 max-w-xl flex-1 justify-between gap-3 px-3 font-normal shadow-none"
+          className={cn(
+            "min-w-0 max-w-xl flex-1 justify-between gap-3 px-3 font-normal shadow-none",
+            className,
+          )}
           aria-label="Workspace and preview"
         >
           <span className="min-w-0 truncate">
