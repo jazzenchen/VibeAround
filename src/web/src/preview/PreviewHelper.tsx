@@ -158,88 +158,105 @@ export function PreviewHelper({
       )}
       style={dragPosition}
     >
-      {view === "collapsed" ? (
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11 touch-none cursor-grab rounded-xl border-border/80 bg-background/95 px-3 shadow-lg backdrop-blur active:cursor-grabbing"
-          aria-label="Open Preview helper"
-          title="Open Preview helper · drag to move"
-          onClick={() => {
-            if (didDragRef.current) {
-              didDragRef.current = false;
-              return;
-            }
-            onViewChange("expanded");
-          }}
-          {...pointerHandlers}
-        >
-          <img
-            src="/va/brand/vibearound-mark.svg"
-            alt=""
-            draggable={false}
-            className="pointer-events-none h-5 w-5"
-          />
-          <span className="font-medium">Preview</span>
-          <Maximize2 className="h-4 w-4 text-muted-foreground" />
-        </Button>
-      ) : (
-        <div
-          className="flex h-11 items-center gap-1 rounded-xl border border-border/80 bg-background/95 p-1.5 shadow-lg backdrop-blur"
-          style={{ width: "calc(100vw - 2.5rem)" }}
-        >
-          <div
-            className="flex h-8 w-8 shrink-0 touch-none cursor-grab items-center justify-center rounded-md active:cursor-grabbing"
-            title="Drag to move Preview helper"
-            {...pointerHandlers}
-          >
-            <img
-              src="/va/brand/vibearound-mark.svg"
-              alt=""
-              draggable={false}
-              className="pointer-events-none h-5 w-5"
+      <div
+        className={cn(
+          "inline-flex h-12 w-fit items-center gap-2 rounded-2xl border border-border/80 bg-background/95 p-1.5 shadow-lg backdrop-blur",
+          view === "expanded" && "max-w-[calc(100vw-2.5rem)]",
+        )}
+      >
+        {view === "collapsed" ? (
+          <>
+            <button
+              type="button"
+              className="inline-flex h-9 touch-none cursor-grab items-center gap-2 rounded-xl text-base font-medium outline-none transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 active:cursor-grabbing"
+              aria-label="Open Preview helper"
+              title="Open Preview helper · drag to move"
+              onClick={() => {
+                if (didDragRef.current) {
+                  didDragRef.current = false;
+                  return;
+                }
+                onViewChange("expanded");
+              }}
+              {...pointerHandlers}
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center">
+                <img
+                  src="/va/brand/vibearound-mark.svg"
+                  alt=""
+                  draggable={false}
+                  className="pointer-events-none h-5 w-5"
+                />
+              </span>
+              <span className="px-1">Preview</span>
+            </button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="cursor-pointer"
+              onClick={() => onViewChange("expanded")}
+              aria-label="Expand Preview helper"
+              title="Expand Preview helper"
+            >
+              <Maximize2 className="h-4 w-4 text-muted-foreground" />
+            </Button>
+          </>
+        ) : (
+          <>
+            <div
+              className="flex h-8 w-8 shrink-0 touch-none cursor-grab items-center justify-center rounded-md active:cursor-grabbing"
+              title="Drag to move Preview helper"
+              {...pointerHandlers}
+            >
+              <img
+                src="/va/brand/vibearound-mark.svg"
+                alt=""
+                draggable={false}
+                className="pointer-events-none h-5 w-5"
+              />
+            </div>
+            <PreviewPicker
+              previews={previews}
+              selected={selected}
+              onSelect={onSelectPreview}
+              className="h-9 px-3"
             />
-          </div>
-          <PreviewPicker
-            previews={previews}
-            selected={selected}
-            onSelect={onSelectPreview}
-            className="h-8 max-w-none flex-1 px-2"
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={onRefresh}
-            aria-label="Refresh preview"
-            title="Refresh preview"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="px-2"
-            onClick={() => onViewChange("chat")}
-            aria-label="Preview conversation"
-            title="Preview conversation"
-          >
-            <MessageSquare className="h-4 w-4" />
-            <span className="hidden sm:inline">Chat</span>
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => onViewChange("collapsed")}
-            aria-label="Collapse Preview helper"
-            title="Collapse Preview helper"
-          >
-            <Minimize2 className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={onRefresh}
+              aria-label="Refresh preview"
+              title="Refresh preview"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="px-3"
+              onClick={() => onViewChange("chat")}
+              aria-label="Preview conversation"
+              title="Preview conversation"
+            >
+              <MessageSquare className="h-4 w-4" />
+              <span className="hidden sm:inline">Chat</span>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => onViewChange("collapsed")}
+              aria-label="Collapse Preview helper"
+              title="Collapse Preview helper"
+            >
+              <Minimize2 className="h-4 w-4" />
+            </Button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -48,7 +48,7 @@ export function PreviewPicker({
           type="button"
           variant="outline"
           className={cn(
-            "min-w-0 max-w-xl flex-1 justify-between gap-3 px-3 font-normal shadow-none",
+            "min-w-0 max-w-80 flex-initial shrink justify-between gap-3 px-3 font-normal shadow-none",
             className,
           )}
           aria-label="Workspace and preview"
@@ -60,7 +60,7 @@ export function PreviewPicker({
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-[min(32rem,calc(100vw-2rem))]">
+      <DropdownMenuContent align="start" className="w-[min(24rem,calc(100vw-2rem))]">
         {Array.from(groups, ([workspace, items]) => (
           <div key={workspace}>
             <DropdownMenuLabel
