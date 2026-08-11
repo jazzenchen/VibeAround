@@ -1,11 +1,13 @@
-import { useEffect, useState, type CSSProperties } from "react";
-import { MessageSquare, X } from "lucide-react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Image, MessageSquare, X } from "lucide-react";
 
 import {
   ChatInput,
   ChatMessageList,
   PendingPermissions,
 } from "@/components/chat/chatUi";
+import type { ChatAttachment } from "@/components/chat/chatTypes";
+import { uploadPreviewChatFile } from "@/api/sessions";
 import { cn } from "@/lib/utils";
 import { PreviewChatHeader } from "./PreviewChatHeader";
 import { PreviewChatResizeHandle } from "./PreviewChatResizeHandle";
@@ -40,12 +42,38 @@ type PreviewChatDrawerProps = {
   onWidthChange: (width: number) => void;
   onFocusDraft: (id: string) => void;
   onRemoveDraft: (id: string) => void;
-  onClearSubmittedDrafts: () => void;
+  onClearSubmittedDrafts: (submittedIds: string[]) => void;
 };
 
 function draftExcerpt(draft: PreviewReviewDraft) {
   const value = draft.anchor.text.replace(/\s+/g, " ").trim();
   return value.length > 38 ? `${value.slice(0, 37)}…` : value || "Selected element";
+}
+
+async function uploadReviewScreenshots(
+  previewSlug: string,
+  drafts: PreviewReviewDraft[],
+): Promise<ChatAttachment[]> {
+  const screenshots = drafts.flatMap((draft) =>
+    draft.screenshot ? [draft.screenshot] : [],
+  );
+  return Promise.all(
+    screenshots.map(async (screenshot) => {
+      const uploaded = await uploadPreviewChatFile(
+        previewSlug,
+        new File([screenshot.blob], screenshot.fileName, {
+          type: screenshot.blob.type,
+        }),
+      );
+      return {
+        id: uploaded.id,
+        name: uploaded.name,
+        mimeType: uploaded.mime_type,
+        size: uploaded.size,
+        uri: uploaded.uri,
+      };
+    }),
+  );
 }
 
 export function PreviewChatDrawer({
@@ -67,32 +95,65 @@ export function PreviewChatDrawer({
 }: PreviewChatDrawerProps) {
   const [input, setInput] = useState("");
   const [submitError, setSubmitError] = useState("");
+  const [uploadingScreenshots, setUploadingScreenshots] = useState(false);
+  const previewSlugRef = useRef(preview.slug);
+  const draftsRef = useRef(drafts);
+  const submittingRef = useRef(false);
+  previewSlugRef.current = preview.slug;
+  draftsRef.current = drafts;
 
   useEffect(() => {
     setInput("");
     setSubmitError("");
   }, [preview.slug]);
 
-  const submit = () => {
+  const submit = async () => {
     const prompt = input.trim();
-    if (!prompt && drafts.length === 0) return;
-    const message = drafts.length
-      ? buildPreviewReviewPrompt(preview, drafts, prompt)
+    if ((!prompt && drafts.length === 0) || submittingRef.current) return;
+    const submittedSlug = preview.slug;
+    const submittedDrafts = [...drafts];
+    const submittedIds = submittedDrafts.map((draft) => draft.id);
+    const message = submittedDrafts.length
+      ? buildPreviewReviewPrompt(preview, submittedDrafts, prompt)
       : prompt;
-    const display = drafts.length
-      ? previewReviewDisplay(drafts, prompt)
+    const display = submittedDrafts.length
+      ? previewReviewDisplay(submittedDrafts, prompt)
       : prompt;
     if (message.length > MAX_PREVIEW_MESSAGE_LENGTH) {
       setSubmitError("These review notes are too long for one message.");
       return;
     }
-    if (!chat.sendMessage(message, display)) {
-      setSubmitError("Wait for the current turn to finish.");
-      return;
+    const hasScreenshots = submittedDrafts.some((draft) => draft.screenshot);
+    submittingRef.current = true;
+    setUploadingScreenshots(hasScreenshots);
+    try {
+      const attachments = hasScreenshots
+        ? await uploadReviewScreenshots(submittedSlug, submittedDrafts)
+        : [];
+      if (previewSlugRef.current !== submittedSlug) return;
+      const currentDrafts = draftsRef.current;
+      const unchanged = submittedDrafts.every((submitted) =>
+        currentDrafts.some((current) => current === submitted),
+      );
+      if (!unchanged) {
+        setSubmitError("Review notes changed while uploading. Submit again.");
+        return;
+      }
+      if (!chat.sendMessage(message, display, attachments)) {
+        setSubmitError("Wait for the current turn to finish.");
+        return;
+      }
+      setInput("");
+      setSubmitError("");
+      if (submittedIds.length) onClearSubmittedDrafts(submittedIds);
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error ? error.message : "Screenshot upload failed.",
+      );
+    } finally {
+      submittingRef.current = false;
+      setUploadingScreenshots(false);
     }
-    setInput("");
-    setSubmitError("");
-    if (drafts.length) onClearSubmittedDrafts();
   };
 
   const drawerStyle = {
@@ -160,10 +221,12 @@ export function PreviewChatDrawer({
           setInput(value);
           setSubmitError("");
         }}
-        onSubmit={submit}
+        onSubmit={() => void submit()}
         disabled={!preview.chatAvailable}
-        submitDisabled={!chat.connected || chat.streaming}
+        submitDisabled={!chat.connected || chat.streaming || uploadingScreenshots}
         isStreaming={chat.streaming}
+        attachmentsUploading={uploadingScreenshots}
+        attachmentsUploadingCount={drafts.filter((draft) => draft.screenshot).length}
         onStop={chat.stopStreaming}
         showCommands={false}
         contextCanSubmit={drafts.length > 0}
@@ -182,7 +245,11 @@ export function PreviewChatDrawer({
                       onClick={() => onFocusDraft(draft.id)}
                       title={draft.comment}
                     >
-                      <MessageSquare className="h-3 w-3 shrink-0 text-primary" />
+                      {draft.screenshot ? (
+                        <Image className="h-3 w-3 shrink-0 text-primary" />
+                      ) : (
+                        <MessageSquare className="h-3 w-3 shrink-0 text-primary" />
+                      )}
                       <span className="truncate">{draftExcerpt(draft)}</span>
                     </button>
                     <button

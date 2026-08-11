@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 
+import { chatUserContentBlocks } from "../src/components/chat/chatUserContent";
 import {
   applyPreviewSessionNotification,
   previewSessionChanged,
@@ -86,6 +87,56 @@ test("review submission carries source location while the visible message stays 
   expect(display).toContain("“Host-side Web Search”");
   expect(display).toContain("→ 翻译成中文");
   expect(display).not.toContain("BEGIN QUOTED");
+});
+
+test("region review identifies its screenshot attachment without embedding image data", () => {
+  const drafts: PreviewReviewDraft[] = [
+    {
+      id: "review-region",
+      anchor: {
+        kind: "region",
+        text: "Screenshot region 320 × 180",
+        page: { path: "/settings" },
+        region: { width: 320, height: 180 },
+      },
+      comment: "Reduce the spacing here",
+      screenshot: {
+        blob: new Blob(["image"], { type: "image/png" }),
+        fileName: "preview-region.png",
+      },
+    },
+  ];
+
+  const prompt = buildPreviewReviewPrompt(preview, drafts, "");
+  const display = previewReviewDisplay(drafts, "");
+  expect(prompt).toContain("Screenshot attachment: preview-region.png");
+  expect(prompt).toContain("Screenshot size: 320 × 180 CSS pixels");
+  expect(prompt).not.toContain("data:image");
+  expect(display).toContain("320 × 180 screenshot");
+});
+
+test("submitted screenshot stays visible as a standard chat resource", () => {
+  expect(
+    chatUserContentBlocks("Review the selected region", [
+      {
+        id: "capture-1",
+        name: "preview-region.png",
+        mimeType: "image/png",
+        size: 50113,
+        uri: "file:///tmp/preview-region.png",
+      },
+    ]),
+  ).toEqual([
+    { type: "text", text: "Review the selected region" },
+    {
+      type: "resource_link",
+      name: "preview-region.png",
+      title: "preview-region.png",
+      mimeType: "image/png",
+      size: 50113,
+      uri: "file:///tmp/preview-region.png",
+    },
+  ]);
 });
 
 test("echoed hidden review prompt acknowledges the optimistic visible summary", () => {

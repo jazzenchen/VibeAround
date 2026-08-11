@@ -77,6 +77,12 @@ export function buildPreviewReviewPrompt(
   for (const draft of drafts) {
     lines.push("", "Review note:");
     appendPromptLocation(lines, draft.anchor);
+    if (draft.screenshot) {
+      lines.push(
+        `Screenshot attachment: ${draft.screenshot.fileName}`,
+        `Screenshot size: ${draft.anchor.region?.width} × ${draft.anchor.region?.height} CSS pixels`,
+      );
+    }
     lines.push(
       "Quoted Preview content:",
       "--- BEGIN QUOTED PREVIEW CONTENT ---",

@@ -302,13 +302,19 @@ export function usePreviewReviewBridge(
     [capabilities, command],
   );
 
-  const clearSubmittedDrafts = useCallback(() => {
-    for (const draft of draftsRef.current) {
-      command("remove-marker", { markerId: draft.id });
-    }
-    setDrafts([]);
-    setEditor(null);
-  }, [command]);
+  const clearSubmittedDrafts = useCallback(
+    (submittedIds: string[]) => {
+      const ids = new Set(submittedIds);
+      for (const draft of draftsRef.current) {
+        if (ids.has(draft.id)) command("remove-marker", { markerId: draft.id });
+      }
+      setDrafts((current) => current.filter((draft) => !ids.has(draft.id)));
+      setEditor((current) =>
+        current?.draftId && ids.has(current.draftId) ? null : current,
+      );
+    },
+    [command],
+  );
 
   return {
     drafts,
