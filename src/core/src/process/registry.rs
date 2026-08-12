@@ -23,15 +23,17 @@
 //!
 //! - `orphan_sweep()` runs at daemon startup and kills any leftover
 //!   `node` processes whose command line references
-//!   `/.vibearound/plugins/` or an ACP agent package, whose parent is
-//!   either init (PID 1 on Unix) or no longer alive. This self-heals
-//!   from crashes, `kill -9`, and abrupt laptop sleeps.
+//!   `/.vibearound/plugins/`, a discovered development channel-plugin
+//!   directory, or an ACP agent package, whose parent is either init
+//!   (PID 1 on Unix) or no longer alive. This self-heals from crashes,
+//!   `kill -9`, and abrupt laptop sleeps.
 //!
 //! The registry does **not** replace per-process lifecycle management —
 //! task authors still `remove()` cleanly on the normal shutdown path.
 //! This is a safety net, not the primary drop path.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::OnceLock;
 
 use parking_lot::Mutex;
@@ -42,7 +44,7 @@ use tokio::process::Child;
 /// structured logging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessKind {
-    /// Channel plugin process (node running under ~/.vibearound/plugins/).
+    /// Channel plugin process (node running from a discovered plugin directory).
     ChannelPlugin,
     /// ACP coding-agent child (node running the ACP bridge package).
     AcpAgent,
@@ -274,6 +276,14 @@ fn process_descendants(root_pid: u32, sys: &sysinfo::System) -> Vec<u32> {
 pub fn orphan_sweep() {
     use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
+    let project_channel_plugin_dirs = crate::plugins::channel::discover()
+        .into_values()
+        .filter_map(|plugin| match plugin.source {
+            crate::plugins::PluginSource::Project => Some(plugin.dir),
+            crate::plugins::PluginSource::User => None,
+        })
+        .collect::<Vec<_>>();
+
     let mut sys = System::new_with_specifics(
         RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
     );
@@ -292,7 +302,7 @@ pub fn orphan_sweep() {
 
             let name = proc_.name().to_string_lossy();
             let cmdline = process_cmdline(proc_);
-            let kind = vibearound_child_kind(&name, &cmdline)?;
+            let kind = vibearound_child_kind(&name, &cmdline, &project_channel_plugin_dirs)?;
             Some((*pid, kind, cmdline))
         })
         .collect();
@@ -344,12 +354,20 @@ fn process_cmdline(proc_: &sysinfo::Process) -> String {
         .join(" ")
 }
 
-fn vibearound_child_kind(name: &str, cmdline: &str) -> Option<&'static str> {
+fn vibearound_child_kind(
+    name: &str,
+    cmdline: &str,
+    project_channel_plugin_dirs: &[std::path::PathBuf],
+) -> Option<&'static str> {
     let name = name.to_lowercase();
     let cmdline = cmdline.to_lowercase();
+    let normalized_cmdline = cmdline.replace('\\', "/");
 
     let in_plugins =
-        cmdline.contains("/.vibearound/plugins/") || cmdline.contains("\\.vibearound\\plugins\\");
+        command_references_plugin_dir(&normalized_cmdline, &crate::plugins::user_plugins_dir())
+            || project_channel_plugin_dirs
+                .iter()
+                .any(|dir| command_references_plugin_dir(&normalized_cmdline, dir));
     let known_acp = cmdline.contains("@agentclientprotocol/")
         || cmdline.contains("@agentclientprotocol\\")
         || cmdline.contains("@zed-industries/claude-code-acp")
@@ -370,6 +388,15 @@ fn vibearound_child_kind(name: &str, cmdline: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn command_references_plugin_dir(normalized_cmdline: &str, plugin_dir: &Path) -> bool {
+    let normalized_dir = plugin_dir
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase();
+    let normalized_dir = normalized_dir.trim_end_matches('/');
+    !normalized_dir.is_empty() && normalized_cmdline.contains(&format!("{normalized_dir}/"))
 }
 
 fn has_orphaned_candidate_ancestor(
@@ -402,4 +429,45 @@ fn has_orphaned_candidate_ancestor(
 
     memo.insert(pid, result);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installed_plugin_command_matches_user_plugin_root() {
+        let entry = crate::plugins::user_plugins_dir()
+            .join("va-plugin-channel-telegram")
+            .join("dist/index.js");
+        let cmdline = format!("node {}", entry.display());
+
+        assert_eq!(vibearound_child_kind("node", &cmdline, &[]), Some("plugin"));
+    }
+
+    #[test]
+    fn project_plugin_command_matches_discovered_directory() {
+        let plugin_dir = std::path::PathBuf::from(
+            "/workspace/VibeAround/src/plugins/va-plugin-channel-telegram",
+        );
+        let cmdline = format!("node {}/dist/index.js", plugin_dir.display());
+
+        assert_eq!(
+            vibearound_child_kind("node", &cmdline, &[plugin_dir]),
+            Some("plugin")
+        );
+    }
+
+    #[test]
+    fn unrelated_src_plugins_command_does_not_match() {
+        let project_plugin_dir = std::path::PathBuf::from(
+            "/workspace/VibeAround/src/plugins/va-plugin-channel-telegram",
+        );
+        let cmdline = "node /workspace/other/src/plugins/va-plugin-channel-telegram/dist/index.js";
+
+        assert_eq!(
+            vibearound_child_kind("node", cmdline, &[project_plugin_dir]),
+            None
+        );
+    }
 }
