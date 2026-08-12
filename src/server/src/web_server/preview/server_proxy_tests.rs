@@ -50,7 +50,7 @@ fn unique_temp_dir(label: &str) -> std::path::PathBuf {
 #[test]
 fn routing_cookie_is_signed_and_bound_to_the_daemon_token() {
     let dir = unique_temp_dir("signature");
-    let slug = common::previews::ensure_server(4318, dir.clone(), "server".into(), None);
+    let (slug, _) = common::previews::ensure_server(4318, dir.clone(), "server".into(), None);
     let auth = auth_state();
     let other_auth = auth_state();
     let signed = signed_slug(&slug, &auth);
@@ -131,7 +131,7 @@ async fn proxies_static_path_and_query_without_forwarding_credentials() {
         }
     });
     let dir = unique_temp_dir("static");
-    let slug = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
     let auth = auth_state();
     let cookie = server_routing_cookie(&slug, &auth)
         .split(';')
@@ -212,7 +212,7 @@ async fn rewrites_absolute_loopback_redirects_to_the_tunnel_origin() {
         }
     });
     let dir = unique_temp_dir("redirect");
-    let slug = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
     let auth = auth_state();
     let cookie = server_routing_cookie(&slug, &auth)
         .split(';')

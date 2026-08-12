@@ -74,7 +74,8 @@ pub(super) async fn mcp_preview_start(
 
     let title = derive_title(arguments, &cwd_path);
     let owner_session = parent_request.owner_session_id();
-    let owner_slug = common::previews::ensure_server(port, cwd_path, title, owner_session);
+    let (owner_slug, _share) =
+        common::previews::ensure_server(port, cwd_path, title, owner_session);
     if let Err(error) =
         ensure_preview_conversation_thread(&owner_slug, parent_thread_id, state).await
     {

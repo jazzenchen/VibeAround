@@ -36,7 +36,7 @@ pub struct PreviewEntry {
     pub expires_at: Option<Instant>,
 }
 
-/// Public share details returned to the owner who created a File preview.
+/// Public share details returned to the owner who created a preview.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewShare {
     /// Opaque identifier carried by the public URL.
@@ -74,7 +74,7 @@ pub struct PreviewSnapshot {
     pub port: Option<u16>,
     pub share_id: Option<String>,
     pub share_code: Option<String>,
-    /// Unix millis; `null` for owner-only sessions (no share generated).
+    /// Unix millis; `null` after the in-memory share transaction expires.
     pub share_expires_at_ms: Option<u64>,
     pub created_at_ms: u64,
 }

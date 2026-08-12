@@ -11,14 +11,13 @@
 //! - `slug`      — stable, readable URL segment derived from `id`.
 //!   Full-path-based (slashes → `-`), so slugs are globally
 //!   unique and collision-proof.
-//! - `share`     — one 10-minute File-preview transaction containing the
-//!   public link ID, human access code, and browser grant.
-//!   Server previews stay local-only and load from their own localhost origin.
+//! - `share`     — one 10-minute transaction containing the public link ID,
+//!   human access code, and browser grant.
 //!
 //! URL structure (all routes under `/va/`):
 //!
 //! - Owner: `/preview/u/{slug}`        — restored while its target remains valid
-//! - File share: `/preview/s/{share_id}` — access-code gate
+//! - Share: `/preview/s/{share_id}` — access-code gate
 //!
 //! One `HashMap<PathBuf, PreviewSession>` backs everything. Lookups by
 //! `slug` or `share_id` scan values — `n` is tiny (<20 typical).
@@ -57,28 +56,27 @@ use store::{
 // Public API — create / refresh
 // ---------------------------------------------------------------------------
 
-/// Ensure a local-only Server preview session exists for `(workspace, port)`.
-/// Calling twice for the same `(workspace, port)` reuses the owner slug.
+/// Ensure a Server preview session exists for `(workspace, port)`. Returns
+/// `(owner_slug, share)`. Calling twice for the same `(workspace, port)` reuses
+/// the owner slug and a live share transaction.
 /// Different ports under the same workspace coexist as independent sessions.
 pub fn ensure_server(
     port: u16,
     workspace: PathBuf,
     title: String,
     owner_session: Option<String>,
-) -> String {
+) -> (String, PreviewShare) {
     let workspace = canonical(&workspace);
     let id = workspace.join(format!(":port:{port}"));
     let listener = kill::listener_process(port);
-    let (slug, share) = ensure_session(
+    ensure_session(
         id,
         workspace,
         title,
         PreviewTarget::Server { port },
         owner_session,
         listener,
-    );
-    debug_assert!(share.is_none());
-    slug
+    )
 }
 
 /// Ensure a File preview session exists for `file`. Returns
@@ -86,8 +84,7 @@ pub fn ensure_server(
 pub fn ensure_file(file: PathBuf, workspace: PathBuf, title: String) -> (String, PreviewShare) {
     let file = canonical(&file);
     let workspace = canonical(&workspace);
-    let (slug, share) = ensure_session(file, workspace, title, PreviewTarget::File, None, None);
-    (slug, share.expect("File previews always receive a share"))
+    ensure_session(file, workspace, title, PreviewTarget::File, None, None)
 }
 
 fn ensure_session(
@@ -97,7 +94,7 @@ fn ensure_session(
     target: PreviewTarget,
     owner_session: Option<String>,
     listener: Option<ListenerProcess>,
-) -> (String, Option<PreviewShare>) {
+) -> (String, PreviewShare) {
     let slug = slug_from_path(&id);
     let now = Instant::now();
 
@@ -129,40 +126,35 @@ fn ensure_session(
         session.owner_session = owner_session;
     }
 
-    // Only File previews are shareable. Reuse a live transaction or replace
-    // the entire expired transaction so an old shared URL cannot revive.
-    let share = if target_is_shareable(&session.target) {
-        if session
-            .share
-            .as_ref()
-            .is_none_or(|share| share.expires_at <= now)
-        {
-            let previous_code = session.share.as_ref().map(|share| share.code.as_str());
-            session.share = Some(ShareTransaction {
-                id: generate_share_id(),
-                code: generate_share_code(previous_code),
-                grant: generate_share_grant(),
-                expires_at: now + SHARE_TTL,
-                attempt_tokens: SHARE_CODE_ATTEMPT_BURST,
-                attempts_refilled_at: now,
-            });
-        }
-        session.share.as_ref().map(|share| PreviewShare {
-            id: share.id.clone(),
-            code: share.code.clone(),
-            expires_at: share.expires_at,
-        })
-    } else {
-        session.share = None;
-        None
+    // Reuse a live transaction or replace the entire expired transaction so
+    // an old shared URL cannot revive.
+    if session
+        .share
+        .as_ref()
+        .is_none_or(|share| share.expires_at <= now)
+    {
+        let previous_code = session.share.as_ref().map(|share| share.code.as_str());
+        session.share = Some(ShareTransaction {
+            id: generate_share_id(),
+            code: generate_share_code(previous_code),
+            grant: generate_share_grant(),
+            expires_at: now + SHARE_TTL,
+            attempt_tokens: SHARE_CODE_ATTEMPT_BURST,
+            attempts_refilled_at: now,
+        });
+    }
+    let share = session
+        .share
+        .as_ref()
+        .expect("all previews receive a share");
+    let share = PreviewShare {
+        id: share.id.clone(),
+        code: share.code.clone(),
+        expires_at: share.expires_at,
     };
 
     registrations::persist_active(&sessions);
     (slug, share)
-}
-
-fn target_is_shareable(target: &PreviewTarget) -> bool {
-    matches!(target, PreviewTarget::File)
 }
 
 // ---------------------------------------------------------------------------
@@ -228,17 +220,16 @@ pub fn owner_conversation_thread_id(
         .and_then(|session| session.conversation_thread_id.clone())
 }
 
-/// Look up an active File share by its opaque public link ID.
+/// Look up an active share by its opaque public link ID.
 pub fn lookup_share_link(id: &str) -> Option<PreviewEntry> {
     let sessions = SESSIONS.lock();
     let now = Instant::now();
     sessions
         .values()
         .find(|s| {
-            target_is_shareable(&s.target)
-                && s.share
-                    .as_ref()
-                    .is_some_and(|share| share.id == id && share.expires_at > now)
+            s.share
+                .as_ref()
+                .is_some_and(|share| share.id == id && share.expires_at > now)
         })
         .map(|s| entry_from(s, s.share.as_ref().map(|share| share.expires_at)))
 }
@@ -251,11 +242,10 @@ pub fn verify_share_code(id: &str, code: &str) -> Result<(PreviewEntry, String),
     let session = sessions
         .values_mut()
         .find(|session| {
-            target_is_shareable(&session.target)
-                && session
-                    .share
-                    .as_ref()
-                    .is_some_and(|share| share.id == id && share.expires_at > now)
+            session
+                .share
+                .as_ref()
+                .is_some_and(|share| share.id == id && share.expires_at > now)
         })
         .ok_or(ShareCodeError::NotFound)?;
 
@@ -276,17 +266,16 @@ pub fn verify_share_code(id: &str, code: &str) -> Result<(PreviewEntry, String),
     Ok((entry_from(session, Some(expires_at)), grant))
 }
 
-/// Revalidate the long browser grant on every shared Markdown request.
+/// Revalidate the long browser grant on every shared Preview request.
 pub fn authorize_share_grant(id: &str, grant: &str) -> Option<PreviewEntry> {
     let sessions = SESSIONS.lock();
     let now = Instant::now();
     sessions
         .values()
         .find(|session| {
-            target_is_shareable(&session.target)
-                && session.share.as_ref().is_some_and(|share| {
-                    share.id == id && share.grant == grant && share.expires_at > now
-                })
+            session.share.as_ref().is_some_and(|share| {
+                share.id == id && share.grant == grant && share.expires_at > now
+            })
         })
         .map(|session| {
             entry_from(
@@ -333,10 +322,7 @@ pub fn list_snapshots() -> Vec<PreviewSnapshot> {
                 PreviewTarget::Server { port } => ("server", Some(port)),
                 PreviewTarget::File => ("file", None),
             };
-            let active_share = s
-                .share
-                .as_ref()
-                .filter(|share| target_is_shareable(&s.target) && share.expires_at > now_inst);
+            let active_share = s.share.as_ref().filter(|share| share.expires_at > now_inst);
             let (share_id, share_code, share_expires_at_ms) = match active_share {
                 Some(share) => (
                     Some(share.id.clone()),
@@ -378,7 +364,7 @@ fn instant_to_unix_ms(point: Instant, now_inst: Instant, now_sys: std::time::Sys
 
 /// Kill all preview sessions owned by a specific agent session.
 /// Called from pod.close() when a route is shut down. Kills Server
-/// ports (if not shared) and removes matching sessions.
+/// ports that no remaining session uses and removes matching sessions.
 pub fn kill_by_session(session_id: &str) {
     let to_remove: Vec<(PathBuf, Option<(u16, ListenerProcess)>)> = {
         let sessions = SESSIONS.lock();

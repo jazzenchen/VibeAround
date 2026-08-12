@@ -127,7 +127,7 @@ fn owner_chat_accepts_a_paired_remote_server_preview() {
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let slug = common::previews::ensure_server(4318, dir.clone(), "server".into(), None);
+    let (slug, _) = common::previews::ensure_server(4318, dir.clone(), "server".into(), None);
     let auth = std::sync::Arc::new(common::auth::AuthToken::generate());
     let mut remote = request(
         "preview.example.com",

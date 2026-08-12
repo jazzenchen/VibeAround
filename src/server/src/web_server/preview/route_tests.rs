@@ -428,7 +428,7 @@ async fn server_preview_uses_direct_local_origin_and_remote_same_origin_proxy() 
     let dir = unique_temp_dir("owner");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let owner_slug = common::previews::ensure_server(port, dir.clone(), "owner".into(), None);
+    let (owner_slug, _) = common::previews::ensure_server(port, dir.clone(), "owner".into(), None);
     let file = dir.join("other.md");
     std::fs::write(&file, "other").unwrap();
     let (file_owner_slug, share) = common::previews::ensure_file(file, dir, "other".into());
@@ -578,7 +578,8 @@ async fn active_previews_omit_server_after_listener_closes() {
     let dir = unique_temp_dir("stale-server");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let server_slug = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let (server_slug, _) =
+        common::previews::ensure_server(port, dir.clone(), "server".into(), None);
     let file = dir.join("active.md");
     std::fs::write(&file, "active").unwrap();
     let (file_slug, _) = common::previews::ensure_file(file, dir, "file".into());
