@@ -9,7 +9,7 @@ Every timeout, TTL, interval, and size limit in one table. **This page is the si
 | 10 minutes | Minimum idle age before a resident warm thread is eligible for pressure eviction; this is not a timer | `src/core/src/workspace/manager.rs` (`WARM_THREAD_MIN_IDLE`) |
 | 120 seconds | Handover pickup code TTL (4-character code, one-shot) | `src/core/src/workspace/handover.rs` |
 | 60 seconds | Browser pairing code TTL (6-digit code, refreshable) | `src/core/src/auth/pair.rs` (`CODE_TTL`) |
-| 600 seconds | Markdown preview **share transaction** lifetime: URL ID, reusable access code, and browser grant expire together (owner access follows the preview session; Server previews do not mint shares) | `src/core/src/previews/store.rs` (`SHARE_TTL_SECS`) |
+| 600 seconds | Server or Markdown Preview **share transaction** lifetime: URL ID, reusable access code, and browser grant expire together; owner access follows the preview session | `src/core/src/previews/store.rs` (`SHARE_TTL_SECS`) |
 | per daemon start | Dashboard auth token rotation — every restart invalidates all previous URLs | `src/core/src/auth/token.rs` |
 
 ## Supervision

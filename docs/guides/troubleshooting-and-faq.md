@@ -55,8 +55,8 @@ Codes are one-shot and short-lived — issue a fresh one and use it immediately.
 **`/session --switch` can't find my terminal session.**
 `va launch sessions` shows what discovery sees. The session must belong to the same agent and workspace the chat is bound to; archived sessions are hidden (unarchive with `va launch unarchive`).
 
-**A Markdown preview share link stopped working after a few minutes.**
-Each Markdown Share URL, six-digit access code, and browser grant expires after the same 600-second deadline by design. Re-share to create a new transaction, or use the owner link where you are authenticated. Live Server previews are local-only. See [Security model](../architecture/security-model.md).
+**A Preview Share link stopped working after a few minutes.**
+Each Server or Markdown Share URL, six-digit access code, and browser grant expires after the same 600-second deadline by design. Re-share to create a new transaction, or use the owner link where you are authenticated. Server Shares intentionally support only GET/HEAD pages and static assets, so APIs, writes, workers, WebSockets, and HMR will not work there. See [Security model](../architecture/security-model.md).
 
 ## Models and profiles
 

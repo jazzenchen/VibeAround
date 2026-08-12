@@ -1,6 +1,6 @@
 # Tunnels and remote access
 
-A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Four providers are built in; remote browsers must pair before entering protected dashboard and owner surfaces. Markdown shares use a separate six-digit access-code gate instead of owner pairing. The trust rules behind this page are in [Security model](../architecture/security-model.md).
+A tunnel publishes your dashboard to a public URL so you can reach it away from the machine — phone on the subway, laptop at a café. Four providers are built in; remote browsers must pair before entering protected dashboard and owner surfaces. Server and Markdown Shares use a separate six-digit access-code gate instead of owner pairing. The trust rules behind this page are in [Security model](../architecture/security-model.md).
 
 ## Choosing a provider
 
@@ -87,7 +87,9 @@ Pairing survives browser restarts but not daemon restarts (tokens are regenerate
 
 ## What a tunnel exposes — and what it never does
 
-Through the tunnel, after pairing: the dashboard SPA, web chat, web terminal, Markdown owner previews, and the WebSocket endpoints — everything token-gated. Markdown **shares** (`/preview/s/<share_id>`) are the deliberate exception to owner pairing: viewers enter the reusable six-digit access code, then receive a path-scoped browser grant. The URL, code, and grant cover one document and expire together after 10 minutes. Live Server preview routes are local-only and return `403` on public hostnames.
+Through the tunnel, after pairing: the dashboard SPA, web chat, web terminal, Server and Markdown owner previews, and the WebSocket endpoints — everything token-gated. Preview **Shares** (`/preview/s/<share_id>`) are the deliberate exception to owner pairing: viewers enter the reusable six-digit access code, then receive a scoped browser grant. The URL, code, and grant cover one Preview and expire together after 10 minutes.
+
+The first Server Share transport is intentionally read-only and page-oriented: it proxies GET/HEAD documents and static assets only. API requests, writes, workers, WebSocket upgrades, HMR traffic, owner chat, and review tools remain unavailable. A local Server owner still loads the loopback origin directly with the app's native behavior.
 
 Never reachable through a tunnel: the local API bridge and agent-as-API endpoints (loopback-only), the MCP endpoint's local-bridge surface, and provider credentials in any form.
 

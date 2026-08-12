@@ -4,28 +4,28 @@
 
 ## Responsibility
 
-Track preview sessions (dev-server ports and rendered files), mint local Server owner URLs and Markdown owner/share transactions, enforce the shared access deadline, and clean up preview-related processes. The HTTP side (owner shell, direct Server iframe selection, and Markdown rendering) lives in [server](server.md)'s `preview` submodule.
+Track preview sessions (dev-server ports and rendered files), mint Server/Markdown owner and Share identities, enforce the shared access deadline, and clean up preview-related processes. The HTTP side (owner shell, Server routing, Share gate, and Markdown rendering) lives in [server](server.md)'s `preview` submodule.
 
 ## Key types
 
 | Type | File | Role |
 |---|---|---|
 | Preview store / `SESSIONS` | `store.rs` | Slug → preview session; `SHARE_TTL_SECS = 600` |
-| Owner vs share semantics | `mod.rs`, `store.rs` | Server has local owner only; Markdown owner lives with the preview, while share ID, code, and grant form one 600 s transaction |
+| Owner vs Share semantics | `mod.rs`, `store.rs` | Each target has a stable owner slug; its Share ID, code, and grant form one 600 s transaction |
 | `kill_by_session` / `shutdown_kill_all_ports` | `mod.rs` | Kill dev-server processes tied to an agent session / all previewed ports at daemon stop |
 
 ## Interactions
 
 - **← server (MCP `preview` / `md_preview`):** agents create previews via tools; skills (`va-preview`, `va-md-preview`) wrap them.
-- **← server (`preview/` handlers):** resolve slugs, render the owner picker and Markdown content; the browser loads Server origins directly.
+- **← server (`preview/` handlers):** resolve slugs, render the owner picker and Markdown content; local owners load Server origins directly, while tunneled Server pages use the restricted proxy.
 - **← workspace:** closing a thread kills previews bound to its session.
 - **← cli / dashboard:** list and delete.
 
 ## Invariants — do not break
 
-1. **Only Markdown can mint a share transaction** — one document, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. Server previews stay loopback-only. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
+1. **Every Share is one scoped transaction** — one Preview, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. A Server Share may proxy only GET/HEAD pages and static assets; it must reject APIs, writes, workers, WebSockets, and HMR. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
 2. **Preview processes are session-scoped**: an agent session's dev servers die with `/close` and with the daemon — no orphaned `npm run dev`.
-3. Remote Markdown owner links require owner pairing; share expiry must not affect the owner path.
+3. Remote Server and Markdown owner links require owner pairing; Share expiry must not affect the owner path.
 
 ## Known debt
 

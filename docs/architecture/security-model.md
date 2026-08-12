@@ -38,17 +38,20 @@ IM messages arrive through channel plugins. The platform never gets a shell; it 
 - **Attachment hygiene.** File keys from plugins are validated against path traversal (`..`, separators) before becoming file references; unsafe keys are dropped.
 - **Bot credentials** (platform tokens) live in `settings.json` on your machine and are passed only to the owning plugin process.
 
-## Previews: local servers, scoped Markdown sharing
+## Previews: paired owners, scoped sharing
 
-Live Server and rendered Markdown previews have different boundaries:
+Live Server and rendered Markdown previews use the same owner/share split, with a narrower transport for Server Shares:
 
 | Target and URL | Audience | Lifetime |
 |---|---|---|
-| Server `/preview/u/<slug>` | Loopback browser only | While the preview exists |
+| Server `/preview/u/<slug>` | Loopback browser or paired owner | While the preview exists |
 | Markdown `/preview/u/<slug>` | Loopback browser or paired owner | While the preview exists |
+| Server `/preview/s/<share_id>` | Anyone with the Share URL and six-digit access code | One shared 600-second deadline for URL, code, and browser grant |
 | Markdown `/preview/s/<share_id>` | Anyone with the Share URL and six-digit access code | One shared 600-second deadline for URL, code, and browser grant |
 
-Live Server previews do not mint share links and cannot load through a public hostname. On loopback, the owner shell frames the exact dev-server origin directly; it does not forward an owner bearer token or proxy the app's fetch, WebSocket, or HMR traffic. The different port isolates the child from the owner's DOM and storage, while the dev server's own framing policy and browser capabilities still apply. A Markdown share does not use owner pairing: its opaque URL opens an access-code gate, and successful verification issues a Secure, HttpOnly, path-scoped browser grant. The URL, reusable six-digit code, and grant belong to one document and expire together after 10 minutes. Everything else on the tunnel still requires pairing + token.
+On loopback, the Server owner shell frames the exact dev-server origin directly; it does not forward an owner bearer token or proxy the app's fetch, WebSocket, or HMR traffic. The different port isolates the child from the owner's DOM and storage, while the dev server's own framing policy and browser capabilities still apply. A tunneled Server or Markdown owner remains behind pairing and owner-token authentication.
+
+A Share does not use owner pairing: its opaque URL opens an access-code gate, and successful verification issues a Secure, HttpOnly browser grant. The URL, reusable six-digit code, and grant belong to one Preview and expire together after 10 minutes. A Server Share revalidates that grant on every proxied request and accepts only GET/HEAD document and static-resource destinations. It does not expose APIs, writes, workers, WebSockets, HMR, owner chat, or review tools. Everything else on the tunnel still requires pairing + token.
 
 The Markdown parser and sanitizer are bundled with the daemon; Preview does not execute remote parser scripts. GitHub-style raw HTML is rendered only through an allowlist that removes scripts, styles, frames, forms, event handlers, and unsupported attributes. Images written with Markdown syntax or allowed raw HTML must use an absolute HTTPS URL. An image host can see the viewer's IP address, while `Referrer-Policy: no-referrer` prevents the Preview URL from being sent with the request.
 

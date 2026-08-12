@@ -15,7 +15,7 @@ Priority order; suggested capture at ~1440px width, light theme, redact any real
 | 7 | IM permission card (Telegram or Feishu) | guides/im-usage.md §The basics | Tappable card in a real chat |
 | 8 | Pairing gate on a tunneled URL | guides/tunnels-and-remote-access.md §First visit | 6-digit code screen |
 | 9 | Channel plugin manager | guides/connect-channels.md §The pattern | Installed plugins with status |
-| 10 | Preview list with Server and Markdown rows | guides/web-dashboard.md §Live Preview | Server local-only state + Markdown owner/share controls |
+| 10 | Preview list with Server and Markdown rows | guides/web-dashboard.md §Live Preview | Server/Markdown owner and Share controls |
 
 When adding: `![alt text](../assets/<name>.png)` under the matching section; keep one image per section maximum.
 

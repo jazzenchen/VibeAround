@@ -25,7 +25,7 @@ Prerequisites: VibeAround installed with Codex enabled ([install and onboarding]
    /new           abandon course, start a fresh thread
    ```
 
-5. **Review outputs visually** with [Live Preview](../guides/web-dashboard.md): rendered Markdown can open on the phone, while dev-server and HTML previews stay on the host's local browser.
+5. **Review outputs visually** with [Live Preview](../guides/web-dashboard.md): paired owner links and code-gated Server/Markdown Shares can open on the phone. Server Shares show GET/HEAD pages and static assets only, not APIs, writes, workers, WebSockets, or HMR.
 
 ## What Phones Are Good At
 

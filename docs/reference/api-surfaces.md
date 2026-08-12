@@ -13,7 +13,7 @@ Served at `/mcp` (JSON-RPC over streamable HTTP, token-authenticated). Auto-inje
 | `register_workspace` | Register the current project directory as a workspace |
 | `initialize_subagents` | Start a multi-agent turn — modes: `parallel`, `collaboration`, `brainstorming` |
 | `wait_for_subagents` | Block until subagents report completion; returns their reports |
-| `preview` | Create a local-only live preview for a dev server port |
+| `preview` | Create a live preview for a dev server port, with owner and time-scoped Share links when a tunnel is available |
 | `md_preview` | Create a rendered Markdown preview |
 
 Companion skills installed per agent (`skill_auto_install`): `vibearound` (handover), `va-session`, `va-preview`, `va-md-preview`, `agent-collaboration`.
@@ -75,9 +75,11 @@ All token-authenticated; see [architecture overview](../architecture/overview.md
 
 | URL | Target | Auth | Lifetime |
 |---|---|---|---|
-| `/preview/u/{slug}` | Owner shell; Server selection loads its exact loopback origin directly | Loopback only for a Server slug; loopback or paired owner for Markdown | While the preview exists |
-| `/preview/u/{slug}/content` | Markdown content inside the owner iframe | Same owner boundary as the shell | While the preview exists |
-| `/preview/s/{share_id}` | Markdown | Six-digit access code, then path-scoped browser grant | One shared 600 s deadline |
+| `/preview/u/{slug}` | Owner shell for Server or Markdown | Loopback or paired owner | While the preview exists |
+| `/preview/u/{slug}/content` | Selected owner content; a local Server uses its loopback origin directly | Same owner boundary as the shell | While the preview exists |
+| `/preview/s/{share_id}` | Server or Markdown Share | Six-digit access code, then scoped browser grant | One shared 600 s deadline |
+
+The first Server Share transport accepts only GET/HEAD requests for documents and static resources. It rejects APIs, writes, workers, WebSocket upgrades, and HMR traffic; owner chat and review controls are not part of a Share.
 
 ---
 
