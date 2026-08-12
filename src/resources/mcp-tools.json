@@ -194,7 +194,7 @@
   },
   {
     "name": "preview",
-    "description": "Start a live Preview for a running localhost server. Returns Local and available Tunnel owner URLs. Pass thread_id or agent_kind with session_id when available to link the review child to the current task; without an explicit identity, VibeAround can create a standalone Preview conversation.",
+    "description": "Start a live Preview for a running localhost server. Returns a Local owner URL and, when a public tunnel is running, Tunnel owner and Share URLs plus a reusable six-digit access code. The Share URL and code expire together 10 minutes after the Preview transaction starts; the result reports their current remaining lifetime because an active transaction may be reused. Pass thread_id or agent_kind with session_id when available to link the review child to the current task; without an explicit identity, VibeAround can create a standalone Preview conversation.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -74,8 +74,7 @@ pub(super) async fn mcp_preview_start(
 
     let title = derive_title(arguments, &cwd_path);
     let owner_session = parent_request.owner_session_id();
-    let (owner_slug, _share) =
-        common::previews::ensure_server(port, cwd_path, title, owner_session);
+    let (owner_slug, share) = common::previews::ensure_server(port, cwd_path, title, owner_session);
     if let Err(error) =
         ensure_preview_conversation_thread(&owner_slug, parent_thread_id, state).await
     {
@@ -88,14 +87,7 @@ pub(super) async fn mcp_preview_start(
         "http://127.0.0.1:{}/va/preview/u/{}",
         state.port, owner_slug
     );
-    let tunnel_owner = state
-        .tunnels
-        .first_url()
-        .map(|base| build_preview_url(&base, "preview/u", &owner_slug));
-    let tunnel_owner_line = tunnel_owner
-        .as_deref()
-        .map(|url| format!("Tunnel owner: `{url}`"))
-        .unwrap_or_else(|| "Tunnel owner: unavailable (no tunnel is running)".to_string());
+    let tunnel_url = state.tunnels.first_url();
     let review_bridge_url = format!(
         "http://127.0.0.1:{}{}",
         state.port,
@@ -103,16 +95,53 @@ pub(super) async fn mcp_preview_start(
     );
     mcp_text(
         id,
-        &format!(
-            "Preview ready.\n\n\
-             Local owner: `{}`\n\
-             {}\n\
-             Port: {}\n\
-             Text and element review bridge (optional, dev-only):\n\
-             `<script src=\"{}\"></script>`\n\
-             Public sharing is unavailable for live server previews.",
-            local_owner_url, tunnel_owner_line, port, review_bridge_url
+        &server_preview_message(
+            &local_owner_url,
+            tunnel_url.as_deref(),
+            &owner_slug,
+            &share,
+            port,
+            &review_bridge_url,
         ),
+    )
+}
+
+fn server_preview_message(
+    local_owner_url: &str,
+    tunnel_base: Option<&str>,
+    owner_slug: &str,
+    share: &common::previews::PreviewShare,
+    port: u16,
+    review_bridge_url: &str,
+) -> String {
+    let remote = match tunnel_base {
+        Some(base) => {
+            let tunnel_owner = build_preview_url(base, "preview/u", owner_slug);
+            let tunnel_share = build_preview_url(base, "preview/s", &share.id);
+            let remaining = share
+                .expires_at
+                .saturating_duration_since(std::time::Instant::now());
+            format!(
+                "Tunnel owner: `{tunnel_owner}`\n\
+                 Tunnel Share: `{tunnel_share}`\n\
+                 Access code: `{}`\n\
+                 Link and code expire together in {}:{:02}.",
+                share.code,
+                remaining.as_secs() / 60,
+                remaining.as_secs() % 60
+            )
+        }
+        None => "Tunnel owner: unavailable (no tunnel is running)\n\
+                 Public sharing is unavailable until a tunnel is running."
+            .to_string(),
+    };
+    format!(
+        "Preview ready.\n\n\
+         Local owner: `{local_owner_url}`\n\
+         {remote}\n\
+         Port: {port}\n\
+         Text and element review bridge (optional, dev-only):\n\
+         `<script src=\"{review_bridge_url}\"></script>`"
     )
 }
 
@@ -234,4 +263,63 @@ fn derive_title(arguments: &Value, cwd: &Path) -> String {
 
 fn build_preview_url(base: &str, route: &str, slug: &str) -> String {
     format!("{}/va/{}/{}", base.trim_end_matches('/'), route, slug)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use common::previews::PreviewShare;
+
+    use super::server_preview_message;
+
+    fn share() -> PreviewShare {
+        PreviewShare {
+            id: "share-id".to_string(),
+            code: "123456".to_string(),
+            expires_at: Instant::now() + Duration::from_secs(600),
+        }
+    }
+
+    #[test]
+    fn server_preview_message_includes_tunnel_share_details() {
+        let message = server_preview_message(
+            "http://127.0.0.1:12358/va/preview/u/owner-slug",
+            Some("https://preview.example.com/"),
+            "owner-slug",
+            &share(),
+            5173,
+            "http://127.0.0.1:12358/va/preview/assets/review.js",
+        );
+
+        assert!(
+            message.contains("Tunnel owner: `https://preview.example.com/va/preview/u/owner-slug`")
+        );
+        assert!(
+            message.contains("Tunnel Share: `https://preview.example.com/va/preview/s/share-id`")
+        );
+        assert!(message.contains("Access code: `123456`"));
+        assert!(
+            message.contains("Link and code expire together in 9:59")
+                || message.contains("Link and code expire together in 10:00")
+        );
+        assert!(!message.contains("Public sharing is unavailable"));
+    }
+
+    #[test]
+    fn server_preview_message_explains_when_tunnel_is_unavailable() {
+        let message = server_preview_message(
+            "http://127.0.0.1:12358/va/preview/u/owner-slug",
+            None,
+            "owner-slug",
+            &share(),
+            5173,
+            "http://127.0.0.1:12358/va/preview/assets/review.js",
+        );
+
+        assert!(message.contains("Tunnel owner: unavailable (no tunnel is running)"));
+        assert!(message.contains("Public sharing is unavailable until a tunnel is running."));
+        assert!(!message.contains("Tunnel Share:"));
+        assert!(!message.contains("Access code:"));
+    }
 }

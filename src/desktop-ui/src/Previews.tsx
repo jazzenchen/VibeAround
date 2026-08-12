@@ -114,10 +114,8 @@ type CopyStatus = "idle" | "copied" | "failed";
 function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: PreviewRowProps) {
   const { locale, t } = useI18n();
   const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
-  const isServer = preview.kind === "server";
   const ownerPath = `/va/preview/u/${encodeURIComponent(preview.slug)}`;
-  const sharePath = !isServer
-    && preview.share_id
+  const sharePath = preview.share_id
     && preview.share_code
     && preview.share_expires_at_ms
     && preview.share_expires_at_ms > Date.now()
@@ -199,60 +197,56 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
           openUrl={openExternalUrl}
           disabledReason={tunnelOwnerUrl ? null : t("Tunnel not running")}
         />
-        {!isServer && (
+        <UrlButton
+          label={t("Tunnel · share")}
+          url={tunnelShareUrl}
+          icon={<Globe className="w-3 h-3" />}
+          openUrl={openExternalUrl}
+          disabledReason={
+            !tunnelUrl
+              ? t("Tunnel not running")
+              : !sharePath
+                ? t("Access code expired")
+                : null
+          }
+        />
+        {shareMessage && (
           <>
-            <UrlButton
-              label={t("Tunnel · share")}
-              url={tunnelShareUrl}
-              icon={<Globe className="w-3 h-3" />}
-              openUrl={openExternalUrl}
-              disabledReason={
-                !tunnelUrl
-                  ? t("Tunnel not running")
-                  : !sharePath
-                    ? t("Access code expired")
-                    : null
-              }
-            />
-            {shareMessage && (
-              <>
-                <span className="px-1 text-[11px] text-muted-foreground">
-                  {t("Access code")}: <code className="font-mono text-foreground">{displayCode}</code>
-                </span>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="xs"
-                  className="h-7 text-[11px] bg-primary/10 text-primary hover:bg-primary/20"
-                  title={copyStatus === "copied"
-                    ? t("Copied")
-                    : copyStatus === "failed"
-                      ? t("Copy failed")
-                      : t("Copy share message")}
-                  onClick={() => {
-                    void (async () => {
-                      try {
-                        await navigator.clipboard.writeText(shareMessage);
-                        setCopyStatus("copied");
-                      } catch {
-                        setCopyStatus("failed");
-                      } finally {
-                        window.setTimeout(() => setCopyStatus("idle"), 1600);
-                      }
-                    })();
-                  }}
-                >
-                  {copyStatus === "copied"
-                    ? <Check className="w-3 h-3" />
-                    : <Copy className="w-3 h-3" />}
-                  {copyStatus === "copied"
-                    ? t("Copied")
-                    : copyStatus === "failed"
-                      ? t("Copy failed")
-                      : t("Copy share message")}
-                </Button>
-              </>
-            )}
+            <span className="px-1 text-[11px] text-muted-foreground">
+              {t("Access code")}: <code className="font-mono text-foreground">{displayCode}</code>
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
+              className="h-7 text-[11px] bg-primary/10 text-primary hover:bg-primary/20"
+              title={copyStatus === "copied"
+                ? t("Copied")
+                : copyStatus === "failed"
+                  ? t("Copy failed")
+                  : t("Copy share message")}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await navigator.clipboard.writeText(shareMessage);
+                    setCopyStatus("copied");
+                  } catch {
+                    setCopyStatus("failed");
+                  } finally {
+                    window.setTimeout(() => setCopyStatus("idle"), 1600);
+                  }
+                })();
+              }}
+            >
+              {copyStatus === "copied"
+                ? <Check className="w-3 h-3" />
+                : <Copy className="w-3 h-3" />}
+              {copyStatus === "copied"
+                ? t("Copied")
+                : copyStatus === "failed"
+                  ? t("Copy failed")
+                  : t("Copy share message")}
+            </Button>
           </>
         )}
       </div>

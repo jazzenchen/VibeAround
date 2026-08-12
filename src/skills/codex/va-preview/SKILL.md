@@ -52,7 +52,7 @@ If the workspace is not registered, call `register_workspace` with `cwd`, then r
 
 ### 4. Relay the returned link
 
-Present the Local owner URL and, when returned, the Tunnel owner URL. Do not construct URLs yourself. Server Preview does not create a public Share URL; the Tunnel URL is an owner link and may require pairing.
+Present the Local owner URL. When the tool also returns Tunnel owner and Share URLs, present both URLs together with the six-digit access code and exact remaining lifetime. State that the code can be reused by multiple viewers until the Share URL and code expire together. Do not construct URLs yourself. If public sharing is unavailable, show the owner URL and that message.
 
 ## Error Handling
 
