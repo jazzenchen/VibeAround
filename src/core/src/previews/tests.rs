@@ -131,6 +131,25 @@ fn ensure_file_is_idempotent_and_independent_of_server() {
 }
 
 #[test]
+fn emergency_shutdown_keeps_file_registration() {
+    let dir = std::env::temp_dir().join(format!(
+        "va-preview-test-emergency-shutdown-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("README.md");
+    std::fs::write(&file, "preview").unwrap();
+    let (slug, _) = ensure_file(file, dir.clone(), "file".into());
+
+    emergency_kill_all_ports();
+    emergency_kill_all_ports();
+
+    assert!(lookup_owner(&slug).is_some());
+    delete_session(&slug);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn lookups_preserve_owner_and_share_boundaries() {
     let dir = std::env::temp_dir().join("va-preview-test-lookup");
     std::fs::create_dir_all(&dir).unwrap();

@@ -475,10 +475,7 @@ pub fn reconcile_registrations() {
     }
 }
 
-/// Kill each registered Server listener whose PID and start time still match.
-/// Best-effort; failures are logged. Durable File registrations are retained,
-/// then the in-memory session map is cleared.
-pub fn shutdown_kill_all_ports() {
+fn kill_registered_server_listeners() {
     let listeners: Vec<(u16, ListenerProcess)> = SESSIONS
         .lock()
         .values()
@@ -496,6 +493,22 @@ pub fn shutdown_kill_all_ports() {
             kill::kill_registered_listener(port, listener);
         }
     }
+}
+
+/// Best-effort final process cleanup that does not change Preview registrations.
+///
+/// Used when the application is already exiting and graceful daemon shutdown
+/// may have run. In particular, it must not overwrite durable File previews
+/// with an empty in-memory registry.
+pub fn emergency_kill_all_ports() {
+    kill_registered_server_listeners();
+}
+
+/// Kill each registered Server listener whose PID and start time still match.
+/// Best-effort; failures are logged. Durable File registrations are retained,
+/// then the in-memory session map is cleared.
+pub fn shutdown_kill_all_ports() {
+    kill_registered_server_listeners();
     let mut sessions = SESSIONS.lock();
     sessions.retain(|_, session| matches!(session.target, PreviewTarget::File));
     registrations::persist_active(&sessions);

@@ -442,7 +442,7 @@ fn main() {
                 // shutdown was skipped or interrupted.
                 if let tauri::RunEvent::Exit = event {
                     common::process::registry::ChildRegistry::global().kill_all();
-                    common::previews::shutdown_kill_all_ports();
+                    common::previews::emergency_kill_all_ports();
                 }
             }
         });
