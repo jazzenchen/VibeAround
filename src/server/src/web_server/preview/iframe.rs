@@ -11,7 +11,7 @@ use super::markdown::render_md_content;
 pub(super) fn render_owner_app(
     html: String,
     previews: &[PreviewSnapshot],
-    server_host: &str,
+    server_host: Option<&str>,
 ) -> Response {
     let csp = format!(
         "default-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; media-src 'self' https: data: blob:; font-src 'self' data:; connect-src 'self'; frame-src {}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
@@ -41,12 +41,17 @@ pub(super) async fn render_owner_content(
     }
 }
 
-pub(super) fn preview_src(slug: &str, port: Option<u16>, server_host: &str) -> String {
-    port.map(|port| format!("http://{server_host}:{port}/"))
-        .unwrap_or_else(|| format!("/va/preview/u/{slug}/content"))
+pub(super) fn preview_src(slug: &str, port: Option<u16>, server_host: Option<&str>) -> String {
+    match (port, server_host) {
+        (Some(port), Some(server_host)) => format!("http://{server_host}:{port}/"),
+        _ => format!("/va/preview/u/{slug}/content"),
+    }
 }
 
-fn frame_sources(previews: &[PreviewSnapshot], server_host: &str) -> String {
+fn frame_sources(previews: &[PreviewSnapshot], server_host: Option<&str>) -> String {
+    let Some(server_host) = server_host else {
+        return "'self'".to_string();
+    };
     let mut ports = previews
         .iter()
         .filter_map(|preview| preview.port)

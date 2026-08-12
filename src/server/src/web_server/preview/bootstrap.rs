@@ -26,7 +26,7 @@ struct OwnerPreviewItem {
 pub(super) fn owner_preview_bootstrap(
     selected_slug: &str,
     previews: &[PreviewSnapshot],
-    server_host: &str,
+    server_host: Option<&str>,
 ) -> OwnerPreviewBootstrap {
     let mut previews = previews.iter().collect::<Vec<_>>();
     previews.sort_by(|a, b| {

@@ -36,6 +36,18 @@ fn local_request_with_origin(host: &str, origin: &str) -> Request<Body> {
     request
 }
 
+fn remote_owner_request(host: &str, auth: &Arc<common::auth::AuthToken>) -> Request<Body> {
+    let mut request = request_with_host_and_peer(host, "127.0.0.1:45000");
+    request.headers_mut().insert(
+        "cookie",
+        format!("va_owner={}", auth.as_str()).parse().unwrap(),
+    );
+    request
+        .extensions_mut()
+        .insert(crate::web_server::auth::AuthState(Arc::clone(auth)));
+    request
+}
+
 fn unique_temp_dir(label: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "vibearound-preview-route-{label}-{}",
@@ -417,7 +429,7 @@ async fn failed_access_codes_are_rate_limited_per_share_link() {
 }
 
 #[tokio::test]
-async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
+async fn server_preview_uses_direct_local_origin_and_remote_same_origin_proxy() {
     let dir = unique_temp_dir("owner");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -439,7 +451,7 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
         .iter()
         .map(|value| value.to_str().unwrap().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(local_cookies.len(), 3);
+    assert_eq!(local_cookies.len(), 4);
     assert!(local_cookies
         .iter()
         .any(|cookie| cookie.starts_with("va_owner=; Path=/;")));
@@ -449,6 +461,9 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     assert!(local_cookies
         .iter()
         .any(|cookie| cookie.starts_with("va_preview=; Path=/;")));
+    assert!(local_cookies
+        .iter()
+        .any(|cookie| cookie.starts_with("va_preview_server=; Path=/;")));
     let local_csp = local
         .headers()
         .get("content-security-policy")
@@ -459,7 +474,7 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     let local_body = to_bytes(local.into_body(), usize::MAX).await.unwrap();
     let local_body = String::from_utf8(local_body.to_vec()).unwrap();
     assert!(local_body.contains("data-preview-spa"));
-    assert!(local_csp.contains(&format!("frame-src 'self' http://127.0.0.1:{port}")));
+    assert!(local_csp.contains(&format!("http://127.0.0.1:{port}")));
     assert!(!local_body.contains(&share.id));
     assert!(!local_body.contains(&share.code));
 
@@ -492,22 +507,60 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
         .unwrap()
         .contains("load directly from their local origin"));
 
-    let public = owner_preview_for_test(
+    let unauthorized = owner_preview_for_test(
         Path(owner_slug.clone()),
         local_request("preview.example.com"),
     )
     .await;
-    assert_eq!(public.status(), StatusCode::FORBIDDEN);
-    assert!(public.headers().get("location").is_none());
-    assert!(public.headers().get("set-cookie").is_none());
+    assert_eq!(unauthorized.status(), StatusCode::FOUND);
+    assert!(unauthorized.headers().get("set-cookie").is_none());
+
+    let auth = Arc::new(common::auth::AuthToken::generate());
+    let public = owner_preview_for_test(
+        Path(owner_slug.clone()),
+        remote_owner_request("preview.example.com", &auth),
+    )
+    .await;
+    assert_eq!(public.status(), StatusCode::OK);
+    let public_csp = public
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(public_csp.contains("frame-src 'self'"));
+    assert!(!public_csp.contains(&format!("localhost:{port}")));
+
+    let public_bootstrap = owner_preview_bootstrap_handler(
+        Path(owner_slug.clone()),
+        remote_owner_request("preview.example.com", &auth),
+    )
+    .await;
+    assert_eq!(public_bootstrap.status(), StatusCode::OK);
+    let body = to_bytes(public_bootstrap.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(body["previews"].as_array().unwrap().iter().any(|preview| {
+        preview["slug"] == owner_slug
+            && preview["src"] == format!("/va/preview/u/{owner_slug}/content")
+    }));
 
     let public_content = owner_preview_content_handler(
         Path(owner_slug.clone()),
-        local_request("preview.example.com"),
+        remote_owner_request("preview.example.com", &auth),
     )
     .await;
-    assert_eq!(public_content.status(), StatusCode::FORBIDDEN);
-    assert!(public_content.headers().get("set-cookie").is_none());
+    assert_eq!(public_content.status(), StatusCode::FOUND);
+    assert_eq!(public_content.headers().get("location").unwrap(), "/");
+    let routing_cookie = public_content
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(routing_cookie.starts_with(&format!("va_preview_server={owner_slug}.")));
+    assert!(!routing_cookie.contains(auth.as_str()));
 
     let share_route = share_preview_handler(
         Path(owner_slug.clone()),
@@ -516,8 +569,10 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     .await;
     assert_eq!(share_route.status(), StatusCode::NOT_FOUND);
 
-    let remote_options = active_preview_snapshots(false).await;
-    assert!(remote_options.iter().all(|preview| preview.kind == "file"));
+    let remote_options = active_preview_snapshots().await;
+    assert!(remote_options
+        .iter()
+        .any(|preview| preview.slug == owner_slug));
     assert!(remote_options
         .iter()
         .any(|preview| preview.slug == file_owner_slug));
@@ -533,12 +588,12 @@ async fn active_previews_omit_server_after_listener_closes() {
     std::fs::write(&file, "active").unwrap();
     let (file_slug, _) = common::previews::ensure_file(file, dir, "file".into());
 
-    let listening = active_preview_snapshots(true).await;
+    let listening = active_preview_snapshots().await;
     assert!(listening.iter().any(|preview| preview.slug == server_slug));
     assert!(listening.iter().any(|preview| preview.slug == file_slug));
 
     drop(listener);
-    let active = active_preview_snapshots(true).await;
+    let active = active_preview_snapshots().await;
     assert!(active.iter().all(|preview| preview.slug != server_slug));
     assert!(active.iter().any(|preview| preview.slug == file_slug));
 

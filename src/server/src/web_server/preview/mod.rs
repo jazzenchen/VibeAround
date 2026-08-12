@@ -9,14 +9,14 @@
 //! - GET /preview/s/:share_id        — Markdown share gate or document
 //! - POST /preview/s/:share_id       — verify reusable access code
 //!   The owner app switches one iframe between previews. Markdown content
-//!   renders from the owner-only content route. Local Server content loads
-//!   directly from its own `localhost:{port}` origin.
+//!   renders from the owner-only content route. Server content loads directly
+//!   from `localhost:{port}` locally and through the page proxy remotely.
 //!
 //! Markdown shares use a public opaque link ID plus a reusable six-digit
 //! access code. Successful public verification receives a path-scoped browser
 //! grant with the same TTL (`common::previews::SHARE_TTL_SECS`). Owner slugs
 //! remain stable and require owner access through a loopback request or the
-//! `va_owner` cookie. Server previews are local-only.
+//! `va_owner` cookie. Server previews remain owner-only.
 //!
 //! ## Module layout
 //!
@@ -32,6 +32,7 @@ mod bootstrap;
 mod chat;
 mod iframe;
 mod markdown;
+mod server_proxy;
 mod toolbar;
 
 use axum::body::Body;
@@ -41,7 +42,7 @@ use axum::http::{header, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use common::previews::{PreviewEntry, PreviewTarget, ShareCodeError};
+use common::previews::{PreviewTarget, ShareCodeError};
 use futures_util::future::join_all;
 use serde::Deserialize;
 
@@ -52,6 +53,7 @@ pub(super) use assets::{
 };
 pub(super) use chat::owner_preview_chat_handler;
 pub(in crate::web_server) use chat::request_owner_refresh;
+pub(in crate::web_server) use server_proxy::{server_proxy_fallback, ServerProxyState};
 
 use access::{
     clear_share_cookie, extract_cookie, render_access_gate, share_cookie_name, share_grant_cookie,
@@ -87,26 +89,21 @@ pub(super) async fn owner_preview_response(
     req: Request,
     web_dist: std::path::PathBuf,
 ) -> Response {
-    let include_server_previews = crate::web_server::auth::request_is_loopback(&req);
+    let local = crate::web_server::auth::request_is_loopback(&req);
     let response = match common::previews::lookup_owner(&slug) {
-        Some(entry) if !preview_target_available(&req, &entry) => {
-            server_preview_local_only().into_response()
-        }
         Some(_) if owner_access_allowed(&req) => {
-            let previews = active_preview_snapshots(include_server_previews).await;
+            let previews = active_preview_snapshots().await;
             let mut response = match tokio::fs::read_to_string(web_dist.join("index.html")).await {
-                Ok(html) => render_owner_app(
-                    html,
-                    &previews,
-                    preview_server_host(&req, include_server_previews),
-                ),
+                Ok(html) => {
+                    render_owner_app(html, &previews, local.then(|| preview_server_host(&req)))
+                }
                 Err(error) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Failed to load Preview app: {error}"),
                 )
                     .into_response(),
             };
-            if include_server_previews {
+            if local {
                 clear_local_preview_cookies(&mut response);
             }
             response
@@ -124,15 +121,12 @@ pub async fn owner_preview_bootstrap_handler(Path(slug): Path<String>, req: Requ
         StatusCode::UNAUTHORIZED.into_response()
     } else {
         match common::previews::lookup_owner(&slug) {
-            Some(entry) if !preview_target_available(&req, &entry) => {
-                server_preview_local_only().into_response()
-            }
             Some(_) => {
-                let include_server_previews = crate::web_server::auth::request_is_loopback(&req);
+                let local = crate::web_server::auth::request_is_loopback(&req);
                 Json(owner_preview_bootstrap(
                     &slug,
-                    &active_preview_snapshots(include_server_previews).await,
-                    preview_server_host(&req, include_server_previews),
+                    &active_preview_snapshots().await,
+                    local.then(|| preview_server_host(&req)),
                 ))
                 .into_response()
             }
@@ -144,19 +138,22 @@ pub async fn owner_preview_bootstrap_handler(Path(slug): Path<String>, req: Requ
 
 /// GET /preview/u/{slug}/content — owner-only iframe content.
 ///
-/// Markdown renders directly. Server previews use their own local origin and
-/// never enter this content route.
+/// Markdown renders directly. A remote Server preview enters through this
+/// route once to establish its signed page-routing cookie.
 pub async fn owner_preview_content_handler(Path(slug): Path<String>, req: Request) -> Response {
     let response = match common::previews::lookup_owner(&slug) {
-        Some(entry) if !preview_target_available(&req, &entry) => {
-            server_preview_local_only().into_response()
-        }
         Some(entry) if owner_access_allowed(&req) => {
-            let annotations_enabled =
-                common::previews::owner_conversation_thread_id(&slug).is_some();
-            render_owner_content(entry, annotations_enabled)
-                .await
-                .unwrap_or_else(IntoResponse::into_response)
+            if matches!(entry.target, PreviewTarget::Server { .. })
+                && !crate::web_server::auth::request_is_loopback(&req)
+            {
+                server_proxy::owner_server_content_response(&slug, &req)
+            } else {
+                let annotations_enabled =
+                    common::previews::owner_conversation_thread_id(&slug).is_some();
+                render_owner_content(entry, annotations_enabled)
+                    .await
+                    .unwrap_or_else(IntoResponse::into_response)
+            }
         }
         Some(_) => owner_pairing_redirect_to(format!("/va/preview/u/{slug}")),
         None if owner_access_allowed(&req) => preview_not_found().into_response(),
@@ -165,16 +162,13 @@ pub async fn owner_preview_content_handler(Path(slug): Path<String>, req: Reques
     no_store(response)
 }
 
-pub(super) async fn active_preview_snapshots(
-    include_servers: bool,
-) -> Vec<common::previews::PreviewSnapshot> {
+pub(super) async fn active_preview_snapshots() -> Vec<common::previews::PreviewSnapshot> {
     join_all(
         common::previews::list_snapshots()
             .into_iter()
             .map(|preview| async move {
                 match preview.port {
                     None => Some(preview),
-                    Some(_) if !include_servers => None,
                     Some(port) if server_port_is_listening(port).await => Some(preview),
                     Some(_) => None,
                 }
@@ -204,10 +198,7 @@ async fn server_port_is_listening(port: u16) -> bool {
     .unwrap_or(false)
 }
 
-fn preview_server_host(req: &Request, local: bool) -> &'static str {
-    if !local {
-        return "localhost";
-    }
+fn preview_server_host(req: &Request) -> &'static str {
     let host = req
         .headers()
         .get(header::HOST)
@@ -229,6 +220,7 @@ fn clear_local_preview_cookies(response: &mut Response) {
         .chain(std::iter::once(
             "va_preview=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax".to_string(),
         ))
+        .chain(std::iter::once(server_proxy::clear_server_routing_cookie()))
     {
         response.headers_mut().append(
             header::SET_COOKIE,
@@ -321,21 +313,6 @@ pub async fn verify_share_code_handler(
         Err(ShareCodeError::NotFound) => preview_not_found().into_response(),
     };
     no_store(response)
-}
-
-/// Whether this target may be served in the current request context.
-/// Markdown can be remote; live Server content requires a real loopback
-/// connection and loopback Host header.
-pub(super) fn preview_target_available(req: &Request, entry: &PreviewEntry) -> bool {
-    !matches!(entry.target, PreviewTarget::Server { .. })
-        || crate::web_server::auth::request_is_loopback(req)
-}
-
-pub(super) fn server_preview_local_only() -> (StatusCode, &'static str) {
-    (
-        StatusCode::FORBIDDEN,
-        "Live server previews are only available on localhost.",
-    )
 }
 
 fn no_store(mut response: Response) -> Response {

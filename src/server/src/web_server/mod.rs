@@ -16,7 +16,7 @@ mod ws_pty;
 use axum::body::Body;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
 use axum::{Extension, Router};
 use std::net::SocketAddr;
@@ -216,6 +216,7 @@ pub async fn run_web_server(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("reqwest client");
+    let server_proxy_state = preview::ServerProxyState::new(preview_client.clone());
     let state = AppState {
         pty_manager: Arc::new(PtySessionManager::from_registry(pty_registry)),
         dist_for_fallback: web_dist.clone(),
@@ -486,7 +487,7 @@ pub async fn run_web_server(
         .route("/api/pair/start", post(pair::start_handler))
         .route("/api/pair/status", get(pair::status_handler))
         // Preview pages dispatch by session target:
-        //   Server → direct local dev-server iframe
+        //   Server → direct local iframe or owner-only remote page proxy
         //   File   → owner-only iframe content or shared markdown page
         // /u = owner (loopback or va_owner cookie), /s = temporary share.
         .route(
@@ -554,6 +555,7 @@ pub async fn run_web_server(
     let app = mount_dashboard(dashboard)
         .with_state(state)
         .layer(Extension(auth_state))
+        .layer(Extension(server_proxy_state))
         .layer(build_cors_layer(port));
 
     println!(
@@ -577,11 +579,12 @@ where
 {
     Router::new()
         .nest("/va/", dashboard)
-        .fallback(any(redirect_to_dashboard))
+        .fallback(any(preview::server_proxy_fallback))
 }
 
-async fn redirect_to_dashboard() -> Redirect {
-    Redirect::temporary("/va/")
+#[cfg(test)]
+async fn redirect_to_dashboard() -> axum::response::Redirect {
+    axum::response::Redirect::temporary("/va/")
 }
 
 /// Build an open CORS layer for the local daemon API.

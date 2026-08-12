@@ -25,7 +25,7 @@ use crate::web_server::ws_chat::{
 };
 use crate::web_server::AppState;
 
-use super::{owner_access_allowed, preview_target_available};
+use super::owner_access_allowed;
 
 const PREVIEW_REFRESH_FRAME: &str = r#"{"kind":"preview_refresh"}"#;
 static PREVIEW_REFRESH_EVENTS: LazyLock<broadcast::Sender<String>> = LazyLock::new(|| {
@@ -82,11 +82,8 @@ fn resolve_owner_chat_route(
         ));
     }
 
-    let entry = common::previews::lookup_owner(slug)
+    common::previews::lookup_owner(slug)
         .ok_or((StatusCode::NOT_FOUND, "Preview not found or expired."))?;
-    if !preview_target_available(req, &entry) {
-        return Err(super::server_preview_local_only());
-    }
     Ok(preview_web_route_for_slug(slug))
 }
 

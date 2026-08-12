@@ -32,8 +32,12 @@ fn bootstrap_contains_only_owner_ui_data_and_server_built_sources() {
         snapshot("/tmp/alpha", "readme", "README", "file", None),
     ];
 
-    let value =
-        serde_json::to_value(owner_preview_bootstrap("readme", &previews, "localhost")).unwrap();
+    let value = serde_json::to_value(owner_preview_bootstrap(
+        "readme",
+        &previews,
+        Some("localhost"),
+    ))
+    .unwrap();
 
     assert_eq!(value["selectedSlug"], "readme");
     assert_eq!(value["previews"][0]["workspace"], "/tmp/alpha");
@@ -42,4 +46,19 @@ fn bootstrap_contains_only_owner_ui_data_and_server_built_sources() {
     assert!(value.to_string().contains("chatAvailable"));
     assert!(!value.to_string().contains("private-share-id"));
     assert!(!value.to_string().contains("123456"));
+}
+
+#[test]
+fn remote_bootstrap_routes_server_content_through_the_daemon_origin() {
+    let previews = vec![snapshot(
+        "/tmp/alpha",
+        "server",
+        "App",
+        "server",
+        Some(5173),
+    )];
+
+    let value = serde_json::to_value(owner_preview_bootstrap("server", &previews, None)).unwrap();
+
+    assert_eq!(value["previews"][0]["src"], "/va/preview/u/server/content");
 }

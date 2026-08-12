@@ -120,6 +120,39 @@ fn owner_chat_enforces_origin_and_strict_loopback_access() {
     );
 }
 
+#[test]
+fn owner_chat_accepts_a_paired_remote_server_preview() {
+    let dir = std::env::temp_dir().join(format!(
+        "vibearound-preview-chat-server-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let slug = common::previews::ensure_server(4318, dir.clone(), "server".into(), None);
+    let auth = std::sync::Arc::new(common::auth::AuthToken::generate());
+    let mut remote = request(
+        "preview.example.com",
+        "127.0.0.1:45000",
+        "https://preview.example.com",
+    );
+    remote.headers_mut().insert(
+        "cookie",
+        format!("va_owner={}", auth.as_str()).parse().unwrap(),
+    );
+    remote
+        .extensions_mut()
+        .insert(crate::web_server::auth::AuthState(auth));
+
+    let route = resolve_owner_chat_route(
+        &slug,
+        &remote,
+        12358,
+        &["https://preview.example.com".to_string()],
+    )
+    .expect("paired remote Server Preview chat route");
+    assert_eq!(route, preview_web_route_for_slug(&slug));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[tokio::test]
 async fn unregistering_preview_connection_preserves_route_replay() {
     let manager = WebChannelManager::new();
