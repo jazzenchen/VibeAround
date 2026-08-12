@@ -23,8 +23,8 @@
 //! One `HashMap<PathBuf, PreviewSession>` backs everything. Lookups by
 //! `slug` or `share_id` scan values — `n` is tiny (<20 typical).
 //!
-//! On daemon shutdown, [`shutdown_kill_all_ports`] SIGKILLs any process
-//! listening on a tracked `Server` port so dev servers don't leak.
+//! On daemon shutdown, [`shutdown_kill_all_ports`] kills a tracked `Server`
+//! listener only while its PID and process start time still match registration.
 //!
 //! ## Module layout
 //!
@@ -47,7 +47,8 @@ pub use types::{
 
 use store::{
     canonical, entry_from, generate_share_code, generate_share_grant, generate_share_id,
-    slug_from_path, PreviewSession, ShareTransaction, SESSIONS, SHARE_ATTEMPT_REFILL, SHARE_TTL,
+    slug_from_path, ListenerProcess, PreviewSession, ShareTransaction, SESSIONS,
+    SHARE_ATTEMPT_REFILL, SHARE_TTL,
 };
 
 // ---------------------------------------------------------------------------
@@ -65,12 +66,14 @@ pub fn ensure_server(
 ) -> String {
     let workspace = canonical(&workspace);
     let id = workspace.join(format!(":port:{port}"));
+    let listener = kill::listener_process(port);
     let (slug, share) = ensure_session(
         id,
         workspace,
         title,
         PreviewTarget::Server { port },
         owner_session,
+        listener,
     );
     debug_assert!(share.is_none());
     slug
@@ -81,7 +84,7 @@ pub fn ensure_server(
 pub fn ensure_file(file: PathBuf, workspace: PathBuf, title: String) -> (String, PreviewShare) {
     let file = canonical(&file);
     let workspace = canonical(&workspace);
-    let (slug, share) = ensure_session(file, workspace, title, PreviewTarget::File, None);
+    let (slug, share) = ensure_session(file, workspace, title, PreviewTarget::File, None, None);
     (slug, share.expect("File previews always receive a share"))
 }
 
@@ -91,6 +94,7 @@ fn ensure_session(
     title: String,
     target: PreviewTarget,
     owner_session: Option<String>,
+    listener: Option<ListenerProcess>,
 ) -> (String, Option<PreviewShare>) {
     let slug = slug_from_path(&id);
     let now = Instant::now();
@@ -103,6 +107,7 @@ fn ensure_session(
             workspace: workspace.clone(),
             title: title.clone(),
             target: target.clone(),
+            listener,
             slug: slug.clone(),
             share: None,
             conversation_thread_id: None,
@@ -114,6 +119,10 @@ fn ensure_session(
     session.workspace = workspace;
     session.title = title;
     session.target = target;
+    session.listener = match session.target {
+        PreviewTarget::Server { .. } => listener.or(session.listener),
+        PreviewTarget::File => None,
+    };
     if owner_session.is_some() {
         session.owner_session = owner_session;
     }
@@ -368,17 +377,17 @@ fn instant_to_unix_ms(point: Instant, now_inst: Instant, now_sys: std::time::Sys
 /// Called from pod.close() when a route is shut down. Kills Server
 /// ports (if not shared) and removes matching sessions.
 pub fn kill_by_session(session_id: &str) {
-    let to_remove: Vec<(PathBuf, Option<u16>)> = {
+    let to_remove: Vec<(PathBuf, Option<(u16, ListenerProcess)>)> = {
         let sessions = SESSIONS.lock();
         sessions
             .iter()
             .filter(|(_, s)| s.owner_session.as_deref() == Some(session_id))
             .map(|(k, s)| {
-                let port = match s.target {
-                    PreviewTarget::Server { port } => Some(port),
-                    PreviewTarget::File => None,
+                let listener = match (&s.target, s.listener) {
+                    (PreviewTarget::Server { port }, Some(listener)) => Some((*port, listener)),
+                    _ => None,
                 };
-                (k.clone(), port)
+                (k.clone(), listener)
             })
             .collect()
     };
@@ -399,22 +408,22 @@ pub fn kill_by_session(session_id: &str) {
     }
     drop(sessions); // release lock before killing
 
-    for (_, port) in to_remove {
-        if let Some(p) = port {
+    for (_, listener) in to_remove {
+        if let Some((port, listener)) = listener {
             // Only kill if no remaining session uses this port.
             let still_used = SESSIONS
                 .lock()
                 .values()
-                .any(|s| matches!(s.target, PreviewTarget::Server { port: pp } if pp == p));
+                .any(|s| matches!(s.target, PreviewTarget::Server { port: pp } if pp == port));
             if !still_used {
-                kill::kill_port(p);
+                kill::kill_registered_listener(port, listener);
             }
         }
     }
 }
 
-/// Close a single preview session: if it's a Server target, SIGKILL the
-/// process currently listening on its port (via `lsof` + `sysinfo::kill`).
+/// Close a single preview session. A Server listener is killed only when its
+/// current PID and process start time still match registration.
 /// Then remove the session from the store. Returns `true` when a matching
 /// slug was found and removed.
 pub fn delete_session(slug: &str) -> bool {
@@ -436,8 +445,8 @@ pub fn delete_session(slug: &str) -> bool {
     };
 
     // Kill the port if Server — best effort.
-    if let PreviewTarget::Server { port } = session.target {
-        kill::kill_port(port);
+    if let (PreviewTarget::Server { port }, Some(listener)) = (session.target, session.listener) {
+        kill::kill_registered_listener(port, listener);
     }
     true
 }
@@ -458,16 +467,25 @@ pub fn tracked_ports() -> Vec<u16> {
         .collect()
 }
 
-/// Send SIGKILL to every process listening on a tracked Server port.
+/// Kill each registered Server listener whose PID and start time still match.
 /// Best-effort; failures are logged. Clears the session map.
 pub fn shutdown_kill_all_ports() {
-    let ports = tracked_ports();
-    if !ports.is_empty() {
+    let listeners: Vec<(u16, ListenerProcess)> = SESSIONS
+        .lock()
+        .values()
+        .filter_map(|session| match (&session.target, session.listener) {
+            (PreviewTarget::Server { port }, Some(listener)) => Some((*port, listener)),
+            _ => None,
+        })
+        .collect();
+    if !listeners.is_empty() {
         tracing::info!(
-            "[preview] shutdown: killing dev servers on ports {:?}",
-            ports
+            "[preview] shutdown: checking {} registered dev-server listener(s)",
+            listeners.len()
         );
-        kill::kill_pids_on_ports(&ports);
+        for (port, listener) in listeners {
+            kill::kill_registered_listener(port, listener);
+        }
     }
     SESSIONS.lock().clear();
 }

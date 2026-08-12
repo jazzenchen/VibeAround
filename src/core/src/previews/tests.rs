@@ -58,6 +58,53 @@ fn ensure_server_keeps_different_ports_separate() {
 }
 
 #[test]
+fn server_registration_tracks_the_current_listener_fingerprint() {
+    let workspace =
+        std::env::temp_dir().join(format!("va-preview-test-listener-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let workspace = canonical(&workspace);
+    let id = workspace.join(":port:3457");
+    let first = ListenerProcess {
+        pid: 123,
+        start_time: 456,
+    };
+    let replacement = ListenerProcess {
+        pid: 789,
+        start_time: 1011,
+    };
+
+    ensure_session(
+        id.clone(),
+        workspace.clone(),
+        "server".into(),
+        PreviewTarget::Server { port: 3457 },
+        None,
+        Some(first),
+    );
+    ensure_session(
+        id.clone(),
+        workspace.clone(),
+        "server".into(),
+        PreviewTarget::Server { port: 3457 },
+        None,
+        Some(replacement),
+    );
+    ensure_session(
+        id.clone(),
+        workspace,
+        "server".into(),
+        PreviewTarget::Server { port: 3457 },
+        None,
+        None,
+    );
+
+    assert_eq!(
+        SESSIONS.lock().get(&id).unwrap().listener,
+        Some(replacement)
+    );
+}
+
+#[test]
 fn ensure_file_is_idempotent_and_independent_of_server() {
     let dir = std::env::temp_dir().join("va-preview-test-file");
     std::fs::create_dir_all(&dir).unwrap();

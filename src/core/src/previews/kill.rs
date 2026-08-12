@@ -1,124 +1,121 @@
-//! Process-group SIGKILL helpers for tracked dev-server ports.
+//! Registered-listener cleanup for tracked dev-server ports.
 //!
-//! Resolution is entirely port-driven — we don't assume a specific runtime
-//! (python / node / ruby / go / …). For each port we:
+//! Registration records the listener PID plus its `sysinfo` start time. Before
+//! cleanup, the port is resolved again and both values must still match. This
+//! avoids killing an unrelated process that later reuses the same port or PID.
 //!
-//! 1. Find the listener PID via `lsof -ti :<port>`.
-//! 2. Look up its process-group ID (`pgid`) via `ps -o pgid= -p <pid>`.
-//! 3. SIGTERM the whole group, wait ~500ms, then SIGKILL any survivors.
-//!
-//! Why the process group instead of just the PID: agents commonly launch
-//! dev servers through a shell wrapper (e.g. `sh -c "<cmd>"`). The listener
-//! is the inner process; the shell is its parent in the same group. If we
-//! SIGKILL only the listener, the shell keeps the pipe to the agent open,
-//! the agent's output-watcher never sees EOF, and the current turn hangs
-//! forever. Killing the group tears the whole wrapper tree down, the
-//! watcher unblocks, and `acp::Agent::prompt` can return.
+//! Only the listener PID is killed. A process group can include the launching
+//! agent or other unrelated work, so ownership cannot be inferred from PGID.
 
-/// Kill every process *group* whose listener holds one of the given ports.
-pub(super) fn kill_pids_on_ports(ports: &[u16]) {
-    let pids = pids_listening_on(ports);
-    if pids.is_empty() {
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+
+use super::store::ListenerProcess;
+
+pub(super) fn listener_process(port: u16) -> Option<ListenerProcess> {
+    let pid = single_listener_pid(port)?;
+    let system = process_system();
+    fingerprint(&system, pid)
+}
+
+pub(super) fn kill_registered_listener(port: u16, expected: ListenerProcess) {
+    let Some(pid) = single_listener_pid(port) else {
+        tracing::info!("[preview] kill: port {} has no single listener", port);
         return;
-    }
-
-    // PID → PGID (via `ps`). Deduplicate so we don't send the same signal twice.
-    let pgids: std::collections::HashSet<i32> =
-        pids.iter().filter_map(|pid| pgid_for(*pid)).collect();
-
-    if pgids.is_empty() {
+    };
+    let system = process_system();
+    let current = fingerprint(&system, pid);
+    if !listener_matches(expected, current) {
         tracing::info!(
-            "[preview] kill: no process groups resolved for pids {:?}",
-            pids
+            "[preview] kill: listener changed on port {} expected={:?} current={:?}",
+            port,
+            expected,
+            current
         );
         return;
     }
 
-    #[cfg(unix)]
-    {
-        use std::process::Command;
-
-        // First pass: SIGTERM. Gives the shell wrapper + agent watcher a
-        // chance to unwind cleanly (flush stdout, emit SIGCHLD, etc.).
-        for pgid in &pgids {
-            let _ = Command::new("kill")
-                .args(["-TERM", &format!("-{}", pgid)])
-                .output();
-            tracing::info!("[preview] SIGTERM pgid={}", pgid);
-        }
-
-        // Give it half a second to exit politely, then SIGKILL survivors.
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        for pgid in &pgids {
-            let _ = Command::new("kill")
-                .args(["-KILL", &format!("-{}", pgid)])
-                .output();
-            tracing::info!("[preview] SIGKILL pgid={}", pgid);
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        // Windows fallback: taskkill /T kills the process tree rooted at each PID.
-        for pid in pids {
-            let _ = crate::process::env::std_command("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .output();
-        }
-        let _ = pgids; // unused on non-unix
-    }
+    let killed = system
+        .process(Pid::from_u32(expected.pid))
+        .is_some_and(|process| process.kill());
+    tracing::info!(
+        "[preview] kill: listener pid={} port={} killed={}",
+        expected.pid,
+        port,
+        killed
+    );
 }
 
-/// Convenience wrapper for a single port.
-pub(super) fn kill_port(port: u16) {
-    kill_pids_on_ports(&[port]);
+fn listener_matches(expected: ListenerProcess, current: Option<ListenerProcess>) -> bool {
+    current == Some(expected)
 }
 
-/// Resolve a PID to its process-group ID via `ps -o pgid= -p PID`.
 #[cfg(unix)]
-fn pgid_for(pid: u32) -> Option<i32> {
-    let out = std::process::Command::new("ps")
-        .args(["-o", "pgid=", "-p", &pid.to_string()])
+fn single_listener_pid(port: u16) -> Option<u32> {
+    use std::process::Command;
+    let out = Command::new("lsof")
+        .args(["-nP", "-ti", &format!("tcp:{port}"), "-sTCP:LISTEN"])
         .output()
         .ok()?;
-    String::from_utf8(out.stdout)
-        .ok()?
-        .trim()
-        .parse::<i32>()
-        .ok()
+    let mut pids = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    match pids.as_slice() {
+        [pid] => Some(*pid),
+        _ => None,
+    }
 }
 
 #[cfg(not(unix))]
-fn pgid_for(_pid: u32) -> Option<i32> {
+fn single_listener_pid(_port: u16) -> Option<u32> {
     None
 }
 
-#[cfg(unix)]
-fn pids_listening_on(ports: &[u16]) -> Vec<u32> {
-    use std::process::Command;
-    let mut pids = Vec::new();
-    for port in ports {
-        let out = match Command::new("lsof")
-            .args(["-nP", "-ti", &format!("tcp:{}", port), "-sTCP:LISTEN"])
-            .output()
-        {
-            Ok(o) => o,
-            Err(_) => continue,
-        };
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            if let Ok(pid) = line.trim().parse::<u32>() {
-                pids.push(pid);
-            }
-        }
-    }
-    pids.sort_unstable();
-    pids.dedup();
-    pids
+fn process_system() -> System {
+    let mut system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+    );
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    system
 }
 
-#[cfg(not(unix))]
-fn pids_listening_on(_ports: &[u16]) -> Vec<u32> {
-    // TODO: Windows via `netstat -ano` parsing.
-    Vec::new()
+fn fingerprint(system: &System, pid: u32) -> Option<ListenerProcess> {
+    system
+        .process(Pid::from_u32(pid))
+        .map(|process| ListenerProcess {
+            pid,
+            start_time: process.start_time(),
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_requires_the_registered_pid_and_start_time() {
+        let expected = ListenerProcess {
+            pid: 123,
+            start_time: 456,
+        };
+
+        assert!(!listener_matches(expected, None));
+        assert!(!listener_matches(
+            expected,
+            Some(ListenerProcess {
+                pid: 124,
+                start_time: 456,
+            })
+        ));
+        assert!(!listener_matches(
+            expected,
+            Some(ListenerProcess {
+                pid: 123,
+                start_time: 457,
+            })
+        ));
+        assert!(listener_matches(expected, Some(expected)));
+    }
 }
