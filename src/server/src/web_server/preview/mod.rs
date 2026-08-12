@@ -42,6 +42,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use common::previews::{PreviewEntry, PreviewTarget, ShareCodeError};
+use futures_util::future::join_all;
 use serde::Deserialize;
 
 pub(super) use assets::{
@@ -92,7 +93,7 @@ pub(super) async fn owner_preview_response(
             server_preview_local_only().into_response()
         }
         Some(_) if owner_access_allowed(&req) => {
-            let previews = owner_preview_snapshots(include_server_previews);
+            let previews = active_preview_snapshots(include_server_previews).await;
             let mut response = match tokio::fs::read_to_string(web_dist.join("index.html")).await {
                 Ok(html) => render_owner_app(
                     html,
@@ -130,7 +131,7 @@ pub async fn owner_preview_bootstrap_handler(Path(slug): Path<String>, req: Requ
                 let include_server_previews = crate::web_server::auth::request_is_loopback(&req);
                 Json(owner_preview_bootstrap(
                     &slug,
-                    &owner_preview_snapshots(include_server_previews),
+                    &active_preview_snapshots(include_server_previews).await,
                     preview_server_host(&req, include_server_previews),
                 ))
                 .into_response()
@@ -164,11 +165,43 @@ pub async fn owner_preview_content_handler(Path(slug): Path<String>, req: Reques
     no_store(response)
 }
 
-fn owner_preview_snapshots(include_servers: bool) -> Vec<common::previews::PreviewSnapshot> {
-    common::previews::list_snapshots()
-        .into_iter()
-        .filter(|preview| include_servers || preview.kind != "server")
-        .collect()
+pub(super) async fn active_preview_snapshots(
+    include_servers: bool,
+) -> Vec<common::previews::PreviewSnapshot> {
+    join_all(
+        common::previews::list_snapshots()
+            .into_iter()
+            .map(|preview| async move {
+                match preview.port {
+                    None => Some(preview),
+                    Some(_) if !include_servers => None,
+                    Some(port) if server_port_is_listening(port).await => Some(preview),
+                    Some(_) => None,
+                }
+            }),
+    )
+    .await
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+async fn server_port_is_listening(port: u16) -> bool {
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::time::Duration;
+
+    let ipv4 = tokio::net::TcpStream::connect(SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
+    let ipv6 = tokio::net::TcpStream::connect(SocketAddr::from((Ipv6Addr::LOCALHOST, port)));
+    tokio::pin!(ipv4, ipv6);
+
+    tokio::time::timeout(Duration::from_millis(250), async {
+        tokio::select! {
+            result = &mut ipv4 => result.is_ok() || ipv6.await.is_ok(),
+            result = &mut ipv6 => result.is_ok() || ipv4.await.is_ok(),
+        }
+    })
+    .await
+    .unwrap_or(false)
 }
 
 fn preview_server_host(req: &Request, local: bool) -> &'static str {

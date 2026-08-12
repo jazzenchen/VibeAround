@@ -8,8 +8,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use super::{
-    owner_access_allowed, owner_preview_bootstrap_handler, owner_preview_content_handler,
-    owner_preview_response, owner_preview_snapshots, share_preview_handler,
+    active_preview_snapshots, owner_access_allowed, owner_preview_bootstrap_handler,
+    owner_preview_content_handler, owner_preview_response, share_preview_handler,
     verify_share_code_handler, ShareCodeForm,
 };
 
@@ -419,7 +419,9 @@ async fn failed_access_codes_are_rate_limited_per_share_link() {
 #[tokio::test]
 async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     let dir = unique_temp_dir("owner");
-    let owner_slug = common::previews::ensure_server(4212, dir.clone(), "owner".into(), None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let owner_slug = common::previews::ensure_server(port, dir.clone(), "owner".into(), None);
     let file = dir.join("other.md");
     std::fs::write(&file, "other").unwrap();
     let (file_owner_slug, share) = common::previews::ensure_file(file, dir, "other".into());
@@ -457,7 +459,7 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     let local_body = to_bytes(local.into_body(), usize::MAX).await.unwrap();
     let local_body = String::from_utf8(local_body.to_vec()).unwrap();
     assert!(local_body.contains("data-preview-spa"));
-    assert!(local_csp.contains("frame-src 'self' http://127.0.0.1:4212"));
+    assert!(local_csp.contains(&format!("frame-src 'self' http://127.0.0.1:{port}")));
     assert!(!local_body.contains(&share.id));
     assert!(!local_body.contains(&share.code));
 
@@ -476,7 +478,7 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|preview| preview["src"] == "http://127.0.0.1:4212/"));
+        .any(|preview| preview["src"] == format!("http://127.0.0.1:{port}/")));
     assert!(!bootstrap.to_string().contains(&share.id));
     assert!(!bootstrap.to_string().contains(&share.code));
 
@@ -507,15 +509,57 @@ async fn server_preview_is_local_only_and_accepts_only_owner_slug() {
     assert_eq!(public_content.status(), StatusCode::FORBIDDEN);
     assert!(public_content.headers().get("set-cookie").is_none());
 
-    let share_route =
-        share_preview_handler(Path(owner_slug), local_request("preview.example.com")).await;
+    let share_route = share_preview_handler(
+        Path(owner_slug.clone()),
+        local_request("preview.example.com"),
+    )
+    .await;
     assert_eq!(share_route.status(), StatusCode::NOT_FOUND);
 
-    let remote_options = owner_preview_snapshots(false);
+    let remote_options = active_preview_snapshots(false).await;
     assert!(remote_options.iter().all(|preview| preview.kind == "file"));
     assert!(remote_options
         .iter()
         .any(|preview| preview.slug == file_owner_slug));
+}
+
+#[tokio::test]
+async fn active_previews_omit_server_after_listener_closes() {
+    let dir = unique_temp_dir("stale-server");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server_slug = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let file = dir.join("active.md");
+    std::fs::write(&file, "active").unwrap();
+    let (file_slug, _) = common::previews::ensure_file(file, dir, "file".into());
+
+    let listening = active_preview_snapshots(true).await;
+    assert!(listening.iter().any(|preview| preview.slug == server_slug));
+    assert!(listening.iter().any(|preview| preview.slug == file_slug));
+
+    drop(listener);
+    let active = active_preview_snapshots(true).await;
+    assert!(active.iter().all(|preview| preview.slug != server_slug));
+    assert!(active.iter().any(|preview| preview.slug == file_slug));
+
+    let stale_bootstrap =
+        owner_preview_bootstrap_handler(Path(file_slug.clone()), local_request("127.0.0.1:12358"))
+            .await;
+    assert_eq!(stale_bootstrap.status(), StatusCode::OK);
+    let stale_bootstrap_body = to_bytes(stale_bootstrap.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let stale_bootstrap: serde_json::Value = serde_json::from_slice(&stale_bootstrap_body).unwrap();
+    assert!(stale_bootstrap["previews"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|preview| preview["slug"] != server_slug));
+    assert!(stale_bootstrap["previews"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|preview| preview["slug"] == file_slug));
 }
 
 #[tokio::test]

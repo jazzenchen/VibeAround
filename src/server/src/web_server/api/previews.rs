@@ -9,7 +9,7 @@ use crate::web_server::AppState;
 
 /// GET /api/previews -- list all live preview sessions and the active tunnel URL.
 pub async fn list_previews_handler(State(state): State<AppState>) -> Response {
-    let previews = common::previews::list_snapshots();
+    let previews = crate::web_server::preview::active_preview_snapshots(true).await;
     let tunnel_url = state.tunnels.first_url();
     let mut response = Json(crate::api_types::PreviewsResponse {
         previews,
