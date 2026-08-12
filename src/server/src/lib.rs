@@ -274,7 +274,7 @@ impl ServerDaemon {
         // path (no matches) and prevents phantom children from hogging ports
         // or auth sockets.
         child_registry::orphan_sweep();
-        common::previews::reconcile_server_leases();
+        common::previews::reconcile_registrations();
 
         let web_listener = bind_web_listener(self.port).await?;
 

@@ -17,7 +17,7 @@
 //!
 //! URL structure (all routes under `/va/`):
 //!
-//! - Owner: `/preview/u/{slug}`        — permanent for the daemon lifetime
+//! - Owner: `/preview/u/{slug}`        — restored while its target remains valid
 //! - File share: `/preview/s/{share_id}` — access-code gate
 //!
 //! One `HashMap<PathBuf, PreviewSession>` backs everything. Lookups by
@@ -31,10 +31,10 @@
 //! - [`types`] — public data model (`PreviewTarget`, `PreviewEntry`, …).
 //! - [`store`] — internal session storage + slug/share-key generation.
 //! - [`kill`]  — port-driven process-group SIGKILL helpers.
-//! - [`lease`] — durable Server-listener projection for crash recovery.
+//! - [`registrations`] — durable File and Server registration projection.
 
 mod kill;
-mod lease;
+mod registrations;
 mod store;
 mod types;
 
@@ -98,7 +98,6 @@ fn ensure_session(
     owner_session: Option<String>,
     listener: Option<ListenerProcess>,
 ) -> (String, Option<PreviewShare>) {
-    let persist_server = matches!(target, PreviewTarget::Server { .. });
     let slug = slug_from_path(&id);
     let now = Instant::now();
 
@@ -158,9 +157,7 @@ fn ensure_session(
         None
     };
 
-    if persist_server {
-        lease::persist_active(&sessions);
-    }
+    registrations::persist_active(&sessions);
     (slug, share)
 }
 
@@ -427,7 +424,7 @@ pub fn kill_by_session(session_id: &str) {
         }
     }
 
-    lease::persist_active(&SESSIONS.lock());
+    registrations::persist_active(&SESSIONS.lock());
 }
 
 /// Close a single preview session. A Server listener is killed only when its
@@ -454,13 +451,10 @@ pub fn delete_session(slug: &str) -> bool {
     };
 
     // Kill the port if Server — best effort.
-    let was_server = matches!(&session.target, PreviewTarget::Server { .. });
     if let (PreviewTarget::Server { port }, Some(listener)) = (session.target, session.listener) {
         kill::kill_registered_listener(port, listener);
     }
-    if was_server {
-        lease::persist_active(&SESSIONS.lock());
-    }
+    registrations::persist_active(&SESSIONS.lock());
     true
 }
 
@@ -480,23 +474,24 @@ pub fn tracked_ports() -> Vec<u16> {
         .collect()
 }
 
-/// Restore Server previews left by an unclean daemon exit. A lease is restored
-/// only when the current listener has the same PID and process start time.
-pub fn reconcile_server_leases() {
-    let path = lease::activate_path();
+/// Restore durable File registrations and Server previews left by an unclean
+/// daemon exit. Server ownership still requires the exact listener fingerprint.
+pub fn reconcile_registrations() {
+    let path = registrations::activate_path();
     let mut sessions = SESSIONS.lock();
-    match lease::reconcile_at(path, &mut sessions, kill::listener_process) {
+    match registrations::reconcile_at(path, &mut sessions, kill::listener_process) {
         Ok(0) => {}
-        Ok(count) => tracing::info!("[preview] restored {} Server preview lease(s)", count),
+        Ok(count) => tracing::info!("[preview] restored {} preview registration(s)", count),
         Err(error) => {
-            tracing::warn!(path = ?path, error = %error, "failed to reconcile Server preview leases");
-            lease::persist_active(&sessions);
+            tracing::warn!(path = ?path, error = %error, "failed to reconcile Preview registrations");
+            registrations::persist_active(&sessions);
         }
     }
 }
 
 /// Kill each registered Server listener whose PID and start time still match.
-/// Best-effort; failures are logged. Clears the session map.
+/// Best-effort; failures are logged. Durable File registrations are retained,
+/// then the in-memory session map is cleared.
 pub fn shutdown_kill_all_ports() {
     let listeners: Vec<(u16, ListenerProcess)> = SESSIONS
         .lock()
@@ -516,8 +511,9 @@ pub fn shutdown_kill_all_ports() {
         }
     }
     let mut sessions = SESSIONS.lock();
+    sessions.retain(|_, session| matches!(session.target, PreviewTarget::File));
+    registrations::persist_active(&sessions);
     sessions.clear();
-    lease::persist_active(&sessions);
 }
 
 #[cfg(test)]
