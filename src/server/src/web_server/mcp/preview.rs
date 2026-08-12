@@ -86,10 +86,18 @@ pub(super) async fn mcp_preview_start(
             &format!("Failed to initialize Preview conversation: {error:#}"),
         );
     }
-    let owner_url = format!(
+    let local_owner_url = format!(
         "http://127.0.0.1:{}/va/preview/u/{}",
         state.port, owner_slug
     );
+    let tunnel_owner = state
+        .tunnels
+        .first_url()
+        .map(|base| build_preview_url(&base, "preview/u", &owner_slug));
+    let tunnel_owner_line = tunnel_owner
+        .as_deref()
+        .map(|url| format!("Tunnel owner: `{url}`"))
+        .unwrap_or_else(|| "Tunnel owner: unavailable (no tunnel is running)".to_string());
     let review_bridge_url = format!(
         "http://127.0.0.1:{}{}",
         state.port,
@@ -106,11 +114,12 @@ pub(super) async fn mcp_preview_start(
         &format!(
             "Preview ready.\n\n\
              Local owner: `{}`\n\
+             {}\n\
              Port: {}\n\
              Text and element review bridge (optional, dev-only):\n\
              `<script src=\"{}\"></script>`\n\
              Public sharing is unavailable for live server previews.{}",
-            owner_url, port, review_bridge_url, session_hint
+            local_owner_url, tunnel_owner_line, port, review_bridge_url, session_hint
         ),
     )
 }

@@ -61,7 +61,6 @@ export function Previews() {
       <PageHeader
         icon={<Eye className="w-4 h-4 text-primary" />}
         title={t("Previews")}
-        description={t("Live server previews are local-only. Markdown owner links require owner access; share links and access codes expire together.")}
         actions={(
           <Button
             type="button"
@@ -126,7 +125,7 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
     : null;
 
   const localOwnerUrl = `${localBase}${ownerPath}`;
-  const tunnelOwnerUrl = !isServer && tunnelUrl ? `${tunnelUrl}${ownerPath}` : null;
+  const tunnelOwnerUrl = tunnelUrl ? `${tunnelUrl}${ownerPath}` : null;
   const tunnelShareUrl = tunnelUrl && sharePath ? `${tunnelUrl}${sharePath}` : null;
   const shareMessage = tunnelShareUrl && preview.share_code && preview.share_expires_at_ms
     ? t("Access code: {{code}} (reusable by multiple viewers until expiry)\nVibeAround Preview: {{title}}\n{{url}}\nExpires: {{expires}}", {
@@ -159,11 +158,6 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
               >
                 {preview.kind}
               </Badge>
-              {isServer && (
-                <Badge variant="secondary" className="text-[10px]">
-                  {t("Local only")}
-                </Badge>
-              )}
               {preview.port != null && (
                 <Badge variant="secondary" className="text-[10px] font-mono">
                   :{preview.port}
@@ -198,15 +192,15 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
           icon={<ExternalLink className="w-3 h-3" />}
           openUrl={openExternalUrl}
         />
+        <UrlButton
+          label={t("Tunnel · owner")}
+          url={tunnelOwnerUrl}
+          icon={<Globe className="w-3 h-3" />}
+          openUrl={openExternalUrl}
+          disabledReason={tunnelOwnerUrl ? null : t("Tunnel not running")}
+        />
         {!isServer && (
           <>
-            <UrlButton
-              label={t("Tunnel · owner")}
-              url={tunnelOwnerUrl}
-              icon={<Globe className="w-3 h-3" />}
-              openUrl={openExternalUrl}
-              disabledReason={tunnelOwnerUrl ? null : t("Tunnel not running")}
-            />
             <UrlButton
               label={t("Tunnel · share")}
               url={tunnelShareUrl}
