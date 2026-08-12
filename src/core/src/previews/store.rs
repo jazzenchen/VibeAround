@@ -11,12 +11,13 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use rand::rngs::OsRng;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use crate::workspace::threads::WorkspaceThreadId;
 
 use super::types::{PreviewEntry, PreviewTarget};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ListenerProcess {
     pub(super) pid: u32,
     pub(super) start_time: u64,

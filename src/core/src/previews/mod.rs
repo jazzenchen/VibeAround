@@ -31,8 +31,10 @@
 //! - [`types`] — public data model (`PreviewTarget`, `PreviewEntry`, …).
 //! - [`store`] — internal session storage + slug/share-key generation.
 //! - [`kill`]  — port-driven process-group SIGKILL helpers.
+//! - [`lease`] — durable Server-listener projection for crash recovery.
 
 mod kill;
+mod lease;
 mod store;
 mod types;
 
@@ -96,6 +98,7 @@ fn ensure_session(
     owner_session: Option<String>,
     listener: Option<ListenerProcess>,
 ) -> (String, Option<PreviewShare>) {
+    let persist_server = matches!(target, PreviewTarget::Server { .. });
     let slug = slug_from_path(&id);
     let now = Instant::now();
 
@@ -155,6 +158,9 @@ fn ensure_session(
         None
     };
 
+    if persist_server {
+        lease::persist_active(&sessions);
+    }
     (slug, share)
 }
 
@@ -420,6 +426,8 @@ pub fn kill_by_session(session_id: &str) {
             }
         }
     }
+
+    lease::persist_active(&SESSIONS.lock());
 }
 
 /// Close a single preview session. A Server listener is killed only when its
@@ -434,10 +442,11 @@ pub fn delete_session(slug: &str) -> bool {
             .iter()
             .find(|(_, s)| s.slug == slug)
             .map(|(k, _)| k.clone());
-        match key {
+        let removed = match key {
             Some(k) => sessions.remove(&k),
             None => None,
-        }
+        };
+        removed
     };
 
     let Some(session) = removed else {
@@ -445,8 +454,12 @@ pub fn delete_session(slug: &str) -> bool {
     };
 
     // Kill the port if Server — best effort.
+    let was_server = matches!(&session.target, PreviewTarget::Server { .. });
     if let (PreviewTarget::Server { port }, Some(listener)) = (session.target, session.listener) {
         kill::kill_registered_listener(port, listener);
+    }
+    if was_server {
+        lease::persist_active(&SESSIONS.lock());
     }
     true
 }
@@ -465,6 +478,21 @@ pub fn tracked_ports() -> Vec<u16> {
             PreviewTarget::File => None,
         })
         .collect()
+}
+
+/// Restore Server previews left by an unclean daemon exit. A lease is restored
+/// only when the current listener has the same PID and process start time.
+pub fn reconcile_server_leases() {
+    let path = lease::activate_path();
+    let mut sessions = SESSIONS.lock();
+    match lease::reconcile_at(path, &mut sessions, kill::listener_process) {
+        Ok(0) => {}
+        Ok(count) => tracing::info!("[preview] restored {} Server preview lease(s)", count),
+        Err(error) => {
+            tracing::warn!(path = ?path, error = %error, "failed to reconcile Server preview leases");
+            lease::persist_active(&sessions);
+        }
+    }
 }
 
 /// Kill each registered Server listener whose PID and start time still match.
@@ -487,7 +515,9 @@ pub fn shutdown_kill_all_ports() {
             kill::kill_registered_listener(port, listener);
         }
     }
-    SESSIONS.lock().clear();
+    let mut sessions = SESSIONS.lock();
+    sessions.clear();
+    lease::persist_active(&sessions);
 }
 
 #[cfg(test)]
