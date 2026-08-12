@@ -45,8 +45,10 @@ pub(super) fn owner_preview_bootstrap(
                 workspace: preview.workspace.display().to_string(),
                 kind: preview.kind,
                 src: preview_src(&preview.slug, preview.port, server_host),
-                chat_available: common::previews::owner_conversation_thread_id(&preview.slug)
-                    .is_some(),
+                // Chat is an owner Preview capability. The socket resolves an
+                // existing child by slug or creates a standalone child when
+                // no prior conversation exists.
+                chat_available: true,
             })
             .collect(),
     }

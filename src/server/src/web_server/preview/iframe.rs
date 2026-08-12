@@ -30,14 +30,13 @@ pub(super) fn render_owner_app(
 /// Render one already-authorized iframe target.
 pub(super) async fn render_owner_content(
     entry: PreviewEntry,
-    annotations_enabled: bool,
 ) -> Result<Response, (StatusCode, String)> {
     match &entry.target {
         PreviewTarget::Server { .. } => Err((
             StatusCode::BAD_REQUEST,
             "Live server previews load directly from their local origin.".to_string(),
         )),
-        PreviewTarget::File => render_md_content(&entry, annotations_enabled).await,
+        PreviewTarget::File => render_md_content(&entry).await,
     }
 }
 

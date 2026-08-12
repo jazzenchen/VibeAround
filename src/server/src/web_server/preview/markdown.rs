@@ -19,21 +19,19 @@ const MARKDOWN_CLIENT_JS: &str = include_str!("markdown_client.js");
 
 /// Render a standalone shared Markdown page with its title/timer toolbar.
 pub(super) async fn render_md_page(entry: &PreviewEntry) -> Result<Response, (StatusCode, String)> {
-    render_md(entry, true, false).await
+    render_md(entry, true).await
 }
 
 /// Render owner Markdown content inside the owner app iframe.
 pub(super) async fn render_md_content(
     entry: &PreviewEntry,
-    annotations_enabled: bool,
 ) -> Result<Response, (StatusCode, String)> {
-    render_md(entry, false, annotations_enabled).await
+    render_md(entry, false).await
 }
 
 async fn render_md(
     entry: &PreviewEntry,
     standalone: bool,
-    annotations_enabled: bool,
 ) -> Result<Response, (StatusCode, String)> {
     let file_path = match &entry.target {
         PreviewTarget::File => &entry.id,
@@ -84,7 +82,7 @@ async fn render_md(
     } else {
         String::new()
     };
-    let selection_script = if annotations_enabled {
+    let selection_script = if !standalone {
         format!(
             r#"<script nonce="{nonce}" src="{}"></script>"#,
             review_bridge_script_href()

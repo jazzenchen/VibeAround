@@ -35,11 +35,7 @@ async fn render(markdown: &str, title: &str, expires_at: Option<Instant>) -> (He
     (headers, String::from_utf8(body.to_vec()).unwrap())
 }
 
-async fn render_embedded(
-    markdown: &str,
-    title: &str,
-    annotations_enabled: bool,
-) -> (HeaderMap, String) {
+async fn render_embedded(markdown: &str, title: &str) -> (HeaderMap, String) {
     let workspace = unique_temp_dir();
     let file = workspace.join("preview.md");
     std::fs::write(&file, markdown).unwrap();
@@ -52,9 +48,7 @@ async fn render_embedded(
         expires_at: None,
     };
 
-    let response = render_md_content(&entry, annotations_enabled)
-        .await
-        .unwrap();
+    let response = render_md_content(&entry).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let headers = response.headers().clone();
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -234,8 +228,7 @@ async fn markdown_page_encodes_html_breakouts_before_the_browser_parses_the_page
 
 #[tokio::test]
 async fn embedded_owner_and_share_markdown_share_content_security_policy() {
-    let (owner_headers, owner_body) = render_embedded("owner", "Owner", true).await;
-    let (_, unbound_owner_body) = render_embedded("unbound", "Unbound", false).await;
+    let (owner_headers, owner_body) = render_embedded("owner", "Owner").await;
     let (share_headers, share_body) = render(
         "share",
         "Share",
@@ -254,7 +247,6 @@ async fn embedded_owner_and_share_markdown_share_content_security_policy() {
     assert!(!owner_body.contains("id=\"timer\""));
     assert!(!owner_body.contains("class=\"toolbar\""));
     assert!(owner_body.contains("/va/preview/assets/review-bridge-"));
-    assert!(!unbound_owner_body.contains("/va/preview/assets/review-bridge-"));
     assert!(share_body.contains("id=\"timer\""));
     assert!(!share_body.contains("va.preview.markdown-selection"));
     assert!(!share_body.contains("preview-comment-trigger"));

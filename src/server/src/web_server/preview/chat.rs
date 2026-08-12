@@ -111,7 +111,7 @@ async fn resolve_owner_chat_thread_id(
     let runtime = match hinted_runtime {
         Some(runtime) => runtime,
         None => manager
-            .resolve_route_runtime(route)
+            .ensure_preview_web_thread(None, slug)
             .await
             .map_err(|_| preview_conversation_unavailable())?,
     };
