@@ -100,7 +100,7 @@
     root = host.attachShadow({ mode: "closed" });
     host.dataset.html2canvasIgnore = "true";
     root.innerHTML = `<style>.box{position:fixed;border:2px solid #0d9488;background:#14b8a61f;border-radius:4px;pointer-events:none}
-      .hover{border-style:dashed;background:#14b8a612}.hover-label{position:fixed;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:4px;background:#0f766e;color:#fff;padding:3px 7px;font:600 11px system-ui;pointer-events:none}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}button[hidden],.hover-label[hidden]{display:none}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.focus{outline:3px solid #0d948859;outline-offset:2px}
+      .hover{border-style:dashed;background:#14b8a612}.hover-label{position:fixed;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:4px;background:#0f766e;color:#fff;padding:3px 7px;font:600 11px system-ui;pointer-events:none}button{position:fixed;border:1px solid #99f6e4;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 2px 8px #0003;font:600 12px system-ui;pointer-events:auto;cursor:pointer}button[hidden],.hover-label[hidden]{display:none}.trigger{padding:6px 9px}.marker{display:grid;place-items:center;width:26px;height:26px;padding:0}.marker svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.region-pin::after{content:"";position:absolute;top:50%;width:14px;height:1px;background:#0d9488}.region-pin.pin-left::after{left:100%}.region-pin.pin-right::after{right:100%}.focus{outline:3px solid #0d948859;outline-offset:2px}
       .region{position:fixed;inset:0;pointer-events:auto;cursor:crosshair;touch-action:none;background:#14b8a60a}.region[hidden],.region-box[hidden],.region-status[hidden]{display:none}.region-box{position:fixed;border:2px dashed #0d9488;background:#14b8a61a;pointer-events:none}.region-status{position:fixed;left:50%;top:50%;translate:-50% -50%;border-radius:999px;background:#fff;color:#134e4a;box-shadow:0 4px 18px #0003;padding:8px 12px;font:600 12px system-ui;pointer-events:none}</style>
       <div class="box hover" hidden></div><div class="hover-label" hidden></div><button class="trigger" type="button" hidden>Comment</button>
       <div class="region" hidden><div class="region-box" hidden></div><div class="region-status" hidden>Capturing screenshot…</div></div>`;
@@ -180,6 +180,17 @@
       width: `${rect.width}px`, height: `${rect.height}px`,
     });
   }
+  function placeRegionPin(node, rect) {
+    if (!hasArea(rect) || !rectVisible(rect)) return void (node.hidden = true);
+    const pinLeft = rect.left >= 44;
+    node.hidden = false;
+    node.classList.toggle("pin-left", pinLeft);
+    node.classList.toggle("pin-right", !pinLeft);
+    node.style.left = `${pinLeft
+      ? Math.max(4, rect.left - 40)
+      : Math.min(innerWidth - 30, rect.right + 14)}px`;
+    node.style.top = `${Math.max(4, Math.min(innerHeight - 30, rect.top))}px`;
+  }
   function updateOverlays() {
     if (pending && !trigger.hidden) {
       const rect = rectFor(pending.selection);
@@ -191,7 +202,9 @@
     }
     for (const marker of markers.values()) {
       const rect = rectFor(marker.selection);
-      place(marker.highlight, rect, false); place(marker.button, rect, true);
+      if (marker.highlight) place(marker.highlight, rect, false);
+      if (marker.regionPin) placeRegionPin(marker.button, rect);
+      else place(marker.button, rect, true);
     }
     if (activeAnchor && channelId) {
       const rect = rectFor(activeAnchor.selection);
@@ -240,6 +253,7 @@
         width: rect.width,
         height: rect.height,
       },
+      element: elementFor(target),
     };
     const anchor = {
       kind: "region",
@@ -277,12 +291,22 @@
     const selection = selections.get(selectionId);
     if (!selection || !markerId) return;
     removeMarker(markerId);
-    const highlight = document.createElement("div");
+    const regionPin = Boolean(selection.region);
+    const markerSelection = regionPin ? { element: selection.element } : selection;
+    if (regionPin && !markerSelection.element) {
+      selections.delete(selectionId);
+      if (pending && pending.selectionId === selectionId) pending = null;
+      return;
+    }
+    const highlight = regionPin ? null : document.createElement("div");
     const button = document.createElement("button");
     const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     const iconPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    highlight.className = "box";
-    Object.assign(button, { className: "marker", type: "button" });
+    if (highlight) highlight.className = "box";
+    Object.assign(button, {
+      className: regionPin ? "marker region-pin" : "marker",
+      type: "button",
+    });
     button.setAttribute("aria-label", "Open comment");
     icon.setAttribute("viewBox", "0 0 24 24");
     icon.setAttribute("aria-hidden", "true");
@@ -291,11 +315,12 @@
     button.appendChild(icon);
     button.addEventListener("click", () => {
       if (pending) cancelPick(false);
-      activeAnchor = { id: markerId, selection };
-      post("marker-activate", { markerId, rect: messageRect(selection) });
+      activeAnchor = { id: markerId, selection: markerSelection };
+      post("marker-activate", { markerId, rect: messageRect(markerSelection) });
     });
-    root.append(highlight, button);
-    markers.set(markerId, { selection, highlight, button });
+    if (highlight) root.append(highlight);
+    root.append(button);
+    markers.set(markerId, { selection: markerSelection, highlight, button, regionPin });
     if (activeAnchor && activeAnchor.id === selectionId) activeAnchor = null;
     selections.delete(selectionId);
     if (pending && pending.selectionId === selectionId) pending = null;
@@ -305,7 +330,8 @@
   function removeMarker(markerId) {
     const marker = markers.get(markerId);
     if (!marker) return;
-    marker.highlight.remove(); marker.button.remove();
+    if (marker.highlight) marker.highlight.remove();
+    marker.button.remove();
     markers.delete(markerId);
     if (activeAnchor && activeAnchor.id === markerId) activeAnchor = null;
   }
@@ -315,17 +341,6 @@
     const rect = rectFor(marker.selection);
     if (!hasArea(rect)) return;
     activeAnchor = { id: markerId, selection: marker.selection, activateWhenVisible: true };
-    if (marker.selection.region) {
-      scrollTo({
-        left: marker.selection.region.documentX - (innerWidth - rect.width) / 2,
-        top: marker.selection.region.documentY - (innerHeight - rect.height) / 2,
-        behavior: "smooth",
-      });
-      marker.button.classList.add("focus");
-      setTimeout(() => marker.button.classList.remove("focus"), 1200);
-      updateOverlays();
-      return;
-    }
     const owner = marker.selection.element
       || elementFor(marker.selection.range.startContainer);
     owner.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });

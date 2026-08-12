@@ -41,13 +41,9 @@ pub(in crate::web_server) async fn theme_stylesheet_handler() -> Response {
 }
 
 pub(in crate::web_server) async fn review_bridge_script_handler() -> Response {
-    let mut script =
-        String::with_capacity(
-            HTML2CANVAS_SCRIPT.len()
-                + REVIEW_REGION_SCRIPT.len()
-                + REVIEW_BRIDGE_SCRIPT.len()
-                + 420,
-        );
+    let mut script = String::with_capacity(
+        HTML2CANVAS_SCRIPT.len() + REVIEW_REGION_SCRIPT.len() + REVIEW_BRIDGE_SCRIPT.len() + 420,
+    );
     script.push_str(
         "(()=>{const vaPreviewHtml2canvasDescriptor=Object.getOwnPropertyDescriptor(globalThis,\"html2canvas\");const module={exports:{}};const exports=module.exports;\n",
     );
@@ -188,6 +184,7 @@ mod tests {
         ));
         assert!(script.contains("Object.defineProperty(globalThis,\"html2canvas\""));
         assert!(script.contains("createPreviewRegionPicker"));
+        assert!(script.contains("region-pin"));
         assert!(script.contains("va-preview-review"));
         assert!(script.contains("Source line") || script.contains("startLine"));
     }
