@@ -7,7 +7,8 @@ use axum::http::{header, Method, Request, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::{
-    proxy_request, server_routing_cookie, signed_slug, verified_server_entry, SERVER_ROUTING_COOKIE,
+    proxy_request, server_routing_cookie, share_server_routing_cookie, signed_slug,
+    verified_server_entry, SERVER_ROUTING_COOKIE,
 };
 use crate::web_server::auth::AuthState;
 
@@ -48,9 +49,9 @@ fn unique_temp_dir(label: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn routing_cookie_is_signed_and_bound_to_the_daemon_token() {
+fn owner_routing_is_daemon_bound_and_share_routing_revalidates_the_grant() {
     let dir = unique_temp_dir("signature");
-    let (slug, _) = common::previews::ensure_server(4318, dir.clone(), "server".into(), None);
+    let (slug, share) = common::previews::ensure_server(4318, dir.clone(), "server".into(), None);
     let auth = auth_state();
     let other_auth = auth_state();
     let signed = signed_slug(&slug, &auth);
@@ -59,10 +60,36 @@ fn routing_cookie_is_signed_and_bound_to_the_daemon_token() {
     assert!(verified_server_entry(&signed, &other_auth).is_none());
     assert!(verified_server_entry(&format!("{signed}0"), &auth).is_none());
 
+    let (server_entry, grant) =
+        common::previews::verify_share_code(&share.id, &share.code).unwrap();
+    let share_cookie = share_server_routing_cookie(&share.id, &grant, &server_entry);
+    let share_route = share_cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .split_once('=')
+        .unwrap()
+        .1;
+    assert!(verified_server_entry(share_route, &auth).is_some());
+    assert!(verified_server_entry(share_route, &other_auth).is_some());
+    assert!(verified_server_entry(&format!("share:{}:wrong-grant", share.id), &auth).is_none());
+
     let file = dir.join("README.md");
     std::fs::write(&file, "readme").unwrap();
-    let (file_slug, _) = common::previews::ensure_file(file, dir.clone(), "file".into());
+    let (file_slug, file_share) = common::previews::ensure_file(file, dir.clone(), "file".into());
     assert!(verified_server_entry(&signed_slug(&file_slug, &auth), &auth).is_none());
+    let (file_entry, file_grant) =
+        common::previews::verify_share_code(&file_share.id, &file_share.code).unwrap();
+    let file_cookie = share_server_routing_cookie(&file_share.id, &file_grant, &file_entry);
+    let file_route = file_cookie
+        .split(';')
+        .next()
+        .unwrap()
+        .split_once('=')
+        .unwrap()
+        .1;
+    assert!(verified_server_entry(file_route, &auth).is_none());
+    assert!(verified_server_entry(&format!("share:{}:{file_grant}", share.id), &auth).is_none());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -131,9 +158,10 @@ async fn proxies_static_path_and_query_without_forwarding_credentials() {
         }
     });
     let dir = unique_temp_dir("static");
-    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let (_, share) = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
     let auth = auth_state();
-    let cookie = server_routing_cookie(&slug, &auth)
+    let (entry, grant) = common::previews::verify_share_code(&share.id, &share.code).unwrap();
+    let cookie = share_server_routing_cookie(&share.id, &grant, &entry)
         .split(';')
         .next()
         .unwrap()
@@ -188,6 +216,8 @@ async fn proxies_static_path_and_query_without_forwarding_credentials() {
     assert!(upstream_request.contains("range: bytes=0-1"));
     assert!(!upstream_request.contains("owner-secret"));
     assert!(!upstream_request.contains("va_preview_server"));
+    assert!(!upstream_request.contains(&share.id));
+    assert!(!upstream_request.contains(&grant));
     assert!(!upstream_request.contains("origin:"));
     assert!(!upstream_request.contains("referer:"));
     std::fs::remove_dir_all(dir).unwrap();
@@ -247,4 +277,23 @@ fn cookie_header_uses_the_root_path_without_exposing_the_owner_token() {
     assert!(cookie.contains("Secure"));
     assert!(cookie.contains("HttpOnly"));
     assert!(!cookie.contains(auth.0.as_str()));
+}
+
+#[test]
+fn share_cookie_uses_the_existing_grant_and_share_deadline() {
+    let dir = unique_temp_dir("share-cookie");
+    let (_, share) = common::previews::ensure_server(4319, dir.clone(), "server".into(), None);
+    let (entry, grant) = common::previews::verify_share_code(&share.id, &share.code).unwrap();
+    let cookie = share_server_routing_cookie(&share.id, &grant, &entry);
+
+    assert!(cookie.starts_with(&format!(
+        "{SERVER_ROUTING_COOKIE}=share:{}:{grant};",
+        share.id
+    )));
+    assert!(cookie.contains("Path=/"));
+    assert!(cookie.contains("Max-Age="));
+    assert!(cookie.contains("Secure"));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(!cookie.contains(&share.code));
+    std::fs::remove_dir_all(dir).unwrap();
 }

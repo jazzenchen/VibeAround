@@ -342,6 +342,91 @@ async fn public_share_requires_access_code_and_issues_scoped_grant() {
 }
 
 #[tokio::test]
+async fn public_server_share_uses_the_existing_code_and_grant_without_owner_ui() {
+    let dir = unique_temp_dir("server-share");
+    let (owner_slug, share) =
+        common::previews::ensure_server(4320, dir.clone(), "Shared server".into(), None);
+
+    let gate =
+        share_preview_handler(Path(share.id.clone()), local_request("preview.example.com")).await;
+    assert_eq!(gate.status(), StatusCode::OK);
+    let gate_body = to_bytes(gate.into_body(), usize::MAX).await.unwrap();
+    assert!(String::from_utf8(gate_body.to_vec())
+        .unwrap()
+        .contains("Enter access code"));
+
+    // A loopback request does not silently turn a public Server share into
+    // owner access; Server shares still enter through the same code gate.
+    let local_gate =
+        share_preview_handler(Path(share.id.clone()), local_request("127.0.0.1:12358")).await;
+    let local_gate_body = to_bytes(local_gate.into_body(), usize::MAX).await.unwrap();
+    assert!(String::from_utf8(local_gate_body.to_vec())
+        .unwrap()
+        .contains("Enter access code"));
+
+    let verified = verify_share_code_handler(
+        Path(share.id.clone()),
+        Ok(Form(ShareCodeForm {
+            code: share.code.clone(),
+        })),
+    )
+    .await;
+    assert_eq!(verified.status(), StatusCode::SEE_OTHER);
+    let grant_cookie = verified
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let grant = grant_cookie.split_once('=').unwrap().1.to_string();
+
+    let mut authorized_request = local_request("preview.example.com");
+    authorized_request
+        .headers_mut()
+        .insert("cookie", grant_cookie.parse().unwrap());
+    let response = share_preview_handler(Path(share.id.clone()), authorized_request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let root_cookie = response
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(root_cookie.starts_with(&format!("va_preview_server=share:{}:{grant};", share.id)));
+    assert!(root_cookie.contains("Path=/"));
+    assert!(root_cookie.contains("Max-Age="));
+    assert!(root_cookie.contains("Secure"));
+    assert!(root_cookie.contains("HttpOnly"));
+    assert!(!root_cookie.contains(&share.code));
+    assert!(!root_cookie.contains(&owner_slug));
+
+    let csp = response
+        .headers()
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("frame-src 'self'"));
+    assert!(csp.contains("form-action 'none'"));
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    assert!(body.contains("<iframe src=\"/\""));
+    assert!(body.contains("Shared server"));
+    assert!(!body.contains("data-preview-spa"));
+    assert!(!body.contains("review-bridge"));
+    assert!(!body.contains("chat"));
+    assert!(!body.contains(&share.id));
+    assert!(!body.contains(&grant));
+    assert!(!body.contains(&owner_slug));
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn access_code_form_is_extracted_through_the_real_route() {
     let dir = unique_temp_dir("share-form");
     let file = dir.join("form.md");

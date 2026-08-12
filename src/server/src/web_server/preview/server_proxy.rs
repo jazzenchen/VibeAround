@@ -1,10 +1,12 @@
-//! Same-origin page and static-resource proxy for remote owner Server previews.
+//! Same-origin page and static-resource proxy for remote Server previews.
 //!
-//! The owner-only `/content` route selects one live Server preview by setting a
-//! signed, daemon-lifetime routing cookie. Root requests then retain their
-//! original path and query while this module forwards them to the selected
-//! loopback dev server. This intentionally does not proxy APIs, workers,
-//! WebSockets, or writes.
+//! An owner `/content` route or an authorized public share selects one live
+//! Server preview by setting a root-scoped routing cookie. Root requests then
+//! retain their original path and query while this module forwards them to the
+//! selected loopback dev server. Owner routing stays signed to the daemon;
+//! share routing carries the existing browser grant and revalidates it on every
+//! request. This intentionally does not proxy APIs, workers, WebSockets, or
+//! writes.
 
 use axum::body::Body;
 use axum::extract::{Extension, Request};
@@ -17,8 +19,10 @@ use common::previews::PreviewTarget;
 use crate::web_server::auth::AuthState;
 
 use super::access::extract_cookie;
+use super::toolbar::{escape_html, remaining_millis};
 
 const SERVER_ROUTING_COOKIE: &str = "va_preview_server";
+const SHARE_ROUTE_PREFIX: &str = "share:";
 
 #[derive(Clone)]
 pub(in crate::web_server) struct ServerProxyState {
@@ -41,6 +45,47 @@ pub(super) fn owner_server_content_response(slug: &str, req: &Request) -> Respon
         .header(header::SET_COOKIE, server_routing_cookie(slug, auth))
         .body(Body::empty())
         .expect("valid Server Preview redirect")
+}
+
+pub(super) fn share_server_content_response(
+    share_id: &str,
+    grant: &str,
+    entry: &common::previews::PreviewEntry,
+) -> Response {
+    let PreviewTarget::Server { .. } = &entry.target else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let title = escape_html(&entry.title);
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preview — {title}</title>
+<style>
+  html, body, iframe {{ width: 100%; height: 100%; margin: 0; border: 0; }}
+  body {{ overflow: hidden; background: #fff; }}
+</style>
+</head>
+<body><iframe src="/" title="{title}"></iframe></body>
+</html>"#,
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; frame-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        )
+        .header("Referrer-Policy", "no-referrer")
+        .header("X-Content-Type-Options", "nosniff")
+        .header(
+            header::SET_COOKIE,
+            share_server_routing_cookie(share_id, grant, entry),
+        )
+        .body(Body::from(html))
+        .expect("valid shared Server Preview response")
 }
 
 pub(super) fn clear_server_routing_cookie() -> String {
@@ -159,12 +204,30 @@ fn server_routing_cookie(slug: &str, auth: &AuthState) -> String {
     )
 }
 
+fn share_server_routing_cookie(
+    share_id: &str,
+    grant: &str,
+    entry: &common::previews::PreviewEntry,
+) -> String {
+    let max_age = remaining_millis(entry)
+        .map(|milliseconds| (milliseconds / 1000).max(1))
+        .unwrap_or(1);
+    format!(
+        "{SERVER_ROUTING_COOKIE}={SHARE_ROUTE_PREFIX}{share_id}:{grant}; Path=/; Max-Age={max_age}; Secure; HttpOnly; SameSite=Lax"
+    )
+}
+
 fn signed_slug(slug: &str, auth: &AuthState) -> String {
     let signature = routing_signature(slug, auth);
     format!("{slug}.{}", hex_encode(&signature))
 }
 
 fn verified_server_entry(cookie: &str, auth: &AuthState) -> Option<common::previews::PreviewEntry> {
+    if let Some(route) = cookie.strip_prefix(SHARE_ROUTE_PREFIX) {
+        let (share_id, grant) = route.split_once(':')?;
+        return common::previews::authorize_share_grant(share_id, grant)
+            .filter(|entry| matches!(entry.target, PreviewTarget::Server { .. }));
+    }
     let (slug, signature) = cookie.rsplit_once('.')?;
     let signature = hex_decode_32(signature)?;
     constant_time_eq(&signature, &routing_signature(slug, auth)).then_some(())?;

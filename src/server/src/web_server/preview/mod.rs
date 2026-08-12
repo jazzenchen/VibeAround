@@ -6,17 +6,18 @@
 //! - GET /preview/u/:slug/chat       — owner-only conversation WebSocket
 //! - POST /preview/u/:slug/chat/uploads — owner-only chat attachment upload
 //! - GET /preview/u/:slug/content    — owner iframe content
-//! - GET /preview/s/:share_id        — Markdown share gate or document
+//! - GET /preview/s/:share_id        — share gate or authorized preview
 //! - POST /preview/s/:share_id       — verify reusable access code
 //!   The owner app switches one iframe between previews. Markdown content
 //!   renders from the owner-only content route. Server content loads directly
 //!   from `localhost:{port}` locally and through the page proxy remotely.
 //!
-//! Markdown shares use a public opaque link ID plus a reusable six-digit
+//! Public shares use an opaque link ID plus a reusable six-digit
 //! access code. Successful public verification receives a path-scoped browser
 //! grant with the same TTL (`common::previews::SHARE_TTL_SECS`). Owner slugs
 //! remain stable and require owner access through a loopback request or the
-//! `va_owner` cookie. Server previews remain owner-only.
+//! `va_owner` cookie. Shared Server pages and static resources revalidate that
+//! same grant at the root proxy; they do not expose owner chat or review tools.
 //!
 //! ## Module layout
 //!
@@ -241,19 +242,28 @@ pub(super) async fn require_owner_preview_access(req: Request, next: Next) -> Re
     next.run(req).await
 }
 
-/// GET /preview/s/{share_id} — public Markdown gate or authorized document.
+/// GET /preview/s/{share_id} — public gate or authorized preview.
 pub async fn share_preview_handler(Path(share_id): Path<String>, req: Request) -> Response {
     let response = match common::previews::lookup_share_link(&share_id) {
-        Some(entry) if crate::web_server::auth::request_is_local_dashboard(&req) => {
+        Some(entry)
+            if crate::web_server::auth::request_is_local_dashboard(&req)
+                && matches!(&entry.target, PreviewTarget::File) =>
+        {
             render_md_page(&entry)
                 .await
                 .unwrap_or_else(IntoResponse::into_response)
         }
         Some(entry) => match extract_cookie(&req, &share_cookie_name(&share_id)) {
             Some(grant) => match common::previews::authorize_share_grant(&share_id, &grant) {
-                Some(authorized) => render_md_page(&authorized)
-                    .await
-                    .unwrap_or_else(IntoResponse::into_response),
+                Some(authorized) => {
+                    if matches!(&authorized.target, PreviewTarget::Server { .. }) {
+                        server_proxy::share_server_content_response(&share_id, &grant, &authorized)
+                    } else {
+                        render_md_page(&authorized)
+                            .await
+                            .unwrap_or_else(IntoResponse::into_response)
+                    }
+                }
                 None => {
                     let mut gate = render_access_gate(&entry, None);
                     gate.headers_mut().insert(
