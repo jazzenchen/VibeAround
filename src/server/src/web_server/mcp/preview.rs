@@ -165,22 +165,10 @@ pub(super) async fn mcp_md_preview(
         return response;
     }
 
-    let requested_file = PathBuf::from(file);
-    let file_path = if requested_file.is_relative() {
-        cwd_path.join(requested_file)
-    } else {
-        requested_file
+    let file_path = match resolve_md_preview_file(&cwd_path, file) {
+        Ok(file_path) => file_path,
+        Err(error) => return mcp_error_text(id, &error),
     };
-    if !file_path.is_file() {
-        return mcp_error_text(id, &format!("File not found: {}", file_path.display()));
-    }
-    if let (Ok(canonical_file), Ok(canonical_workspace)) =
-        (file_path.canonicalize(), cwd_path.canonicalize())
-    {
-        if !canonical_file.starts_with(&canonical_workspace) {
-            return mcp_error_text(id, "File must be inside the workspace directory.");
-        }
-    }
 
     let title = arguments
         .get("title")
@@ -265,13 +253,35 @@ fn build_preview_url(base: &str, route: &str, slug: &str) -> String {
     format!("{}/va/{}/{}", base.trim_end_matches('/'), route, slug)
 }
 
+fn resolve_md_preview_file(workspace: &Path, file: &str) -> Result<PathBuf, String> {
+    let workspace = workspace.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve workspace {}: {error}",
+            workspace.display()
+        )
+    })?;
+    let requested = PathBuf::from(file);
+    let requested = if requested.is_relative() {
+        workspace.join(requested)
+    } else {
+        requested
+    };
+    let resolved = requested
+        .canonicalize()
+        .map_err(|error| format!("File not found: {} ({error})", requested.display()))?;
+    if !resolved.is_file() {
+        return Err(format!("Path is not a file: {}", resolved.display()));
+    }
+    Ok(resolved)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
 
     use common::previews::PreviewShare;
 
-    use super::server_preview_message;
+    use super::{resolve_md_preview_file, server_preview_message};
 
     fn share() -> PreviewShare {
         PreviewShare {
@@ -321,5 +331,37 @@ mod tests {
         assert!(message.contains("Public sharing is unavailable until a tunnel is running."));
         assert!(!message.contains("Tunnel Share:"));
         assert!(!message.contains("Access code:"));
+    }
+
+    #[test]
+    fn markdown_preview_allows_external_files_but_requires_resolvable_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "vibearound-md-preview-paths-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let workspace = root.join("workspace");
+        let missing_workspace = root.join("missing-workspace");
+        let outside = root.join("outside.md");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(&outside, "preview").unwrap();
+
+        assert_eq!(
+            resolve_md_preview_file(&workspace, outside.to_str().unwrap()).unwrap(),
+            outside.canonicalize().unwrap()
+        );
+        assert_eq!(
+            resolve_md_preview_file(&workspace, "../outside.md").unwrap(),
+            outside.canonicalize().unwrap()
+        );
+        assert!(
+            resolve_md_preview_file(&missing_workspace, outside.to_str().unwrap())
+                .unwrap_err()
+                .contains("Failed to resolve workspace")
+        );
+        assert!(resolve_md_preview_file(&workspace, "missing.md")
+            .unwrap_err()
+            .contains("File not found"));
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
