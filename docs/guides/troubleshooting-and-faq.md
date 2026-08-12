@@ -56,7 +56,7 @@ Codes are one-shot and short-lived — issue a fresh one and use it immediately.
 `va launch sessions` shows what discovery sees. The session must belong to the same agent and workspace the chat is bound to; archived sessions are hidden (unarchive with `va launch unarchive`).
 
 **A Preview Share link stopped working after a few minutes.**
-Each Server or Markdown Share URL, six-digit access code, and browser grant expires after the same 600-second deadline by design. Re-share to create a new transaction, or use the owner link where you are authenticated. Server Shares intentionally support only GET/HEAD pages and static assets, so APIs, writes, workers, WebSockets, and HMR will not work there. See [Security model](../architecture/security-model.md).
+Each Server or Markdown Share URL, six-digit access code, and browser grant expires after the same 600-second deadline by design. Re-share to create a new transaction, or use the owner link where you are authenticated. Server Shares are page previews: GET/HEAD iframe navigations and browser-declared static subresources work, while browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets, and HMR do not. They are not a general API-compatibility or API-isolation layer. See [Security model](../architecture/security-model.md).
 
 ## Models and profiles
 

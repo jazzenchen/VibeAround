@@ -254,7 +254,7 @@ VibeAround opens dev servers and Markdown in one owner page with a collapsible w
 - Preview dev servers on their native loopback origin locally, preserving their own fetch, WebSocket, and HMR behavior.
 - Reach an owner page through a tunnel after browser pairing.
 - Generate copyable Server and Markdown Share messages containing the public URL, access code, and expiry.
-- Share a Server page through a deliberately narrow GET/HEAD proxy for documents and static assets; APIs, writes, workers, WebSockets, and HMR are not available in this first version.
+- Share a Server page through a page-preview proxy for GET/HEAD iframe navigations and browser-declared static subresources; browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets, and HMR are unsupported.
 
 <details>
 <summary><strong>Supported AI Agents</strong></summary>
@@ -327,7 +327,7 @@ VibeAround keeps AI coding work on your computer by default.
 - Dashboard APIs and WebSocket routes require a local auth token.
 - Protected public tunnel surfaces, including Preview owner links, require browser pairing.
 - Server and Markdown Share transactions instead use their own six-digit access codes; each Share URL, code, and browser grant expires together after 10 minutes.
-- Server Shares expose only GET/HEAD pages and static assets, never APIs, writes, workers, WebSockets, or HMR.
+- Server Shares are a page-preview transport, not general API compatibility or an API-isolation sandbox: they support GET/HEAD iframe navigations and browser-declared static subresources, while browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets, HMR, owner chat, and review are unsupported.
 - Agent CLIs use your local project permissions.
 
 </details>

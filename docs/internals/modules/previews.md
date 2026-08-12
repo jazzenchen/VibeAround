@@ -17,13 +17,13 @@ Track preview sessions (dev-server ports and rendered files), mint Server/Markdo
 ## Interactions
 
 - **← server (MCP `preview` / `md_preview`):** agents create previews via tools; skills (`va-preview`, `va-md-preview`) wrap them.
-- **← server (`preview/` handlers):** resolve slugs, render the owner picker and Markdown content; local owners load Server origins directly, while tunneled Server pages use the restricted proxy.
+- **← server (`preview/` handlers):** resolve slugs, render the owner picker and Markdown content; local owners load Server origins directly, while Server Shares use the page-preview proxy.
 - **← workspace:** closing a thread kills previews bound to its session.
 - **← cli / dashboard:** list and delete.
 
 ## Invariants — do not break
 
-1. **Every Share is one scoped transaction** — one Preview, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. A Server Share may proxy only GET/HEAD pages and static assets; it must reject APIs, writes, workers, WebSockets, and HMR. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
+1. **Every Share is one scoped transaction** — one Preview, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. A Server Share forwards only GET/HEAD iframe navigations and browser-declared static subresources; browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets, HMR, and `/va/*` forwarding must remain rejected or unsupported. It is a page-preview transport, not an API-isolation sandbox; do not infer policy from path names. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
 2. **Preview processes are session-scoped**: an agent session's dev servers die with `/close` and with the daemon — no orphaned `npm run dev`.
 3. Remote Server and Markdown owner links require owner pairing; Share expiry must not affect the owner path.
 

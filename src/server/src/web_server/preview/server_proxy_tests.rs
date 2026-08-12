@@ -94,7 +94,7 @@ fn owner_routing_is_daemon_bound_and_share_routing_revalidates_the_grant() {
 }
 
 #[tokio::test]
-async fn rejects_api_write_worker_and_websocket_before_connecting() {
+async fn rejects_fetch_write_worker_and_websocket_before_connecting() {
     let client = reqwest::Client::new();
     let auth = auth_state();
 

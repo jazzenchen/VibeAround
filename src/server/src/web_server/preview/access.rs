@@ -1,4 +1,4 @@
-//! Preview cookie parsing plus the public Markdown share gate and grant cookie.
+//! Preview cookie parsing plus the public Share gate and grant cookie.
 
 use axum::body::Body;
 use axum::http::{header, HeaderValue, Request, StatusCode};

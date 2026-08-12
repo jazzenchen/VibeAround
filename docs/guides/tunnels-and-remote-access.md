@@ -89,7 +89,7 @@ Pairing survives browser restarts but not daemon restarts (tokens are regenerate
 
 Through the tunnel, after pairing: the dashboard SPA, web chat, web terminal, Server and Markdown owner previews, and the WebSocket endpoints — everything token-gated. Preview **Shares** (`/preview/s/<share_id>`) are the deliberate exception to owner pairing: viewers enter the reusable six-digit access code, then receive a scoped browser grant. The URL, code, and grant cover one Preview and expire together after 10 minutes.
 
-The first Server Share transport is intentionally read-only and page-oriented: it proxies GET/HEAD documents and static assets only. API requests, writes, workers, WebSocket upgrades, HMR traffic, owner chat, and review tools remain unavailable. A local Server owner still loads the loopback origin directly with the app's native behavior.
+The first Server Share transport is page-oriented: it forwards GET/HEAD iframe navigations and browser-declared static subresources. Browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSocket upgrades, HMR traffic, owner chat, and review tools remain unavailable. This is not general API compatibility or an API-isolation sandbox; an accepted navigation or subresource can use any path. A local Server owner still loads the loopback origin directly with the app's native behavior.
 
 Never reachable through a tunnel: the local API bridge and agent-as-API endpoints (loopback-only), the MCP endpoint's local-bridge surface, and provider credentials in any form.
 

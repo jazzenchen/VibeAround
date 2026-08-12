@@ -1,12 +1,14 @@
-//! Same-origin page and static-resource proxy for remote Server previews.
+//! Same-origin page-preview proxy for remote Server previews.
 //!
 //! An owner `/content` route or an authorized public share selects one live
 //! Server preview by setting a root-scoped routing cookie. Root requests then
 //! retain their original path and query while this module forwards them to the
 //! selected loopback dev server. Owner routing stays signed to the daemon;
 //! share routing carries the existing browser grant and revalidates it on every
-//! request. This intentionally does not proxy APIs, workers, WebSockets, or
-//! writes.
+//! request. It supports GET/HEAD iframe navigations and browser-declared static
+//! subresources. Browser fetch/XHR/EventSource, workers, non-GET/HEAD methods,
+//! and WebSocket/HMR traffic are unsupported. This is not an API-isolation
+//! boundary: accepted request paths are forwarded unchanged.
 
 use axum::body::Body;
 use axum::extract::{Extension, Request};
@@ -93,7 +95,7 @@ pub(super) fn clear_server_routing_cookie() -> String {
 }
 
 /// Root fallback used outside `/va/`. Missing or invalid routing state returns
-/// to the dashboard; accepted page/static requests retain their path/query.
+/// to the dashboard; accepted iframe/subresource requests retain path/query.
 pub(in crate::web_server) async fn server_proxy_fallback(
     state: Option<Extension<ServerProxyState>>,
     req: Request,
@@ -122,7 +124,7 @@ async fn proxy_request_inner(client: &reqwest::Client, req: Request) -> Response
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .header(header::ALLOW, "GET, HEAD")
             .body(Body::from(
-                "VibeAround Preview only proxies page and static-resource GET/HEAD requests.",
+                "VibeAround remote Server Preview only supports GET/HEAD iframe navigations and browser-declared static subresources.",
             ))
             .expect("valid method rejection");
     }

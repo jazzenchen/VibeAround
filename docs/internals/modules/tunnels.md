@@ -28,7 +28,7 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 
 1. **`none` is a first-class provider** — no tunnel code runs, no child spawns; new call sites must tolerate absent URLs.
 2. **The tunnel exposes exactly the web listener** — never bind additional ports through it; loopback-only surfaces (local-api) must stay unreachable.
-3. **Server Share proxying stays narrow** — GET/HEAD pages and static assets only; never APIs, writes, workers, WebSockets, or HMR.
+3. **Server Share proxying stays page-oriented** — accept GET/HEAD iframe navigations and browser-declared static subresources; reject or leave unsupported browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets/HMR, and `/va/*` forwarding. This is not an API-isolation sandbox; accepted request paths are forwarded unchanged.
 4. Provider children are registered for cleanup like every other child; a dead daemon leaves no `cloudflared` or `tailscale funnel` process behind.
 5. Public URL is data, not identity: consumers subscribe to changes rather than caching it across restarts.
 
