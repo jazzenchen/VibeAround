@@ -13,7 +13,7 @@
 | `register_workspace` | 把当前项目目录注册为 Workspace |
 | `initialize_subagents` | 开始多 Agent 回合 —— 模式：`parallel`、`collaboration`、`brainstorming` |
 | `wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
-| `preview` | 为某个 dev server 端口创建仅限本机的实时预览 |
+| `preview` | 为某个 dev server 端口创建实时预览；有隧道时同时提供 owner 和限时 Share 链接 |
 | `md_preview` | 创建 Markdown 渲染预览 |
 
 按 Agent 安装的配套技能（`skill_auto_install`）：`vibearound`（交接）、`va-session`、`va-preview`、`va-md-preview`、`agent-collaboration`。
@@ -75,9 +75,11 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 
 | URL | 目标 | 认证 | 寿命 |
 |---|---|---|---|
-| `/preview/u/{slug}` | Owner shell；选择 Server 时直接加载其准确 loopback origin | Server slug 仅限回环地址；Markdown 为回环地址或已配对 owner | 预览存在期间 |
-| `/preview/u/{slug}/content` | Owner iframe 内的 Markdown 内容 | 与 owner shell 相同 | 预览存在期间 |
-| `/preview/s/{share_id}` | Markdown | 六位访问码，随后使用按路径限定的浏览器授信 | 共用 600 秒期限 |
+| `/preview/u/{slug}` | Server 或 Markdown 的 Owner shell | 回环地址或已配对 owner | 预览存在期间 |
+| `/preview/u/{slug}/content` | 选中的 owner 内容；本地 Server 直接使用其 loopback origin | 与 owner shell 相同 | 预览存在期间 |
+| `/preview/s/{share_id}` | Server 或 Markdown Share | 六位访问码，随后使用限定作用域的浏览器授信 | 共用 600 秒期限 |
+
+第一版 Server Share 是页面预览传输：只接受 GET/HEAD iframe 导航和浏览器通过 `Sec-Fetch-Dest` 声明的静态子资源请求；拒绝非 GET/HEAD、fetch/XHR/EventSource、worker、WebSocket upgrade 和 HMR。它不是通用 API 兼容层，也不是 API 隔离沙盒；`/va/*`、owner 页面、chat 和审阅控件不进入 Share。
 
 ---
 

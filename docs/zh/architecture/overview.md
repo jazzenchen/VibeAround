@@ -70,7 +70,7 @@
 | `agent` | ACP agent 句柄、启动渲染、MCP/技能配置注入 |
 | `profiles` | Profile schema、目录、渲染、Bridge 启动 URL、供应商连接 |
 | `pty` | PTY 会话注册表与运行时 —— Web 终端的后端 |
-| `previews` | 本地 Server 预览、Markdown owner/share URL、端口清理 |
+| `previews` | Server/Markdown owner 与 Share URL、受限 Server Share 代理、端口清理 |
 | `tunnels` | ngrok / localtunnel / cloudflare / Tailscale Funnel 各供应商 |
 | `auth` | 守护进程 token、配对码 |
 | `launch_sessions` | 原生 CLI 会话发现与归档 |

@@ -15,7 +15,7 @@
 - 想用一套 Workspace 模型容纳多个编程 Agent 的团队 —— OpenCode 与 Claude Code、Codex CLI、Gemini CLI 等并肩。
 - 想在手机或浏览器终端里够到 OpenCode 的开发者。
 - 需要本地 dev server、本地包缓存或内网访问的工作流。
-- 受益于本地网页/HTML 预览或可远程分享的 Markdown 渲染预览的会话（[Live Preview](../guides/web-dashboard.md)）。
+- 受益于 Server/HTML owner 预览或可远程分享的 Server/Markdown Preview 的会话（[Live Preview](../guides/web-dashboard.md)）。
 
 ## 需要验证的限制
 

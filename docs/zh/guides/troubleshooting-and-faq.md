@@ -55,8 +55,8 @@ Agent CLI 自己需要官方登录（`claude login` 等）—— VibeAround 托�
 **`/session --switch` 找不到我的终端会话。**
 `va launch sessions` 显示发现机制能看到什么。会话必须属于聊天绑定的同一个 Agent 和 Workspace；已归档的会话是隐藏的（`va launch unarchive` 取消归档）。
 
-**Markdown 预览分享链接几分钟后失效了。**
-每笔 Markdown 分享的 URL、六位访问码和浏览器授信设计上共用 600 秒期限。重新分享可创建一笔新事务，或者使用你已认证的 owner 链接。Live Server 预览仅限本机。见[安全模型](../architecture/security-model.md)。
+**Preview Share 链接几分钟后失效了。**
+每笔 Server 或 Markdown Share 的 URL、六位访问码和浏览器授信设计上共用 600 秒期限。重新分享可创建一笔新事务，或者使用你已认证的 owner 链接。Server Share 是页面预览传输：支持 GET/HEAD iframe 导航和浏览器声明的静态子资源，拒绝非 GET/HEAD、fetch/XHR/EventSource、worker、WebSocket 与 HMR。它不承诺通用 API 兼容性，也不是 API 隔离沙盒；`/va/*`、owner、chat 和审阅界面不进入 Share。见[安全模型](../architecture/security-model.md)。
 
 ## 模型与 Profile
 

@@ -1,6 +1,6 @@
 # 隧道与远程访问
 
-隧道把你的控制台发布到一个公网 URL，让你离开机器也能访问 —— 地铁上的手机、咖啡馆里的笔记本。内置四家隧道供应商；远程浏览器进入受保护的控制台与 owner 界面前必须配对，Markdown 分享则使用独立的六位访问码门。本页背后的信任规则见[安全模型](../architecture/security-model.md)。
+隧道把你的控制台发布到一个公网 URL，让你离开机器也能访问 —— 地铁上的手机、咖啡馆里的笔记本。内置四家隧道供应商；远程浏览器进入受保护的控制台与 owner 界面前必须配对，Server 和 Markdown Share 则使用独立的六位访问码门。本页背后的信任规则见[安全模型](../architecture/security-model.md)。
 
 ## 选择供应商
 
@@ -87,7 +87,9 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 
 ## 隧道暴露什么 —— 永远不暴露什么
 
-配对之后，通过隧道可达：控制台 SPA、Web Chat、Web Terminal、Markdown owner 预览和各 WebSocket 端点 —— 全部有 token 把守。Markdown **分享**（`/preview/s/<share_id>`）是 owner 配对的有意例外：查看者输入可重复使用的六位访问码后，获得按路径限定的浏览器授信。URL、访问码和授信只覆盖一个文档，并在 10 分钟后同时过期。Live Server 预览仅限本机，公网 hostname 请求会返回 `403`。
+配对之后，通过隧道可达：控制台 SPA、Web Chat、Web Terminal、Server 和 Markdown owner 预览，以及各 WebSocket 端点 —— 全部有 token 把守。Preview **Share**（`/preview/s/<share_id>`）是 owner 配对的有意例外：查看者输入可重复使用的六位访问码后，获得限定作用域的浏览器授信。URL、访问码和授信只覆盖一个 Preview，并在 10 分钟后同时过期。
+
+第一版 Server Share 是页面预览传输：支持 GET/HEAD iframe 导航和浏览器声明的静态子资源请求，拒绝非 GET/HEAD、fetch/XHR/EventSource、worker、WebSocket upgrade 与 HMR。它不承诺通用 API 兼容性，也不是 API 隔离沙盒；`/va/*`、owner 页面、chat 和审阅工具不进入 Share。本地 Server owner 仍然直接加载 loopback origin，保留应用原本的行为。
 
 永远不会通过隧道可达：本地 API Bridge 和 agent-as-API 端点（仅回环地址）、MCP 端点的本地 Bridge 面，以及任何形式的供应商凭据。
 

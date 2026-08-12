@@ -10,7 +10,7 @@ Gemini 是 Google 的产品。VibeAround 是协调本地 Agent 工作流的独�
 2. **在 VibeAround 里启用 Gemini** —— 引导期间或从桌面 Agent 页面（[安装与上手](../guides/install-and-onboarding.md)）。
 3. **启动或接续会话。** 桌面 **Launch** 页面（Gemini + Workspace + Profile）或 `va launch --profile <name>` 在自己终端里启动；或给已连接的渠道 / Web Chat 发消息，拉起托管会话（[Agent 启动指南](../guides/agent-launch.md)）。
 4. **加上远程界面。** 连一个 IM 渠道（[连接渠道](../guides/connect-channels.md)），然后在 CLI 里 `/vibearound handover`、在聊天里 `/pickup <code>` 把终端会话移过去 —— 或者直接在同一个聊天里继续指挥托管会话。
-5. **审阅输出** —— 用 [Live Preview](../guides/web-dashboard.md) 在手机查看渲染后的 Markdown；HTML 与 dev server 预览保留在主机的本地浏览器。
+5. **审阅输出** —— 用 [Live Preview](../guides/web-dashboard.md) 在手机打开已配对的 owner 链接，或由访问码保护的 Server/Markdown Share。Server Share 面向页面预览，支持 GET/HEAD iframe 导航和浏览器声明的静态子资源；fetch/XHR/EventSource、worker、非 GET/HEAD、WebSocket 与 HMR 不可用，也不承诺通用 API 兼容性。
 
 ## 常见用法
 

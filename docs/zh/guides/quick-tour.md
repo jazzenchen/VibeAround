@@ -59,7 +59,7 @@ fix the failing test in ~/dev/my-app and show me the diff
 | 一份供应商订阅供多个 Agent CLI 使用 | [模型 Profile 指南](model-profiles.md) |
 | 出门在外访问控制台 | [隧道与远程访问](tunnels-and-remote-access.md) |
 | 完整的斜杠命令列表 | [IM 使用](im-usage.md) |
-| 在本机预览 dev server，或用可重复使用的六位访问码把 Markdown 分享 10 分钟 | [Web 控制台指南](web-dashboard.md) |
+| 在本机或通过配对 owner 预览 dev server，并用可重复使用的六位访问码把 Server/Markdown Share 分享 10 分钟 | [Web 控制台指南](web-dashboard.md) |
 
 ---
 

@@ -38,17 +38,20 @@ IM 消息经渠道插件到达。平台永远拿不到 shell，它拿到的是�
 - **附件卫生。** 来自插件的 file key 在成为文件引用前会做路径穿越校验（`..`、分隔符）；不安全的 key 被丢弃。
 - **Bot 凭据**（平台 token）存在你机器上的 `settings.json` 里，只传给拥有它的那个插件进程。
 
-## 预览：本地 Server、受限 Markdown 分享
+## 预览：配对 owner、限定作用域的分享
 
-Live Server 与 Markdown 渲染预览采用不同边界：
+Live Server 与 Markdown 渲染预览采用相同的 owner/share 划分，但 Server Share 的传输范围更窄：
 
 | 目标与 URL | 受众 | 寿命 |
 |---|---|---|
-| Server `/preview/u/<slug>` | 仅回环浏览器 | 预览存在期间 |
+| Server `/preview/u/<slug>` | 回环浏览器或已配对 owner | 预览存在期间 |
 | Markdown `/preview/u/<slug>` | 回环浏览器或已配对 owner | 预览存在期间 |
+| Server `/preview/s/<share_id>` | 持有 Share URL 和六位访问码的人 | URL、访问码和浏览器授信共用 600 秒期限 |
 | Markdown `/preview/s/<share_id>` | 持有 Share URL 和六位访问码的人 | URL、访问码和浏览器授信共用 600 秒期限 |
 
-Live Server 预览不生成分享链接，也不能通过公网 hostname 加载。在 loopback 上，owner shell 直接 iframe 准确的 dev-server origin；它不会转发 owner bearer token，也不代理应用的 Fetch、WebSocket 或 HMR 流量。不同端口把子页面与 owner 的 DOM、storage 隔离开，但 dev server 自己的 iframe 策略和浏览器能力仍然生效。Markdown 分享不使用 owner 配对：不透明 URL 先显示访问码门，验证成功后签发 `Secure`、`HttpOnly`、按路径限定的浏览器授信。URL、可重复使用的六位访问码和授信只对应一个文档，并在 10 分钟后同时过期。隧道上的其他一切仍需配对 + token。
+在 loopback 上，Server owner shell 直接 iframe 准确的 dev-server origin；它不会转发 owner bearer token，也不代理应用的 Fetch、WebSocket 或 HMR 流量。不同端口把子页面与 owner 的 DOM、storage 隔离开，但 dev server 自己的 iframe 策略和浏览器能力仍然生效。隧道上的 Server 或 Markdown owner 仍受配对和 owner-token 认证保护。
+
+Share 不使用 owner 配对：不透明 URL 先显示访问码门，验证成功后签发 `Secure`、`HttpOnly` 浏览器授信。URL、可重复使用的六位访问码和授信只对应一个 Preview，并在 10 分钟后同时过期。Server Share 会在每次代理请求时重新验证授信；它只接受 GET/HEAD iframe 导航以及浏览器通过 `Sec-Fetch-Dest` 声明的静态子资源请求，并拒绝非 GET/HEAD、fetch/XHR/EventSource、worker、WebSocket 和 HMR。这是页面预览传输，不是通用 API 兼容层，也不是 API 隔离沙盒；`/va/*`、owner 页面、chat 和审阅控件始终排除在 Share 之外。隧道上的其他一切仍需配对 + token。
 
 Markdown 解析器和净化器都随守护进程内置，Preview 不执行远程解析脚本。GitHub 风格的原始 HTML 只有通过安全白名单后才会渲染，脚本、样式、iframe、表单、事件处理器和未支持的属性都会被移除。Markdown 图片语法和允许的原始 HTML 图片都必须使用绝对 HTTPS URL。图片主机可以看到访问者的 IP 地址；`Referrer-Policy: no-referrer` 会阻止 Preview URL 随请求发送。
 
