@@ -194,7 +194,7 @@
   },
   {
     "name": "preview",
-    "description": "Start a local-only live preview for a running server. Returns the local owner URL. Pass thread_id, or agent_kind with session_id (use /va-session skill), to link the owner review child to the current task.",
+    "description": "Start a live Preview for a running localhost server. Returns Local and available Tunnel owner URLs. Pass thread_id or agent_kind with session_id when available to link the review child to the current task; without an explicit identity, VibeAround can create a standalone Preview conversation.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -208,11 +208,11 @@
         },
         "thread_id": {
           "type": "string",
-          "description": "Exact VibeAround workspace thread ID from $VIBEAROUND_THREAD_ID. Enables an owner-only child conversation linked to that task."
+          "description": "Optional exact VibeAround workspace thread ID from $VIBEAROUND_THREAD_ID. Links the Preview child to that task when available."
         },
         "session_id": {
           "type": "string",
-          "description": "Exact native agent session ID. Enables automatic dev-server cleanup and, with agent_kind, can link an external task to the owner conversation."
+          "description": "Optional exact native agent session ID. Enables earlier dev-server cleanup and, with agent_kind, can link an external task to the owner conversation."
         },
         "agent_kind": {
           "type": "string",

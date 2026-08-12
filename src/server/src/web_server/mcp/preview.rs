@@ -73,11 +73,8 @@ pub(super) async fn mcp_preview_start(
         };
 
     let title = derive_title(arguments, &cwd_path);
-    let session_id = arguments
-        .get("session_id")
-        .and_then(Value::as_str)
-        .map(String::from);
-    let owner_slug = common::previews::ensure_server(port, cwd_path, title, session_id.clone());
+    let owner_session = parent_request.owner_session_id();
+    let owner_slug = common::previews::ensure_server(port, cwd_path, title, owner_session);
     if let Err(error) =
         ensure_preview_conversation_thread(&owner_slug, parent_thread_id, state).await
     {
@@ -103,12 +100,6 @@ pub(super) async fn mcp_preview_start(
         state.port,
         crate::web_server::preview::review_bridge_script_href()
     );
-    let session_hint = if session_id.is_none() {
-        "\n\n⚠️ No session_id provided. Use /va-session skill to resolve it and pass session_id for automatic dev-server cleanup."
-    } else {
-        ""
-    };
-
     mcp_text(
         id,
         &format!(
@@ -118,8 +109,8 @@ pub(super) async fn mcp_preview_start(
              Port: {}\n\
              Text and element review bridge (optional, dev-only):\n\
              `<script src=\"{}\"></script>`\n\
-             Public sharing is unavailable for live server previews.{}",
-            local_owner_url, tunnel_owner_line, port, review_bridge_url, session_hint
+             Public sharing is unavailable for live server previews.",
+            local_owner_url, tunnel_owner_line, port, review_bridge_url
         ),
     )
 }

@@ -46,6 +46,13 @@ impl PreviewParentRequest {
             session_id,
         })
     }
+
+    pub(super) fn owner_session_id(&self) -> Option<String> {
+        match self.identity()? {
+            PreviewParentIdentity::ManagedThread(_) => None,
+            PreviewParentIdentity::ExternalSession { session_id, .. } => Some(session_id),
+        }
+    }
 }
 
 pub(super) async fn resolve_preview_parent_thread(
@@ -140,6 +147,10 @@ mod tests {
                 agent_id: "codex".to_string(),
                 session_id: "codex-native-session".to_string()
             })
+        );
+        assert_eq!(
+            request.owner_session_id().as_deref(),
+            Some("codex-native-session")
         );
     }
 
