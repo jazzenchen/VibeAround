@@ -105,6 +105,36 @@ fn ensure_server_is_idempotent() {
 }
 
 #[test]
+fn server_reregistration_replaces_lifecycle_owner() {
+    let workspace = PathBuf::from("/tmp/lifecycle-owner");
+    let id = canonical(&workspace).join(":port:31995");
+
+    ensure_server(
+        31_995,
+        workspace.clone(),
+        "owned".into(),
+        Some("old-session".into()),
+    );
+    assert_eq!(
+        SESSIONS
+            .lock()
+            .get(&id)
+            .and_then(|session| session.owner_session.as_deref()),
+        Some("old-session")
+    );
+
+    ensure_server(31_995, workspace, "standalone".into(), None);
+    assert_eq!(
+        SESSIONS
+            .lock()
+            .get(&id)
+            .and_then(|session| session.owner_session.as_deref()),
+        None
+    );
+    SESSIONS.lock().remove(&id);
+}
+
+#[test]
 fn ensure_server_keeps_different_ports_separate() {
     let path = std::env::temp_dir().join("va-preview-test-multiport");
     std::fs::create_dir_all(&path).unwrap();

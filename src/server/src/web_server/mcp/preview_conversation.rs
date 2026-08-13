@@ -48,10 +48,19 @@ impl PreviewParentRequest {
     }
 
     pub(super) fn owner_session_id(&self) -> Option<String> {
-        match self.identity()? {
-            PreviewParentIdentity::ManagedThread(_) => None,
-            PreviewParentIdentity::ExternalSession { session_id, .. } => Some(session_id),
+        if self
+            .agent_kind
+            .as_deref()
+            .is_some_and(|agent| agent.eq_ignore_ascii_case("codex"))
+            || (self.agent_kind.is_none() && self.codex_metadata_session_id.is_some())
+        {
+            return self
+                .codex_metadata_session_id
+                .clone()
+                .or_else(|| self.session_id.clone());
         }
+        self.agent_kind.as_ref()?;
+        self.session_id.clone()
     }
 }
 
@@ -129,6 +138,10 @@ mod tests {
             Some(PreviewParentIdentity::ManagedThread(
                 common::workspace::threads::WorkspaceThreadId::from("wt_managed")
             ))
+        );
+        assert_eq!(
+            request.owner_session_id().as_deref(),
+            Some("external-session")
         );
     }
 

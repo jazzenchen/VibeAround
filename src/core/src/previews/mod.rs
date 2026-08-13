@@ -123,9 +123,7 @@ fn ensure_session(
         PreviewTarget::Server { .. } => listener.or(session.listener),
         PreviewTarget::File => None,
     };
-    if owner_session.is_some() {
-        session.owner_session = owner_session;
-    }
+    session.owner_session = owner_session;
 
     // Reuse a live transaction or replace the entire expired transaction so
     // an old shared URL cannot revive.

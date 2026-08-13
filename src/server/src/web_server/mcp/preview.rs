@@ -102,28 +102,16 @@ async fn mcp_server_preview(
     }
 
     let parent_request = preview_parent_request(arguments, metadata);
-    let parent_thread_id =
-        match resolve_preview_parent_thread(&parent_request, &cwd_path, state).await {
-            Ok(parent_thread_id) => parent_thread_id,
-            Err(error) => {
-                return mcp_error_text(
-                    id,
-                    &format!("Failed to resolve Preview parent task: {error:#}"),
-                );
-            }
-        };
+    let (parent_thread_id, parent_warning) =
+        resolve_preview_parent_best_effort(&parent_request, &cwd_path, state).await;
 
     let title = derive_title(arguments, &cwd_path);
-    let owner_session = parent_request.owner_session_id();
+    let owner_session = parent_thread_id
+        .as_ref()
+        .and_then(|_| parent_request.owner_session_id());
     let (owner_slug, share) = common::previews::ensure_server(port, cwd_path, title, owner_session);
-    if let Err(error) =
-        ensure_preview_conversation_thread(&owner_slug, parent_thread_id, state).await
-    {
-        return mcp_error_text(
-            id,
-            &format!("Failed to initialize Preview conversation: {error:#}"),
-        );
-    }
+    let conversation_warning =
+        ensure_preview_conversation_best_effort(&owner_slug, parent_thread_id, state).await;
     let local_owner_url = format!(
         "http://127.0.0.1:{}/va/preview/u/{}",
         state.port, owner_slug
@@ -134,16 +122,17 @@ async fn mcp_server_preview(
         state.port,
         crate::web_server::preview::review_bridge_script_href()
     );
+    let message = server_preview_message(
+        &local_owner_url,
+        tunnel_url.as_deref(),
+        &owner_slug,
+        &share,
+        port,
+        &review_bridge_url,
+    );
     mcp_text(
         id,
-        &server_preview_message(
-            &local_owner_url,
-            tunnel_url.as_deref(),
-            &owner_slug,
-            &share,
-            port,
-            &review_bridge_url,
-        ),
+        &append_preview_warnings(message, [parent_warning, conversation_warning]),
     )
 }
 
@@ -212,26 +201,12 @@ async fn mcp_file_preview(
                 .to_string()
         });
     let parent_request = preview_parent_request(arguments, metadata);
-    let parent_thread_id =
-        match resolve_preview_parent_thread(&parent_request, &cwd_path, state).await {
-            Ok(parent_thread_id) => parent_thread_id,
-            Err(error) => {
-                return mcp_error_text(
-                    id,
-                    &format!("Failed to resolve Preview parent task: {error:#}"),
-                );
-            }
-        };
+    let (parent_thread_id, parent_warning) =
+        resolve_preview_parent_best_effort(&parent_request, &cwd_path, state).await;
 
     let (owner_slug, share) = common::previews::ensure_file(file_path, cwd_path, title);
-    if let Err(error) =
-        ensure_preview_conversation_thread(&owner_slug, parent_thread_id, state).await
-    {
-        return mcp_error_text(
-            id,
-            &format!("Failed to initialize Preview conversation: {error:#}"),
-        );
-    }
+    let conversation_warning =
+        ensure_preview_conversation_best_effort(&owner_slug, parent_thread_id, state).await;
     let tunnel_url = state.tunnels.first_url();
     let owner_base = tunnel_url
         .clone()
@@ -261,7 +236,60 @@ async fn mcp_file_preview(
         ),
     };
 
-    mcp_text(id, &message)
+    mcp_text(
+        id,
+        &append_preview_warnings(message, [parent_warning, conversation_warning]),
+    )
+}
+
+async fn resolve_preview_parent_best_effort(
+    request: &PreviewParentRequest,
+    cwd: &Path,
+    state: &AppState,
+) -> (
+    Option<common::workspace::threads::WorkspaceThreadId>,
+    Option<String>,
+) {
+    match resolve_preview_parent_thread(request, cwd, state).await {
+        Ok(parent_thread_id) => (parent_thread_id, None),
+        Err(error) => {
+            tracing::warn!(error = %error, "Preview parent task link was skipped");
+            (
+                None,
+                Some(format!(
+                    "Parent task link was skipped; Preview continues standalone: {error:#}"
+                )),
+            )
+        }
+    }
+}
+
+async fn ensure_preview_conversation_best_effort(
+    owner_slug: &str,
+    parent_thread_id: Option<common::workspace::threads::WorkspaceThreadId>,
+    state: &AppState,
+) -> Option<String> {
+    match ensure_preview_conversation_thread(owner_slug, parent_thread_id, state).await {
+        Ok(()) => None,
+        Err(error) => {
+            tracing::warn!(preview_slug = owner_slug, error = %error, "Preview conversation initialization failed");
+            Some(format!(
+                "Preview conversation is temporarily unavailable: {error:#}"
+            ))
+        }
+    }
+}
+
+fn append_preview_warnings(
+    message: String,
+    warnings: impl IntoIterator<Item = Option<String>>,
+) -> String {
+    let warnings = warnings.into_iter().flatten().collect::<Vec<_>>();
+    if warnings.is_empty() {
+        message
+    } else {
+        format!("{message}\n\nWarning: {}", warnings.join("\nWarning: "))
+    }
 }
 
 fn derive_title(arguments: &Value, cwd: &Path) -> String {
@@ -329,8 +357,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        preview_source, resolve_preview_file, server_http_is_responding, server_preview_message,
-        PreviewSource,
+        append_preview_warnings, preview_source, resolve_preview_file, server_http_is_responding,
+        server_preview_message, PreviewSource,
     };
 
     fn share() -> PreviewShare {
@@ -381,6 +409,24 @@ mod tests {
         assert!(message.contains("Public sharing is unavailable until a tunnel is running."));
         assert!(!message.contains("Tunnel Share:"));
         assert!(!message.contains("Access code:"));
+    }
+
+    #[test]
+    fn preview_warnings_do_not_replace_success_output() {
+        assert_eq!(
+            append_preview_warnings("Preview ready.".into(), [None]),
+            "Preview ready."
+        );
+        assert_eq!(
+            append_preview_warnings(
+                "Preview ready.".into(),
+                [
+                    Some("Parent link skipped.".into()),
+                    Some("Chat unavailable.".into())
+                ],
+            ),
+            "Preview ready.\n\nWarning: Parent link skipped.\nWarning: Chat unavailable."
+        );
     }
 
     #[test]
