@@ -25,7 +25,6 @@ import type { PreviewItem, PreviewReviewDraft } from "./previewTypes";
 import type { usePreviewChatConnection } from "./usePreviewChatConnection";
 
 type PreviewChat = ReturnType<typeof usePreviewChatConnection>;
-const MAX_PREVIEW_MESSAGE_LENGTH = 20_000;
 
 type PreviewChatDrawerProps = {
   open: boolean;
@@ -125,10 +124,6 @@ export function PreviewChatDrawer({
     const display = submittedDrafts.length
       ? previewReviewDisplay(submittedDrafts, prompt)
       : prompt;
-    if (message.length > MAX_PREVIEW_MESSAGE_LENGTH) {
-      setSubmitError("These review notes are too long for one message.");
-      return;
-    }
     const hasScreenshots = submittedDrafts.some((draft) => draft.screenshot);
     submittingRef.current = true;
     setUploadingScreenshots(hasScreenshots);

@@ -148,7 +148,6 @@ export function PreviewReviewPopover({
             }
           }}
           rows={3}
-          maxLength={2000}
           placeholder="What should change?"
           className="min-h-20 w-full resize-none bg-transparent px-2.5 py-2 pr-10 text-sm outline-none placeholder:text-muted-foreground"
         />
