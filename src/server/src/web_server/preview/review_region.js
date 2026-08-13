@@ -9,6 +9,7 @@ function createPreviewRegionPicker({
   onCancel,
 }) {
   let generation = 0;
+  let capturing = false;
   let start = null;
 
   const point = (event) => ({
@@ -78,6 +79,7 @@ function createPreviewRegionPicker({
   region.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    if (capturing) return;
     start = point(event);
     region.setPointerCapture(event.pointerId);
     showRect(selectionRect(start, start));
@@ -108,6 +110,7 @@ function createPreviewRegionPicker({
       rect.top + rect.height / 2,
     );
     const documentPoint = { x: rect.left + scrollX, y: rect.top + scrollY };
+    capturing = true;
     const currentGeneration = ++generation;
     region.hidden = false;
     region.style.cursor = "wait";
@@ -121,6 +124,7 @@ function createPreviewRegionPicker({
         onError(error instanceof Error ? error.message : "Screenshot capture failed.");
       }
     } finally {
+      capturing = false;
       if (currentGeneration === generation) hide();
     }
   });

@@ -195,6 +195,11 @@ mod tests {
         assert!(!script.contains("&& !markdownSource"));
         assert!(!script.contains("if (!markdownSource)"));
         assert!(script.contains("Source line") || script.contains("startLine"));
+        assert!(script.contains("let capturing = false"));
+        assert!(script.contains("if (capturing) return"));
+        assert!(script.contains("finally {\n      capturing = false;"));
+        assert!(script.contains("if (currentGeneration === generation) hide()"));
+        assert!(!script.contains("generation += 1;\n    capturing = false"));
         assert!(!script.contains("getLayoutRevision"));
         assert!(!script.contains("Page changed while capturing"));
     }
