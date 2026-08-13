@@ -1,65 +1,75 @@
 ---
 name: va-preview
-description: Start a live Preview for a running development server. Use after starting a dev server or when the user asks to preview a browsable artifact. Only available when the VibeAround MCP server is connected.
+description: Start a VibeAround Preview for either a running local web server or a Markdown file. Use after starting a dev server, after creating or updating Markdown, or when the user asks to preview a browsable artifact. Only available when the VibeAround MCP server is connected.
 ---
 
-# VibeAround Live Preview
+# VibeAround Preview
 
-Register a running development server so the user can inspect it through VibeAround Preview.
+Preview exactly one local source through VibeAround: a running web server or a Markdown file.
 
-## When to Use
+## Workflow
 
-- You started a dev server such as Next.js, Vite, or `python -m http.server`
-- You created a browsable artifact and are serving it locally
-- The user asked to preview or open the result
-- The VibeAround MCP server is connected
+### 1. Confirm the preview
 
-**Proactive behavior**: Ask before calling `preview`. Do not call the tool without the user's confirmation.
+Treat an explicit user request as confirmation. Otherwise ask before calling `preview`; after changing Markdown, offer a preview instead of starting one silently.
 
-## Prerequisites
+### 2. Prepare one source
 
-The VibeAround desktop app and MCP server must be running.
+- **Server**: Reuse the intended server when its tracked process is still running. Otherwise start it with the framework's automatic port selection, wait until it is listening, and keep it on loopback when possible. Do not adopt or kill an arbitrary listener.
+- **Markdown**: Verify that the requested file exists. No separate static-file server is needed.
 
-## Steps
+### 3. Add identity when available
 
-### 1. Reuse or start the server
+Pass `$VIBEAROUND_THREAD_ID` when present. If an exact current session ID is readily available, pass it with the current agent ID. Both are optional; do not delay or block Preview when either is unavailable.
 
-- Reuse the actual port when this task already started the intended server and its tracked process is still running
-- Do not adopt or kill an arbitrary listener just because it occupies an old port
-- Otherwise prefer the framework's automatic port selection; when it supports port `0`, let the OS allocate a port and read the actual port from the startup output
-- Respect a project-required fixed port, but do not hardcode a temporary Preview port or maintain a dedicated port range
-- Wait until the server reports that it is listening, and keep it on a loopback interface when possible
+### 4. Call `preview`
 
-### 2. Resolve the conversation identity
+Pass exactly one of `port` or `file`, plus `cwd`.
 
-Pass `$VIBEAROUND_THREAD_ID` when present. If an exact current session ID is readily available, pass it with the current agent ID for earlier lifecycle cleanup. Both identities are optional: do not delay or block Preview when either is unavailable; VibeAround creates a standalone Preview conversation.
-
-### 3. Call preview
+For a server:
 
 ```
 Tool: preview
 Server: vibearound
 Arguments:
-  port: <the local server port>
+  port: <local server port>
   cwd: "<current working directory>"
   thread_id: "<value of $VIBEAROUND_THREAD_ID if present>"
-  agent_kind: "<current VibeAround agent ID>"  (pass with session_id when available)
-  session_id: "<exact current session ID>"  (pass if available)
-  title: "<short description>"  (optional)
+  agent_kind: "<current VibeAround agent ID>"  (pass with session_id)
+  session_id: "<exact current session ID if available>"
+  title: "<short title>"  (optional)
+```
+
+For Markdown:
+
+```
+Tool: preview
+Server: vibearound
+Arguments:
+  file: "<absolute path, or path relative to cwd>"
+  cwd: "<current working directory>"
+  thread_id: "<value of $VIBEAROUND_THREAD_ID if present>"
+  agent_kind: "<current VibeAround agent ID>"  (pass with session_id)
+  session_id: "<exact current session ID if available>"
+  title: "<document title>"  (optional)
 ```
 
 If the workspace is not registered, call `register_workspace` with `cwd`, then retry.
 
-### 4. Relay the returned link
+### 5. Relay returned links
 
-Present the Local owner URL. When the tool also returns Tunnel owner and Share URLs, present both URLs together with the six-digit access code and exact remaining lifetime. State that the code can be reused by multiple viewers until the Share URL and code expire together. Do not construct URLs yourself. If public sharing is unavailable, show the owner URL and that message.
+Present every owner and Share URL returned by the tool. Include the six-digit access code and exact remaining lifetime with a Share. The Share URL and code expire together and the code can be reused by multiple viewers until expiry. Do not construct URLs yourself.
 
-### 5. Optional owner review bridge
+## Markdown rendering and privacy
 
-Only when the user asks to review or comment on the live page, add the exact dev-only `<script>` tag returned by the `preview` tool to the page. It enables owner-side text and element comments without proxying the app. Do not add it proactively, and do not ship it in a production build.
+VibeAround renders Markdown internally. Raw HTML is shown as source text, and only absolute HTTPS Markdown images are loaded. Image hosts can see the viewer's IP address; Preview sends no referrer.
 
-## Error Handling
+## Optional server review bridge
 
-- **MCP server unavailable**: Ask the user to start the VibeAround desktop app.
-- **Workspace not registered**: Register it, then retry.
-- **Server unavailable**: Verify that the reported port is listening.
+Only when the user asks to review or comment on a server preview, add the exact dev-only `<script>` tag returned by the tool. Do not add it proactively or ship it in a production build.
+
+## Errors
+
+- If the MCP server is unavailable, ask the user to start VibeAround.
+- If a server is unavailable, verify that the returned port is listening.
+- If a file cannot be previewed, verify that it exists and is readable.
