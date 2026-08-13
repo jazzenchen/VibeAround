@@ -9,8 +9,9 @@
 //!   `Server`; file path for `File`).
 //! - `target`    — what to serve: `Server { port }` or `File`.
 //! - `slug`      — stable, readable URL segment derived from `id`.
-//!   Full-path-based (slashes → `-`), so slugs are globally
-//!   unique and collision-proof.
+//!   A sanitized full-path prefix is followed by a short hash of the
+//!   canonical identity, so paths that normalize to the same prefix remain
+//!   distinct.
 //! - `share`     — one 10-minute transaction containing the public link ID,
 //!   human access code, and browser grant.
 //!

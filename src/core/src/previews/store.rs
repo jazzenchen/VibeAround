@@ -12,6 +12,7 @@ use parking_lot::Mutex;
 use rand::rngs::OsRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::workspace::threads::WorkspaceThreadId;
 
@@ -62,6 +63,7 @@ pub(super) const SHARE_TTL: Duration = Duration::from_secs(SHARE_TTL_SECS);
 pub(super) const SHARE_ATTEMPT_REFILL: Duration = Duration::from_secs(6);
 
 const ACCESS_CODE_SPACE: u32 = 10_u32.pow(SHARE_CODE_LENGTH as u32);
+const OWNER_SLUG_HASH_HEX_LEN: usize = 16;
 
 pub(super) static SESSIONS: LazyLock<Mutex<HashMap<PathBuf, PreviewSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -97,16 +99,16 @@ pub(super) fn generate_share_grant() -> String {
     grant
 }
 
-/// Derive a stable, collision-free owner slug from a full path.
+/// Derive a stable, collision-resistant owner slug from a canonical identity.
 ///
-/// Strategy: lowercase the path, replace every non-alphanumeric character
-/// with `-`, and collapse repeated dashes. Because the full path is
-/// unique per session, two sessions can never share a slug.
+/// The readable prefix lowercases ASCII and collapses non-ASCII/non-alphanumeric
+/// runs to `-`. Because distinct paths can share that prefix, every slug also
+/// carries the first 64 bits of the SHA-256 digest of the exact identity.
 ///
 /// Examples:
 ///
-/// - `/Users/foo/my-app`              → `users-foo-my-app`
-/// - `/Users/foo/my-app/README.md`    → `users-foo-my-app-readme-md`
+/// - `/Users/foo/my-app`           → `users-foo-my-app-<hash>`
+/// - `/Users/foo/my_app`           → `users-foo-my-app-<different-hash>`
 pub(super) fn slug_from_path(path: &Path) -> String {
     let raw = path.to_string_lossy();
     let mut out = String::with_capacity(raw.len());
@@ -120,12 +122,10 @@ pub(super) fn slug_from_path(path: &Path) -> String {
             last_dash = true;
         }
     }
-    let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() {
-        "preview".to_string()
-    } else {
-        trimmed
-    }
+    let prefix = out.trim_matches('-');
+    let prefix = if prefix.is_empty() { "preview" } else { prefix };
+    let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    format!("{prefix}-{}", &digest[..OWNER_SLUG_HASH_HEX_LEN])
 }
 
 pub(super) fn canonical(p: &Path) -> PathBuf {

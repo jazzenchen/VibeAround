@@ -3,16 +3,82 @@ use std::path::Path;
 use std::time::Duration;
 
 #[test]
-fn slug_from_full_path_is_stable_and_unique() {
-    assert_eq!(slug_from_path(Path::new("/tmp/my-app")), "tmp-my-app");
+fn slug_from_full_path_is_stable_and_distinguishes_normalized_prefixes() {
+    assert_eq!(
+        slug_from_path(Path::new("/tmp/my-app")),
+        "tmp-my-app-1bcbc5ebe8449856"
+    );
     assert_eq!(
         slug_from_path(Path::new("/tmp/my-app/README.md")),
-        "tmp-my-app-readme-md"
+        "tmp-my-app-readme-md-9ddae9a27eeb8d4f"
     );
-    assert_ne!(
-        slug_from_path(Path::new("/a/readme.md")),
-        slug_from_path(Path::new("/b/readme.md")),
+
+    let dashed = slug_from_path(Path::new("/tmp/a-b"));
+    let underscored = slug_from_path(Path::new("/tmp/a_b"));
+    let uppercase = slug_from_path(Path::new("/tmp/A-B"));
+    let non_ascii_a = slug_from_path(Path::new("/tmp/项目一"));
+    let non_ascii_b = slug_from_path(Path::new("/tmp/项目二"));
+
+    assert!(dashed.starts_with("tmp-a-b-"));
+    assert!(underscored.starts_with("tmp-a-b-"));
+    assert!(uppercase.starts_with("tmp-a-b-"));
+    assert_ne!(dashed, underscored);
+    assert_ne!(dashed, uppercase);
+    assert_ne!(non_ascii_a, non_ascii_b);
+    for slug in [dashed, underscored, uppercase, non_ascii_a, non_ascii_b] {
+        assert!(slug
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'));
+    }
+}
+
+#[test]
+fn owner_operations_keep_normalized_path_collisions_separate() {
+    let dir = std::env::temp_dir().join(format!(
+        "va-preview-test-slug-collision-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dashed_file = dir.join("a-b.md");
+    let underscored_file = dir.join("a_b.md");
+    std::fs::write(&dashed_file, "dashed").unwrap();
+    std::fs::write(&underscored_file, "underscored").unwrap();
+
+    let (dashed_slug, _) = ensure_file(dashed_file.clone(), dir.clone(), "dashed".into());
+    let (underscored_slug, _) =
+        ensure_file(underscored_file.clone(), dir.clone(), "underscored".into());
+    assert_ne!(dashed_slug, underscored_slug);
+    assert_eq!(
+        lookup_owner(&dashed_slug).unwrap().id,
+        canonical(&dashed_file)
     );
+    assert_eq!(
+        lookup_owner(&underscored_slug).unwrap().id,
+        canonical(&underscored_file)
+    );
+
+    let dashed_thread = crate::workspace::threads::WorkspaceThreadId::from("wt_slug_dashed");
+    let underscored_thread =
+        crate::workspace::threads::WorkspaceThreadId::from("wt_slug_underscored");
+    bind_owner_conversation(&dashed_slug, dashed_thread.clone()).unwrap();
+    bind_owner_conversation(&underscored_slug, underscored_thread.clone()).unwrap();
+    assert_eq!(
+        owner_conversation_thread_id(&dashed_slug),
+        Some(dashed_thread)
+    );
+    assert_eq!(
+        owner_conversation_thread_id(&underscored_slug),
+        Some(underscored_thread)
+    );
+
+    assert!(delete_session(&dashed_slug));
+    assert!(lookup_owner(&dashed_slug).is_none());
+    assert_eq!(
+        lookup_owner(&underscored_slug).unwrap().id,
+        canonical(&underscored_file)
+    );
+    assert!(delete_session(&underscored_slug));
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
