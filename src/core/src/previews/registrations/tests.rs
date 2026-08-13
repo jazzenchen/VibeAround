@@ -45,7 +45,7 @@ fn matching_registrations_restore_files_and_servers_without_private_state() {
     let second_session = server_session(&workspace, 4319, second);
     source.insert(first_session.id.clone(), first_session);
     source.insert(second_session.id.clone(), second_session);
-    let file_id = workspace.join("README.md");
+    let file_id = path.with_extension("external.md");
     std::fs::write(&file_id, "preview").unwrap();
     let now = Instant::now();
     source.insert(
@@ -133,11 +133,12 @@ fn matching_registrations_restore_files_and_servers_without_private_state() {
         .all(|session| session.owner_session.as_deref() == Some("owner-session")));
 
     std::fs::remove_file(path).unwrap();
+    std::fs::remove_file(file_id).unwrap();
     std::fs::remove_dir_all(workspace).unwrap();
 }
 
 #[test]
-fn missing_or_out_of_workspace_files_are_pruned() {
+fn missing_files_are_pruned_while_external_files_are_restored() {
     let path = temp_path("files");
     let workspace = path.with_extension("workspace");
     let outside = path.with_extension("outside");
@@ -163,7 +164,7 @@ fn missing_or_out_of_workspace_files_are_pruned() {
                 title: "missing".into(),
             },
             PreviewRegistration::File {
-                file: outside_file,
+                file: outside_file.clone(),
                 workspace: workspace.clone(),
                 title: "outside".into(),
             },
@@ -177,12 +178,13 @@ fn missing_or_out_of_workspace_files_are_pruned() {
     })
     .unwrap();
 
-    assert_eq!(count, 1);
-    assert_eq!(restored.len(), 1);
+    assert_eq!(count, 2);
+    assert_eq!(restored.len(), 2);
     assert!(restored.contains_key(&canonical(&valid_file)));
+    assert!(restored.contains_key(&canonical(&outside_file)));
     let normalized: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(normalized.as_array().unwrap().len(), 1);
+    assert_eq!(normalized.as_array().unwrap().len(), 2);
 
     std::fs::remove_file(path).unwrap();
     std::fs::remove_dir_all(workspace).unwrap();

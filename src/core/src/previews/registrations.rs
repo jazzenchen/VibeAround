@@ -182,7 +182,7 @@ pub(super) fn persist_at(path: &Path, sessions: &HashMap<PathBuf, PreviewSession
 }
 
 fn valid_file_registration(file: &Path, workspace: &Path) -> bool {
-    file.is_file() && file != workspace && file.starts_with(workspace)
+    file.is_file() && workspace.is_dir()
 }
 
 fn persist_registrations_at(
