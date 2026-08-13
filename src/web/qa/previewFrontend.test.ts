@@ -2,11 +2,9 @@ import { expect, test } from "bun:test";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 
 import { chatUserContentBlocks } from "../src/components/chat/chatUserContent";
+import { applyPreviewSessionNotification } from "../src/preview/previewChatMessages";
 import {
-  applyPreviewSessionNotification,
-  previewSessionChanged,
-} from "../src/preview/previewChatMessages";
-import {
+  previewConversationIdentityChanged,
   previewConversationThreadId,
   previewSocketUrl,
 } from "../src/preview/usePreviewChatConnection";
@@ -178,10 +176,14 @@ test("echoed hidden review prompt acknowledges the optimistic visible summary", 
   expect(next[0].optimistic).toBe(false);
 });
 
-test("Preview transcript resets only when the bound agent session changes", () => {
-  expect(previewSessionChanged(null, "session-1")).toBe(false);
-  expect(previewSessionChanged("session-1", "session-1")).toBe(false);
-  expect(previewSessionChanged("session-1", "session-2")).toBe(true);
+test("Preview conversation resets only when an established identity changes", () => {
+  expect(previewConversationIdentityChanged(null, "readme-cn")).toBe(false);
+  expect(previewConversationIdentityChanged("readme-cn", "readme-cn")).toBe(
+    false,
+  );
+  expect(previewConversationIdentityChanged("readme-cn", "readme-en")).toBe(
+    true,
+  );
 });
 
 test("Preview conversation accepts only a non-empty thread id", () => {

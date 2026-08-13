@@ -73,6 +73,13 @@ export function previewConversationThreadId(value: unknown): string | null {
   return value.thread_id.trim() || null;
 }
 
+export function previewConversationIdentityChanged(
+  currentIdentity: string | null,
+  nextIdentity: string,
+) {
+  return previewSessionChanged(currentIdentity, nextIdentity);
+}
+
 export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
@@ -83,7 +90,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
   const turnActiveRef = useRef(false);
-  const sessionIdRef = useRef<string | null>(null);
+  const activeSlugRef = useRef<string | null>(null);
   const conversationThreadIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -119,12 +126,15 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
       socket.close();
     };
 
-    const resetConnectionView = () => {
-      setMessages([]);
+    const resetTransportView = () => {
       setPendingPermissions([]);
-      sessionIdRef.current = null;
       turnActiveRef.current = false;
       setStreaming(false);
+    };
+
+    const resetConversationView = () => {
+      setMessages([]);
+      resetTransportView();
     };
 
     const handleMessage = (event: MessageEvent) => {
@@ -141,12 +151,13 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
         const previousThreadId = conversationThreadIdRef.current;
         conversationThreadIdRef.current = conversationThreadId;
         writePreviewThreadId(slug, conversationThreadId);
-        if (previousThreadId && previousThreadId !== conversationThreadId) {
-          setMessages([]);
-          setPendingPermissions([]);
-          sessionIdRef.current = null;
-          turnActiveRef.current = false;
-          setStreaming(false);
+        if (
+          previewConversationIdentityChanged(
+            previousThreadId,
+            conversationThreadId,
+          )
+        ) {
+          resetConversationView();
         }
         return;
       }
@@ -161,15 +172,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
       switch (frame.kind) {
         case "agent_ready":
           setAgentLabel(frame.agent);
-          break;
-        case "session_ready":
-          if (previewSessionChanged(sessionIdRef.current, frame.session_id)) {
-            setMessages([]);
-            setPendingPermissions([]);
-            turnActiveRef.current = false;
-            setStreaming(false);
-          }
-          sessionIdRef.current = frame.session_id;
           break;
         case "system_text":
           setMessages((current) =>
@@ -220,7 +222,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
       if (disposed || !chatAvailable) return;
       closeSocket();
       setConnected(false);
-      resetConnectionView();
+      resetTransportView();
 
       let socket: WebSocket;
       try {
@@ -253,13 +255,17 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
       };
     }
 
+    if (previewConversationIdentityChanged(activeSlugRef.current, slug)) {
+      resetConversationView();
+    }
+    activeSlugRef.current = slug;
     reconnectAttemptRef.current = 0;
     conversationThreadIdRef.current = readPreviewThreadId(slug);
     if (chatAvailable) connect();
     else {
       closeSocket();
       setConnected(false);
-      resetConnectionView();
+      resetTransportView();
     }
 
     return () => {
