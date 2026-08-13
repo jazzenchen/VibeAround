@@ -5,10 +5,10 @@
 //! retain their original path and query while this module forwards them to the
 //! selected loopback dev server. Owner routing stays signed to the daemon;
 //! share routing carries the existing browser grant and revalidates it on every
-//! request. It supports GET/HEAD iframe navigations and browser-declared static
-//! subresources. Browser fetch/XHR/EventSource, workers, non-GET/HEAD methods,
-//! and WebSocket/HMR traffic are unsupported. This is not an API-isolation
-//! boundary: accepted request paths are forwarded unchanged.
+//! request. Authenticated GET/HEAD paths are forwarded unchanged, including
+//! data requests made by the previewed page. Non-GET/HEAD methods and protocol
+//! upgrades are unsupported. Service-worker installation is rejected so a
+//! preview cannot retain control of the shared tunnel origin after it closes.
 
 use axum::body::Body;
 use axum::extract::{Extension, Request};
@@ -95,7 +95,7 @@ pub(super) fn clear_server_routing_cookie() -> String {
 }
 
 /// Root fallback used outside `/va/`. Missing or invalid routing state returns
-/// to the dashboard; accepted iframe/subresource requests retain path/query.
+/// to the dashboard; accepted requests retain path/query.
 pub(in crate::web_server) async fn server_proxy_fallback(
     state: Option<Extension<ServerProxyState>>,
     req: Request,
@@ -124,23 +124,19 @@ async fn proxy_request_inner(client: &reqwest::Client, req: Request) -> Response
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .header(header::ALLOW, "GET, HEAD")
             .body(Body::from(
-                "VibeAround remote Server Preview only supports GET/HEAD iframe navigations and browser-declared static subresources.",
+                "VibeAround remote Server Preview only supports GET and HEAD requests.",
             ))
             .expect("valid method rejection");
     }
-
-    let destination = req
+    if req.headers().contains_key(header::UPGRADE) {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    }
+    let service_worker = req
         .headers()
         .get("sec-fetch-dest")
         .and_then(|value| value.to_str().ok())
-        .unwrap_or("document");
-    if destination == "document" {
-        return Redirect::temporary("/va/").into_response();
-    }
-    if !matches!(
-        destination,
-        "iframe" | "script" | "style" | "image" | "font" | "audio" | "video" | "track" | "manifest"
-    ) {
+        .is_some_and(|destination| destination == "serviceworker");
+    if service_worker {
         return StatusCode::FORBIDDEN.into_response();
     }
 
@@ -294,16 +290,7 @@ async fn upstream_response(upstream: reqwest::Response, port: u16) -> Response {
             }
         }
     }
-    let body = match upstream.bytes().await {
-        Ok(bytes) => Body::from(bytes),
-        Err(error) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to read Server Preview response: {error}"),
-            )
-                .into_response()
-        }
-    };
+    let body = Body::from_stream(upstream.bytes_stream());
     builder.body(body).expect("valid proxied response")
 }
 

@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
 use axum::extract::ConnectInfo;
@@ -19,15 +20,13 @@ fn auth_state() -> AuthState {
 fn proxy_request_for(
     uri: &str,
     method: Method,
-    destination: &str,
     cookie: Option<&str>,
     auth: &AuthState,
 ) -> Request<Body> {
     let mut builder = Request::builder()
         .uri(uri)
         .method(method)
-        .header(header::HOST, "preview.example.com")
-        .header("sec-fetch-dest", destination);
+        .header(header::HOST, "preview.example.com");
     if let Some(cookie) = cookie {
         builder = builder.header(header::COOKIE, cookie);
     }
@@ -94,29 +93,31 @@ fn owner_routing_is_daemon_bound_and_share_routing_revalidates_the_grant() {
 }
 
 #[tokio::test]
-async fn rejects_fetch_write_worker_and_websocket_before_connecting() {
+async fn rejects_writes_upgrades_and_service_workers_before_connecting() {
     let client = reqwest::Client::new();
     let auth = auth_state();
+    let response = proxy_request(
+        &client,
+        proxy_request_for("/api/data", Method::POST, None, &auth),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 
-    for (method, destination, expected) in [
-        (Method::POST, "iframe", StatusCode::METHOD_NOT_ALLOWED),
-        (Method::GET, "empty", StatusCode::FORBIDDEN),
-        (Method::GET, "worker", StatusCode::FORBIDDEN),
-    ] {
-        let response = proxy_request(
-            &client,
-            proxy_request_for("/api/data", method, destination, None, &auth),
-        )
-        .await;
-        assert_eq!(response.status(), expected);
-    }
-
-    let mut websocket = proxy_request_for("/socket", Method::GET, "empty", None, &auth);
+    let mut websocket = proxy_request_for("/socket", Method::GET, None, &auth);
     websocket
         .headers_mut()
         .insert(header::UPGRADE, "websocket".parse().unwrap());
     assert_eq!(
         proxy_request(&client, websocket).await.status(),
+        StatusCode::NOT_IMPLEMENTED
+    );
+
+    let mut service_worker = proxy_request_for("/sw.js", Method::GET, None, &auth);
+    service_worker
+        .headers_mut()
+        .insert("sec-fetch-dest", "serviceworker".parse().unwrap());
+    assert_eq!(
+        proxy_request(&client, service_worker).await.status(),
         StatusCode::FORBIDDEN
     );
 }
@@ -125,18 +126,14 @@ async fn rejects_fetch_write_worker_and_websocket_before_connecting() {
 async fn never_proxies_the_dashboard_namespace() {
     let client = reqwest::Client::new();
     let auth = auth_state();
-    let response = proxy_request(
-        &client,
-        proxy_request_for("/va", Method::GET, "iframe", None, &auth),
-    )
-    .await;
+    let response = proxy_request(&client, proxy_request_for("/va", Method::GET, None, &auth)).await;
 
     assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/va/");
 }
 
 #[tokio::test]
-async fn proxies_static_path_and_query_without_forwarding_credentials() {
+async fn proxies_get_path_and_query_without_forwarding_credentials() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = tokio::spawn(async move {
@@ -166,13 +163,10 @@ async fn proxies_static_path_and_query_without_forwarding_credentials() {
         .next()
         .unwrap()
         .to_string();
-    let mut request = proxy_request_for(
-        "/assets/app.js?v=7",
-        Method::GET,
-        "script",
-        Some(&cookie),
-        &auth,
-    );
+    let mut request = proxy_request_for("/assets/app.js?v=7", Method::GET, Some(&cookie), &auth);
+    request
+        .headers_mut()
+        .insert("sec-fetch-dest", "empty".parse().unwrap());
     request.headers_mut().insert(
         header::AUTHORIZATION,
         "Bearer owner-secret".parse().unwrap(),
@@ -224,6 +218,57 @@ async fn proxies_static_path_and_query_without_forwarding_credentials() {
 }
 
 #[tokio::test]
+async fn streams_the_upstream_body_after_returning_response_headers() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 1024];
+        socket.read(&mut request).await.unwrap();
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n2\r\nok\r\n",
+            )
+            .await
+            .unwrap();
+        let _ = release_rx.await;
+        socket.write_all(b"0\r\n\r\n").await.unwrap();
+    });
+    let dir = unique_temp_dir("stream");
+    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let auth = auth_state();
+    let cookie = server_routing_cookie(&slug, &auth)
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        proxy_request(
+            &client,
+            proxy_request_for("/stream", Method::GET, Some(&cookie), &auth),
+        ),
+    )
+    .await
+    .expect("proxy returns after upstream headers");
+    assert_eq!(response.status(), StatusCode::OK);
+    release_tx.send(()).unwrap();
+    assert_eq!(
+        to_bytes(response.into_body(), 16).await.unwrap().as_ref(),
+        b"ok"
+    );
+
+    server.await.unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn rewrites_absolute_loopback_redirects_to_the_tunnel_origin() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -255,7 +300,7 @@ async fn rewrites_absolute_loopback_redirects_to_the_tunnel_origin() {
         .unwrap();
     let response = proxy_request(
         &client,
-        proxy_request_for("/", Method::GET, "iframe", Some(&cookie), &auth),
+        proxy_request_for("/", Method::GET, Some(&cookie), &auth),
     )
     .await;
 

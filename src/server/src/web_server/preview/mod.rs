@@ -16,9 +16,9 @@
 //! access code. Successful public verification receives a path-scoped browser
 //! grant with the same TTL (`common::previews::SHARE_TTL_SECS`). Owner slugs
 //! remain stable and require owner access through a loopback request or the
-//! `va_owner` cookie. Shared Server iframe navigations and browser-declared
-//! subresources revalidate that same grant at the root proxy; the proxy does
-//! not forward `/va/*`, and the grant does not include owner chat or review.
+//! `va_owner` cookie. Shared Server GET/HEAD requests revalidate that same
+//! grant at the root proxy; the proxy does not forward `/va/*`, and the grant
+//! does not include owner chat or review.
 //!
 //! ## Module layout
 //!
