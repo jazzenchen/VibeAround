@@ -34,6 +34,18 @@ function makeId(prefix: string) {
     : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+export function previewReviewHelloStartsNewEpoch(
+  currentDocumentId: string | null,
+  nextDocumentId: unknown,
+) {
+  return (
+    currentDocumentId !== null &&
+    typeof nextDocumentId === "string" &&
+    nextDocumentId.length > 0 &&
+    nextDocumentId !== currentDocumentId
+  );
+}
+
 function isFrameRect(value: unknown): value is PreviewFrameRect {
   if (!value || typeof value !== "object") return false;
   const rect = value as Record<string, unknown>;
@@ -75,6 +87,8 @@ export function usePreviewReviewBridge(
   const [pickMode, setPickModeState] = useState<PreviewReviewTool | null>(null);
   const [captureError, setCaptureError] = useState("");
   const channelIdRef = useRef(makeId("preview-channel"));
+  const documentIdRef = useRef<string | null>(null);
+  const previewSlugRef = useRef(preview.slug);
   const readyRef = useRef(false);
   const draftsRef = useRef<PreviewReviewDraft[]>([]);
 
@@ -116,22 +130,36 @@ export function usePreviewReviewBridge(
     [post],
   );
 
-  const clearFrameState = useCallback(() => {
+  const resetTransport = useCallback(() => {
     readyRef.current = false;
     setCapabilities([]);
-    setDrafts([]);
     setEditor(null);
     setPickModeState(null);
     setCaptureError("");
   }, []);
 
-  const prepareFrame = useCallback(() => {
+  const rotateChannel = useCallback(() => {
     channelIdRef.current = makeId("preview-channel");
-    clearFrameState();
-  }, [clearFrameState]);
+    resetTransport();
+  }, [resetTransport]);
+
+  const prepareFrame = useCallback(() => {
+    documentIdRef.current = null;
+    rotateChannel();
+  }, [rotateChannel]);
+
+  useLayoutEffect(() => {
+    if (previewSlugRef.current === preview.slug) return;
+    previewSlugRef.current = preview.slug;
+    draftsRef.current = [];
+    setDrafts([]);
+  }, [preview.slug]);
 
   const handleFrameLoad = useCallback(() => {
-    if (preview.chatAvailable) post("init");
+    const documentId = documentIdRef.current;
+    if (!readyRef.current && preview.chatAvailable && documentId) {
+      post("init", { documentId });
+    }
   }, [post, preview.chatAvailable]);
 
   useLayoutEffect(() => {
@@ -152,8 +180,24 @@ export function usePreviewReviewBridge(
       }
 
       if (message.type === "hello") {
-        if (readyRef.current) prepareFrame();
-        if (preview.chatAvailable) post("init");
+        if (
+          previewReviewHelloStartsNewEpoch(
+            documentIdRef.current,
+            message.documentId,
+          )
+        ) {
+          rotateChannel();
+        }
+        if (
+          typeof message.documentId !== "string" ||
+          !message.documentId
+        ) {
+          return;
+        }
+        documentIdRef.current = message.documentId;
+        if (preview.chatAvailable) {
+          post("init", { documentId: message.documentId });
+        }
         return;
       }
       if (message.channelId !== channelIdRef.current) return;
@@ -231,7 +275,7 @@ export function usePreviewReviewBridge(
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [frameOrigin, frameRef, post, prepareFrame, preview.chatAvailable]);
+  }, [frameOrigin, frameRef, post, preview.chatAvailable, rotateChannel]);
 
   const closeEditor = useCallback(
     (cancelNewSelection: boolean) => {

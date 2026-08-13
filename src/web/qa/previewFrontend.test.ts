@@ -10,6 +10,7 @@ import {
   previewConversationThreadId,
   previewSocketUrl,
 } from "../src/preview/usePreviewChatConnection";
+import { previewReviewHelloStartsNewEpoch } from "../src/preview/usePreviewReviewBridge";
 import {
   buildPreviewReviewPrompt,
   previewReviewDisplay,
@@ -39,6 +40,17 @@ test("Preview chat width stays bounded on either resize edge", () => {
   expect(clampPreviewChatWidth(800)).toBe(560);
   expect(resizePreviewChatWidth(400, 40, "left")).toBe(440);
   expect(resizePreviewChatWidth(400, 40, "right")).toBe(360);
+});
+
+test("Preview review hello rotates only for a different iframe document", () => {
+  expect(previewReviewHelloStartsNewEpoch(null, "document-1")).toBe(false);
+  expect(previewReviewHelloStartsNewEpoch("document-1", "document-1")).toBe(
+    false,
+  );
+  expect(previewReviewHelloStartsNewEpoch("document-1", "document-2")).toBe(
+    true,
+  );
+  expect(previewReviewHelloStartsNewEpoch("document-1", null)).toBe(false);
 });
 
 test("owner Preview route matches only the page shell", () => {

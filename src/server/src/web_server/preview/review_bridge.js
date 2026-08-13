@@ -4,6 +4,9 @@
   if (!script || !script.src || window.parent === window) return;
   const scope = "va-preview-review";
   const version = 1;
+  const documentId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `preview-document-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const scriptUrl = new URL(script.src, location.href);
   const allowedOwnerOrigins = new Set([scriptUrl.origin]);
   if (["127.0.0.1", "localhost", "[::1]"].includes(scriptUrl.hostname)) {
@@ -430,7 +433,8 @@
     const data = event.data;
     if (event.source !== parent || !data
         || data.scope !== scope || data.version !== version) return;
-    if (data.type === "init" && typeof data.channelId === "string" && data.channelId) {
+    if (data.type === "init" && data.documentId === documentId
+        && typeof data.channelId === "string" && data.channelId) {
       if (channelId) {
         if (event.origin !== ownerOrigin || data.channelId !== channelId) return;
       } else {
@@ -463,7 +467,7 @@
         && activeAnchor && activeAnchor.id === data.anchorId) activeAnchor = null;
   });
   const hello = () => {
-    parent.postMessage({ scope, version, type: "hello" }, "*");
+    parent.postMessage({ scope, version, type: "hello", documentId }, "*");
   };
   hello();
   let attempts = 0;

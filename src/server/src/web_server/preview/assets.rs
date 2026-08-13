@@ -186,6 +186,8 @@ mod tests {
         assert!(script.contains("createPreviewRegionPicker"));
         assert!(script.contains("region-pin"));
         assert!(script.contains("va-preview-review"));
+        assert!(script.contains("documentId"));
+        assert!(script.contains("data.documentId === documentId"));
         assert!(script.contains("Source line") || script.contains("startLine"));
     }
 }
