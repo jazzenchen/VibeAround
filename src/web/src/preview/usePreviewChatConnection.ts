@@ -59,15 +59,6 @@ export function previewSocketUrl(
   return url.href;
 }
 
-export function isPreviewRefreshEvent(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "kind" in value &&
-    value.kind === "preview_refresh"
-  );
-}
-
 export function previewConversationThreadId(value: unknown): string | null {
   if (
     typeof value !== "object" ||
@@ -88,7 +79,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
   const [streaming, setStreaming] = useState(false);
   const [agentLabel, setAgentLabel] = useState("AI");
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([]);
-  const [refreshRequestVersion, setRefreshRequestVersion] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -144,10 +134,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
         payload = JSON.parse(event.data);
       } catch (error) {
         console.warn("[Preview] bad chat frame, dropping:", error);
-        return;
-      }
-      if (isPreviewRefreshEvent(payload)) {
-        setRefreshRequestVersion((version) => version + 1);
         return;
       }
       const conversationThreadId = previewConversationThreadId(payload);
@@ -267,7 +253,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
       };
     }
 
-    setRefreshRequestVersion(0);
     reconnectAttemptRef.current = 0;
     conversationThreadIdRef.current = readPreviewThreadId(slug);
     if (chatAvailable) connect();
@@ -393,7 +378,6 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
     streaming,
     agentLabel,
     pendingPermissions,
-    refreshRequestVersion,
     sendMessage,
     stopStreaming,
     sendPermissionResponse,

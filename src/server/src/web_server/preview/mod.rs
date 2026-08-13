@@ -54,7 +54,6 @@ pub(super) use assets::{
     MARKED_SCRIPT_ROUTE, REVIEW_BRIDGE_SCRIPT_ROUTE, THEME_STYLESHEET_ROUTE,
 };
 pub(super) use chat::owner_preview_chat_handler;
-pub(in crate::web_server) use chat::request_owner_refresh;
 pub(in crate::web_server) use server_proxy::{server_proxy_fallback, ServerProxyState};
 
 use access::{

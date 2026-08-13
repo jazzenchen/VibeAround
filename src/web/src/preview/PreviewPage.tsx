@@ -107,10 +107,6 @@ function PreviewWorkspace({
   }, [review.prepareFrame]);
 
   useEffect(() => {
-    if (chat.refreshRequestVersion > 0) refreshPreview();
-  }, [chat.refreshRequestVersion, refreshPreview]);
-
-  useEffect(() => {
     document.title = `Preview — ${selected.title}`;
   }, [selected.title]);
 

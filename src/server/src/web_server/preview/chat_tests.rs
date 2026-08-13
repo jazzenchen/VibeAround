@@ -246,19 +246,3 @@ async fn stale_preview_session_defers_user_message_until_successor_is_ready() {
     ));
     assert!(!preview_route_session_is_stale(None, None));
 }
-
-#[tokio::test]
-async fn preview_refresh_events_are_live_only_and_filtered_by_owner_slug() {
-    let before_subscribe = format!("before-{}", uuid::Uuid::new_v4());
-    request_owner_refresh(&before_subscribe);
-    let mut rx = PREVIEW_REFRESH_EVENTS.subscribe();
-    assert!(matches!(
-        rx.try_recv(),
-        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
-    ));
-
-    let target = format!("target-{}", uuid::Uuid::new_v4());
-    request_owner_refresh("another-preview");
-    request_owner_refresh(&target);
-    receive_owner_refresh(&mut rx, &target).await.unwrap();
-}
