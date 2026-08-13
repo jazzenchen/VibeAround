@@ -172,7 +172,6 @@ pub struct Config {
     pub default_workspace: PathBuf,
     /// User-added project folders.
     pub workspaces: Vec<PathBuf>,
-    pub preview_base_url: Option<String>,
     pub tmux_detach_others: bool,
     // --- Agents ---
     pub default_agent: String,
@@ -541,13 +540,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
     let default_workspace = workspace_settings.default_workspace;
     let workspaces = workspace_settings.workspaces;
 
-    let preview_base_url = root
-        .get("preview_base_url")
-        .or_else(|| root.get("tunnel").and_then(|t| t.get("preview_base_url")))
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
     let tmux_detach_others = root
         .get("tmux")
         .and_then(|t| t.get("detach_others"))
@@ -637,7 +629,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         portable_toolchain,
         default_workspace,
         workspaces,
-        preview_base_url,
         tmux_detach_others,
         default_agent,
         enabled_agents,
@@ -904,24 +895,6 @@ fn retry_limit_setting(
     } else {
         value.as_u64().map(|value| value as usize).or(default)
     }
-}
-
-/// Base URL for preview links. Reads from the config cache.
-pub fn preview_base_url() -> Option<String> {
-    let cfg = ensure_loaded();
-    cfg.preview_base_url
-        .clone()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            cfg.cloudflare_hostname
-                .as_ref()
-                .map(|h| format!("https://{}", h.trim()))
-        })
-        .or_else(|| {
-            cfg.ngrok_domain
-                .as_ref()
-                .map(|d| format!("https://{}", d.trim()))
-        })
 }
 
 /// Expand ~ to home directory in a path string.
@@ -1365,7 +1338,6 @@ impl Default for Config {
             portable_toolchain: false,
             default_workspace: builtin_workspaces_dir(),
             workspaces: vec![],
-            preview_base_url: None,
             tmux_detach_others: true,
             default_agent: "claude".to_string(),
             enabled_agents: crate::resources::AGENTS

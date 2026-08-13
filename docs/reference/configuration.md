@@ -38,7 +38,6 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
     "ngrok":      { "auth_token": "…", "domain": "…" },
     "cloudflare": { "tunnel_token": "…", "hostname": "…" }
   },
-  "preview_base_url": null,          // override the public base URL for preview links
 
   // --- Toolchain ---
   "toolchain_mode": "system",        // system | managed
