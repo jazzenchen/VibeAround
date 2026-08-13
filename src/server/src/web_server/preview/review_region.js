@@ -4,7 +4,6 @@ function createPreviewRegionPicker({
   regionStatus,
   host,
   renderer,
-  getLayoutRevision,
   onPicked,
   onError,
   onCancel,
@@ -109,7 +108,6 @@ function createPreviewRegionPicker({
       rect.top + rect.height / 2,
     );
     const documentPoint = { x: rect.left + scrollX, y: rect.top + scrollY };
-    const layoutRevision = getLayoutRevision();
     const currentGeneration = ++generation;
     region.hidden = false;
     region.style.cursor = "wait";
@@ -117,10 +115,6 @@ function createPreviewRegionPicker({
     try {
       const screenshot = await capture(rect);
       if (currentGeneration !== generation) return;
-      if (layoutRevision !== getLayoutRevision()) {
-        onError("Page changed while capturing. Try again.");
-        return;
-      }
       onPicked({ rect, target, screenshot, documentPoint });
     } catch (error) {
       if (currentGeneration === generation) {

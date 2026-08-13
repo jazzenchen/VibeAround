@@ -26,7 +26,6 @@
   let pending = null;
   let activeAnchor = null;
   let overlayFrame = 0;
-  let layoutRevision = 0;
   let regionPicker = null;
   let host, root, hover, hoverLabel, trigger;
 
@@ -126,7 +125,6 @@
       regionStatus: root.querySelector(".region-status"),
       host,
       renderer: vaPreviewHtml2canvas,
-      getLayoutRevision: () => layoutRevision,
       onPicked: ({ rect, target, screenshot, documentPoint }) => {
         pickMode = "none";
         setPending(newRegionSelection(rect, target, screenshot, documentPoint), false);
@@ -405,10 +403,7 @@
     post("anchor-picked", pending.message);
   }, true);
   document.addEventListener("keydown", (event) => event.key === "Escape" && cancelPick(true), true);
-  const handleLayoutChange = () => {
-    layoutRevision += 1;
-    scheduleOverlayUpdate();
-  };
+  const handleLayoutChange = scheduleOverlayUpdate;
   document.addEventListener("toggle", handleLayoutChange, true);
   document.addEventListener("load", (event) => {
     if (event.target instanceof HTMLImageElement) handleLayoutChange();
@@ -416,11 +411,10 @@
   document.addEventListener("transitionend", handleLayoutChange, true);
   document.addEventListener("animationend", handleLayoutChange, true);
   addEventListener("scroll", () => {
-    layoutRevision += 1;
-    updateOverlays();
+    scheduleOverlayUpdate();
   }, { passive: true, capture: true });
   addEventListener("scrollend", () => {
-    updateOverlays();
+    scheduleOverlayUpdate();
     if (activeAnchor && activeAnchor.activateWhenVisible) activeAnchor = null;
   }, { passive: true, capture: true });
   addEventListener("resize", handleLayoutChange, { passive: true });
