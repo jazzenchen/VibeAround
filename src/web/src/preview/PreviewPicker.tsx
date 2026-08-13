@@ -1,4 +1,4 @@
-import { Check, ChevronDown, FileText, Monitor } from "lucide-react";
+import { Check, ChevronDown, Monitor } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,11 +21,6 @@ type PreviewPickerProps = {
 function workspaceLabel(path: string) {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
-}
-
-function kindLabel(preview: PreviewItem) {
-  const kind = preview.kind.toLowerCase();
-  return kind === "file" || kind.includes("markdown") ? "Markdown" : "Web";
 }
 
 export function PreviewPicker({
@@ -54,9 +49,8 @@ export function PreviewPicker({
           )}
           aria-label="Workspace and preview"
         >
-          <span className="min-w-0 truncate">
-            <span className="font-medium text-foreground">{selected.title}</span>
-            <span className="text-muted-foreground"> · {kindLabel(selected)}</span>
+          <span className="min-w-0 truncate font-medium text-foreground">
+            {selected.title}
           </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Button>
@@ -70,28 +64,19 @@ export function PreviewPicker({
             >
               {workspaceLabel(workspace)}
             </DropdownMenuLabel>
-            {items.map((preview) => {
-              const kind = preview.kind.toLowerCase();
-              const Icon = kind === "file" || kind.includes("markdown")
-                ? FileText
-                : Monitor;
-              return (
-                <DropdownMenuItem
-                  key={preview.slug}
-                  onSelect={() => onSelect(preview.slug)}
-                  className="min-w-0"
-                >
-                  <Icon className="h-4 w-4" />
-                  <span className="min-w-0 flex-1 truncate">{preview.title}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {kindLabel(preview)}
-                  </span>
-                  {preview.slug === selected.slug && (
-                    <Check className="h-4 w-4 text-primary" />
-                  )}
-                </DropdownMenuItem>
-              );
-            })}
+            {items.map((preview) => (
+              <DropdownMenuItem
+                key={preview.slug}
+                onSelect={() => onSelect(preview.slug)}
+                className="min-w-0"
+              >
+                <Monitor className="h-4 w-4" />
+                <span className="min-w-0 flex-1 truncate">{preview.title}</span>
+                {preview.slug === selected.slug && (
+                  <Check className="h-4 w-4 text-primary" />
+                )}
+              </DropdownMenuItem>
+            ))}
           </div>
         ))}
       </DropdownMenuContent>

@@ -2,9 +2,7 @@ export interface PreviewItem {
   slug: string;
   title: string;
   workspace: string;
-  kind: string;
   src: string;
-  chatAvailable: boolean;
 }
 
 export interface PreviewBootstrap {
@@ -72,9 +70,7 @@ export function parsePreviewBootstrap(value: unknown): PreviewBootstrap | null {
       typeof item.slug !== "string" ||
       typeof item.title !== "string" ||
       typeof item.workspace !== "string" ||
-      typeof item.kind !== "string" ||
-      typeof item.src !== "string" ||
-      typeof item.chatAvailable !== "boolean"
+      typeof item.src !== "string"
     ) {
       return null;
     }
@@ -82,9 +78,7 @@ export function parsePreviewBootstrap(value: unknown): PreviewBootstrap | null {
       slug: item.slug,
       title: item.title,
       workspace: item.workspace,
-      kind: item.kind,
       src: item.src,
-      chatAvailable: item.chatAvailable,
     });
   }
 

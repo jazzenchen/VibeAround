@@ -157,10 +157,10 @@ export function usePreviewReviewBridge(
 
   const handleFrameLoad = useCallback(() => {
     const documentId = documentIdRef.current;
-    if (!readyRef.current && preview.chatAvailable && documentId) {
+    if (!readyRef.current && documentId) {
       post("init", { documentId });
     }
-  }, [post, preview.chatAvailable]);
+  }, [post]);
 
   useLayoutEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -195,9 +195,7 @@ export function usePreviewReviewBridge(
           return;
         }
         documentIdRef.current = message.documentId;
-        if (preview.chatAvailable) {
-          post("init", { documentId: message.documentId });
-        }
+        post("init", { documentId: message.documentId });
         return;
       }
       if (message.channelId !== channelIdRef.current) return;
@@ -275,7 +273,7 @@ export function usePreviewReviewBridge(
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [frameOrigin, frameRef, post, preview.chatAvailable, rotateChannel]);
+  }, [frameOrigin, frameRef, post, rotateChannel]);
 
   const closeEditor = useCallback(
     (cancelNewSelection: boolean) => {

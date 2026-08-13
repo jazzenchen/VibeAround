@@ -98,7 +98,7 @@ function PreviewWorkspace({
     bootstrap.previews.find((preview) => preview.slug === selectedSlug) ??
     bootstrap.previews[0];
 
-  const chat = usePreviewChatConnection(selected.slug, selected.chatAvailable);
+  const chat = usePreviewChatConnection(selected.slug);
   const review = usePreviewReviewBridge(frameRef, selected);
 
   const refreshPreview = useCallback(() => {

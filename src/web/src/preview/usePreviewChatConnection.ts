@@ -80,7 +80,7 @@ export function previewConversationIdentityChanged(
   return previewSessionChanged(currentIdentity, nextIdentity);
 }
 
-export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
+export function usePreviewChatConnection(slug: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -103,7 +103,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
     };
 
     const scheduleReconnect = () => {
-      if (disposed || !chatAvailable || reconnectTimerRef.current) return;
+      if (disposed || reconnectTimerRef.current) return;
       const delay =
         RECONNECT_DELAYS_MS[
           Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS_MS.length - 1)
@@ -219,7 +219,7 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
     };
 
     function connect() {
-      if (disposed || !chatAvailable) return;
+      if (disposed) return;
       closeSocket();
       setConnected(false);
       resetTransportView();
@@ -261,19 +261,14 @@ export function usePreviewChatConnection(slug: string, chatAvailable: boolean) {
     activeSlugRef.current = slug;
     reconnectAttemptRef.current = 0;
     conversationThreadIdRef.current = readPreviewThreadId(slug);
-    if (chatAvailable) connect();
-    else {
-      closeSocket();
-      setConnected(false);
-      resetTransportView();
-    }
+    connect();
 
     return () => {
       disposed = true;
       clearReconnectTimer();
       closeSocket();
     };
-  }, [chatAvailable, slug]);
+  }, [slug]);
 
   const sendMessage = useCallback(
     (text: string, displayText = text, attachments: ChatAttachment[] = []) => {

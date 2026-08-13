@@ -28,9 +28,7 @@ const preview: PreviewItem = {
   slug: "readme-cn-md",
   title: "README 中文版",
   workspace: "/work/VibeAround",
-  kind: "file",
   src: "/va/preview/u/readme-cn-md/content",
-  chatAvailable: true,
 };
 
 test("Preview chat width stays bounded on either resize edge", () => {
@@ -59,14 +57,14 @@ test("owner Preview route matches only the page shell", () => {
   expect(ownerPreviewSlug("/va/")).toBeNull();
 });
 
-test("Preview bootstrap rejects partial item contracts", () => {
+test("Preview bootstrap accepts the unified item and rejects a missing source", () => {
   expect(
     parsePreviewBootstrap({ selectedSlug: preview.slug, previews: [preview] }),
   ).toEqual({ selectedSlug: preview.slug, previews: [preview] });
   expect(
     parsePreviewBootstrap({
       selectedSlug: preview.slug,
-      previews: [{ ...preview, chatAvailable: "yes" }],
+      previews: [{ ...preview, src: undefined }],
     }),
   ).toBeNull();
 });

@@ -225,7 +225,6 @@ export function PreviewChatDrawer({
           setSubmitError("");
         }}
         onSubmit={() => void submit()}
-        disabled={!preview.chatAvailable}
         submitDisabled={!chat.connected || chat.streaming || uploadingScreenshots}
         isStreaming={chat.streaming}
         attachmentsUploading={uploadingScreenshots}
@@ -274,13 +273,7 @@ export function PreviewChatDrawer({
           ) : undefined
         }
         placeholder="Ask for a change…"
-        targetLabel={
-          !preview.chatAvailable
-            ? "Preview chat unavailable"
-            : chat.connected
-              ? chat.agentLabel
-              : "Connecting…"
-        }
+        targetLabel={chat.connected ? chat.agentLabel : "Connecting…"}
       />
     </aside>
   );

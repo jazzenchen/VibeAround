@@ -18,9 +18,7 @@ struct OwnerPreviewItem {
     slug: String,
     title: String,
     workspace: String,
-    kind: &'static str,
     src: String,
-    chat_available: bool,
 }
 
 pub(super) fn owner_preview_bootstrap(
@@ -43,12 +41,7 @@ pub(super) fn owner_preview_bootstrap(
                 slug: preview.slug.clone(),
                 title: preview.title.clone(),
                 workspace: preview.workspace.display().to_string(),
-                kind: preview.kind,
                 src: preview_src(&preview.slug, preview.port, server_host),
-                // Chat is an owner Preview capability. The socket resolves an
-                // existing child by slug or creates a standalone child when
-                // no prior conversation exists.
-                chat_available: true,
             })
             .collect(),
     }
