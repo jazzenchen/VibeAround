@@ -30,7 +30,7 @@
 
 ## 不变量：不要破坏
 
-1. **Route protection layout**：除有意开放的集合（SPA shell/assets、由访问码保护的 Preview Share、pairing entry）外，所有东西都 token-gated。Owner Preview routes 要求 loopback/token 访问或远程配对。Server Share 只接受 GET/HEAD iframe 导航和浏览器通过 `Sec-Fetch-Dest` 声明的静态子资源，并拒绝非 GET/HEAD、fetch/XHR/EventSource、worker、WebSocket 与 HMR。它不是通用 API 兼容层或 API 隔离沙盒；`/va/*`、owner、chat 与 review 不进入 Share。新 routes 默认 protected；新增 open route 是安全模型变更。
+1. **Route protection layout**：除有意开放的集合（SPA shell/assets、由访问码保护的 Preview Share、pairing entry）外，所有东西都 token-gated。Owner Preview routes 要求 loopback/token 访问或远程配对。Server Share 会原样转发已认证的 GET/HEAD 路径，包括页面的数据读取；写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持，`/va/*`、owner 页面、chat 与 review 不进入 Share。它不是通用 API 兼容层或 API 隔离沙盒，route policy 不得因 child path 看似 API 而改变。新 routes 默认 protected；新增 open route 是安全模型变更。
 2. **模型 surface 上的 local-bridge gate**：local-api / local-agent / legacy bridge routes 必须保持 loopback-only，不能被 tunnel 访问。
 3. **Shutdown order matters**：先停 Web/input ingress，再 drain `ConversationIngress`，然后停止 channel、workspace hosts、search，最后 safety-net registry kill、previews、PTY 和 listeners。teardown 后不能再执行排队 prompt。
 4. **`ws_domains` protocol 是 snapshot-replace**：client 把最后一条消息当作当前 state；不要在这些 endpoints 引入 incremental diffs（设计上就是为了避免 schema drift）。

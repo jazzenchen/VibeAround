@@ -78,7 +78,7 @@ All token-authenticated; see [architecture overview](../architecture/overview.md
 | `/preview/u/{slug}/content` | Selected owner content; a local Server uses its loopback origin directly | Same owner boundary as the shell | While the preview exists |
 | `/preview/s/{share_id}` | Server or Markdown Share | Six-digit access code, then scoped browser grant | One shared 600 s deadline |
 
-The first Server Share transport forwards only GET/HEAD iframe navigations and browser-declared static subresources. It rejects or does not support browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSocket upgrades, HMR traffic, or forwarding `/va/*` to the child; owner chat and review controls are not part of a Share. This is a page-preview transport, not general API compatibility or an API-isolation sandbox: an accepted navigation or subresource can use any path.
+The Server Share proxy revalidates the scoped browser grant on every request and forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR remain unsupported. `/va/*`, owner pages, chat, and review controls are excluded from a Share. This is a page-preview transport, not general API compatibility or an API-isolation sandbox; accepted GET/HEAD paths are not classified by name.
 
 ---
 

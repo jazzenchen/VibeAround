@@ -23,7 +23,7 @@ Track preview sessions (dev-server ports and Markdown files), mint Server/Markdo
 
 ## Invariants — do not break
 
-1. **Every Share is one scoped transaction** — one Preview, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. A Server Share forwards only GET/HEAD iframe navigations and browser-declared static subresources; browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets, HMR, and `/va/*` forwarding must remain rejected or unsupported. It is a page-preview transport, not an API-isolation sandbox; do not infer policy from path names. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
+1. **Every Share is one scoped transaction** — one Preview, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. A Server Share forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR must remain unsupported; `/va/*`, owner pages, chat, and review stay excluded. It is a page-preview transport, not an API-isolation sandbox; do not infer policy from path names. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
 2. **Preview processes are session-scoped**: an agent session's dev servers die with `/close` and with the daemon — no orphaned `npm run dev`.
 3. Remote Server and Markdown owner links require owner pairing; Share expiry must not affect the owner path.
 

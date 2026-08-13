@@ -23,7 +23,7 @@
 
 ## 不变量：不要破坏
 
-1. **每笔 Share 都是一笔限定作用域的事务**：一个 Preview、一个不透明 URL ID、一个可重复使用的六位访问码、一个浏览器授信和一个硬 TTL。Server Share 只接受 GET/HEAD iframe 导航与浏览器通过 `Sec-Fetch-Dest` 声明的静态子资源，必须拒绝非 GET/HEAD、fetch/XHR/EventSource、worker、WebSocket 和 HMR；它是页面预览传输，不是通用 API 兼容层或 API 隔离沙盒。`/va/*`、owner、chat 与 review 不进入 Share。不重新审视[安全模型](../../architecture/security-model.md)就不要扩大 target scope 或 lifetime。
+1. **每笔 Share 都是一笔限定作用域的事务**：一个 Preview、一个不透明 URL ID、一个可重复使用的六位访问码、一个浏览器授信和一个硬 TTL。Server Share 会原样转发已认证的 GET/HEAD 路径，包括页面的数据读取；写请求、协议升级、service worker、WebSocket 与 HMR 必须保持不支持，`/va/*`、owner 页面、chat 与 review 不进入 Share。它是页面预览传输，不是通用 API 兼容层或 API 隔离沙盒；不要根据路径名称推断策略。不重新审视[安全模型](../../architecture/security-model.md)就不要扩大 target scope 或 lifetime。
 2. **Preview processes 是 session-scoped**：agent session 的 dev servers 会随 `/close` 和 daemon 一起死，不留下 orphaned `npm run dev`。
 3. 远程 Server 与 Markdown owner link 需要 owner 配对；Share expiry 不能影响 owner path。
 

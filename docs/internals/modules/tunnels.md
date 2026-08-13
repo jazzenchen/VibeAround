@@ -21,14 +21,14 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 
 - **← server (daemon boot):** starts the configured tunnel; reports Tailscale's `awaiting_approval` state; registers the abort handle; `stop()` aborts and clears.
 - **← auth:** a public hostname is what triggers the pairing gate.
-- **← previews / dashboard:** public URL for paired Server/Markdown owner links and code-gated Share links (`preview_base_url` can override).
+- **← previews / dashboard:** the active tunnel URL supplies paired Server/Markdown owner links and code-gated Share links.
 - **→ resources:** provider program definitions and spawn-error hints (e.g. "is Node/npx installed?").
 
 ## Invariants — do not break
 
 1. **`none` is a first-class provider** — no tunnel code runs, no child spawns; new call sites must tolerate absent URLs.
 2. **The tunnel exposes exactly the web listener** — never bind additional ports through it; loopback-only surfaces (local-api) must stay unreachable.
-3. **Server Share proxying stays page-oriented** — accept GET/HEAD iframe navigations and browser-declared static subresources; reject or leave unsupported browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets/HMR, and `/va/*` forwarding. This is not an API-isolation sandbox; accepted request paths are forwarded unchanged.
+3. **Server Share proxying stays page-oriented** — forward authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR remain unsupported; `/va/*`, owner pages, chat, and review remain excluded. This is not an API-isolation sandbox; accepted GET/HEAD paths are not classified by name.
 4. Provider children are registered for cleanup like every other child; a dead daemon leaves no `cloudflared` or `tailscale funnel` process behind.
 5. Public URL is data, not identity: consumers subscribe to changes rather than caching it across restarts.
 

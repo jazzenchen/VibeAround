@@ -25,7 +25,7 @@ Prerequisites: VibeAround installed with Codex enabled ([install and onboarding]
    /new           abandon course, start a fresh thread
    ```
 
-5. **Review outputs visually** with [Live Preview](../guides/web-dashboard.md): paired owner links and code-gated Server/Markdown Shares can open on the phone. Server Shares support GET/HEAD iframe navigations and browser-declared static subresources; browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets, and HMR are unsupported.
+5. **Review outputs visually** with [Live Preview](../guides/web-dashboard.md): paired owner links and code-gated Server/Markdown Shares can open on the phone. Server Shares forward authenticated GET/HEAD paths, including page data reads; writes, protocol upgrades, service workers, WebSockets, and HMR are unsupported. `/va/*`, owner pages, chat, and review controls are excluded.
 
 ## What Phones Are Good At
 

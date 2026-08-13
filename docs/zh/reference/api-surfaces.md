@@ -78,7 +78,7 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 | `/preview/u/{slug}/content` | 选中的 owner 内容；本地 Server 直接使用其 loopback origin | 与 owner shell 相同 | 预览存在期间 |
 | `/preview/s/{share_id}` | Server 或 Markdown Share | 六位访问码，随后使用限定作用域的浏览器授信 | 共用 600 秒期限 |
 
-第一版 Server Share 是页面预览传输：只接受 GET/HEAD iframe 导航和浏览器通过 `Sec-Fetch-Dest` 声明的静态子资源请求；拒绝非 GET/HEAD、fetch/XHR/EventSource、worker、WebSocket upgrade 和 HMR。它不是通用 API 兼容层，也不是 API 隔离沙盒；`/va/*`、owner 页面、chat 和审阅控件不进入 Share。
+Server Share 代理会在每次请求时重新验证限定作用域的浏览器授信，并原样转发已认证的 GET/HEAD 路径，包括页面的数据读取。写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持；`/va/*`、owner 页面、chat 和审阅控件不进入 Share。它是页面预览传输，不是通用 API 兼容层或 API 隔离沙盒；已接受的 GET/HEAD 路径不会按名称分类。
 
 ---
 
