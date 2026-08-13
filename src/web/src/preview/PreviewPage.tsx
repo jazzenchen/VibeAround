@@ -13,7 +13,11 @@ import type {
   PreviewReviewTool,
   PreviewReviewToolbarModel,
 } from "./PreviewReviewToolbar";
-import { parsePreviewBootstrap, type PreviewBootstrap } from "./previewTypes";
+import {
+  parsePreviewBootstrap,
+  refreshedPreviewSlug,
+  type PreviewBootstrap,
+} from "./previewTypes";
 import { usePreviewChatConnection } from "./usePreviewChatConnection";
 import { usePreviewReviewBridge } from "./usePreviewReviewBridge";
 
@@ -25,18 +29,10 @@ export default function PreviewPage({ initialSlug }: { initialSlug: string }) {
     const abort = new AbortController();
     setBootstrap(undefined);
     setError(undefined);
-    void fetch(
-      `/va/preview/u/${encodeURIComponent(initialSlug)}/bootstrap`,
-      { signal: abort.signal, credentials: "same-origin" },
-    )
-      .then(async (response) => {
-        if (!response.ok) {
-          const detail = (await response.text()).trim();
-          throw new Error(detail || `Preview failed to load (${response.status})`);
-        }
-        const parsed = parsePreviewBootstrap(await response.json());
-        if (!parsed || parsed.previews.length === 0) {
-          throw new Error("Preview response is invalid.");
+    void fetchPreviewBootstrap(initialSlug, abort.signal)
+      .then((parsed) => {
+        if (!parsed.previews.some((preview) => preview.slug === initialSlug)) {
+          throw new Error("This Preview is no longer active.");
         }
         setBootstrap(parsed);
       })
@@ -46,6 +42,20 @@ export default function PreviewPage({ initialSlug }: { initialSlug: string }) {
       });
     return () => abort.abort();
   }, [initialSlug]);
+
+  const refreshBootstrap = useCallback(async (slug: string) => {
+    try {
+      const next = await fetchPreviewBootstrap(slug);
+      setBootstrap(next);
+      setError(undefined);
+      return next;
+    } catch (reason: unknown) {
+      setError(
+        reason instanceof Error ? reason.message : "Preview failed to load.",
+      );
+      return null;
+    }
+  }, []);
 
   if (error) {
     return (
@@ -71,21 +81,44 @@ export default function PreviewPage({ initialSlug }: { initialSlug: string }) {
     );
   }
 
-  return <PreviewWorkspace bootstrap={bootstrap} requestedSlug={initialSlug} />;
+  return (
+    <PreviewWorkspace
+      bootstrap={bootstrap}
+      requestedSlug={initialSlug}
+      onRefreshBootstrap={refreshBootstrap}
+    />
+  );
+}
+
+async function fetchPreviewBootstrap(
+  slug: string,
+  signal?: AbortSignal,
+): Promise<PreviewBootstrap> {
+  const response = await fetch(
+    `/va/preview/u/${encodeURIComponent(slug)}/bootstrap`,
+    { signal, credentials: "same-origin" },
+  );
+  if (!response.ok) {
+    const detail = (await response.text()).trim();
+    throw new Error(detail || `Preview failed to load (${response.status})`);
+  }
+  const parsed = parsePreviewBootstrap(await response.json());
+  if (!parsed || parsed.previews.length === 0) {
+    throw new Error("Preview response is invalid.");
+  }
+  return parsed;
 }
 
 function PreviewWorkspace({
   bootstrap,
   requestedSlug,
+  onRefreshBootstrap,
 }: {
   bootstrap: PreviewBootstrap;
   requestedSlug: string;
+  onRefreshBootstrap: (slug: string) => Promise<PreviewBootstrap | null>;
 }) {
-  const initialSelectedSlug =
-    [bootstrap.selectedSlug, requestedSlug].find((slug) =>
-      bootstrap.previews.some((preview) => preview.slug === slug),
-    ) ?? bootstrap.previews[0].slug;
-  const [selectedSlug, setSelectedSlug] = useState(initialSelectedSlug);
+  const [selectedSlug, setSelectedSlug] = useState(requestedSlug);
   const [helperView, setHelperView] =
     useState<PreviewHelperView>("collapsed");
   const [helperCorner, setHelperCorner] =
@@ -101,10 +134,23 @@ function PreviewWorkspace({
   const chat = usePreviewChatConnection(selected.slug);
   const review = usePreviewReviewBridge(frameRef, selected);
 
-  const refreshPreview = useCallback(() => {
+  const refreshPreview = useCallback(async () => {
+    const nextBootstrap = await onRefreshBootstrap(selected.slug);
+    if (!nextBootstrap) return;
+    const nextSlug = refreshedPreviewSlug(nextBootstrap, selected.slug);
+    if (!nextSlug) return;
+
     review.prepareFrame();
+    setSelectedSlug(nextSlug);
     setFrameRevision((revision) => revision + 1);
-  }, [review.prepareFrame]);
+    if (nextSlug !== selected.slug) {
+      history.replaceState(
+        null,
+        "",
+        `/va/preview/u/${encodeURIComponent(nextSlug)}`,
+      );
+    }
+  }, [onRefreshBootstrap, review.prepareFrame, selected.slug]);
 
   useEffect(() => {
     document.title = `Preview — ${selected.title}`;

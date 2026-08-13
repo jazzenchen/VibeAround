@@ -20,6 +20,7 @@ import {
 import { ownerPreviewSlug } from "../src/preview/previewRoute";
 import {
   parsePreviewBootstrap,
+  refreshedPreviewSlug,
   type PreviewItem,
   type PreviewReviewDraft,
 } from "../src/preview/previewTypes";
@@ -66,6 +67,34 @@ test("Preview bootstrap accepts the unified item and rejects a missing source", 
       selectedSlug: preview.slug,
       previews: [{ ...preview, src: undefined }],
     }),
+  ).toBeNull();
+});
+
+test("manual Preview refresh keeps the active selection before using fresh fallbacks", () => {
+  const other = { ...preview, slug: "other", title: "Other" };
+  expect(
+    refreshedPreviewSlug(
+      { selectedSlug: other.slug, previews: [preview, other] },
+      preview.slug,
+    ),
+  ).toBe(preview.slug);
+  expect(
+    refreshedPreviewSlug(
+      { selectedSlug: other.slug, previews: [other] },
+      preview.slug,
+    ),
+  ).toBe(other.slug);
+  expect(
+    refreshedPreviewSlug(
+      { selectedSlug: "stale", previews: [other] },
+      preview.slug,
+    ),
+  ).toBe(other.slug);
+  expect(
+    refreshedPreviewSlug(
+      { selectedSlug: "stale", previews: [] },
+      preview.slug,
+    ),
   ).toBeNull();
 });
 

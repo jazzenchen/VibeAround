@@ -84,3 +84,14 @@ export function parsePreviewBootstrap(value: unknown): PreviewBootstrap | null {
 
   return { selectedSlug: value.selectedSlug, previews };
 }
+
+export function refreshedPreviewSlug(
+  bootstrap: PreviewBootstrap,
+  currentSlug: string,
+): string | null {
+  return (
+    [currentSlug, bootstrap.selectedSlug].find((slug) =>
+      bootstrap.previews.some((preview) => preview.slug === slug),
+    ) ?? bootstrap.previews[0]?.slug ?? null
+  );
+}
