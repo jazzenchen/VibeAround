@@ -93,7 +93,7 @@ export function Previews() {
         ))}
         {(!data || data.previews.length === 0) && !loading && (
           <EmptyBlock>
-            {t("No active previews. Ask your coding agent to run preview or md_preview.")}
+            {t("No active previews. Ask your coding agent to run preview.")}
           </EmptyBlock>
         )}
       </div>

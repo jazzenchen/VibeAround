@@ -13,10 +13,9 @@
 | `register_workspace` | 把当前项目目录注册为 Workspace |
 | `initialize_subagents` | 开始多 Agent 回合 —— 模式：`parallel`、`collaboration`、`brainstorming` |
 | `wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
-| `preview` | 为某个 dev server 端口创建实时预览；有隧道时同时提供 owner 和限时 Share 链接 |
-| `md_preview` | 创建 Markdown 渲染预览 |
+| `preview` | 预览一个明确来源：正在运行的 dev-server `port` 或 Markdown `file`；Markdown 由 VibeAround 直接渲染，不会另起服务 |
 
-按 Agent 安装的配套技能（`skill_auto_install`）：`vibearound`（交接）、`va-session`、`va-preview`、`va-md-preview`、`agent-collaboration`。
+按 Agent 安装的配套技能（`skill_auto_install`）：`vibearound`（交接）、`va-session`、`va-preview`、`agent-collaboration`。
 
 ## 本地 API 路由族
 

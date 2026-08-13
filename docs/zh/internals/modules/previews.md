@@ -4,7 +4,7 @@
 
 ## 职责
 
-跟踪 preview sessions（dev-server ports 和 rendered files），为 Server/Markdown 铸造 owner 与 Share 身份，执行共享访问期限，并清理 preview 相关进程。HTTP 侧（owner shell、Server routing、Share gate 和 Markdown rendering）在 [server](server.md) 的 `preview` 子模块里。
+跟踪 preview sessions（dev-server ports 和 Markdown files），为 Server/Markdown 铸造 owner 与 Share 身份，执行共享访问期限，并清理 preview 相关进程。HTTP 侧（owner shell、Server routing、Share gate，以及无需子静态服务的 Markdown 直接渲染）在 [server](server.md) 的 `preview` 子模块里。
 
 ## 关键类型
 
@@ -16,7 +16,7 @@
 
 ## 交互
 
-- **← server (MCP `preview` / `md_preview`)：** agents 通过 tools 创建 previews；skills（`va-preview`、`va-md-preview`）包装它们。
+- **← server (MCP `preview`)：** agents 传入 dev-server port 或 Markdown file；`va-preview` skill 包装这个统一工具。
 - **← server (`preview/` handlers)：** resolve slugs、render owner picker 与 Markdown content；本地 owner 直接加载 Server origin，隧道上的 Server 页面则使用受限代理。
 - **← workspace：** 关闭 thread 会 kill 绑定到其 session 的 previews。
 - **← cli / dashboard：** list 和 delete。

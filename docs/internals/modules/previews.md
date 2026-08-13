@@ -4,7 +4,7 @@
 
 ## Responsibility
 
-Track preview sessions (dev-server ports and rendered files), mint Server/Markdown owner and Share identities, enforce the shared access deadline, and clean up preview-related processes. The HTTP side (owner shell, Server routing, Share gate, and Markdown rendering) lives in [server](server.md)'s `preview` submodule.
+Track preview sessions (dev-server ports and Markdown files), mint Server/Markdown owner and Share identities, enforce the shared access deadline, and clean up preview-related processes. The HTTP side (owner shell, Server routing, Share gate, and direct Markdown rendering without a child static server) lives in [server](server.md)'s `preview` submodule.
 
 ## Key types
 
@@ -16,7 +16,7 @@ Track preview sessions (dev-server ports and rendered files), mint Server/Markdo
 
 ## Interactions
 
-- **← server (MCP `preview` / `md_preview`):** agents create previews via tools; skills (`va-preview`, `va-md-preview`) wrap them.
+- **← server (MCP `preview`):** agents pass either a dev-server port or a Markdown file; the `va-preview` skill wraps the unified tool.
 - **← server (`preview/` handlers):** resolve slugs, render the owner picker and Markdown content; local owners load Server origins directly, while Server Shares use the page-preview proxy.
 - **← workspace:** closing a thread kills previews bound to its session.
 - **← cli / dashboard:** list and delete.

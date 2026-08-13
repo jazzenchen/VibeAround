@@ -13,10 +13,9 @@ Served at `/mcp` (JSON-RPC over streamable HTTP, token-authenticated). Auto-inje
 | `register_workspace` | Register the current project directory as a workspace |
 | `initialize_subagents` | Start a multi-agent turn — modes: `parallel`, `collaboration`, `brainstorming` |
 | `wait_for_subagents` | Block until subagents report completion; returns their reports |
-| `preview` | Create a live preview for a dev server port, with owner and time-scoped Share links when a tunnel is available |
-| `md_preview` | Create a rendered Markdown preview |
+| `preview` | Preview exactly one source: a running dev-server `port` or a Markdown `file`. Markdown is rendered directly without starting a separate server |
 
-Companion skills installed per agent (`skill_auto_install`): `vibearound` (handover), `va-session`, `va-preview`, `va-md-preview`, `agent-collaboration`.
+Companion skills installed per agent (`skill_auto_install`): `vibearound` (handover), `va-session`, `va-preview`, `agent-collaboration`.
 
 ## Local API route families
 

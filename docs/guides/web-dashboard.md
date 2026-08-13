@@ -26,9 +26,9 @@ A real terminal (xterm.js) attached to a PTY on your machine:
 
 Inspect local work without turning VibeAround into a general development tunnel:
 
-- **One owner page.** A collapsible picker groups the current workspace and Preview list while one iframe shows the selected target. Switching targets updates the owner URL; Refresh reloads the page and current inventory.
-- **Dev server preview.** Register a local port and a local owner iframe loads that server's loopback origin directly, preserving the app's relative APIs, fetch, WebSockets, and HMR behavior. A tunneled owner requires browser pairing. With a public tunnel, the Preview also gets a 10-minute code-gated Share. That page-preview transport forwards GET/HEAD iframe navigations and browser-declared static subresources; browser fetch/XHR/EventSource, workers, non-GET/HEAD methods, WebSockets, and HMR are unsupported. It is not general API compatibility or an API-isolation sandbox. Agents create these via the `va-preview` skill / MCP `preview` tool ([tool reference](../reference/api-surfaces.md#mcp-tools)).
-- **Markdown preview.** Any Markdown file gets an owner URL rendered with VibeAround's bundled `marked` script. With a public tunnel, it also gets a copyable Share URL plus a reusable six-digit access code. Server and Markdown Share URLs, codes, and browser grants expire together after 10 minutes (`md_preview` tool or the `va-md-preview` skill). See [Security model](../architecture/security-model.md).
+- **One owner page.** A collapsible picker groups the current workspace and Preview list while one iframe shows the selected target. Switching targets updates the owner URL; Refresh reloads the selected content.
+- **Dev server preview.** Register a local port and a local owner iframe loads that server's loopback origin directly, preserving the app's relative APIs, fetch, WebSockets, and HMR behavior. A tunneled owner requires browser pairing. With a public tunnel, the Preview also gets a 10-minute code-gated Share. The tunnel proxy forwards authenticated GET/HEAD paths unchanged, including page data reads; writes, protocol upgrades, service workers, WebSockets, and HMR remain unsupported. Agents create these via the `va-preview` skill / MCP `preview` tool ([tool reference](../reference/api-surfaces.md#mcp-tools)).
+- **Markdown preview.** Pass a Markdown `file` to the same `va-preview` skill / MCP `preview` tool. VibeAround reads and renders it directly with the bundled `marked` script, without starting a separate static server. With a public tunnel, it also gets a copyable Share URL plus a reusable six-digit access code. Server and Markdown Share URLs, codes, and browser grants expire together after 10 minutes. See [Security model](../architecture/security-model.md).
 - **Owner review.** A Preview linked to an AI task can collect text comments in Markdown and send reliable source line/section context with them. A live web app can opt into text and element comments with the development-only bridge tag returned by the `preview` tool; the local owner app still loads directly. Draft markers belong to the loaded page and are cleared on reload, while the task conversation remains available. Share pages never expose review controls.
 - `va previews` / `va preview delete <slug>` manage them from the CLI; preview processes started for you are killed when the daemon stops.
 
@@ -42,7 +42,7 @@ The dashboard is responsive; the chat surface includes mobile command controls s
 
 ---
 
-*Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`, `src/skills/va-md-preview/`.*
+*Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`.*
 *Last verified: v0.7.24*
 
 <sub>[◀ Desktop app guide](desktop-app.md) · [Documentation index](../README.md) · [IM usage ▶](im-usage.md)</sub>

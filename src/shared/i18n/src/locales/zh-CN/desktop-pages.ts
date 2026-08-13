@@ -1,6 +1,6 @@
 export const zhCNDesktopPages: Record<string, string> = {
-  "No active previews. Ask your coding agent to run preview or md_preview.":
-    "没有活跃预览。让你的 Coding Agent 运行 preview 或 md_preview。",
+  "No active previews. Ask your coding agent to run preview.":
+    "没有活跃预览。让你的 Coding Agent 运行 preview。",
   "API Bridge": "API 转接",
   "Apply API Bridge Settings": "应用 API 转接设置",
   "Apply & Restart Services": "应用并重启服务",
