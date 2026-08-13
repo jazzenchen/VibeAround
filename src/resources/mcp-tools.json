@@ -180,13 +180,17 @@
   },
   {
     "name": "preview",
-    "description": "Start a live Preview for a running localhost server. Returns a Local owner URL and, when a public tunnel is running, Tunnel owner and Share URLs plus a reusable six-digit access code. The Share URL and code expire together 10 minutes after the Preview transaction starts; the result reports their current remaining lifetime because an active transaction may be reused. Pass thread_id or agent_kind with session_id when available to link the review child to the current task; without an explicit identity, VibeAround can create a standalone Preview conversation.",
+    "description": "Preview exactly one source: a running localhost server via port, or a Markdown document via file. Markdown is rendered directly by VibeAround and does not need a separate static server. Returns owner access and, when a public tunnel is running, a Share URL plus a reusable six-digit access code. The Share URL and code expire together after 10 minutes. Pass thread_id or agent_kind with session_id when available to link the review child to the current task; without an explicit identity, VibeAround can create a standalone Preview conversation.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "port": {
           "type": "number",
-          "description": "The localhost port where the dev server is running."
+          "description": "The localhost port where the dev server is running. Pass either port or file, never both."
+        },
+        "file": {
+          "type": "string",
+          "description": "Path to a Markdown file (absolute, or relative to cwd). Pass either file or port, never both."
         },
         "cwd": {
           "type": "string",
@@ -206,44 +210,10 @@
         },
         "title": {
           "type": "string",
-          "description": "Optional title shown in the preview toolbar. Defaults to the workspace directory name."
+          "description": "Optional title shown in the preview toolbar. Defaults to the workspace directory name for port, or the filename for file."
         }
       },
-      "required": ["port", "cwd"]
-    }
-  },
-  {
-    "name": "md_preview",
-    "description": "Preview a markdown file with GitHub-style rendering. Raw HTML is shown as source text; only absolute HTTPS Markdown images are loaded. Returns an owner URL and, when a public tunnel is running, a share URL plus a reusable six-digit access code. The share URL and code expire together 10 minutes after the Preview transaction starts; the result reports their current remaining lifetime because an active transaction may be reused.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "file": {
-          "type": "string",
-          "description": "Path to the markdown file (absolute, or relative to cwd)."
-        },
-        "cwd": {
-          "type": "string",
-          "description": "Absolute path to the project workspace directory."
-        },
-        "thread_id": {
-          "type": "string",
-          "description": "Exact VibeAround workspace thread ID from $VIBEAROUND_THREAD_ID. Enables an owner-only child conversation linked to that task."
-        },
-        "session_id": {
-          "type": "string",
-          "description": "Exact native agent session ID. With agent_kind, links an external task to the owner conversation."
-        },
-        "agent_kind": {
-          "type": "string",
-          "description": "Agent kind for an explicitly supplied external session_id. Not needed when thread_id is provided."
-        },
-        "title": {
-          "type": "string",
-          "description": "Optional title shown in the preview toolbar. Defaults to the filename."
-        }
-      },
-      "required": ["file", "cwd"]
+      "required": ["cwd"]
     }
   }
 ]

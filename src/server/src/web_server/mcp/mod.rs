@@ -148,8 +148,7 @@ async fn mcp_tools_call(
         "register_workspace" => tools::mcp_register_workspace(id, arguments).await,
         "initialize_subagents" => subagents::mcp_initialize_subagents(id, arguments, state).await,
         "wait_for_subagents" => subagents::mcp_wait_for_subagents(id, arguments, state).await,
-        "preview" => preview::mcp_preview_start(id, arguments, params.get("_meta"), state).await,
-        "md_preview" => preview::mcp_md_preview(id, arguments, params.get("_meta"), state).await,
+        "preview" => preview::mcp_preview(id, arguments, params.get("_meta"), state).await,
         _ => jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name)),
     }
 }
@@ -213,5 +212,21 @@ mod tests {
                 "result": { "prompts": [] }
             })
         );
+    }
+
+    #[test]
+    fn preview_exposes_one_tool_with_exactly_one_runtime_source() {
+        let response = super::mcp_tools_list(Some(json!(4))).0;
+        let tools = response["result"]["tools"].as_array().unwrap();
+        assert!(tools.iter().all(|tool| tool["name"] != "md_preview"));
+
+        let preview = tools
+            .iter()
+            .find(|tool| tool["name"] == "preview")
+            .expect("preview tool");
+        let properties = preview["inputSchema"]["properties"].as_object().unwrap();
+        assert!(properties.contains_key("port"));
+        assert!(properties.contains_key("file"));
+        assert_eq!(preview["inputSchema"]["required"], json!(["cwd"]));
     }
 }

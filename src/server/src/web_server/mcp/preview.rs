@@ -23,23 +23,65 @@ fn preview_parent_request(arguments: &Value, metadata: Option<&Value>) -> Previe
     }
 }
 
-pub(super) async fn mcp_preview_start(
+#[derive(Debug, PartialEq)]
+enum PreviewSource<'a> {
+    Server(u16),
+    File(&'a str),
+}
+
+fn preview_source(arguments: &Value) -> Result<PreviewSource<'_>, &'static str> {
+    match (arguments.get("port"), arguments.get("file")) {
+        (Some(_), Some(_)) | (None, None) => Err("Pass exactly one Preview source: port or file."),
+        (Some(port), None) => port
+            .as_u64()
+            .filter(|port| *port > 0 && *port <= u16::MAX as u64)
+            .map(|port| PreviewSource::Server(port as u16))
+            .ok_or("Invalid Preview port: expected an integer from 1 to 65535."),
+        (None, Some(file)) => file
+            .as_str()
+            .filter(|file| !file.is_empty())
+            .map(PreviewSource::File)
+            .ok_or("Invalid Preview file: expected a non-empty path."),
+    }
+}
+
+pub(super) async fn mcp_preview(
     id: Option<Value>,
     arguments: &Value,
     metadata: Option<&Value>,
     state: &AppState,
 ) -> Json<Value> {
-    let port = match arguments.get("port").and_then(Value::as_u64) {
-        Some(port) if port > 0 && port <= u16::MAX as u64 => port as u16,
-        _ => {
-            return jsonrpc_err(
-                id,
-                -32602,
-                "Missing or invalid required argument: port (1-65535)",
-            );
-        }
+    let source = match preview_source(arguments) {
+        Ok(source) => source,
+        Err(message) => return jsonrpc_err(id, -32602, message),
     };
+    let cwd = match arguments.get("cwd").and_then(Value::as_str) {
+        Some(cwd) => cwd,
+        None => return jsonrpc_err(id, -32602, "Missing required argument: cwd"),
+    };
+    let cwd_path = PathBuf::from(cwd);
+    if let Err(response) = validate_workspace(&cwd_path, id.clone()) {
+        return response;
+    }
 
+    match source {
+        PreviewSource::Server(port) => {
+            mcp_server_preview(id, arguments, metadata, state, cwd_path, port).await
+        }
+        PreviewSource::File(file) => {
+            mcp_file_preview(id, arguments, metadata, state, cwd_path, file).await
+        }
+    }
+}
+
+async fn mcp_server_preview(
+    id: Option<Value>,
+    arguments: &Value,
+    metadata: Option<&Value>,
+    state: &AppState,
+    cwd_path: PathBuf,
+    port: u16,
+) -> Json<Value> {
     if is_denied_port(port) {
         return mcp_error_text(
             id,
@@ -49,15 +91,6 @@ pub(super) async fn mcp_preview_start(
                 port
             ),
         );
-    }
-
-    let cwd = match arguments.get("cwd").and_then(Value::as_str) {
-        Some(cwd) => cwd,
-        None => return jsonrpc_err(id, -32602, "Missing required argument: cwd"),
-    };
-    let cwd_path = PathBuf::from(cwd);
-    if let Err(response) = validate_workspace(&cwd_path, id.clone()) {
-        return response;
     }
     if !server_http_is_responding(&state.preview_client, port).await {
         return mcp_error_text(
@@ -153,27 +186,15 @@ fn server_preview_message(
     )
 }
 
-pub(super) async fn mcp_md_preview(
+async fn mcp_file_preview(
     id: Option<Value>,
     arguments: &Value,
     metadata: Option<&Value>,
     state: &AppState,
+    cwd_path: PathBuf,
+    file: &str,
 ) -> Json<Value> {
-    let file = match arguments.get("file").and_then(Value::as_str) {
-        Some(file) => file,
-        None => return jsonrpc_err(id, -32602, "Missing required argument: file"),
-    };
-    let cwd = match arguments.get("cwd").and_then(Value::as_str) {
-        Some(cwd) => cwd,
-        None => return jsonrpc_err(id, -32602, "Missing required argument: cwd"),
-    };
-
-    let cwd_path = PathBuf::from(cwd);
-    if let Err(response) = validate_workspace(&cwd_path, id.clone()) {
-        return response;
-    }
-
-    let file_path = match resolve_md_preview_file(&cwd_path, file) {
+    let file_path = match resolve_preview_file(&cwd_path, file) {
         Ok(file_path) => file_path,
         Err(error) => return mcp_error_text(id, &error),
     };
@@ -276,7 +297,7 @@ async fn server_http_is_responding(client: &reqwest::Client, port: u16) -> bool 
     .unwrap_or(false)
 }
 
-fn resolve_md_preview_file(workspace: &Path, file: &str) -> Result<PathBuf, String> {
+fn resolve_preview_file(workspace: &Path, file: &str) -> Result<PathBuf, String> {
     let workspace = workspace.canonicalize().map_err(|error| {
         format!(
             "Failed to resolve workspace {}: {error}",
@@ -305,7 +326,12 @@ mod tests {
     use common::previews::PreviewShare;
     use tokio::io::AsyncWriteExt;
 
-    use super::{resolve_md_preview_file, server_http_is_responding, server_preview_message};
+    use serde_json::json;
+
+    use super::{
+        preview_source, resolve_preview_file, server_http_is_responding, server_preview_message,
+        PreviewSource,
+    };
 
     fn share() -> PreviewShare {
         PreviewShare {
@@ -370,23 +396,39 @@ mod tests {
         std::fs::write(&outside, "preview").unwrap();
 
         assert_eq!(
-            resolve_md_preview_file(&workspace, outside.to_str().unwrap()).unwrap(),
+            resolve_preview_file(&workspace, outside.to_str().unwrap()).unwrap(),
             outside.canonicalize().unwrap()
         );
         assert_eq!(
-            resolve_md_preview_file(&workspace, "../outside.md").unwrap(),
+            resolve_preview_file(&workspace, "../outside.md").unwrap(),
             outside.canonicalize().unwrap()
         );
         assert!(
-            resolve_md_preview_file(&missing_workspace, outside.to_str().unwrap())
+            resolve_preview_file(&missing_workspace, outside.to_str().unwrap())
                 .unwrap_err()
                 .contains("Failed to resolve workspace")
         );
-        assert!(resolve_md_preview_file(&workspace, "missing.md")
+        assert!(resolve_preview_file(&workspace, "missing.md")
             .unwrap_err()
             .contains("File not found"));
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preview_accepts_exactly_one_source() {
+        assert_eq!(
+            preview_source(&json!({ "port": 5173 })).unwrap(),
+            PreviewSource::Server(5173)
+        );
+        assert_eq!(
+            preview_source(&json!({ "file": "README.md" })).unwrap(),
+            PreviewSource::File("README.md")
+        );
+        assert!(preview_source(&json!({})).is_err());
+        assert!(preview_source(&json!({ "port": 5173, "file": "README.md" })).is_err());
+        assert!(preview_source(&json!({ "port": 0 })).is_err());
+        assert!(preview_source(&json!({ "file": "" })).is_err());
     }
 
     #[tokio::test]
