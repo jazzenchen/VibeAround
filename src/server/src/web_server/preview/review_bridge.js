@@ -350,7 +350,14 @@
     updateOverlays();
   }
   function captureTextSelection(event) {
-    if (!channelId || pickMode !== "none" || (host && event.composedPath().includes(host))) return;
+    const insideReviewUi = host && event.composedPath().includes(host);
+    if (event.type === "pointerup" && pickMode === "element"
+        && event.button === 0 && !insideReviewUi) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    if (!channelId || pickMode !== "none" || insideReviewUi) return;
     const selection = getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount || editableSelection(selection)) return;
     const exact = selection.toString().trim();

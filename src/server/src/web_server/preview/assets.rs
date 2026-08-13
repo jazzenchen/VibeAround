@@ -188,6 +188,7 @@ mod tests {
         assert!(script.contains("va-preview-review"));
         assert!(script.contains("documentId"));
         assert!(script.contains("data.documentId === documentId"));
+        assert!(script.contains("event.type === \"pointerup\" && pickMode === \"element\""));
         assert!(script.contains("Source line") || script.contains("startLine"));
         assert!(!script.contains("getLayoutRevision"));
         assert!(!script.contains("Page changed while capturing"));
