@@ -83,9 +83,13 @@
   function makeAnchor(kind, target, exact) {
     const text = kind === "text"
       ? String(exact || "").trim().slice(0, 2000) : safeText(target, 320);
-    const result = { kind, text, heading: headingFor(target) };
-    if (!markdownSource) result.page = page();
-    if (kind === "element" || !markdownSource) result.element = elementSummary(elementFor(target));
+    const result = {
+      kind,
+      text,
+      heading: headingFor(target),
+      page: page(),
+      element: elementSummary(elementFor(target)),
+    };
     const lines = markdownLines(String(exact || text).trim());
     return lines ? { ...result, ...lines } : result;
   }
@@ -261,8 +265,8 @@
       text: `Screenshot region ${width} × ${height}`,
       heading: headingFor(target),
       region: { width, height },
+      page: page(),
     };
-    if (!markdownSource) anchor.page = page();
     const message = {
       selectionId,
       rect: messageRect(selection),
@@ -444,8 +448,7 @@
         channelId = data.channelId;
       }
       ensureUi();
-      const capabilities = markdownSource ? ["text", "region", "markers"]
-        : ["text", "element", "region", "markers"];
+      const capabilities = ["text", "element", "region", "markers"];
       post("ready", { capabilities });
       return;
     }
@@ -453,7 +456,7 @@
     if (data.type === "pick-mode") {
       ensureUi();
       const requested = data.mode === "region" ? "region"
-        : data.mode === "element" && !markdownSource ? "element" : "none";
+        : data.mode === "element" ? "element" : "none";
       if (requested !== "none" && pending) cancelPick(false);
       pickMode = requested;
       hover.hidden = true;

@@ -189,6 +189,11 @@ mod tests {
         assert!(script.contains("documentId"));
         assert!(script.contains("data.documentId === documentId"));
         assert!(script.contains("event.type === \"pointerup\" && pickMode === \"element\""));
+        assert!(script.contains(
+            "const capabilities = [\"text\", \"element\", \"region\", \"markers\"]"
+        ));
+        assert!(!script.contains("&& !markdownSource"));
+        assert!(!script.contains("if (!markdownSource)"));
         assert!(script.contains("Source line") || script.contains("startLine"));
         assert!(!script.contains("getLayoutRevision"));
         assert!(!script.contains("Page changed while capturing"));
