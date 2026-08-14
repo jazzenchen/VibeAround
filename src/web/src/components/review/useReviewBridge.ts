@@ -13,8 +13,7 @@ import type {
   ReviewEditor,
   ReviewFrameRect,
   ReviewTool,
-} from "@/components/review/reviewTypes";
-import type { PreviewItem } from "./previewTypes";
+} from "./reviewTypes";
 
 const REVIEW_SCOPE = "va-preview-review";
 const REVIEW_VERSION = 1;
@@ -25,7 +24,7 @@ function makeId(prefix: string) {
     : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-export function previewReviewHelloStartsNewEpoch(
+export function reviewHelloStartsNewEpoch(
   currentDocumentId: string | null,
   nextDocumentId: unknown,
 ) {
@@ -68,9 +67,9 @@ function isScreenshot(value: unknown): value is Blob {
   );
 }
 
-export function usePreviewReviewBridge(
+export function useReviewBridge(
   frameRef: RefObject<HTMLIFrameElement | null>,
-  preview: PreviewItem,
+  target: { id: string; src: string },
 ) {
   const [drafts, setDrafts] = useState<ReviewDraft[]>([]);
   const [editor, setEditor] = useState<ReviewEditor | null>(null);
@@ -79,7 +78,7 @@ export function usePreviewReviewBridge(
   const [captureError, setCaptureError] = useState("");
   const channelIdRef = useRef(makeId("preview-channel"));
   const documentIdRef = useRef<string | null>(null);
-  const previewSlugRef = useRef(preview.slug);
+  const targetIdRef = useRef(target.id);
   const readyRef = useRef(false);
   const draftsRef = useRef<ReviewDraft[]>([]);
 
@@ -89,11 +88,11 @@ export function usePreviewReviewBridge(
 
   const frameOrigin = useCallback(() => {
     try {
-      return new URL(preview.src, window.location.href).origin;
+      return new URL(target.src, window.location.href).origin;
     } catch {
       return null;
     }
-  }, [preview.src]);
+  }, [target.src]);
 
   const post = useCallback(
     (type: string, fields: Record<string, unknown> = {}) => {
@@ -140,11 +139,11 @@ export function usePreviewReviewBridge(
   }, [rotateChannel]);
 
   useLayoutEffect(() => {
-    if (previewSlugRef.current === preview.slug) return;
-    previewSlugRef.current = preview.slug;
+    if (targetIdRef.current === target.id) return;
+    targetIdRef.current = target.id;
     draftsRef.current = [];
     setDrafts([]);
-  }, [preview.slug]);
+  }, [target.id]);
 
   const handleFrameLoad = useCallback(() => {
     const documentId = documentIdRef.current;
@@ -172,7 +171,7 @@ export function usePreviewReviewBridge(
 
       if (message.type === "hello") {
         if (
-          previewReviewHelloStartsNewEpoch(
+          reviewHelloStartsNewEpoch(
             documentIdRef.current,
             message.documentId,
           )

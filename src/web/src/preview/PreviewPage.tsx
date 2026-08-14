@@ -7,6 +7,7 @@ import type {
   ReviewTool,
   ReviewToolbarModel,
 } from "@/components/review/reviewTypes";
+import { useReviewBridge } from "@/components/review/useReviewBridge";
 import { PreviewChatDrawer } from "./PreviewChatDrawer";
 import type { PreviewChatMode, PreviewChatSide } from "./previewChatLayout";
 import {
@@ -20,7 +21,6 @@ import {
   type PreviewBootstrap,
 } from "./previewTypes";
 import { usePreviewChatConnection } from "./usePreviewChatConnection";
-import { usePreviewReviewBridge } from "./usePreviewReviewBridge";
 import {
   rememberServerPreviewConsent,
   serverPreviewNeedsConsent,
@@ -138,7 +138,10 @@ function PreviewWorkspace({
     bootstrap.previews[0];
 
   const chat = usePreviewChatConnection(selected.slug);
-  const review = usePreviewReviewBridge(frameRef, selected);
+  const review = useReviewBridge(frameRef, {
+    id: selected.slug,
+    src: selected.src,
+  });
   const needsServerConsent = serverPreviewNeedsConsent(
     selected,
     window.sessionStorage,

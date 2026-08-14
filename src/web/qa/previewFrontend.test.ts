@@ -3,13 +3,13 @@ import type { SessionNotification } from "@agentclientprotocol/sdk";
 
 import { chatUserContentBlocks } from "../src/components/chat/chatUserContent";
 import type { ReviewDraft } from "../src/components/review/reviewTypes";
+import { reviewHelloStartsNewEpoch } from "../src/components/review/useReviewBridge";
 import { applyPreviewSessionNotification } from "../src/preview/previewChatMessages";
 import {
   previewConversationIdentityChanged,
   previewConversationThreadId,
   previewSocketUrl,
 } from "../src/preview/usePreviewChatConnection";
-import { previewReviewHelloStartsNewEpoch } from "../src/preview/usePreviewReviewBridge";
 import {
   buildPreviewReviewPrompt,
   previewReviewDisplay,
@@ -52,15 +52,15 @@ test("Preview chat width stays bounded on either resize edge", () => {
   expect(resizePreviewChatWidth(400, 40, "right")).toBe(360);
 });
 
-test("Preview review hello rotates only for a different iframe document", () => {
-  expect(previewReviewHelloStartsNewEpoch(null, "document-1")).toBe(false);
-  expect(previewReviewHelloStartsNewEpoch("document-1", "document-1")).toBe(
+test("Review bridge hello rotates only for a different iframe document", () => {
+  expect(reviewHelloStartsNewEpoch(null, "document-1")).toBe(false);
+  expect(reviewHelloStartsNewEpoch("document-1", "document-1")).toBe(
     false,
   );
-  expect(previewReviewHelloStartsNewEpoch("document-1", "document-2")).toBe(
+  expect(reviewHelloStartsNewEpoch("document-1", "document-2")).toBe(
     true,
   );
-  expect(previewReviewHelloStartsNewEpoch("document-1", null)).toBe(false);
+  expect(reviewHelloStartsNewEpoch("document-1", null)).toBe(false);
 });
 
 test("owner Preview route matches only the page shell", () => {
