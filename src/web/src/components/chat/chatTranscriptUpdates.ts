@@ -25,13 +25,6 @@ export type ChatTranscriptUpdateOptions = {
   toolProgressLabel?: (tool: string) => string;
 };
 
-export function chatIdentityChanged(
-  currentIdentity: string | null,
-  nextIdentity: string,
-) {
-  return currentIdentity !== null && currentIdentity !== nextIdentity;
-}
-
 export function applyChatTranscriptUpdate(
   messages: ChatMessage[],
   update: TranscriptUpdate,

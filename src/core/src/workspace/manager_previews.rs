@@ -1,41 +1,6 @@
 use super::*;
 
 impl WorkspaceThreadManager {
-    pub async fn attach_preview_web_thread_hint(
-        &self,
-        preview_slug: &str,
-        thread_id: &WorkspaceThreadId,
-    ) -> anyhow::Result<Option<Arc<ThreadRuntime>>> {
-        let _preview_lifecycle = self.preview_lifecycle.lock().await;
-        if crate::previews::lookup_owner(preview_slug).is_none() {
-            return Err(anyhow!("Preview {} no longer exists", preview_slug));
-        }
-        let route = preview_web_route_for_slug(preview_slug);
-        if let Some(active) = self.active_runtime_for_route(&route).await? {
-            return Ok(Some(active));
-        }
-        let Some(thread) = self.thread(thread_id).await? else {
-            return Ok(None);
-        };
-        if thread.status != ThreadStatus::Open
-            || thread.preview_slug.as_deref() != Some(preview_slug)
-        {
-            return Ok(None);
-        }
-
-        let already_attached = self
-            .current_attachment(&route)
-            .await?
-            .is_some_and(|attachment| attachment.thread_id == thread.id);
-        if !already_attached {
-            self.attach_route(route, thread.workspace_id.clone(), thread.id.clone())
-                .await?;
-        }
-        crate::previews::replace_owner_conversation(preview_slug, thread.id.clone())
-            .map_err(|_| anyhow!("Preview {} no longer exists", preview_slug))?;
-        self.runtime_from_thread(thread).await.map(Some)
-    }
-
     pub async fn ensure_preview_web_thread(
         &self,
         parent_thread_id: Option<&WorkspaceThreadId>,
@@ -45,19 +10,8 @@ impl WorkspaceThreadManager {
         let preview = crate::previews::lookup_owner(preview_slug)
             .ok_or_else(|| anyhow!("Preview {} no longer exists", preview_slug))?;
         let route = preview_web_route_for_slug(preview_slug);
-        if let Some(bound_thread_id) = crate::previews::owner_conversation_thread_id(preview_slug) {
-            if let Some(bound) = self.thread(&bound_thread_id).await? {
-                if bound.preview_slug.as_deref() != Some(preview_slug) {
-                    return Err(anyhow!(
-                        "Preview {} is linked to unrelated task {}",
-                        preview_slug,
-                        bound_thread_id
-                    ));
-                }
-                return self
-                    .reuse_or_advance_preview_thread(&route, preview_slug, bound)
-                    .await;
-            }
+        if let Some(active) = self.active_runtime_for_route(&route).await? {
+            return Ok(active);
         }
 
         if let Some(previous) = self.preferred_preview_thread(preview_slug).await? {
@@ -113,8 +67,6 @@ impl WorkspaceThreadManager {
         self.ensure_thread_persisted(&task).await?;
         self.attach_route(route.clone(), task.workspace_id.clone(), task.id.clone())
             .await?;
-        crate::previews::replace_owner_conversation(&preview_slug, task.id.clone())
-            .map_err(|_| anyhow!("Preview {} no longer exists", preview_slug))?;
         self.runtime_from_thread(task).await
     }
 
@@ -126,16 +78,6 @@ impl WorkspaceThreadManager {
         if crate::previews::lookup_owner(preview_slug).is_none() {
             return Err(anyhow!("Preview {} no longer exists", preview_slug));
         }
-        if let Some(thread_id) = crate::previews::owner_conversation_thread_id(preview_slug) {
-            if let Some(thread) = self.thread(&thread_id).await? {
-                if thread.preview_slug.as_deref() == Some(preview_slug) {
-                    return self
-                        .reuse_or_advance_preview_thread(route, preview_slug, thread)
-                        .await;
-                }
-            }
-        }
-
         let previous = self
             .preferred_preview_thread(preview_slug)
             .await?
@@ -183,8 +125,6 @@ impl WorkspaceThreadManager {
                 previous.id.clone(),
             )
             .await?;
-            crate::previews::replace_owner_conversation(preview_slug, previous.id.clone())
-                .map_err(|_| anyhow!("Preview {} no longer exists", preview_slug))?;
             return self.runtime_from_thread(previous).await;
         }
 

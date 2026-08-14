@@ -3,10 +3,8 @@ use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use std::net::SocketAddr;
 
-use common::channels::{ChannelOutput, WebChannelManager};
-use common::workspace::threads::WorkspaceThreadId;
-
 use super::*;
+use common::channels::{ChannelOutput, WebChannelManager};
 
 fn request(host: &str, peer: &str, origin: &str) -> Request<Body> {
     let mut request = Request::builder()
@@ -41,10 +39,8 @@ fn preview_file(label: &str) -> (String, common::previews::PreviewShare) {
 }
 
 #[test]
-fn owner_chat_resolves_only_the_bound_child_route() {
+fn owner_chat_resolves_only_an_owner_preview_route() {
     let (slug, share) = preview_file("bound");
-    let child = WorkspaceThreadId::from("wt_preview_child");
-    common::previews::bind_owner_conversation(&slug, child.clone()).unwrap();
 
     let route =
         resolve_owner_chat_route(&slug, &local_request(), 12358, &[]).expect("owner chat route");
@@ -56,31 +52,8 @@ fn owner_chat_resolves_only_the_bound_child_route() {
 }
 
 #[test]
-fn owner_chat_auth_does_not_require_an_in_memory_conversation_binding() {
-    let (slug, _) = preview_file("unbound");
-
-    let route = resolve_owner_chat_route(&slug, &local_request(), 12358, &[])
-        .expect("conversation resolution recovers after owner authorization");
-    assert_eq!(route, preview_web_route_for_slug(&slug));
-}
-
-#[test]
-fn preview_conversation_frame_is_preview_only_and_contains_the_thread_id() {
-    let frame = preview_conversation_frame(&WorkspaceThreadId::from("wt_preview_restored"));
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&frame).unwrap(),
-        serde_json::json!({
-            "kind": "preview_conversation",
-            "thread_id": "wt_preview_restored",
-        })
-    );
-}
-
-#[test]
 fn owner_chat_enforces_origin_and_strict_loopback_access() {
     let (slug, _) = preview_file("auth");
-    common::previews::bind_owner_conversation(&slug, WorkspaceThreadId::from("wt_preview_auth"))
-        .unwrap();
 
     let hostile_origin = request("127.0.0.1:12358", "127.0.0.1:45000", "https://evil.example");
     assert_eq!(

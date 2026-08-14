@@ -97,7 +97,6 @@ pub(super) fn reconcile_at(
                 target: PreviewTarget::File,
                 slug: slug_from_path(&file),
                 share: None,
-                conversation_thread_id: None,
                 created_at: Instant::now(),
             },
         );

@@ -27,7 +27,6 @@ fn file_session(file: &Path, workspace: &Path) -> PreviewSession {
             attempt_tokens: SHARE_CODE_ATTEMPT_BURST,
             attempts_refilled_at: now,
         }),
-        conversation_thread_id: None,
         created_at: now,
     }
 }
@@ -53,7 +52,6 @@ fn persistence_keeps_only_files_without_private_state() {
             target: PreviewTarget::Server { port: 4318 },
             slug: slug_from_path(&server_id),
             share: None,
-            conversation_thread_id: None,
             created_at: Instant::now(),
         },
     );
@@ -64,7 +62,6 @@ fn persistence_keeps_only_files_without_private_state() {
     assert_eq!(json[0]["kind"], "file");
     assert!(!json.to_string().contains("share-secret"));
     assert!(!json.to_string().contains("grant-secret"));
-    assert!(!json.to_string().contains("conversation"));
 
     let mut restored = HashMap::new();
     assert_eq!(reconcile_at(&path, &mut restored).unwrap(), 1);

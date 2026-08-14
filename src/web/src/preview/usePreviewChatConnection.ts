@@ -15,39 +15,11 @@ import type {
   PendingPermission,
 } from "@/components/chat/chatTypes";
 import { chatUserContentBlocks } from "@/components/chat/chatUserContent";
-import {
-  applyChatTranscriptUpdate,
-  chatIdentityChanged,
-} from "@/components/chat/chatTranscriptUpdates";
+import { applyChatTranscriptUpdate } from "@/components/chat/chatTranscriptUpdates";
 import { startReconnectingWebSocket } from "@/components/chat/reconnectingWebSocket";
-
-const PREVIEW_THREAD_STORAGE_PREFIX = "vibearound.preview.review-thread.";
-
-function readPreviewThreadId(slug: string): string | null {
-  try {
-    const threadId = window.localStorage.getItem(
-      `${PREVIEW_THREAD_STORAGE_PREFIX}${slug}`,
-    );
-    return threadId?.trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-function writePreviewThreadId(slug: string, threadId: string) {
-  try {
-    window.localStorage.setItem(
-      `${PREVIEW_THREAD_STORAGE_PREFIX}${slug}`,
-      threadId,
-    );
-  } catch {
-    // Storage can be unavailable in private or restricted browser contexts.
-  }
-}
 
 export function previewSocketUrl(
   slug: string,
-  threadId: string | null,
   pageHref = window.location.href,
 ) {
   const url = new URL(
@@ -55,29 +27,7 @@ export function previewSocketUrl(
     pageHref,
   );
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  if (threadId) url.searchParams.set("thread_id", threadId);
   return url.href;
-}
-
-export function previewConversationThreadId(value: unknown): string | null {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("kind" in value) ||
-    value.kind !== "preview_conversation" ||
-    !("thread_id" in value) ||
-    typeof value.thread_id !== "string"
-  ) {
-    return null;
-  }
-  return value.thread_id.trim() || null;
-}
-
-export function previewConversationIdentityChanged(
-  currentIdentity: string | null,
-  nextIdentity: string,
-) {
-  return chatIdentityChanged(currentIdentity, nextIdentity);
 }
 
 export function usePreviewChatConnection(slug: string) {
@@ -88,19 +38,12 @@ export function usePreviewChatConnection(slug: string) {
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([]);
   const socketRef = useRef<WebSocket | null>(null);
   const turnActiveRef = useRef(false);
-  const activeSlugRef = useRef<string | null>(null);
-  const conversationThreadIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const resetTransportView = () => {
       setPendingPermissions([]);
       turnActiveRef.current = false;
       setStreaming(false);
-    };
-
-    const resetConversationView = () => {
-      setMessages([]);
-      resetTransportView();
     };
 
     const handleMessage = (event: MessageEvent) => {
@@ -110,21 +53,6 @@ export function usePreviewChatConnection(slug: string) {
         payload = JSON.parse(event.data);
       } catch (error) {
         console.warn("[Preview] bad chat frame, dropping:", error);
-        return;
-      }
-      const conversationThreadId = previewConversationThreadId(payload);
-      if (conversationThreadId) {
-        const previousThreadId = conversationThreadIdRef.current;
-        conversationThreadIdRef.current = conversationThreadId;
-        writePreviewThreadId(slug, conversationThreadId);
-        if (
-          previewConversationIdentityChanged(
-            previousThreadId,
-            conversationThreadId,
-          )
-        ) {
-          resetConversationView();
-        }
         return;
       }
       let frame;
@@ -185,15 +113,12 @@ export function usePreviewChatConnection(slug: string) {
       }
     };
 
-    if (previewConversationIdentityChanged(activeSlugRef.current, slug)) {
-      resetConversationView();
-    }
-    activeSlugRef.current = slug;
-    conversationThreadIdRef.current = readPreviewThreadId(slug);
+    setMessages([]);
+    resetTransportView();
 
     return startReconnectingWebSocket({
       socketRef,
-      url: () => previewSocketUrl(slug, conversationThreadIdRef.current),
+      url: () => previewSocketUrl(slug),
       onConnecting: () => {
         setConnected(false);
         resetTransportView();

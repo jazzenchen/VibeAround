@@ -254,10 +254,6 @@ async fn preview_without_parent_creates_and_reuses_a_standalone_task() {
         thread_id
     );
     assert_eq!(
-        crate::previews::owner_conversation_thread_id(&slug),
-        Some(thread_id.clone())
-    );
-    assert_eq!(
         manager
             .runtime_for_thread_id(&thread_id)
             .await
@@ -301,10 +297,6 @@ async fn standalone_preview_new_close_and_next_message_keep_the_slug() {
     assert_ne!(third_id, second_id);
     assert_eq!(third_thread.parent_thread_id, None);
     assert_eq!(third_thread.preview_slug.as_deref(), Some(slug.as_str()));
-    assert_eq!(
-        crate::previews::owner_conversation_thread_id(&slug),
-        Some(third_id)
-    );
 }
 
 #[tokio::test]
@@ -358,7 +350,6 @@ async fn preview_child_reuses_global_slug_across_parents_and_reload() {
     let (recreated_slug, _) =
         crate::previews::ensure_file(preview.id, preview.workspace, preview.title);
     assert_eq!(recreated_slug, slug);
-    assert_eq!(crate::previews::owner_conversation_thread_id(&slug), None);
     drop(manager);
     let reloaded = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let runtime = reloaded
@@ -376,52 +367,6 @@ async fn preview_child_reuses_global_slug_across_parents_and_reload() {
             .parent_thread_id,
         Some(parent_id)
     );
-    assert_eq!(
-        crate::previews::owner_conversation_thread_id(&slug),
-        Some(child_id)
-    );
-}
-
-#[tokio::test]
-async fn preview_thread_hint_only_attaches_an_open_child_for_the_same_slug() {
-    let (workspaces, threads, attachments) = temp_paths();
-    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
-    let (slug, _, child_id, route) = seed_preview_child(&manager, "hint-target").await;
-    let (_, _, other_child_id, _) = seed_preview_child(&manager, "hint-other").await;
-    manager.detach_route(&route).await.unwrap();
-
-    let restored = manager
-        .attach_preview_web_thread_hint(&slug, &child_id)
-        .await
-        .unwrap()
-        .expect("matching open Preview child");
-    assert_eq!(restored.state().await.thread_id, child_id);
-    assert_eq!(
-        manager
-            .current_attachment(&route)
-            .await
-            .unwrap()
-            .unwrap()
-            .thread_id,
-        child_id
-    );
-    manager.detach_route(&route).await.unwrap();
-
-    assert!(manager
-        .attach_preview_web_thread_hint(&slug, &other_child_id)
-        .await
-        .unwrap()
-        .is_none());
-
-    manager
-        .close_thread(&child_id, Some("closed for hint test".to_string()))
-        .await
-        .unwrap();
-    assert!(manager
-        .attach_preview_web_thread_hint(&slug, &child_id)
-        .await
-        .unwrap()
-        .is_none());
 }
 
 #[tokio::test]
@@ -455,10 +400,6 @@ async fn concurrent_preview_ensure_creates_one_standalone_task_for_the_slug() {
             .count(),
         1
     );
-    assert_eq!(
-        crate::previews::owner_conversation_thread_id(&slug),
-        Some(first_id)
-    );
 }
 
 #[tokio::test]
@@ -476,19 +417,10 @@ async fn preview_new_close_and_next_message_keep_parent_and_slug() {
     assert_ne!(second_id, first_id);
     assert_eq!(second_thread.parent_thread_id.as_ref(), Some(&parent_id));
     assert_eq!(second_thread.preview_slug.as_deref(), Some(slug.as_str()));
-    assert_eq!(
-        crate::previews::owner_conversation_thread_id(&slug),
-        Some(second_id.clone())
-    );
-
     manager
         .close_route(&route, Some("test /close".to_string()))
         .await
         .unwrap();
-    assert_eq!(
-        crate::previews::owner_conversation_thread_id(&slug),
-        Some(second_id.clone())
-    );
     assert!(manager.current_attachment(&route).await.unwrap().is_none());
 
     let third = manager.resolve_route_runtime(&route).await.unwrap();
@@ -497,10 +429,6 @@ async fn preview_new_close_and_next_message_keep_parent_and_slug() {
     assert_ne!(third_id, second_id);
     assert_eq!(third_thread.parent_thread_id.as_ref(), Some(&parent_id));
     assert_eq!(third_thread.preview_slug.as_deref(), Some(slug.as_str()));
-    assert_eq!(
-        crate::previews::owner_conversation_thread_id(&slug),
-        Some(third_id)
-    );
 }
 
 #[tokio::test]
@@ -534,11 +462,6 @@ async fn preview_host_switch_keeps_the_same_child_and_route() {
             .thread_id,
         child_id
     );
-    assert_eq!(
-        crate::previews::owner_conversation_thread_id(&slug),
-        Some(child_id.clone())
-    );
-
     drop(runtime);
     drop(manager);
     let reloaded = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);

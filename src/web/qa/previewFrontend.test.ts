@@ -5,11 +5,7 @@ import { chatUserContentBlocks } from "../src/components/chat/chatUserContent";
 import { applyChatTranscriptUpdate } from "../src/components/chat/chatTranscriptUpdates";
 import type { ReviewDraft } from "../src/components/review/reviewTypes";
 import { reviewHelloStartsNewEpoch } from "../src/components/review/useReviewBridge";
-import {
-  previewConversationIdentityChanged,
-  previewConversationThreadId,
-  previewSocketUrl,
-} from "../src/preview/usePreviewChatConnection";
+import { previewSocketUrl } from "../src/preview/usePreviewChatConnection";
 import {
   buildPreviewReviewPrompt,
   previewReviewDisplay,
@@ -237,51 +233,16 @@ test("echoed hidden review prompt acknowledges the optimistic visible summary", 
   expect(next[0].optimistic).toBe(false);
 });
 
-test("Preview conversation resets only when an established identity changes", () => {
-  expect(previewConversationIdentityChanged(null, "readme-cn")).toBe(false);
-  expect(previewConversationIdentityChanged("readme-cn", "readme-cn")).toBe(
-    false,
-  );
-  expect(previewConversationIdentityChanged("readme-cn", "readme-en")).toBe(
-    true,
-  );
-});
-
-test("Preview conversation accepts only a non-empty thread id", () => {
-  expect(
-    previewConversationThreadId({
-      kind: "preview_conversation",
-      thread_id: " wt_review ",
-    }),
-  ).toBe("wt_review");
-  expect(
-    previewConversationThreadId({
-      kind: "preview_conversation",
-      thread_id: "   ",
-    }),
-  ).toBeNull();
-  expect(
-    previewConversationThreadId({ kind: "preview_conversation" }),
-  ).toBeNull();
-  expect(
-    previewConversationThreadId({ kind: "session_ready", thread_id: "wt_other" }),
-  ).toBeNull();
-});
-
-test("Preview websocket carries the saved conversation thread as a hint", () => {
+test("Preview websocket uses the owner route without conversation state", () => {
   expect(
     previewSocketUrl(
       "readme cn",
-      "wt_review/1",
       "https://va.example/va/preview/u/readme-cn",
     ),
-  ).toBe(
-    "wss://va.example/va/preview/u/readme%20cn/chat?thread_id=wt_review%2F1",
-  );
+  ).toBe("wss://va.example/va/preview/u/readme%20cn/chat");
   expect(
     previewSocketUrl(
       "readme-cn",
-      null,
       "http://127.0.0.1:12358/va/preview/u/readme-cn",
     ),
   ).toBe("ws://127.0.0.1:12358/va/preview/u/readme-cn/chat");

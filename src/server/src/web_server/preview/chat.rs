@@ -2,18 +2,15 @@
 
 use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
-    Path, Query, Request, State,
+    Path, Request, State,
 };
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
+use futures_util::StreamExt;
 use uuid::Uuid;
 
-use common::channels::ChannelOutput;
 use common::routing::RouteKey;
 use common::workspace::manager::preview_web_route_for_slug;
-use common::workspace::threads::WorkspaceThreadId;
 
 use crate::api_types::ChatEvent;
 use crate::web_server::ws_chat::{
@@ -25,15 +22,9 @@ use crate::web_server::AppState;
 
 use super::owner_access_allowed;
 
-#[derive(Debug, Default, Deserialize)]
-pub(in crate::web_server) struct OwnerPreviewChatQuery {
-    thread_id: Option<String>,
-}
-
 pub(in crate::web_server) async fn owner_preview_chat_handler(
     State(state): State<AppState>,
     Path(slug): Path<String>,
-    Query(query): Query<OwnerPreviewChatQuery>,
     ws: WebSocketUpgrade,
     req: Request,
 ) -> Response {
@@ -42,14 +33,21 @@ pub(in crate::web_server) async fn owner_preview_chat_handler(
         Ok(route) => route,
         Err(error) => return error.into_response(),
     };
-    let initial_thread_id =
-        match resolve_owner_chat_thread_id(&state, &route, &slug, query.thread_id.as_deref()).await
-        {
-            Ok(thread_id) => thread_id,
-            Err(error) => return error.into_response(),
-        };
+    if state
+        .channel_hub
+        .workspace_thread_manager()
+        .ensure_preview_web_thread(None, &slug)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::CONFLICT,
+            "Preview conversation is unavailable. Recreate this Preview from the current task.",
+        )
+            .into_response();
+    }
 
-    ws.on_upgrade(move |socket| handle_owner_chat_socket(socket, state, route, initial_thread_id))
+    ws.on_upgrade(move |socket| handle_owner_chat_socket(socket, state, route))
 }
 
 fn resolve_owner_chat_route(
@@ -77,50 +75,7 @@ fn resolve_owner_chat_route(
     Ok(preview_web_route_for_slug(slug))
 }
 
-async fn resolve_owner_chat_thread_id(
-    state: &AppState,
-    route: &RouteKey,
-    slug: &str,
-    thread_hint: Option<&str>,
-) -> Result<WorkspaceThreadId, (StatusCode, &'static str)> {
-    let manager = state.channel_hub.workspace_thread_manager();
-    if let Some(runtime) = manager
-        .active_route_runtime(route)
-        .await
-        .map_err(|_| preview_conversation_unavailable())?
-    {
-        return Ok(runtime.state().await.thread_id);
-    }
-    let hinted_runtime = match thread_hint.map(str::trim).filter(|hint| !hint.is_empty()) {
-        Some(hint) => manager
-            .attach_preview_web_thread_hint(slug, &WorkspaceThreadId::from(hint))
-            .await
-            .map_err(|_| preview_conversation_unavailable())?,
-        None => None,
-    };
-    let runtime = match hinted_runtime {
-        Some(runtime) => runtime,
-        None => manager
-            .ensure_preview_web_thread(None, slug)
-            .await
-            .map_err(|_| preview_conversation_unavailable())?,
-    };
-    Ok(runtime.state().await.thread_id)
-}
-
-fn preview_conversation_unavailable() -> (StatusCode, &'static str) {
-    (
-        StatusCode::CONFLICT,
-        "Preview conversation is unavailable. Recreate this Preview from the current task.",
-    )
-}
-
-async fn handle_owner_chat_socket(
-    socket: WebSocket,
-    state: AppState,
-    route: RouteKey,
-    initial_thread_id: WorkspaceThreadId,
-) {
+async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: RouteKey) {
     let connection_id = Uuid::new_v4().to_string();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     state
@@ -129,30 +84,10 @@ async fn handle_owner_chat_socket(
         .await;
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
     let (mut ws_tx, mut ws_rx) = socket.split();
-    let outbound_state = state.clone();
-    let outbound_route = route.clone();
-
     let outbound_task = tokio::spawn(async move {
-        let mut announced_thread_id = initial_thread_id;
-        if send_preview_conversation(&mut ws_tx, &announced_thread_id)
-            .await
-            .is_err()
-        {
-            return;
-        }
         loop {
             tokio::select! {
                 Some(output) = rx.recv() => {
-                    if matches!(&output, ChannelOutput::SessionReady { .. }) {
-                        if let Some(thread_id) = active_preview_thread_id(&outbound_state, &outbound_route).await {
-                            if thread_id != announced_thread_id {
-                                if send_preview_conversation(&mut ws_tx, &thread_id).await.is_err() {
-                                    break;
-                                }
-                                announced_thread_id = thread_id;
-                            }
-                        }
-                    }
                     if send_event(&mut ws_tx, &output_to_chat_event(output)).await.is_err() {
                         break;
                     }
@@ -215,37 +150,6 @@ async fn handle_owner_chat_socket(
         .web_channel
         .unregister_connection(&route, &connection_id)
         .await;
-}
-
-async fn active_preview_thread_id(state: &AppState, route: &RouteKey) -> Option<WorkspaceThreadId> {
-    let runtime = state
-        .channel_hub
-        .workspace_thread_manager()
-        .active_route_runtime(route)
-        .await
-        .ok()??;
-    Some(runtime.state().await.thread_id)
-}
-
-fn preview_conversation_frame(thread_id: &WorkspaceThreadId) -> String {
-    serde_json::json!({
-        "kind": "preview_conversation",
-        "thread_id": thread_id.as_str(),
-    })
-    .to_string()
-}
-
-async fn send_preview_conversation<S>(
-    ws_tx: &mut S,
-    thread_id: &WorkspaceThreadId,
-) -> Result<(), ()>
-where
-    S: SinkExt<Message, Error = axum::Error> + Unpin,
-{
-    ws_tx
-        .send(Message::Text(preview_conversation_frame(thread_id).into()))
-        .await
-        .map_err(|_| ())
 }
 
 async fn preview_user_message_waits_for_session(state: &AppState, route: &RouteKey) -> bool {

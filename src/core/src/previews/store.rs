@@ -13,8 +13,6 @@ use rand::rngs::OsRng;
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
-use crate::workspace::threads::WorkspaceThreadId;
-
 use super::types::{PreviewEntry, PreviewTarget};
 
 #[derive(Debug, Clone)]
@@ -25,7 +23,6 @@ pub(super) struct PreviewSession {
     pub(super) target: PreviewTarget,
     pub(super) slug: String,
     pub(super) share: Option<ShareTransaction>,
-    pub(super) conversation_thread_id: Option<WorkspaceThreadId>,
     pub(super) created_at: Instant,
 }
 

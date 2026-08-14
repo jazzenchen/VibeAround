@@ -57,20 +57,6 @@ fn owner_operations_keep_normalized_path_collisions_separate() {
         canonical(&underscored_file)
     );
 
-    let dashed_thread = crate::workspace::threads::WorkspaceThreadId::from("wt_slug_dashed");
-    let underscored_thread =
-        crate::workspace::threads::WorkspaceThreadId::from("wt_slug_underscored");
-    bind_owner_conversation(&dashed_slug, dashed_thread.clone()).unwrap();
-    bind_owner_conversation(&underscored_slug, underscored_thread.clone()).unwrap();
-    assert_eq!(
-        owner_conversation_thread_id(&dashed_slug),
-        Some(dashed_thread)
-    );
-    assert_eq!(
-        owner_conversation_thread_id(&underscored_slug),
-        Some(underscored_thread)
-    );
-
     assert!(delete_session(&dashed_slug));
     assert!(lookup_owner(&dashed_slug).is_none());
     assert_eq!(
@@ -219,59 +205,6 @@ fn server_share_supports_code_grant_expiry_and_target_scope() {
     assert_ne!(rotated.id, first.id);
     assert_ne!(rotated.code, first.code);
     assert!(verify_share_code(&rotated.id, &rotated.code).is_ok());
-}
-
-#[test]
-fn owner_conversation_binding_is_idempotent_and_cannot_be_retargeted() {
-    let dir = std::env::temp_dir().join(format!(
-        "va-preview-test-conversation-{}",
-        uuid::Uuid::new_v4()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("review.md");
-    std::fs::write(&file, "review").unwrap();
-    let (slug, share) = ensure_file(file, dir, "review".into());
-    let child_id = crate::workspace::threads::WorkspaceThreadId::from("wt_child");
-
-    assert_eq!(owner_conversation_thread_id(&slug), None);
-    assert_eq!(bind_owner_conversation(&slug, child_id.clone()), Ok(()));
-    assert_eq!(bind_owner_conversation(&slug, child_id.clone()), Ok(()));
-    assert_eq!(owner_conversation_thread_id(&slug), Some(child_id));
-    assert_eq!(
-        bind_owner_conversation(
-            &slug,
-            crate::workspace::threads::WorkspaceThreadId::from("wt_other")
-        ),
-        Err(PreviewConversationBindError::Conflict {
-            existing_thread_id: crate::workspace::threads::WorkspaceThreadId::from("wt_child")
-        })
-    );
-    assert_eq!(owner_conversation_thread_id(&share.id), None);
-    assert_eq!(
-        bind_owner_conversation(
-            &share.id,
-            crate::workspace::threads::WorkspaceThreadId::from("wt_share")
-        ),
-        Err(PreviewConversationBindError::NotFound)
-    );
-}
-
-#[test]
-fn owner_conversation_lifecycle_replaces_the_latest_child() {
-    let dir = std::env::temp_dir().join(format!(
-        "va-preview-test-conversation-lifecycle-{}",
-        uuid::Uuid::new_v4()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("review.md");
-    std::fs::write(&file, "review").unwrap();
-    let (slug, _) = ensure_file(file, dir, "review".into());
-    let first = crate::workspace::threads::WorkspaceThreadId::from("wt_first");
-    let second = crate::workspace::threads::WorkspaceThreadId::from("wt_second");
-
-    bind_owner_conversation(&slug, first.clone()).unwrap();
-    replace_owner_conversation(&slug, second.clone()).unwrap();
-    assert_eq!(owner_conversation_thread_id(&slug), Some(second));
 }
 
 #[test]
