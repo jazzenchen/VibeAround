@@ -148,9 +148,6 @@ pub async fn owner_preview_content_handler(Path(slug): Path<String>, req: Reques
             {
                 server_proxy::owner_server_content_response(&slug, &req)
             } else {
-                // Review is an owner Preview capability, not a reflection of
-                // the process-local conversation binding. The chat socket can
-                // recover or create that conversation independently.
                 render_owner_content(entry)
                     .await
                     .unwrap_or_else(IntoResponse::into_response)

@@ -108,10 +108,6 @@ pub(in crate::web_server) async fn server_proxy_fallback(
 }
 
 async fn proxy_request(client: &reqwest::Client, req: Request) -> Response {
-    proxy_request_inner(client, req).await
-}
-
-async fn proxy_request_inner(client: &reqwest::Client, req: Request) -> Response {
     if req.uri().path() == "/va" || req.uri().path().starts_with("/va/") {
         return Redirect::temporary("/va/").into_response();
     }
