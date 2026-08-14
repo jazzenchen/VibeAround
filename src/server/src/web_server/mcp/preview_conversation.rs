@@ -91,19 +91,6 @@ pub(super) async fn resolve_preview_parent_thread(
     Ok(Some(runtime_state.thread_id))
 }
 
-pub(super) async fn ensure_preview_conversation_thread(
-    owner_slug: &str,
-    parent_thread_id: Option<common::workspace::threads::WorkspaceThreadId>,
-    state: &AppState,
-) -> anyhow::Result<()> {
-    state
-        .channel_hub
-        .workspace_thread_manager()
-        .ensure_preview_web_thread(parent_thread_id.as_ref(), owner_slug)
-        .await
-        .map(|_| ())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

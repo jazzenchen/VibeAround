@@ -43,9 +43,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 pub use store::{SHARE_CODE_ATTEMPT_BURST, SHARE_CODE_LENGTH, SHARE_TTL_SECS};
-pub use types::{
-    PreviewEntry, PreviewKind, PreviewShare, PreviewSnapshot, PreviewTarget, ShareCodeError,
-};
+pub use types::{PreviewEntry, PreviewShare, PreviewSnapshot, PreviewTarget, ShareCodeError};
 
 use store::{
     canonical, entry_from, generate_share_code, generate_share_grant, generate_share_id,

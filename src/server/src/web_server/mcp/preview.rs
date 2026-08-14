@@ -6,9 +6,7 @@ use serde_json::Value;
 use crate::web_server::AppState;
 
 use super::jsonrpc::{jsonrpc_err, mcp_error_text, mcp_text};
-use super::preview_conversation::{
-    ensure_preview_conversation_thread, resolve_preview_parent_thread, PreviewParentRequest,
-};
+use super::preview_conversation::{resolve_preview_parent_thread, PreviewParentRequest};
 use super::session_identity::{argument_string, codex_session_id_from_mcp_metadata};
 use super::tools::validate_workspace;
 
@@ -81,14 +79,10 @@ async fn mcp_server_preview(
     cwd_path: PathBuf,
     port: u16,
 ) -> Json<Value> {
-    let parent_request = preview_parent_request(arguments, metadata);
-    let (parent_thread_id, parent_warning) =
-        resolve_preview_parent_best_effort(&parent_request, &cwd_path, state).await;
-
     let title = derive_title(arguments, &cwd_path);
-    let (owner_slug, share) = common::previews::ensure_server(port, cwd_path, title);
-    let conversation_warning =
-        ensure_preview_conversation_best_effort(&owner_slug, parent_thread_id, state).await;
+    let (owner_slug, share) = common::previews::ensure_server(port, cwd_path.clone(), title);
+    let warnings =
+        initialize_preview_conversation(arguments, metadata, &cwd_path, &owner_slug, state).await;
     let local_owner_url = format!(
         "http://127.0.0.1:{}/va/preview/u/{}",
         state.port, owner_slug
@@ -107,10 +101,7 @@ async fn mcp_server_preview(
         port,
         &review_bridge_url,
     );
-    mcp_text(
-        id,
-        &append_preview_warnings(message, [parent_warning, conversation_warning]),
-    )
+    mcp_text(id, &append_preview_warnings(message, warnings))
 }
 
 fn server_preview_message(
@@ -165,25 +156,10 @@ async fn mcp_file_preview(
         Err(error) => return mcp_error_text(id, &error),
     };
 
-    let title = arguments
-        .get("title")
-        .and_then(Value::as_str)
-        .filter(|title| !title.is_empty())
-        .map(String::from)
-        .unwrap_or_else(|| {
-            file_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Preview")
-                .to_string()
-        });
-    let parent_request = preview_parent_request(arguments, metadata);
-    let (parent_thread_id, parent_warning) =
-        resolve_preview_parent_best_effort(&parent_request, &cwd_path, state).await;
-
-    let (owner_slug, share) = common::previews::ensure_file(file_path, cwd_path, title);
-    let conversation_warning =
-        ensure_preview_conversation_best_effort(&owner_slug, parent_thread_id, state).await;
+    let title = derive_title(arguments, &file_path);
+    let (owner_slug, share) = common::previews::ensure_file(file_path, cwd_path.clone(), title);
+    let warnings =
+        initialize_preview_conversation(arguments, metadata, &cwd_path, &owner_slug, state).await;
     let tunnel_url = state.tunnels.first_url();
     let owner_base = tunnel_url
         .clone()
@@ -213,48 +189,45 @@ async fn mcp_file_preview(
         ),
     };
 
-    mcp_text(
-        id,
-        &append_preview_warnings(message, [parent_warning, conversation_warning]),
-    )
+    mcp_text(id, &append_preview_warnings(message, warnings))
 }
 
-async fn resolve_preview_parent_best_effort(
-    request: &PreviewParentRequest,
+async fn initialize_preview_conversation(
+    arguments: &Value,
+    metadata: Option<&Value>,
     cwd: &Path,
-    state: &AppState,
-) -> (
-    Option<common::workspace::threads::WorkspaceThreadId>,
-    Option<String>,
-) {
-    match resolve_preview_parent_thread(request, cwd, state).await {
-        Ok(parent_thread_id) => (parent_thread_id, None),
-        Err(error) => {
-            tracing::warn!(error = %error, "Preview parent task link was skipped");
-            (
-                None,
-                Some(format!(
-                    "Parent task link was skipped; Preview continues standalone: {error:#}"
-                )),
-            )
-        }
-    }
-}
-
-async fn ensure_preview_conversation_best_effort(
     owner_slug: &str,
-    parent_thread_id: Option<common::workspace::threads::WorkspaceThreadId>,
     state: &AppState,
-) -> Option<String> {
-    match ensure_preview_conversation_thread(owner_slug, parent_thread_id, state).await {
-        Ok(()) => None,
+) -> [Option<String>; 2] {
+    let request = preview_parent_request(arguments, metadata);
+    let (parent_thread_id, parent_warning) =
+        match resolve_preview_parent_thread(&request, cwd, state).await {
+            Ok(parent_thread_id) => (parent_thread_id, None),
+            Err(error) => {
+                tracing::warn!(error = %error, "Preview parent task link was skipped");
+                (
+                    None,
+                    Some(format!(
+                        "Parent task link was skipped; Preview continues standalone: {error:#}"
+                    )),
+                )
+            }
+        };
+    let conversation_warning = match state
+        .channel_hub
+        .workspace_thread_manager()
+        .ensure_preview_web_thread(parent_thread_id.as_ref(), owner_slug)
+        .await
+    {
+        Ok(_) => None,
         Err(error) => {
             tracing::warn!(preview_slug = owner_slug, error = %error, "Preview conversation initialization failed");
             Some(format!(
                 "Preview conversation is temporarily unavailable: {error:#}"
             ))
         }
-    }
+    };
+    [parent_warning, conversation_warning]
 }
 
 fn append_preview_warnings(

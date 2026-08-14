@@ -12,10 +12,6 @@ pub enum PreviewTarget {
     File,
 }
 
-/// Legacy alias kept for callers that still use `PreviewKind`.
-/// New code should prefer [`PreviewTarget`].
-pub type PreviewKind = PreviewTarget;
-
 /// Public view of a preview session, returned from lookups.
 #[derive(Debug, Clone)]
 pub struct PreviewEntry {
