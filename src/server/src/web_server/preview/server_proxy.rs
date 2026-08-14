@@ -108,6 +108,15 @@ pub(in crate::web_server) async fn server_proxy_fallback(
 }
 
 async fn proxy_request(client: &reqwest::Client, req: Request) -> Response {
+    let mut response = proxy_request_inner(client, req).await;
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "no-store".parse().expect("valid cache-control"),
+    );
+    response
+}
+
+async fn proxy_request_inner(client: &reqwest::Client, req: Request) -> Response {
     if req.uri().path() == "/va" || req.uri().path().starts_with("/va/") {
         return Redirect::temporary("/va/").into_response();
     }
@@ -335,14 +344,7 @@ async fn proxy_share_request(client: &reqwest::Client, req: Request, port: u16) 
         }
     }
     match upstream_request.send().await {
-        Ok(upstream) => {
-            let mut response = share_upstream_response(upstream, port).await;
-            response.headers_mut().insert(
-                header::CACHE_CONTROL,
-                "no-store".parse().expect("valid cache-control"),
-            );
-            response
-        }
+        Ok(upstream) => share_upstream_response(upstream, port).await,
         Err(error) => upstream_error(port, error),
     }
 }

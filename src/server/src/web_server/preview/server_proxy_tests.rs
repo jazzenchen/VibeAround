@@ -335,7 +335,7 @@ async fn owner_proxy_transparently_forwards_http_to_ipv4_loopback() {
     );
     assert_eq!(
         response.headers()[header::CACHE_CONTROL],
-        "public, max-age=60"
+        "no-store"
     );
     assert_eq!(
         to_bytes(response.into_body(), 16).await.unwrap().as_ref(),
