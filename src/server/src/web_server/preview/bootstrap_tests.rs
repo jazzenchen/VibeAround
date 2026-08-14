@@ -41,9 +41,10 @@ fn bootstrap_contains_only_owner_ui_data_and_server_built_sources() {
 
     assert_eq!(value["selectedSlug"], "readme");
     assert_eq!(value["previews"][0]["workspace"], "/tmp/alpha");
+    assert_eq!(value["previews"][0]["kind"], "file");
     assert_eq!(value["previews"][0]["src"], "/va/preview/u/readme/content");
+    assert_eq!(value["previews"][1]["kind"], "server");
     assert_eq!(value["previews"][1]["src"], "http://localhost:5173/");
-    assert!(value["previews"][0].get("kind").is_none());
     assert!(value["previews"][0].get("chatAvailable").is_none());
     assert!(!value.to_string().contains("private-share-id"));
     assert!(!value.to_string().contains("123456"));

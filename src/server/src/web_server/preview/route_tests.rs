@@ -659,8 +659,8 @@ async fn server_preview_uses_direct_local_origin_and_remote_same_origin_proxy() 
 }
 
 #[tokio::test]
-async fn active_previews_omit_server_after_listener_closes() {
-    let dir = unique_temp_dir("stale-server");
+async fn active_previews_keep_registered_server_after_listener_closes() {
+    let dir = unique_temp_dir("registered-server");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let (server_slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into());
@@ -668,29 +668,23 @@ async fn active_previews_omit_server_after_listener_closes() {
     std::fs::write(&file, "active").unwrap();
     let (file_slug, _) = common::previews::ensure_file(file, dir, "file".into());
 
-    let listening = active_preview_snapshots().await;
-    assert!(listening.iter().any(|preview| preview.slug == server_slug));
-    assert!(listening.iter().any(|preview| preview.slug == file_slug));
-
     drop(listener);
     let active = active_preview_snapshots().await;
-    assert!(active.iter().all(|preview| preview.slug != server_slug));
+    assert!(active.iter().any(|preview| preview.slug == server_slug));
     assert!(active.iter().any(|preview| preview.slug == file_slug));
 
-    let stale_bootstrap =
+    let bootstrap =
         owner_preview_bootstrap_handler(Path(file_slug.clone()), local_request("127.0.0.1:12358"))
             .await;
-    assert_eq!(stale_bootstrap.status(), StatusCode::OK);
-    let stale_bootstrap_body = to_bytes(stale_bootstrap.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let stale_bootstrap: serde_json::Value = serde_json::from_slice(&stale_bootstrap_body).unwrap();
-    assert!(stale_bootstrap["previews"]
+    assert_eq!(bootstrap.status(), StatusCode::OK);
+    let bootstrap_body = to_bytes(bootstrap.into_body(), usize::MAX).await.unwrap();
+    let bootstrap: serde_json::Value = serde_json::from_slice(&bootstrap_body).unwrap();
+    assert!(bootstrap["previews"]
         .as_array()
         .unwrap()
         .iter()
-        .all(|preview| preview["slug"] != server_slug));
-    assert!(stale_bootstrap["previews"]
+        .any(|preview| preview["slug"] == server_slug));
+    assert!(bootstrap["previews"]
         .as_array()
         .unwrap()
         .iter()

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MousePointer2, ScanLine, X } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { PreviewChatDrawer } from "./PreviewChatDrawer";
 import type { PreviewChatMode, PreviewChatSide } from "./previewChatLayout";
 import {
@@ -20,6 +21,10 @@ import {
 } from "./previewTypes";
 import { usePreviewChatConnection } from "./usePreviewChatConnection";
 import { usePreviewReviewBridge } from "./usePreviewReviewBridge";
+import {
+  rememberServerPreviewConsent,
+  serverPreviewNeedsConsent,
+} from "./previewConsent";
 
 export default function PreviewPage({ initialSlug }: { initialSlug: string }) {
   const [bootstrap, setBootstrap] = useState<PreviewBootstrap>();
@@ -126,6 +131,7 @@ function PreviewWorkspace({
   const [chatMode, setChatMode] = useState<PreviewChatMode>("impact");
   const [chatWidth, setChatWidth] = useState(448);
   const [frameRevision, setFrameRevision] = useState(0);
+  const [consentRevision, setConsentRevision] = useState(0);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const selected =
     bootstrap.previews.find((preview) => preview.slug === selectedSlug) ??
@@ -133,6 +139,10 @@ function PreviewWorkspace({
 
   const chat = usePreviewChatConnection(selected.slug);
   const review = usePreviewReviewBridge(frameRef, selected);
+  const needsServerConsent = serverPreviewNeedsConsent(
+    selected,
+    window.sessionStorage,
+  );
 
   const refreshPreview = useCallback(async () => {
     const nextBootstrap = await onRefreshBootstrap(selected.slug);
@@ -209,15 +219,37 @@ function PreviewWorkspace({
   return (
     <div className="relative flex h-full min-h-0 overflow-hidden bg-muted/20">
       <div className="relative order-1 min-w-0 flex-1">
-        <iframe
-          key={`${selected.slug}:${frameRevision}`}
-          ref={frameRef}
-          src={selected.src}
-          title={`Preview content — ${selected.title}`}
-          referrerPolicy="no-referrer"
-          onLoad={review.handleFrameLoad}
-          className="h-full w-full border-0 bg-white"
-        />
+        {needsServerConsent ? (
+          <div className="flex h-full items-center justify-center bg-muted/20 p-6">
+            <section className="max-w-lg rounded-xl border border-border bg-background p-6 shadow-sm">
+              <h1 className="text-lg font-semibold">Open this Server Preview?</h1>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                This loads content from a local development server. Continue only
+                if you trust the project and its dependencies; the page can behave
+                like any site you open in your browser.
+              </p>
+              <Button
+                className="mt-5"
+                onClick={() => {
+                  rememberServerPreviewConsent(selected, window.sessionStorage);
+                  setConsentRevision((revision) => revision + 1);
+                }}
+              >
+                Continue to Preview
+              </Button>
+            </section>
+          </div>
+        ) : (
+          <iframe
+            key={`${selected.slug}:${frameRevision}:${consentRevision}`}
+            ref={frameRef}
+            src={selected.src}
+            title={`Preview content — ${selected.title}`}
+            referrerPolicy="no-referrer"
+            onLoad={review.handleFrameLoad}
+            className="h-full w-full border-0 bg-white"
+          />
+        )}
 
         <PreviewHelper
           view={helperView}

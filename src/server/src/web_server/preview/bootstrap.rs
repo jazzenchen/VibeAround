@@ -18,6 +18,7 @@ struct OwnerPreviewItem {
     slug: String,
     title: String,
     workspace: String,
+    kind: &'static str,
     src: String,
 }
 
@@ -41,6 +42,7 @@ pub(super) fn owner_preview_bootstrap(
                 slug: preview.slug.clone(),
                 title: preview.title.clone(),
                 workspace: preview.workspace.display().to_string(),
+                kind: preview.kind,
                 src: preview_src(&preview.slug, preview.port, server_host),
             })
             .collect(),

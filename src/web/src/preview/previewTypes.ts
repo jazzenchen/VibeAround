@@ -2,6 +2,7 @@ export interface PreviewItem {
   slug: string;
   title: string;
   workspace: string;
+  kind: "file" | "server";
   src: string;
 }
 
@@ -70,6 +71,7 @@ export function parsePreviewBootstrap(value: unknown): PreviewBootstrap | null {
       typeof item.slug !== "string" ||
       typeof item.title !== "string" ||
       typeof item.workspace !== "string" ||
+      (item.kind !== "file" && item.kind !== "server") ||
       typeof item.src !== "string"
     ) {
       return null;
@@ -78,6 +80,7 @@ export function parsePreviewBootstrap(value: unknown): PreviewBootstrap | null {
       slug: item.slug,
       title: item.title,
       workspace: item.workspace,
+      kind: item.kind,
       src: item.src,
     });
   }

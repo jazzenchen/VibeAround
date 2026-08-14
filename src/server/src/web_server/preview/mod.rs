@@ -45,7 +45,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use common::previews::{PreviewTarget, ShareCodeError};
-use futures_util::future::join_all;
 use serde::Deserialize;
 
 pub(super) use assets::{
@@ -165,39 +164,7 @@ pub async fn owner_preview_content_handler(Path(slug): Path<String>, req: Reques
 }
 
 pub(super) async fn active_preview_snapshots() -> Vec<common::previews::PreviewSnapshot> {
-    join_all(
-        common::previews::list_snapshots()
-            .into_iter()
-            .map(|preview| async move {
-                match preview.port {
-                    None => Some(preview),
-                    Some(port) if server_port_is_listening(port).await => Some(preview),
-                    Some(_) => None,
-                }
-            }),
-    )
-    .await
-    .into_iter()
-    .flatten()
-    .collect()
-}
-
-async fn server_port_is_listening(port: u16) -> bool {
-    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
-    use std::time::Duration;
-
-    let ipv4 = tokio::net::TcpStream::connect(SocketAddr::from((Ipv4Addr::LOCALHOST, port)));
-    let ipv6 = tokio::net::TcpStream::connect(SocketAddr::from((Ipv6Addr::LOCALHOST, port)));
-    tokio::pin!(ipv4, ipv6);
-
-    tokio::time::timeout(Duration::from_millis(250), async {
-        tokio::select! {
-            result = &mut ipv4 => result.is_ok() || ipv6.await.is_ok(),
-            result = &mut ipv6 => result.is_ok() || ipv4.await.is_ok(),
-        }
-    })
-    .await
-    .unwrap_or(false)
+    common::previews::list_snapshots()
 }
 
 fn preview_server_host(req: &Request) -> &'static str {

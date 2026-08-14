@@ -81,15 +81,6 @@ async fn mcp_server_preview(
     cwd_path: PathBuf,
     port: u16,
 ) -> Json<Value> {
-    if !server_http_is_responding(&state.preview_client, port).await {
-        return mcp_error_text(
-            id,
-            &format!(
-                "No HTTP server is responding on localhost:{port}. Start the dev server, then retry Preview."
-            ),
-        );
-    }
-
     let parent_request = preview_parent_request(arguments, metadata);
     let (parent_thread_id, parent_warning) =
         resolve_preview_parent_best_effort(&parent_request, &cwd_path, state).await;
@@ -296,21 +287,6 @@ fn build_preview_url(base: &str, route: &str, slug: &str) -> String {
     format!("{}/va/{}/{}", base.trim_end_matches('/'), route, slug)
 }
 
-async fn server_http_is_responding(client: &reqwest::Client, port: u16) -> bool {
-    let ipv4 = client.get(format!("http://127.0.0.1:{port}/")).send();
-    let ipv6 = client.get(format!("http://[::1]:{port}/")).send();
-    tokio::pin!(ipv4, ipv6);
-
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        tokio::select! {
-            result = &mut ipv4 => result.is_ok() || ipv6.await.is_ok(),
-            result = &mut ipv6 => result.is_ok() || ipv4.await.is_ok(),
-        }
-    })
-    .await
-    .unwrap_or(false)
-}
-
 fn resolve_preview_file(workspace: &Path, file: &str) -> Result<PathBuf, String> {
     let workspace = workspace.canonicalize().map_err(|error| {
         format!(
@@ -338,13 +314,11 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use common::previews::PreviewShare;
-    use tokio::io::AsyncWriteExt;
-
     use serde_json::json;
 
     use super::{
-        append_preview_warnings, preview_source, resolve_preview_file, server_http_is_responding,
-        server_preview_message, PreviewSource,
+        append_preview_warnings, preview_source, resolve_preview_file, server_preview_message,
+        PreviewSource,
     };
 
     fn share() -> PreviewShare {
@@ -461,38 +435,5 @@ mod tests {
         assert!(preview_source(&json!({ "port": 5173, "file": "README.md" })).is_err());
         assert!(preview_source(&json!({ "port": 0 })).is_err());
         assert!(preview_source(&json!({ "file": "" })).is_err());
-    }
-
-    #[tokio::test]
-    async fn server_preview_requires_an_http_response() {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap();
-        let http = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let http_port = http.local_addr().unwrap().port();
-        let response = tokio::spawn(async move {
-            let (mut stream, _) = http.accept().await.unwrap();
-            stream
-                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
-                .await
-                .unwrap();
-        });
-        assert!(server_http_is_responding(&client, http_port).await);
-        response.await.unwrap();
-
-        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let silent_port = silent.local_addr().unwrap().port();
-        let accepted = tokio::spawn(async move {
-            let (_stream, _) = silent.accept().await.unwrap();
-            tokio::time::sleep(Duration::from_secs(2)).await;
-        });
-        assert!(!server_http_is_responding(&client, silent_port).await);
-        accepted.abort();
-
-        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let closed_port = closed.local_addr().unwrap().port();
-        drop(closed);
-        assert!(!server_http_is_responding(&client, closed_port).await);
     }
 }

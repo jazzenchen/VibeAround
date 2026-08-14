@@ -19,6 +19,10 @@ import {
 } from "../src/preview/previewChatLayout";
 import { ownerPreviewSlug } from "../src/preview/previewRoute";
 import {
+  rememberServerPreviewConsent,
+  serverPreviewNeedsConsent,
+} from "../src/preview/previewConsent";
+import {
   parsePreviewBootstrap,
   refreshedPreviewSlug,
   type PreviewItem,
@@ -29,8 +33,17 @@ const preview: PreviewItem = {
   slug: "readme-cn-md",
   title: "README 中文版",
   workspace: "/work/VibeAround",
+  kind: "file",
   src: "/va/preview/u/readme-cn-md/content",
 };
+
+function memoryStorage(): Pick<Storage, "getItem" | "setItem"> {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+}
 
 test("Preview chat width stays bounded on either resize edge", () => {
   expect(clampPreviewChatWidth(100)).toBe(280);
@@ -68,6 +81,25 @@ test("Preview bootstrap accepts the unified item and rejects a missing source", 
       previews: [{ ...preview, src: undefined }],
     }),
   ).toBeNull();
+  expect(
+    parsePreviewBootstrap({
+      selectedSlug: preview.slug,
+      previews: [{ ...preview, kind: "unknown" }],
+    }),
+  ).toBeNull();
+});
+
+test("Server Preview requires one confirmation per preview and browser session", () => {
+  const storage = memoryStorage();
+  const server = { ...preview, slug: "app", kind: "server" as const };
+
+  expect(serverPreviewNeedsConsent(preview, storage)).toBe(false);
+  expect(serverPreviewNeedsConsent(server, storage)).toBe(true);
+  rememberServerPreviewConsent(server, storage);
+  expect(serverPreviewNeedsConsent(server, storage)).toBe(false);
+  expect(
+    serverPreviewNeedsConsent({ ...server, slug: "another-app" }, storage),
+  ).toBe(true);
 });
 
 test("manual Preview refresh keeps the active selection before using fresh fallbacks", () => {
