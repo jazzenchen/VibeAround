@@ -11,51 +11,6 @@ export interface PreviewBootstrap {
   previews: PreviewItem[];
 }
 
-export type PreviewAnchor = {
-  kind: "text" | "element" | "region";
-  text: string;
-  heading?: string;
-  startLine?: number;
-  endLine?: number;
-  page?: {
-    path?: string;
-    hash?: string;
-    title?: string;
-  };
-  element?: {
-    tag?: string;
-    id?: string;
-    testId?: string;
-    role?: string;
-    label?: string;
-    selector?: string;
-    text?: string;
-  };
-  region?: {
-    width: number;
-    height: number;
-  };
-};
-
-export type PreviewFrameRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-export type PreviewReviewDraft = {
-  id: string;
-  anchor: PreviewAnchor;
-  comment: string;
-  screenshot?: PreviewScreenshot;
-};
-
-export type PreviewScreenshot = {
-  blob: Blob;
-  fileName: string;
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

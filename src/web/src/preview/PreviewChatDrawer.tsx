@@ -7,21 +7,22 @@ import {
   PendingPermissions,
 } from "@/components/chat/chatUi";
 import type { ChatAttachment } from "@/components/chat/chatTypes";
+import { ReviewToolbar } from "@/components/review/ReviewToolbar";
+import type {
+  ReviewDraft,
+  ReviewToolbarModel,
+} from "@/components/review/reviewTypes";
 import { uploadPreviewChatFile } from "@/api/sessions";
 import { cn } from "@/lib/utils";
 import { PreviewChatHeader } from "./PreviewChatHeader";
 import { PreviewChatResizeHandle } from "./PreviewChatResizeHandle";
-import {
-  PreviewReviewToolbar,
-  type PreviewReviewToolbarModel,
-} from "./PreviewReviewToolbar";
 import {
   clampPreviewChatWidth,
   type PreviewChatMode,
   type PreviewChatSide,
 } from "./previewChatLayout";
 import { buildPreviewReviewPrompt, previewReviewDisplay } from "./previewReview";
-import type { PreviewItem, PreviewReviewDraft } from "./previewTypes";
+import type { PreviewItem } from "./previewTypes";
 import type { usePreviewChatConnection } from "./usePreviewChatConnection";
 
 type PreviewChat = ReturnType<typeof usePreviewChatConnection>;
@@ -31,8 +32,8 @@ type PreviewChatDrawerProps = {
   previews: PreviewItem[];
   preview: PreviewItem;
   chat: PreviewChat;
-  drafts: PreviewReviewDraft[];
-  reviewToolbar: PreviewReviewToolbarModel;
+  drafts: ReviewDraft[];
+  reviewToolbar: ReviewToolbarModel;
   mode: PreviewChatMode;
   side: PreviewChatSide;
   width: number;
@@ -47,14 +48,14 @@ type PreviewChatDrawerProps = {
   onClearSubmittedDrafts: (submittedIds: string[]) => void;
 };
 
-function draftExcerpt(draft: PreviewReviewDraft) {
+function draftExcerpt(draft: ReviewDraft) {
   const value = draft.anchor.text.replace(/\s+/g, " ").trim();
   return value.length > 38 ? `${value.slice(0, 37)}…` : value || "Selected element";
 }
 
 async function uploadReviewScreenshots(
   previewSlug: string,
-  drafts: PreviewReviewDraft[],
+  drafts: ReviewDraft[],
 ): Promise<ChatAttachment[]> {
   const screenshots = drafts.flatMap((draft) =>
     draft.screenshot ? [draft.screenshot] : [],
@@ -209,7 +210,7 @@ export function PreviewChatDrawer({
         onRespond={chat.sendPermissionResponse}
         onCancel={chat.cancelPermissionRequest}
       />
-      <PreviewReviewToolbar
+      <ReviewToolbar
         {...reviewToolbar}
         className="shrink-0 border-t border-border px-2 py-1.5"
       />

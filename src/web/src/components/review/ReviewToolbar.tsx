@@ -2,30 +2,21 @@ import { Scan, ScanLine } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { ReviewTool, ReviewToolbarModel } from "./reviewTypes";
 
-export type PreviewReviewTool = "element" | "region";
-
-export type PreviewReviewToolbarModel = {
-  activeTool: PreviewReviewTool | null;
-  elementAvailable: boolean;
-  regionAvailable: boolean;
-  textSelectionAvailable: boolean;
-  onToolChange: (tool: PreviewReviewTool | null) => void;
-};
-
-type PreviewReviewToolbarProps = PreviewReviewToolbarModel & {
+type ReviewToolbarProps = ReviewToolbarModel & {
   className?: string;
 };
 
-export function PreviewReviewToolbar({
+export function ReviewToolbar({
   activeTool,
   elementAvailable,
   regionAvailable,
   textSelectionAvailable,
   onToolChange,
   className,
-}: PreviewReviewToolbarProps) {
-  const toggle = (tool: PreviewReviewTool) => {
+}: ReviewToolbarProps) {
+  const toggle = (tool: ReviewTool) => {
     onToolChange(activeTool === tool ? null : tool);
   };
 

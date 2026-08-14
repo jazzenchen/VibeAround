@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 
 import { chatUserContentBlocks } from "../src/components/chat/chatUserContent";
+import type { ReviewDraft } from "../src/components/review/reviewTypes";
 import { applyPreviewSessionNotification } from "../src/preview/previewChatMessages";
 import {
   previewConversationIdentityChanged,
@@ -26,7 +27,6 @@ import {
   parsePreviewBootstrap,
   refreshedPreviewSlug,
   type PreviewItem,
-  type PreviewReviewDraft,
 } from "../src/preview/previewTypes";
 
 const preview: PreviewItem = {
@@ -131,7 +131,7 @@ test("manual Preview refresh keeps the active selection before using fresh fallb
 });
 
 test("review submission carries source location while the visible message stays readable", () => {
-  const drafts: PreviewReviewDraft[] = [
+  const drafts: ReviewDraft[] = [
     {
       id: "review-1",
       anchor: {
@@ -158,7 +158,7 @@ test("review submission carries source location while the visible message stays 
 });
 
 test("region review identifies its screenshot attachment without embedding image data", () => {
-  const drafts: PreviewReviewDraft[] = [
+  const drafts: ReviewDraft[] = [
     {
       id: "review-region",
       anchor: {

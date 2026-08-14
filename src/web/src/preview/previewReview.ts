@@ -1,48 +1,12 @@
-import type { PreviewAnchor, PreviewItem, PreviewReviewDraft } from "./previewTypes";
+import { reviewAnchorLocation, reviewAnchorQuote } from "@/components/review/reviewText";
+import type { ReviewAnchor, ReviewDraft } from "@/components/review/reviewTypes";
+import type { PreviewItem } from "./previewTypes";
 
 function compact(value: string | undefined) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
-export function previewAnchorQuote(anchor: PreviewAnchor) {
-  if (anchor.kind === "text") return anchor.text;
-  if (anchor.kind === "region") return anchor.text;
-  return (
-    anchor.element?.text ??
-    anchor.element?.label ??
-    anchor.page?.title ??
-    "Selected element"
-  );
-}
-
-export function previewAnchorLocation(anchor: PreviewAnchor) {
-  const parts: string[] = [];
-  if (anchor.page?.path) {
-    parts.push(`${anchor.page.path}${anchor.page.hash ?? ""}`);
-  }
-  if (Number.isInteger(anchor.startLine)) {
-    parts.push(
-      anchor.endLine !== undefined && anchor.endLine > (anchor.startLine ?? 0)
-        ? `lines ${anchor.startLine}–${anchor.endLine}`
-        : `line ${anchor.startLine}`,
-    );
-  }
-  if (anchor.heading) parts.push(anchor.heading);
-  if (anchor.region) {
-    parts.push(`${anchor.region.width} × ${anchor.region.height} screenshot`);
-  }
-  if (anchor.element) {
-    parts.push(
-      anchor.element.selector ??
-        anchor.element.role ??
-        anchor.element.tag ??
-        "element",
-    );
-  }
-  return parts.join(" · ") || "Selected content";
-}
-
-function appendPromptLocation(lines: string[], anchor: PreviewAnchor) {
+function appendPromptLocation(lines: string[], anchor: ReviewAnchor) {
   if (anchor.page?.path) {
     lines.push(`Page: ${anchor.page.path}${anchor.page.hash ?? ""}`);
   }
@@ -63,7 +27,7 @@ function appendPromptLocation(lines: string[], anchor: PreviewAnchor) {
 
 export function buildPreviewReviewPrompt(
   preview: PreviewItem,
-  drafts: PreviewReviewDraft[],
+  drafts: ReviewDraft[],
   prompt: string,
 ) {
   const lines = [
@@ -86,7 +50,7 @@ export function buildPreviewReviewPrompt(
     lines.push(
       "Quoted Preview content:",
       "--- BEGIN QUOTED PREVIEW CONTENT ---",
-      previewAnchorQuote(draft.anchor),
+      reviewAnchorQuote(draft.anchor),
       "--- END QUOTED PREVIEW CONTENT ---",
       "Requested change:",
       draft.comment,
@@ -95,14 +59,14 @@ export function buildPreviewReviewPrompt(
   return lines.join("\n");
 }
 
-export function previewReviewDisplay(drafts: PreviewReviewDraft[], prompt: string) {
+export function previewReviewDisplay(drafts: ReviewDraft[], prompt: string) {
   const lines = prompt.trim() ? [prompt.trim()] : [];
   for (const draft of drafts) {
     if (lines.length) lines.push("");
-    const quote = compact(previewAnchorQuote(draft.anchor));
+    const quote = compact(reviewAnchorQuote(draft.anchor));
     const excerpt = quote.length > 160 ? `${quote.slice(0, 159)}…` : quote;
     lines.push(
-      previewAnchorLocation(draft.anchor),
+      reviewAnchorLocation(draft.anchor),
       `“${excerpt}”`,
       `→ ${draft.comment}`,
     );

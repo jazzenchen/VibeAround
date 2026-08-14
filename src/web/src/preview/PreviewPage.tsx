@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MousePointer2, ScanLine, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ReviewPopover } from "@/components/review/ReviewPopover";
+import type {
+  ReviewTool,
+  ReviewToolbarModel,
+} from "@/components/review/reviewTypes";
 import { PreviewChatDrawer } from "./PreviewChatDrawer";
 import type { PreviewChatMode, PreviewChatSide } from "./previewChatLayout";
 import {
@@ -9,11 +14,6 @@ import {
   type PreviewHelperCorner,
   type PreviewHelperView,
 } from "./PreviewHelper";
-import { PreviewReviewPopover } from "./PreviewReviewPopover";
-import type {
-  PreviewReviewTool,
-  PreviewReviewToolbarModel,
-} from "./PreviewReviewToolbar";
 import {
   parsePreviewBootstrap,
   refreshedPreviewSlug,
@@ -204,8 +204,8 @@ function PreviewWorkspace({
     ? review.drafts.find((draft) => draft.id === review.editor?.draftId)
     : undefined;
 
-  const activeReviewTool: PreviewReviewTool | null = review.pickMode;
-  const reviewToolbar: PreviewReviewToolbarModel = {
+  const activeReviewTool: ReviewTool | null = review.pickMode;
+  const reviewToolbar: ReviewToolbarModel = {
     activeTool: activeReviewTool,
     elementAvailable: review.capabilities.includes("element"),
     regionAvailable: review.capabilities.includes("region"),
@@ -318,7 +318,7 @@ function PreviewWorkspace({
       />
 
       {review.editor && (
-        <PreviewReviewPopover
+        <ReviewPopover
           editor={review.editor}
           frameRef={frameRef}
           initialComment={activeDraft?.comment ?? ""}

@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { PreviewReviewToolbar } from "../src/preview/PreviewReviewToolbar";
+import { ReviewToolbar } from "../src/components/review/ReviewToolbar";
 
 test("Preview review tools share one semantic toolbar across surfaces", () => {
   const markup = renderToStaticMarkup(
-    <PreviewReviewToolbar
+    <ReviewToolbar
       activeTool="element"
       elementAvailable
       regionAvailable={false}

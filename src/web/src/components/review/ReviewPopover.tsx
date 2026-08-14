@@ -2,11 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 import { Check, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { previewAnchorLocation, previewAnchorQuote } from "./previewReview";
-import type { PreviewReviewEditor } from "./usePreviewReviewBridge";
+import { reviewAnchorLocation, reviewAnchorQuote } from "./reviewText";
+import type { ReviewEditor } from "./reviewTypes";
 
-type PreviewReviewPopoverProps = {
-  editor: PreviewReviewEditor;
+type ReviewPopoverProps = {
+  editor: ReviewEditor;
   frameRef: RefObject<HTMLIFrameElement | null>;
   initialComment: string;
   onSave: (comment: string) => void;
@@ -15,13 +15,13 @@ type PreviewReviewPopoverProps = {
 
 type Position = { left: number; top: number; width: number };
 
-export function PreviewReviewPopover({
+export function ReviewPopover({
   editor,
   frameRef,
   initialComment,
   onSave,
   onCancel,
-}: PreviewReviewPopoverProps) {
+}: ReviewPopoverProps) {
   const [comment, setComment] = useState(initialComment);
   const [position, setPosition] = useState<Position>();
   const [screenshotUrl, setScreenshotUrl] = useState<string>();
@@ -124,7 +124,7 @@ export function PreviewReviewPopover({
         <X className="h-3.5 w-3.5" />
       </Button>
       <div className="pr-7 text-[11px] font-medium text-muted-foreground">
-        {previewAnchorLocation(editor.anchor)}
+        {reviewAnchorLocation(editor.anchor)}
       </div>
       {screenshotUrl && (
         <img
@@ -134,7 +134,7 @@ export function PreviewReviewPopover({
         />
       )}
       <blockquote className="mt-1 line-clamp-3 border-l-2 border-border pl-2 text-xs text-muted-foreground">
-        {previewAnchorQuote(editor.anchor)}
+        {reviewAnchorQuote(editor.anchor)}
       </blockquote>
       <div className="relative mt-2 rounded-md border border-border bg-background focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20">
         <textarea

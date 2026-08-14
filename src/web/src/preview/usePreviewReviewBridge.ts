@@ -8,25 +8,16 @@ import {
 } from "react";
 
 import type {
-  PreviewAnchor,
-  PreviewFrameRect,
-  PreviewItem,
-  PreviewReviewDraft,
-  PreviewScreenshot,
-} from "./previewTypes";
-import type { PreviewReviewTool } from "./PreviewReviewToolbar";
+  ReviewAnchor,
+  ReviewDraft,
+  ReviewEditor,
+  ReviewFrameRect,
+  ReviewTool,
+} from "@/components/review/reviewTypes";
+import type { PreviewItem } from "./previewTypes";
 
 const REVIEW_SCOPE = "va-preview-review";
 const REVIEW_VERSION = 1;
-
-export type PreviewReviewEditor = {
-  anchorId: string;
-  selectionId?: string;
-  draftId?: string;
-  anchor: PreviewAnchor;
-  rect: PreviewFrameRect;
-  screenshot?: PreviewScreenshot;
-};
 
 function makeId(prefix: string) {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -46,7 +37,7 @@ export function previewReviewHelloStartsNewEpoch(
   );
 }
 
-function isFrameRect(value: unknown): value is PreviewFrameRect {
+function isFrameRect(value: unknown): value is ReviewFrameRect {
   if (!value || typeof value !== "object") return false;
   const rect = value as Record<string, unknown>;
   return [rect.x, rect.y, rect.width, rect.height].every(
@@ -54,7 +45,7 @@ function isFrameRect(value: unknown): value is PreviewFrameRect {
   );
 }
 
-function isAnchor(value: unknown): value is PreviewAnchor {
+function isAnchor(value: unknown): value is ReviewAnchor {
   if (!value || typeof value !== "object") return false;
   const anchor = value as Record<string, unknown>;
   if (typeof anchor.text !== "string") return false;
@@ -81,16 +72,16 @@ export function usePreviewReviewBridge(
   frameRef: RefObject<HTMLIFrameElement | null>,
   preview: PreviewItem,
 ) {
-  const [drafts, setDrafts] = useState<PreviewReviewDraft[]>([]);
-  const [editor, setEditor] = useState<PreviewReviewEditor | null>(null);
+  const [drafts, setDrafts] = useState<ReviewDraft[]>([]);
+  const [editor, setEditor] = useState<ReviewEditor | null>(null);
   const [capabilities, setCapabilities] = useState<string[]>([]);
-  const [pickMode, setPickModeState] = useState<PreviewReviewTool | null>(null);
+  const [pickMode, setPickModeState] = useState<ReviewTool | null>(null);
   const [captureError, setCaptureError] = useState("");
   const channelIdRef = useRef(makeId("preview-channel"));
   const documentIdRef = useRef<string | null>(null);
   const previewSlugRef = useRef(preview.slug);
   const readyRef = useRef(false);
-  const draftsRef = useRef<PreviewReviewDraft[]>([]);
+  const draftsRef = useRef<ReviewDraft[]>([]);
 
   useEffect(() => {
     draftsRef.current = drafts;
@@ -302,7 +293,7 @@ export function usePreviewReviewBridge(
         );
         command("close-popover", { anchorId: editor.anchorId });
       } else {
-        const draft: PreviewReviewDraft = {
+        const draft: ReviewDraft = {
           id: makeId("review"),
           anchor: editor.anchor,
           comment: value,
@@ -335,7 +326,7 @@ export function usePreviewReviewBridge(
   );
 
   const setPickMode = useCallback(
-    (mode: PreviewReviewTool | null) => {
+    (mode: ReviewTool | null) => {
       const next = mode && capabilities.includes(mode) ? mode : null;
       setPickModeState(next);
       setCaptureError("");

@@ -2,6 +2,8 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { Maximize2, MessageSquare, Minimize2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ReviewToolbar } from "@/components/review/ReviewToolbar";
+import type { ReviewToolbarModel } from "@/components/review/reviewTypes";
 import { cn } from "@/lib/utils";
 import {
   hasPreviewHelperDragStarted,
@@ -9,10 +11,6 @@ import {
   type PreviewHelperCorner,
 } from "./previewHelperPosition";
 import { PreviewPicker } from "./PreviewPicker";
-import {
-  PreviewReviewToolbar,
-  type PreviewReviewToolbarModel,
-} from "./PreviewReviewToolbar";
 import type { PreviewItem } from "./previewTypes";
 
 export type PreviewHelperView = "collapsed" | "expanded" | "chat";
@@ -26,7 +24,7 @@ type PreviewHelperProps = {
   onCornerChange: (corner: PreviewHelperCorner) => void;
   onSelectPreview: (slug: string) => void;
   onRefresh: () => void;
-  reviewToolbar: PreviewReviewToolbarModel;
+  reviewToolbar: ReviewToolbarModel;
 };
 
 type DragSession = {
@@ -264,7 +262,7 @@ export function PreviewHelper({
                 <Minimize2 className="h-4 w-4" />
               </Button>
             </div>
-            <PreviewReviewToolbar
+            <ReviewToolbar
               {...reviewToolbar}
               className="border-t border-border/70 px-0.5 pt-1"
             />
