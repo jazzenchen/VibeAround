@@ -8,8 +8,8 @@ use axum::http::{header, Method, Request, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::{
-    proxy_request, server_routing_cookie, share_server_routing_cookie, signed_slug,
-    verified_server_entry, SERVER_ROUTING_COOKIE,
+    is_daemon_authorization, proxy_request, server_routing_cookie, share_server_routing_cookie,
+    signed_slug, verified_server_entry, ServerRouteKind, SERVER_ROUTING_COOKIE,
 };
 use crate::web_server::auth::AuthState;
 
@@ -55,7 +55,10 @@ fn owner_routing_is_daemon_bound_and_share_routing_revalidates_the_grant() {
     let other_auth = auth_state();
     let signed = signed_slug(&slug, &auth);
 
-    assert!(verified_server_entry(&signed, &auth).is_some());
+    assert_eq!(
+        verified_server_entry(&signed, &auth).unwrap().kind,
+        ServerRouteKind::Owner
+    );
     assert!(verified_server_entry(&signed, &other_auth).is_none());
     assert!(verified_server_entry(&format!("{signed}0"), &auth).is_none());
 
@@ -69,7 +72,10 @@ fn owner_routing_is_daemon_bound_and_share_routing_revalidates_the_grant() {
         .split_once('=')
         .unwrap()
         .1;
-    assert!(verified_server_entry(share_route, &auth).is_some());
+    assert_eq!(
+        verified_server_entry(share_route, &auth).unwrap().kind,
+        ServerRouteKind::Share
+    );
     assert!(verified_server_entry(share_route, &other_auth).is_some());
     assert!(verified_server_entry(&format!("share:{}:wrong-grant", share.id), &auth).is_none());
 
@@ -93,17 +99,25 @@ fn owner_routing_is_daemon_bound_and_share_routing_revalidates_the_grant() {
 }
 
 #[tokio::test]
-async fn rejects_writes_upgrades_and_service_workers_before_connecting() {
+async fn shared_server_rejects_writes_upgrades_and_service_workers() {
     let client = reqwest::Client::new();
     let auth = auth_state();
+    let dir = unique_temp_dir("share-transport");
+    let (_, share) = common::previews::ensure_server(4318, dir.clone(), "server".into());
+    let (entry, grant) = common::previews::verify_share_code(&share.id, &share.code).unwrap();
+    let cookie = share_server_routing_cookie(&share.id, &grant, &entry)
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
     let response = proxy_request(
         &client,
-        proxy_request_for("/api/data", Method::POST, None, &auth),
+        proxy_request_for("/api/data", Method::POST, Some(&cookie), &auth),
     )
     .await;
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 
-    let mut websocket = proxy_request_for("/socket", Method::GET, None, &auth);
+    let mut websocket = proxy_request_for("/socket", Method::GET, Some(&cookie), &auth);
     websocket
         .headers_mut()
         .insert(header::UPGRADE, "websocket".parse().unwrap());
@@ -112,7 +126,7 @@ async fn rejects_writes_upgrades_and_service_workers_before_connecting() {
         StatusCode::NOT_IMPLEMENTED
     );
 
-    let mut service_worker = proxy_request_for("/sw.js", Method::GET, None, &auth);
+    let mut service_worker = proxy_request_for("/sw.js", Method::GET, Some(&cookie), &auth);
     service_worker
         .headers_mut()
         .insert("sec-fetch-dest", "serviceworker".parse().unwrap());
@@ -120,6 +134,7 @@ async fn rejects_writes_upgrades_and_service_workers_before_connecting() {
         proxy_request(&client, service_worker).await.status(),
         StatusCode::FORBIDDEN
     );
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[tokio::test]
@@ -218,6 +233,109 @@ async fn proxies_get_path_and_query_without_forwarding_credentials() {
 }
 
 #[tokio::test]
+async fn owner_proxy_transparently_forwards_http_to_ipv4_loopback() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        loop {
+            let mut chunk = [0_u8; 1024];
+            let read = socket.read(&mut chunk).await.unwrap();
+            request.extend_from_slice(&chunk[..read]);
+            if request
+                .windows(b"\r\n\r\n".len())
+                .position(|window| window == b"\r\n\r\n")
+                .is_some_and(|headers_end| request.len() >= headers_end + 4 + 11)
+            {
+                break;
+            }
+        }
+        socket
+            .write_all(
+                b"HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 11\r\nX-App-Response: yes\r\nSet-Cookie: app_session=updated\r\nContent-Security-Policy: default-src 'self'\r\nCache-Control: public, max-age=60\r\nConnection: close\r\n\r\n{\"saved\":1}",
+            )
+            .await
+            .unwrap();
+        String::from_utf8(request).unwrap()
+    });
+    let dir = unique_temp_dir("owner-http");
+    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into());
+    let auth = auth_state();
+    let routing_cookie = server_routing_cookie(&slug, &auth)
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let mut request = proxy_request_for("/api/items?draft=1", Method::POST, None, &auth);
+    *request.body_mut() = Body::from(r#"{"value":1}"#);
+    request.headers_mut().insert(
+        header::COOKIE,
+        format!("{routing_cookie}; app_session=abc")
+            .parse()
+            .unwrap(),
+    );
+    request
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+    request
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, "11".parse().unwrap());
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer app-secret".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("x-app-request", "yes".parse().unwrap());
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let response = proxy_request(&client, request).await;
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.headers()["x-app-response"], "yes");
+    assert_eq!(
+        response.headers()[header::SET_COOKIE],
+        "app_session=updated"
+    );
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "default-src 'self'"
+    );
+    assert_eq!(
+        response.headers()[header::CACHE_CONTROL],
+        "public, max-age=60"
+    );
+    assert_eq!(
+        to_bytes(response.into_body(), 16).await.unwrap().as_ref(),
+        br#"{"saved":1}"#
+    );
+
+    let upstream_request = server.await.unwrap().to_ascii_lowercase();
+    assert!(upstream_request.starts_with("post /api/items?draft=1 http/1.1"));
+    assert!(upstream_request.contains(&format!("host: 127.0.0.1:{port}")));
+    assert!(upstream_request.contains("content-type: application/json"));
+    assert!(upstream_request.contains("authorization: bearer app-secret"));
+    assert!(upstream_request.contains("x-app-request: yes"));
+    assert!(upstream_request.contains("cookie: app_session=abc"));
+    assert!(!upstream_request.contains("va_preview_server"));
+    assert!(upstream_request.ends_with(r#"{"value":1}"#));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn owner_proxy_does_not_forward_the_daemon_bearer_token() {
+    let auth = auth_state();
+    let daemon = format!("Bearer {}", auth.0.as_str()).parse().unwrap();
+    let app = "Bearer app-secret".parse().unwrap();
+
+    assert!(is_daemon_authorization(&daemon, &auth));
+    assert!(!is_daemon_authorization(&app, &auth));
+}
+
+#[tokio::test]
 async fn streams_the_upstream_body_after_returning_response_headers() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -269,7 +387,7 @@ async fn streams_the_upstream_body_after_returning_response_headers() {
 }
 
 #[tokio::test]
-async fn rewrites_absolute_loopback_redirects_to_the_tunnel_origin() {
+async fn owner_proxy_preserves_upstream_redirects() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = tokio::spawn(async move {
@@ -307,7 +425,7 @@ async fn rewrites_absolute_loopback_redirects_to_the_tunnel_origin() {
     assert_eq!(response.status(), StatusCode::FOUND);
     assert_eq!(
         response.headers().get(header::LOCATION).unwrap(),
-        "/welcome?from=preview"
+        &format!("http://localhost:{port}/welcome?from=preview")
     );
     server.await.unwrap();
     std::fs::remove_dir_all(dir).unwrap();

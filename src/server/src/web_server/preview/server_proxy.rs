@@ -3,12 +3,9 @@
 //! An owner `/content` route or an authorized public share selects one live
 //! Server preview by setting a root-scoped routing cookie. Root requests then
 //! retain their original path and query while this module forwards them to the
-//! selected loopback dev server. Owner routing stays signed to the daemon;
-//! share routing carries the existing browser grant and revalidates it on every
-//! request. Authenticated GET/HEAD paths are forwarded unchanged, including
-//! data requests made by the previewed page. Non-GET/HEAD methods and protocol
-//! upgrades are unsupported. Service-worker installation is rejected so a
-//! preview cannot retain control of the shared tunnel origin after it closes.
+//! selected `127.0.0.1` dev server. Owner routing stays signed to the daemon
+//! and transparently forwards ordinary HTTP traffic. Share routing carries the
+//! existing browser grant and retains its narrower read-only behavior.
 
 use axum::body::Body;
 use axum::extract::{Extension, Request};
@@ -107,24 +104,74 @@ pub(in crate::web_server) async fn server_proxy_fallback(
 }
 
 async fn proxy_request(client: &reqwest::Client, req: Request) -> Response {
-    let mut response = proxy_request_inner(client, req).await;
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        "no-store".parse().expect("valid cache-control"),
-    );
-    response
+    proxy_request_inner(client, req).await
 }
 
 async fn proxy_request_inner(client: &reqwest::Client, req: Request) -> Response {
     if req.uri().path() == "/va" || req.uri().path().starts_with("/va/") {
         return Redirect::temporary("/va/").into_response();
     }
+
+    let Some(auth) = req.extensions().get::<AuthState>().cloned() else {
+        return Redirect::temporary("/va/").into_response();
+    };
+    let Some(cookie) = extract_cookie(&req, SERVER_ROUTING_COOKIE) else {
+        return Redirect::temporary("/va/").into_response();
+    };
+    let Some(route) = verified_server_entry(&cookie, &auth) else {
+        return invalid_cookie_response();
+    };
+    let PreviewTarget::Server { port } = route.entry.target else {
+        return invalid_cookie_response();
+    };
+
+    match route.kind {
+        ServerRouteKind::Owner => proxy_owner_request(client, req, port, &auth).await,
+        ServerRouteKind::Share => proxy_share_request(client, req, port).await,
+    }
+}
+
+async fn proxy_owner_request(
+    client: &reqwest::Client,
+    req: Request,
+    port: u16,
+    auth: &AuthState,
+) -> Response {
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/");
+    let url = format!("http://127.0.0.1:{port}{path_and_query}");
+    let method = req.method().clone();
+    let headers = req.headers().clone();
+    let body = reqwest::Body::wrap_stream(req.into_body().into_data_stream());
+    let mut upstream_request = client.request(method, url).body(body);
+
+    for (name, value) in &headers {
+        if !is_hop_by_hop_header(name) && *name != header::HOST && *name != header::COOKIE {
+            if *name != header::AUTHORIZATION || !is_daemon_authorization(value, auth) {
+                upstream_request = upstream_request.header(name, value);
+            }
+        }
+    }
+    if let Some(cookie) = application_cookie_header(&headers) {
+        upstream_request = upstream_request.header(header::COOKIE, cookie);
+    }
+
+    match upstream_request.send().await {
+        Ok(upstream) => transparent_upstream_response(upstream),
+        Err(error) => upstream_error(port, error),
+    }
+}
+
+async fn proxy_share_request(client: &reqwest::Client, req: Request, port: u16) -> Response {
     if !matches!(*req.method(), Method::GET | Method::HEAD) {
         return Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .header(header::ALLOW, "GET, HEAD")
             .body(Body::from(
-                "VibeAround remote Server Preview only supports GET and HEAD requests.",
+                "VibeAround shared Server Preview only supports GET and HEAD requests.",
             ))
             .expect("valid method rejection");
     }
@@ -140,19 +187,6 @@ async fn proxy_request_inner(client: &reqwest::Client, req: Request) -> Response
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let Some(auth) = req.extensions().get::<AuthState>() else {
-        return Redirect::temporary("/va/").into_response();
-    };
-    let Some(cookie) = extract_cookie(&req, SERVER_ROUTING_COOKIE) else {
-        return Redirect::temporary("/va/").into_response();
-    };
-    let Some(entry) = verified_server_entry(&cookie, auth) else {
-        return invalid_cookie_response();
-    };
-    let PreviewTarget::Server { port } = entry.target else {
-        return invalid_cookie_response();
-    };
-
     let path_and_query = req
         .uri()
         .path_and_query()
@@ -160,39 +194,96 @@ async fn proxy_request_inner(client: &reqwest::Client, req: Request) -> Response
         .unwrap_or("/");
     let method = req.method().clone();
     let request_headers = req.headers().clone();
-    let mut upstream = None;
-    for host in ["127.0.0.1", "[::1]"] {
-        let url = format!("http://{host}:{port}{path_and_query}");
-        let mut upstream_request = client.request(method.clone(), url);
-        for name in forwarded_request_headers() {
-            if let Some(value) = request_headers.get(name) {
-                upstream_request = upstream_request.header(name, value);
-            }
-        }
-        match upstream_request.send().await {
-            Ok(response) => {
-                upstream = Some(response);
-                break;
-            }
-            Err(error) if error.is_connect() => continue,
-            Err(error) => {
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    format!("Server Preview upstream error: {error}"),
-                )
-                    .into_response();
-            }
+    let url = format!("http://127.0.0.1:{port}{path_and_query}");
+    let mut upstream_request = client.request(method, url);
+    for name in forwarded_request_headers() {
+        if let Some(value) = request_headers.get(name) {
+            upstream_request = upstream_request.header(name, value);
         }
     }
+    match upstream_request.send().await {
+        Ok(upstream) => {
+            let mut response = share_upstream_response(upstream, port).await;
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                "no-store".parse().expect("valid cache-control"),
+            );
+            response
+        }
+        Err(error) => upstream_error(port, error),
+    }
+}
 
-    let Some(upstream) = upstream else {
-        return (
-            StatusCode::BAD_GATEWAY,
-            format!("Server Preview is not responding on localhost:{port}."),
-        )
-            .into_response();
-    };
-    upstream_response(upstream, port).await
+fn application_cookie_header(headers: &header::HeaderMap) -> Option<header::HeaderValue> {
+    let cookies = headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .map(str::trim)
+        .filter(|pair| {
+            pair.split_once('=').is_none_or(|(name, _)| {
+                !matches!(
+                    name.trim(),
+                    SERVER_ROUTING_COOKIE | crate::web_server::auth::OWNER_COOKIE
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if cookies.is_empty() {
+        None
+    } else {
+        cookies.join("; ").parse().ok()
+    }
+}
+
+fn is_daemon_authorization(value: &header::HeaderValue, auth: &AuthState) -> bool {
+    value
+        .to_str()
+        .ok()
+        .and_then(|value| {
+            value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer "))
+        })
+        .is_some_and(|token| token.trim() == auth.0.as_str())
+}
+
+fn is_hop_by_hop_header(name: &header::HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+    )
+}
+
+fn transparent_upstream_response(upstream: reqwest::Response) -> Response {
+    let status =
+        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let headers = upstream.headers().clone();
+    let mut builder = Response::builder().status(status);
+    for (name, value) in &headers {
+        if !is_hop_by_hop_header(name) {
+            builder = builder.header(name, value);
+        }
+    }
+    builder
+        .body(Body::from_stream(upstream.bytes_stream()))
+        .expect("valid proxied response")
+}
+
+fn upstream_error(port: u16, error: reqwest::Error) -> Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        format!("Server Preview upstream 127.0.0.1:{port} error: {error}"),
+    )
+        .into_response()
 }
 
 fn server_routing_cookie(slug: &str, auth: &AuthState) -> String {
@@ -220,17 +311,36 @@ fn signed_slug(slug: &str, auth: &AuthState) -> String {
     format!("{slug}.{}", hex_encode(&signature))
 }
 
-fn verified_server_entry(cookie: &str, auth: &AuthState) -> Option<common::previews::PreviewEntry> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerRouteKind {
+    Owner,
+    Share,
+}
+
+struct VerifiedServerRoute {
+    entry: common::previews::PreviewEntry,
+    kind: ServerRouteKind,
+}
+
+fn verified_server_entry(cookie: &str, auth: &AuthState) -> Option<VerifiedServerRoute> {
     if let Some(route) = cookie.strip_prefix(SHARE_ROUTE_PREFIX) {
         let (share_id, grant) = route.split_once(':')?;
-        return common::previews::authorize_share_grant(share_id, grant)
-            .filter(|entry| matches!(entry.target, PreviewTarget::Server { .. }));
+        let entry = common::previews::authorize_share_grant(share_id, grant)
+            .filter(|entry| matches!(entry.target, PreviewTarget::Server { .. }))?;
+        return Some(VerifiedServerRoute {
+            entry,
+            kind: ServerRouteKind::Share,
+        });
     }
     let (slug, signature) = cookie.rsplit_once('.')?;
     let signature = hex_decode_32(signature)?;
     constant_time_eq(&signature, &routing_signature(slug, auth)).then_some(())?;
-    common::previews::lookup_owner(slug)
-        .filter(|entry| matches!(entry.target, PreviewTarget::Server { .. }))
+    let entry = common::previews::lookup_owner(slug)
+        .filter(|entry| matches!(entry.target, PreviewTarget::Server { .. }))?;
+    Some(VerifiedServerRoute {
+        entry,
+        kind: ServerRouteKind::Owner,
+    })
 }
 
 fn routing_signature(slug: &str, auth: &AuthState) -> [u8; 32] {
@@ -274,7 +384,7 @@ fn forwarded_request_headers() -> &'static [header::HeaderName] {
     ]
 }
 
-async fn upstream_response(upstream: reqwest::Response, port: u16) -> Response {
+async fn share_upstream_response(upstream: reqwest::Response, port: u16) -> Response {
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let headers = upstream.headers().clone();
