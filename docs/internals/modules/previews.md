@@ -17,14 +17,15 @@ Track preview sessions (dev-server ports and Markdown files), mint Server/Markdo
 ## Interactions
 
 - **← server (MCP `preview`):** agents pass either a dev-server port or a Markdown file; the `va-preview` skill wraps the unified tool.
-- **← server (`preview/` handlers):** resolve slugs, render the owner picker and Markdown content; local owners load Server origins directly, while Server Shares use the page-preview proxy.
+- **← server (`preview/` handlers):** resolve slugs, render the owner picker and Markdown content; local Server owners load their loopback origin directly, remote owners use the transparent loopback proxy, and Server Shares use the narrower page-preview proxy.
 - **← cli / dashboard:** list and delete.
 
 ## Invariants — do not break
 
-1. **Every Share is one scoped transaction** — one Preview, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. A Server Share forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR must remain unsupported; `/va/*`, owner pages, chat, and review stay excluded. It is a page-preview transport, not an API-isolation sandbox; do not infer policy from path names. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
-2. **Server Preview lifetime belongs to Preview, not an agent session**: Server registrations exist only in the current daemon run. Closing a Server Preview or the daemon kills the process currently listening on that registered port; thread/session close does nothing, and daemon startup never restores Server registrations.
-3. Remote Server and Markdown owner links require owner pairing; Share expiry must not affect the owner path.
+1. **Server owner behavior is intentionally small** — before creating a Server iframe, the owner SPA asks for one risk acknowledgement per Preview and browser session. Local owners load the loopback origin directly. Remote owners transparently forward normal HTTP and WebSocket/HMR traffic only to `127.0.0.1:<registered-port>`; `/va/*` remains reserved. Do not add liveness, content, workspace, process, header, or redirect inspection to this path.
+2. **Every Share is one scoped transaction** — one Preview, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. A Server Share forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR must remain unsupported; `/va/*`, owner pages, chat, and review stay excluded. It is a page-preview transport, not an API-isolation sandbox; do not infer policy from path names. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
+3. **Server Preview lifetime belongs to Preview, not an agent session**: Server registrations exist only in the current daemon run. Closing a Server Preview or the daemon kills the process currently listening on that registered port; thread/session close does nothing, and daemon startup never restores Server registrations.
+4. Remote Server and Markdown owner links require owner pairing; Share expiry must not affect the owner path.
 
 ## Known debt
 

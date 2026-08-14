@@ -51,7 +51,7 @@ Live Server 与 Markdown 渲染预览采用相同的 owner/share 划分，但 Se
 | Server `/preview/s/<share_id>` | 持有 Share URL 和六位访问码的人 | URL、访问码和浏览器授信共用 600 秒期限 |
 | Markdown `/preview/s/<share_id>` | 持有 Share URL 和六位访问码的人 | URL、访问码和浏览器授信共用 600 秒期限 |
 
-在 loopback 上，Server owner shell 直接 iframe 准确的 dev-server origin；它不会转发 owner bearer token，也不代理应用的 Fetch、WebSocket 或 HMR 流量。不同端口把子页面与 owner 的 DOM、storage 隔离开，但 dev server 自己的 iframe 策略和浏览器能力仍然生效。隧道上的 Server 或 Markdown owner 仍受配对和 owner-token 认证保护。
+创建任何 Server iframe 前，owner shell 会让用户针对每个 Preview、每个浏览器会话确认一次本地服务可能包含未知代码的风险。在 loopback 上，它直接 iframe 准确的 dev-server origin，并且不会转发 owner bearer token。通过隧道访问时，已配对的 owner 获得同源的透明 HTTP 与 WebSocket/HMR 代理；上游固定为 `127.0.0.1:<已登记端口>`，VibeAround routing cookie 与 daemon authorization 不会被转发，`/va/*` 保留给 VibeAround。owner 路径不检查应用内容，也不按请求用途分类。Markdown owner 仍受同样的配对和 owner-token 认证保护。
 
 Share 不使用 owner 配对：不透明 URL 先显示访问码门，验证成功后签发 `Secure`、`HttpOnly` 浏览器授信。URL、可重复使用的六位访问码和授信只对应一个 Preview，并在 10 分钟后同时过期。Server Share 会在每次代理请求时重新验证授信，并原样转发已认证的 GET/HEAD 路径，包括页面的数据读取。写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持；`/va/*`、owner 页面、chat 和审阅控件始终排除在 Share 之外。这是页面预览传输，不是通用 API 兼容层或 API 隔离沙盒；已接受的 GET/HEAD 路径不会按名称分类。隧道上的其他一切仍需配对 + token。
 

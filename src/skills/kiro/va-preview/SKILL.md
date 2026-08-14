@@ -10,20 +10,17 @@ Preview exactly one local source through VibeAround: a running web server or a M
 
 ## Workflow
 
-### 1. Confirm the preview
+### 1. Prepare one source
 
-Treat an explicit user request as confirmation. Otherwise ask before calling `preview`; after changing Markdown, offer a preview instead of starting one silently.
-
-### 2. Prepare one source
-
-- **Server**: Reuse the intended server when it is still running. Otherwise start it with the framework's automatic port selection, wait until it is listening, and keep it on loopback when possible. VibeAround registers the selected port for the current daemon run; closing that Preview or the daemon kills the process currently listening there.
+- **Server**: Reuse the intended server when it is still running. Otherwise start it with the framework's automatic port selection and wait until it is reachable at `127.0.0.1:<port>`. VibeAround registers that port for the current daemon run; closing that Preview or the daemon kills the process currently listening there.
 - **Markdown**: Verify that the requested file exists. No separate static-file server is needed.
 
-### 3. Add identity when available
+### 2. Add optional conversation identity
 
 Pass `$VIBEAROUND_THREAD_ID` when present. If an exact current session ID is readily available, pass it with `agent_kind: "kiro"`. Both are optional; do not delay or block Preview when either is unavailable.
+These fields only let Preview chat inherit the current task as context. They never control Preview or server lifetime.
 
-### 4. Call `preview`
+### 3. Call `preview`
 
 Pass exactly one of `port` or `file`, plus `cwd`.
 
@@ -57,9 +54,15 @@ Arguments:
 
 If the workspace is not registered, call `register_workspace` with `cwd`, then retry.
 
-### 5. Relay returned links
+### 4. Relay returned links
 
 Present every owner and Share URL returned by the tool. Include the six-digit access code and exact remaining lifetime with a Share. The Share URL and code expire together and the code can be reused by multiple viewers until expiry. Do not construct URLs yourself.
+
+## Server consent and transport
+
+Do not add an agent-side risk preflight. Before a Server iframe is created, the Preview page itself asks the user once per Preview and browser session to acknowledge that the local server may contain unknown code.
+
+Remote owner traffic is forwarded only to `127.0.0.1:<registered-port>`, including ordinary HTTP methods, request bodies, and WebSocket/HMR traffic. The public Share remains a narrower read-only view.
 
 ## Markdown rendering and privacy
 

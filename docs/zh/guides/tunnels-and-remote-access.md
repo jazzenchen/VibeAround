@@ -89,7 +89,7 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 
 配对之后，通过隧道可达：控制台 SPA、Web Chat、Web Terminal、Server 和 Markdown owner 预览，以及各 WebSocket 端点 —— 全部有 token 把守。Preview **Share**（`/preview/s/<share_id>`）是 owner 配对的有意例外：查看者输入可重复使用的六位访问码后，获得限定作用域的浏览器授信。URL、访问码和授信只覆盖一个 Preview，并在 10 分钟后同时过期。
 
-Server Share 是页面预览传输：它会原样转发已认证的 GET/HEAD 路径，包括页面的数据读取；写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持，`/va/*`、owner 页面、chat 和审阅工具不进入 Share。它不承诺通用 API 兼容性，也不是 API 隔离沙盒；已接受的 GET/HEAD 路径不会按名称分类。本地 Server owner 仍然直接加载 loopback origin，保留应用原本的行为。
+已配对的 Server owner 会把常规 HTTP 与 WebSocket/HMR 流量透明代理到 `127.0.0.1` 上的已登记端口，`/va/*` 保留给 VibeAround。Server Share 是更窄的页面预览传输：它会原样转发已认证的 GET/HEAD 路径，包括页面的数据读取；写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持，`/va/*`、owner 页面、chat 和审阅工具不进入 Share。它不承诺通用 API 兼容性，也不是 API 隔离沙盒；已接受的 GET/HEAD 路径不会按名称分类。本地 Server owner 仍然直接加载 loopback origin，保留应用原本的行为。
 
 永远不会通过隧道可达：本地 API Bridge 和 agent-as-API 端点（仅回环地址）、MCP 端点的本地 Bridge 面，以及任何形式的供应商凭据。
 
