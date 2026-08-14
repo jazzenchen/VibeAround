@@ -19,8 +19,8 @@ import {
   applyChatTranscriptUpdate,
   chatIdentityChanged,
 } from "@/components/chat/chatTranscriptUpdates";
+import { startReconnectingWebSocket } from "@/components/chat/reconnectingWebSocket";
 
-const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000];
 const PREVIEW_THREAD_STORAGE_PREFIX = "vibearound.preview.review-thread.";
 
 function readPreviewThreadId(slug: string): string | null {
@@ -87,45 +87,11 @@ export function usePreviewChatConnection(slug: string) {
   const [agentLabel, setAgentLabel] = useState("AI");
   const [pendingPermissions, setPendingPermissions] = useState<PendingPermission[]>([]);
   const socketRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptRef = useRef(0);
   const turnActiveRef = useRef(false);
   const activeSlugRef = useRef<string | null>(null);
   const conversationThreadIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    let disposed = false;
-
-    const clearReconnectTimer = () => {
-      if (!reconnectTimerRef.current) return;
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    };
-
-    const scheduleReconnect = () => {
-      if (disposed || reconnectTimerRef.current) return;
-      const delay =
-        RECONNECT_DELAYS_MS[
-          Math.min(reconnectAttemptRef.current, RECONNECT_DELAYS_MS.length - 1)
-        ];
-      reconnectAttemptRef.current += 1;
-      reconnectTimerRef.current = setTimeout(() => {
-        reconnectTimerRef.current = null;
-        connect();
-      }, delay);
-    };
-
-    const closeSocket = () => {
-      const socket = socketRef.current;
-      socketRef.current = null;
-      if (!socket) return;
-      socket.onopen = null;
-      socket.onmessage = null;
-      socket.onerror = null;
-      socket.onclose = null;
-      socket.close();
-    };
-
     const resetTransportView = () => {
       setPendingPermissions([]);
       turnActiveRef.current = false;
@@ -219,56 +185,30 @@ export function usePreviewChatConnection(slug: string) {
       }
     };
 
-    function connect() {
-      if (disposed) return;
-      closeSocket();
-      setConnected(false);
-      resetTransportView();
-
-      let socket: WebSocket;
-      try {
-        socket = new WebSocket(
-          previewSocketUrl(slug, conversationThreadIdRef.current),
-        );
-      } catch (error) {
-        console.warn("[Preview] failed to create chat websocket:", error);
-        scheduleReconnect();
-        return;
-      }
-      socketRef.current = socket;
-      socket.onopen = () => {
-        if (disposed || socketRef.current !== socket) return;
-        reconnectAttemptRef.current = 0;
-        setConnected(true);
-      };
-      socket.onmessage = handleMessage;
-      socket.onerror = () => {
-        if (socketRef.current === socket) setConnected(false);
-      };
-      socket.onclose = () => {
-        if (disposed || socketRef.current !== socket) return;
-        socketRef.current = null;
-        setConnected(false);
-        turnActiveRef.current = false;
-        setStreaming(false);
-        setMessages((current) => settleStreamActivitiesMessage(current));
-        scheduleReconnect();
-      };
-    }
-
     if (previewConversationIdentityChanged(activeSlugRef.current, slug)) {
       resetConversationView();
     }
     activeSlugRef.current = slug;
-    reconnectAttemptRef.current = 0;
     conversationThreadIdRef.current = readPreviewThreadId(slug);
-    connect();
 
-    return () => {
-      disposed = true;
-      clearReconnectTimer();
-      closeSocket();
-    };
+    return startReconnectingWebSocket({
+      socketRef,
+      url: () => previewSocketUrl(slug, conversationThreadIdRef.current),
+      onConnecting: () => {
+        setConnected(false);
+        resetTransportView();
+      },
+      onOpen: () => setConnected(true),
+      onMessage: handleMessage,
+      onError: () => setConnected(false),
+      onClose: () => {
+        setConnected(false);
+        resetTransportView();
+        setMessages((current) => settleStreamActivitiesMessage(current));
+      },
+      onCreateError: (error) =>
+        console.warn("[Preview] failed to create chat websocket:", error),
+    });
   }, [slug]);
 
   const sendMessage = useCallback(

@@ -28,6 +28,7 @@ import {
   settleStreamActivitiesMessage,
 } from "./chatMessageUpdates";
 import { applyChatTranscriptUpdate } from "./chatTranscriptUpdates";
+import { startReconnectingWebSocket } from "./reconnectingWebSocket";
 import {
   readCachedChatSession,
   writeCachedChatSession,
@@ -46,7 +47,6 @@ interface UseWebChatConnectionOptions {
 
 const CACHE_WRITE_DEBOUNCE_MS = 350;
 const RESUME_REPLAY_SETTLE_MS = 700;
-const CHAT_WS_RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000];
 const USER_CONTENT_PART_ID_PREFIX = "user-content";
 const COMPACTION_NOTICE_DROP_RATIO = 0.55;
 const COMPACTION_NOTICE_MIN_WINDOW_RATIO = 0.25;
@@ -175,8 +175,6 @@ export function useWebChatConnection({
   >({});
   const [lastTurnCompletedAt, setLastTurnCompletedAt] = useState<number | undefined>();
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptRef = useRef(0);
   const promptInFlightRef = useRef(false);
   const turnActiveRef = useRef(false);
   const resumeReplayRef = useRef<ResumeReplayState | null>(null);
@@ -365,14 +363,6 @@ export function useWebChatConnection({
   );
 
   useEffect(() => {
-    let disposed = false;
-
-    function clearReconnectTimer() {
-      if (!reconnectTimerRef.current) return;
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-
     function markDisconnected(clearPermissions: boolean) {
       setConnected(false);
       setStreaming(false);
@@ -383,85 +373,24 @@ export function useWebChatConnection({
       finishResumeReplay();
     }
 
-    function scheduleReconnect() {
-      if (disposed || reconnectTimerRef.current) return;
-      const delay =
-        CHAT_WS_RECONNECT_DELAYS_MS[
-          Math.min(reconnectAttemptRef.current, CHAT_WS_RECONNECT_DELAYS_MS.length - 1)
-        ];
-      reconnectAttemptRef.current += 1;
-      reconnectTimerRef.current = setTimeout(() => {
-        reconnectTimerRef.current = null;
-        connect();
-      }, delay);
-    }
-
-    function closeCurrentSocket() {
-      const ws = wsRef.current;
-      wsRef.current = null;
-      if (!ws) return;
-      ws.onopen = null;
-      ws.onmessage = null;
-      ws.onerror = null;
-      ws.onclose = null;
-      ws.close();
-    }
-
-    function connect() {
-      if (disposed || !chatId) return;
-      const current = wsRef.current;
-      if (
-        current &&
-        current.readyState !== WebSocket.CLOSED &&
-        current.readyState !== WebSocket.CLOSING
-      ) {
-        return;
-      }
-
-      let ws: WebSocket;
-      try {
-        ws = new WebSocket(
-          getWebSocketUrl(`/ws/chat?chat_id=${encodeURIComponent(chatId)}`),
-        );
-      } catch (error) {
-        console.warn("[ChatView] failed to create chat websocket:", error);
-        markDisconnected(true);
-        scheduleReconnect();
-        return;
-      }
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (disposed || wsRef.current !== ws) return;
-        reconnectAttemptRef.current = 0;
-        setConnected(true);
-      };
-      ws.onclose = () => {
-        if (disposed || wsRef.current !== ws) return;
-        wsRef.current = null;
-        markDisconnected(true);
-        scheduleReconnect();
-      };
-      ws.onerror = () => {
-        if (disposed || wsRef.current !== ws) return;
-        markDisconnected(false);
-      };
-
-      ws.onmessage = (event) => {
-        if (disposed || wsRef.current !== ws) return;
-        handleSocketMessage(event);
-      };
-    }
-
     if (!chatId) {
-      clearReconnectTimer();
-      reconnectAttemptRef.current = 0;
-      closeCurrentSocket();
       setConnected(false);
       return;
     }
 
-    connect();
+    const closeSocket = startReconnectingWebSocket({
+      socketRef: wsRef,
+      url: () =>
+        getWebSocketUrl(`/ws/chat?chat_id=${encodeURIComponent(chatId)}`),
+      onOpen: () => setConnected(true),
+      onMessage: handleSocketMessage,
+      onError: () => markDisconnected(false),
+      onClose: () => markDisconnected(true),
+      onCreateError: (error) => {
+        console.warn("[ChatView] failed to create chat websocket:", error);
+        markDisconnected(true);
+      },
+    });
 
     function handleSocketMessage(event: MessageEvent) {
       if (typeof event.data !== "string") return;
@@ -738,10 +667,7 @@ export function useWebChatConnection({
     }
 
     return () => {
-      disposed = true;
-      clearReconnectTimer();
-      reconnectAttemptRef.current = 0;
-      closeCurrentSocket();
+      closeSocket();
       clearResumeReplayDoneTimer();
       clearReplayCacheWriteTimer();
       clearActiveTranscriptCacheWriteTimer();
