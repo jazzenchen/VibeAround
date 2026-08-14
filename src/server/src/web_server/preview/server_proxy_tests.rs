@@ -144,6 +144,29 @@ async fn shared_server_rejects_writes_upgrades_and_service_workers() {
 }
 
 #[tokio::test]
+async fn owner_server_rejects_service_workers() {
+    let client = reqwest::Client::new();
+    let auth = auth_state();
+    let dir = unique_temp_dir("owner-service-worker");
+    let (slug, _) = common::previews::ensure_server(4318, dir.clone(), "server".into());
+    let cookie = server_routing_cookie(&slug, &auth)
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let mut request = proxy_request_for("/sw.js", Method::GET, Some(&cookie), &auth);
+    request
+        .headers_mut()
+        .insert("sec-fetch-dest", "serviceworker".parse().unwrap());
+
+    assert_eq!(
+        proxy_request(&client, request).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn never_proxies_the_dashboard_namespace() {
     let client = reqwest::Client::new();
     let auth = auth_state();

@@ -111,6 +111,14 @@ async fn proxy_request(client: &reqwest::Client, req: Request) -> Response {
     if req.uri().path() == "/va" || req.uri().path().starts_with("/va/") {
         return Redirect::temporary("/va/").into_response();
     }
+    let service_worker = req
+        .headers()
+        .get("sec-fetch-dest")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|destination| destination == "serviceworker");
+    if service_worker {
+        return StatusCode::FORBIDDEN.into_response();
+    }
 
     let Some(auth) = req.extensions().get::<AuthState>().cloned() else {
         return Redirect::temporary("/va/").into_response();
@@ -310,14 +318,6 @@ async fn proxy_share_request(client: &reqwest::Client, req: Request, port: u16) 
     }
     if req.headers().contains_key(header::UPGRADE) {
         return StatusCode::NOT_IMPLEMENTED.into_response();
-    }
-    let service_worker = req
-        .headers()
-        .get("sec-fetch-dest")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|destination| destination == "serviceworker");
-    if service_worker {
-        return StatusCode::FORBIDDEN.into_response();
     }
 
     let path_and_query = req
