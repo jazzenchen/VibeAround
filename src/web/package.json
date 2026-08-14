@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "bun test qa/",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
