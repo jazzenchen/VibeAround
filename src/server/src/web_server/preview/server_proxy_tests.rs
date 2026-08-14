@@ -3,13 +3,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::ConnectInfo;
 use axum::http::{header, Method, Request, StatusCode};
+use axum::routing::{any, get};
+use axum::{Extension, Router};
+use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::Message;
 
 use super::{
     is_daemon_authorization, proxy_request, server_routing_cookie, share_server_routing_cookie,
-    signed_slug, verified_server_entry, ServerRouteKind, SERVER_ROUTING_COOKIE,
+    signed_slug, verified_server_entry, ServerProxyState, ServerRouteKind, SERVER_ROUTING_COOKIE,
 };
 use crate::web_server::auth::AuthState;
 
@@ -333,6 +339,66 @@ fn owner_proxy_does_not_forward_the_daemon_bearer_token() {
 
     assert!(is_daemon_authorization(&daemon, &auth));
     assert!(!is_daemon_authorization(&app, &auth));
+}
+
+#[tokio::test]
+async fn owner_proxy_bridges_websocket_hmr_to_ipv4_loopback() {
+    let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_port = upstream_listener.local_addr().unwrap().port();
+    let upstream_app = Router::new().route(
+        "/hmr",
+        get(|upgrade: WebSocketUpgrade| async move {
+            upgrade.on_upgrade(|mut socket| async move {
+                if let Some(Ok(message)) = socket.recv().await {
+                    socket.send(message).await.unwrap();
+                }
+            })
+        }),
+    );
+    let upstream_server = tokio::spawn(async move {
+        axum::serve(upstream_listener, upstream_app).await.unwrap();
+    });
+
+    let dir = unique_temp_dir("owner-websocket");
+    let (slug, _) = common::previews::ensure_server(upstream_port, dir.clone(), "server".into());
+    let auth = auth_state();
+    let routing_cookie = server_routing_cookie(&slug, &auth)
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let proxy_client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let proxy_app = Router::new()
+        .fallback(any(super::server_proxy_fallback))
+        .layer(Extension(auth))
+        .layer(Extension(ServerProxyState::new(proxy_client)));
+    let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_port = proxy_listener.local_addr().unwrap().port();
+    let proxy_server = tokio::spawn(async move {
+        axum::serve(proxy_listener, proxy_app).await.unwrap();
+    });
+
+    let mut request = format!("ws://127.0.0.1:{proxy_port}/hmr?token=dev")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::COOKIE, routing_cookie.parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket.send(Message::Text("update".into())).await.unwrap();
+    let echoed = tokio::time::timeout(Duration::from_secs(1), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(echoed, Message::Text("update".into()));
+
+    proxy_server.abort();
+    upstream_server.abort();
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[tokio::test]

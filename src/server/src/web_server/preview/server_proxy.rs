@@ -8,10 +8,14 @@
 //! existing browser grant and retains its narrower read-only behavior.
 
 use axum::body::Body;
-use axum::extract::{Extension, Request};
+use axum::extract::ws::{Message as ClientMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::{Extension, FromRequestParts, Request};
 use axum::http::{header, Method, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
+use futures_util::{SinkExt, StreamExt};
 use sha2::{Digest, Sha256};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::Message as UpstreamMessage;
 
 use common::previews::PreviewTarget;
 
@@ -126,12 +130,15 @@ async fn proxy_request_inner(client: &reqwest::Client, req: Request) -> Response
     };
 
     match route.kind {
-        ServerRouteKind::Owner => proxy_owner_request(client, req, port, &auth).await,
+        ServerRouteKind::Owner if req.headers().contains_key(header::UPGRADE) => {
+            proxy_owner_websocket(req, port, &auth).await
+        }
+        ServerRouteKind::Owner => proxy_owner_http(client, req, port, &auth).await,
         ServerRouteKind::Share => proxy_share_request(client, req, port).await,
     }
 }
 
-async fn proxy_owner_request(
+async fn proxy_owner_http(
     client: &reqwest::Client,
     req: Request,
     port: u16,
@@ -162,6 +169,136 @@ async fn proxy_owner_request(
     match upstream_request.send().await {
         Ok(upstream) => transparent_upstream_response(upstream),
         Err(error) => upstream_error(port, error),
+    }
+}
+
+async fn proxy_owner_websocket(req: Request, port: u16, auth: &AuthState) -> Response {
+    let path_and_query = req
+        .uri()
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/")
+        .to_string();
+    let headers = req.headers().clone();
+    let (mut parts, _) = req.into_parts();
+    let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+        Ok(upgrade) => upgrade,
+        Err(rejection) => return rejection.into_response(),
+    };
+    let upstream_request = match upstream_websocket_request(&path_and_query, &headers, port, auth) {
+        Ok(request) => request,
+        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
+    };
+    let (upstream, response) = match tokio_tungstenite::connect_async(upstream_request).await {
+        Ok(connection) => connection,
+        Err(error) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("Server Preview upstream 127.0.0.1:{port} WebSocket error: {error}"),
+            )
+                .into_response()
+        }
+    };
+    let protocol = response
+        .headers()
+        .get(header::SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let upgrade = match protocol {
+        Some(protocol) => upgrade.protocols([protocol]),
+        None => upgrade,
+    };
+    upgrade.on_upgrade(move |client| bridge_websockets(client, upstream))
+}
+
+fn upstream_websocket_request(
+    path_and_query: &str,
+    headers: &header::HeaderMap,
+    port: u16,
+    auth: &AuthState,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, String> {
+    let mut request = format!("ws://127.0.0.1:{port}{path_and_query}")
+        .into_client_request()
+        .map_err(|error| format!("Invalid Server Preview WebSocket request: {error}"))?;
+    for (name, value) in headers {
+        if !is_websocket_handshake_header(name) && *name != header::COOKIE {
+            if *name != header::AUTHORIZATION || !is_daemon_authorization(value, auth) {
+                request.headers_mut().append(name, value.clone());
+            }
+        }
+    }
+    if let Some(cookie) = application_cookie_header(headers) {
+        request.headers_mut().insert(header::COOKIE, cookie);
+    }
+    Ok(request)
+}
+
+fn is_websocket_handshake_header(name: &header::HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "host"
+            | "connection"
+            | "upgrade"
+            | "sec-websocket-key"
+            | "sec-websocket-version"
+            | "sec-websocket-extensions"
+    )
+}
+
+async fn bridge_websockets(
+    client: WebSocket,
+    upstream: tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
+) {
+    let (mut client_tx, mut client_rx) = client.split();
+    let (mut upstream_tx, mut upstream_rx) = upstream.split();
+
+    loop {
+        tokio::select! {
+            message = client_rx.next() => match message {
+                Some(Ok(message)) => {
+                    let closing = matches!(message, ClientMessage::Close(_));
+                    if upstream_tx.send(client_to_upstream(message)).await.is_err() || closing {
+                        break;
+                    }
+                }
+                _ => break,
+            },
+            message = upstream_rx.next() => match message {
+                Some(Ok(message)) => {
+                    let Some(message) = upstream_to_client(message) else {
+                        continue;
+                    };
+                    let closing = matches!(message, ClientMessage::Close(_));
+                    if client_tx.send(message).await.is_err() || closing {
+                        break;
+                    }
+                }
+                _ => break,
+            },
+        }
+    }
+}
+
+fn client_to_upstream(message: ClientMessage) -> UpstreamMessage {
+    match message {
+        ClientMessage::Text(text) => UpstreamMessage::Text(text.to_string().into()),
+        ClientMessage::Binary(bytes) => UpstreamMessage::Binary(bytes),
+        ClientMessage::Ping(bytes) => UpstreamMessage::Ping(bytes),
+        ClientMessage::Pong(bytes) => UpstreamMessage::Pong(bytes),
+        ClientMessage::Close(_) => UpstreamMessage::Close(None),
+    }
+}
+
+fn upstream_to_client(message: UpstreamMessage) -> Option<ClientMessage> {
+    match message {
+        UpstreamMessage::Text(text) => Some(ClientMessage::Text(text.to_string().into())),
+        UpstreamMessage::Binary(bytes) => Some(ClientMessage::Binary(bytes)),
+        UpstreamMessage::Ping(bytes) => Some(ClientMessage::Ping(bytes)),
+        UpstreamMessage::Pong(bytes) => Some(ClientMessage::Pong(bytes)),
+        UpstreamMessage::Close(_) => Some(ClientMessage::Close(None)),
+        UpstreamMessage::Frame(_) => None,
     }
 }
 

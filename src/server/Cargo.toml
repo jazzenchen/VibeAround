@@ -15,7 +15,8 @@ va-ai-api-bridge = "0.1.8"
 axum = { version = "0.8", features = ["json", "ws", "tokio"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 tokio = { workspace = true, features = ["full"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+tokio-tungstenite = "0.29"
 bytes = "1.9"
 serde = { workspace = true }
 serde_json = { workspace = true }
