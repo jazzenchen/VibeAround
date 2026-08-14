@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 
 import { chatUserContentBlocks } from "../src/components/chat/chatUserContent";
+import { applyChatTranscriptUpdate } from "../src/components/chat/chatTranscriptUpdates";
 import type { ReviewDraft } from "../src/components/review/reviewTypes";
 import { reviewHelloStartsNewEpoch } from "../src/components/review/useReviewBridge";
-import { applyPreviewSessionNotification } from "../src/preview/previewChatMessages";
 import {
   previewConversationIdentityChanged,
   previewConversationThreadId,
@@ -228,7 +228,9 @@ test("echoed hidden review prompt acknowledges the optimistic visible summary", 
     },
   } as SessionNotification;
 
-  const next = applyPreviewSessionNotification(current, notification);
+  const next = applyChatTranscriptUpdate(current, notification.update, {
+    acknowledgeOptimisticUser: true,
+  });
   expect(next).toHaveLength(1);
   expect(next[0].content).toContain("→ 翻译成中文");
   expect(next[0].content).not.toContain("Please update this Preview");

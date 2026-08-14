@@ -1,13 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  ContentBlock,
-  Plan,
-  SessionNotification,
-  ToolCall,
-  ToolCallUpdate,
-} from "@agentclientprotocol/sdk";
+import type { SessionNotification } from "@agentclientprotocol/sdk";
 import {
   ChatEventSchema,
   formatErrorMessage,
@@ -26,25 +20,14 @@ import type {
   PendingPermission,
   SessionModeState,
 } from "./chatTypes";
-import {
-  createMessageId,
-  switchedAgentId,
-  toolActivityLabel,
-  toolActivityStatus,
-} from "./chatFrameUtils";
+import { createMessageId, switchedAgentId } from "./chatFrameUtils";
 import {
   appendErrorToStreamMessage,
-  appendPlanMessage,
   appendStandaloneAssistantMessage,
-  appendStreamAssistantMessage,
-  appendThinkingActivityMessage,
-  appendToolActivityMessage,
-  appendUserMessageChunk,
-  clearStreamProgressMessage,
   mergeChatMessageSnapshots,
-  setStreamProgressMessage,
   settleStreamActivitiesMessage,
 } from "./chatMessageUpdates";
+import { applyChatTranscriptUpdate } from "./chatTranscriptUpdates";
 import {
   readCachedChatSession,
   writeCachedChatSession,
@@ -627,8 +610,16 @@ export function useWebChatConnection({
       }
       const replaying = pendingResume?.sessionId === notif.sessionId;
       const replaySessionId = replaying ? notif.sessionId : undefined;
-
       const update = notif.update;
+      const applyTranscriptUpdate = (
+        options?: Parameters<typeof applyChatTranscriptUpdate>[2],
+      ) => {
+        applyMessageUpdate(
+          (prev) => applyChatTranscriptUpdate(prev, update, options),
+          replaySessionId,
+        );
+      };
+
       const usage = usageSnapshot(update);
       if (usage) {
         const previous = usageBySessionRef.current.get(notif.sessionId);
@@ -651,41 +642,36 @@ export function useWebChatConnection({
 
       switch (update.sessionUpdate) {
         case "user_message_chunk": {
-          appendUserMessage(update.content, update.messageId, {
-            forceNewMessage: replaying && !update.messageId,
-            dedupeExistingText: !replaying,
-          }, replaySessionId);
+          applyTranscriptUpdate({
+            userMessage: {
+              forceNewMessage: replaying && !update.messageId,
+              dedupeExistingText: !replaying,
+            },
+          });
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "agent_message_chunk": {
-          appendToStreamAssistant(update.content, update.messageId, replaySessionId);
+          applyTranscriptUpdate();
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "agent_thought_chunk": {
-          appendThinkingActivity(update.content, replaySessionId);
+          applyTranscriptUpdate({ thinkingLabel: t("Thinking") });
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "tool_call":
         case "tool_call_update": {
-          const title = toolActivityLabel(update);
-          const status = toolActivityStatus(update);
-          appendToolActivity(update, replaySessionId);
-          if (status === "completed" || status === "failed") {
-            clearStreamProgress(replaySessionId);
-          } else {
-            setStreamProgress(
-              t("Using tool: {{tool}}…", { tool: title }),
-              replaySessionId,
-            );
-          }
+          applyTranscriptUpdate({
+            toolProgressLabel: (tool) =>
+              t("Using tool: {{tool}}…", { tool }),
+          });
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "plan": {
-          appendPlan(update, replaySessionId);
+          applyTranscriptUpdate();
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
@@ -739,62 +725,6 @@ export function useWebChatConnection({
         (prev) => appendStandaloneAssistantMessage(prev, text),
         replaySessionId,
       );
-    }
-
-    function appendUserMessage(
-      content: ContentBlock,
-      messageId?: string | null,
-      options?: { forceNewMessage?: boolean; dedupeExistingText?: boolean },
-      replaySessionId?: string,
-    ) {
-      applyMessageUpdate(
-        (prev) => appendUserMessageChunk(prev, content, messageId, options),
-        replaySessionId,
-      );
-    }
-
-    function appendToStreamAssistant(
-      content: ContentBlock,
-      messageId?: string | null,
-      replaySessionId?: string,
-      options?: { forceNewMessage?: boolean },
-    ) {
-      applyMessageUpdate(
-        (prev) => appendStreamAssistantMessage(prev, content, messageId, options),
-        replaySessionId,
-      );
-    }
-
-    function appendThinkingActivity(content: ContentBlock, replaySessionId?: string) {
-      applyMessageUpdate(
-        (prev) => appendThinkingActivityMessage(prev, content, t("Thinking")),
-        replaySessionId,
-      );
-    }
-
-    function appendToolActivity(
-      update: ToolCall | ToolCallUpdate,
-      replaySessionId?: string,
-    ) {
-      applyMessageUpdate(
-        (prev) => appendToolActivityMessage(prev, update),
-        replaySessionId,
-      );
-    }
-
-    function appendPlan(plan: Plan, replaySessionId?: string) {
-      applyMessageUpdate((prev) => appendPlanMessage(prev, plan), replaySessionId);
-    }
-
-    function setStreamProgress(progress: string, replaySessionId?: string) {
-      applyMessageUpdate(
-        (prev) => setStreamProgressMessage(prev, progress, "tool"),
-        replaySessionId,
-      );
-    }
-
-    function clearStreamProgress(replaySessionId?: string) {
-      applyMessageUpdate((prev) => clearStreamProgressMessage(prev), replaySessionId);
     }
 
     function settleStreamActivities(replaySessionId?: string) {
@@ -1175,34 +1105,12 @@ function applySubagentAcpNotification(
   prev: ChatMessage[],
   notif: SessionNotification,
 ): ChatMessage[] {
-  const update = notif.update;
-  switch (update.sessionUpdate) {
-    case "user_message_chunk":
-      return appendUserMessageChunk(prev, update.content, update.messageId, {
+  return applyChatTranscriptUpdate(prev, notif.update, {
+    userMessage: {
         dedupeExistingText: true,
-      });
-    case "agent_message_chunk":
-      return appendStreamAssistantMessage(prev, update.content, update.messageId);
-    case "agent_thought_chunk":
-      return appendThinkingActivityMessage(prev, update.content, "Thinking");
-    case "tool_call":
-    case "tool_call_update": {
-      const messages = appendToolActivityMessage(prev, update);
-      const status = toolActivityStatus(update);
-      if (status === "completed" || status === "failed") {
-        return clearStreamProgressMessage(messages);
-      }
-      return setStreamProgressMessage(
-        messages,
-        `Using tool: ${toolActivityLabel(update)}...`,
-        "tool",
-      );
-    }
-    case "plan":
-      return appendPlanMessage(prev, update);
-    default:
-      return prev;
-  }
+    },
+    toolProgressLabel: (tool) => `Using tool: ${tool}...`,
+  });
 }
 
 function mergeById<T extends { id: string }>(prev: T[], nextItems: T[]): T[] {

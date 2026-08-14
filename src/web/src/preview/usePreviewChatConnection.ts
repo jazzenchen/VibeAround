@@ -16,9 +16,9 @@ import type {
 } from "@/components/chat/chatTypes";
 import { chatUserContentBlocks } from "@/components/chat/chatUserContent";
 import {
-  applyPreviewSessionNotification,
-  previewSessionChanged,
-} from "./previewChatMessages";
+  applyChatTranscriptUpdate,
+  chatIdentityChanged,
+} from "@/components/chat/chatTranscriptUpdates";
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000];
 const PREVIEW_THREAD_STORAGE_PREFIX = "vibearound.preview.review-thread.";
@@ -77,7 +77,7 @@ export function previewConversationIdentityChanged(
   currentIdentity: string | null,
   nextIdentity: string,
 ) {
-  return previewSessionChanged(currentIdentity, nextIdentity);
+  return chatIdentityChanged(currentIdentity, nextIdentity);
 }
 
 export function usePreviewChatConnection(slug: string) {
@@ -199,9 +199,10 @@ export function usePreviewChatConnection(slug: string) {
         }
         case "acp_notification":
           setMessages((current) =>
-            applyPreviewSessionNotification(
+            applyChatTranscriptUpdate(
               current,
-              frame.payload as SessionNotification,
+              (frame.payload as SessionNotification).update,
+              { acknowledgeOptimisticUser: true },
             ),
           );
           break;
