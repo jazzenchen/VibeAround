@@ -473,7 +473,7 @@ async fn handle_bridge_recording_socket(socket: WebSocket, recorder: BridgeRecor
 
 fn allowed_ws_origin(state: &AppState, headers: &HeaderMap) -> bool {
     let tunnel_urls = state.tunnels.public_urls();
-    super::auth::headers_have_allowed_ws_origin(headers, state.port, &tunnel_urls)
+    super::auth::headers_have_allowed_dashboard_origin(headers, state.port, &tunnel_urls)
 }
 
 fn timestamp_ms() -> u128 {

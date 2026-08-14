@@ -58,7 +58,11 @@ fn resolve_owner_chat_route(
     port: u16,
     tunnel_urls: &[String],
 ) -> Result<RouteKey, (StatusCode, &'static str)> {
-    if !crate::web_server::auth::headers_have_allowed_ws_origin(req.headers(), port, tunnel_urls) {
+    if !crate::web_server::auth::headers_have_allowed_dashboard_origin(
+        req.headers(),
+        port,
+        tunnel_urls,
+    ) {
         return Err((StatusCode::FORBIDDEN, "Preview chat origin is not allowed."));
     }
     if !owner_access_allowed(req) {

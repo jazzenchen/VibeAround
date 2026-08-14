@@ -447,7 +447,7 @@ impl ThreadOwner {
     }
 
     async fn shutdown_host_contents(&mut self, runtime: &ThreadRuntime) {
-        self.shutdown_agent_processes(runtime, true).await;
+        self.shutdown_agent_processes(runtime).await;
     }
 
     async fn shutdown_host_generation(&mut self, runtime: &ThreadRuntime) {
@@ -458,20 +458,12 @@ impl ThreadOwner {
         }
     }
 
-    async fn shutdown_agent_processes(&mut self, runtime: &ThreadRuntime, cleanup_previews: bool) {
+    async fn shutdown_agent_processes(&mut self, runtime: &ThreadRuntime) {
         runtime.active_turn_target.cancel_current();
-        if cleanup_previews {
-            if let Some(session_id) = &self.session_id {
-                crate::previews::kill_by_session(session_id);
-            }
-        }
         if let Some(host) = self.host.take() {
             host.shutdown().await;
         }
         for (_, subagent) in std::mem::take(&mut self.subagents) {
-            if cleanup_previews {
-                crate::previews::kill_by_session(&subagent.session_id);
-            }
             subagent.agent.shutdown().await;
         }
         let mut state = self.state_tx.borrow().clone();
@@ -490,7 +482,7 @@ impl ThreadOwner {
         if self.activity_generation != generation || !has_live_agent || !self.subagents.is_empty() {
             return false;
         }
-        self.shutdown_agent_processes(runtime, false).await;
+        self.shutdown_agent_processes(runtime).await;
         true
     }
 

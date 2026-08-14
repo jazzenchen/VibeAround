@@ -46,7 +46,7 @@ pub async fn ws_chat_handler(
     ws: WebSocketUpgrade,
 ) -> Response {
     let tunnel_urls = state.tunnels.public_urls();
-    if !super::auth::headers_have_allowed_ws_origin(&headers, state.port, &tunnel_urls) {
+    if !super::auth::headers_have_allowed_dashboard_origin(&headers, state.port, &tunnel_urls) {
         return StatusCode::FORBIDDEN.into_response();
     }
 

@@ -29,6 +29,8 @@ Tunnels (ngrok, localtunnel, Cloudflare, Tailscale Funnel) publish the dashboard
 
 Local hostnames (`localhost`, `127.0.0.1`, `::1`, and the desktop app's own origins) skip pairing but never skip the token.
 
+Browser pairing requests are accepted only from the local dashboard, desktop development origin, or an active tunnel origin. Native clients without an `Origin` header remain supported; an unrelated website cannot start and poll a pairing transaction to read the daemon token.
+
 ## Zone 3: IM platforms
 
 IM messages arrive through channel plugins. The platform never gets a shell; it gets a conversation:

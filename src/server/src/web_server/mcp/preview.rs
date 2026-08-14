@@ -6,7 +6,6 @@ use serde_json::Value;
 use crate::web_server::AppState;
 
 use super::jsonrpc::{jsonrpc_err, mcp_error_text, mcp_text};
-use super::ports::is_denied_port;
 use super::preview_conversation::{
     ensure_preview_conversation_thread, resolve_preview_parent_thread, PreviewParentRequest,
 };
@@ -82,16 +81,6 @@ async fn mcp_server_preview(
     cwd_path: PathBuf,
     port: u16,
 ) -> Json<Value> {
-    if is_denied_port(port) {
-        return mcp_error_text(
-            id,
-            &format!(
-                "Port {} is a well-known service port and cannot be previewed for security reasons. \
-                 Use a typical dev server port (e.g. 3000, 5173, 8080).",
-                port
-            ),
-        );
-    }
     if !server_http_is_responding(&state.preview_client, port).await {
         return mcp_error_text(
             id,
@@ -106,10 +95,7 @@ async fn mcp_server_preview(
         resolve_preview_parent_best_effort(&parent_request, &cwd_path, state).await;
 
     let title = derive_title(arguments, &cwd_path);
-    let owner_session = parent_thread_id
-        .as_ref()
-        .and_then(|_| parent_request.owner_session_id());
-    let (owner_slug, share) = common::previews::ensure_server(port, cwd_path, title, owner_session);
+    let (owner_slug, share) = common::previews::ensure_server(port, cwd_path, title);
     let conversation_warning =
         ensure_preview_conversation_best_effort(&owner_slug, parent_thread_id, state).await;
     let local_owner_url = format!(

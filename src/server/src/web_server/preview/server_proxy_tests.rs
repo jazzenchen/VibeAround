@@ -50,7 +50,7 @@ fn unique_temp_dir(label: &str) -> std::path::PathBuf {
 #[test]
 fn owner_routing_is_daemon_bound_and_share_routing_revalidates_the_grant() {
     let dir = unique_temp_dir("signature");
-    let (slug, share) = common::previews::ensure_server(4318, dir.clone(), "server".into(), None);
+    let (slug, share) = common::previews::ensure_server(4318, dir.clone(), "server".into());
     let auth = auth_state();
     let other_auth = auth_state();
     let signed = signed_slug(&slug, &auth);
@@ -155,7 +155,7 @@ async fn proxies_get_path_and_query_without_forwarding_credentials() {
         }
     });
     let dir = unique_temp_dir("static");
-    let (_, share) = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let (_, share) = common::previews::ensure_server(port, dir.clone(), "server".into());
     let auth = auth_state();
     let (entry, grant) = common::previews::verify_share_code(&share.id, &share.code).unwrap();
     let cookie = share_server_routing_cookie(&share.id, &grant, &entry)
@@ -236,7 +236,7 @@ async fn streams_the_upstream_body_after_returning_response_headers() {
         socket.write_all(b"0\r\n\r\n").await.unwrap();
     });
     let dir = unique_temp_dir("stream");
-    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into());
     let auth = auth_state();
     let cookie = server_routing_cookie(&slug, &auth)
         .split(';')
@@ -287,7 +287,7 @@ async fn rewrites_absolute_loopback_redirects_to_the_tunnel_origin() {
         }
     });
     let dir = unique_temp_dir("redirect");
-    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into(), None);
+    let (slug, _) = common::previews::ensure_server(port, dir.clone(), "server".into());
     let auth = auth_state();
     let cookie = server_routing_cookie(&slug, &auth)
         .split(';')
@@ -327,7 +327,7 @@ fn cookie_header_uses_the_root_path_without_exposing_the_owner_token() {
 #[test]
 fn share_cookie_uses_the_existing_grant_and_share_deadline() {
     let dir = unique_temp_dir("share-cookie");
-    let (_, share) = common::previews::ensure_server(4319, dir.clone(), "server".into(), None);
+    let (_, share) = common::previews::ensure_server(4319, dir.clone(), "server".into());
     let (entry, grant) = common::previews::verify_share_code(&share.id, &share.code).unwrap();
     let cookie = share_server_routing_cookie(&share.id, &grant, &entry);
 

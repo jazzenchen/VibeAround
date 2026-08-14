@@ -17,10 +17,8 @@
 //! - [`subagents`] — multi-agent tool handlers and runtime notifications
 //! - [`subagent_worktrees`] — git worktree setup and cleanup
 //! - [`sessions`] — per-agent on-disk session auto-discovery
-//! - [`ports`]   — deny-list of well-known service ports
 
 mod jsonrpc;
-mod ports;
 mod preview;
 mod preview_conversation;
 mod session_identity;

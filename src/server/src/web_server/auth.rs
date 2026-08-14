@@ -231,7 +231,7 @@ pub async fn require_auth(
     StatusCode::UNAUTHORIZED.into_response()
 }
 
-pub(crate) fn headers_have_allowed_ws_origin(
+pub(crate) fn headers_have_allowed_dashboard_origin(
     headers: &HeaderMap,
     port: u16,
     tunnel_urls: &[String],

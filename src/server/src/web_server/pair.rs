@@ -6,19 +6,23 @@
 
 use axum::body::Body;
 use axum::{
-    extract::{Query, Request},
+    extract::{Query, Request, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
 
 use super::auth::{extract_bearer_token, owner_cookie_headers, AuthState};
+use super::AppState;
 
 /// POST /va/api/pair/start — generate a pairing code.
 ///
 /// Returns `{ "code": "847291", "sid": "uuid" }`.
 /// The code expires in 1 minute.
-pub async fn start_handler() -> Response {
+pub async fn start_handler(State(state): State<AppState>, req: Request) -> Response {
+    if !pairing_origin_allowed(&state, &req) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let mut response = match common::auth::pair::generate() {
         Ok((sid, code)) => Json(serde_json::json!({
             "code": code,
@@ -61,7 +65,18 @@ pub struct StatusQuery {
 /// - `{ "status": "pending" }` — waiting for `/pair` command
 /// - `{ "status": "expired" }` — code has expired, frontend should refresh
 /// - `{ "status": "verified" }` — paired! Also sets `va_owner` cookie with auth token
-pub async fn status_handler(Query(q): Query<StatusQuery>, req: Request) -> Response {
+pub async fn status_handler(
+    State(state): State<AppState>,
+    Query(q): Query<StatusQuery>,
+    req: Request,
+) -> Response {
+    if !pairing_origin_allowed(&state, &req) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    status_response(q, req)
+}
+
+fn status_response(q: StatusQuery, req: Request) -> Response {
     let mut response = match common::auth::pair::check_status(&q.sid) {
         None => {
             // Unknown or expired session.
@@ -101,6 +116,11 @@ pub async fn status_handler(Query(q): Query<StatusQuery>, req: Request) -> Respo
     response
 }
 
+fn pairing_origin_allowed(state: &AppState, req: &Request) -> bool {
+    let tunnel_urls = state.tunnels.public_urls();
+    super::auth::headers_have_allowed_dashboard_origin(req.headers(), state.port, &tunnel_urls)
+}
+
 /// POST /va/api/pair/complete — finish the Desktop-token fallback flow.
 ///
 /// The protected router validates the bearer token before this handler runs.
@@ -134,7 +154,6 @@ mod tests {
 
     use axum::{
         body::{to_bytes, Body},
-        extract::Query,
         http::{header, Request, StatusCode},
         middleware,
         routing::post,
@@ -181,15 +200,36 @@ mod tests {
             request
                 .extensions_mut()
                 .insert(AuthState(Arc::clone(&auth)));
-            let response =
-                super::status_handler(Query(super::StatusQuery { sid: sid.clone() }), request)
-                    .await;
+            let response = super::status_response(super::StatusQuery { sid: sid.clone() }, request);
             assert_eq!(response.status(), StatusCode::OK);
             let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
             let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(json["status"], "verified");
             assert_eq!(json["token"], expected_token);
         }
+    }
+
+    #[test]
+    fn browser_pairing_accepts_only_dashboard_origins() {
+        let allowed = |origin: Option<&str>, tunnel_urls: &[String]| {
+            let mut headers = axum::http::HeaderMap::new();
+            if let Some(origin) = origin {
+                headers.insert(header::ORIGIN, origin.parse().unwrap());
+            }
+            crate::web_server::auth::headers_have_allowed_dashboard_origin(
+                &headers,
+                12358,
+                tunnel_urls,
+            )
+        };
+
+        assert!(allowed(Some("http://127.0.0.1:12358"), &[]));
+        assert!(allowed(
+            Some("https://preview.example"),
+            &["https://preview.example".into()]
+        ));
+        assert!(!allowed(Some("https://evil.example"), &[]));
+        assert!(allowed(None, &[]), "native clients do not send Origin");
     }
 
     #[tokio::test]

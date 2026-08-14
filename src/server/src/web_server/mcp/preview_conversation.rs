@@ -46,22 +46,6 @@ impl PreviewParentRequest {
             session_id,
         })
     }
-
-    pub(super) fn owner_session_id(&self) -> Option<String> {
-        if self
-            .agent_kind
-            .as_deref()
-            .is_some_and(|agent| agent.eq_ignore_ascii_case("codex"))
-            || (self.agent_kind.is_none() && self.codex_metadata_session_id.is_some())
-        {
-            return self
-                .codex_metadata_session_id
-                .clone()
-                .or_else(|| self.session_id.clone());
-        }
-        self.agent_kind.as_ref()?;
-        self.session_id.clone()
-    }
 }
 
 pub(super) async fn resolve_preview_parent_thread(
@@ -139,10 +123,6 @@ mod tests {
                 common::workspace::threads::WorkspaceThreadId::from("wt_managed")
             ))
         );
-        assert_eq!(
-            request.owner_session_id().as_deref(),
-            Some("external-session")
-        );
     }
 
     #[test]
@@ -160,10 +140,6 @@ mod tests {
                 agent_id: "codex".to_string(),
                 session_id: "codex-native-session".to_string()
             })
-        );
-        assert_eq!(
-            request.owner_session_id().as_deref(),
-            Some("codex-native-session")
         );
     }
 

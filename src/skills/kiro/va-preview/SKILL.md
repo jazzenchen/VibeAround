@@ -16,7 +16,7 @@ Treat an explicit user request as confirmation. Otherwise ask before calling `pr
 
 ### 2. Prepare one source
 
-- **Server**: Reuse the intended server when its tracked process is still running. Otherwise start it with the framework's automatic port selection, wait until it is listening, and keep it on loopback when possible. Do not adopt or kill an arbitrary listener.
+- **Server**: Reuse the intended server when it is still running. Otherwise start it with the framework's automatic port selection, wait until it is listening, and keep it on loopback when possible. VibeAround registers the selected port for the current daemon run; closing that Preview or the daemon kills the process currently listening there.
 - **Markdown**: Verify that the requested file exists. No separate static-file server is needed.
 
 ### 3. Add identity when available

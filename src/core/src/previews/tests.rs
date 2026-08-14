@@ -87,8 +87,8 @@ fn ensure_server_is_idempotent() {
     std::fs::create_dir_all(&path).unwrap();
 
     let before = Instant::now();
-    let (slug_a, share_a) = ensure_server(3000, path.clone(), "t".into(), None);
-    let (slug_b, share_b) = ensure_server(3000, path.clone(), "t".into(), None);
+    let (slug_a, share_a) = ensure_server(3000, path.clone(), "t".into());
+    let (slug_b, share_b) = ensure_server(3000, path.clone(), "t".into());
     assert_eq!(slug_a, slug_b);
     assert_eq!(share_a, share_b);
     assert!(share_a.expires_at >= before + SHARE_TTL);
@@ -105,42 +105,12 @@ fn ensure_server_is_idempotent() {
 }
 
 #[test]
-fn server_reregistration_replaces_lifecycle_owner() {
-    let workspace = PathBuf::from("/tmp/lifecycle-owner");
-    let id = canonical(&workspace).join(":port:31995");
-
-    ensure_server(
-        31_995,
-        workspace.clone(),
-        "owned".into(),
-        Some("old-session".into()),
-    );
-    assert_eq!(
-        SESSIONS
-            .lock()
-            .get(&id)
-            .and_then(|session| session.owner_session.as_deref()),
-        Some("old-session")
-    );
-
-    ensure_server(31_995, workspace, "standalone".into(), None);
-    assert_eq!(
-        SESSIONS
-            .lock()
-            .get(&id)
-            .and_then(|session| session.owner_session.as_deref()),
-        None
-    );
-    SESSIONS.lock().remove(&id);
-}
-
-#[test]
 fn ensure_server_keeps_different_ports_separate() {
     let path = std::env::temp_dir().join("va-preview-test-multiport");
     std::fs::create_dir_all(&path).unwrap();
 
-    let (slug_a, _) = ensure_server(3456, path.clone(), "liquid".into(), None);
-    let (slug_b, _) = ensure_server(5000, path.clone(), "python".into(), None);
+    let (slug_a, _) = ensure_server(3456, path.clone(), "liquid".into());
+    let (slug_b, _) = ensure_server(5000, path.clone(), "python".into());
     assert_ne!(
         slug_a, slug_b,
         "same workspace + different ports must not collapse"
@@ -159,60 +129,13 @@ fn ensure_server_keeps_different_ports_separate() {
 }
 
 #[test]
-fn server_registration_tracks_the_current_listener_fingerprint() {
-    let workspace =
-        std::env::temp_dir().join(format!("va-preview-test-listener-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&workspace).unwrap();
-    let workspace = canonical(&workspace);
-    let id = workspace.join(":port:3457");
-    let first = ListenerProcess {
-        pid: 123,
-        start_time: 456,
-    };
-    let replacement = ListenerProcess {
-        pid: 789,
-        start_time: 1011,
-    };
-
-    ensure_session(
-        id.clone(),
-        workspace.clone(),
-        "server".into(),
-        PreviewTarget::Server { port: 3457 },
-        None,
-        Some(first),
-    );
-    ensure_session(
-        id.clone(),
-        workspace.clone(),
-        "server".into(),
-        PreviewTarget::Server { port: 3457 },
-        None,
-        Some(replacement),
-    );
-    ensure_session(
-        id.clone(),
-        workspace,
-        "server".into(),
-        PreviewTarget::Server { port: 3457 },
-        None,
-        None,
-    );
-
-    assert_eq!(
-        SESSIONS.lock().get(&id).unwrap().listener,
-        Some(replacement)
-    );
-}
-
-#[test]
 fn ensure_file_is_idempotent_and_independent_of_server() {
     let dir = std::env::temp_dir().join("va-preview-test-file");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("README.md");
     std::fs::write(&file, "hi").unwrap();
 
-    let (srv_slug, srv_share) = ensure_server(4000, dir.clone(), "srv".into(), None);
+    let (srv_slug, srv_share) = ensure_server(4000, dir.clone(), "srv".into());
     let (file_slug_a, file_share_a) = ensure_file(file.clone(), dir.clone(), "md".into());
     let (file_slug_b, file_share_b) = ensure_file(file.clone(), dir.clone(), "md".into());
 
@@ -227,32 +150,13 @@ fn ensure_file_is_idempotent_and_independent_of_server() {
 }
 
 #[test]
-fn emergency_shutdown_keeps_file_registration() {
-    let dir = std::env::temp_dir().join(format!(
-        "va-preview-test-emergency-shutdown-{}",
-        uuid::Uuid::new_v4()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("README.md");
-    std::fs::write(&file, "preview").unwrap();
-    let (slug, _) = ensure_file(file, dir.clone(), "file".into());
-
-    emergency_kill_all_ports();
-    emergency_kill_all_ports();
-
-    assert!(lookup_owner(&slug).is_some());
-    delete_session(&slug);
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
 fn lookups_preserve_owner_and_share_boundaries() {
     let dir = std::env::temp_dir().join("va-preview-test-lookup");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("share.md");
     std::fs::write(&file, "share").unwrap();
 
-    let (server_slug, server_share) = ensure_server(4100, dir.clone(), "server".into(), None);
+    let (server_slug, server_share) = ensure_server(4100, dir.clone(), "server".into());
     let (file_slug, share) = ensure_file(file, dir, "file".into());
 
     assert!(lookup_owner(&server_slug).is_some());
@@ -276,7 +180,7 @@ fn server_share_supports_code_grant_expiry_and_target_scope() {
     std::fs::write(&file, "share").unwrap();
 
     let before = Instant::now();
-    let (server_slug, first) = ensure_server(42001, dir.clone(), "server".into(), None);
+    let (server_slug, first) = ensure_server(42001, dir.clone(), "server".into());
     let (_, file_share) = ensure_file(file, dir.clone(), "file".into());
     assert!(first.expires_at >= before + Duration::from_secs(SHARE_TTL_SECS));
     assert!(first.expires_at <= Instant::now() + Duration::from_secs(SHARE_TTL_SECS));
@@ -310,7 +214,7 @@ fn server_share_supports_code_grant_expiry_and_target_scope() {
 
     assert!(lookup_share_link(&first.id).is_none());
     assert!(authorize_share_grant(&first.id, &first_grant).is_none());
-    let (rotated_slug, rotated) = ensure_server(42001, dir, "server".into(), None);
+    let (rotated_slug, rotated) = ensure_server(42001, dir, "server".into());
     assert_eq!(rotated_slug, server_slug);
     assert_ne!(rotated.id, first.id);
     assert_ne!(rotated.code, first.code);

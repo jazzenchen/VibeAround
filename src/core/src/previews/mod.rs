@@ -23,15 +23,16 @@
 //! One `HashMap<PathBuf, PreviewSession>` backs everything. Lookups by
 //! `slug` or `share_id` scan values — `n` is tiny (<20 typical).
 //!
-//! On daemon shutdown, [`shutdown_kill_all_ports`] kills a tracked `Server`
-//! listener only while its PID and process start time still match registration.
+//! Server registrations live only for the current daemon run. Closing one or
+//! shutting down the daemon kills whatever process currently listens on its
+//! registered port.
 //!
 //! ## Module layout
 //!
 //! - [`types`] — public data model (`PreviewTarget`, `PreviewEntry`, …).
 //! - [`store`] — internal session storage + slug/share-key generation.
-//! - [`kill`]  — port-driven process-group SIGKILL helpers.
-//! - [`registrations`] — durable File and Server registration projection.
+//! - [`kill`]  — best-effort cleanup for current port listeners.
+//! - [`registrations`] — durable File registration projection.
 
 mod kill;
 mod registrations;
@@ -49,8 +50,7 @@ pub use types::{
 
 use store::{
     canonical, entry_from, generate_share_code, generate_share_grant, generate_share_id,
-    slug_from_path, ListenerProcess, PreviewSession, ShareTransaction, SESSIONS,
-    SHARE_ATTEMPT_REFILL, SHARE_TTL,
+    slug_from_path, PreviewSession, ShareTransaction, SESSIONS, SHARE_ATTEMPT_REFILL, SHARE_TTL,
 };
 
 // ---------------------------------------------------------------------------
@@ -61,23 +61,10 @@ use store::{
 /// `(owner_slug, share)`. Calling twice for the same `(workspace, port)` reuses
 /// the owner slug and a live share transaction.
 /// Different ports under the same workspace coexist as independent sessions.
-pub fn ensure_server(
-    port: u16,
-    workspace: PathBuf,
-    title: String,
-    owner_session: Option<String>,
-) -> (String, PreviewShare) {
+pub fn ensure_server(port: u16, workspace: PathBuf, title: String) -> (String, PreviewShare) {
     let workspace = canonical(&workspace);
     let id = workspace.join(format!(":port:{port}"));
-    let listener = kill::listener_process(port);
-    ensure_session(
-        id,
-        workspace,
-        title,
-        PreviewTarget::Server { port },
-        owner_session,
-        listener,
-    )
+    ensure_session(id, workspace, title, PreviewTarget::Server { port })
 }
 
 /// Ensure a File preview session exists for `file`. Returns
@@ -85,7 +72,7 @@ pub fn ensure_server(
 pub fn ensure_file(file: PathBuf, workspace: PathBuf, title: String) -> (String, PreviewShare) {
     let file = canonical(&file);
     let workspace = canonical(&workspace);
-    ensure_session(file, workspace, title, PreviewTarget::File, None, None)
+    ensure_session(file, workspace, title, PreviewTarget::File)
 }
 
 fn ensure_session(
@@ -93,8 +80,6 @@ fn ensure_session(
     workspace: PathBuf,
     title: String,
     target: PreviewTarget,
-    owner_session: Option<String>,
-    listener: Option<ListenerProcess>,
 ) -> (String, PreviewShare) {
     let slug = slug_from_path(&id);
     let now = Instant::now();
@@ -107,11 +92,9 @@ fn ensure_session(
             workspace: workspace.clone(),
             title: title.clone(),
             target: target.clone(),
-            listener,
             slug: slug.clone(),
             share: None,
             conversation_thread_id: None,
-            owner_session: owner_session.clone(),
             created_at: now,
         });
 
@@ -119,11 +102,6 @@ fn ensure_session(
     session.workspace = workspace;
     session.title = title;
     session.target = target;
-    session.listener = match session.target {
-        PreviewTarget::Server { .. } => listener.or(session.listener),
-        PreviewTarget::File => None,
-    };
-    session.owner_session = owner_session;
 
     // Reuse a live transaction or replace the entire expired transaction so
     // an old shared URL cannot revive.
@@ -361,60 +339,8 @@ fn instant_to_unix_ms(point: Instant, now_inst: Instant, now_sys: std::time::Sys
     }
 }
 
-/// Kill all preview sessions owned by a specific agent session.
-/// Called from pod.close() when a route is shut down. Kills Server
-/// ports that no remaining session uses and removes matching sessions.
-pub fn kill_by_session(session_id: &str) {
-    let to_remove: Vec<(PathBuf, Option<(u16, ListenerProcess)>)> = {
-        let sessions = SESSIONS.lock();
-        sessions
-            .iter()
-            .filter(|(_, s)| s.owner_session.as_deref() == Some(session_id))
-            .map(|(k, s)| {
-                let listener = match (&s.target, s.listener) {
-                    (PreviewTarget::Server { port }, Some(listener)) => Some((*port, listener)),
-                    _ => None,
-                };
-                (k.clone(), listener)
-            })
-            .collect()
-    };
-
-    if to_remove.is_empty() {
-        return;
-    }
-
-    tracing::info!(
-        "[preview] kill_by_session session={} count={}",
-        session_id,
-        to_remove.len()
-    );
-
-    let mut sessions = SESSIONS.lock();
-    for (key, _port) in &to_remove {
-        sessions.remove(key);
-    }
-    drop(sessions); // release lock before killing
-
-    for (_, listener) in to_remove {
-        if let Some((port, listener)) = listener {
-            // Only kill if no remaining session uses this port.
-            let still_used = SESSIONS
-                .lock()
-                .values()
-                .any(|s| matches!(s.target, PreviewTarget::Server { port: pp } if pp == port));
-            if !still_used {
-                kill::kill_registered_listener(port, listener);
-            }
-        }
-    }
-
-    registrations::persist_active(&SESSIONS.lock());
-}
-
-/// Close a single preview session. A Server listener is killed only when its
-/// current PID and process start time still match registration.
-/// Then remove the session from the store. Returns `true` when a matching
+/// Close a single preview session. Server cleanup kills whatever process
+/// currently listens on the registered port. Returns `true` when a matching
 /// slug was found and removed.
 pub fn delete_session(slug: &str) -> bool {
     // Find and remove the matching session.
@@ -435,9 +361,8 @@ pub fn delete_session(slug: &str) -> bool {
         return false;
     };
 
-    // Kill the port if Server — best effort.
-    if let (PreviewTarget::Server { port }, Some(listener)) = (session.target, session.listener) {
-        kill::kill_registered_listener(port, listener);
+    if let PreviewTarget::Server { port } = session.target {
+        kill::kill_port(port);
     }
     registrations::persist_active(&SESSIONS.lock());
     true
@@ -459,12 +384,12 @@ pub fn tracked_ports() -> Vec<u16> {
         .collect()
 }
 
-/// Restore durable File registrations and Server previews left by an unclean
-/// daemon exit. Server ownership still requires the exact listener fingerprint.
+/// Restore durable File registrations. Server previews are intentionally
+/// scoped to one daemon run and are never restored after restart.
 pub fn reconcile_registrations() {
     let path = registrations::activate_path();
     let mut sessions = SESSIONS.lock();
-    match registrations::reconcile_at(path, &mut sessions, kill::listener_process) {
+    match registrations::reconcile_at(path, &mut sessions) {
         Ok(0) => {}
         Ok(count) => tracing::info!("[preview] restored {} preview registration(s)", count),
         Err(error) => {
@@ -474,22 +399,15 @@ pub fn reconcile_registrations() {
     }
 }
 
-fn kill_registered_server_listeners() {
-    let listeners: Vec<(u16, ListenerProcess)> = SESSIONS
-        .lock()
-        .values()
-        .filter_map(|session| match (&session.target, session.listener) {
-            (PreviewTarget::Server { port }, Some(listener)) => Some((*port, listener)),
-            _ => None,
-        })
-        .collect();
-    if !listeners.is_empty() {
+fn kill_registered_server_ports() {
+    let ports = tracked_ports();
+    if !ports.is_empty() {
         tracing::info!(
-            "[preview] shutdown: checking {} registered dev-server listener(s)",
-            listeners.len()
+            "[preview] shutdown: killing dev servers on ports {:?}",
+            ports
         );
-        for (port, listener) in listeners {
-            kill::kill_registered_listener(port, listener);
+        for port in ports {
+            kill::kill_port(port);
         }
     }
 }
@@ -500,14 +418,13 @@ fn kill_registered_server_listeners() {
 /// may have run. In particular, it must not overwrite durable File previews
 /// with an empty in-memory registry.
 pub fn emergency_kill_all_ports() {
-    kill_registered_server_listeners();
+    kill_registered_server_ports();
 }
 
-/// Kill each registered Server listener whose PID and start time still match.
-/// Best-effort; failures are logged. Durable File registrations are retained,
-/// then the in-memory session map is cleared.
+/// Kill every currently registered Server port. Durable File registrations are
+/// retained, then the in-memory session map is cleared.
 pub fn shutdown_kill_all_ports() {
-    kill_registered_server_listeners();
+    kill_registered_server_ports();
     let mut sessions = SESSIONS.lock();
     sessions.retain(|_, session| matches!(session.target, PreviewTarget::File));
     registrations::persist_active(&sessions);

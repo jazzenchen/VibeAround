@@ -240,7 +240,7 @@ async fn build_agents_runtime(
 
 fn allowed_ws_origin(state: &AppState, headers: &HeaderMap) -> bool {
     let tunnel_urls = state.tunnels.public_urls();
-    super::auth::headers_have_allowed_ws_origin(headers, state.port, &tunnel_urls)
+    super::auth::headers_have_allowed_dashboard_origin(headers, state.port, &tunnel_urls)
 }
 
 /// Runs a WS session: first emit, then emit on every `()` ping from the

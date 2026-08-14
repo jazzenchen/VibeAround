@@ -11,18 +11,11 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use rand::rngs::OsRng;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::workspace::threads::WorkspaceThreadId;
 
 use super::types::{PreviewEntry, PreviewTarget};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct ListenerProcess {
-    pub(super) pid: u32,
-    pub(super) start_time: u64,
-}
 
 #[derive(Debug, Clone)]
 pub(super) struct PreviewSession {
@@ -30,15 +23,9 @@ pub(super) struct PreviewSession {
     pub(super) workspace: PathBuf,
     pub(super) title: String,
     pub(super) target: PreviewTarget,
-    /// Listener observed when this Server preview was registered. Cleanup
-    /// only kills the process while both its PID and start time still match.
-    pub(super) listener: Option<ListenerProcess>,
     pub(super) slug: String,
     pub(super) share: Option<ShareTransaction>,
     pub(super) conversation_thread_id: Option<WorkspaceThreadId>,
-    /// Agent session ID that registered this preview. Used for cleanup
-    /// when the session closes. `None` if the agent didn't provide it.
-    pub(super) owner_session: Option<String>,
     pub(super) created_at: Instant,
 }
 
