@@ -46,7 +46,6 @@ pub enum ChatEvent {
     TurnStatus {
         active: bool,
     },
-    PreviewRefresh,
     SystemText {
         text: String,
     },
@@ -310,14 +309,6 @@ mod tests {
             ChatEvent::SessionReady {
                 session_id: "01HX".to_string()
             }
-        );
-    }
-
-    #[test]
-    fn decodes_preview_refresh_event() {
-        assert_eq!(
-            decode_chat_event(json!({ "kind": "preview_refresh" })).expect("event"),
-            ChatEvent::PreviewRefresh
         );
     }
 

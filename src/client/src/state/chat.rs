@@ -106,8 +106,7 @@ impl ChatState {
             }
             ChatEvent::SubagentStatus { .. }
             | ChatEvent::SubagentAcpNotification { .. }
-            | ChatEvent::AcpNotification { .. }
-            | ChatEvent::PreviewRefresh => {}
+            | ChatEvent::AcpNotification { .. } => {}
         }
     }
 }

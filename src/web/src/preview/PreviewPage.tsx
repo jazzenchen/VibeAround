@@ -20,7 +20,6 @@ import {
   refreshedPreviewSlug,
   type PreviewBootstrap,
 } from "./previewTypes";
-import { confirmManualPreviewRefresh } from "./previewReview";
 import { usePreviewChatConnection } from "./usePreviewChatConnection";
 import {
   rememberServerPreviewConsent,
@@ -166,7 +165,14 @@ function PreviewWorkspace({
   }, [onRefreshBootstrap, review.prepareFrame, selected.slug]);
   const refreshPreview = useCallback(async () => {
     const hasReviewDraft = review.drafts.length > 0 || review.editor !== null;
-    if (!confirmManualPreviewRefresh(hasReviewDraft)) return;
+    if (
+      hasReviewDraft &&
+      !window.confirm(
+        "Refreshing this Preview will clear all review drafts. Continue?",
+      )
+    ) {
+      return;
+    }
     await reloadPreview();
   }, [reloadPreview, review.drafts.length, review.editor]);
   const chat = usePreviewChatConnection(selected.slug, reloadPreview);
