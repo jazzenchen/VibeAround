@@ -22,14 +22,7 @@ export type AppDefaultForm = {
 
 export type RemoteChannelDefaults = {
   agent_id?: string;
-  agentId?: string;
-  agent?: string;
   profile_id?: string;
-  profileId?: string;
-  profile?: string;
-  workspace?: string;
-  workspace_path?: string;
-  workspacePath?: string;
 };
 
 export type RemoteSettings = {

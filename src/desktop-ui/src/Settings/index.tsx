@@ -405,8 +405,7 @@ export function SettingsDialog({
       : {};
     const maxRetries = retry429.max_retries;
     const delaySeconds = retry429.delay_seconds;
-    const replaceWebSearch =
-      apiBridge.replace_provider_web_search ?? apiBridge.replaceProviderWebSearch;
+    const replaceWebSearch = apiBridge.replace_provider_web_search;
 
     const nextForm = {
       retry429Enabled:
@@ -436,13 +435,9 @@ export function SettingsDialog({
       ? loadedSettings.search_tool
       : {};
     const sources = isRecord(searchTool.sources) ? searchTool.sources : {};
-    setSearchMaxResults(
-      searchMaxResultsInput(searchTool.max_results ?? searchTool.maxResults),
-    );
+    setSearchMaxResults(searchMaxResultsInput(searchTool.max_results));
     setSearchContextSize(
-      searchContextSizeValue(
-        searchTool.search_context_size ?? searchTool.searchContextSize,
-      ),
+      searchContextSizeValue(searchTool.search_context_size),
     );
     setSearchSources(() => {
       const next = defaultSearchSourceForms();
@@ -487,8 +482,7 @@ export function SettingsDialog({
         : "system",
     );
     const configuredPortableToolchain =
-      loadedSettings.startkit?.portable_toolchain ??
-      loadedSettings.startkit?.portableToolchain;
+      loadedSettings.startkit?.portable_toolchain;
     setPortableToolchain(
       typeof configuredPortableToolchain === "boolean"
         ? configuredPortableToolchain
@@ -3213,7 +3207,6 @@ function buildWebSearchSettings({
     ? { ...result.api_bridge }
     : {};
   apiBridge.replace_provider_web_search = replaceProviderWebSearch;
-  delete apiBridge.replaceProviderWebSearch;
   result.api_bridge = apiBridge as AppSettings["api_bridge"];
   return result;
 }
