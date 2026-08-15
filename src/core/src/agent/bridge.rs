@@ -7,13 +7,13 @@
 //! [`AgentReady`] to the caller via a oneshot before holding the connection
 //! open until cancellation or child stdout EOF.
 //!
-//! Unlike [`ChannelPluginBridge`], the agent has **no restart policy**
+//! Unlike [`ChannelPluginRunner`], the agent has **no restart policy**
 //! ([`RestartPolicy::Never`]). One bridge = one spawn = one `AgentReady`.
 //! The `BridgeFactory` handed to [`Supervisor::register`] is therefore
 //! single-shot: we build the bridge eagerly and `take()` it from the
 //! `FnMut` factory the first (and only) time the factory is invoked.
 //!
-//! [`ChannelPluginBridge`]: crate::channels::plugin_bridge::ChannelPluginBridge
+//! [`ChannelPluginRunner`]: crate::channels::plugin_runner::ChannelPluginRunner
 //! [`RestartPolicy::Never`]: crate::process::RestartPolicy::Never
 //! [`Supervisor::register`]: crate::process::Supervisor::register
 
