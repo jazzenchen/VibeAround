@@ -23,17 +23,19 @@
 //! One `HashMap<PathBuf, PreviewSession>` backs everything. Lookups by
 //! `slug` or `share_id` scan values — `n` is tiny (<20 typical).
 //!
-//! All Preview registrations live only for the current daemon run. Closing a
-//! Server Preview or shutting down the daemon kills whatever process currently
-//! listens on its registered port.
+//! Preview state lives only for the current daemon run. A minimal cleanup
+//! journal survives only so startup can repeat shutdown cleanup after an
+//! interrupted exit; it is never used to restore a Preview.
 //!
 //! ## Module layout
 //!
 //! - [`types`] — public data model (`PreviewTarget`, `PreviewEntry`, …).
 //! - [`store`] — internal session storage + slug/share-key generation.
 //! - [`kill`]  — best-effort cleanup for current port listeners.
+//! - [`registrations`] — cleanup-only journal shared by startup and shutdown.
 
 mod kill;
+mod registrations;
 mod store;
 mod types;
 
@@ -124,6 +126,7 @@ fn ensure_session(
         expires_at: share.expires_at,
     };
 
+    registrations::persist_active(&sessions);
     (slug, share)
 }
 
@@ -307,6 +310,7 @@ pub fn delete_session(slug: &str) -> bool {
     if let PreviewTarget::Server { port } = session.target {
         kill::kill_port(port);
     }
+    registrations::persist_active(&SESSIONS.lock());
     true
 }
 
@@ -326,30 +330,56 @@ pub fn tracked_ports() -> Vec<u16> {
         .collect()
 }
 
-fn kill_registered_server_ports() {
-    let ports = tracked_ports();
+/// Run the same cleanup at daemon startup and shutdown.
+///
+/// Persisted registrations contribute only Server ports to kill. Preview state
+/// is always discarded, and both the current and legacy journals are removed
+/// after the best-effort cleanup attempt.
+pub fn cleanup_registered_previews() {
+    let (current_path, legacy_path) = registrations::activate_paths();
+    let mut ports = tracked_ports();
+    for (path, registered_ports) in [
+        (
+            current_path,
+            registrations::current_server_ports_at(current_path),
+        ),
+        (
+            legacy_path,
+            registrations::legacy_server_ports_at(legacy_path),
+        ),
+    ] {
+        match registered_ports {
+            Ok(registered_ports) => ports.extend(registered_ports),
+            Err(error) => tracing::warn!(
+                path = ?path,
+                error = %error,
+                "failed to read Preview cleanup registrations"
+            ),
+        }
+    }
+    ports.sort_unstable();
+    ports.dedup();
+
     if !ports.is_empty() {
         tracing::info!(
-            "[preview] shutdown: killing dev servers on ports {:?}",
+            "[preview] cleanup: killing dev servers on ports {:?}",
             ports
         );
         for port in ports {
             kill::kill_port(port);
         }
     }
-}
-
-/// Best-effort final process cleanup used when the application is already
-/// exiting and graceful daemon shutdown may have run.
-pub fn emergency_kill_all_ports() {
-    kill_registered_server_ports();
-}
-
-/// Kill every currently registered Server port, then clear the in-memory
-/// Preview registry.
-pub fn shutdown_kill_all_ports() {
-    kill_registered_server_ports();
     SESSIONS.lock().clear();
+
+    for path in [current_path, legacy_path] {
+        if let Err(error) = registrations::remove_at(path) {
+            tracing::warn!(
+                path = ?path,
+                error = %error,
+                "failed to clear Preview cleanup registrations"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

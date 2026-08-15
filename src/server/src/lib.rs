@@ -110,7 +110,7 @@ impl RunningDaemon {
 
         // Kill any user-started dev servers we were previewing so they don't
         // outlive the daemon. Best-effort; failures are logged.
-        common::previews::shutdown_kill_all_ports();
+        common::previews::cleanup_registered_previews();
 
         let pty_manager = PtySessionManager::from_registry(Arc::clone(&pty));
         let session_ids: Vec<SessionId> = pty.iter().map(|entry| *entry.key()).collect();
@@ -274,6 +274,7 @@ impl ServerDaemon {
         // path (no matches) and prevents phantom children from hogging ports
         // or auth sockets.
         child_registry::orphan_sweep();
+        common::previews::cleanup_registered_previews();
 
         let web_listener = bind_web_listener(self.port).await?;
 
