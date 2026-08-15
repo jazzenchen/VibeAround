@@ -6,6 +6,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 
 const LEGACY_STATE_FILES: [&str; 2] = ["workspaces.jsonl", "workspace-threads.jsonl"];
+const DASHSCOPE_PROVIDER_ID: &str = "dashscope";
+const DASHSCOPE_LABEL: &str = "Alibaba DashScope";
+const LEGACY_QWEN_PROVIDER_ID: &str = "qwen";
+const LEGACY_QWEN_LABEL: &str = "Qwen / DashScope";
+const MOONSHOT_PROVIDER_ID: &str = "moonshot";
+const LEGACY_KIMI_PROVIDER_ID: &str = "kimi";
+const KIMI_CODING_ENDPOINT_ID: &str = "kimi-coding";
+const KIMI_CODING_LEGACY_BASE_URL: &str = "https://api.kimi.com/coding";
+const GEMINI_PROVIDER_ID: &str = "gemini";
+const GEMINI_API_ENDPOINT_ID: &str = "gemini-api";
+const LEGACY_GEMINI_OPENAI_ENDPOINT_ID: &str = "openai-compatible";
 
 pub fn run() -> Result<()> {
     run_at(&crate::config::data_dir())
@@ -17,30 +28,40 @@ fn run_at(data_dir: &Path) -> Result<()> {
     let _lock = crate::file_lock::ExclusiveFileLock::acquire(&data_dir.join("migration.lock"))
         .with_context(|| format!("lock migrations in {}", data_dir.display()))?;
 
-    let changes = legacy_state_changes(data_dir);
+    let mut changes = legacy_state_changes(data_dir);
+    changes.extend(legacy_profile_provider_changes(data_dir)?);
     if changes.is_empty() {
         return Ok(());
     }
 
-    let backup_dir = create_backup(data_dir, changes.iter().map(|change| &change.source))?;
+    let backup_dir = create_backup(data_dir, changes.iter().map(Change::source))?;
     for change in changes {
-        apply_state_change(&change)?;
+        apply_change(change)?;
     }
     tracing::info!(backup = ?backup_dir, "completed configuration migration");
     Ok(())
 }
 
-struct StateChange {
-    source: PathBuf,
-    target: PathBuf,
+enum Change {
+    Rewrite { path: PathBuf, contents: String },
+    MoveState { source: PathBuf, target: PathBuf },
 }
 
-fn legacy_state_changes(data_dir: &Path) -> Vec<StateChange> {
+impl Change {
+    fn source(&self) -> &Path {
+        match self {
+            Self::Rewrite { path, .. } => path,
+            Self::MoveState { source, .. } => source,
+        }
+    }
+}
+
+fn legacy_state_changes(data_dir: &Path) -> Vec<Change> {
     LEGACY_STATE_FILES
         .iter()
         .filter_map(|name| {
             let source = data_dir.join(name);
-            source.exists().then(|| StateChange {
+            source.exists().then(|| Change::MoveState {
                 source,
                 target: data_dir.join("state").join(name),
             })
@@ -48,9 +69,155 @@ fn legacy_state_changes(data_dir: &Path) -> Vec<StateChange> {
         .collect()
 }
 
+fn legacy_profile_provider_changes(data_dir: &Path) -> Result<Vec<Change>> {
+    let profiles_dir = data_dir.join("profiles");
+    let entries = match std::fs::read_dir(&profiles_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read {}", profiles_dir.display()))
+        }
+    };
+    let mut paths = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    let mut changes = Vec::new();
+    for path in paths {
+        let body = std::fs::read_to_string(&path)
+            .with_context(|| format!("read profile {}", path.display()))?;
+        let mut profile: crate::profiles::ProfileDef = match serde_json::from_str(&body) {
+            Ok(profile) => profile,
+            Err(error) => {
+                tracing::warn!(path = ?path, %error, "skipping invalid profile during migration");
+                continue;
+            }
+        };
+        if !migrate_legacy_profile_provider(&mut profile) {
+            continue;
+        }
+        changes.push(Change::Rewrite {
+            path,
+            contents: serde_json::to_string_pretty(&profile)
+                .context("serialize migrated profile")?,
+        });
+    }
+    Ok(changes)
+}
+
+pub(crate) fn migrate_legacy_profile_provider(profile: &mut crate::profiles::ProfileDef) -> bool {
+    if !needs_legacy_profile_provider_migration(profile) {
+        return false;
+    }
+
+    normalize_legacy_dashscope_profile(profile);
+    normalize_legacy_kimi_profile(profile);
+    normalize_legacy_gemini_profile(profile);
+    if profile.provider == "azure" && profile.api_types.iter().any(|item| item == "openai-chat") {
+        let chat_overrides = profile.overrides.remove("openai-chat");
+        profile.api_types.retain(|item| item != "openai-chat");
+        if !profile
+            .api_types
+            .iter()
+            .any(|item| item == "openai-responses")
+        {
+            profile.api_types.push("openai-responses".to_string());
+            if let Some(overrides) = chat_overrides {
+                profile
+                    .overrides
+                    .entry("openai-responses".to_string())
+                    .or_insert(overrides);
+            }
+        }
+    }
+    true
+}
+
+fn needs_legacy_profile_provider_migration(profile: &crate::profiles::ProfileDef) -> bool {
+    profile.provider == LEGACY_QWEN_PROVIDER_ID
+        || (profile.provider == DASHSCOPE_PROVIDER_ID
+            && (profile.label == LEGACY_QWEN_LABEL
+                || profile.overrides.values().any(|overrides| {
+                    matches!(
+                        overrides.endpoint_id.as_deref(),
+                        Some("coding-global" | "coding-cn" | "standard-global" | "standard-cn")
+                    )
+                })))
+        || profile.provider == LEGACY_KIMI_PROVIDER_ID
+        || (profile.provider == GEMINI_PROVIDER_ID
+            && (profile.auth_mode == crate::profiles::AuthMode::OauthViaCli
+                || profile.overrides.values().any(|overrides| {
+                    overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID)
+                })))
+        || (profile.provider == "azure"
+            && profile.api_types.iter().any(|item| item == "openai-chat"))
+}
+
+fn normalize_legacy_dashscope_profile(profile: &mut crate::profiles::ProfileDef) {
+    if profile.provider == LEGACY_QWEN_PROVIDER_ID {
+        profile.provider = DASHSCOPE_PROVIDER_ID.to_string();
+    }
+    if profile.provider != DASHSCOPE_PROVIDER_ID {
+        return;
+    }
+    if profile.label == LEGACY_QWEN_LABEL {
+        profile.label = DASHSCOPE_LABEL.to_string();
+    }
+    for overrides in profile.overrides.values_mut() {
+        overrides.endpoint_id = match overrides.endpoint_id.as_deref() {
+            Some("coding-global") => Some("coding-plan".to_string()),
+            Some("coding-cn") => Some("coding-plan-cn".to_string()),
+            Some("standard-global") => Some("token-plan".to_string()),
+            Some("standard-cn") => Some("token-plan-cn".to_string()),
+            _ => overrides.endpoint_id.clone(),
+        };
+    }
+}
+
+fn normalize_legacy_kimi_profile(profile: &mut crate::profiles::ProfileDef) {
+    if profile.provider != LEGACY_KIMI_PROVIDER_ID {
+        return;
+    }
+    profile.provider = MOONSHOT_PROVIDER_ID.to_string();
+    if !profile.api_types.iter().any(|item| item == "anthropic") {
+        return;
+    }
+    let overrides = profile
+        .overrides
+        .entry("anthropic".to_string())
+        .or_default();
+    if matches!(overrides.endpoint_id.as_deref(), None | Some("anthropic")) {
+        overrides.endpoint_id = Some(KIMI_CODING_ENDPOINT_ID.to_string());
+    }
+    if overrides
+        .base_url
+        .as_deref()
+        .map(|value| value.trim_end_matches('/'))
+        == Some(KIMI_CODING_LEGACY_BASE_URL)
+    {
+        overrides.base_url = None;
+    }
+}
+
+fn normalize_legacy_gemini_profile(profile: &mut crate::profiles::ProfileDef) {
+    if profile.provider != GEMINI_PROVIDER_ID {
+        return;
+    }
+    if profile.auth_mode == crate::profiles::AuthMode::OauthViaCli {
+        profile.auth_mode = crate::profiles::AuthMode::GoogleOauth;
+    }
+    for overrides in profile.overrides.values_mut() {
+        if overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID) {
+            overrides.endpoint_id = Some(GEMINI_API_ENDPOINT_ID.to_string());
+        }
+    }
+}
+
 fn create_backup<'a>(
     data_dir: &Path,
-    sources: impl IntoIterator<Item = &'a PathBuf>,
+    sources: impl IntoIterator<Item = &'a Path>,
 ) -> Result<PathBuf> {
     let backup_root = data_dir.join("migration-backups");
     create_private_dir(&backup_root)?;
@@ -80,23 +247,22 @@ fn create_backup<'a>(
     Ok(backup_dir)
 }
 
-fn apply_state_change(change: &StateChange) -> Result<()> {
-    if change.target.exists() {
-        std::fs::remove_file(&change.source)
-            .with_context(|| format!("remove migrated {}", change.source.display()))?;
-        return Ok(());
+fn apply_change(change: Change) -> Result<()> {
+    match change {
+        Change::Rewrite { path, contents } => crate::file_replace::write_private(&path, contents)
+            .with_context(|| format!("write migrated {}", path.display())),
+        Change::MoveState { source, target } => {
+            if target.exists() {
+                return std::fs::remove_file(&source)
+                    .with_context(|| format!("remove migrated {}", source.display()));
+            }
+            if let Some(parent) = target.parent() {
+                create_private_dir(parent)?;
+            }
+            std::fs::rename(&source, &target)
+                .with_context(|| format!("move {} to {}", source.display(), target.display()))
+        }
     }
-
-    if let Some(parent) = change.target.parent() {
-        create_private_dir(parent)?;
-    }
-    std::fs::rename(&change.source, &change.target).with_context(|| {
-        format!(
-            "move {} to {}",
-            change.source.display(),
-            change.target.display()
-        )
-    })
 }
 
 fn create_private_dir(path: &Path) -> Result<()> {
@@ -188,6 +354,84 @@ mod tests {
         assert_eq!(backup_dirs(&dir).len(), 1);
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn backs_up_then_rewrites_legacy_provider_profiles_once() {
+        let dir = test_dir();
+        std::fs::create_dir_all(dir.join("profiles")).unwrap();
+        let legacy_path = dir.join("profiles/qwen-old.json");
+        std::fs::write(
+            &legacy_path,
+            r#"{
+  "id": "qwen-old",
+  "label": "Qwen / DashScope",
+  "provider": "qwen",
+  "auth_mode": "api_key",
+  "api_types": ["openai-chat"],
+  "credentials": { "api_key": "secret" },
+  "overrides": {
+    "openai-chat": { "endpoint_id": "standard-cn" }
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("profiles/current.json"),
+            r#"{
+  "id": "current",
+  "label": "Current",
+  "provider": "deepseek",
+  "auth_mode": "api_key",
+  "api_types": ["openai-chat"]
+}"#,
+        )
+        .unwrap();
+
+        run_at(&dir).unwrap();
+
+        let migrated: crate::profiles::ProfileDef =
+            serde_json::from_str(&std::fs::read_to_string(&legacy_path).unwrap()).unwrap();
+        assert_eq!(migrated.provider, "dashscope");
+        assert_eq!(migrated.label, "Alibaba DashScope");
+        assert_eq!(
+            migrated.overrides["openai-chat"].endpoint_id.as_deref(),
+            Some("token-plan-cn")
+        );
+        assert_eq!(migrated.credentials["api_key"], "secret");
+
+        let backups = backup_dirs(&dir);
+        assert_eq!(backups.len(), 1);
+        let original = std::fs::read_to_string(backups[0].join("profiles/qwen-old.json")).unwrap();
+        assert!(original.contains("\"provider\": \"qwen\""));
+        assert!(!backups[0].join("profiles/current.json").exists());
+
+        run_at(&dir).unwrap();
+        assert_eq!(backup_dirs(&dir).len(), 1);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn migrates_legacy_azure_api_type() {
+        let mut profile: crate::profiles::ProfileDef = serde_json::from_value(serde_json::json!({
+            "id": "azure-old",
+            "label": "Azure",
+            "provider": "azure",
+            "auth_mode": "api_key",
+            "api_types": ["openai-chat"],
+            "overrides": {
+                "openai-chat": { "model": "gpt-5" }
+            }
+        }))
+        .unwrap();
+
+        assert!(migrate_legacy_profile_provider(&mut profile));
+        assert_eq!(profile.api_types, ["openai-responses"]);
+        assert_eq!(
+            profile.overrides["openai-responses"].model.as_deref(),
+            Some("gpt-5")
+        );
     }
 
     fn backup_dirs(data_dir: &Path) -> Vec<PathBuf> {

@@ -25,18 +25,6 @@ use std::collections::HashSet;
 
 use crate::{agent_state, config};
 
-const DASHSCOPE_PROVIDER_ID: &str = "dashscope";
-const DASHSCOPE_LABEL: &str = "Alibaba DashScope";
-const LEGACY_QWEN_PROVIDER_ID: &str = "qwen";
-const LEGACY_QWEN_LABEL: &str = "Qwen / DashScope";
-const MOONSHOT_PROVIDER_ID: &str = "moonshot";
-const LEGACY_KIMI_PROVIDER_ID: &str = "kimi";
-const KIMI_CODING_ENDPOINT_ID: &str = "kimi-coding";
-const KIMI_CODING_LEGACY_BASE_URL: &str = "https://api.kimi.com/coding";
-const GEMINI_PROVIDER_ID: &str = "gemini";
-const GEMINI_API_ENDPOINT_ID: &str = "gemini-api";
-const LEGACY_GEMINI_OPENAI_ENDPOINT_ID: &str = "openai-compatible";
-
 #[derive(Debug, thiserror::Error)]
 pub enum ProfileStoreError {
     #[error("{0}")]
@@ -47,7 +35,7 @@ pub enum ProfileStoreError {
 
 /// Load a saved profile and persist any supported legacy migration.
 pub fn load_profile(id: &str) -> Option<ProfileDef> {
-    schema::load(id).map(normalize_legacy_profile_and_persist)
+    schema::load(id)
 }
 
 pub fn save_profile(profile: &ProfileDef) -> Result<(), ProfileStoreError> {
@@ -102,7 +90,6 @@ pub fn set_profile_connection(
 ) -> Result<bool, ProfileStoreError> {
     let mut invalid = None;
     let updated = schema::update(profile_id, |profile| {
-        *profile = normalize_legacy_profile(profile.clone());
         let preference =
             connections::sanitize_profile_connection_preference(profile, agent_id, preference)
                 .map_err(|error| {
@@ -240,66 +227,13 @@ fn clear_profile_references(root: &mut serde_json::Value, profile_id: &str) -> R
     agent_state::remove_profile_references_from_settings(root, profile_id)
 }
 
-pub fn normalize_legacy_profile(mut profile: ProfileDef) -> ProfileDef {
-    normalize_legacy_dashscope_profile(&mut profile);
-    normalize_legacy_kimi_profile(&mut profile);
-    normalize_legacy_gemini_profile(&mut profile);
-
-    if profile.provider == "azure" && profile.api_types.iter().any(|t| t == "openai-chat") {
-        let chat_overrides = profile.overrides.remove("openai-chat");
-        profile.api_types.retain(|t| t != "openai-chat");
-        if !profile.api_types.iter().any(|t| t == "openai-responses") {
-            profile.api_types.push("openai-responses".to_string());
-            if let Some(overrides) = chat_overrides {
-                profile
-                    .overrides
-                    .entry("openai-responses".to_string())
-                    .or_insert(overrides);
-            }
-        }
-    }
-    profile
-}
-
-fn normalize_legacy_profile_and_persist(profile: ProfileDef) -> ProfileDef {
-    let should_persist_profile_migration = needs_dashscope_profile_persist(&profile)
-        || needs_kimi_profile_persist(&profile)
-        || needs_gemini_profile_persist(&profile);
-    let profile = normalize_legacy_profile(profile);
-
-    // TODO(0.6.x): remove these legacy provider migrations once old profile
-    // files have had a release window to be rewritten on load.
-    if should_persist_profile_migration {
-        let id = profile.id.clone();
-        match schema::update(&id, |current| {
-            *current = normalize_legacy_profile(current.clone());
-            Ok(current.clone())
-        }) {
-            Ok(Some(current)) => return current,
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!(
-                    "[profiles] failed to persist legacy profile migration for '{}': {}",
-                    profile.id,
-                    error
-                );
-            }
-        }
-    }
-
-    profile
-}
-
 /// List saved profiles using the user's Launch/Tray ordering.
 ///
 /// `schema::list()` intentionally has a stable fallback sort by label for
 /// raw storage reads. Product surfaces should call this helper instead so
 /// the `settings.json.profile_order` preference is respected consistently.
 pub fn ordered_profiles() -> Vec<ProfileDef> {
-    let mut remaining: Vec<_> = schema::list()
-        .into_iter()
-        .map(normalize_legacy_profile_and_persist)
-        .collect();
+    let mut remaining = schema::list();
     let mut out = Vec::new();
 
     for id in read_profile_order() {
@@ -331,102 +265,6 @@ fn read_profile_order() -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn normalize_legacy_dashscope_profile(profile: &mut ProfileDef) {
-    if profile.provider == LEGACY_QWEN_PROVIDER_ID {
-        profile.provider = DASHSCOPE_PROVIDER_ID.to_string();
-    }
-    if profile.provider != DASHSCOPE_PROVIDER_ID {
-        return;
-    }
-
-    if profile.label == LEGACY_QWEN_LABEL {
-        profile.label = DASHSCOPE_LABEL.to_string();
-    }
-
-    for overrides in profile.overrides.values_mut() {
-        let Some(endpoint_id) = overrides.endpoint_id.as_deref() else {
-            continue;
-        };
-        let next = match endpoint_id {
-            "coding-global" => "coding-plan",
-            "coding-cn" => "coding-plan-cn",
-            "standard-global" => "token-plan",
-            "standard-cn" => "token-plan-cn",
-            _ => continue,
-        };
-        overrides.endpoint_id = Some(next.to_string());
-    }
-}
-
-fn normalize_legacy_kimi_profile(profile: &mut ProfileDef) {
-    if profile.provider != LEGACY_KIMI_PROVIDER_ID {
-        return;
-    }
-
-    profile.provider = MOONSHOT_PROVIDER_ID.to_string();
-    if profile
-        .api_types
-        .iter()
-        .any(|api_type| api_type == "anthropic")
-    {
-        let overrides = profile
-            .overrides
-            .entry("anthropic".to_string())
-            .or_default();
-        if matches!(overrides.endpoint_id.as_deref(), None | Some("anthropic")) {
-            overrides.endpoint_id = Some(KIMI_CODING_ENDPOINT_ID.to_string());
-        }
-        if overrides
-            .base_url
-            .as_deref()
-            .map(|base_url| base_url.trim_end_matches('/'))
-            == Some(KIMI_CODING_LEGACY_BASE_URL)
-        {
-            overrides.base_url = None;
-        }
-    }
-}
-
-fn normalize_legacy_gemini_profile(profile: &mut ProfileDef) {
-    if profile.provider != GEMINI_PROVIDER_ID {
-        return;
-    }
-
-    if profile.auth_mode == schema::AuthMode::OauthViaCli {
-        profile.auth_mode = schema::AuthMode::GoogleOauth;
-    }
-
-    for overrides in profile.overrides.values_mut() {
-        if overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID) {
-            overrides.endpoint_id = Some(GEMINI_API_ENDPOINT_ID.to_string());
-        }
-    }
-}
-
-fn needs_dashscope_profile_persist(profile: &ProfileDef) -> bool {
-    profile.provider == LEGACY_QWEN_PROVIDER_ID
-        || (profile.provider == DASHSCOPE_PROVIDER_ID
-            && (profile.label == LEGACY_QWEN_LABEL
-                || profile.overrides.values().any(|overrides| {
-                    matches!(
-                        overrides.endpoint_id.as_deref(),
-                        Some("coding-global" | "coding-cn" | "standard-global" | "standard-cn")
-                    )
-                })))
-}
-
-fn needs_kimi_profile_persist(profile: &ProfileDef) -> bool {
-    profile.provider == LEGACY_KIMI_PROVIDER_ID
-}
-
-fn needs_gemini_profile_persist(profile: &ProfileDef) -> bool {
-    profile.provider == GEMINI_PROVIDER_ID
-        && (profile.auth_mode == schema::AuthMode::OauthViaCli
-            || profile.overrides.values().any(|overrides| {
-                overrides.endpoint_id.as_deref() == Some(LEGACY_GEMINI_OPENAI_ENDPOINT_ID)
-            }))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -449,7 +287,7 @@ mod tests {
         );
         let profile = ProfileDef {
             id: "qwen-old".to_string(),
-            label: LEGACY_QWEN_LABEL.to_string(),
+            label: "Qwen / DashScope".to_string(),
             provider: "qwen".to_string(),
             auth_mode: AuthMode::ApiKey,
             api_types: vec!["openai-chat".to_string()],
@@ -461,10 +299,13 @@ mod tests {
             connections: Default::default(),
         };
 
-        let profile = normalize_legacy_profile(profile);
+        let mut profile = profile;
+        assert!(crate::migration::migrate_legacy_profile_provider(
+            &mut profile
+        ));
 
         assert_eq!(profile.provider, "dashscope");
-        assert_eq!(profile.label, DASHSCOPE_LABEL);
+        assert_eq!(profile.label, "Alibaba DashScope");
         assert_eq!(
             profile
                 .overrides
@@ -490,7 +331,10 @@ mod tests {
             connections: Default::default(),
         };
 
-        let profile = normalize_legacy_profile(profile);
+        let mut profile = profile;
+        assert!(crate::migration::migrate_legacy_profile_provider(
+            &mut profile
+        ));
 
         assert_eq!(profile.provider, "dashscope");
         assert_eq!(profile.label, "Work DashScope");
@@ -523,7 +367,10 @@ mod tests {
             connections: Default::default(),
         };
 
-        let profile = normalize_legacy_profile(profile);
+        let mut profile = profile;
+        assert!(crate::migration::migrate_legacy_profile_provider(
+            &mut profile
+        ));
 
         assert_eq!(profile.provider, "moonshot");
         let overrides = profile
@@ -562,7 +409,10 @@ mod tests {
             connections: Default::default(),
         };
 
-        let profile = normalize_legacy_profile(profile);
+        let mut profile = profile;
+        assert!(crate::migration::migrate_legacy_profile_provider(
+            &mut profile
+        ));
 
         assert_eq!(
             profile
@@ -589,7 +439,10 @@ mod tests {
             connections: Default::default(),
         };
 
-        let profile = normalize_legacy_profile(profile);
+        let mut profile = profile;
+        assert!(crate::migration::migrate_legacy_profile_provider(
+            &mut profile
+        ));
 
         assert_eq!(profile.auth_mode, AuthMode::GoogleOauth);
     }
