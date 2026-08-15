@@ -76,21 +76,6 @@ test("keeps undetected desktop agents hidden without a manual path", () => {
   expect(visible.map(({ id }) => id)).toEqual(["codex", "codex-desktop"]);
 });
 
-test("supports the legacy executable path preference", () => {
-  const visible = visibleLaunchAgents(
-    agents,
-    new Set<string>(),
-    null,
-    {
-      "claude-desktop": {
-        executablePath: "/Applications/Claude.app",
-      },
-    },
-  );
-
-  expect(visible.map(({ id }) => id)).toEqual(["claude-desktop"]);
-});
-
 test("only offers desktop agents that are not already visible", () => {
   const addable = addableDesktopAgents(agents, [
     agent("codex", false),

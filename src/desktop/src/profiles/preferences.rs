@@ -60,8 +60,6 @@ pub struct AgentLaunchPreferenceSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub executable_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub executable: Option<AgentExecutablePreferenceSummary>,
     #[serde(skip_serializing_if = "agent_state::AgentLaunchArgs::is_empty")]
     pub launch_args: agent_state::AgentLaunchArgs,
@@ -171,15 +169,12 @@ fn summarize_agent_preferences(
         let executable = stored
             .and_then(|_| agent_state::resolve_agent_executable(agent_prefs, &agent_id))
             .map(executable_summary);
-        let executable_path = executable
-            .as_ref()
-            .map(|executable| executable.path.clone());
         let launch_args = stored
             .map(|preference| preference.launch_args.clone())
             .unwrap_or_default();
         if profile_id.is_some()
             || workspace.is_some()
-            || executable_path.is_some()
+            || executable.is_some()
             || !launch_args.is_empty()
         {
             out.insert(
@@ -187,7 +182,6 @@ fn summarize_agent_preferences(
                 AgentLaunchPreferenceSummary {
                     profile_id,
                     workspace,
-                    executable_path,
                     executable,
                     launch_args,
                 },

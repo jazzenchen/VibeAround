@@ -909,7 +909,6 @@ export function AgentLaunchBuilder({
   };
   const selectedExecutablePath =
     selectedAgentPreference?.executable?.path ??
-    selectedAgentPreference?.executablePath ??
     (selectedAgentIsDirectOnly
       ? desktopAppPathForAgent(agentId)
       : currentAgentExecutable?.selected?.path);
