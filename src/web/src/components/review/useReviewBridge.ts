@@ -133,17 +133,22 @@ export function useReviewBridge(
     resetTransport();
   }, [resetTransport]);
 
+  const discardDrafts = useCallback(() => {
+    draftsRef.current = [];
+    setDrafts([]);
+  }, []);
+
   const prepareFrame = useCallback(() => {
     documentIdRef.current = null;
+    discardDrafts();
     rotateChannel();
-  }, [rotateChannel]);
+  }, [discardDrafts, rotateChannel]);
 
   useLayoutEffect(() => {
     if (targetIdRef.current === target.id) return;
     targetIdRef.current = target.id;
-    draftsRef.current = [];
-    setDrafts([]);
-  }, [target.id]);
+    discardDrafts();
+  }, [discardDrafts, target.id]);
 
   const handleFrameLoad = useCallback(() => {
     const documentId = documentIdRef.current;

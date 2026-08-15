@@ -9,6 +9,7 @@ import { reviewHelloStartsNewEpoch } from "../src/components/review/useReviewBri
 import { previewSocketUrl } from "../src/preview/usePreviewChatConnection";
 import {
   buildPreviewReviewPrompt,
+  confirmManualPreviewRefresh,
   previewReviewDisplay,
 } from "../src/preview/previewReview";
 import {
@@ -253,4 +254,20 @@ test("Preview refresh is an explicit chat event", () => {
   expect(ChatEventSchema.parse({ kind: "preview_refresh" })).toEqual({
     kind: "preview_refresh",
   });
+});
+
+test("manual Preview refresh confirms only when it will discard drafts", () => {
+  let prompt = "";
+  expect(
+    confirmManualPreviewRefresh(false, () => {
+      throw new Error("confirm should not be called without drafts");
+    }),
+  ).toBe(true);
+  expect(
+    confirmManualPreviewRefresh(true, (message) => {
+      prompt = message;
+      return false;
+    }),
+  ).toBe(false);
+  expect(prompt).toContain("clear all review drafts");
 });

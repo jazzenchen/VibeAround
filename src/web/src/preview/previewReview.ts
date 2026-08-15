@@ -6,6 +6,16 @@ function compact(value: string | undefined) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+export function confirmManualPreviewRefresh(
+  hasDrafts: boolean,
+  confirm: (message: string) => boolean = (message) => window.confirm(message),
+) {
+  return (
+    !hasDrafts ||
+    confirm("Refreshing this Preview will clear all review drafts. Continue?")
+  );
+}
+
 function appendPromptLocation(lines: string[], anchor: ReviewAnchor) {
   if (anchor.page?.path) {
     lines.push(`Page: ${anchor.page.path}${anchor.page.hash ?? ""}`);

@@ -20,6 +20,7 @@ import {
   refreshedPreviewSlug,
   type PreviewBootstrap,
 } from "./previewTypes";
+import { confirmManualPreviewRefresh } from "./previewReview";
 import { usePreviewChatConnection } from "./usePreviewChatConnection";
 import {
   rememberServerPreviewConsent,
@@ -146,7 +147,7 @@ function PreviewWorkspace({
     window.sessionStorage,
   );
 
-  const refreshPreview = useCallback(async () => {
+  const reloadPreview = useCallback(async () => {
     const nextBootstrap = await onRefreshBootstrap(selected.slug);
     if (!nextBootstrap) return;
     const nextSlug = refreshedPreviewSlug(nextBootstrap, selected.slug);
@@ -163,7 +164,11 @@ function PreviewWorkspace({
       );
     }
   }, [onRefreshBootstrap, review.prepareFrame, selected.slug]);
-  const chat = usePreviewChatConnection(selected.slug, refreshPreview);
+  const refreshPreview = useCallback(async () => {
+    if (!confirmManualPreviewRefresh(review.drafts.length > 0)) return;
+    await reloadPreview();
+  }, [reloadPreview, review.drafts.length]);
+  const chat = usePreviewChatConnection(selected.slug, reloadPreview);
 
   useEffect(() => {
     document.title = `Preview — ${selected.title}`;
