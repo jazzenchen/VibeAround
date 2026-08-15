@@ -30,7 +30,7 @@ fn run_at(data_dir: &Path) -> Result<()> {
         .with_context(|| format!("lock migrations in {}", data_dir.display()))?;
 
     let mut changes = legacy_state_changes(data_dir);
-    changes.extend(legacy_profile_provider_changes(data_dir)?);
+    changes.extend(legacy_profile_changes(data_dir)?);
     if changes.is_empty() {
         return Ok(());
     }
@@ -70,7 +70,7 @@ fn legacy_state_changes(data_dir: &Path) -> Vec<Change> {
         .collect()
 }
 
-fn legacy_profile_provider_changes(data_dir: &Path) -> Result<Vec<Change>> {
+fn legacy_profile_changes(data_dir: &Path) -> Result<Vec<Change>> {
     let profiles_dir = data_dir.join("profiles");
     let entries = match std::fs::read_dir(&profiles_dir) {
         Ok(entries) => entries,
@@ -96,7 +96,10 @@ fn legacy_profile_provider_changes(data_dir: &Path) -> Result<Vec<Change>> {
                 continue;
             }
         };
-        if !migrate_legacy_profile_provider(&mut profile) {
+        let provider_changed = migrate_legacy_profile_provider(&mut profile);
+        let api_config_count = profile.api_configs.len();
+        crate::profiles::schema::hydrate_legacy_api_configs(&mut profile);
+        if !provider_changed && profile.api_configs.len() == api_config_count {
             continue;
         }
         changes.push(Change::Rewrite {
@@ -396,7 +399,10 @@ mod tests {
   "label": "Current",
   "provider": "deepseek",
   "auth_mode": "api_key",
-  "api_types": ["openai-chat"]
+  "api_types": ["openai-chat"],
+  "api_configs": {
+    "openai-chat": { "enabled": true }
+  }
 }"#,
         )
         .unwrap();
@@ -409,6 +415,10 @@ mod tests {
         assert_eq!(migrated.label, "Alibaba DashScope");
         assert_eq!(
             migrated.overrides["openai-chat"].endpoint_id.as_deref(),
+            Some("token-plan-cn")
+        );
+        assert_eq!(
+            migrated.api_configs["openai-chat"].endpoint_id.as_deref(),
             Some("token-plan-cn")
         );
         assert_eq!(migrated.credentials["api_key"], "secret");

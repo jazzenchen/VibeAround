@@ -522,8 +522,7 @@ impl From<&RouteKey> for AgentAttachedRoute {
 }
 
 pub fn agent_profile_label(profile_id: Option<&str>) -> Option<String> {
-    let profile = common::profiles::schema::load(profile_id?)?;
-    Some(common::profiles::normalize_legacy_profile(profile).label)
+    common::profiles::load_profile(profile_id?).map(|profile| profile.label)
 }
 
 #[derive(Debug, Clone, Serialize)]

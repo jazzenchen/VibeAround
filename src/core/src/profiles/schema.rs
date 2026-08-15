@@ -136,21 +136,17 @@ pub struct ProfileDef {
     /// not yet supported in v1; UI gates this.
     pub provider: String,
     pub auth_mode: AuthMode,
-    /// Which CLI launch targets this credential is good for. Internally these
-    /// are still keyed by the API/config shape each target needs.
+    /// Legacy migration input. Normal profile code uses `api_configs` only.
     pub api_types: Vec<String>,
     /// Free-form credentials — `api_key` is the only field used by v1
     /// catalog entries, but we keep the bag generic so future plugins can
     /// declare custom field names without a schema migration.
     #[serde(default)]
     pub credentials: BTreeMap<String, String>,
-    /// Optional per-api-type overrides for `base_url` / `model`. Empty ==
-    /// inherit catalog defaults.
+    /// Legacy migration input. Normal profile code uses `api_configs` only.
     #[serde(default)]
     pub overrides: BTreeMap<String, ApiTypeOverrides>,
-    /// Materialized editable API configs cloned from the provider catalog.
-    /// Legacy `api_types` + `overrides` remain the compatibility source for
-    /// older profile files and are projected into this map on load/save.
+    /// Editable API configs cloned from the provider catalog.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub api_configs: BTreeMap<String, ProfileApiConfig>,
     /// When true, provider-bound requests for this profile use the global
@@ -220,16 +216,13 @@ pub fn validate(profile: &ProfileDef) -> anyhow::Result<()> {
     if profile.label.trim().is_empty() {
         bail!("profile label must not be empty");
     }
-    if profile.api_types.is_empty() {
+    if !profile.api_configs.values().any(|config| config.enabled) {
         bail!("profile must declare at least one api kind");
     }
     Ok(())
 }
 
 pub fn enabled_api_types(profile: &ProfileDef) -> Vec<String> {
-    if profile.api_configs.is_empty() {
-        return profile.api_types.clone();
-    }
     profile
         .api_configs
         .iter()
@@ -238,19 +231,11 @@ pub fn enabled_api_types(profile: &ProfileDef) -> Vec<String> {
         .collect()
 }
 
-pub fn api_config_for(
-    profile: &ProfileDef,
-    provider: &catalog::ProviderCatalog,
-    api_type: &str,
-) -> Option<ProfileApiConfig> {
-    profile
-        .api_configs
-        .get(api_type)
-        .cloned()
-        .or_else(|| legacy_api_config(profile, provider, api_type))
+pub fn api_config_for(profile: &ProfileDef, api_type: &str) -> Option<ProfileApiConfig> {
+    profile.api_configs.get(api_type).cloned()
 }
 
-pub fn hydrate_api_configs(profile: &mut ProfileDef) {
+pub(crate) fn hydrate_legacy_api_configs(profile: &mut ProfileDef) {
     let Some(provider) = catalog::get(&profile.provider) else {
         return;
     };
@@ -427,9 +412,8 @@ pub fn load(id: &str) -> Option<ProfileDef> {
 
 fn load_path(path: &Path) -> anyhow::Result<ProfileDef> {
     let body = std::fs::read_to_string(path).with_context(|| format!("read {:?}", path))?;
-    let mut profile: ProfileDef =
+    let profile: ProfileDef =
         serde_json::from_str(&body).with_context(|| format!("parse {:?}", path))?;
-    hydrate_api_configs(&mut profile);
     Ok(profile)
 }
 
@@ -474,7 +458,6 @@ fn update_at<T>(
     };
     let mut profile: ProfileDef =
         serde_json::from_str(&body).with_context(|| format!("parse {:?}", target))?;
-    hydrate_api_configs(&mut profile);
     if profile.id != id {
         bail!(
             "profile id '{}' does not match filename stem '{}'",
@@ -498,10 +481,8 @@ fn update_at<T>(
 }
 
 fn serialize_profile(profile: &ProfileDef) -> anyhow::Result<String> {
-    let mut profile = profile.clone();
-    hydrate_api_configs(&mut profile);
     validate(&profile)?;
-    serde_json::to_string_pretty(&profile).context("serialize profile")
+    serde_json::to_string_pretty(profile).context("serialize profile")
 }
 
 fn ensure_profiles_dir(dir: &Path) -> anyhow::Result<()> {
@@ -618,7 +599,10 @@ mod tests {
             "label": label,
             "provider": "test",
             "auth_mode": "api_key",
-            "api_types": ["openai-chat"]
+            "api_types": ["openai-chat"],
+            "api_configs": {
+                "openai-chat": { "enabled": true }
+            }
         }))
         .unwrap()
     }
@@ -698,7 +682,7 @@ mod tests {
         )
         .unwrap();
 
-        hydrate_api_configs(&mut profile);
+        hydrate_legacy_api_configs(&mut profile);
 
         let anthropic = profile.api_configs.get("anthropic").unwrap();
         assert!(anthropic.enabled);

@@ -112,11 +112,12 @@ fn validate_profile(profile: &ProfileDef) -> Result<(), ProfileStoreError> {
     let provider = catalog::get(&profile.provider).ok_or_else(|| {
         ProfileStoreError::Invalid(format!("unknown provider '{}'", profile.provider))
     })?;
-    for api_type in &profile.api_types {
-        let endpoint_id = profile
-            .overrides
-            .get(api_type)
-            .and_then(|overrides| overrides.endpoint_id.as_deref());
+    for (api_type, config) in profile
+        .api_configs
+        .iter()
+        .filter(|(_, config)| config.enabled)
+    {
+        let endpoint_id = config.endpoint_id.as_deref();
         if catalog::find_endpoint(provider, api_type, endpoint_id).is_none() {
             let suffix = endpoint_id
                 .map(|id| format!(" endpoint_id '{id}'"))

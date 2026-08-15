@@ -132,16 +132,10 @@ pub(super) fn upstream_endpoint(
             format!("unknown provider '{}'", profile.provider),
         )
     })?;
-    let api_config = schema::api_config_for(&profile, provider, target_api_type);
+    let api_config = schema::api_config_for(&profile, target_api_type);
     let endpoint_id = api_config
         .as_ref()
-        .and_then(|config| config.endpoint_id.as_deref())
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.endpoint_id.as_deref())
-        });
+        .and_then(|config| config.endpoint_id.as_deref());
     let endpoint =
         catalog::find_endpoint(provider, target_api_type, endpoint_id).ok_or_else(|| {
             let suffix = endpoint_id
@@ -158,12 +152,6 @@ pub(super) fn upstream_endpoint(
     let base_url = api_config
         .as_ref()
         .and_then(|config| config.base_url.clone())
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.base_url.clone())
-        })
         .unwrap_or_else(|| endpoint.default_base_url.clone());
     let base_url = base_url.trim_end_matches('/');
     if base_url.is_empty() {

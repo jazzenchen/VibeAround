@@ -129,7 +129,7 @@ fn api_type_warnings(
         return warnings;
     };
     for api_type in schema::enabled_api_types(profile) {
-        let endpoint_id = selected_endpoint_id(profile, Some(provider), &api_type);
+        let endpoint_id = selected_endpoint_id(profile, &api_type);
         if let Some(endpoint) = catalog::find_endpoint(provider, &api_type, endpoint_id.as_deref())
         {
             if let Some(warning) = &endpoint.compatibility_warning {
@@ -148,17 +148,10 @@ fn api_type_models(
         .iter()
         .filter_map(|api_type| {
             let endpoint = endpoint_for(profile, provider, api_type);
-            let config = api_config_for(profile, provider, api_type);
+            let config = api_config_for(profile, api_type);
             let model = config
                 .as_ref()
                 .and_then(|config| clean_string(config.model.as_deref()))
-                .or_else(|| {
-                    profile
-                        .overrides
-                        .get(api_type)
-                        .and_then(|overrides| overrides.model.as_ref())
-                        .and_then(|model| clean_string(Some(model)))
-                })
                 .or_else(|| {
                     config.as_ref().and_then(|config| {
                         config
@@ -186,7 +179,7 @@ fn api_type_model_options(
     schema::enabled_api_types(profile)
         .iter()
         .filter_map(|api_type| {
-            let config = api_config_for(profile, provider, api_type);
+            let config = api_config_for(profile, api_type);
             let mut models = config
                 .as_ref()
                 .map(|config| {
@@ -206,13 +199,6 @@ fn api_type_model_options(
             if let Some(model) = config
                 .as_ref()
                 .and_then(|config| clean_string(config.model.as_deref()))
-                .or_else(|| {
-                    profile
-                        .overrides
-                        .get(api_type)
-                        .and_then(|overrides| overrides.model.as_ref())
-                        .and_then(|model| clean_string(Some(model)))
-                })
             {
                 if !models.iter().any(|item| item.id == model) {
                     models.insert(
@@ -273,33 +259,17 @@ fn endpoint_for<'a>(
     api_type: &str,
 ) -> Option<&'a catalog::EndpointDef> {
     provider.and_then(|catalog| {
-        let endpoint_id = selected_endpoint_id(profile, Some(catalog), api_type);
+        let endpoint_id = selected_endpoint_id(profile, api_type);
         catalog::find_endpoint(catalog, api_type, endpoint_id.as_deref())
     })
 }
 
-fn api_config_for(
-    profile: &ProfileDef,
-    provider: Option<&catalog::ProviderCatalog>,
-    api_type: &str,
-) -> Option<schema::ProfileApiConfig> {
-    let provider = provider?;
-    schema::api_config_for(profile, provider, api_type).filter(|config| config.enabled)
+fn api_config_for(profile: &ProfileDef, api_type: &str) -> Option<schema::ProfileApiConfig> {
+    schema::api_config_for(profile, api_type).filter(|config| config.enabled)
 }
 
-fn selected_endpoint_id(
-    profile: &ProfileDef,
-    provider: Option<&catalog::ProviderCatalog>,
-    api_type: &str,
-) -> Option<String> {
-    api_config_for(profile, provider, api_type)
-        .and_then(|config| config.endpoint_id)
-        .or_else(|| {
-            profile
-                .overrides
-                .get(api_type)
-                .and_then(|overrides| overrides.endpoint_id.clone())
-        })
+fn selected_endpoint_id(profile: &ProfileDef, api_type: &str) -> Option<String> {
+    api_config_for(profile, api_type).and_then(|config| config.endpoint_id)
 }
 
 fn clean_string(value: Option<&str>) -> Option<String> {

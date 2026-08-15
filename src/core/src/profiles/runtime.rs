@@ -33,7 +33,10 @@ pub fn render_for_launch_api_type(
             api_type
         );
     }
-    if !profile.api_types.iter().any(|t| t == api_type)
+    if !profile
+        .api_configs
+        .get(api_type)
+        .is_some_and(|config| config.enabled)
         || !provider.endpoints.iter().any(|e| e.api_type == api_type)
     {
         bail!(
@@ -216,7 +219,10 @@ pub fn api_type_for_launch_target<'a>(
     let candidates = api_types_for_launch_target(launch_target);
 
     for candidate in candidates {
-        if profile.api_types.iter().any(|t| t == candidate)
+        if profile
+            .api_configs
+            .get(*candidate)
+            .is_some_and(|config| config.enabled)
             && provider.endpoints.iter().any(|e| e.api_type == *candidate)
         {
             return Ok(candidate);

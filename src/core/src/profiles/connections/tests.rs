@@ -4,6 +4,18 @@ use super::*;
 use crate::profiles::schema::{AuthMode, ProfileApiConfig, ProfileModelConfig, ProviderSettings};
 
 fn profile(api_types: &[&str]) -> ProfileDef {
+    let api_configs = api_types
+        .iter()
+        .map(|api_type| {
+            (
+                (*api_type).to_string(),
+                ProfileApiConfig {
+                    enabled: true,
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
     ProfileDef {
         id: "profile-test".to_string(),
         label: "Profile Test".to_string(),
@@ -12,7 +24,7 @@ fn profile(api_types: &[&str]) -> ProfileDef {
         api_types: api_types.iter().map(|value| (*value).to_string()).collect(),
         credentials: BTreeMap::new(),
         overrides: BTreeMap::new(),
-        api_configs: BTreeMap::new(),
+        api_configs,
         use_settings_proxy: false,
         provider_settings: ProviderSettings::default(),
         connections: Default::default(),

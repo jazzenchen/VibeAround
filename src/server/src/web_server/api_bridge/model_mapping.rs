@@ -107,20 +107,14 @@ fn route_scope_agent_ids() -> &'static [(&'static str, &'static str)] {
 
 fn canonical_model(profile: &ProfileDef, target_api_type: &str, model: &str) -> Option<String> {
     let provider = catalog::get(&profile.provider)?;
-    if let Some(model_id) = schema::api_config_for(profile, provider, target_api_type)
+    if let Some(model_id) = schema::api_config_for(profile, target_api_type)
         .filter(|config| config.enabled)
         .and_then(|config| canonical_api_config_model_id(&config.models, model))
     {
         return Some(model_id);
     }
-    let endpoint_id = schema::api_config_for(profile, provider, target_api_type)
-        .and_then(|config| config.endpoint_id)
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.endpoint_id.clone())
-        });
+    let endpoint_id =
+        schema::api_config_for(profile, target_api_type).and_then(|config| config.endpoint_id);
     let endpoint = catalog::find_endpoint(provider, target_api_type, endpoint_id.as_deref())?;
     catalog::canonical_model_id(endpoint, model)
 }

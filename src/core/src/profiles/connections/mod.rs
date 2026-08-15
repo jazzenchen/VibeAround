@@ -1,7 +1,7 @@
 //! Profile-to-agent connection routing shared by desktop launch and web
 //! terminal launch.
 //!
-//! A profile's raw `api_types` tell us which provider protocols it exposes.
+//! A profile's enabled API configs tell us which provider protocols it exposes.
 //! A launch target also depends on per-profile agent preferences: which client
 //! protocol the agent should speak and whether VibeAround should bridge that
 //! client protocol to another provider protocol.
@@ -390,12 +390,6 @@ fn default_model(profile: &ProfileDef, target_api_type: &str) -> Option<String> 
             })
         })
         .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| clean_optional_string(overrides.model.as_deref()))
-        })
-        .or_else(|| {
             endpoint_for(profile, target_api_type)?
                 .models
                 .first()
@@ -418,20 +412,13 @@ fn endpoint_for<'a>(
     target_api_type: &str,
 ) -> Option<&'a catalog::EndpointDef> {
     let provider = catalog::get(&profile.provider)?;
-    let endpoint_id = api_config_for(profile, target_api_type)
-        .and_then(|config| config.endpoint_id)
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.endpoint_id.clone())
-        });
+    let endpoint_id =
+        api_config_for(profile, target_api_type).and_then(|config| config.endpoint_id);
     catalog::find_endpoint(provider, target_api_type, endpoint_id.as_deref())
 }
 
 fn api_config_for(profile: &ProfileDef, target_api_type: &str) -> Option<schema::ProfileApiConfig> {
-    let provider = catalog::get(&profile.provider)?;
-    schema::api_config_for(profile, provider, target_api_type).filter(|config| config.enabled)
+    schema::api_config_for(profile, target_api_type).filter(|config| config.enabled)
 }
 
 fn api_config_models(

@@ -83,22 +83,18 @@ fn resolve_bridge_settings(
 ) -> anyhow::Result<BridgeLaunchSettings> {
     let provider = catalog::get(&profile.provider)
         .ok_or_else(|| anyhow!("unknown provider '{}'", profile.provider))?;
-    if !profile
-        .api_types
-        .iter()
-        .any(|api_type| api_type == target_api_type)
-    {
-        bail!(
-            "profile '{}' does not expose bridge target '{}'",
-            profile.id,
-            target_api_type
-        );
-    }
-
-    let endpoint_id = profile
-        .overrides
+    let api_config = profile
+        .api_configs
         .get(target_api_type)
-        .and_then(|overrides| overrides.endpoint_id.as_deref());
+        .filter(|config| config.enabled)
+        .ok_or_else(|| {
+            anyhow!(
+                "profile '{}' does not expose bridge target '{}'",
+                profile.id,
+                target_api_type
+            )
+        })?;
+    let endpoint_id = api_config.endpoint_id.as_deref();
     let endpoint =
         catalog::find_endpoint(provider, target_api_type, endpoint_id).ok_or_else(|| {
             let suffix = endpoint_id
@@ -124,10 +120,16 @@ fn resolve_bridge_settings(
         bail!("profile '{}' has no api_key credential", profile.id);
     }
     let local_api_key = local_bridge_client_key()?;
-    let profile_model = profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| overrides.model.clone())
+    let profile_model = api_config
+        .model
+        .clone()
+        .or_else(|| {
+            api_config
+                .models
+                .iter()
+                .find(|model| model.enabled)
+                .map(|model| model.id.clone())
+        })
         .or_else(|| endpoint.models.first().map(|model| model.id.clone()))
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
@@ -166,10 +168,9 @@ fn resolve_bridge_settings(
             target_api_type
         );
     }
-    let reasoning_effort = profile
-        .overrides
-        .get(target_api_type)
-        .and_then(|overrides| overrides.reasoning_effort.clone())
+    let reasoning_effort = api_config
+        .reasoning_effort
+        .clone()
         .unwrap_or_else(|| "medium".to_string());
 
     Ok(BridgeLaunchSettings {
@@ -599,7 +600,7 @@ fn toml_string(s: &str) -> String {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::profiles::schema::{ApiTypeOverrides, AuthMode, ProfileDef};
+    use crate::profiles::schema::{AuthMode, ProfileApiConfig, ProfileDef};
     use serde_json::Value;
 
     use super::*;
@@ -1016,15 +1017,15 @@ mod tests {
     fn codex_bridge_launch_can_target_native_gemini_api() {
         let mut profile = gemini_profile();
         profile.api_types = vec!["gemini".to_string()];
-        profile.overrides.clear();
-        profile.overrides.insert(
+        profile.api_configs.clear();
+        profile.api_configs.insert(
             "gemini".to_string(),
-            ApiTypeOverrides {
+            ProfileApiConfig {
+                enabled: true,
                 endpoint_id: None,
-                base_url: None,
                 model: Some("gemini-3.1-pro".to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1060,15 +1061,15 @@ mod tests {
     fn codex_desktop_bridge_launch_uses_desktop_scope() {
         let mut profile = gemini_profile();
         profile.api_types = vec!["gemini".to_string()];
-        profile.overrides.clear();
-        profile.overrides.insert(
+        profile.api_configs.clear();
+        profile.api_configs.insert(
             "gemini".to_string(),
-            ApiTypeOverrides {
+            ProfileApiConfig {
+                enabled: true,
                 endpoint_id: None,
-                base_url: None,
                 model: Some("gemini-3.1-pro".to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1095,15 +1096,15 @@ mod tests {
         profile.auth_mode = AuthMode::GoogleOauth;
         profile.credentials.clear();
         profile.api_types = vec!["gemini".to_string()];
-        profile.overrides.clear();
-        profile.overrides.insert(
+        profile.api_configs.clear();
+        profile.api_configs.insert(
             "gemini".to_string(),
-            ApiTypeOverrides {
+            ProfileApiConfig {
+                enabled: true,
                 endpoint_id: Some("google-accounts".to_string()),
-                base_url: None,
                 model: Some("gemini-3.1-pro".to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1215,15 +1216,15 @@ mod tests {
         let mut credentials = BTreeMap::new();
         credentials.insert("api_key".to_string(), "test-key".to_string());
 
-        let mut overrides = BTreeMap::new();
-        overrides.insert(
+        let mut api_configs = BTreeMap::new();
+        api_configs.insert(
             "openai-chat".to_string(),
-            ApiTypeOverrides {
+            ProfileApiConfig {
+                enabled: true,
                 endpoint_id: Some("coding-plan".to_string()),
-                base_url: None,
                 model: Some("qwen3.6-plus".to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1234,8 +1235,8 @@ mod tests {
             auth_mode: AuthMode::ApiKey,
             api_types: vec!["openai-chat".to_string()],
             credentials,
-            overrides,
-            api_configs: Default::default(),
+            overrides: Default::default(),
+            api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -1246,15 +1247,15 @@ mod tests {
         let mut credentials = BTreeMap::new();
         credentials.insert("api_key".to_string(), "test-key".to_string());
 
-        let mut overrides = BTreeMap::new();
-        overrides.insert(
+        let mut api_configs = BTreeMap::new();
+        api_configs.insert(
             "openai-chat".to_string(),
-            ApiTypeOverrides {
+            ProfileApiConfig {
+                enabled: true,
                 endpoint_id: Some("gemini-api".to_string()),
-                base_url: None,
                 model: Some("gemini-3.1-pro".to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1265,8 +1266,8 @@ mod tests {
             auth_mode: AuthMode::ApiKey,
             api_types: vec!["openai-chat".to_string()],
             credentials,
-            overrides,
-            api_configs: Default::default(),
+            overrides: Default::default(),
+            api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -1277,15 +1278,14 @@ mod tests {
         let mut credentials = BTreeMap::new();
         credentials.insert("api_key".to_string(), "test-key".to_string());
 
-        let mut overrides = BTreeMap::new();
-        overrides.insert(
+        let mut api_configs = BTreeMap::new();
+        api_configs.insert(
             "openai-chat".to_string(),
-            ApiTypeOverrides {
-                endpoint_id: None,
-                base_url: None,
+            ProfileApiConfig {
+                enabled: true,
                 model: Some("deepseek-v4-pro".to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1296,8 +1296,8 @@ mod tests {
             auth_mode: AuthMode::ApiKey,
             api_types: vec!["openai-chat".to_string()],
             credentials,
-            overrides,
-            api_configs: Default::default(),
+            overrides: Default::default(),
+            api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -1308,15 +1308,15 @@ mod tests {
         let mut credentials = BTreeMap::new();
         credentials.insert("api_key".to_string(), "test-key".to_string());
 
-        let mut overrides = BTreeMap::new();
-        overrides.insert(
+        let mut api_configs = BTreeMap::new();
+        api_configs.insert(
             "anthropic".to_string(),
-            ApiTypeOverrides {
+            ProfileApiConfig {
+                enabled: true,
                 endpoint_id: Some("kimi-coding".to_string()),
-                base_url: None,
                 model: Some("kimi-for-coding".to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1327,8 +1327,8 @@ mod tests {
             auth_mode: AuthMode::ApiKey,
             api_types: vec!["anthropic".to_string()],
             credentials,
-            overrides,
-            api_configs: Default::default(),
+            overrides: Default::default(),
+            api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),

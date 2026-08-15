@@ -109,7 +109,6 @@ fn ensure_claude_bridge_agent_model(
         .unwrap_or_default();
     let profile_id = profile.id.clone();
     let updated = schema::update(&profile_id, |current| {
-        *current = profiles::normalize_legacy_profile(current.clone());
         let mut preference = current
             .connections
             .get("claude-desktop")

@@ -227,9 +227,7 @@ fn profile_provider_label(profile_id: Option<&str>) -> (Option<String>, Option<S
     let Some(profile_id) = profile_id else {
         return (None, None);
     };
-    let Some(profile) =
-        common::profiles::schema::load(profile_id).map(common::profiles::normalize_legacy_profile)
-    else {
+    let Some(profile) = common::profiles::load_profile(profile_id) else {
         return (None, None);
     };
     let provider_id = profile.provider;

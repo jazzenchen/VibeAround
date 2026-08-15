@@ -166,11 +166,6 @@ fn resolve_content_capabilities(
         return capabilities;
     }
 
-    let overrides = profile.overrides.get(target_api_type);
-    if let Some(capabilities) = overrides.and_then(|overrides| overrides.capabilities.clone()) {
-        return capabilities;
-    }
-
     let Some(provider) = catalog::get(&profile.provider) else {
         return ContentCapabilities::default();
     };
@@ -288,14 +283,7 @@ fn supports_required_content_caps(
 }
 
 fn selected_endpoint_id(profile: &ProfileDef, target_api_type: &str) -> Option<String> {
-    api_config_for(profile, target_api_type)
-        .and_then(|config| config.endpoint_id)
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.endpoint_id.clone())
-        })
+    api_config_for(profile, target_api_type).and_then(|config| config.endpoint_id)
 }
 
 #[cfg(test)]
@@ -309,23 +297,15 @@ fn content_usage_label(usage: ContentUsage) -> &'static str {
 }
 
 fn configured_model(profile: &ProfileDef, target_api_type: &str) -> Option<String> {
-    api_config_for(profile, target_api_type)
-        .and_then(|config| {
-            clean_model_id(config.model.as_deref().unwrap_or_default()).or_else(|| {
-                config
-                    .models
-                    .iter()
-                    .filter(|model| model.enabled)
-                    .find_map(|model| clean_model_id(&model.id))
-            })
+    api_config_for(profile, target_api_type).and_then(|config| {
+        clean_model_id(config.model.as_deref().unwrap_or_default()).or_else(|| {
+            config
+                .models
+                .iter()
+                .filter(|model| model.enabled)
+                .find_map(|model| clean_model_id(&model.id))
         })
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.model.as_deref())
-                .and_then(clean_model_id)
-        })
+    })
 }
 
 fn clean_model_id(value: &str) -> Option<String> {
@@ -334,8 +314,7 @@ fn clean_model_id(value: &str) -> Option<String> {
 }
 
 fn api_config_for(profile: &ProfileDef, target_api_type: &str) -> Option<schema::ProfileApiConfig> {
-    let provider = catalog::get(&profile.provider)?;
-    schema::api_config_for(profile, provider, target_api_type).filter(|config| config.enabled)
+    schema::api_config_for(profile, target_api_type).filter(|config| config.enabled)
 }
 
 fn api_config_model<'a>(
@@ -465,7 +444,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use common::profiles::schema::{
-        ApiTypeOverrides, AuthMode, ProfileApiConfig, ProfileModelConfig, ProviderSettings,
+        AuthMode, ProfileApiConfig, ProfileModelConfig, ProviderSettings,
     };
     use serde_json::json;
     use va_ai_api_bridge::{
@@ -482,16 +461,17 @@ mod tests {
             auth_mode: AuthMode::ApiKey,
             api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: [(
+            overrides: BTreeMap::new(),
+            api_configs: [(
                 "openai-chat".to_string(),
-                ApiTypeOverrides {
+                ProfileApiConfig {
+                    enabled: true,
                     model: Some(model.to_string()),
                     ..Default::default()
                 },
             )]
             .into_iter()
             .collect(),
-            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
@@ -556,15 +536,15 @@ mod tests {
     }
 
     #[test]
-    fn custom_override_controls_image_input() {
+    fn custom_api_config_controls_image_input() {
         let mut profile = profile("custom", "my-vision-model");
         let error =
             validate_request_content(&profile, "openai-chat", &image_request("my-vision-model"))
                 .unwrap_err();
         assert!(error.contains("image input"));
 
-        let overrides = profile.overrides.get_mut("openai-chat").unwrap();
-        overrides.capabilities = Some(ContentCapabilities {
+        let config = profile.api_configs.get_mut("openai-chat").unwrap();
+        config.capabilities = Some(ContentCapabilities {
             image_input: true,
             file_input: false,
             web_search: false,
