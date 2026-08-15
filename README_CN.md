@@ -23,17 +23,17 @@
 
 ## 为什么需要 VibeAround
 
-VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量不打扰你已经配置好的环境。
+VibeAround 把分散的 AI 编程工作流收拢到一个入口，也尽量不改动你现有的配置。
 
 - 继续使用你已经熟悉的 Claude Code、Codex CLI、Gemini CLI、Pi、OpenCode、Claude Desktop、Codex Desktop 等 AI 编程 Agent。
 - 直接启动 Agent，或通过第三方 AI API 运行 Agent，不用在不同 Agent 配置文件之间来回手改。
 - 桥接不同 AI API 协议，让 Agent 和模型 provider 即使原生 API 不匹配也能配合工作。
 - 在桌面、CLI、消息应用、手机浏览器、网页浏览器和 Web Terminal 之间继续同一个会话。
 - 在本机预览 dev server 和 HTML，并远程查看渲染后的 Markdown，同时执行环境仍留在你的电脑上。
-- 当所选模型 provider 不提供原生搜索时，为 Agent 补上 Web Search 等 host-side 工具能力。
+- 在主机端为 Agent 补上所选模型不支持的能力，例如 Web Search 和图片理解。
 - 在现有配置、项目权限和工作流之外增加能力，尽量保持原有环境干净、少改动。
 
-## Agent Launch
+## Agent 启动
 
 选择合适的 AI Agent，搭配对应的模型，一键启动。
 
@@ -63,17 +63,17 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，同时尽量�
 | Live request inspect | ✅ Original request、bridge request、raw response、bridge response 和 search tool 内容 | ❌ 当前不支持 |
 | Session resume | ✅ 在 macOS、Windows 和 Linux 上继续并启动 CLI 与桌面版 Agent | ⚠️ macOS 支持 terminal resume；Windows 和 Linux 只能复制 command 到剪贴板 |
 | Workspace selection | ✅ 从指定目录 launch agent | ⚠️ 仅支持 OpenClaw workspace |
-| IM Chat | ✅ 通过 [Remote Messaging & Session Continuity](#remote-messaging--session-continuity) 接入飞书/Lark、Discord、Slack 等 | ❌ 当前不支持 |
+| IM Chat | ✅ 通过 [远程消息与会话接续](#远程消息与会话接续) 接入飞书/Lark、Discord、Slack 等 | ❌ 当前不支持 |
 | Web Terminal | ✅ 通过 [Web Terminal](#web-terminal) 远程控制 CLI | ❌ 当前不支持 |
 | Web Hub | ✅ 通过 [Web Hub](#web-hub) 在电脑或手机浏览器 launch、continue sessions 和 chat | ❌ 当前不支持 |
 | Remote preview | ✅ 本地 dev-server/HTML 预览 + 远程 Markdown 链接 | ❌ 当前不支持 |
-| Host-side web search | ✅ provider 不提供原生搜索时，通过 [Host-side Web Search](#host-side-web-search) / `va-search-tool` 补上 | ❌ 当前不支持 |
+| Host-side web search | ✅ provider 不提供原生搜索时，通过 [主机端 Web 搜索](#主机端-web-搜索) / `va-search-tool` 补上 | ❌ 当前不支持 |
 | MCP 和 Skills | ❌ 当前不支持 | ✅ 在 supported apps 之间统一管理 MCP 和 Skills |
 | Usage / cost tracking | 🚧 Roadmap | ✅ 内置 usage dashboard |
 
 </details>
 
-## Known Issue
+## 已知问题
 
 ### 遇到 `Unable to connect to API (ConnectionRefused)` 怎么办？
 
@@ -114,9 +114,9 @@ Agent 侧 API 形态                  VibeAround API Bridge                  Pro
 - 在 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages 和 Gemini Generate Content 等 API 形态之间自由转换。
 - 支持同一个 AI Agent 在多个 session 里同时运行不同 API 配置。
 
-## Host-side Web Search
+## 主机端 Web 搜索
 
-即使当前模型 provider 不提供原生服务端搜索，VibeAround 也可以为 Agent 补上 Web Search 能力。
+模型服务本身不支持 Web 搜索时，VibeAround 可以在本机调用搜索工具，再把结果交给 Agent。
 
 VibeAround 可以把 provider 原生的 `web_search` 替换成本机搜索运行时，再通过 bridge 把标准化后的搜索结果交回给模型。搜索源在 Settings 中配置，并通过 [va-search-tool](https://github.com/jazzenchen/va-search-tool) 项目运行。同一套 search SDK / runtime 也可以脱离 VibeAround，以命令行方式单独运行，用于本地 smoke test 或自定义集成。
 
@@ -153,9 +153,9 @@ VibeAround 可以把已启用的本地 Agent 暴露成 OpenAI / Anthropic 兼容
 - 支持这些 API 形态下的 streaming / non-streaming 请求。
 - 这个能力面向 dev 和 local test usage；VibeAround 不试图成为托管式生产 API gateway。
 
-## Remote Messaging & Session Continuity
+## 远程消息与会话接续
 
-把正在跑的 coding session 交接出去，再从任意地方接回来。
+离开电脑后，也能通过手机或其他设备继续当前的编程会话。
 
 VibeAround 可以为当前桌面或 CLI 会话生成一个 `/pickup` command。把这个 command 发到任意已连接的 IM channel，就能用同一个 Agent 继续同一个 session；pickup 不绑定生成它的那个 channel。
 
@@ -169,7 +169,7 @@ IM 接入是通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plu
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/im-remote.webp" alt="VibeAround Remote Access 设置，包含消息应用和 Cloudflare tunnel" width="88%" />
 </p>
 
-- 从桌面、CLI 或 Web Hub hand over 当前 session。
+- 从桌面端、CLI 或 Web Hub 发起会话交接。
 - 在飞书/Lark、Discord、Slack 或其他已配置消息频道中 pickup。
 - 通过基于 SDK 的 plugin 添加或更新消息频道。
 - 远程继续同一个 Agent session，不丢失上下文。
@@ -227,7 +227,7 @@ VibeAround Web Hub 提供浏览器入口，用来选择 Agent、API Profile、Wo
 - 在浏览器里选择 Agent、API Profile、Workspace 和 Session。
 - 使用电脑或手机浏览器访问，不需要把执行环境搬到云端。
 
-## Remote Tunnels
+## 远程隧道
 
 只在你明确开启时，才把 VibeAround 的本地 Web 入口暴露出去。
 
@@ -239,7 +239,7 @@ Remote tunnel 会被 Web Hub、Web Terminal 和 Markdown preview 链接使用。
 | Localtunnel | ✅ 支持 | 通过托管的 `localtunnel` npm package 或系统 `npx` 快速生成公网 URL。 |
 | Cloudflare Tunnel | ✅ 支持 | 通过 `cloudflared`、tunnel token 和配置好的 hostname 使用 named tunnel。 |
 | ngrok | ✅ 支持 | 使用 ngrok SDK，支持 auth token 和可选 reserved/static domain。 |
-| Tailscale Funnel | 🚧 Roadmap | 面向已经用 Tailscale 连接多台设备的用户，计划支持。 |
+| Tailscale Funnel | ✅ 支持 | 通过已安装并登录的 Tailscale 客户端获取公开的 `.ts.net` 地址。 |
 
 ## Live Preview
 
