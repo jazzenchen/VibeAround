@@ -23,7 +23,7 @@ export function initAuthFromUrl(): void {
   const token = params.get("token");
   if (!token) return;
 
-  window.sessionStorage.setItem(STORAGE_KEY, token);
+  setAuthToken(token);
 
   // Strip ?token=... from the URL without reloading the page.
   params.delete("token");
@@ -37,4 +37,24 @@ export function initAuthFromUrl(): void {
 export function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.sessionStorage.getItem(STORAGE_KEY);
+}
+
+export function setAuthToken(token: string): void {
+  window.sessionStorage.setItem(STORAGE_KEY, token);
+}
+
+export function clearAuthToken(): void {
+  window.sessionStorage.removeItem(STORAGE_KEY);
+}
+
+/** Return a same-origin VibeAround destination, or the dashboard fallback. */
+export function pairingDestination(raw: string | null, origin: string): string {
+  if (!raw) return "/va/";
+  try {
+    const url = new URL(raw, origin);
+    if (url.origin !== origin || !url.pathname.startsWith("/va/")) return "/va/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/va/";
+  }
 }

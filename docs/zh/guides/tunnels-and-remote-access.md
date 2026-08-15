@@ -1,6 +1,6 @@
 # 隧道与远程访问
 
-隧道把你的控制台发布到一个公网 URL，让你离开机器也能访问 —— 地铁上的手机、咖啡馆里的笔记本。内置四家隧道供应商；每个远程浏览器进入前都必须配对。本页背后的信任规则见[安全模型](../architecture/security-model.md)。
+隧道把你的控制台发布到一个公网 URL，让你离开机器也能访问 —— 地铁上的手机、咖啡馆里的笔记本。内置四家隧道供应商；远程浏览器进入受保护的控制台与 owner 界面前必须配对，Server 和 Markdown Share 则使用独立的六位访问码门。本页背后的信任规则见[安全模型](../architecture/security-model.md)。
 
 ## 选择供应商
 
@@ -74,7 +74,7 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 
 ## 远程浏览器首次访问：配对
 
-在新设备上打开公网 URL 会看到配对门：
+在新设备上打开控制台或 owner URL 会看到配对门：
 
 1. 浏览器显示一个 6 位码（60 秒有效，可刷新）。
 2. 在你已经信任的界面上确认它：
@@ -87,7 +87,9 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 
 ## 隧道暴露什么 —— 永远不暴露什么
 
-配对之后，通过隧道可达：控制台 SPA、Web Chat、Web Terminal、预览和各 WebSocket 端点 —— 全部有 token 把守。预览的**分享链接**（`/preview/s/<slug>`）是唯一有意的例外：不用配对、不用 token、只开放单个预览、10 分钟过期。
+配对之后，通过隧道可达：控制台 SPA、Web Chat、Web Terminal、Server 和 Markdown owner 预览，以及各 WebSocket 端点 —— 全部有 token 把守。Preview **Share**（`/preview/s/<share_id>`）是 owner 配对的有意例外：查看者输入可重复使用的六位访问码后，获得限定作用域的浏览器授信。URL、访问码和授信只覆盖一个 Preview，并在 10 分钟后同时过期。
+
+已配对的 Server owner 会把常规 HTTP 与 WebSocket/HMR 流量透明代理到 `127.0.0.1` 上的已登记端口，`/va/*` 保留给 VibeAround。Server Share 是更窄的页面预览传输：它会原样转发已认证的 GET/HEAD 路径，包括页面的数据读取；写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持，`/va/*`、owner 页面、chat 和审阅工具不进入 Share。它不承诺通用 API 兼容性，也不是 API 隔离沙盒；已接受的 GET/HEAD 路径不会按名称分类。本地 Server owner 仍然直接加载 loopback origin，保留应用原本的行为。
 
 永远不会通过隧道可达：本地 API Bridge 和 agent-as-API 端点（仅回环地址）、MCP 端点的本地 Bridge 面，以及任何形式的供应商凭据。
 

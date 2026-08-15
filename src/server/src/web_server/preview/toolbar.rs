@@ -1,21 +1,16 @@
 //! Toolbar + shared HTML helpers for preview pages.
 //!
-//! Every preview page renders a sticky top toolbar with the title, a
-//! countdown badge, and optional extra buttons (e.g. `Refresh` for the
-//! server-iframe preview). The toolbar CSS and the countdown-timer
-//! script are shared across all renderers.
-
-use axum::body::Body;
-use axum::http::StatusCode;
-use axum::response::Response;
+//! Standalone Markdown pages render a sticky toolbar with the title and an
+//! optional countdown. The owner app provides its own Preview picker.
 
 use common::previews::PreviewEntry;
 
-pub(super) fn remaining_millis(entry: &PreviewEntry) -> u128 {
-    entry
-        .expires_at
-        .saturating_duration_since(std::time::Instant::now())
-        .as_millis()
+pub(super) fn remaining_millis(entry: &PreviewEntry) -> Option<u128> {
+    entry.expires_at.map(|expires_at| {
+        expires_at
+            .saturating_duration_since(std::time::Instant::now())
+            .as_millis()
+    })
 }
 
 pub(super) fn escape_html(s: &str) -> String {
@@ -23,14 +18,6 @@ pub(super) fn escape_html(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
-}
-
-pub(super) fn html_response(html: String) -> Response {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "text/html; charset=utf-8")
-        .body(Body::from(html))
-        .unwrap()
 }
 
 /// Minimal percent-encoder for query-string values: encodes anything
@@ -52,23 +39,25 @@ pub(super) fn url_encode_query(s: &str) -> String {
 pub(super) fn toolbar_and_timer(
     title: &str,
     subtitle: &str,
-    remaining_ms: u128,
+    remaining_ms: Option<u128>,
     extra_buttons: &str,
+    script_nonce: Option<&str>,
 ) -> String {
     let subtitle_html = if subtitle.is_empty() {
         String::new()
     } else {
         format!(r#"<span class="subtitle">{}</span>"#, subtitle)
     };
-    format!(
-        r#"<div class="toolbar">
-  <span class="title">{title}</span>
-  {subtitle_html}
-  <span class="badge" id="timer">5:00</span>
-  <span class="spacer"></span>
-  {extra_buttons}
-</div>
-<script>
+    let timer_html = remaining_ms.map_or_else(String::new, |remaining_ms| {
+        let total_seconds = remaining_ms / 1000;
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        let nonce = script_nonce
+            .map(|nonce| format!(r#" nonce="{}""#, escape_html(nonce)))
+            .unwrap_or_default();
+        format!(
+            r#"<span class="badge" id="timer">{minutes}:{seconds:02}</span>
+<script{nonce}>
 (function() {{
   var expiry = Date.now() + {remaining_ms};
   var el = document.getElementById('timer');
@@ -79,15 +68,25 @@ pub(super) fn toolbar_and_timer(
     el.textContent = m + ':' + (s < 10 ? '0' : '') + s;
     if (left <= 0) {{
       el.textContent = 'Expired';
-      el.style.background = '#6b2020';
-      el.style.color = '#e5a5a5';
+      el.classList.add('expired');
     }}
   }}, 1000);
 }})();
 </script>"#,
+        )
+    });
+    format!(
+        r#"<div class="toolbar">
+  <img class="mark" src="/va/brand/vibearound-mark.svg" alt="">
+  <span class="title">{title}</span>
+  {subtitle_html}
+  {timer_html}
+  <span class="spacer"></span>
+  {extra_buttons}
+</div>"#,
         title = title,
         subtitle_html = subtitle_html,
-        remaining_ms = remaining_ms,
+        timer_html = timer_html,
         extra_buttons = extra_buttons,
     )
 }
@@ -99,48 +98,61 @@ pub(super) const TOOLBAR_CSS: &str = r#"
     position: sticky;
     top: 0;
     z-index: 100;
-    height: 40px;
+    height: 44px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 0 16px;
-    background: #1a1a1a;
-    border-bottom: 1px solid #333;
+    gap: 10px;
+    padding: 0 14px;
+    background: var(--popover);
+    border-bottom: 1px solid var(--border);
     font-size: 13px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    color: var(--popover-foreground);
+  }
+  .toolbar .mark {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
   }
   .toolbar .title {
     font-weight: 600;
-    color: #fff;
+    color: var(--popover-foreground);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .toolbar .subtitle {
-    color: #999;
+    color: var(--muted-foreground);
     font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .toolbar .badge {
-    background: #2d6a4f;
-    color: #b7e4c7;
+    background: color-mix(in oklab, var(--primary) 12%, transparent);
+    color: var(--primary);
     padding: 2px 8px;
     border-radius: 10px;
     font-size: 11px;
     flex-shrink: 0;
   }
+  .toolbar .badge.expired {
+    background: color-mix(in oklab, var(--destructive) 12%, transparent);
+    color: var(--destructive);
+  }
   .toolbar .spacer { flex: 1; }
   .toolbar button {
-    background: #333;
-    color: #ccc;
-    border: 1px solid #444;
+    background: var(--background);
+    color: var(--foreground);
+    border: 1px solid var(--border);
     padding: 4px 12px;
-    border-radius: 4px;
+    border-radius: calc(var(--radius) - 2px);
     cursor: pointer;
     font-size: 12px;
   }
-  .toolbar button:hover { background: #444; color: #fff; }
+  .toolbar button:hover { background: var(--accent); color: var(--accent-foreground); }
+  .toolbar button:focus-visible {
+    outline: 3px solid color-mix(in oklab, var(--ring) 35%, transparent);
+    outline-offset: 1px;
+  }
 "#;

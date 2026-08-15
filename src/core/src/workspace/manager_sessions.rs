@@ -54,7 +54,7 @@ impl WorkspaceThreadManager {
             .or_else(|| launch_setting_profile_for_agent(&agent_id));
         let workspace = self.ensure_workspace_for_cwd(cwd).await?;
         let host_binding = HostBinding::new(agent_id, profile_id);
-        let thread = self.new_thread_record_with_host(workspace.id.clone(), host_binding);
+        let thread = self.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
         let route = web_route_for_thread(&thread.id);
         self.ensure_thread_persisted(&thread).await?;
         self.attach_route(route, workspace.id, thread.id.clone())
@@ -291,7 +291,7 @@ impl WorkspaceThreadManager {
                     workspace.cwd.to_string_lossy()
                 ));
             }
-            self.new_thread_record_with_host(workspace.id.clone(), host_binding.clone())
+            self.new_thread_record_with_host(workspace.id.clone(), None, host_binding.clone())
         };
 
         Ok(PreparedExternalSessionThread {

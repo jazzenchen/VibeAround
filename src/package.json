@@ -9,6 +9,7 @@
     "desktop-ui": "bun run --cwd desktop-ui dev",
     "desktop-ui:build": "bun run --cwd desktop-ui build",
     "web": "bun run --cwd web dev",
+    "web:test": "bun run --cwd web test",
     "web:build": "bun run --cwd web build",
     "server": "cargo run -p server",
     "server:build": "cargo build -p server",

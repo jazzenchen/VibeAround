@@ -1,8 +1,8 @@
 //! Skill file install/uninstall.
 //!
 //! Each agent gets the common VibeAround skills (`vibearound`, `va-session`,
-//! `va-preview`, `va-md-preview`); selected agents can receive additional
-//! skills while their workflows are being validated.
+//! `va-preview`); selected agents can receive additional skills while their
+//! workflows are being validated.
 //!
 //! The `include_str!` paths are relative to this source file: `src/core/
 //! src/agent/skills.rs` → `../../../skills/...` reaches the top-level
@@ -15,6 +15,8 @@ use anyhow::Context;
 use crate::resources;
 
 use super::mcp::home_dir;
+
+const RETIRED_MANAGED_SKILLS: &[&str] = &["va-md-preview"];
 
 /// Install all skill files for a given agent.
 #[allow(dead_code)]
@@ -75,6 +77,10 @@ fn install_skill_at_root(
             .map(|p| p.to_path_buf())
             .unwrap_or(primary_skill_dir.clone())
     };
+
+    for skill_name in RETIRED_MANAGED_SKILLS {
+        remove_retired_managed_skill(agent, global_config, &skill_base, skill_name)?;
+    }
 
     for (skill_name, content) in agent_skills(agent) {
         if has_skill_filename {
@@ -187,7 +193,59 @@ fn uninstall_skill_at_root(
             }
         }
     }
+
+    for skill_name in RETIRED_MANAGED_SKILLS {
+        remove_retired_managed_skill(agent, global_config, &skill_base, skill_name)?;
+    }
     Ok(())
+}
+
+fn remove_retired_managed_skill(
+    agent: &str,
+    global_config: &resources::AgentGlobalConfig,
+    skill_base: &Path,
+    skill_name: &str,
+) -> anyhow::Result<()> {
+    let (target, dedicated_dir) = if let Some(filename) = &global_config.skill_filename {
+        let ext = filename.rsplit('.').next().unwrap_or("md");
+        (skill_base.join(format!("{skill_name}.{ext}")), None)
+    } else {
+        let dir = skill_base.join(skill_name);
+        (dir.join("SKILL.md"), Some(dir))
+    };
+
+    if !is_retired_managed_skill_file(&target, skill_name)? {
+        return Ok(());
+    }
+
+    std::fs::remove_file(&target).with_context(|| format!("Remove {:?}", target))?;
+    if let Some(dir) = dedicated_dir {
+        let is_empty = std::fs::read_dir(&dir)
+            .with_context(|| format!("Read {:?}", dir))?
+            .next()
+            .transpose()
+            .with_context(|| format!("Read {:?}", dir))?
+            .is_none();
+        if is_empty {
+            std::fs::remove_dir(&dir).with_context(|| format!("Remove {:?}", dir))?;
+        }
+    }
+    tracing::info!(
+        "[integrations] Removed retired {}/{} skill at {:?}",
+        agent,
+        skill_name,
+        target
+    );
+    Ok(())
+}
+
+fn is_retired_managed_skill_file(path: &Path, skill_name: &str) -> anyhow::Result<bool> {
+    if skill_name != "va-md-preview" || !path.is_file() {
+        return Ok(false);
+    }
+    let content = std::fs::read_to_string(path).with_context(|| format!("Read {:?}", path))?;
+    Ok(content.contains("# VibeAround Markdown Preview")
+        && (content.contains("Tool: md_preview") || content.contains("call `md_preview`")))
 }
 
 fn skill_dir_for_scope(
@@ -269,10 +327,6 @@ fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
                     "va-preview",
                     include_str!(concat!("../../../skills/", $dir, "/va-preview/SKILL.md")),
                 ),
-                (
-                    "va-md-preview",
-                    include_str!(concat!("../../../skills/", $dir, "/va-md-preview/SKILL.md")),
-                ),
             ]
         };
     }
@@ -297,10 +351,6 @@ fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
             (
                 "va-preview",
                 include_str!("../../../skills/va-preview/SKILL.md"),
-            ),
-            (
-                "va-md-preview",
-                include_str!("../../../skills/va-md-preview/SKILL.md"),
             ),
         ],
     };
@@ -369,6 +419,22 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn active_preview_skill_covers_both_sources_without_the_retired_tool() {
+        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro"] {
+            let skills = agent_skills(agent);
+            assert!(skills.iter().all(|(name, _)| *name != "va-md-preview"));
+            let preview = skills
+                .iter()
+                .find(|(name, _)| *name == "va-preview")
+                .unwrap()
+                .1;
+            assert!(preview.contains("port:"), "{agent} preview port source");
+            assert!(preview.contains("file:"), "{agent} preview file source");
+            assert!(!preview.contains("Tool: md_preview"));
         }
     }
 
@@ -444,6 +510,65 @@ mod tests {
         assert_eq!(fs::read_to_string(&target).unwrap(), "user-owned skill");
         assert!(dir.join(".agents/skills/vibearound/SKILL.md").exists());
 
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn install_removes_managed_retired_skill_without_deleting_sidecars() {
+        let dir = unique_test_dir("retired-install");
+        let retired_dir = dir.join(".agents/skills/va-md-preview");
+        let target = retired_dir.join("SKILL.md");
+        let sidecar = retired_dir.join("notes.txt");
+        fs::create_dir_all(&retired_dir).unwrap();
+        fs::write(
+            &target,
+            "# VibeAround Markdown Preview\n\nTool: md_preview\n",
+        )
+        .unwrap();
+        fs::write(&sidecar, "user notes").unwrap();
+
+        install_project_skill("codex", &dir).unwrap();
+
+        assert!(!target.exists());
+        assert_eq!(fs::read_to_string(&sidecar).unwrap(), "user notes");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn retired_skill_cleanup_preserves_unmanaged_files() {
+        let dir = unique_test_dir("retired-unmanaged");
+        let target = dir.join(".cursor/rules/va-md-preview.mdc");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(
+            &target,
+            "# VibeAround Markdown Preview\n\nuser-owned preview rule\n",
+        )
+        .unwrap();
+
+        install_project_skill("cursor", &dir).unwrap();
+        uninstall_project_skill("cursor", &dir).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "# VibeAround Markdown Preview\n\nuser-owned preview rule\n"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn uninstall_removes_managed_retired_shared_rule() {
+        let dir = unique_test_dir("retired-uninstall");
+        let target = dir.join(".cursor/rules/va-md-preview.mdc");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(
+            &target,
+            "# VibeAround Markdown Preview\n\nTool: md_preview\n",
+        )
+        .unwrap();
+
+        uninstall_project_skill("cursor", &dir).unwrap();
+
+        assert!(!target.exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

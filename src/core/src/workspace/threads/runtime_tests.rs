@@ -4,6 +4,35 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::*;
 use crate::workspace::registry::WorkspaceId;
 
+struct NoopClientHandler;
+
+#[async_trait::async_trait]
+impl AgentClientHandler for NoopClientHandler {
+    async fn session_notification(&self, _args: acp::SessionNotification) -> acp::Result<()> {
+        Ok(())
+    }
+
+    async fn request_permission(
+        &self,
+        _args: acp::RequestPermissionRequest,
+    ) -> acp::Result<acp::RequestPermissionResponse> {
+        Ok(acp::RequestPermissionResponse::new(
+            acp::RequestPermissionOutcome::Cancelled,
+        ))
+    }
+}
+
+#[test]
+fn cancelled_prompt_is_not_a_successful_completion() {
+    let completed = Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+    let cancelled = Ok(acp::PromptResponse::new(acp::StopReason::Cancelled));
+    let failed = Err(acp::Error::method_not_found());
+
+    assert!(prompt_completed_successfully(&completed));
+    assert!(!prompt_completed_successfully(&cancelled));
+    assert!(!prompt_completed_successfully(&failed));
+}
+
 #[tokio::test]
 async fn cancelled_prompt_returns_real_result_without_shutdown_within_grace() {
     let (reply, result) = oneshot::channel();
@@ -16,13 +45,14 @@ async fn cancelled_prompt_returns_real_result_without_shutdown_within_grace() {
     let result = await_cancelled_prompt(
         prompt.as_mut(),
         Duration::from_secs(1),
+        Duration::from_secs(1),
         move || async move {
             shutdown_flag.store(true, Ordering::SeqCst);
         },
     )
     .await;
 
-    assert_eq!(result, 42);
+    assert_eq!(result, Some(42));
     assert!(!shutdown_called.load(Ordering::SeqCst));
 }
 
@@ -37,6 +67,7 @@ async fn cancelled_prompt_forces_shutdown_after_grace_then_waits_for_result() {
     let result = await_cancelled_prompt(
         prompt.as_mut(),
         Duration::from_millis(1),
+        Duration::from_secs(1),
         move || async move {
             shutdown_flag.store(true, Ordering::SeqCst);
             reply.send(7).unwrap();
@@ -44,7 +75,28 @@ async fn cancelled_prompt_forces_shutdown_after_grace_then_waits_for_result() {
     )
     .await;
 
-    assert_eq!(result, 7);
+    assert_eq!(result, Some(7));
+    assert!(shutdown_called.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn cancelled_prompt_stops_waiting_after_shutdown_grace() {
+    let prompt = std::future::pending::<u8>();
+    tokio::pin!(prompt);
+    let shutdown_called = Arc::new(AtomicBool::new(false));
+    let shutdown_flag = Arc::clone(&shutdown_called);
+
+    let result = await_cancelled_prompt(
+        prompt.as_mut(),
+        Duration::from_millis(1),
+        Duration::from_millis(1),
+        move || async move {
+            shutdown_flag.store(true, Ordering::SeqCst);
+        },
+    )
+    .await;
+
+    assert_eq!(result, None);
     assert!(shutdown_called.load(Ordering::SeqCst));
 }
 
@@ -84,6 +136,8 @@ fn thread_with_host_session(
     WorkspaceThread {
         id: WorkspaceThreadId::from("wt_a"),
         workspace_id: WorkspaceId::from("ws_a"),
+        parent_thread_id: None,
+        preview_slug: None,
         host_binding: host,
         status: ThreadStatus::Open,
         first_user_prompt: None,
@@ -157,6 +211,55 @@ async fn turn_owner_serializes_busy_state() {
     turn_state.changed().await.unwrap();
 
     assert!(!runtime.state().await.busy);
+}
+
+#[tokio::test]
+async fn queued_start_honors_cancellation_before_agent_launch() {
+    let runtime = Arc::new(ThreadRuntime::new(
+        thread_with_sessions(),
+        PathBuf::from("/tmp/project"),
+        ThreadEventStore::new("/tmp/unused.jsonl"),
+    ));
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    runtime
+        .owner_tx
+        .send(ThreadOwnerCommand::Probe {
+            started: started_tx,
+            release: release_rx,
+        })
+        .unwrap();
+    started_rx.await.unwrap();
+
+    let (cancel_tx, cancellation) = watch::channel(false);
+    let (reply_tx, start) = oneshot::channel();
+    runtime
+        .owner_tx
+        .send(ThreadOwnerCommand::Start(Box::new(StartCommand {
+            runtime: Arc::clone(&runtime),
+            route: RouteKey::new("web", "chat-1"),
+            handler: Arc::new(NoopClientHandler),
+            cancellation: Some(cancellation),
+            reply: reply_tx,
+        })))
+        .unwrap();
+    let (ping_tx, ping_rx) = oneshot::channel();
+    runtime
+        .owner_tx
+        .send(ThreadOwnerCommand::Ping(ping_tx))
+        .unwrap();
+    ping_rx.await.expect("start command was not queued");
+
+    cancel_tx.send_replace(true);
+    release_tx.send(()).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(1), start)
+        .await
+        .expect("cancelled start did not finish")
+        .unwrap()
+        .unwrap();
+
+    assert!(result.is_none());
+    assert!(runtime.state().await.initialize.is_none());
 }
 
 #[tokio::test]
@@ -339,6 +442,8 @@ fn routes_without_known_session_start_fresh() {
     let thread = WorkspaceThread {
         id: WorkspaceThreadId::from("wt_a"),
         workspace_id: WorkspaceId::from("ws_a"),
+        parent_thread_id: None,
+        preview_slug: None,
         host_binding: HostBinding::new("codex", Some("direct".to_string())),
         status: ThreadStatus::Open,
         first_user_prompt: None,

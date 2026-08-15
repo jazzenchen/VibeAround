@@ -64,6 +64,9 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --cwd src --frozen-lockfile
 
+      - name: Test web dashboard
+        run: bun run --cwd src web:test
+
       - name: Resolve release metadata
         id: release
         shell: bash

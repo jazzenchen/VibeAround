@@ -180,50 +180,40 @@
   },
   {
     "name": "preview",
-    "description": "Start a live preview for a running local server. Returns owner and share URLs. Pass session_id (use /va-session skill) for proper lifecycle management.",
+    "description": "Preview exactly one source: a running localhost server via port, or a Markdown document via file. Markdown is rendered directly by VibeAround and does not need a separate static server. Returns owner access and, when a public tunnel is running, a Share URL plus a reusable six-digit access code. The Share URL and code expire together after 10 minutes. Pass thread_id or agent_kind with session_id when available to link the review child to the current task; without an explicit identity, VibeAround can create a standalone Preview conversation.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "port": {
           "type": "number",
-          "description": "The localhost port where the dev server is running."
+          "description": "The localhost port where the dev server is running. Pass either port or file, never both."
+        },
+        "file": {
+          "type": "string",
+          "description": "Path to a Markdown file (absolute, or relative to cwd). Pass either file or port, never both."
         },
         "cwd": {
           "type": "string",
           "description": "Absolute path to the project workspace directory."
+        },
+        "thread_id": {
+          "type": "string",
+          "description": "Optional exact VibeAround workspace thread ID from $VIBEAROUND_THREAD_ID. Links the Preview child to that task when available."
         },
         "session_id": {
           "type": "string",
-          "description": "Your agent session ID (use /va-session skill to resolve). Enables automatic dev-server cleanup when the session ends."
+          "description": "Optional exact native agent session ID. With agent_kind, it can link an external task to the owner conversation; it never controls Preview or dev-server lifetime."
+        },
+        "agent_kind": {
+          "type": "string",
+          "description": "Agent kind for an explicitly supplied external session_id. Not needed when thread_id is provided."
         },
         "title": {
           "type": "string",
-          "description": "Optional title shown in the preview toolbar. Defaults to the workspace directory name."
+          "description": "Optional title shown in the preview toolbar. Defaults to the workspace directory name for port, or the filename for file."
         }
       },
-      "required": ["port", "cwd"]
-    }
-  },
-  {
-    "name": "md_preview",
-    "description": "Preview a markdown file with beautiful GitHub-style rendering. Returns a shareable URL. The URL expires in 5 minutes.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "file": {
-          "type": "string",
-          "description": "Path to the markdown file (absolute, or relative to cwd)."
-        },
-        "cwd": {
-          "type": "string",
-          "description": "Absolute path to the project workspace directory."
-        },
-        "title": {
-          "type": "string",
-          "description": "Optional title shown in the preview toolbar. Defaults to the filename."
-        }
-      },
-      "required": ["file", "cwd"]
+      "required": ["cwd"]
     }
   }
 ]

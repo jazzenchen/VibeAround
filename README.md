@@ -29,7 +29,7 @@ VibeAround keeps AI coding work together without making you rebuild the environm
 - Launch agents directly or through third-party AI APIs, without hand-editing each agent's config files back and forth.
 - Bridge different AI API protocols so agents and model providers can work together even when their native APIs do not match.
 - Continue the same sessions across desktop, CLI, messaging apps, mobile browsers, web browsers, and a Web Terminal.
-- Preview dev servers, Markdown, and HTML remotely while execution stays on your own computer.
+- Preview dev servers, HTML, and rendered Markdown locally or through time-scoped remote links while execution stays on your own computer.
 - Provide host-side tools like web search when the selected model provider does not offer them natively.
 - Add these capabilities around your existing configs, project permissions, and workflows while keeping them as untouched as possible.
 
@@ -66,7 +66,7 @@ Pick an AI agent, model profile or API endpoint, and workspace. VibeAround launc
 | IM Chat | ✅ [Remote Messaging & Session Continuity](#remote-messaging--session-continuity) through Feishu/Lark, Discord, Slack, and more | ❌ Not currently supported |
 | Web Terminal | ✅ [Web Terminal](#web-terminal) for remote CLI control | ❌ Not currently supported |
 | Web Hub | ✅ [Web Hub](#web-hub) for browser-based launch, sessions, and chat | ❌ Not currently supported |
-| Remote preview | ✅ [Live Preview](#live-preview) for dev server / Markdown / HTML links | ❌ Not currently supported |
+| Remote preview | ✅ Paired owner links + 10-minute code-gated Server/Markdown shares | ❌ Not currently supported |
 | Host-side web search | ✅ [Host-side Web Search](#host-side-web-search) via `va-search-tool` when providers do not expose native search | ❌ Not currently supported |
 | MCP and Skills | ❌ Not currently supported | ✅ Unified MCP and Skills management across supported apps |
 | Usage and cost tracking | 🚧 Roadmap | ✅ Built-in usage dashboard |
@@ -188,7 +188,7 @@ IM integrations are built through the [VibeAround Channel SDK](https://github.co
 | Session commands | ✅ `/session --list`, `/session --switch`, `/new`, and `/pickup` | ✅ `/new`, `/list`, `/switch`, and `/current` |
 | Agent / profile switch | ✅ `/switch`, `/agent --switch`, and `/profile --switch` | ❌ Not currently supported |
 | Workspace commands | ✅ `/workspace --list` and `/workspace --switch` | ✅ `/dir` and `/cd` |
-| Remote preview | ✅ Sends Live Preview links for dev servers, Markdown, and HTML | ❌ Not currently supported |
+| Remote preview | ✅ Sends paired owner links and code-gated Server/Markdown shares | ❌ Not currently supported |
 | IM file attachments | ⚠️ Send-only; receiving files from IM is not currently supported | ✅ Send and receive files/images on supported platforms |
 | Web Terminal | ✅ Browser terminal for controlling local AI agent CLIs remotely | ❌ Not currently supported |
 | Web Hub | ✅ Browser launch, session continuation, and chat | ⚠️ Web admin/config dashboard; service runs separately |
@@ -231,7 +231,7 @@ VibeAround Web Hub gives you a browser interface for choosing agents, API profil
 
 Expose VibeAround's local web surfaces only when you choose to.
 
-Remote tunnels are used by Web Hub, Web Terminal, Live Preview, and Markdown preview links. VibeAround keeps the daemon local, starts the selected tunnel provider, and requires browser pairing for public tunnel URLs.
+Remote tunnels are used by Web Hub, Web Terminal, and Preview links. VibeAround keeps the daemon local and starts the selected tunnel provider; owner surfaces require browser pairing, while each Server or Markdown Share transaction uses its own time-scoped access code.
 
 | Tunnel option | Status | Notes |
 |---|---|---|
@@ -245,15 +245,16 @@ Remote tunnels are used by Web Hub, Web Terminal, Live Preview, and Markdown pre
 
 Preview what AI agents are building.
 
-VibeAround turns dev servers, Markdown files, and HTML files into previewable links you can open from desktop browsers, mobile browsers, or messaging apps.
+VibeAround opens dev servers and Markdown in one owner page with a collapsible workspace/Preview picker. A local Server owner loads the dev server directly from its loopback origin; tunneled owners remain pairing-protected. Both Server and Markdown targets can mint 10-minute Share transactions protected by reusable six-digit access codes.
 
 <p align="center">
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/preview-in-a-row.webp" alt="Ask for previews from messaging apps, pair a browser, and open web or Markdown previews" width="92%" />
 </p>
 
-- Generate owner links and scoped short-lived share links.
-- Use tunnels to access preview links remotely.
-- Preview dev servers, Markdown files, and HTML files.
+- Preview dev servers on their native loopback origin locally, preserving their own fetch, WebSocket, and HMR behavior.
+- Reach an owner page through a tunnel after browser pairing.
+- Generate copyable Server and Markdown Share messages containing the public URL, access code, and expiry.
+- Share a Server page through a page-preview proxy that forwards authenticated GET/HEAD paths, including page data reads; writes, protocol upgrades, service workers, WebSockets, and HMR are unsupported. `/va/*`, owner pages, chat, and review controls are excluded.
 
 <details>
 <summary><strong>Supported AI Agents</strong></summary>
@@ -324,8 +325,9 @@ VibeAround keeps AI coding work on your computer by default.
 - Provider credentials stay in local VibeAround settings/profile storage.
 - The daemon listens on loopback unless you explicitly enable a tunnel.
 - Dashboard APIs and WebSocket routes require a local auth token.
-- Public tunnel URLs require browser pairing.
-- Preview links are scoped and short-lived.
+- Protected public tunnel surfaces, including Preview owner links, require browser pairing.
+- Server and Markdown Share transactions instead use their own six-digit access codes; each Share URL, code, and browser grant expires together after 10 minutes.
+- Server Shares are a page-preview transport, not general API compatibility or an API-isolation sandbox: they forward authenticated GET/HEAD paths, including page data reads, while writes, protocol upgrades, service workers, WebSockets, and HMR are unsupported. `/va/*`, owner pages, chat, and review controls are excluded.
 - Agent CLIs use your local project permissions.
 
 </details>

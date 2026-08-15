@@ -29,7 +29,7 @@ Fifteen minutes if VibeAround is already installed; add ten for a first install.
 | Web Terminal | Shell-like access to the local workspace. |
 | Mobile browser | Quick review, approval, or redirection away from the desk. |
 | Messaging channels | Asynchronous check-ins through Telegram, Feishu/Lark, Discord, Slack, WeChat, DingTalk, WeCom, or QQ Bot. |
-| Live Preview | Reviewing local dev servers, Markdown, HTML, and generated artifacts. |
+| Live Preview | Reviewing dev servers/HTML in the host's local browser and rendered Markdown remotely. |
 
 ## Safety Checklist
 

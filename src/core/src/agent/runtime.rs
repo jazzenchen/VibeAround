@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{anyhow, Context};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 
 use acp::schema::v1 as schema;
 use agent_client_protocol as acp;
@@ -35,7 +35,7 @@ use agent_client_protocol as acp;
 use crate::process::bridge::{BridgeFactory, ProcessBridge};
 use crate::process::registry::ProcessKind;
 use crate::process::supervisor::{ProcessId, RestartPolicy, SpawnSpec, Supervisor};
-use crate::routing::RouteKey;
+use crate::routing::{wait_for_signal, RouteKey};
 
 use super::bridge::AcpAgentBridge;
 
@@ -166,6 +166,21 @@ impl PendingProcessRegistration {
             .set(process_id)
             .expect("agent process registration already installed");
     }
+
+    async fn unregister(mut self) {
+        let process_id = self
+            .process_id
+            .expect("pending process registration already transferred");
+        if let Err(error) = self.supervisor.unregister(process_id).await {
+            tracing::warn!(
+                process_id = %process_id,
+                error = %error,
+                "failed to clean cancelled agent registration"
+            );
+            return;
+        }
+        self.process_id = None;
+    }
 }
 
 impl Drop for PendingProcessRegistration {
@@ -184,6 +199,31 @@ impl Drop for PendingProcessRegistration {
             }
         });
     }
+}
+
+async fn await_agent_ready(
+    ready_rx: oneshot::Receiver<anyhow::Result<AgentReady>>,
+    registration: PendingProcessRegistration,
+    cancellation: Option<&mut watch::Receiver<bool>>,
+    agent_id: &str,
+) -> anyhow::Result<Option<AgentReady>> {
+    let ready = match cancellation {
+        Some(cancellation) => {
+            tokio::select! {
+                biased;
+                _ = wait_for_signal(cancellation) => {
+                    registration.unregister().await;
+                    return Ok(None);
+                }
+                ready = ready_rx => ready,
+            }
+        }
+        None => ready_rx.await,
+    }
+    .map_err(|_| anyhow!("Agent bridge for {} died during init", agent_id))??;
+
+    registration.transfer_to(&ready.agent);
+    Ok(Some(ready))
 }
 
 impl Agent {
@@ -205,6 +245,31 @@ impl Agent {
         extra_args: Vec<String>,
         extra_env: Vec<(String, String)>,
     ) -> anyhow::Result<AgentReady> {
+        Self::spawn_cancellable(
+            agent_id,
+            route,
+            workspace,
+            startup_session,
+            client_handler,
+            extra_args,
+            extra_env,
+            None,
+        )
+        .await
+        .map(|ready| ready.expect("uncancellable agent spawn cannot be cancelled"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn spawn_cancellable(
+        agent_id: String,
+        route: &RouteKey,
+        workspace: &Path,
+        startup_session: StartupSession,
+        client_handler: Arc<dyn AgentClientHandler>,
+        extra_args: Vec<String>,
+        extra_env: Vec<(String, String)>,
+        cancellation: Option<&mut watch::Receiver<bool>>,
+    ) -> anyhow::Result<Option<AgentReady>> {
         crate::resources::validate_acp_runtime_agent(&agent_id).map_err(anyhow::Error::msg)?;
 
         let cwd = workspace.to_path_buf();
@@ -259,6 +324,13 @@ impl Agent {
             Box::new(bridge) as Box<dyn ProcessBridge>
         });
 
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| *cancellation.borrow())
+        {
+            return Ok(None);
+        }
+
         let supervisor = Supervisor::global();
         let id = supervisor
             .register(
@@ -270,16 +342,7 @@ impl Agent {
             )
             .await;
         let registration = PendingProcessRegistration::new(supervisor, id);
-
-        let err_label = agent_id.clone();
-        let ready = ready_rx
-            .await
-            .map_err(|_| anyhow!("Agent bridge for {} died during init", err_label))??;
-
-        // Transfer the only process owner after initialization succeeds.
-        registration.transfer_to(&ready.agent);
-
-        Ok(ready)
+        await_agent_ready(ready_rx, registration, cancellation, &agent_id).await
     }
 
     /// Constructor used by the bridge once the ACP handshake has succeeded.
@@ -339,7 +402,7 @@ impl Agent {
 mod lifecycle_tests {
     use std::sync::Arc;
 
-    use super::{AcpSessionGeneration, PendingProcessRegistration};
+    use super::{await_agent_ready, AcpSessionGeneration, PendingProcessRegistration};
     use crate::process::bridge::{BridgeExit, BridgeFuture, ProcessBridge, StdioPipes};
     use crate::process::registry::{ChildRegistry, ProcessKind};
     use crate::process::supervisor::{RestartPolicy, SpawnSpec, Supervisor};
@@ -429,6 +492,52 @@ mod lifecycle_tests {
         })
         .await
         .expect("cancelled initialization leaked its process registration");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[tokio::test]
+    async fn cancelled_ready_wait_unregisters_and_reaps_child() {
+        let registry = Arc::new(ChildRegistry::new());
+        let supervisor = Supervisor::new(Arc::clone(&registry));
+        let process_id = supervisor
+            .register(
+                ProcessKind::AcpAgent,
+                "cancelled-agent-init",
+                hanging_child_spec(),
+                RestartPolicy::Never,
+                Box::new(|| Box::new(HangingInitializeBridge)),
+            )
+            .await;
+        let registration = PendingProcessRegistration::new(Arc::clone(&supervisor), process_id);
+        let (_ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (cancel_tx, mut cancellation) = tokio::sync::watch::channel(false);
+
+        let cancel = async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while registry.len() == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("child was not registered");
+            cancel_tx.send_replace(true);
+        };
+        let (result, ()) = tokio::join!(
+            await_agent_ready(
+                ready_rx,
+                registration,
+                Some(&mut cancellation),
+                "cancelled-agent-init",
+            ),
+            cancel,
+        );
+
+        assert!(result.unwrap().is_none());
+        assert_eq!(registry.len(), 0);
+        assert!(!supervisor
+            .snapshot()
+            .iter()
+            .any(|process| process.id == process_id));
     }
 }
 

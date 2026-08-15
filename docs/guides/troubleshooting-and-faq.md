@@ -55,8 +55,8 @@ Codes are one-shot and short-lived — issue a fresh one and use it immediately.
 **`/session --switch` can't find my terminal session.**
 `va launch sessions` shows what discovery sees. The session must belong to the same agent and workspace the chat is bound to; archived sessions are hidden (unarchive with `va launch unarchive`).
 
-**A preview share link stopped working after a few minutes.**
-Share links expire after 600 seconds by design. Re-share, or use the owner link where you are authenticated. See [Security model](../architecture/security-model.md).
+**A Preview Share link stopped working after a few minutes.**
+Each Server or Markdown Share URL, six-digit access code, and browser grant expires after the same 600-second deadline by design. Re-share to create a new transaction, or use the owner link where you are authenticated. The Server Share proxy forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR are unsupported; `/va/*`, owner pages, chat, and review controls are excluded. It is not a general API-compatibility or API-isolation layer. See [Security model](../architecture/security-model.md).
 
 ## Models and profiles
 

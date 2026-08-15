@@ -9,7 +9,7 @@ Coding agents like Claude Code and Codex are terminal programs. That is great wh
 - The agent asks for permission to run a command five minutes after you left.
 - A long refactor finishes and you want to review and reply from your phone.
 - You started debugging in a terminal and want to continue from the sofa in a chat window.
-- You want to share a running dev server with a teammate for a minute, not deploy it.
+- You want to preview a running dev server locally, or share rendered Markdown without deploying it.
 
 VibeAround runs a local daemon that hosts your agents and exposes them through every surface you already use, with one consistent conversation model underneath.
 
@@ -21,7 +21,7 @@ VibeAround runs a local daemon that hosts your agents and exposes them through e
 
 **Use one model subscription across many CLIs.** Model profiles plus the built-in API bridge let a single provider account (Moonshot/Kimi, DeepSeek, OpenRouter, MiniMax, Z.AI/GLM, Gemini, Azure OpenAI, xAI, and others) power Claude Code, Codex, Gemini CLI, and any OpenAI-compatible client — including protocol translation between API dialects.
 
-**Operate everything from a browser.** The web dashboard serves a real terminal (xterm over WebSocket), a web chat with permission cards, live previews of dev servers, and rendered Markdown previews — locally by default, or anywhere through a built-in tunnel (ngrok, localtunnel, Cloudflare, or Tailscale Funnel) protected by pairing codes.
+**Operate everything from a browser.** The web dashboard serves a real terminal (xterm over WebSocket), a web chat with permission cards, dev-server previews, and rendered Markdown previews. Server and Markdown owner links can be reached through a built-in tunnel (ngrok, localtunnel, Cloudflare, or Tailscale Funnel) after pairing; their Shares instead use a reusable six-digit access code and 10-minute deadline. The Server Share page-preview proxy forwards authenticated GET/HEAD paths unchanged, including page data reads; writes, protocol upgrades, service workers, WebSockets, and HMR are unsupported. `/va/*`, owner pages, chat, and review controls are excluded.
 
 **Launch agents your way.** The desktop app and `va launch` open agent CLIs in your own terminal with a saved profile: credentials materialized, model routing configured, project integrations installed.
 

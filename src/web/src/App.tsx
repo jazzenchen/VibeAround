@@ -9,7 +9,7 @@ import { TabBar } from "@/components/TabBar";
 import { Button } from "@/components/ui/button";
 import { useSessions } from "@/hooks/useSessions";
 import { useTmux } from "@/hooks/useTmux";
-import type { AppPage, ChatRuntimeStatus } from "@/lib/dashboard-types";
+import type { AppPage } from "@/lib/dashboard-types";
 import type { ViewMode } from "@/lib/terminal-types";
 import { cn } from "@/lib/utils";
 import { ThemeContext, getResolvedTheme, toggleTheme as applyThemeToggle, type Theme } from "@/lib/theme";
@@ -72,7 +72,6 @@ function App() {
   const { t } = useI18n();
   const [page, setPage] = useState<AppPage>("chat");
   const [viewMode, setViewMode] = useState<ViewMode>("tabs");
-  const [chatStatus, setChatStatus] = useState<ChatRuntimeStatus>("connecting");
   const [theme, setTheme] = useState<Theme>(() => getResolvedTheme());
   const [webSettings, setWebSettings] = useState<WebVerboseSettings>(readStoredWebSettings);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -143,7 +142,6 @@ function App() {
           onThemeToggle={() => setTheme(applyThemeToggle(theme))}
           totalSessions={totalSessions}
           runningSessions={runningSessions}
-          chatStatus={chatStatus}
           webSettings={webSettings}
           onWebSettingsChange={handleWebSettingsChange}
         />
@@ -186,7 +184,6 @@ function App() {
             >
               <ChatView
                 webSettings={webSettings}
-                onStatusChange={setChatStatus}
                 onOpenAppSidebar={() => setMobileSidebarOpen(true)}
               />
             </section>

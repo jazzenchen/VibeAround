@@ -14,7 +14,7 @@ import { ChatMessageParts } from "./ChatMessageParts";
 import { chatPartVisibleForDisplay } from "./ChatTurnDisplay";
 import type { ChatDisplaySettings, ChatMessage } from "./chatTypes";
 
-interface ChatMessageListProps {
+export interface ChatMessageListProps {
   messages: ChatMessage[];
   streaming: boolean;
   agentLabel: string;
@@ -51,6 +51,34 @@ function progressVisible(message: ChatMessage, settings: ChatDisplaySettings) {
   return settings.showTools;
 }
 
+function messageHasVisibleActiveWork(
+  message: ChatMessage | undefined,
+  settings: ChatDisplaySettings,
+) {
+  if (!message || message.role !== "assistant") return false;
+  const activePartVisible = message.parts?.some((part) => {
+    if (part.kind === "thought") return part.active === true && settings.showThinking;
+    if (part.kind === "tool_call") return part.active === true && settings.showTools;
+    return (
+      part.kind === "plan" &&
+      part.plan.entries.some((entry) => entry.status === "in_progress")
+    );
+  });
+  if (activePartVisible) return true;
+  const activeActivityVisible = message.activities?.some(
+    (activity) => activity.active === true && activityVisible(activity, settings),
+  );
+  return Boolean(activeActivityVisible || progressVisible(message, settings));
+}
+
+export function shouldShowWorkingIndicator(
+  messages: ChatMessage[],
+  streaming: boolean,
+  settings: ChatDisplaySettings,
+) {
+  return streaming && !messageHasVisibleActiveWork(messages[messages.length - 1], settings);
+}
+
 function messageRenderResetKey(message: ChatMessage, index: number) {
   const partKey =
     message.parts
@@ -83,6 +111,11 @@ export function ChatMessageList({
   workspacePath,
 }: ChatMessageListProps) {
   const { t } = useI18n();
+  const showWorkingIndicator = shouldShowWorkingIndicator(
+    messages,
+    streaming,
+    displaySettings,
+  );
 
   return (
     <Conversation
@@ -102,7 +135,7 @@ export function ChatMessageList({
               </span>
             </div>
           )}
-          {messages.length === 0 && !replayLoading ? (
+          {messages.length === 0 && !replayLoading && !streaming ? (
             <ConversationEmptyState
               title={t("Chat with {{agent}}", { agent: agentLabel })}
               description={t("Send a message to start.")}
@@ -116,14 +149,7 @@ export function ChatMessageList({
           ) : (
             messages.map((msg, i) => {
               const isLastStreamingMessage = streaming && i === messages.length - 1;
-              const showWorkingIndicator =
-                msg.role === "assistant" &&
-                isLastStreamingMessage &&
-                !msg.content &&
-                !msg.progress &&
-                !msg.activities?.length &&
-                !msg.parts?.length;
-              if (!messageVisible(msg, displaySettings) && !showWorkingIndicator) {
+              if (!messageVisible(msg, displaySettings)) {
                 return null;
               }
               return (
@@ -137,11 +163,6 @@ export function ChatMessageList({
                           : "w-full px-0 py-1 text-foreground"
                     }
                   >
-                    {showWorkingIndicator && (
-                      <span className="font-mono text-xs text-primary/80 animate-pulse">
-                        {t("AI is working…")}
-                      </span>
-                    )}
                     <MessageRenderErrorBoundary
                       resetKey={messageRenderResetKey(msg, i)}
                     >
@@ -156,6 +177,15 @@ export function ChatMessageList({
                 </Message>
               );
             })
+          )}
+          {showWorkingIndicator && (
+            <Message from="assistant">
+              <MessageContent className="w-full px-0 py-1 text-foreground">
+                <span className="animate-pulse font-mono text-xs text-primary/80">
+                  {t("AI is working…")}
+                </span>
+              </MessageContent>
+            </Message>
           )}
         </div>
       </ConversationContent>

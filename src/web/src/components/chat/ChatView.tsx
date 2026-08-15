@@ -10,7 +10,6 @@ import {
   initWorkspaceThread,
 } from "@/api/sessions";
 import { getAgentDisplayName } from "@/lib/agents";
-import type { ChatRuntimeStatus } from "@/lib/dashboard-types";
 import type {
   LaunchSessionInfo,
   ProfileLaunchOption,
@@ -18,7 +17,6 @@ import type {
   WorkspaceItem,
 } from "@va/client";
 import { useI18n } from "@va/i18n";
-import { ChatInput } from "./ChatInput";
 import { ChatHeader } from "./ChatHeader";
 import { ChatRuntimeHost } from "./ChatRuntimeHost";
 import {
@@ -58,11 +56,10 @@ import {
   writeStoredSessionSidebarWidth,
 } from "./chatSessionStorage";
 import { shortSessionId } from "./chatSessionDisplay";
-import { ChatMessageList } from "./ChatMessageList";
 import { NewChatAgentPicker } from "./NewChatAgentPicker";
 import { NewChatHome } from "./NewChatHome";
 import { NewChatWorkspacePicker } from "./NewChatWorkspacePicker";
-import { PendingPermissions } from "./PendingPermissions";
+import { ChatInput, ChatMessageList, PendingPermissions } from "./chatUi";
 import { SubagentPanel } from "./SubagentPanel";
 import { currentUnixSeconds } from "./chatTime";
 import type { ChatSessionSelection } from "./chatTypes";
@@ -70,7 +67,6 @@ import { useChatAttachments } from "./useChatAttachments";
 
 interface ChatViewProps {
   webSettings: WebVerboseSettings;
-  onStatusChange?: (status: ChatRuntimeStatus) => void;
   onOpenAppSidebar?: () => void;
 }
 
@@ -78,7 +74,6 @@ const DIRECT_PROFILE_ID = "direct";
 
 export function ChatView({
   webSettings,
-  onStatusChange,
   onOpenAppSidebar,
 }: ChatViewProps) {
   const { t } = useI18n();
@@ -358,24 +353,6 @@ export function ChatView({
           )
         : undefined;
   const replayLoading = Boolean(resumeReplay);
-  const chatStatus: ChatRuntimeStatus =
-    pendingPermissions.length > 0
-      ? "attention"
-      : streaming || replayLoading
-        ? "working"
-        : connected
-          ? "ready"
-          : "connecting";
-  const statusLabel =
-    chatStatus === "attention"
-      ? t("Agent needs input")
-      : chatStatus === "working"
-        ? replayLoading
-          ? t("Loading chat history")
-          : t("Agent working")
-        : chatStatus === "ready"
-          ? t("Local agent ready")
-          : t("Connecting to local agent");
   const headerSessionLabel =
     activeLaunchSession
       ? activeLaunchSession.title
@@ -830,10 +807,6 @@ export function ChatView({
     delete syncedTurnCompletionRef.current[runtimeKey];
     delete syncedActiveSessionRef.current[runtimeKey];
   }, []);
-
-  useEffect(() => {
-    onStatusChange?.(chatStatus);
-  }, [chatStatus, onStatusChange]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -1541,11 +1514,7 @@ export function ChatView({
           headerSessionLabel={headerSessionLabel}
           workspacePath={activeWorkspacePath}
           sessionId={meta.sessionId}
-          chatStatus={chatStatus}
-          statusLabel={statusLabel}
           connected={connected}
-          streaming={streaming}
-          replayLoading={replayLoading}
           showSessionSidebar={showSessionSidebar}
           onShowMobileSessions={() => setMobileSessionSidebarOpen(true)}
           onToggleSessionSidebar={() => setShowSessionSidebar((value) => !value)}

@@ -1,0 +1,256 @@
+import { expect, test } from "bun:test";
+import type { SessionNotification } from "@agentclientprotocol/sdk";
+import { ChatEventSchema } from "@va/client";
+
+import { chatUserContentBlocks } from "../src/components/chat/chatUserContent";
+import { applyChatTranscriptUpdate } from "../src/components/chat/chatTranscriptUpdates";
+import type { ReviewDraft } from "../src/components/review/reviewTypes";
+import { reviewHelloStartsNewEpoch } from "../src/components/review/useReviewBridge";
+import { previewSocketUrl } from "../src/preview/usePreviewChatConnection";
+import {
+  buildPreviewReviewPrompt,
+  previewReviewDisplay,
+} from "../src/preview/previewReview";
+import {
+  clampPreviewChatWidth,
+  resizePreviewChatWidth,
+} from "../src/preview/previewChatLayout";
+import { ownerPreviewSlug } from "../src/preview/previewRoute";
+import {
+  rememberServerPreviewConsent,
+  serverPreviewNeedsConsent,
+} from "../src/preview/previewConsent";
+import {
+  parsePreviewBootstrap,
+  refreshedPreviewSlug,
+  type PreviewItem,
+} from "../src/preview/previewTypes";
+
+const preview: PreviewItem = {
+  slug: "readme-cn-md",
+  title: "README 中文版",
+  workspace: "/work/VibeAround",
+  kind: "file",
+  src: "/va/preview/u/readme-cn-md/content",
+};
+
+function memoryStorage(): Pick<Storage, "getItem" | "setItem"> {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+}
+
+test("Preview chat width stays bounded on either resize edge", () => {
+  expect(clampPreviewChatWidth(100)).toBe(280);
+  expect(clampPreviewChatWidth(800)).toBe(560);
+  expect(resizePreviewChatWidth(400, 40, "left")).toBe(440);
+  expect(resizePreviewChatWidth(400, 40, "right")).toBe(360);
+});
+
+test("Review bridge hello rotates only for a different iframe document", () => {
+  expect(reviewHelloStartsNewEpoch(null, "document-1")).toBe(false);
+  expect(reviewHelloStartsNewEpoch("document-1", "document-1")).toBe(
+    false,
+  );
+  expect(reviewHelloStartsNewEpoch("document-1", "document-2")).toBe(
+    true,
+  );
+  expect(reviewHelloStartsNewEpoch("document-1", null)).toBe(false);
+});
+
+test("owner Preview route matches only the page shell", () => {
+  expect(ownerPreviewSlug("/va/preview/u/readme-cn-md")).toBe("readme-cn-md");
+  expect(ownerPreviewSlug("/va/preview/u/readme%20cn")).toBe("readme cn");
+  expect(ownerPreviewSlug("/va/preview/u/readme/content")).toBeNull();
+  expect(ownerPreviewSlug("/va/preview/s/readme")).toBeNull();
+  expect(ownerPreviewSlug("/va/")).toBeNull();
+});
+
+test("Preview bootstrap accepts the unified item and rejects a missing source", () => {
+  expect(
+    parsePreviewBootstrap({ selectedSlug: preview.slug, previews: [preview] }),
+  ).toEqual({ selectedSlug: preview.slug, previews: [preview] });
+  expect(
+    parsePreviewBootstrap({
+      selectedSlug: preview.slug,
+      previews: [{ ...preview, src: undefined }],
+    }),
+  ).toBeNull();
+  expect(
+    parsePreviewBootstrap({
+      selectedSlug: preview.slug,
+      previews: [{ ...preview, kind: "unknown" }],
+    }),
+  ).toBeNull();
+});
+
+test("Server Preview requires one confirmation per preview and browser session", () => {
+  const storage = memoryStorage();
+  const server = { ...preview, slug: "app", kind: "server" as const };
+
+  expect(serverPreviewNeedsConsent(preview, storage)).toBe(false);
+  expect(serverPreviewNeedsConsent(server, storage)).toBe(true);
+  rememberServerPreviewConsent(server, storage);
+  expect(serverPreviewNeedsConsent(server, storage)).toBe(false);
+  expect(
+    serverPreviewNeedsConsent({ ...server, slug: "another-app" }, storage),
+  ).toBe(true);
+});
+
+test("manual Preview refresh keeps the active selection before using fresh fallbacks", () => {
+  const other = { ...preview, slug: "other", title: "Other" };
+  expect(
+    refreshedPreviewSlug(
+      { selectedSlug: other.slug, previews: [preview, other] },
+      preview.slug,
+    ),
+  ).toBe(preview.slug);
+  expect(
+    refreshedPreviewSlug(
+      { selectedSlug: other.slug, previews: [other] },
+      preview.slug,
+    ),
+  ).toBe(other.slug);
+  expect(
+    refreshedPreviewSlug(
+      { selectedSlug: "stale", previews: [other] },
+      preview.slug,
+    ),
+  ).toBe(other.slug);
+  expect(
+    refreshedPreviewSlug(
+      { selectedSlug: "stale", previews: [] },
+      preview.slug,
+    ),
+  ).toBeNull();
+});
+
+test("review submission carries source location while the visible message stays readable", () => {
+  const drafts: ReviewDraft[] = [
+    {
+      id: "review-1",
+      anchor: {
+        kind: "text",
+        text: "Host-side Web Search",
+        heading: "Web Search",
+        startLine: 128,
+        endLine: 129,
+      },
+      comment: "翻译成中文",
+    },
+  ];
+  const prompt = buildPreviewReviewPrompt(preview, drafts, "顺便检查语气");
+  const display = previewReviewDisplay(drafts, "顺便检查语气");
+
+  expect(prompt).toContain("Source lines: 128-129");
+  expect(prompt).toContain("Section: Web Search");
+  expect(prompt).toContain("--- BEGIN QUOTED PREVIEW CONTENT ---");
+  expect(prompt).toContain("翻译成中文");
+  expect(display).toContain("lines 128–129 · Web Search");
+  expect(display).toContain("“Host-side Web Search”");
+  expect(display).toContain("→ 翻译成中文");
+  expect(display).not.toContain("BEGIN QUOTED");
+});
+
+test("region review identifies its screenshot attachment without embedding image data", () => {
+  const drafts: ReviewDraft[] = [
+    {
+      id: "review-region",
+      anchor: {
+        kind: "region",
+        text: "Screenshot region 320 × 180",
+        page: { path: "/settings" },
+        region: { width: 320, height: 180 },
+      },
+      comment: "Reduce the spacing here",
+      screenshot: {
+        blob: new Blob(["image"], { type: "image/png" }),
+        fileName: "preview-region.png",
+      },
+    },
+  ];
+
+  const prompt = buildPreviewReviewPrompt(preview, drafts, "");
+  const display = previewReviewDisplay(drafts, "");
+  expect(prompt).toContain("Screenshot attachment: preview-region.png");
+  expect(prompt).toContain("Screenshot size: 320 × 180 CSS pixels");
+  expect(prompt).not.toContain("data:image");
+  expect(display).toContain("320 × 180 screenshot");
+});
+
+test("submitted screenshot stays visible as a standard chat resource", () => {
+  expect(
+    chatUserContentBlocks("Review the selected region", [
+      {
+        id: "capture-1",
+        name: "preview-region.png",
+        mimeType: "image/png",
+        size: 50113,
+        uri: "file:///tmp/preview-region.png",
+      },
+    ]),
+  ).toEqual([
+    { type: "text", text: "Review the selected region" },
+    {
+      type: "resource_link",
+      name: "preview-region.png",
+      title: "preview-region.png",
+      mimeType: "image/png",
+      size: 50113,
+      uri: "file:///tmp/preview-region.png",
+    },
+  ]);
+});
+
+test("echoed hidden review prompt acknowledges the optimistic visible summary", () => {
+  const current = [
+    {
+      role: "user" as const,
+      content: "Web Search\n“Host-side Web Search”\n→ 翻译成中文",
+      messageId: "message-1",
+      optimistic: true,
+    },
+  ];
+  const notification = {
+    sessionId: "session-1",
+    update: {
+      sessionUpdate: "user_message_chunk",
+      messageId: "message-1",
+      content: {
+        type: "text",
+        text: "Please update this Preview using the review notes below…",
+      },
+    },
+  } as SessionNotification;
+
+  const next = applyChatTranscriptUpdate(current, notification.update, {
+    acknowledgeOptimisticUser: true,
+  });
+  expect(next).toHaveLength(1);
+  expect(next[0].content).toContain("→ 翻译成中文");
+  expect(next[0].content).not.toContain("Please update this Preview");
+  expect(next[0].optimistic).toBe(false);
+});
+
+test("Preview websocket uses the owner route without conversation state", () => {
+  expect(
+    previewSocketUrl(
+      "readme cn",
+      "https://va.example/va/preview/u/readme-cn",
+    ),
+  ).toBe("wss://va.example/va/preview/u/readme%20cn/chat");
+  expect(
+    previewSocketUrl(
+      "readme-cn",
+      "http://127.0.0.1:12358/va/preview/u/readme-cn",
+    ),
+  ).toBe("ws://127.0.0.1:12358/va/preview/u/readme-cn/chat");
+});
+
+test("Preview refresh is an explicit chat event", () => {
+  expect(ChatEventSchema.parse({ kind: "preview_refresh" })).toEqual({
+    kind: "preview_refresh",
+  });
+});

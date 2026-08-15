@@ -29,7 +29,7 @@ VibeAround 已装好的话十五分钟；首次安装再加十分钟。
 | Web Terminal | 对本地 Workspace 的类 shell 访问。 |
 | 手机浏览器 | 离开桌子时的快速审阅、批准或调整方向。 |
 | IM 渠道 | 通过 Telegram、飞书/Lark、Discord、Slack、微信、钉钉、企业微信或 QQ 机器人的异步跟进。 |
-| Live Preview | 审阅本地 dev server、Markdown、HTML 和生成的产物。 |
+| Live Preview | 本地直连审阅 dev server/HTML；远端使用已配对的 owner，或限时的 Server/Markdown Share。 |
 
 ## 安全清单
 

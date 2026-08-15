@@ -1,12 +1,15 @@
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { I18nProvider } from "@va/i18n";
 import App from "./App";
 import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { PairingGate } from "./PairingGate";
 import { initTheme } from "./lib/theme";
-import { initAuthFromUrl, getAuthToken } from "./lib/auth";
+import { clearAuthToken, getAuthToken, initAuthFromUrl } from "./lib/auth";
+import { ownerPreviewSlug } from "./preview/previewRoute";
 import "./index.css";
+
+const PreviewPage = lazy(() => import("./preview/PreviewPage"));
 
 initTheme();
 
@@ -44,7 +47,7 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
     headers.set(BYPASS_HEADER, "1");
     if (!headers.has("User-Agent")) headers.set("User-Agent", BYPASS_USER_AGENT);
     // Token is only attached on same-origin calls — never leak it cross-origin.
-    const token = window.sessionStorage.getItem("vibearound.auth.token");
+    const token = getAuthToken();
     if (token && !headers.has("Authorization")) {
       headers.set("Authorization", `Bearer ${token}`);
     }
@@ -59,9 +62,9 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
     const isApiCall =
       typeof url === "string" &&
       (url.includes("/api/") || url.includes("/mcp") || url.includes("/ws"));
-    const hadBearerToken = Boolean(window.sessionStorage.getItem("vibearound.auth.token"));
+    const hadBearerToken = getAuthToken() !== null;
     if (isApiCall && hadBearerToken) {
-      window.sessionStorage.removeItem("vibearound.auth.token");
+      clearAuthToken();
       // Hard reload so React unmounts and `main.tsx` re-evaluates the gate.
       // Guard with a one-shot flag so a burst of 401s doesn't loop.
       if (!sessionStorage.getItem("vibearound.auth.reloading")) {
@@ -79,12 +82,27 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
 // anyone who loads the page without a token sees a clear explanation
 // instead of an empty broken-looking dashboard.
 const hasToken = getAuthToken() !== null;
+const previewSlug = ownerPreviewSlug(window.location.pathname);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <I18nProvider>
       <AppErrorBoundary>
-        {hasToken ? <App /> : <PairingGate />}
+        {previewSlug ? (
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Loading Preview…
+              </div>
+            }
+          >
+            <PreviewPage initialSlug={previewSlug} />
+          </Suspense>
+        ) : hasToken ? (
+          <App />
+        ) : (
+          <PairingGate />
+        )}
       </AppErrorBoundary>
     </I18nProvider>
   </StrictMode>

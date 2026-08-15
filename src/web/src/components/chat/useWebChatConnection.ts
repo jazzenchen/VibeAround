@@ -1,13 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  ContentBlock,
-  Plan,
-  SessionNotification,
-  ToolCall,
-  ToolCallUpdate,
-} from "@agentclientprotocol/sdk";
+import type { SessionNotification } from "@agentclientprotocol/sdk";
 import {
   ChatEventSchema,
   formatErrorMessage,
@@ -26,29 +20,20 @@ import type {
   PendingPermission,
   SessionModeState,
 } from "./chatTypes";
-import {
-  createMessageId,
-  switchedAgentId,
-  toolActivityLabel,
-  toolActivityStatus,
-} from "./chatFrameUtils";
+import { createMessageId, switchedAgentId } from "./chatFrameUtils";
 import {
   appendErrorToStreamMessage,
-  appendPlanMessage,
   appendStandaloneAssistantMessage,
-  appendStreamAssistantMessage,
-  appendThinkingActivityMessage,
-  appendToolActivityMessage,
-  appendUserMessageChunk,
-  clearStreamProgressMessage,
   mergeChatMessageSnapshots,
-  setStreamProgressMessage,
   settleStreamActivitiesMessage,
 } from "./chatMessageUpdates";
+import { applyChatTranscriptUpdate } from "./chatTranscriptUpdates";
+import { startReconnectingWebSocket } from "./reconnectingWebSocket";
 import {
   readCachedChatSession,
   writeCachedChatSession,
 } from "./chatSessionCache";
+import { chatUserContentBlocks } from "./chatUserContent";
 import {
   parseModeFromConfigOptions,
   parseSessionModeState,
@@ -62,7 +47,6 @@ interface UseWebChatConnectionOptions {
 
 const CACHE_WRITE_DEBOUNCE_MS = 350;
 const RESUME_REPLAY_SETTLE_MS = 700;
-const CHAT_WS_RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000];
 const USER_CONTENT_PART_ID_PREFIX = "user-content";
 const COMPACTION_NOTICE_DROP_RATIO = 0.55;
 const COMPACTION_NOTICE_MIN_WINDOW_RATIO = 0.25;
@@ -191,8 +175,6 @@ export function useWebChatConnection({
   >({});
   const [lastTurnCompletedAt, setLastTurnCompletedAt] = useState<number | undefined>();
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptRef = useRef(0);
   const promptInFlightRef = useRef(false);
   const turnActiveRef = useRef(false);
   const resumeReplayRef = useRef<ResumeReplayState | null>(null);
@@ -381,14 +363,6 @@ export function useWebChatConnection({
   );
 
   useEffect(() => {
-    let disposed = false;
-
-    function clearReconnectTimer() {
-      if (!reconnectTimerRef.current) return;
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-
     function markDisconnected(clearPermissions: boolean) {
       setConnected(false);
       setStreaming(false);
@@ -399,85 +373,24 @@ export function useWebChatConnection({
       finishResumeReplay();
     }
 
-    function scheduleReconnect() {
-      if (disposed || reconnectTimerRef.current) return;
-      const delay =
-        CHAT_WS_RECONNECT_DELAYS_MS[
-          Math.min(reconnectAttemptRef.current, CHAT_WS_RECONNECT_DELAYS_MS.length - 1)
-        ];
-      reconnectAttemptRef.current += 1;
-      reconnectTimerRef.current = setTimeout(() => {
-        reconnectTimerRef.current = null;
-        connect();
-      }, delay);
-    }
-
-    function closeCurrentSocket() {
-      const ws = wsRef.current;
-      wsRef.current = null;
-      if (!ws) return;
-      ws.onopen = null;
-      ws.onmessage = null;
-      ws.onerror = null;
-      ws.onclose = null;
-      ws.close();
-    }
-
-    function connect() {
-      if (disposed || !chatId) return;
-      const current = wsRef.current;
-      if (
-        current &&
-        current.readyState !== WebSocket.CLOSED &&
-        current.readyState !== WebSocket.CLOSING
-      ) {
-        return;
-      }
-
-      let ws: WebSocket;
-      try {
-        ws = new WebSocket(
-          getWebSocketUrl(`/ws/chat?chat_id=${encodeURIComponent(chatId)}`),
-        );
-      } catch (error) {
-        console.warn("[ChatView] failed to create chat websocket:", error);
-        markDisconnected(true);
-        scheduleReconnect();
-        return;
-      }
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (disposed || wsRef.current !== ws) return;
-        reconnectAttemptRef.current = 0;
-        setConnected(true);
-      };
-      ws.onclose = () => {
-        if (disposed || wsRef.current !== ws) return;
-        wsRef.current = null;
-        markDisconnected(true);
-        scheduleReconnect();
-      };
-      ws.onerror = () => {
-        if (disposed || wsRef.current !== ws) return;
-        markDisconnected(false);
-      };
-
-      ws.onmessage = (event) => {
-        if (disposed || wsRef.current !== ws) return;
-        handleSocketMessage(event);
-      };
-    }
-
     if (!chatId) {
-      clearReconnectTimer();
-      reconnectAttemptRef.current = 0;
-      closeCurrentSocket();
       setConnected(false);
       return;
     }
 
-    connect();
+    const closeSocket = startReconnectingWebSocket({
+      socketRef: wsRef,
+      url: () =>
+        getWebSocketUrl(`/ws/chat?chat_id=${encodeURIComponent(chatId)}`),
+      onOpen: () => setConnected(true),
+      onMessage: handleSocketMessage,
+      onError: () => markDisconnected(false),
+      onClose: () => markDisconnected(true),
+      onCreateError: (error) => {
+        console.warn("[ChatView] failed to create chat websocket:", error);
+        markDisconnected(true);
+      },
+    });
 
     function handleSocketMessage(event: MessageEvent) {
       if (typeof event.data !== "string") return;
@@ -626,8 +539,16 @@ export function useWebChatConnection({
       }
       const replaying = pendingResume?.sessionId === notif.sessionId;
       const replaySessionId = replaying ? notif.sessionId : undefined;
-
       const update = notif.update;
+      const applyTranscriptUpdate = (
+        options?: Parameters<typeof applyChatTranscriptUpdate>[2],
+      ) => {
+        applyMessageUpdate(
+          (prev) => applyChatTranscriptUpdate(prev, update, options),
+          replaySessionId,
+        );
+      };
+
       const usage = usageSnapshot(update);
       if (usage) {
         const previous = usageBySessionRef.current.get(notif.sessionId);
@@ -650,41 +571,36 @@ export function useWebChatConnection({
 
       switch (update.sessionUpdate) {
         case "user_message_chunk": {
-          appendUserMessage(update.content, update.messageId, {
-            forceNewMessage: replaying && !update.messageId,
-            dedupeExistingText: !replaying,
-          }, replaySessionId);
+          applyTranscriptUpdate({
+            userMessage: {
+              forceNewMessage: replaying && !update.messageId,
+              dedupeExistingText: !replaying,
+            },
+          });
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "agent_message_chunk": {
-          appendToStreamAssistant(update.content, update.messageId, replaySessionId);
+          applyTranscriptUpdate();
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "agent_thought_chunk": {
-          appendThinkingActivity(update.content, replaySessionId);
+          applyTranscriptUpdate({ thinkingLabel: t("Thinking") });
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "tool_call":
         case "tool_call_update": {
-          const title = toolActivityLabel(update);
-          const status = toolActivityStatus(update);
-          appendToolActivity(update, replaySessionId);
-          if (status === "completed" || status === "failed") {
-            clearStreamProgress(replaySessionId);
-          } else {
-            setStreamProgress(
-              t("Using tool: {{tool}}…", { tool: title }),
-              replaySessionId,
-            );
-          }
+          applyTranscriptUpdate({
+            toolProgressLabel: (tool) =>
+              t("Using tool: {{tool}}…", { tool }),
+          });
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "plan": {
-          appendPlan(update, replaySessionId);
+          applyTranscriptUpdate();
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
@@ -740,62 +656,6 @@ export function useWebChatConnection({
       );
     }
 
-    function appendUserMessage(
-      content: ContentBlock,
-      messageId?: string | null,
-      options?: { forceNewMessage?: boolean; dedupeExistingText?: boolean },
-      replaySessionId?: string,
-    ) {
-      applyMessageUpdate(
-        (prev) => appendUserMessageChunk(prev, content, messageId, options),
-        replaySessionId,
-      );
-    }
-
-    function appendToStreamAssistant(
-      content: ContentBlock,
-      messageId?: string | null,
-      replaySessionId?: string,
-      options?: { forceNewMessage?: boolean },
-    ) {
-      applyMessageUpdate(
-        (prev) => appendStreamAssistantMessage(prev, content, messageId, options),
-        replaySessionId,
-      );
-    }
-
-    function appendThinkingActivity(content: ContentBlock, replaySessionId?: string) {
-      applyMessageUpdate(
-        (prev) => appendThinkingActivityMessage(prev, content, t("Thinking")),
-        replaySessionId,
-      );
-    }
-
-    function appendToolActivity(
-      update: ToolCall | ToolCallUpdate,
-      replaySessionId?: string,
-    ) {
-      applyMessageUpdate(
-        (prev) => appendToolActivityMessage(prev, update),
-        replaySessionId,
-      );
-    }
-
-    function appendPlan(plan: Plan, replaySessionId?: string) {
-      applyMessageUpdate((prev) => appendPlanMessage(prev, plan), replaySessionId);
-    }
-
-    function setStreamProgress(progress: string, replaySessionId?: string) {
-      applyMessageUpdate(
-        (prev) => setStreamProgressMessage(prev, progress, "tool"),
-        replaySessionId,
-      );
-    }
-
-    function clearStreamProgress(replaySessionId?: string) {
-      applyMessageUpdate((prev) => clearStreamProgressMessage(prev), replaySessionId);
-    }
-
     function settleStreamActivities(replaySessionId?: string) {
       applyMessageUpdate((prev) => settleStreamActivitiesMessage(prev), replaySessionId);
     }
@@ -807,10 +667,7 @@ export function useWebChatConnection({
     }
 
     return () => {
-      disposed = true;
-      clearReconnectTimer();
-      reconnectAttemptRef.current = 0;
-      closeCurrentSocket();
+      closeSocket();
       clearResumeReplayDoneTimer();
       clearReplayCacheWriteTimer();
       clearActiveTranscriptCacheWriteTimer();
@@ -849,7 +706,7 @@ export function useWebChatConnection({
       const uniqueAttachments = dedupeChatAttachments(attachments);
       promptInFlightRef.current = true;
       const messageId = createMessageId();
-      const contentParts = messageContentBlocks(trimmed, uniqueAttachments).map((block, index) => ({
+      const contentParts = chatUserContentBlocks(trimmed, uniqueAttachments).map((block, index) => ({
         id: `${USER_CONTENT_PART_ID_PREFIX}-${Date.now()}-${index}`,
         kind: "content" as const,
         block,
@@ -1174,34 +1031,12 @@ function applySubagentAcpNotification(
   prev: ChatMessage[],
   notif: SessionNotification,
 ): ChatMessage[] {
-  const update = notif.update;
-  switch (update.sessionUpdate) {
-    case "user_message_chunk":
-      return appendUserMessageChunk(prev, update.content, update.messageId, {
+  return applyChatTranscriptUpdate(prev, notif.update, {
+    userMessage: {
         dedupeExistingText: true,
-      });
-    case "agent_message_chunk":
-      return appendStreamAssistantMessage(prev, update.content, update.messageId);
-    case "agent_thought_chunk":
-      return appendThinkingActivityMessage(prev, update.content, "Thinking");
-    case "tool_call":
-    case "tool_call_update": {
-      const messages = appendToolActivityMessage(prev, update);
-      const status = toolActivityStatus(update);
-      if (status === "completed" || status === "failed") {
-        return clearStreamProgressMessage(messages);
-      }
-      return setStreamProgressMessage(
-        messages,
-        `Using tool: ${toolActivityLabel(update)}...`,
-        "tool",
-      );
-    }
-    case "plan":
-      return appendPlanMessage(prev, update);
-    default:
-      return prev;
-  }
+    },
+    toolProgressLabel: (tool) => `Using tool: ${tool}...`,
+  });
 }
 
 function mergeById<T extends { id: string }>(prev: T[], nextItems: T[]): T[] {
@@ -1227,23 +1062,4 @@ function dedupeChatAttachments(attachments: ChatAttachment[]): ChatAttachment[] 
     out.push(attachment);
   }
   return out;
-}
-
-function messageContentBlocks(
-  text: string,
-  attachments: ChatAttachment[],
-): ContentBlock[] {
-  const blocks: ContentBlock[] = [];
-  if (text) blocks.push({ type: "text", text });
-  blocks.push(
-    ...attachments.map((attachment) => ({
-      type: "resource_link" as const,
-      name: attachment.name,
-      title: attachment.name,
-      mimeType: attachment.mimeType,
-      size: attachment.size,
-      uri: attachment.uri,
-    })),
-  );
-  return blocks;
 }

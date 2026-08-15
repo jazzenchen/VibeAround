@@ -13,10 +13,9 @@
 | `register_workspace` | 把当前项目目录注册为 Workspace |
 | `initialize_subagents` | 开始多 Agent 回合 —— 模式：`parallel`、`collaboration`、`brainstorming` |
 | `wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
-| `preview` | 为某个 dev server 端口创建实时预览 |
-| `md_preview` | 创建 Markdown 渲染预览 |
+| `preview` | 预览一个明确来源：正在运行的 dev-server `port` 或 Markdown `file`；Markdown 由 VibeAround 直接渲染，不会另起服务 |
 
-按 Agent 安装的配套技能（`skill_auto_install`）：`vibearound`（交接）、`va-session`、`va-preview`、`va-md-preview`、`agent-collaboration`。
+按 Agent 安装的配套技能（`skill_auto_install`）：`vibearound`（交接）、`va-session`、`va-preview`、`agent-collaboration`。
 
 ## 本地 API 路由族
 
@@ -73,15 +72,17 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 
 ## 预览 URL
 
-| URL | 认证 | 寿命 |
-|---|---|---|
-| `/preview/u/{slug}` | Owner token | 预览存在期间 |
-| `/preview/s/{slug}` | 无 | 600 秒 |
-| `/md-preview/{slug}` | Owner token | 存在期间 |
+| URL | 目标 | 认证 | 寿命 |
+|---|---|---|---|
+| `/preview/u/{slug}` | Server 或 Markdown 的 Owner shell | 回环地址或已配对 owner | 预览存在期间 |
+| `/preview/u/{slug}/content` | 选中的 owner 内容；本地 Server 直接使用其 loopback origin | 与 owner shell 相同 | 预览存在期间 |
+| `/preview/s/{share_id}` | Server 或 Markdown Share | 六位访问码，随后使用限定作用域的浏览器授信 | 共用 600 秒期限 |
+
+Server Share 代理会在每次请求时重新验证限定作用域的浏览器授信，并原样转发已认证的 GET/HEAD 路径，包括页面的数据读取。写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持；`/va/*`、owner 页面、chat 和审阅控件不进入 Share。它是页面预览传输，不是通用 API 兼容层或 API 隔离沙盒；已接受的 GET/HEAD 路径不会按名称分类。
 
 ---
 
 *Source anchors: `src/server/src/web_server/mcp/mod.rs` (tool dispatch), `src/core/src/workspace/handover.rs` (code TTL), `src/server/src/web_server/api_bridge/routes.rs` + `mod.rs` (route table, body limit), `src/server/src/web_server/ws_domains.rs` (state endpoints), `src/core/src/previews/store.rs` (share TTL).*
-*Last verified: v0.7.11*
+*Last verified: v0.7.24*
 
 <sub>[◀ CLI 参考](cli.md) · [文档索引](../README.md) · [计时器与上限 ▶](timers-and-limits.md)</sub>

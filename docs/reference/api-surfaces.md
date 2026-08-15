@@ -13,10 +13,9 @@ Served at `/mcp` (JSON-RPC over streamable HTTP, token-authenticated). Auto-inje
 | `register_workspace` | Register the current project directory as a workspace |
 | `initialize_subagents` | Start a multi-agent turn — modes: `parallel`, `collaboration`, `brainstorming` |
 | `wait_for_subagents` | Block until subagents report completion; returns their reports |
-| `preview` | Create a live preview for a dev server port |
-| `md_preview` | Create a rendered Markdown preview |
+| `preview` | Preview exactly one source: a running dev-server `port` or a Markdown `file`. Markdown is rendered directly without starting a separate server |
 
-Companion skills installed per agent (`skill_auto_install`): `vibearound` (handover), `va-session`, `va-preview`, `va-md-preview`, `agent-collaboration`.
+Companion skills installed per agent (`skill_auto_install`): `vibearound` (handover), `va-session`, `va-preview`, `agent-collaboration`.
 
 ## Local API route families
 
@@ -73,15 +72,17 @@ All token-authenticated; see [architecture overview](../architecture/overview.md
 
 ## Preview URLs
 
-| URL | Auth | Lifetime |
-|---|---|---|
-| `/preview/u/{slug}` | Owner token | While the preview exists |
-| `/preview/s/{slug}` | None | 600 s |
-| `/md-preview/{slug}` | Owner token | While it exists |
+| URL | Target | Auth | Lifetime |
+|---|---|---|---|
+| `/preview/u/{slug}` | Owner shell for Server or Markdown | Loopback or paired owner | While the preview exists |
+| `/preview/u/{slug}/content` | Selected owner content; a local Server uses its loopback origin directly | Same owner boundary as the shell | While the preview exists |
+| `/preview/s/{share_id}` | Server or Markdown Share | Six-digit access code, then scoped browser grant | One shared 600 s deadline |
+
+The Server Share proxy revalidates the scoped browser grant on every request and forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR remain unsupported. `/va/*`, owner pages, chat, and review controls are excluded from a Share. This is a page-preview transport, not general API compatibility or an API-isolation sandbox; accepted GET/HEAD paths are not classified by name.
 
 ---
 
 *Source anchors: `src/server/src/web_server/mcp/mod.rs` (tool dispatch), `src/core/src/workspace/handover.rs` (code TTL), `src/server/src/web_server/api_bridge/routes.rs` + `mod.rs` (route table, body limit), `src/server/src/web_server/ws_domains.rs` (state endpoints), `src/core/src/previews/store.rs` (share TTL).*
-*Last verified: v0.7.11*
+*Last verified: v0.7.24*
 
 <sub>[◀ CLI reference](cli.md) · [Documentation index](../README.md) · [Timers and limits ▶](timers-and-limits.md)</sub>

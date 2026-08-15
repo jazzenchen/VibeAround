@@ -24,11 +24,12 @@
 
 ## Live Preview
 
-不用部署，就能分享你机器上正在运行的东西：
+无需把 VibeAround 变成通用开发隧道，也能审阅本地工作：
 
-- **Dev server 预览。** 注册一个本地端口，得到一个反向代理它的预览页，带 iframe 工具栏。Agent 启动 dev server 时会自动创建这些预览（通过 `va-preview` 技能 / MCP `preview` 工具 —— [工具参考](../reference/api-surfaces.md#mcp-tools)）。
-- **Markdown 预览。** 任何 markdown 文件按 GitHub 风格渲染（`md_preview` 工具或 `va-md-preview` 技能）。
-- **每个预览有两条链接：** owner URL（token 认证，与预览同寿命）和 share URL（10 分钟过期、无需认证 —— 可以放心贴到群聊里）。见[安全模型](../architecture/security-model.md)。
+- **一个 owner 页面。** 可收起的选择器按 Workspace 汇总当前 Preview 清单，一个 iframe 显示选中的目标。切换目标会同步 owner URL；Refresh 会重载当前内容。
+- **Dev server 预览。** 注册本地端口、确认未知内容风险后，owner iframe 才会加载应用。本地 owner 直接使用 loopback origin；浏览器完成配对后，隧道 owner 会把常规 HTTP 与 WebSocket/HMR 流量透明代理到 `127.0.0.1` 上的已登记端口。有公网隧道时，该 Preview 还会得到一笔由访问码保护、有效期 10 分钟的 Share；这个更窄的传输只转发已授权的 GET/HEAD 路径，不支持写请求、协议升级、service worker、WebSocket 或 HMR。`/va/*`、owner、chat 与审阅界面不进入 Share。Agent 通过 `va-preview` 技能 / MCP `preview` 工具创建它（[工具参考](../reference/api-surfaces.md#mcp-tools)）。
+- **Markdown 预览。** 把 Markdown `file` 传给同一个 `va-preview` 技能 / MCP `preview` 工具即可。VibeAround 会使用内置 `marked` 脚本直接读取并渲染文件，不会另起静态服务；公网隧道运行时，还会得到可复制的 Share URL 和可重复使用的六位访问码。Server 和 Markdown Share 的 URL、访问码和浏览器授信都在 10 分钟后同时过期。见[安全模型](../architecture/security-model.md)。
+- **Owner 审阅。** 与 AI 任务绑定的 Preview 可以在 Markdown 中收集文字批注，并在可靠时附带原文行号和章节。实时 Web 应用可以显式加入 `preview` 工具返回的开发期 bridge 标签，以开放文字和元素批注；本地 owner 应用仍然直接加载。草稿标记只属于当前加载的页面，刷新即清空；任务对话仍然保留。Share 页面不提供审阅能力。
 - `va previews` / `va preview delete <slug>` 从 CLI 管理它们；为你代启的预览进程会随守护进程停止而被杀掉。
 
 ## 运行时管理
@@ -41,7 +42,7 @@
 
 ---
 
-*Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`, `src/skills/va-md-preview/`.*
-*Last verified: v0.7.11*
+*Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`.*
+*Last verified: v0.7.24*
 
 <sub>[◀ 桌面应用指南](desktop-app.md) · [文档索引](../README.md) · [IM 使用 ▶](im-usage.md)</sub>

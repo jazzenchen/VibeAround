@@ -424,6 +424,7 @@ pub struct PreviewsResponse {
 /// { "kind": "subagent_acp_notification", "agent": { ... }, "payload": { ... } }
 /// { "kind": "command_menu", "system_commands": [...], "agent_commands": [...] }
 /// { "kind": "turn_status", "active": false }
+/// { "kind": "preview_refresh" }
 /// { "kind": "error", "error": "spawn failed: ..." }
 /// ```
 #[derive(Debug, Clone, Serialize)]
@@ -466,6 +467,7 @@ pub enum ChatEvent {
     TurnStatus {
         active: bool,
     },
+    PreviewRefresh,
     SystemText {
         text: String,
     },

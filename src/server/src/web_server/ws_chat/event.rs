@@ -4,7 +4,7 @@ use common::channels::ChannelOutput;
 use crate::api_types::ChatEvent;
 
 /// Translate a `ChannelOutput` into a wire `ChatEvent`.
-pub(super) fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
+pub(in crate::web_server) fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
     match output {
         ChannelOutput::ThreadReply { reply, .. } => match reply.payload {
             ThreadReplyPayload::AcpSessionNotification { notification } => {
@@ -70,7 +70,10 @@ fn acp_passthrough(payload: serde_json::Value) -> ChatEvent {
     ChatEvent::AcpNotification { payload }
 }
 
-pub(super) fn permission_response_error_event(request_id: &str, error: &str) -> ChatEvent {
+pub(in crate::web_server) fn permission_response_error_event(
+    request_id: &str,
+    error: &str,
+) -> ChatEvent {
     ChatEvent::Error {
         error: format!("Permission response for request `{request_id}` was ignored: {error}"),
     }

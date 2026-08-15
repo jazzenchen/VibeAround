@@ -24,11 +24,12 @@ A real terminal (xterm.js) attached to a PTY on your machine:
 
 ## Live Preview
 
-Share what is running on your machine without deploying:
+Inspect local work without turning VibeAround into a general development tunnel:
 
-- **Dev server previews.** Register a local port and get a preview page that reverse-proxies it, with an iframe toolbar. Agents create these automatically when they start dev servers (via the `va-preview` skill / MCP `preview` tool — [tool reference](../reference/api-surfaces.md#mcp-tools)).
-- **Markdown preview.** Any markdown file rendered GitHub-style (`md_preview` tool or the `va-md-preview` skill).
-- **Two links per preview:** the owner URL (token-authenticated, lives as long as the preview) and a share URL that expires after 10 minutes and needs no auth — safe to paste in a group chat. See [Security model](../architecture/security-model.md).
+- **One owner page.** A collapsible picker groups the current workspace and Preview list while one iframe shows the selected target. Switching targets updates the owner URL; Refresh reloads the selected content.
+- **Dev server preview.** Register a local port, acknowledge the unknown-content warning, and the owner iframe loads the app. A local owner uses the loopback origin directly. After browser pairing, a tunneled owner transparently proxies normal HTTP and WebSocket/HMR traffic to that registered port on `127.0.0.1`. With a public tunnel, the Preview also gets a 10-minute code-gated Share; that narrower transport forwards authenticated GET/HEAD paths, but not writes, protocol upgrades, service workers, WebSockets, or HMR. `/va/*`, owner pages, chat, and review controls are excluded from Share. Agents create these via the `va-preview` skill / MCP `preview` tool ([tool reference](../reference/api-surfaces.md#mcp-tools)).
+- **Markdown preview.** Pass a Markdown `file` to the same `va-preview` skill / MCP `preview` tool. VibeAround reads and renders it directly with the bundled `marked` script, without starting a separate static server. With a public tunnel, it also gets a copyable Share URL plus a reusable six-digit access code. Server and Markdown Share URLs, codes, and browser grants expire together after 10 minutes. See [Security model](../architecture/security-model.md).
+- **Owner review.** A Preview linked to an AI task can collect text comments in Markdown and send reliable source line/section context with them. A live web app can opt into text and element comments with the development-only bridge tag returned by the `preview` tool; the local owner app still loads directly. Draft markers belong to the loaded page and are cleared on reload, while the task conversation remains available. Share pages never expose review controls.
 - `va previews` / `va preview delete <slug>` manage them from the CLI; preview processes started for you are killed when the daemon stops.
 
 ## Runtime management
@@ -41,7 +42,7 @@ The dashboard is responsive; the chat surface includes mobile command controls s
 
 ---
 
-*Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`, `src/skills/va-md-preview/`.*
-*Last verified: v0.7.11*
+*Source anchors: `src/server/src/web_server/` (ws_chat, ws_pty, preview/), `src/web/src/` (SPA), `src/core/src/pty/` (sessions), `src/core/src/previews/` (owner/share, TTL), `src/skills/va-preview/`.*
+*Last verified: v0.7.24*
 
 <sub>[◀ Desktop app guide](desktop-app.md) · [Documentation index](../README.md) · [IM usage ▶](im-usage.md)</sub>

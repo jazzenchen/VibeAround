@@ -38,7 +38,6 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
     "ngrok":      { "auth_token": "…", "domain": "…" },
     "cloudflare": { "tunnel_token": "…", "hostname": "…" }
   },
-  "preview_base_url": null,          // 覆盖预览链接的公开 base URL
 
   // --- 工具链 ---
   "toolchain_mode": "system",        // system | managed

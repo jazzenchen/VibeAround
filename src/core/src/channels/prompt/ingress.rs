@@ -6,6 +6,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::routing::wait_for_signal;
 use crate::routing::ChannelTarget;
+use crate::workspace::threads::runtime::cancelled_prompt_response;
 use crate::workspace::WorkspaceThreadManager;
 
 use super::{
@@ -621,10 +622,6 @@ impl ConversationIngress {
         }
         count.await.unwrap_or(0)
     }
-}
-
-fn cancelled_prompt_response() -> acp::Result<acp::PromptResponse> {
-    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
 }
 
 #[cfg(test)]

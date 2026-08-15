@@ -1,22 +1,26 @@
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 
 use crate::web_server::AppState;
 
 /// GET /api/previews -- list all live preview sessions and the active tunnel URL.
-pub async fn list_previews_handler(
-    State(state): State<AppState>,
-) -> Json<crate::api_types::PreviewsResponse> {
-    let previews = common::previews::list_snapshots();
+pub async fn list_previews_handler(State(state): State<AppState>) -> Response {
+    let previews = crate::web_server::preview::active_preview_snapshots().await;
     let tunnel_url = state.tunnels.first_url();
-    Json(crate::api_types::PreviewsResponse {
+    let mut response = Json(crate::api_types::PreviewsResponse {
         previews,
         tunnel_url,
     })
+    .into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "no-store".parse().expect("valid cache-control header"),
+    );
+    response
 }
 
 /// DELETE /api/previews/:slug -- close one preview and kill its dev-server port.

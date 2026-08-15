@@ -1,124 +1,88 @@
-//! Process-group SIGKILL helpers for tracked dev-server ports.
-//!
-//! Resolution is entirely port-driven — we don't assume a specific runtime
-//! (python / node / ruby / go / …). For each port we:
-//!
-//! 1. Find the listener PID via `lsof -ti :<port>`.
-//! 2. Look up its process-group ID (`pgid`) via `ps -o pgid= -p <pid>`.
-//! 3. SIGTERM the whole group, wait ~500ms, then SIGKILL any survivors.
-//!
-//! Why the process group instead of just the PID: agents commonly launch
-//! dev servers through a shell wrapper (e.g. `sh -c "<cmd>"`). The listener
-//! is the inner process; the shell is its parent in the same group. If we
-//! SIGKILL only the listener, the shell keeps the pipe to the agent open,
-//! the agent's output-watcher never sees EOF, and the current turn hangs
-//! forever. Killing the group tears the whole wrapper tree down, the
-//! watcher unblocks, and `acp::Agent::prompt` can return.
+//! Best-effort cleanup for processes currently listening on Preview ports.
 
-/// Kill every process *group* whose listener holds one of the given ports.
-pub(super) fn kill_pids_on_ports(ports: &[u16]) {
-    let pids = pids_listening_on(ports);
-    if pids.is_empty() {
-        return;
-    }
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
-    // PID → PGID (via `ps`). Deduplicate so we don't send the same signal twice.
-    let pgids: std::collections::HashSet<i32> =
-        pids.iter().filter_map(|pid| pgid_for(*pid)).collect();
-
-    if pgids.is_empty() {
-        tracing::info!(
-            "[preview] kill: no process groups resolved for pids {:?}",
-            pids
-        );
-        return;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::process::Command;
-
-        // First pass: SIGTERM. Gives the shell wrapper + agent watcher a
-        // chance to unwind cleanly (flush stdout, emit SIGCHLD, etc.).
-        for pgid in &pgids {
-            let _ = Command::new("kill")
-                .args(["-TERM", &format!("-{}", pgid)])
-                .output();
-            tracing::info!("[preview] SIGTERM pgid={}", pgid);
-        }
-
-        // Give it half a second to exit politely, then SIGKILL survivors.
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        for pgid in &pgids {
-            let _ = Command::new("kill")
-                .args(["-KILL", &format!("-{}", pgid)])
-                .output();
-            tracing::info!("[preview] SIGKILL pgid={}", pgid);
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        // Windows fallback: taskkill /T kills the process tree rooted at each PID.
-        for pid in pids {
-            let _ = crate::process::env::std_command("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .output();
-        }
-        let _ = pgids; // unused on non-unix
-    }
-}
-
-/// Convenience wrapper for a single port.
 pub(super) fn kill_port(port: u16) {
-    kill_pids_on_ports(&[port]);
-}
-
-/// Resolve a PID to its process-group ID via `ps -o pgid= -p PID`.
-#[cfg(unix)]
-fn pgid_for(pid: u32) -> Option<i32> {
-    let out = std::process::Command::new("ps")
-        .args(["-o", "pgid=", "-p", &pid.to_string()])
-        .output()
-        .ok()?;
-    String::from_utf8(out.stdout)
-        .ok()?
-        .trim()
-        .parse::<i32>()
-        .ok()
-}
-
-#[cfg(not(unix))]
-fn pgid_for(_pid: u32) -> Option<i32> {
-    None
-}
-
-#[cfg(unix)]
-fn pids_listening_on(ports: &[u16]) -> Vec<u32> {
-    use std::process::Command;
-    let mut pids = Vec::new();
-    for port in ports {
-        let out = match Command::new("lsof")
-            .args(["-nP", "-ti", &format!("tcp:{}", port), "-sTCP:LISTEN"])
-            .output()
-        {
-            Ok(o) => o,
-            Err(_) => continue,
-        };
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            if let Ok(pid) = line.trim().parse::<u32>() {
-                pids.push(pid);
-            }
-        }
+    let pids = listener_pids(port);
+    if pids.is_empty() {
+        tracing::info!("[preview] kill: port {} has no listener", port);
+        return;
     }
+
+    let system = process_system();
+    for pid in pids {
+        let killed = system
+            .process(Pid::from_u32(pid))
+            .is_some_and(|process| process.kill());
+        tracing::info!(
+            "[preview] kill: listener pid={} port={} killed={}",
+            pid,
+            port,
+            killed
+        );
+    }
+}
+
+#[cfg(unix)]
+fn listener_pids(port: u16) -> Vec<u32> {
+    use std::process::Command;
+
+    let Ok(output) = Command::new("lsof")
+        .args(["-nP", "-ti", &format!("tcp:{port}"), "-sTCP:LISTEN"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    unique_pids(&output.stdout)
+}
+
+#[cfg(windows)]
+fn listener_pids(port: u16) -> Vec<u32> {
+    let Ok(output) = crate::process::env::std_command("netstat")
+        .args(["-ano", "-p", "TCP"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    let mut pids = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 5 || !fields[3].eq_ignore_ascii_case("LISTENING") {
+                return None;
+            }
+            let local_port = fields[1].rsplit_once(':')?.1.parse::<u16>().ok()?;
+            if local_port != port {
+                return None;
+            }
+            fields[4].parse::<u32>().ok()
+        })
+        .collect::<Vec<_>>();
     pids.sort_unstable();
     pids.dedup();
     pids
 }
 
-#[cfg(not(unix))]
-fn pids_listening_on(_ports: &[u16]) -> Vec<u32> {
-    // TODO: Windows via `netstat -ano` parsing.
+#[cfg(not(any(unix, windows)))]
+fn listener_pids(_port: u16) -> Vec<u32> {
     Vec::new()
+}
+
+#[cfg(unix)]
+fn unique_pids(bytes: &[u8]) -> Vec<u32> {
+    let mut pids = String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+fn process_system() -> System {
+    let mut system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+    );
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    system
 }
