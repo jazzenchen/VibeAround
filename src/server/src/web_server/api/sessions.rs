@@ -292,11 +292,6 @@ pub(crate) struct LaunchSessionArchiveBody {
     workspace_path: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
-pub(crate) struct LaunchSessionArchiveQuery {
-    workspace_path: Option<String>,
-}
-
 /// POST /api/agents/:agent_id/launch-sessions/:session_id/archive -- hide a
 /// CLI-owned session in VibeAround without modifying the agent's session store.
 pub async fn archive_launch_session_handler(
@@ -313,16 +308,6 @@ pub async fn unarchive_launch_session_handler(
     Json(body): Json<LaunchSessionArchiveBody>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     set_launch_session_archived(agent_id, session_id, body.workspace_path, false).await
-}
-
-/// DELETE /api/agents/:agent_id/launch-sessions/:session_id/archive -- legacy
-/// unarchive endpoint. Use query parameters so clients do not need a DELETE
-/// request body.
-pub async fn unarchive_launch_session_delete_handler(
-    Path((agent_id, session_id)): Path<(String, String)>,
-    Query(query): Query<LaunchSessionArchiveQuery>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    set_launch_session_archived(agent_id, session_id, query.workspace_path, false).await
 }
 
 async fn set_launch_session_archived(

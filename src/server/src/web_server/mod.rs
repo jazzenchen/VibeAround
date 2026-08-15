@@ -273,8 +273,7 @@ pub async fn run_web_server(
         )
         .route(
             "/api/agents/{agent_id}/launch-sessions/{session_id}/archive",
-            post(api::archive_launch_session_handler)
-                .delete(api::unarchive_launch_session_delete_handler),
+            post(api::archive_launch_session_handler),
         )
         .route(
             "/api/agents/{agent_id}/launch-sessions/{session_id}/unarchive",
