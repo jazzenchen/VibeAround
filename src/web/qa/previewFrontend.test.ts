@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
+import { ChatEventSchema } from "@va/client";
 
 import { chatUserContentBlocks } from "../src/components/chat/chatUserContent";
 import { applyChatTranscriptUpdate } from "../src/components/chat/chatTranscriptUpdates";
@@ -246,4 +247,10 @@ test("Preview websocket uses the owner route without conversation state", () => 
       "http://127.0.0.1:12358/va/preview/u/readme-cn",
     ),
   ).toBe("ws://127.0.0.1:12358/va/preview/u/readme-cn/chat");
+});
+
+test("Preview refresh is an explicit chat event", () => {
+  expect(ChatEventSchema.parse({ kind: "preview_refresh" })).toEqual({
+    kind: "preview_refresh",
+  });
 });

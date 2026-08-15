@@ -402,6 +402,9 @@ export const ChatEventSchema = z.discriminatedUnion("kind", [
     active: z.boolean(),
   }),
   z.object({
+    kind: z.literal("preview_refresh"),
+  }),
+  z.object({
     kind: z.literal("system_text"),
     text: z.string(),
   }),

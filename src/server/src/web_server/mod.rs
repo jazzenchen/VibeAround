@@ -22,7 +22,7 @@ use axum::{Extension, Router};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, Notify};
 use tower_http::services::{ServeDir, ServeFile};
 
 use common::auth::AuthToken;
@@ -62,6 +62,8 @@ pub(crate) struct AppState {
     tunnels: Arc<TunnelManager>,
     channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
+    /// Explicit refresh requests emitted by successful MCP `preview` calls.
+    preview_refresh_tx: broadcast::Sender<String>,
     /// Port the daemon is bound to. Handlers that need to build
     /// loopback URLs use this instead of reaching into a services
     /// facade.
@@ -217,12 +219,14 @@ pub async fn run_web_server(
         .build()
         .expect("reqwest client");
     let server_proxy_state = preview::ServerProxyState::new(preview_client.clone());
+    let (preview_refresh_tx, _) = broadcast::channel(32);
     let state = AppState {
         pty_manager: Arc::new(PtySessionManager::from_registry(pty_registry)),
         dist_for_fallback: web_dist.clone(),
         tunnels,
         channel_hub,
         web_channel,
+        preview_refresh_tx,
         port,
         preview_client,
         host_search_available,

@@ -137,7 +137,6 @@ function PreviewWorkspace({
     bootstrap.previews.find((preview) => preview.slug === selectedSlug) ??
     bootstrap.previews[0];
 
-  const chat = usePreviewChatConnection(selected.slug);
   const review = useReviewBridge(frameRef, {
     id: selected.slug,
     src: selected.src,
@@ -164,6 +163,7 @@ function PreviewWorkspace({
       );
     }
   }, [onRefreshBootstrap, review.prepareFrame, selected.slug]);
+  const chat = usePreviewChatConnection(selected.slug, refreshPreview);
 
   useEffect(() => {
     document.title = `Preview — ${selected.title}`;

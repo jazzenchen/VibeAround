@@ -83,6 +83,7 @@ async fn mcp_server_preview(
     let (owner_slug, share) = common::previews::ensure_server(port, cwd_path.clone(), title);
     let warnings =
         initialize_preview_conversation(arguments, metadata, &cwd_path, &owner_slug, state).await;
+    let _ = state.preview_refresh_tx.send(owner_slug.clone());
     let local_owner_url = format!(
         "http://127.0.0.1:{}/va/preview/u/{}",
         state.port, owner_slug
@@ -160,6 +161,7 @@ async fn mcp_file_preview(
     let (owner_slug, share) = common::previews::ensure_file(file_path, cwd_path.clone(), title);
     let warnings =
         initialize_preview_conversation(arguments, metadata, &cwd_path, &owner_slug, state).await;
+    let _ = state.preview_refresh_tx.send(owner_slug.clone());
     let tunnel_url = state.tunnels.first_url();
     let owner_base = tunnel_url
         .clone()

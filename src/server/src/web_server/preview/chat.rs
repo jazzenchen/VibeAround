@@ -47,7 +47,7 @@ pub(in crate::web_server) async fn owner_preview_chat_handler(
             .into_response();
     }
 
-    ws.on_upgrade(move |socket| handle_owner_chat_socket(socket, state, route))
+    ws.on_upgrade(move |socket| handle_owner_chat_socket(socket, state, route, slug))
 }
 
 fn resolve_owner_chat_route(
@@ -75,7 +75,12 @@ fn resolve_owner_chat_route(
     Ok(preview_web_route_for_slug(slug))
 }
 
-async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: RouteKey) {
+async fn handle_owner_chat_socket(
+    socket: WebSocket,
+    state: AppState,
+    route: RouteKey,
+    slug: String,
+) {
     let connection_id = Uuid::new_v4().to_string();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     state
@@ -83,6 +88,7 @@ async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: Rou
         .register_connection(&route, connection_id.clone(), tx, true)
         .await;
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
+    let mut refresh_rx = state.preview_refresh_tx.subscribe();
     let (mut ws_tx, mut ws_rx) = socket.split();
     let outbound_task = tokio::spawn(async move {
         loop {
@@ -95,6 +101,17 @@ async fn handle_owner_chat_socket(socket: WebSocket, state: AppState, route: Rou
                 Some(event) = event_rx.recv() => {
                     if send_event(&mut ws_tx, &event).await.is_err() {
                         break;
+                    }
+                }
+                refresh = refresh_rx.recv() => {
+                    match refresh {
+                        Ok(refresh_slug) if refresh_slug == slug => {
+                            if send_event(&mut ws_tx, &ChatEvent::PreviewRefresh).await.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 else => break,

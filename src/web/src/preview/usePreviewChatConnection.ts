@@ -30,7 +30,10 @@ export function previewSocketUrl(
   return url.href;
 }
 
-export function usePreviewChatConnection(slug: string) {
+export function usePreviewChatConnection(
+  slug: string,
+  onPreviewRefresh: () => void | Promise<void>,
+) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -91,6 +94,9 @@ export function usePreviewChatConnection(slug: string) {
           }
           break;
         }
+        case "preview_refresh":
+          void onPreviewRefresh();
+          break;
         case "acp_notification":
           setMessages((current) =>
             applyChatTranscriptUpdate(
@@ -134,7 +140,7 @@ export function usePreviewChatConnection(slug: string) {
       onCreateError: (error) =>
         console.warn("[Preview] failed to create chat websocket:", error),
     });
-  }, [slug]);
+  }, [onPreviewRefresh, slug]);
 
   const sendMessage = useCallback(
     (text: string, displayText = text, attachments: ChatAttachment[] = []) => {
