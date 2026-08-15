@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "bun test qa/",
+    "test": "bun test qa/ --dots",
+    "test:watch": "bun test qa/ --watch --dots",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
