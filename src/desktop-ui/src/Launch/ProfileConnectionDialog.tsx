@@ -157,7 +157,6 @@ export function ProfileConnectionDialog({
     models: ProfileBridgeModelPreference[],
   ) {
     const cleaned = cleanBridgeModels(models);
-    const primary = cleaned[0] ?? { upstreamModel: "" };
     setDraft((prev) => ({
       ...prev,
       [setting.agentId]: {
@@ -170,8 +169,6 @@ export function ProfileConnectionDialog({
             ...(prev[setting.agentId].bridge?.[setting.clientApiType] ?? {}),
             enabled: true,
             targetApiType: setting.targetApiType,
-            upstreamModel: primary.upstreamModel ?? "",
-            fakeModelId: primary.fakeModelId ?? undefined,
             models: cleaned,
           },
         },
@@ -223,15 +220,10 @@ export function ProfileConnectionDialog({
               selectedConnection.targetOptions.includes(selectedCurrentBridge.targetApiType)
                 ? selectedCurrentBridge.targetApiType
                 : recommendedBridgeTarget(profile, agent.id, selectedApiType);
-            const selectedUpstreamModel =
-              cleanModelId(selectedCurrentBridge.upstreamModel) ||
-              (selectedBridgeTarget ? profile.apiTypeModels[selectedBridgeTarget] : "") ||
-              "";
             const selectedModelEntries = bridgeModelEntries(
               profile,
               selectedBridgeTarget,
               selectedCurrentBridge,
-              selectedUpstreamModel,
             );
             const selectedCanBridge = selectedConnection.targetOptions.length > 0;
             const selectedBridgeEnabled = Boolean(
@@ -252,9 +244,6 @@ export function ProfileConnectionDialog({
                       targetApiType:
                         prev[agent.id].bridge?.[selectedApiType]?.targetApiType ??
                         selectedBridgeTarget,
-                      upstreamModel:
-                        prev[agent.id].bridge?.[selectedApiType]?.upstreamModel ??
-                        selectedUpstreamModel,
                       models:
                         prev[agent.id].bridge?.[selectedApiType]?.models ??
                         selectedModelEntries,
@@ -360,16 +349,12 @@ export function ProfileConnectionDialog({
                       client.targetOptions.includes(currentBridge.targetApiType)
                         ? currentBridge.targetApiType
                         : recommendedBridgeTarget(profile, agent.id, client.apiType);
-                    const upstreamModel =
-                      cleanModelId(currentBridge.upstreamModel) ||
-                      (bridgeTarget ? profile.apiTypeModels[bridgeTarget] : "") ||
-                      "";
                     const modelEntries = bridgeModelEntries(
                       profile,
                       bridgeTarget,
                       currentBridge,
-                      upstreamModel,
                     );
+                    const upstreamModel = cleanModelId(modelEntries[0]?.upstreamModel);
                     const primaryModel = modelEntries[0] ?? { upstreamModel };
                     const fakeModelId = cleanModelId(primaryModel.fakeModelId);
                     const agentModel =
@@ -442,8 +427,6 @@ export function ProfileConnectionDialog({
                                           ...(prev[agent.id].bridge?.[client.apiType] ?? {}),
                                           enabled: true,
                                           targetApiType: value,
-                                          upstreamModel: nextModel,
-                                          fakeModelId: undefined,
                                           models: defaultBridgeModels(
                                             profile,
                                             value,
@@ -920,12 +903,15 @@ function cleanModelId(value: string | null | undefined): string {
 function bridgeModelEntries(
   profile: ProfileSummary,
   targetApiType: string | null,
-  bridge: { models?: ProfileBridgeModelPreference[] | null; fakeModelId?: string | null },
-  upstreamModel: string,
+  bridge: { models?: ProfileBridgeModelPreference[] | null },
 ): ProfileBridgeModelPreference[] {
   const models = cleanBridgeModels(bridge.models);
   if (models.length > 0) return models;
-  return defaultBridgeModels(profile, targetApiType, upstreamModel, bridge.fakeModelId);
+  return defaultBridgeModels(
+    profile,
+    targetApiType,
+    targetApiType ? profile.apiTypeModels[targetApiType] : null,
+  );
 }
 
 function modelAgentId(model: ProfileBridgeModelPreference): string {
