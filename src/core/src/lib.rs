@@ -12,6 +12,7 @@ mod file_lock;
 pub mod file_replace;
 pub mod launch_sessions;
 pub mod logging;
+pub mod migration;
 pub mod plugins;
 pub mod previews;
 pub mod process;

@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     boot.apply_process_env();
     common::logging::init();
+    common::migration::run()?;
     let daemon = server::ServerDaemon::new(boot.port);
 
     let rt = tokio::runtime::Runtime::new()?;

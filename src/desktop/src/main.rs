@@ -230,6 +230,11 @@ fn set_ui_locale<R: Runtime>(app: AppHandle<R>, locale: String) -> Result<(), St
 
 fn main() {
     common::logging::init();
+    if let Err(error) = common::migration::run() {
+        tracing::error!(%error, "configuration migration failed");
+        eprintln!("VibeAround configuration migration failed: {error}");
+        return;
+    }
 
     let port = common::config::DEFAULT_PORT;
     let daemon = Arc::new(server::ServerDaemon::new(port));
