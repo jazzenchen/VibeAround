@@ -333,10 +333,7 @@ async fn owner_proxy_transparently_forwards_http_to_ipv4_loopback() {
         response.headers()["content-security-policy"],
         "default-src 'self'"
     );
-    assert_eq!(
-        response.headers()[header::CACHE_CONTROL],
-        "no-store"
-    );
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
     assert_eq!(
         to_bytes(response.into_body(), 16).await.unwrap().as_ref(),
         br#"{"saved":1}"#
