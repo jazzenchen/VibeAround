@@ -265,6 +265,9 @@ fn canonicalize_settings(settings: &mut serde_json::Value) -> bool {
             {
                 changed |= move_alias(channel, "agent_id", &["agentId", "agent"]);
                 changed |= move_alias(channel, "profile_id", &["profileId", "profile"]);
+                for obsolete in ["workspace", "workspace_path", "workspacePath"] {
+                    changed |= channel.remove(obsolete).is_some();
+                }
             }
         }
     }
@@ -885,6 +888,7 @@ mod tests {
                         "telegram": {
                             "agent": "codex",
                             "profileId": "direct",
+                            "workspacePath": "/tmp/legacy-workspace",
                             "unknown": true
                         }
                     }
@@ -925,6 +929,9 @@ mod tests {
             Some("codex")
         );
         assert_eq!(settings["remote"]["channels"]["telegram"]["unknown"], true);
+        assert!(settings["remote"]["channels"]["telegram"]
+            .get("workspacePath")
+            .is_none());
         assert_eq!(settings["unknown_root"], true);
         assert!(settings.get("bridge").is_none());
         assert!(settings.get("searchTool").is_none());
