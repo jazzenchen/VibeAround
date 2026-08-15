@@ -69,7 +69,7 @@ struct MigrationProfile {
     #[serde(default)]
     provider_settings: crate::profiles::schema::ProviderSettings,
     #[serde(default)]
-    connections: BTreeMap<String, crate::agent_state::ProfileConnectionPreference>,
+    connections: BTreeMap<String, MigrationProfileConnectionPreference>,
 }
 
 impl MigrationProfile {
@@ -83,7 +83,61 @@ impl MigrationProfile {
             api_configs: self.api_configs,
             use_settings_proxy: self.use_settings_proxy,
             provider_settings: self.provider_settings,
-            connections: self.connections,
+            connections: self
+                .connections
+                .into_iter()
+                .map(|(agent_id, preference)| (agent_id, preference.into_preference()))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MigrationProfileConnectionPreference {
+    #[serde(default)]
+    selected_api_type: Option<String>,
+    #[serde(default, alias = "proxy")]
+    bridge: BTreeMap<String, MigrationProfileBridgePreference>,
+}
+
+impl MigrationProfileConnectionPreference {
+    fn into_preference(self) -> crate::agent_state::ProfileConnectionPreference {
+        crate::agent_state::ProfileConnectionPreference {
+            selected_api_type: self.selected_api_type,
+            bridge: self
+                .bridge
+                .into_iter()
+                .map(|(api_type, preference)| (api_type, preference.into_preference()))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MigrationProfileBridgePreference {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    target_api_type: Option<String>,
+    #[serde(default)]
+    upstream_model: Option<String>,
+    #[serde(default)]
+    fake_model_id: Option<String>,
+    #[serde(default)]
+    models: Vec<crate::agent_state::ProfileBridgeModelPreference>,
+    #[serde(default)]
+    headers: BTreeMap<String, String>,
+}
+
+impl MigrationProfileBridgePreference {
+    fn into_preference(self) -> crate::agent_state::ProfileBridgePreference {
+        crate::agent_state::ProfileBridgePreference {
+            enabled: self.enabled,
+            target_api_type: self.target_api_type,
+            models: self.models,
+            headers: self.headers,
         }
     }
 }
@@ -151,7 +205,9 @@ fn legacy_profile_changes(data_dir: &Path) -> Result<Vec<Change>> {
             }
         };
         let has_legacy_fields = value.as_object().is_some_and(|object| {
-            object.contains_key("api_types") || object.contains_key("overrides")
+            object.contains_key("api_types")
+                || object.contains_key("overrides")
+                || has_legacy_bridge_fields(object.get("connections"))
         });
         let mut profile: MigrationProfile = match serde_json::from_value(value) {
             Ok(profile) => profile,
@@ -163,6 +219,7 @@ fn legacy_profile_changes(data_dir: &Path) -> Result<Vec<Change>> {
         let provider_changed = migrate_legacy_profile_provider(&mut profile);
         let api_config_count = profile.api_configs.len();
         hydrate_legacy_api_configs(&mut profile);
+        migrate_legacy_bridge_models(&mut profile);
         if !has_legacy_fields && !provider_changed && profile.api_configs.len() == api_config_count
         {
             continue;
@@ -175,6 +232,101 @@ fn legacy_profile_changes(data_dir: &Path) -> Result<Vec<Change>> {
         });
     }
     Ok(changes)
+}
+
+fn has_legacy_bridge_fields(connections: Option<&serde_json::Value>) -> bool {
+    connections
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|connections| connections.values())
+        .filter_map(serde_json::Value::as_object)
+        .filter_map(|preference| preference.get("bridge").or_else(|| preference.get("proxy")))
+        .filter_map(serde_json::Value::as_object)
+        .flat_map(|bridge| bridge.values())
+        .filter_map(serde_json::Value::as_object)
+        .any(|preference| {
+            preference.contains_key("upstreamModel") || preference.contains_key("fakeModelId")
+        })
+}
+
+fn migrate_legacy_bridge_models(profile: &mut MigrationProfile) {
+    let enabled_api_types = profile
+        .api_configs
+        .iter()
+        .filter(|(_, config)| config.enabled)
+        .map(|(api_type, _)| api_type.clone())
+        .collect::<Vec<_>>();
+    let default_models = enabled_api_types
+        .iter()
+        .filter_map(|api_type| {
+            migration_default_model(profile, api_type).map(|model| (api_type.clone(), model))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for (agent_id, connection) in &mut profile.connections {
+        for (client_api_type, bridge) in &mut connection.bridge {
+            if !bridge.models.is_empty() {
+                continue;
+            }
+            let upstream_model = clean_migration_string(bridge.upstream_model.as_deref());
+            let fake_model_id = clean_migration_string(bridge.fake_model_id.as_deref());
+            if upstream_model.is_none() && fake_model_id.is_none() {
+                continue;
+            }
+            let target_api_type = bridge.target_api_type.clone().or_else(|| {
+                crate::profiles::connections::recommended_bridge_target(
+                    &enabled_api_types,
+                    agent_id,
+                    client_api_type,
+                )
+            });
+            let upstream_model = upstream_model.or_else(|| {
+                target_api_type
+                    .as_ref()
+                    .and_then(|api_type| default_models.get(api_type).cloned())
+            });
+            if let Some(upstream_model) = upstream_model {
+                bridge
+                    .models
+                    .push(crate::agent_state::ProfileBridgeModelPreference {
+                        upstream_model: Some(upstream_model),
+                        fake_model_id,
+                        capabilities: Default::default(),
+                    });
+            }
+        }
+    }
+}
+
+fn migration_default_model(profile: &MigrationProfile, api_type: &str) -> Option<String> {
+    let config = profile.api_configs.get(api_type)?;
+    clean_migration_string(config.model.as_deref())
+        .or_else(|| {
+            config
+                .models
+                .iter()
+                .filter(|model| model.enabled)
+                .find_map(|model| clean_migration_string(Some(model.id.as_str())))
+        })
+        .or_else(|| {
+            let provider = crate::profiles::catalog::get(&profile.provider)?;
+            let endpoint = crate::profiles::catalog::find_endpoint(
+                provider,
+                api_type,
+                config.endpoint_id.as_deref(),
+            )?;
+            endpoint
+                .models
+                .first()
+                .and_then(|model| clean_migration_string(Some(model.id.as_str())))
+        })
+}
+
+fn clean_migration_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn migrate_legacy_profile_provider(profile: &mut MigrationProfile) -> bool {
@@ -627,6 +779,67 @@ mod tests {
         let original = std::fs::read_to_string(backups[0].join("profiles/qwen-old.json")).unwrap();
         assert!(original.contains("\"provider\": \"qwen\""));
         assert!(!backups[0].join("profiles/current.json").exists());
+
+        run_at(&dir).unwrap();
+        assert_eq!(backup_dirs(&dir).len(), 1);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn migrates_single_bridge_model_fields_into_models() {
+        let dir = test_dir();
+        std::fs::create_dir_all(dir.join("profiles")).unwrap();
+        let path = dir.join("profiles/bridge-old.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "id": "bridge-old",
+  "label": "Bridge Old",
+  "provider": "custom",
+  "auth_mode": "api_key",
+  "api_configs": {
+    "openai-chat": {
+      "enabled": true,
+      "model": "provider-default"
+    }
+  },
+  "connections": {
+    "claude": {
+      "selectedApiType": "anthropic",
+      "bridge": {
+        "anthropic": {
+          "enabled": true,
+          "targetApiType": "openai-chat",
+          "upstreamModel": "provider-model",
+          "fakeModelId": "claude-sonnet-4-5"
+        }
+      }
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        run_at(&dir).unwrap();
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        let profile: crate::profiles::ProfileDef = serde_json::from_str(&body).unwrap();
+        let bridge = &profile.connections["claude"].bridge["anthropic"];
+        assert_eq!(bridge.models.len(), 1);
+        assert_eq!(
+            bridge.models[0].upstream_model.as_deref(),
+            Some("provider-model")
+        );
+        assert_eq!(
+            bridge.models[0].fake_model_id.as_deref(),
+            Some("claude-sonnet-4-5")
+        );
+        let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let bridge_json = &json["connections"]["claude"]["bridge"]["anthropic"];
+        assert!(bridge_json.get("upstreamModel").is_none());
+        assert!(bridge_json.get("fakeModelId").is_none());
+        assert_eq!(backup_dirs(&dir).len(), 1);
 
         run_at(&dir).unwrap();
         assert_eq!(backup_dirs(&dir).len(), 1);

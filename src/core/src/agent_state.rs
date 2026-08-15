@@ -94,15 +94,6 @@ pub struct ProfileBridgePreference {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_api_type: Option<String>,
-    // TODO(0.7.x): remove these single-model compatibility fields once all
-    // saved bridge preferences have migrated to `models`.
-    /// The real upstream model this bridge route should run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub upstream_model: Option<String>,
-    /// Optional model id exposed to the agent. The bridge maps it back to
-    /// `upstream_model` before calling the provider.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fake_model_id: Option<String>,
     /// Optional per-route model list. Each entry can expose a fake model id to
     /// the agent while routing to a provider-specific upstream model id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -506,18 +497,6 @@ pub(crate) fn connection_preference_is_empty(preference: &ProfileConnectionPrefe
             !bridge.enabled
                 && bridge
                     .target_api_type
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .is_empty()
-                && bridge
-                    .upstream_model
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .is_empty()
-                && bridge
-                    .fake_model_id
                     .as_deref()
                     .map(str::trim)
                     .unwrap_or_default()

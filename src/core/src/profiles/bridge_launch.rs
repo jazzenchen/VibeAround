@@ -14,24 +14,15 @@ use super::schema::{AuthMode, ProfileDef};
 use crate::auth;
 use crate::config;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn render_bridge_launch(
     profile: &ProfileDef,
     launch_target: &str,
     launch_id: &str,
     client_api_type: &str,
     target_api_type: &str,
-    upstream_model: Option<&str>,
-    fake_model_id: Option<&str>,
     bridge_models: &[ProfileBridgeModelRoute],
 ) -> anyhow::Result<RenderedProfile> {
-    let mut settings = resolve_bridge_settings(
-        profile,
-        target_api_type,
-        upstream_model,
-        fake_model_id,
-        bridge_models,
-    )?;
+    let mut settings = resolve_bridge_settings(profile, target_api_type, bridge_models)?;
     settings.scope = format!("{launch_target}-{client_api_type}");
     match launch_target {
         "claude" | "claude-desktop" => {
@@ -77,8 +68,6 @@ impl BridgeLaunchSettings {
 fn resolve_bridge_settings(
     profile: &ProfileDef,
     target_api_type: &str,
-    upstream_model: Option<&str>,
-    fake_model_id: Option<&str>,
     bridge_models: &[ProfileBridgeModelRoute],
 ) -> anyhow::Result<BridgeLaunchSettings> {
     let provider = catalog::get(&profile.provider)
@@ -139,19 +128,10 @@ fn resolve_bridge_settings(
                 target_api_type
             )
         })?;
-    let requested_upstream_model = upstream_model
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or(profile_model);
     let routes = if bridge_models.is_empty() {
         vec![ProfileBridgeModelRoute {
-            upstream_model: requested_upstream_model.clone(),
-            agent_model: fake_model_id
-                .map(str::trim)
-                .filter(|model| !model.is_empty())
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| requested_upstream_model.clone()),
+            upstream_model: profile_model.clone(),
+            agent_model: profile_model,
             capabilities: catalog::ContentCapabilities::default(),
         }]
     } else {
@@ -620,6 +600,26 @@ mod tests {
         catalog_file
     }
 
+    fn model_route(upstream_model: &str, agent_model: &str) -> ProfileBridgeModelRoute {
+        ProfileBridgeModelRoute {
+            upstream_model: upstream_model.to_string(),
+            agent_model: agent_model.to_string(),
+            capabilities: Default::default(),
+        }
+    }
+
+    fn configured_model_route(
+        profile: &ProfileDef,
+        target_api_type: &str,
+        agent_model: &str,
+    ) -> ProfileBridgeModelRoute {
+        let upstream_model = profile.api_configs[target_api_type]
+            .model
+            .as_deref()
+            .expect("configured profile model");
+        model_route(upstream_model, agent_model)
+    }
+
     #[test]
     fn codex_bridge_launch_includes_catalog_context_window() {
         let profile = dashscope_profile();
@@ -630,9 +630,7 @@ mod tests {
             "launch-test",
             "openai-responses",
             "openai-chat",
-            Some("qwen3.6-plus"),
-            None,
-            &[],
+            &[model_route("qwen3.6-plus", "qwen3.6-plus")],
         )
         .expect("codex bridge launch renders");
 
@@ -660,9 +658,7 @@ mod tests {
             "launch-a",
             "openai-responses",
             "openai-chat",
-            Some("qwen3.6-plus"),
-            None,
-            &[],
+            &[model_route("qwen3.6-plus", "qwen3.6-plus")],
         )
         .expect("first codex bridge launch renders");
         let second = render_bridge_launch(
@@ -671,9 +667,7 @@ mod tests {
             "launch-b",
             "openai-responses",
             "openai-chat",
-            Some("qwen3.6-plus"),
-            None,
-            &[],
+            &[model_route("qwen3.6-plus", "qwen3.6-plus")],
         )
         .expect("second codex bridge launch renders");
 
@@ -693,9 +687,7 @@ mod tests {
             "launch-test",
             "openai-responses",
             "anthropic",
-            Some("kimi-for-coding"),
-            None,
-            &[],
+            &[model_route("kimi-for-coding", "kimi-for-coding")],
         )
         .expect("codex bridge launch renders");
 
@@ -730,8 +722,6 @@ mod tests {
             "launch-test",
             "openai-responses",
             "openai-chat",
-            Some("qwen3.6-plus"),
-            None,
             &[
                 ProfileBridgeModelRoute {
                     upstream_model: "qwen3.6-plus".to_string(),
@@ -786,8 +776,6 @@ mod tests {
             "launch-test",
             "openai-responses",
             "openai-chat",
-            Some("qwen3.6-plus"),
-            None,
             &[ProfileBridgeModelRoute {
                 upstream_model: "qwen3.6-plus".to_string(),
                 agent_model: "qwen3.6-plus".to_string(),
@@ -825,8 +813,6 @@ mod tests {
             "launch-test",
             "openai-responses",
             "openai-chat",
-            Some("qwen3.6-plus"),
-            None,
             &[ProfileBridgeModelRoute {
                 upstream_model: "provider-new-vision-model".to_string(),
                 agent_model: "gpt-custom-vision".to_string(),
@@ -861,8 +847,6 @@ mod tests {
             "launch-test",
             "openai-responses",
             "openai-chat",
-            None,
-            None,
             &[],
         )
         .expect("codex bridge launch renders");
@@ -887,9 +871,7 @@ mod tests {
             "launch-test",
             "gemini",
             "openai-chat",
-            Some("qwen3.6-plus"),
-            Some("gemini-2.5-flash"),
-            &[],
+            &[model_route("qwen3.6-plus", "gemini-2.5-flash")],
         )
         .expect("gemini bridge launch renders");
 
@@ -927,9 +909,7 @@ mod tests {
             "launch-test",
             "openai-responses",
             "openai-chat",
-            None,
-            Some("gpt-5.1"),
-            &[],
+            &[configured_model_route(&profile, "openai-chat", "gpt-5.1")],
         )
         .expect("pi bridge launch renders");
         let extension = rendered
@@ -953,9 +933,7 @@ mod tests {
             "launch-test",
             "openai-responses",
             "anthropic",
-            Some("kimi-code"),
-            Some("gpt-5.1"),
-            &[],
+            &[model_route("kimi-code", "gpt-5.1")],
         )
         .expect("pi bridge launch renders");
 
@@ -997,8 +975,6 @@ mod tests {
             "launch-test",
             "openai-responses",
             "openai-chat",
-            None,
-            None,
             &[],
         )
         .expect("codex bridge launch renders");
@@ -1034,8 +1010,6 @@ mod tests {
             "launch-test",
             "openai-responses",
             "gemini",
-            None,
-            None,
             &[],
         )
         .expect("codex native gemini bridge launch renders");
@@ -1077,8 +1051,6 @@ mod tests {
             "launch-test",
             "openai-responses",
             "gemini",
-            None,
-            None,
             &[],
         )
         .expect("codex desktop native gemini bridge launch renders");
@@ -1111,8 +1083,6 @@ mod tests {
             "launch-test",
             "openai-responses",
             "gemini",
-            None,
-            None,
             &[],
         )
         .expect("oauth bridge launch renders");
@@ -1132,9 +1102,11 @@ mod tests {
                 "launch-test",
                 "anthropic",
                 "openai-chat",
-                None,
-                Some("claude-opus-4-7[1m]"),
-                &[],
+                &[configured_model_route(
+                    &profile,
+                    "openai-chat",
+                    "claude-opus-4-7[1m]",
+                )],
             )
             .expect("claude bridge launch renders");
 
@@ -1173,9 +1145,11 @@ mod tests {
             "launch-test",
             "anthropic",
             "openai-chat",
-            None,
-            Some("claude-opus-4-7[1m]"),
-            &[],
+            &[configured_model_route(
+                &profile,
+                "openai-chat",
+                "claude-opus-4-7[1m]",
+            )],
         )
         .expect("claude desktop bridge launch renders");
 
@@ -1198,9 +1172,7 @@ mod tests {
             "launch-test",
             "openai-responses",
             "openai-chat",
-            None,
-            Some("GPT-5.5"),
-            &[],
+            &[configured_model_route(&profile, "openai-chat", "GPT-5.5")],
         )
         .expect("codex desktop bridge launch renders");
 

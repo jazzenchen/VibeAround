@@ -42,6 +42,14 @@ fn connections(
     .collect()
 }
 
+fn bridge_model(upstream_model: &str) -> agent_state::ProfileBridgeModelPreference {
+    agent_state::ProfileBridgeModelPreference {
+        upstream_model: Some(upstream_model.to_string()),
+        fake_model_id: None,
+        capabilities: Default::default(),
+    }
+}
+
 #[test]
 fn native_route_uses_profile_api_type() {
     let profile = profile(&["openai-responses"]);
@@ -177,7 +185,7 @@ fn gemini_cli_can_launch_openai_chat_profile_via_bridge() {
                 agent_state::ProfileBridgePreference {
                     enabled: true,
                     target_api_type: Some("openai-chat".to_string()),
-                    upstream_model: Some("gpt-test".to_string()),
+                    models: vec![bridge_model("gpt-test")],
                     ..Default::default()
                 },
             )]
@@ -191,7 +199,7 @@ fn gemini_cli_can_launch_openai_chat_profile_via_bridge() {
 
     assert_eq!(route.client_api_type, "gemini");
     assert_eq!(route.bridge_target_api_type.as_deref(), Some("openai-chat"));
-    assert_eq!(route.bridge_upstream_model.as_deref(), Some("gpt-test"));
+    assert_eq!(route.bridge_models[0].upstream_model, "gpt-test");
 }
 
 #[test]
@@ -207,7 +215,7 @@ fn codex_can_launch_gemini_profile_via_bridge() {
                 agent_state::ProfileBridgePreference {
                     enabled: true,
                     target_api_type: Some("gemini".to_string()),
-                    upstream_model: Some("gemini-2.5-flash".to_string()),
+                    models: vec![bridge_model("gemini-2.5-flash")],
                     ..Default::default()
                 },
             )]
@@ -221,10 +229,7 @@ fn codex_can_launch_gemini_profile_via_bridge() {
 
     assert_eq!(route.client_api_type, "openai-responses");
     assert_eq!(route.bridge_target_api_type.as_deref(), Some("gemini"));
-    assert_eq!(
-        route.bridge_upstream_model.as_deref(),
-        Some("gemini-2.5-flash")
-    );
+    assert_eq!(route.bridge_models[0].upstream_model, "gemini-2.5-flash");
 }
 
 #[test]
@@ -240,7 +245,7 @@ fn codex_desktop_uses_desktop_bridge_connection() {
                 agent_state::ProfileBridgePreference {
                     enabled: true,
                     target_api_type: Some("gemini".to_string()),
-                    upstream_model: Some("gemini-2.5-flash".to_string()),
+                    models: vec![bridge_model("gemini-2.5-flash")],
                     ..Default::default()
                 },
             )]
@@ -275,7 +280,7 @@ fn codex_desktop_does_not_reuse_codex_bridge_connection() {
                 agent_state::ProfileBridgePreference {
                     enabled: true,
                     target_api_type: Some("gemini".to_string()),
-                    upstream_model: Some("gemini-2.5-flash".to_string()),
+                    models: vec![bridge_model("gemini-2.5-flash")],
                     ..Default::default()
                 },
             )]
@@ -302,7 +307,7 @@ fn claude_desktop_uses_desktop_bridge_connection() {
                 agent_state::ProfileBridgePreference {
                     enabled: true,
                     target_api_type: Some("openai-responses".to_string()),
-                    upstream_model: Some("gpt-5.1-codex".to_string()),
+                    models: vec![bridge_model("gpt-5.1-codex")],
                     ..Default::default()
                 },
             )]
@@ -340,7 +345,7 @@ fn claude_desktop_does_not_reuse_claude_bridge_connection() {
                 agent_state::ProfileBridgePreference {
                     enabled: true,
                     target_api_type: Some("openai-responses".to_string()),
-                    upstream_model: Some("gpt-5.1-codex".to_string()),
+                    models: vec![bridge_model("gpt-5.1-codex")],
                     ..Default::default()
                 },
             )]

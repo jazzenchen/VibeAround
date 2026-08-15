@@ -70,8 +70,6 @@ pub fn render_for_agent_route(
             launch_id,
             &route.client_api_type,
             target_api_type,
-            route.bridge_upstream_model.as_deref(),
-            route.bridge_fake_model_id.as_deref(),
             &route.bridge_models,
         ),
         None => render_for_launch_api_type(profile, launch_target, &route.client_api_type),

@@ -21,8 +21,6 @@ pub const DEFAULT_CLAUDE_BRIDGE_MODEL_ID: &str = "claude-sonnet-4-5";
 pub struct ProfileAgentRoute {
     pub client_api_type: String,
     pub bridge_target_api_type: Option<String>,
-    pub bridge_upstream_model: Option<String>,
-    pub bridge_fake_model_id: Option<String>,
     pub bridge_models: Vec<ProfileBridgeModelRoute>,
 }
 
@@ -95,14 +93,6 @@ pub fn sanitize_profile_connection_preference(
         } else {
             target_api_type.filter(|api_type| validate_bridge_target(profile, api_type).is_ok())
         };
-        let upstream_model = bridge_preference
-            .upstream_model
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let fake_model_id = bridge_preference
-            .fake_model_id
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
         let models = sanitize_bridge_models(bridge_preference.models);
         let headers = if bridge_preference.enabled {
             prune_bridge_headers(bridge_preference.headers)
@@ -111,8 +101,6 @@ pub fn sanitize_profile_connection_preference(
         };
         if bridge_preference.enabled
             || target_api_type.is_some()
-            || upstream_model.is_some()
-            || fake_model_id.is_some()
             || !models.is_empty()
             || !headers.is_empty()
         {
@@ -121,8 +109,6 @@ pub fn sanitize_profile_connection_preference(
                 agent_state::ProfileBridgePreference {
                     enabled: bridge_preference.enabled,
                     target_api_type,
-                    upstream_model,
-                    fake_model_id,
                     models,
                     headers,
                 },
@@ -193,8 +179,6 @@ pub fn resolve_profile_agent_route_with_connections(
             return Some(ProfileAgentRoute {
                 client_api_type,
                 bridge_target_api_type: Some(target_api_type),
-                bridge_upstream_model: bridge_preference.upstream_model.clone(),
-                bridge_fake_model_id: bridge_preference.fake_model_id.clone(),
                 bridge_models,
             });
         }
@@ -207,8 +191,6 @@ pub fn resolve_profile_agent_route_with_connections(
         return Some(ProfileAgentRoute {
             client_api_type,
             bridge_target_api_type: None,
-            bridge_upstream_model: None,
-            bridge_fake_model_id: None,
             bridge_models: Vec::new(),
         });
     }
@@ -243,26 +225,7 @@ pub fn bridge_model_routes(
         );
     }
 
-    let legacy_upstream =
-        bridge.and_then(|bridge| clean_optional_string(bridge.upstream_model.as_deref()));
-    let legacy_fake =
-        bridge.and_then(|bridge| clean_optional_string(bridge.fake_model_id.as_deref()));
-    if legacy_fake.is_some() {
-        return legacy_upstream
-            .or_else(|| default_model(profile, target_api_type))
-            .map(|upstream| {
-                vec![model_route(
-                    profile,
-                    target_api_type,
-                    upstream,
-                    legacy_fake,
-                    catalog::ContentCapabilities::default(),
-                )]
-            })
-            .unwrap_or_default();
-    }
-
-    let preferred = legacy_upstream.or_else(|| default_model(profile, target_api_type));
+    let preferred = default_model(profile, target_api_type);
     let mut routes = Vec::new();
     if let Some(preferred) = preferred {
         routes.push(model_route(
@@ -533,7 +496,7 @@ fn is_bridge_target_api_type(api_type: &str) -> bool {
     )
 }
 
-fn recommended_bridge_target(
+pub(crate) fn recommended_bridge_target(
     api_types: &[String],
     agent_id: &str,
     client_api_type: &str,
