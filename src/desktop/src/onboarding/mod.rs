@@ -2,7 +2,6 @@
 //! Checks whether settings.json has `"onboarded": true`; exposes Tauri IPC
 //! commands so the desktop-ui frontend can read/write settings and signal completion.
 
-mod agent_integrations;
 pub(crate) mod plugin_install;
 mod plugin_manager;
 mod plugin_session;

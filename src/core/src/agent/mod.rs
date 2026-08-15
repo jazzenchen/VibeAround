@@ -48,18 +48,6 @@ pub use runtime::{Agent, AgentClientHandler, AgentReady, StartupSession};
 use mcp::{install_project_mcp_config, uninstall_mcp_config, uninstall_project_mcp_config};
 use skills::{install_project_skill, uninstall_project_skill, uninstall_skill};
 
-// ---------------------------------------------------------------------------
-// Integration sync (MCP config + SKILL files)
-// ---------------------------------------------------------------------------
-
-/// Legacy global integration sync hook.
-///
-/// Runtime installation is project-scoped now and happens at launch time.
-#[allow(dead_code)]
-pub fn sync_integrations(_settings: &serde_json::Value) {
-    tracing::info!("[agent] global integration sync skipped; using project-scoped launch install");
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct ProjectIntegrationOptions {
     pub mcp: bool,

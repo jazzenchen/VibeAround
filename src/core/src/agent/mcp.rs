@@ -10,40 +10,6 @@ use anyhow::{anyhow, Context};
 
 use crate::{config, resources};
 
-/// Merge VibeAround MCP server entry into an agent's global settings.
-/// Supports JSON (default) and TOML formats. Also writes to legacy path
-/// if configured.
-#[allow(dead_code)]
-pub(super) fn install_mcp_config(agent: &str, mcp_url: &str) -> anyhow::Result<()> {
-    let home = home_dir()?;
-
-    let agent_def = match resources::agent_by_id(agent) {
-        Some(def) => def,
-        None => return Ok(()),
-    };
-    let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
-
-    let config_path = home.join(&global_config.settings_path);
-    install_mcp_config_at_path(agent, global_config, &config_path, mcp_url)?;
-
-    // Also write to legacy path for backward compat (e.g. older Claude Code versions)
-    if let Some(legacy) = &global_config.settings_path_legacy {
-        let legacy_path = home.join(legacy);
-        let _ = install_mcp_config_json(
-            &legacy_path,
-            &global_config.mcp_key,
-            &global_config.mcp_entry,
-            mcp_url,
-            agent,
-        );
-    }
-
-    Ok(())
-}
-
 /// Merge VibeAround MCP server entry into an agent's project/workspace settings.
 pub(super) fn install_project_mcp_config(
     agent: &str,

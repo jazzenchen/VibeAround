@@ -18,26 +18,6 @@ use super::mcp::home_dir;
 
 const RETIRED_MANAGED_SKILLS: &[&str] = &["va-md-preview"];
 
-/// Install all skill files for a given agent.
-#[allow(dead_code)]
-pub(super) fn install_skill(agent: &str) -> anyhow::Result<()> {
-    let agent_def = match resources::agent_by_id(agent) {
-        Some(def) => def,
-        None => return Ok(()),
-    };
-    let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
-    let skill_dir_rel = match skill_dir_for_scope(global_config, false) {
-        Some(dir) => dir,
-        None => return Ok(()),
-    };
-
-    let home = home_dir()?;
-    install_skill_at_root(agent, global_config, &home, skill_dir_rel)
-}
-
 /// Install all skill files for a given agent into a project/workspace.
 pub(super) fn install_project_skill(agent: &str, workspace: &Path) -> anyhow::Result<()> {
     let agent_def = match resources::agent_by_id(agent) {
