@@ -491,11 +491,7 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         .map(ToolchainMode::from_config)
         .unwrap_or_default();
     let portable_toolchain = startkit_settings
-        .and_then(|value| {
-            value
-                .get("portable_toolchain")
-                .or_else(|| value.get("portableToolchain"))
-        })
+        .and_then(|value| value.get("portable_toolchain"))
         .and_then(|value| value.as_bool())
         .unwrap_or_else(|| toolchain_mode.is_managed());
 
@@ -543,12 +539,10 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         .map(|integrations| AgentIntegrationsConfig {
             mcp_auto_install: integrations
                 .get("mcp_auto_install")
-                .or_else(|| integrations.get("auto_install_mcp"))
                 .and_then(|value| value.as_bool())
                 .unwrap_or(true),
             skill_auto_install: integrations
                 .get("skill_auto_install")
-                .or_else(|| integrations.get("auto_install_skills"))
                 .and_then(|value| value.as_bool())
                 .unwrap_or(true),
         })
@@ -566,7 +560,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         .map(|proxy| {
             let http_proxy = proxy
                 .get("http_proxy")
-                .or_else(|| proxy.get("url"))
                 .and_then(|value| value.as_str())
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
@@ -640,28 +633,21 @@ pub fn workspace_settings_from_json(root: &serde_json::Value) -> WorkspaceSettin
 
 fn load_api_bridge_config(root: &serde_json::Value) -> ApiBridgeConfig {
     root.get("api_bridge")
-        .or_else(|| root.get("bridge"))
         .and_then(|value| value.as_object())
         .map(|settings| ApiBridgeConfig {
             retry_429: settings
                 .get("retry_429")
-                .or_else(|| settings.get("rate_limit_retry"))
                 .and_then(|value| value.as_object())
                 .map(load_retry_429_config)
                 .unwrap_or_default(),
-            replace_provider_web_search: bool_setting(
-                settings,
-                &["replace_provider_web_search", "replaceProviderWebSearch"],
-            )
-            .unwrap_or(false),
+            replace_provider_web_search: bool_setting(settings, "replace_provider_web_search")
+                .unwrap_or(false),
         })
         .unwrap_or_default()
 }
 
 fn load_local_agent_api_config(root: &serde_json::Value) -> LocalAgentApiConfig {
     root.get("local_agent_api")
-        .or_else(|| root.get("localAgentApi"))
-        .or_else(|| root.get("local_api"))
         .and_then(|value| value.as_object())
         .map(|settings| LocalAgentApiConfig {
             enabled: settings
@@ -673,19 +659,13 @@ fn load_local_agent_api_config(root: &serde_json::Value) -> LocalAgentApiConfig 
 }
 
 fn load_search_tool_config(root: &serde_json::Value) -> SearchToolConfig {
-    let Some(settings) = root
-        .get("search_tool")
-        .or_else(|| root.get("searchTool"))
-        .and_then(|value| value.as_object())
-    else {
+    let Some(settings) = root.get("search_tool").and_then(|value| value.as_object()) else {
         return SearchToolConfig::default();
     };
 
-    let stdio_path = string_setting(settings, &["stdio_path", "stdioPath", "command"])
-        .map(|value| expand_home(&value));
-    let max_results = usize_setting(settings, &["max_results", "maxResults", "num_results"]);
-    let search_context_size =
-        search_context_size_setting(settings, &["search_context_size", "searchContextSize"]);
+    let stdio_path = string_setting(settings, "stdio_path").map(|value| expand_home(&value));
+    let max_results = usize_setting(settings, "max_results");
+    let search_context_size = search_context_size_setting(settings, "search_context_size");
     let sources = settings
         .get("sources")
         .and_then(|value| value.as_object())
@@ -712,14 +692,13 @@ fn load_search_tool_config(root: &serde_json::Value) -> SearchToolConfig {
 fn load_service_side_config(root: &serde_json::Value) -> ServiceSideConfig {
     let image_input = root
         .get("service_side")
-        .or_else(|| root.get("serviceSide"))
-        .and_then(|value| value.get("image_input").or_else(|| value.get("imageInput")))
+        .and_then(|value| value.get("image_input"))
         .and_then(|value| value.as_object())
         .map(|settings| ServiceSideImageInputConfig {
-            enabled: bool_setting(settings, &["enabled"]).unwrap_or(false),
-            profile_id: string_setting(settings, &["profile_id", "profileId"]),
-            api_type: string_setting(settings, &["api_type", "apiType"]),
-            model: string_setting(settings, &["model"]),
+            enabled: bool_setting(settings, "enabled").unwrap_or(false),
+            profile_id: string_setting(settings, "profile_id"),
+            api_type: string_setting(settings, "api_type"),
+            model: string_setting(settings, "model"),
         })
         .unwrap_or_default();
     ServiceSideConfig { image_input }
@@ -728,7 +707,6 @@ fn load_service_side_config(root: &serde_json::Value) -> ServiceSideConfig {
 fn load_remote_config(root: &serde_json::Value) -> RemoteConfig {
     let channels = root
         .get("remote")
-        .or_else(|| root.get("im_remote"))
         .and_then(|value| value.get("channels"))
         .and_then(|value| value.as_object())
         .map(|channels| {
@@ -755,9 +733,9 @@ fn load_remote_config(root: &serde_json::Value) -> RemoteConfig {
 fn load_remote_channel_defaults(
     settings: &serde_json::Map<String, serde_json::Value>,
 ) -> RemoteChannelDefaults {
-    let agent_id = string_setting(settings, &["agent_id", "agentId", "agent"])
+    let agent_id = string_setting(settings, "agent_id")
         .and_then(|agent| crate::resources::agent_by_alias(&agent).map(|def| def.id.clone()));
-    let profile_id = string_setting(settings, &["profile_id", "profileId", "profile"]);
+    let profile_id = string_setting(settings, "profile_id");
 
     RemoteChannelDefaults {
         agent_id,
@@ -768,9 +746,9 @@ fn load_remote_channel_defaults(
 fn load_search_source_config(
     settings: &serde_json::Map<String, serde_json::Value>,
 ) -> SearchSourceConfig {
-    let api_key = string_setting(settings, &["api_key", "apiKey", "key"]);
-    let api_key_env = string_setting(settings, &["api_key_env", "apiKeyEnv", "keyEnv"]);
-    let base_url = string_setting(settings, &["base_url", "baseUrl", "url"]);
+    let api_key = string_setting(settings, "api_key");
+    let api_key_env = string_setting(settings, "api_key_env");
+    let base_url = string_setting(settings, "base_url");
     SearchSourceConfig {
         enabled: settings
             .get("enabled")
@@ -784,40 +762,35 @@ fn load_search_source_config(
 
 fn string_setting(
     settings: &serde_json::Map<String, serde_json::Value>,
-    keys: &[&str],
+    key: &str,
 ) -> Option<String> {
-    keys.iter()
-        .find_map(|key| settings.get(*key))
+    settings
+        .get(key)
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
 }
 
-fn bool_setting(
-    settings: &serde_json::Map<String, serde_json::Value>,
-    keys: &[&str],
-) -> Option<bool> {
-    keys.iter()
-        .find_map(|key| settings.get(*key))
-        .and_then(|value| value.as_bool())
+fn bool_setting(settings: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<bool> {
+    settings.get(key).and_then(|value| value.as_bool())
 }
 
 fn usize_setting(
     settings: &serde_json::Map<String, serde_json::Value>,
-    keys: &[&str],
+    key: &str,
 ) -> Option<usize> {
-    keys.iter()
-        .find_map(|key| settings.get(*key))
+    settings
+        .get(key)
         .and_then(|value| value.as_u64())
         .map(|value| value as usize)
 }
 
 fn search_context_size_setting(
     settings: &serde_json::Map<String, serde_json::Value>,
-    keys: &[&str],
+    key: &str,
 ) -> Option<String> {
-    string_setting(settings, keys)
+    string_setting(settings, key)
         .map(|value| value.to_ascii_lowercase())
         .filter(|value| matches!(value.as_str(), "low" | "medium" | "high"))
 }
@@ -841,7 +814,6 @@ fn load_retry_429_config(settings: &serde_json::Map<String, serde_json::Value>) 
         max_retries: retry_limit_setting(settings, defaults.max_retries),
         delay_seconds: settings
             .get("delay_seconds")
-            .or_else(|| settings.get("delay"))
             .and_then(|value| value.as_u64())
             .unwrap_or(defaults.delay_seconds)
             .max(1),
@@ -852,10 +824,7 @@ fn retry_limit_setting(
     settings: &serde_json::Map<String, serde_json::Value>,
     default: Option<usize>,
 ) -> Option<usize> {
-    let Some(value) = settings
-        .get("max_retries")
-        .or_else(|| settings.get("retries"))
-    else {
+    let Some(value) = settings.get("max_retries") else {
         return default;
     };
     if value.is_null() {
@@ -1713,12 +1682,12 @@ mod tests {
                 "remote": {
                     "channels": {
                         "feishu": {
-                            "agentId": "codex",
-                            "profileId": "direct",
+                            "agent_id": "codex",
+                            "profile_id": "direct",
                             "workspace": "/ignored"
                         },
                         "slack": {
-                            "agent": "does-not-exist"
+                            "agent_id": "does-not-exist"
                         }
                     }
                 }
@@ -1822,7 +1791,7 @@ mod tests {
         let path = dir.join("settings.json");
         fs::write(
             &path,
-            r#"{ "api_bridge": { "replaceProviderWebSearch": true, "retry_429": { "enabled": false, "max_retries": 4, "delay_seconds": 12 } } }"#,
+            r#"{ "api_bridge": { "replace_provider_web_search": true, "retry_429": { "enabled": false, "max_retries": 4, "delay_seconds": 12 } } }"#,
         )
         .unwrap();
 
@@ -2001,21 +1970,21 @@ mod tests {
             &path,
             r#"
             {
-              "searchTool": {
-                "stdioPath": "~/bin/va-search-tool",
-                "maxResults": 8,
-                "searchContextSize": " high ",
+              "search_tool": {
+                "stdio_path": "~/bin/va-search-tool",
+                "max_results": 8,
+                "search_context_size": " high ",
                 "sources": {
                   " Exa ": {
-                    "apiKey": " exa-key ",
-                    "baseUrl": " https://api.exa.ai "
+                    "api_key": " exa-key ",
+                    "base_url": " https://api.exa.ai "
                   },
                   "tavily": {
                     "enabled": false,
                     "api_key_env": " TAVILY_API_KEY "
                   },
                   "grok": {
-                    "key": "xai-key"
+                    "api_key": "xai-key"
                   }
                 }
               }

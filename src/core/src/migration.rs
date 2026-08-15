@@ -32,6 +32,7 @@ fn run_at(data_dir: &Path) -> Result<()> {
         .with_context(|| format!("lock migrations in {}", data_dir.display()))?;
 
     let mut changes = legacy_state_changes(data_dir);
+    changes.extend(legacy_settings_changes(data_dir)?);
     changes.extend(legacy_profile_changes(data_dir)?);
     if changes.is_empty() {
         return Ok(());
@@ -176,6 +177,122 @@ fn legacy_state_changes(data_dir: &Path) -> Vec<Change> {
             })
         })
         .collect()
+}
+
+fn legacy_settings_changes(data_dir: &Path) -> Result<Vec<Change>> {
+    let path = data_dir.join("settings.json");
+    let body = match std::fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    };
+    let mut settings: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(settings) => settings,
+        Err(error) => {
+            tracing::warn!(path = ?path, %error, "skipping invalid settings during migration");
+            return Ok(Vec::new());
+        }
+    };
+    if !canonicalize_settings(&mut settings) {
+        return Ok(Vec::new());
+    }
+    Ok(vec![Change::Rewrite {
+        path,
+        contents: serde_json::to_string_pretty(&settings).context("serialize migrated settings")?,
+    }])
+}
+
+fn canonicalize_settings(settings: &mut serde_json::Value) -> bool {
+    let Some(root) = settings.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    changed |= move_alias(root, "api_bridge", &["bridge"]);
+    changed |= move_alias(root, "local_agent_api", &["localAgentApi", "local_api"]);
+    changed |= move_alias(root, "search_tool", &["searchTool"]);
+    changed |= move_alias(root, "service_side", &["serviceSide"]);
+    changed |= move_alias(root, "remote", &["im_remote"]);
+
+    if let Some(startkit) = object_at(root, "startkit") {
+        changed |= move_alias(startkit, "portable_toolchain", &["portableToolchain"]);
+    }
+    if let Some(integrations) = object_at(root, "integrations") {
+        changed |= move_alias(integrations, "mcp_auto_install", &["auto_install_mcp"]);
+        changed |= move_alias(integrations, "skill_auto_install", &["auto_install_skills"]);
+    }
+    if let Some(proxy) = object_at(root, "proxy") {
+        changed |= move_alias(proxy, "http_proxy", &["url"]);
+    }
+    if let Some(api_bridge) = object_at(root, "api_bridge") {
+        changed |= move_alias(api_bridge, "retry_429", &["rate_limit_retry"]);
+        changed |= move_alias(
+            api_bridge,
+            "replace_provider_web_search",
+            &["replaceProviderWebSearch"],
+        );
+        if let Some(retry) = object_at(api_bridge, "retry_429") {
+            changed |= move_alias(retry, "delay_seconds", &["delay"]);
+            changed |= move_alias(retry, "max_retries", &["retries"]);
+        }
+    }
+    if let Some(search_tool) = object_at(root, "search_tool") {
+        changed |= move_alias(search_tool, "stdio_path", &["stdioPath", "command"]);
+        changed |= move_alias(search_tool, "max_results", &["maxResults", "num_results"]);
+        changed |= move_alias(search_tool, "search_context_size", &["searchContextSize"]);
+        if let Some(sources) = object_at(search_tool, "sources") {
+            for source in sources
+                .values_mut()
+                .filter_map(serde_json::Value::as_object_mut)
+            {
+                changed |= move_alias(source, "api_key", &["apiKey", "key"]);
+                changed |= move_alias(source, "api_key_env", &["apiKeyEnv", "keyEnv"]);
+                changed |= move_alias(source, "base_url", &["baseUrl", "url"]);
+            }
+        }
+    }
+    if let Some(service_side) = object_at(root, "service_side") {
+        changed |= move_alias(service_side, "image_input", &["imageInput"]);
+        if let Some(image_input) = object_at(service_side, "image_input") {
+            changed |= move_alias(image_input, "profile_id", &["profileId"]);
+            changed |= move_alias(image_input, "api_type", &["apiType"]);
+        }
+    }
+    if let Some(remote) = object_at(root, "remote") {
+        if let Some(channels) = object_at(remote, "channels") {
+            for channel in channels
+                .values_mut()
+                .filter_map(serde_json::Value::as_object_mut)
+            {
+                changed |= move_alias(channel, "agent_id", &["agentId", "agent"]);
+                changed |= move_alias(channel, "profile_id", &["profileId", "profile"]);
+            }
+        }
+    }
+    changed
+}
+
+fn object_at<'a>(
+    object: &'a mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a mut serde_json::Map<String, serde_json::Value>> {
+    object.get_mut(key)?.as_object_mut()
+}
+
+fn move_alias(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    canonical: &str,
+    aliases: &[&str],
+) -> bool {
+    let mut changed = false;
+    for alias in aliases {
+        if let Some(value) = object.remove(*alias) {
+            if !object.contains_key(canonical) {
+                object.insert(canonical.to_string(), value);
+            }
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn legacy_profile_changes(data_dir: &Path) -> Result<Vec<Change>> {
@@ -722,6 +839,124 @@ mod tests {
         assert_eq!(backup_dirs(&dir).len(), 1);
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn backs_up_then_rewrites_settings_aliases_once() {
+        let dir = test_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "startkit": { "portableToolchain": true },
+                "integrations": {
+                    "auto_install_mcp": false,
+                    "auto_install_skills": false
+                },
+                "proxy": { "url": "http://proxy.test" },
+                "bridge": {
+                    "replaceProviderWebSearch": true,
+                    "rate_limit_retry": { "delay": 7, "retries": 3 }
+                },
+                "localAgentApi": { "enabled": true },
+                "searchTool": {
+                    "command": "/tmp/search",
+                    "maxResults": 8,
+                    "searchContextSize": "high",
+                    "sources": {
+                        "exa": {
+                            "apiKey": "secret",
+                            "apiKeyEnv": "EXA_KEY",
+                            "baseUrl": "https://example.test"
+                        }
+                    }
+                },
+                "serviceSide": {
+                    "imageInput": {
+                        "enabled": true,
+                        "profileId": "vision",
+                        "apiType": "openai-chat",
+                        "model": "vision-model"
+                    }
+                },
+                "im_remote": {
+                    "channels": {
+                        "telegram": {
+                            "agent": "codex",
+                            "profileId": "direct",
+                            "unknown": true
+                        }
+                    }
+                },
+                "unknown_root": true
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        run_at(&dir).unwrap();
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let config = crate::config::config_from_settings_json(&settings);
+        assert!(config.portable_toolchain);
+        assert!(!config.integrations.mcp_auto_install);
+        assert!(!config.integrations.skill_auto_install);
+        assert_eq!(
+            config.proxy.http_proxy.as_deref(),
+            Some("http://proxy.test")
+        );
+        assert!(config.api_bridge.replace_provider_web_search);
+        assert_eq!(config.api_bridge.retry_429.delay_seconds, 7);
+        assert_eq!(config.api_bridge.retry_429.max_retries, Some(3));
+        assert!(config.local_agent_api.enabled);
+        assert_eq!(config.search_tool.max_results, Some(8));
+        assert_eq!(
+            config.search_tool.sources["exa"].api_key.as_deref(),
+            Some("secret")
+        );
+        assert_eq!(
+            config.service_side.image_input.profile_id.as_deref(),
+            Some("vision")
+        );
+        assert_eq!(
+            config.remote.channels["telegram"].agent_id.as_deref(),
+            Some("codex")
+        );
+        assert_eq!(settings["remote"]["channels"]["telegram"]["unknown"], true);
+        assert_eq!(settings["unknown_root"], true);
+        assert!(settings.get("bridge").is_none());
+        assert!(settings.get("searchTool").is_none());
+        assert!(settings["api_bridge"].get("rate_limit_retry").is_none());
+        assert!(settings["search_tool"]["sources"]["exa"]
+            .get("apiKey")
+            .is_none());
+
+        let backups = backup_dirs(&dir);
+        assert_eq!(backups.len(), 1);
+        assert!(std::fs::read_to_string(backups[0].join("settings.json"))
+            .unwrap()
+            .contains("\"bridge\""));
+        run_at(&dir).unwrap();
+        assert_eq!(backup_dirs(&dir).len(), 1);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn canonical_settings_values_win_over_aliases() {
+        let mut settings = serde_json::json!({
+            "startkit": {
+                "portable_toolchain": false,
+                "portableToolchain": true
+            }
+        });
+
+        assert!(canonicalize_settings(&mut settings));
+
+        assert_eq!(settings["startkit"]["portable_toolchain"], false);
+        assert!(settings["startkit"].get("portableToolchain").is_none());
     }
 
     #[test]
