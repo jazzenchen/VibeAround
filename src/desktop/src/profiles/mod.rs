@@ -93,8 +93,13 @@ pub async fn profiles_get(id: String) -> Result<ProfileDef, String> {
 }
 
 #[tauri::command]
-pub async fn profiles_upsert(app: tauri::AppHandle, profile: ProfileDef) -> Result<(), String> {
+pub async fn profiles_upsert(
+    app: tauri::AppHandle,
+    id: String,
+    draft: ProfileDraft,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let profile = draft.into_profile(id);
         save_profile(&profile)?;
         emit_launch_config_changed(&app);
         Ok(())

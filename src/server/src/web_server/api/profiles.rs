@@ -44,11 +44,8 @@ pub struct ModelProfileDraft {
     pub label: String,
     pub provider: String,
     pub auth_mode: AuthMode,
-    pub api_types: Vec<String>,
     #[serde(default)]
     pub credentials: BTreeMap<String, String>,
-    #[serde(default)]
-    pub overrides: BTreeMap<String, schema::ApiTypeOverrides>,
     #[serde(default)]
     pub api_configs: BTreeMap<String, schema::ProfileApiConfig>,
     #[serde(default)]
@@ -102,15 +99,10 @@ pub async fn create_model_profile_handler(
 /// PUT /api/model-profiles/:id -- replace a profile definition.
 pub async fn update_model_profile_handler(
     Path(id): Path<String>,
-    Json(profile): Json<ProfileDef>,
+    Json(draft): Json<ModelProfileDraft>,
 ) -> Result<Json<ProfileDef>, (StatusCode, String)> {
     super::run_blocking_io(move || {
-        if profile.id != id {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("profile id mismatch: path '{id}' body '{}'", profile.id),
-            ));
-        }
+        let profile = draft.into_profile(id);
         common::profiles::save_profile(&profile).map_err(profile_store_error)?;
         Ok(Json(profile))
     })
@@ -151,9 +143,9 @@ impl ModelProfileDraft {
             label: self.label,
             provider: self.provider,
             auth_mode: self.auth_mode,
-            api_types: self.api_types,
+            api_types: Vec::new(),
             credentials: self.credentials,
-            overrides: self.overrides,
+            overrides: BTreeMap::new(),
             api_configs: self.api_configs,
             use_settings_proxy: self.use_settings_proxy,
             provider_settings: self.provider_settings,

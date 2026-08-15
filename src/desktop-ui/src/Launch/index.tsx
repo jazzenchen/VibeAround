@@ -94,7 +94,7 @@ export function Launch({ refreshToken = 0 }: { refreshToken?: number }) {
     if (submit.type === "create") {
       await createProfile(submit.draft);
     } else {
-      await upsertProfile(submit.profile);
+      await upsertProfile(submit.id, submit.draft);
     }
     await refresh();
   }

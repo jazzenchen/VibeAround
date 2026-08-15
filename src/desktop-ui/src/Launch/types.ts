@@ -67,14 +67,6 @@ export type ProfileConnections = Record<
   Partial<Record<ConnectionAgentId, ProfileConnectionPreference>>
 >;
 
-export interface ApiTypeOverrides {
-  endpoint_id?: string | null;
-  base_url?: string | null;
-  model?: string | null;
-  reasoning_effort?: string | null;
-  capabilities?: ContentCapabilities | null;
-}
-
 export interface ProfileApiConfig {
   enabled?: boolean;
   endpoint_id?: string | null;
@@ -139,10 +131,8 @@ export interface ProfileDef {
   label: string;
   provider: string;
   auth_mode: AuthMode;
-  api_types: string[];
   credentials: Record<string, string>;
-  overrides: Record<string, ApiTypeOverrides>;
-  api_configs?: Record<string, ProfileApiConfig>;
+  api_configs: Record<string, ProfileApiConfig>;
   use_settings_proxy?: boolean;
   provider_settings?: ProviderSettings;
   connections?: Partial<Record<ConnectionAgentId, ProfileConnectionPreference>>;

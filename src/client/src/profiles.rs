@@ -63,11 +63,10 @@ pub struct ProfileDef {
     pub label: String,
     pub provider: String,
     pub auth_mode: AuthMode,
-    pub api_types: Vec<String>,
     #[serde(default)]
     pub credentials: BTreeMap<String, String>,
     #[serde(default)]
-    pub overrides: BTreeMap<String, Value>,
+    pub api_configs: BTreeMap<String, Value>,
     #[serde(default)]
     pub use_settings_proxy: bool,
     #[serde(default)]
@@ -79,11 +78,10 @@ pub struct ModelProfileDraft {
     pub label: String,
     pub provider: String,
     pub auth_mode: AuthMode,
-    pub api_types: Vec<String>,
     #[serde(default)]
     pub credentials: BTreeMap<String, String>,
     #[serde(default)]
-    pub overrides: BTreeMap<String, Value>,
+    pub api_configs: BTreeMap<String, Value>,
     #[serde(default)]
     pub use_settings_proxy: bool,
     #[serde(default)]
@@ -140,13 +138,13 @@ pub fn create_model_profile(draft: &ModelProfileDraft) -> Result<RequestSpec> {
     .with_body(encode_body(draft)?))
 }
 
-pub fn update_model_profile(id: &str, profile: &ProfileDef) -> Result<RequestSpec> {
+pub fn update_model_profile(id: &str, draft: &ModelProfileDraft) -> Result<RequestSpec> {
     Ok(RequestSpec::new(
         HttpMethod::Put,
         join_path("/api/model-profiles", id),
         AuthRequirement::BearerToken,
     )
-    .with_body(encode_body(profile)?))
+    .with_body(encode_body(draft)?))
 }
 
 pub fn delete_model_profile(id: &str) -> RequestSpec {
@@ -184,5 +182,29 @@ mod tests {
         assert_eq!(request.method, HttpMethod::Put);
         assert_eq!(request.path, "/api/model-profiles/order");
         assert_eq!(request.body, Some(json!({ "profile_ids": ["p1", "p2"] })));
+    }
+
+    #[test]
+    fn model_profile_writes_only_canonical_api_configs() {
+        let draft = ModelProfileDraft {
+            label: "OpenAI".to_string(),
+            provider: "openai".to_string(),
+            auth_mode: AuthMode::ApiKey,
+            credentials: BTreeMap::new(),
+            api_configs: [(
+                "openai-responses".to_string(),
+                json!({ "enabled": true, "model": "gpt-5" }),
+            )]
+            .into_iter()
+            .collect(),
+            use_settings_proxy: false,
+            provider_settings: Value::Null,
+        };
+
+        let request = update_model_profile("openai", &draft).expect("request");
+        let body = request.body.expect("body");
+        assert!(body.get("api_configs").is_some());
+        assert!(body.get("api_types").is_none());
+        assert!(body.get("overrides").is_none());
     }
 }

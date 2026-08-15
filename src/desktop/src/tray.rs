@@ -507,7 +507,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use common::profiles::connections::ProfileLaunchTarget;
-    use common::profiles::schema::{AuthMode, ProfileDef, ProviderSettings};
+    use common::profiles::schema::{AuthMode, ProfileApiConfig, ProfileDef, ProviderSettings};
 
     fn profile(id: &str, label: &str, api_types: &[&str]) -> ProfileDef {
         ProfileDef {
@@ -518,7 +518,18 @@ mod tests {
             api_types: api_types.iter().map(|value| (*value).to_string()).collect(),
             credentials: BTreeMap::new(),
             overrides: BTreeMap::new(),
-            api_configs: Default::default(),
+            api_configs: api_types
+                .iter()
+                .map(|api_type| {
+                    (
+                        (*api_type).to_string(),
+                        ProfileApiConfig {
+                            enabled: true,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),
