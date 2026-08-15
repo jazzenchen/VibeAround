@@ -12,7 +12,7 @@ Track current-daemon Preview sessions (dev-server ports and Markdown files) in m
 |---|---|---|
 | Preview store / `SESSIONS` | `store.rs` | Slug → preview session; `SHARE_TTL_SECS = 600` |
 | Owner vs Share semantics | `mod.rs`, `store.rs` | Each target has a stable owner slug; its Share ID, code, and grant form one 600 s transaction |
-| `delete_session` / `shutdown_kill_all_ports` | `mod.rs` | Kill the current listener when a Server Preview closes / all registered ports at daemon stop |
+| `delete_session` / `cleanup_registered_previews` | `mod.rs`, `registrations.rs` | Close one Preview / run the same cleanup at daemon startup and shutdown |
 
 ## Interactions
 
@@ -24,8 +24,9 @@ Track current-daemon Preview sessions (dev-server ports and Markdown files) in m
 
 1. **Server owner behavior is intentionally small** — before creating a Server iframe, the owner SPA asks for one risk acknowledgement per Preview and browser session. Local owners load the loopback origin directly. Remote owners transparently forward normal HTTP and WebSocket/HMR traffic only to `127.0.0.1:<registered-port>`; `/va/*` remains reserved. Do not add liveness, content, workspace, process, header, or redirect inspection to this path.
 2. **Every Share is one scoped transaction** — one Preview, one opaque URL ID, one reusable six-digit code, one browser grant, and one hard TTL. A Server Share forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR must remain unsupported; `/va/*`, owner pages, chat, and review stay excluded. It is a page-preview transport, not an API-isolation sandbox; do not infer policy from path names. Never widen target scope or lifetime without revisiting the [security model](../../architecture/security-model.md).
-3. **All Preview registrations are in memory**: File and Server registrations exist only in the current daemon run and are never restored at startup. Closing a Server Preview or the daemon kills the process currently listening on that registered port; thread/session close does nothing.
-4. Remote Server and Markdown owner links require owner pairing; Share expiry must not affect the owner path.
+3. **Preview state is never restored**: File and Server Preview state exists only in memory. A minimal journal records only File markers and Server ports so startup can repeat the same cleanup used at shutdown after an interrupted exit. Cleanup kills registered Server ports, removes the journal, and never recreates a Preview. Closing a thread/session does nothing.
+4. **Refresh has one explicit agent trigger**: finishing an agent turn does not refresh the iframe. A successful MCP `preview` call refreshes the matching open owner Preview without prompting. A user-triggered Preview refresh asks for confirmation only when it will clear review drafts.
+5. Remote Server and Markdown owner links require owner pairing; Share expiry must not affect the owner path.
 
 ## Known debt
 

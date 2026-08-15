@@ -41,7 +41,7 @@ same ThreadRuntime + session ◄── host evicted ──► next prompt resume
 | Conversation context inside a session | Yes | Owned by the agent CLI's own storage; restored via resume |
 | In-flight turn | No | A turn interrupted by restart is lost; the session resumes at its last completed state |
 | Web chat scrollback in the browser | Partially | Startup replay re-sends recent output for web routes |
-| Preview registrations | No | File and Server Previews exist only in the current daemon's in-memory registry |
+| Preview state | No | File and Server Previews are never recreated; a cleanup-only journal may survive just long enough for the next startup to kill registered Server ports |
 
 ## Handover: moving a conversation between surfaces
 

@@ -15,7 +15,7 @@ Preview exactly one local source through VibeAround: a running web server or a M
 - **Server**: Reuse the intended server when it is still running. Otherwise start it with the framework's automatic port selection and wait until it is reachable at `127.0.0.1:<port>`. VibeAround registers that port in memory; closing that Preview or the daemon kills the process currently listening there.
 - **Markdown**: Verify that the requested file exists. No separate static-file server is needed.
 
-File and Server registrations exist only for the current daemon run. VibeAround never persists or restores them.
+VibeAround never restores a Preview after restart; call `preview` again when needed. Registered Server ports are cleaned at shutdown and again at the next startup if shutdown was interrupted.
 
 ### 2. Add optional conversation identity
 
@@ -65,10 +65,6 @@ Present every owner and Share URL returned by the tool. Include the six-digit ac
 Do not add an agent-side risk preflight. Before a Server iframe is created, the Preview page itself asks the user once per Preview and browser session to acknowledge that the local server may contain unknown code.
 
 Remote owner traffic is forwarded only to `127.0.0.1:<registered-port>`, including ordinary HTTP methods, request bodies, and WebSocket/HMR traffic. The public Share remains a narrower read-only view.
-
-## Markdown rendering and privacy
-
-VibeAround renders Markdown internally. Raw HTML is shown as source text, and only absolute HTTPS Markdown images are loaded. Image hosts can see the viewer's IP address; Preview sends no referrer.
 
 ## Optional server review bridge
 
