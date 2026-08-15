@@ -1,10 +1,11 @@
 //! One-time migrations for files under the VibeAround data directory.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use chrono::Local;
 
+const APPLICATION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const LEGACY_STATE_FILES: [&str; 2] = ["workspaces.jsonl", "workspace-threads.jsonl"];
 const DASHSCOPE_PROVIDER_ID: &str = "dashscope";
 const DASHSCOPE_LABEL: &str = "Alibaba DashScope";
@@ -221,14 +222,11 @@ fn create_backup<'a>(
 ) -> Result<PathBuf> {
     let backup_root = data_dir.join("migration-backups");
     create_private_dir(&backup_root)?;
-    let backup_dir = backup_root.join(format!(
-        "migration-{}-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-        std::process::id()
-    ));
+    let version_dir = backup_root.join(format!("v{APPLICATION_VERSION}"));
+    create_private_dir(&version_dir)?;
+    let date_dir = version_dir.join(Local::now().format("%Y-%m-%d").to_string());
+    create_private_dir(&date_dir)?;
+    let backup_dir = next_backup_dir(&date_dir)?;
     create_private_dir(&backup_dir)?;
 
     for source in sources {
@@ -245,6 +243,17 @@ fn create_backup<'a>(
     }
 
     Ok(backup_dir)
+}
+
+fn next_backup_dir(date_dir: &Path) -> Result<PathBuf> {
+    let count = std::fs::read_dir(date_dir)
+        .with_context(|| format!("read {}", date_dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+        + 1;
+    Ok(date_dir.join(format!("{count:03}")))
 }
 
 fn apply_change(change: Change) -> Result<()> {
@@ -325,6 +334,10 @@ mod tests {
 
         let backups = backup_dirs(&dir);
         assert_eq!(backups.len(), 1);
+        assert!(backups[0].starts_with(
+            dir.join("migration-backups")
+                .join(format!("v{APPLICATION_VERSION}"))
+        ));
         assert_eq!(
             std::fs::read_to_string(backups[0].join("workspaces.jsonl")).unwrap(),
             "legacy-workspaces\n"
@@ -413,6 +426,28 @@ mod tests {
     }
 
     #[test]
+    fn numbers_each_backup_for_the_application_version_and_local_date() {
+        let dir = test_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("workspaces.jsonl"), "legacy-workspaces\n").unwrap();
+        run_at(&dir).unwrap();
+
+        std::fs::write(
+            dir.join("workspace-threads.jsonl"),
+            "legacy-workspace-threads\n",
+        )
+        .unwrap();
+        run_at(&dir).unwrap();
+
+        let backups = backup_dirs(&dir);
+        assert_eq!(backups.len(), 2);
+        assert_eq!(backups[0].file_name().unwrap(), "001");
+        assert_eq!(backups[1].file_name().unwrap(), "002");
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn migrates_legacy_azure_api_type() {
         let mut profile: crate::profiles::ProfileDef = serde_json::from_value(serde_json::json!({
             "id": "azure-old",
@@ -435,8 +470,12 @@ mod tests {
     }
 
     fn backup_dirs(data_dir: &Path) -> Vec<PathBuf> {
-        let mut dirs = std::fs::read_dir(data_dir.join("migration-backups"))
+        let version_dir = data_dir
+            .join("migration-backups")
+            .join(format!("v{APPLICATION_VERSION}"));
+        let mut dirs = std::fs::read_dir(version_dir)
             .unwrap()
+            .flat_map(|entry| std::fs::read_dir(entry.unwrap().path()).unwrap())
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.is_dir())
             .collect::<Vec<_>>();
