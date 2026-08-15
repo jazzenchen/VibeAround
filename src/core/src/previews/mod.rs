@@ -23,7 +23,7 @@
 //! One `HashMap<PathBuf, PreviewSession>` backs everything. Lookups by
 //! `slug` or `share_id` scan values — `n` is tiny (<20 typical).
 //!
-//! Preview state lives only for the current daemon run. A minimal cleanup
+//! Preview state lives only for the current daemon run. A minimal Server-port
 //! journal survives only so startup can repeat shutdown cleanup after an
 //! interrupted exit; it is never used to restore a Preview.
 //!
@@ -126,7 +126,8 @@ fn ensure_session(
         expires_at: share.expires_at,
     };
 
-    registrations::persist_active(&sessions);
+    drop(sessions);
+    registrations::persist_active(&tracked_ports());
     (slug, share)
 }
 
@@ -310,7 +311,7 @@ pub fn delete_session(slug: &str) -> bool {
     if let PreviewTarget::Server { port } = session.target {
         kill::kill_port(port);
     }
-    registrations::persist_active(&SESSIONS.lock());
+    registrations::persist_active(&tracked_ports());
     true
 }
 
@@ -332,30 +333,18 @@ pub fn tracked_ports() -> Vec<u16> {
 
 /// Run the same cleanup at daemon startup and shutdown.
 ///
-/// Persisted registrations contribute only Server ports to kill. Preview state
-/// is always discarded, and both the current and legacy journals are removed
-/// after the best-effort cleanup attempt.
+/// Persisted ports are used only for cleanup. Preview state is always discarded,
+/// and the journal is removed after the best-effort cleanup attempt.
 pub fn cleanup_registered_previews() {
-    let (current_path, legacy_path) = registrations::activate_paths();
+    let path = registrations::activate_path();
     let mut ports = tracked_ports();
-    for (path, registered_ports) in [
-        (
-            current_path,
-            registrations::current_server_ports_at(current_path),
+    match registrations::read_at(path) {
+        Ok(registered_ports) => ports.extend(registered_ports),
+        Err(error) => tracing::warn!(
+            path = ?path,
+            error = %error,
+            "failed to read Preview cleanup ports"
         ),
-        (
-            legacy_path,
-            registrations::legacy_server_ports_at(legacy_path),
-        ),
-    ] {
-        match registered_ports {
-            Ok(registered_ports) => ports.extend(registered_ports),
-            Err(error) => tracing::warn!(
-                path = ?path,
-                error = %error,
-                "failed to read Preview cleanup registrations"
-            ),
-        }
     }
     ports.sort_unstable();
     ports.dedup();
@@ -371,14 +360,12 @@ pub fn cleanup_registered_previews() {
     }
     SESSIONS.lock().clear();
 
-    for path in [current_path, legacy_path] {
-        if let Err(error) = registrations::remove_at(path) {
-            tracing::warn!(
-                path = ?path,
-                error = %error,
-                "failed to clear Preview cleanup registrations"
-            );
-        }
+    if let Err(error) = registrations::remove_at(path) {
+        tracing::warn!(
+            path = ?path,
+            error = %error,
+            "failed to clear Preview cleanup ports"
+        );
     }
 }
 
