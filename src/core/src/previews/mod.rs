@@ -17,25 +17,23 @@
 //!
 //! URL structure (all routes under `/va/`):
 //!
-//! - Owner: `/preview/u/{slug}`        — restored while its target remains valid
+//! - Owner: `/preview/u/{slug}`        — available for the current daemon run
 //! - Share: `/preview/s/{share_id}` — access-code gate
 //!
 //! One `HashMap<PathBuf, PreviewSession>` backs everything. Lookups by
 //! `slug` or `share_id` scan values — `n` is tiny (<20 typical).
 //!
-//! Server registrations live only for the current daemon run. Closing one or
-//! shutting down the daemon kills whatever process currently listens on its
-//! registered port.
+//! All Preview registrations live only for the current daemon run. Closing a
+//! Server Preview or shutting down the daemon kills whatever process currently
+//! listens on its registered port.
 //!
 //! ## Module layout
 //!
 //! - [`types`] — public data model (`PreviewTarget`, `PreviewEntry`, …).
 //! - [`store`] — internal session storage + slug/share-key generation.
 //! - [`kill`]  — best-effort cleanup for current port listeners.
-//! - [`registrations`] — durable File registration projection.
 
 mod kill;
-mod registrations;
 mod store;
 mod types;
 
@@ -126,7 +124,6 @@ fn ensure_session(
         expires_at: share.expires_at,
     };
 
-    registrations::persist_active(&sessions);
     (slug, share)
 }
 
@@ -310,7 +307,6 @@ pub fn delete_session(slug: &str) -> bool {
     if let PreviewTarget::Server { port } = session.target {
         kill::kill_port(port);
     }
-    registrations::persist_active(&SESSIONS.lock());
     true
 }
 
@@ -330,21 +326,6 @@ pub fn tracked_ports() -> Vec<u16> {
         .collect()
 }
 
-/// Restore durable File registrations. Server previews are intentionally
-/// scoped to one daemon run and are never restored after restart.
-pub fn reconcile_registrations() {
-    let path = registrations::activate_path();
-    let mut sessions = SESSIONS.lock();
-    match registrations::reconcile_at(path, &mut sessions) {
-        Ok(0) => {}
-        Ok(count) => tracing::info!("[preview] restored {} preview registration(s)", count),
-        Err(error) => {
-            tracing::warn!(path = ?path, error = %error, "failed to reconcile Preview registrations");
-            registrations::persist_active(&sessions);
-        }
-    }
-}
-
 fn kill_registered_server_ports() {
     let ports = tracked_ports();
     if !ports.is_empty() {
@@ -358,23 +339,17 @@ fn kill_registered_server_ports() {
     }
 }
 
-/// Best-effort final process cleanup that does not change Preview registrations.
-///
-/// Used when the application is already exiting and graceful daemon shutdown
-/// may have run. In particular, it must not overwrite durable File previews
-/// with an empty in-memory registry.
+/// Best-effort final process cleanup used when the application is already
+/// exiting and graceful daemon shutdown may have run.
 pub fn emergency_kill_all_ports() {
     kill_registered_server_ports();
 }
 
-/// Kill every currently registered Server port. Durable File registrations are
-/// retained, then the in-memory session map is cleared.
+/// Kill every currently registered Server port, then clear the in-memory
+/// Preview registry.
 pub fn shutdown_kill_all_ports() {
     kill_registered_server_ports();
-    let mut sessions = SESSIONS.lock();
-    sessions.retain(|_, session| matches!(session.target, PreviewTarget::File));
-    registrations::persist_active(&sessions);
-    sessions.clear();
+    SESSIONS.lock().clear();
 }
 
 #[cfg(test)]
