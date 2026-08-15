@@ -202,7 +202,7 @@
         },
         "session_id": {
           "type": "string",
-          "description": "Optional exact native agent session ID. Enables earlier dev-server cleanup and, with agent_kind, can link an external task to the owner conversation."
+          "description": "Optional exact native agent session ID. With agent_kind, it can link an external task to the owner conversation; it never controls Preview or dev-server lifetime."
         },
         "agent_kind": {
           "type": "string",

@@ -41,6 +41,7 @@ Thread 在某条 Route 第一次需要它时诞生 —— 聊天的第一条消�
 | Session 内的对话上下文 | 保留 | 归 Agent CLI 自己的存储所有；经恢复还原 |
 | 进行中的回合 | 不保留 | 被重启打断的回合丢失；Session 从最后完成的状态恢复 |
 | 浏览器里 Web Chat 的滚动历史 | 部分保留 | 启动回放会给 web Route 重发近期输出 |
+| Preview registration | 不保留 | File 与 Server Preview 只存在于当前 daemon 的内存 registry |
 
 ## 交接：在界面之间移动对话
 

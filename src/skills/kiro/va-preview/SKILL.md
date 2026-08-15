@@ -12,8 +12,10 @@ Preview exactly one local source through VibeAround: a running web server or a M
 
 ### 1. Prepare one source
 
-- **Server**: Reuse the intended server when it is still running. Otherwise start it with the framework's automatic port selection and wait until it is reachable at `127.0.0.1:<port>`. VibeAround registers that port for the current daemon run; closing that Preview or the daemon kills the process currently listening there.
+- **Server**: Reuse the intended server when it is still running. Otherwise start it with the framework's automatic port selection and wait until it is reachable at `127.0.0.1:<port>`. VibeAround registers that port in memory; closing that Preview or the daemon kills the process currently listening there.
 - **Markdown**: Verify that the requested file exists. No separate static-file server is needed.
+
+File and Server registrations exist only for the current daemon run. VibeAround never persists or restores them.
 
 ### 2. Add optional conversation identity
 
