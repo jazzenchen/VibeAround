@@ -8,8 +8,6 @@ pub struct ServiceHealthResponse {
     pub ok: bool,
     pub service: String,
     pub version: String,
-    #[serde(default)]
-    pub channel_outbox_pending: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -79,7 +77,6 @@ mod tests {
         let health = decode_health(response).expect("decode health");
 
         assert!(health.ok);
-        assert_eq!(health.channel_outbox_pending, 0);
     }
 
     #[test]

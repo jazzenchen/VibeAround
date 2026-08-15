@@ -34,8 +34,6 @@ pub struct ServiceHealthResponse {
     pub ok: bool,
     pub service: &'static str,
     pub version: &'static str,
-    /// Deprecated wire-compatibility field. IM delivery is live-only.
-    pub channel_outbox_pending: usize,
 }
 
 /// `GET /api/service/info` response.
