@@ -165,9 +165,10 @@ function PreviewWorkspace({
     }
   }, [onRefreshBootstrap, review.prepareFrame, selected.slug]);
   const refreshPreview = useCallback(async () => {
-    if (!confirmManualPreviewRefresh(review.drafts.length > 0)) return;
+    const hasReviewDraft = review.drafts.length > 0 || review.editor !== null;
+    if (!confirmManualPreviewRefresh(hasReviewDraft)) return;
     await reloadPreview();
-  }, [reloadPreview, review.drafts.length]);
+  }, [reloadPreview, review.drafts.length, review.editor]);
   const chat = usePreviewChatConnection(selected.slug, reloadPreview);
 
   useEffect(() => {
