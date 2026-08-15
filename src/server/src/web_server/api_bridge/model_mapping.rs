@@ -221,7 +221,7 @@ fn clean_model_id(value: Option<&str>) -> Option<String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use common::profiles::schema::{ApiTypeOverrides, AuthMode};
+    use common::profiles::schema::{AuthMode, ProfileApiConfig};
 
     use super::*;
 
@@ -232,21 +232,18 @@ mod tests {
             label: "Gemini Test".to_string(),
             provider: "gemini".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: [(
+            api_configs: [(
                 "openai-chat".to_string(),
-                ApiTypeOverrides {
+                ProfileApiConfig {
+                    enabled: true,
                     endpoint_id: Some("gemini-api".to_string()),
-                    base_url: None,
                     model: Some("gemini-3.1-pro".to_string()),
-                    reasoning_effort: None,
-                    capabilities: None,
+                    ..Default::default()
                 },
             )]
             .into_iter()
             .collect(),
-            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -274,9 +271,7 @@ mod tests {
             label: "Custom Test".to_string(),
             provider: "custom".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -310,9 +305,7 @@ mod tests {
             label: "DeepSeek Test".to_string(),
             provider: "deepseek".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -371,9 +364,7 @@ mod tests {
             label: "DeepSeek Test".to_string(),
             provider: "deepseek".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -417,9 +408,7 @@ mod tests {
             label: "DeepSeek Test".to_string(),
             provider: "deepseek".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),

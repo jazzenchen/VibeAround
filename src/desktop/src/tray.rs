@@ -515,9 +515,7 @@ mod tests {
             label: label.to_string(),
             provider: "custom".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: api_types.iter().map(|value| (*value).to_string()).collect(),
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: api_types
                 .iter()
                 .map(|api_type| {

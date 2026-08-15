@@ -459,9 +459,7 @@ mod tests {
             label: provider.to_string(),
             provider: provider.to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: [(
                 "openai-chat".to_string(),
                 ProfileApiConfig {

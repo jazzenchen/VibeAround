@@ -544,11 +544,9 @@ mod tests {
             label: "MiniMax Test".to_string(),
             provider: "minimax".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["anthropic".to_string()],
             credentials: [("api_key".to_string(), "test-key".to_string())]
                 .into_iter()
                 .collect(),
-            overrides: BTreeMap::new(),
             api_configs: [(
                 "anthropic".to_string(),
                 ProfileApiConfig {

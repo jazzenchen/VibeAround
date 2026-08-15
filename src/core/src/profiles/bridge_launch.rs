@@ -1016,7 +1016,6 @@ mod tests {
     #[test]
     fn codex_bridge_launch_can_target_native_gemini_api() {
         let mut profile = gemini_profile();
-        profile.api_types = vec!["gemini".to_string()];
         profile.api_configs.clear();
         profile.api_configs.insert(
             "gemini".to_string(),
@@ -1060,7 +1059,6 @@ mod tests {
     #[test]
     fn codex_desktop_bridge_launch_uses_desktop_scope() {
         let mut profile = gemini_profile();
-        profile.api_types = vec!["gemini".to_string()];
         profile.api_configs.clear();
         profile.api_configs.insert(
             "gemini".to_string(),
@@ -1095,7 +1093,6 @@ mod tests {
         let mut profile = gemini_profile();
         profile.auth_mode = AuthMode::GoogleOauth;
         profile.credentials.clear();
-        profile.api_types = vec!["gemini".to_string()];
         profile.api_configs.clear();
         profile.api_configs.insert(
             "gemini".to_string(),
@@ -1233,9 +1230,7 @@ mod tests {
             label: "DashScope Test".to_string(),
             provider: "dashscope".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials,
-            overrides: Default::default(),
             api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -1264,9 +1259,7 @@ mod tests {
             label: "Gemini Test".to_string(),
             provider: "gemini".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials,
-            overrides: Default::default(),
             api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -1294,9 +1287,7 @@ mod tests {
             label: "DeepSeek Test".to_string(),
             provider: "deepseek".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials,
-            overrides: Default::default(),
             api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -1325,9 +1316,7 @@ mod tests {
             label: "Moonshot Test".to_string(),
             provider: "moonshot".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["anthropic".to_string()],
             credentials,
-            overrides: Default::default(),
             api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
