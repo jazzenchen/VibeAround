@@ -32,15 +32,24 @@ fn run_at(data_dir: &Path) -> Result<()> {
         .with_context(|| format!("lock migrations in {}", data_dir.display()))?;
 
     let mut changes = legacy_state_changes(data_dir);
-    changes.extend(legacy_settings_changes(data_dir)?);
-    changes.extend(legacy_profile_changes(data_dir)?);
+    changes.extend(legacy_settings_changes(data_dir));
+    changes.extend(legacy_profile_changes(data_dir));
     if changes.is_empty() {
         return Ok(());
     }
 
-    let backup_dir = create_backup(data_dir, changes.iter().map(Change::source))?;
+    let backup_dir = match create_backup(data_dir, changes.iter().map(Change::source)) {
+        Ok(backup_dir) => backup_dir,
+        Err(error) => {
+            tracing::warn!(%error, "skipping configuration migration because backup failed");
+            return Ok(());
+        }
+    };
     for change in changes {
-        apply_change(change)?;
+        let source = change.source().to_path_buf();
+        if let Err(error) = apply_change(change) {
+            tracing::warn!(path = ?source, %error, "failed to apply configuration migration");
+        }
     }
     tracing::info!(backup = ?backup_dir, "completed configuration migration");
     Ok(())
@@ -179,27 +188,34 @@ fn legacy_state_changes(data_dir: &Path) -> Vec<Change> {
         .collect()
 }
 
-fn legacy_settings_changes(data_dir: &Path) -> Result<Vec<Change>> {
+fn legacy_settings_changes(data_dir: &Path) -> Vec<Change> {
     let path = data_dir.join("settings.json");
     let body = match std::fs::read_to_string(&path) {
         Ok(body) => body,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(path = ?path, %error, "skipping unreadable settings during migration");
+            return Vec::new();
+        }
     };
     let mut settings: serde_json::Value = match serde_json::from_str(&body) {
         Ok(settings) => settings,
         Err(error) => {
             tracing::warn!(path = ?path, %error, "skipping invalid settings during migration");
-            return Ok(Vec::new());
+            return Vec::new();
         }
     };
     if !canonicalize_settings(&mut settings) {
-        return Ok(Vec::new());
+        return Vec::new();
     }
-    Ok(vec![Change::Rewrite {
-        path,
-        contents: serde_json::to_string_pretty(&settings).context("serialize migrated settings")?,
-    }])
+    let contents = match serde_json::to_string_pretty(&settings) {
+        Ok(contents) => contents,
+        Err(error) => {
+            tracing::warn!(path = ?path, %error, "skipping unserializable settings migration");
+            return Vec::new();
+        }
+    };
+    vec![Change::Rewrite { path, contents }]
 }
 
 fn canonicalize_settings(settings: &mut serde_json::Value) -> bool {
@@ -298,13 +314,14 @@ fn move_alias(
     changed
 }
 
-fn legacy_profile_changes(data_dir: &Path) -> Result<Vec<Change>> {
+fn legacy_profile_changes(data_dir: &Path) -> Vec<Change> {
     let profiles_dir = data_dir.join("profiles");
     let entries = match std::fs::read_dir(&profiles_dir) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(error) => {
-            return Err(error).with_context(|| format!("read {}", profiles_dir.display()))
+            tracing::warn!(path = ?profiles_dir, %error, "skipping unreadable profiles directory during migration");
+            return Vec::new();
         }
     };
     let mut paths = entries
@@ -315,8 +332,13 @@ fn legacy_profile_changes(data_dir: &Path) -> Result<Vec<Change>> {
 
     let mut changes = Vec::new();
     for path in paths {
-        let body = std::fs::read_to_string(&path)
-            .with_context(|| format!("read profile {}", path.display()))?;
+        let body = match std::fs::read_to_string(&path) {
+            Ok(body) => body,
+            Err(error) => {
+                tracing::warn!(path = ?path, %error, "skipping unreadable profile during migration");
+                continue;
+            }
+        };
         let value: serde_json::Value = match serde_json::from_str(&body) {
             Ok(value) => value,
             Err(error) => {
@@ -345,13 +367,16 @@ fn legacy_profile_changes(data_dir: &Path) -> Result<Vec<Change>> {
             continue;
         }
         let profile = profile.into_profile();
-        changes.push(Change::Rewrite {
-            path,
-            contents: serde_json::to_string_pretty(&profile)
-                .context("serialize migrated profile")?,
-        });
+        let contents = match serde_json::to_string_pretty(&profile) {
+            Ok(contents) => contents,
+            Err(error) => {
+                tracing::warn!(path = ?path, %error, "skipping unserializable profile migration");
+                continue;
+            }
+        };
+        changes.push(Change::Rewrite { path, contents });
     }
-    Ok(changes)
+    changes
 }
 
 fn has_legacy_bridge_fields(connections: Option<&serde_json::Value>) -> bool {
@@ -967,6 +992,21 @@ mod tests {
     }
 
     #[test]
+    fn backup_failure_keeps_original_files_and_does_not_fail_startup() {
+        let dir = test_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let original = r#"{ "bridge": { "replaceProviderWebSearch": true } }"#;
+        std::fs::write(&path, original).unwrap();
+        std::fs::write(dir.join("migration-backups"), "not a directory").unwrap();
+
+        run_at(&dir).unwrap();
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn backs_up_then_rewrites_legacy_provider_profiles_once() {
         let dir = test_dir();
         std::fs::create_dir_all(dir.join("profiles")).unwrap();
@@ -1025,6 +1065,36 @@ mod tests {
         run_at(&dir).unwrap();
         assert_eq!(backup_dirs(&dir).len(), 1);
 
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_profile_does_not_block_other_profile_migrations() {
+        let dir = test_dir();
+        let profiles_dir = dir.join("profiles");
+        std::fs::create_dir_all(profiles_dir.join("unreadable.json")).unwrap();
+        let legacy_path = profiles_dir.join("deepseek-old.json");
+        std::fs::write(
+            &legacy_path,
+            r#"{
+  "id": "deepseek-old",
+  "label": "DeepSeek Old",
+  "provider": "deepseek",
+  "auth_mode": "api_key",
+  "api_types": ["openai-chat"]
+}"#,
+        )
+        .unwrap();
+
+        run_at(&dir).unwrap();
+
+        let migrated: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(legacy_path).unwrap()).unwrap();
+        assert!(migrated.get("api_types").is_none());
+        assert!(migrated["api_configs"]["openai-chat"]["enabled"]
+            .as_bool()
+            .unwrap());
+        assert!(profiles_dir.join("unreadable.json").is_dir());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
