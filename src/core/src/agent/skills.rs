@@ -105,24 +105,6 @@ pub(super) fn uninstall_skill(agent: &str) -> anyhow::Result<()> {
     uninstall_skill_at_root(agent, global_config, &home, skill_dir_rel)
 }
 
-/// Remove all project/workspace skill files for a given agent.
-pub(super) fn uninstall_project_skill(agent: &str, workspace: &Path) -> anyhow::Result<()> {
-    let agent_def = match resources::agent_by_id(agent) {
-        Some(def) => def,
-        None => return Ok(()),
-    };
-    let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
-    let skill_dir_rel = match skill_dir_for_scope(global_config, true) {
-        Some(dir) => dir,
-        None => return Ok(()),
-    };
-
-    uninstall_skill_at_root(agent, global_config, workspace, skill_dir_rel)
-}
-
 fn uninstall_skill_at_root(
     agent: &str,
     global_config: &resources::AgentGlobalConfig,
@@ -419,36 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn shared_rule_uninstall_leaves_non_vibearound_file() {
-        let dir = unique_test_dir("shared-foreign");
-        let rules = dir.join(".cursor/rules");
-        fs::create_dir_all(&rules).unwrap();
-        let target = rules.join("vibearound.mdc");
-        fs::write(&target, "user owned rule").unwrap();
-
-        uninstall_project_skill("cursor", &dir).unwrap();
-
-        assert_eq!(fs::read_to_string(&target).unwrap(), "user owned rule");
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn project_skill_install_and_uninstall_removes_managed_files() {
-        let dir = unique_test_dir("install-remove");
-        fs::create_dir_all(&dir).unwrap();
-
-        install_project_skill("cursor", &dir).unwrap();
-        assert!(dir.join(".cursor/rules/vibearound.mdc").exists());
-        assert!(dir.join(".cursor/rules/va-preview.mdc").exists());
-
-        uninstall_project_skill("cursor", &dir).unwrap();
-        assert!(!dir.join(".cursor/rules/vibearound.mdc").exists());
-        assert!(!dir.join(".cursor/rules/va-preview.mdc").exists());
-
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
     fn project_skill_install_uses_agent_specific_locations() {
         let dir = unique_test_dir("matrix");
         fs::create_dir_all(&dir).unwrap();
@@ -515,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn retired_skill_cleanup_preserves_unmanaged_files() {
+    fn install_preserves_unmanaged_retired_skill() {
         let dir = unique_test_dir("retired-unmanaged");
         let target = dir.join(".cursor/rules/va-md-preview.mdc");
         fs::create_dir_all(target.parent().unwrap()).unwrap();
@@ -526,29 +478,11 @@ mod tests {
         .unwrap();
 
         install_project_skill("cursor", &dir).unwrap();
-        uninstall_project_skill("cursor", &dir).unwrap();
 
         assert_eq!(
             fs::read_to_string(&target).unwrap(),
             "# VibeAround Markdown Preview\n\nuser-owned preview rule\n"
         );
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn uninstall_removes_managed_retired_shared_rule() {
-        let dir = unique_test_dir("retired-uninstall");
-        let target = dir.join(".cursor/rules/va-md-preview.mdc");
-        fs::create_dir_all(target.parent().unwrap()).unwrap();
-        fs::write(
-            &target,
-            "# VibeAround Markdown Preview\n\nTool: md_preview\n",
-        )
-        .unwrap();
-
-        uninstall_project_skill("cursor", &dir).unwrap();
-
-        assert!(!target.exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

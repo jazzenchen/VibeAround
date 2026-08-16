@@ -44,8 +44,8 @@ pub use install::{
 };
 pub use runtime::{Agent, AgentClientHandler, AgentReady, StartupSession};
 
-use mcp::{install_project_mcp_config, uninstall_mcp_config, uninstall_project_mcp_config};
-use skills::{install_project_skill, uninstall_project_skill, uninstall_skill};
+use mcp::{install_project_mcp_config, uninstall_mcp_config};
+use skills::{install_project_skill, uninstall_skill};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProjectIntegrationOptions {
@@ -92,32 +92,6 @@ pub fn auto_install_project_integrations(agent: &str, workspace: &Path) -> anyho
             skills: cfg.integrations.skill_auto_install,
         },
     )
-}
-
-/// Remove VibeAround-managed project-scoped integrations for one agent/workspace.
-pub fn uninstall_project_integrations(
-    agent: &str,
-    workspace: &Path,
-    options: ProjectIntegrationOptions,
-) -> anyhow::Result<()> {
-    if !workspace.is_dir() {
-        anyhow::bail!("workspace does not exist: {}", workspace.display());
-    }
-    if workspace == config::home_dir() {
-        tracing::info!(
-            "[agent] skipping project integration cleanup for {} in home directory {:?}",
-            agent,
-            workspace
-        );
-        return Ok(());
-    }
-    if options.mcp {
-        uninstall_project_mcp_config(agent, workspace)?;
-    }
-    if options.skills {
-        uninstall_project_skill(agent, workspace)?;
-    }
-    Ok(())
 }
 
 /// Remove VibeAround-managed integrations from legacy global locations only.

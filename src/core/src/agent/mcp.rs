@@ -53,21 +53,6 @@ pub(super) fn uninstall_mcp_config(agent: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Remove VibeAround MCP server entry from an agent's project/workspace settings.
-pub(super) fn uninstall_project_mcp_config(agent: &str, workspace: &Path) -> anyhow::Result<()> {
-    let agent_def = match resources::agent_by_id(agent) {
-        Some(def) => def,
-        None => return Ok(()),
-    };
-    let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
-
-    let config_path = workspace.join(project_mcp_settings_path(agent, global_config));
-    uninstall_mcp_config_at_path(agent, global_config, &config_path)
-}
-
 fn install_mcp_config_at_path(
     agent: &str,
     global_config: &resources::AgentGlobalConfig,
@@ -348,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn project_mcp_json_install_and_uninstall_preserves_other_servers() {
+    fn project_mcp_json_install_preserves_other_servers() {
         let dir = unique_test_dir("json");
         fs::create_dir_all(dir.join(".gemini")).unwrap();
         let path = dir.join(".gemini/settings.json");
@@ -370,12 +355,6 @@ mod tests {
             "http://127.0.0.1:12358/va/mcp"
         );
         assert!(installed["mcpServers"]["other"].is_object());
-
-        uninstall_project_mcp_config("gemini", &dir).unwrap();
-        let removed: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(removed["mcpServers"]["vibearound"].is_null());
-        assert!(removed["mcpServers"]["other"].is_object());
 
         fs::remove_dir_all(&dir).unwrap();
     }
