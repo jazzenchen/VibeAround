@@ -193,6 +193,17 @@ fn canonical_settings_values_win_over_aliases() {
 }
 
 #[test]
+fn materializes_the_legacy_managed_toolchain_default() {
+    let mut settings = serde_json::json!({
+        "startkit": { "toolchain_mode": "managed" }
+    });
+
+    assert!(canonicalize_settings(&mut settings));
+
+    assert_eq!(settings["startkit"]["portable_toolchain"], true);
+}
+
+#[test]
 fn backup_failure_keeps_original_files_and_does_not_fail_startup() {
     let dir = test_dir();
     std::fs::create_dir_all(&dir).unwrap();

@@ -481,12 +481,8 @@ export function SettingsDialog({
         ? "managed"
         : "system",
     );
-    const configuredPortableToolchain =
-      loadedSettings.startkit?.portable_toolchain;
     setPortableToolchain(
-      typeof configuredPortableToolchain === "boolean"
-        ? configuredPortableToolchain
-        : loadedSettings.startkit?.toolchain_mode === "managed",
+      loadedSettings.startkit?.portable_toolchain === true,
     );
   }, []);
 

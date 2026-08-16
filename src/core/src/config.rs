@@ -493,7 +493,7 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
     let portable_toolchain = startkit_settings
         .and_then(|value| value.get("portable_toolchain"))
         .and_then(|value| value.as_bool())
-        .unwrap_or_else(|| toolchain_mode.is_managed());
+        .unwrap_or(false);
 
     let raw_channels = root
         .get("channels")
@@ -1654,20 +1654,6 @@ mod tests {
 
         assert_eq!(config.toolchain_mode, ToolchainMode::Managed);
         assert!(!config.portable_toolchain);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn legacy_managed_toolchain_enables_portable_toolchain() {
-        let dir = unique_test_dir("legacy-portable-toolchain");
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("settings.json");
-        fs::write(&path, r#"{ "startkit": { "toolchain_mode": "managed" } }"#).unwrap();
-
-        let config = load_settings_from(&path);
-
-        assert_eq!(config.toolchain_mode, ToolchainMode::Managed);
-        assert!(config.portable_toolchain);
         fs::remove_dir_all(&dir).unwrap();
     }
 

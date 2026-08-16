@@ -231,6 +231,15 @@ fn canonicalize_settings(settings: &mut serde_json::Value) -> bool {
 
     if let Some(startkit) = object_at(root, "startkit") {
         changed |= move_alias(startkit, "portable_toolchain", &["portableToolchain"]);
+        if !startkit.contains_key("portable_toolchain")
+            && startkit
+                .get("toolchain_mode")
+                .and_then(serde_json::Value::as_str)
+                == Some("managed")
+        {
+            startkit.insert("portable_toolchain".to_string(), true.into());
+            changed = true;
+        }
     }
     if let Some(integrations) = object_at(root, "integrations") {
         changed |= move_alias(integrations, "mcp_auto_install", &["auto_install_mcp"]);
