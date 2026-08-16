@@ -107,7 +107,7 @@ pub fn set_profile_connection(
         .map_err(|error| ProfileStoreError::Storage(error.to_string()))
 }
 
-fn validate_profile(profile: &ProfileDef) -> Result<(), ProfileStoreError> {
+pub(crate) fn validate_profile(profile: &ProfileDef) -> Result<(), ProfileStoreError> {
     schema::validate(profile).map_err(|error| ProfileStoreError::Invalid(error.to_string()))?;
     let provider = catalog::get(&profile.provider).ok_or_else(|| {
         ProfileStoreError::Invalid(format!("unknown provider '{}'", profile.provider))

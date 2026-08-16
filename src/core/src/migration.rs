@@ -360,13 +360,20 @@ fn legacy_profile_changes(data_dir: &Path) -> Vec<Change> {
         };
         let provider_changed = migrate_legacy_profile_provider(&mut profile);
         let api_config_count = profile.api_configs.len();
-        hydrate_legacy_api_configs(&mut profile);
+        if let Err(error) = hydrate_legacy_api_configs(&mut profile) {
+            tracing::warn!(path = ?path, %error, "skipping incomplete profile migration");
+            continue;
+        }
         migrate_legacy_bridge_models(&mut profile);
         if !has_legacy_fields && !provider_changed && profile.api_configs.len() == api_config_count
         {
             continue;
         }
         let profile = profile.into_profile();
+        if let Err(error) = crate::profiles::validate_profile(&profile) {
+            tracing::warn!(path = ?path, %error, "skipping invalid profile migration");
+            continue;
+        }
         let contents = match serde_json::to_string_pretty(&profile) {
             Ok(contents) => contents,
             Err(error) => {
@@ -627,10 +634,9 @@ fn normalize_legacy_gemini_profile(profile: &mut MigrationProfile) {
     }
 }
 
-fn hydrate_legacy_api_configs(profile: &mut MigrationProfile) {
-    let Some(provider) = crate::profiles::catalog::get(&profile.provider) else {
-        return;
-    };
+fn hydrate_legacy_api_configs(profile: &mut MigrationProfile) -> Result<()> {
+    let provider = crate::profiles::catalog::get(&profile.provider)
+        .with_context(|| format!("unknown provider '{}'", profile.provider))?;
     for api_type in profile.api_types.clone() {
         if profile.api_configs.contains_key(&api_type) {
             continue;
@@ -640,13 +646,17 @@ fn hydrate_legacy_api_configs(profile: &mut MigrationProfile) {
             .get(&api_type)
             .cloned()
             .unwrap_or_default();
-        let Some(endpoint) = crate::profiles::catalog::find_endpoint(
+        let endpoint = crate::profiles::catalog::find_endpoint(
             provider,
             &api_type,
             overrides.endpoint_id.as_deref(),
-        ) else {
-            continue;
-        };
+        )
+        .with_context(|| {
+            format!(
+                "provider '{}' has no endpoint for legacy api type '{}'",
+                profile.provider, api_type
+            )
+        })?;
         profile.api_configs.insert(
             api_type,
             crate::profiles::schema::ProfileApiConfig {
@@ -676,6 +686,7 @@ fn hydrate_legacy_api_configs(profile: &mut MigrationProfile) {
             },
         );
     }
+    Ok(())
 }
 
 fn legacy_model_configs(
@@ -1099,6 +1110,50 @@ mod tests {
     }
 
     #[test]
+    fn unmappable_legacy_api_type_keeps_the_original_profile() {
+        let dir = test_dir();
+        let profiles_dir = dir.join("profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        let path = profiles_dir.join("partial.json");
+        let original = r#"{
+  "id": "partial",
+  "label": "Partial",
+  "provider": "deepseek",
+  "auth_mode": "api_key",
+  "api_types": ["openai-chat", "unsupported"]
+}"#;
+        std::fs::write(&path, original).unwrap();
+
+        run_at(&dir).unwrap();
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+        assert!(!dir.join("migration-backups").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn invalid_migrated_profile_keeps_the_original_file() {
+        let dir = test_dir();
+        let profiles_dir = dir.join("profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        let path = profiles_dir.join("invalid.json");
+        let original = r#"{
+  "id": "invalid",
+  "label": "",
+  "provider": "deepseek",
+  "auth_mode": "api_key",
+  "api_types": ["openai-chat"]
+}"#;
+        std::fs::write(&path, original).unwrap();
+
+        run_at(&dir).unwrap();
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+        assert!(!dir.join("migration-backups").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn migrates_single_bridge_model_fields_into_models() {
         let dir = test_dir();
         std::fs::create_dir_all(dir.join("profiles")).unwrap();
@@ -1196,7 +1251,7 @@ mod tests {
         .unwrap();
 
         assert!(migrate_legacy_profile_provider(&mut profile));
-        hydrate_legacy_api_configs(&mut profile);
+        hydrate_legacy_api_configs(&mut profile).unwrap();
         let profile = profile.into_profile();
         assert_eq!(
             profile.api_configs["openai-responses"].model.as_deref(),
@@ -1221,7 +1276,7 @@ mod tests {
         }))
         .unwrap();
         assert!(migrate_legacy_profile_provider(&mut kimi));
-        hydrate_legacy_api_configs(&mut kimi);
+        hydrate_legacy_api_configs(&mut kimi).unwrap();
         let kimi = kimi.into_profile();
         assert_eq!(kimi.provider, "moonshot");
         assert_eq!(
@@ -1241,7 +1296,7 @@ mod tests {
         }))
         .unwrap();
         assert!(migrate_legacy_profile_provider(&mut gemini));
-        hydrate_legacy_api_configs(&mut gemini);
+        hydrate_legacy_api_configs(&mut gemini).unwrap();
         let gemini = gemini.into_profile();
         assert_eq!(gemini.auth_mode, crate::profiles::AuthMode::GoogleOauth);
         assert_eq!(
@@ -1271,7 +1326,7 @@ mod tests {
         }))
         .unwrap();
 
-        hydrate_legacy_api_configs(&mut profile);
+        hydrate_legacy_api_configs(&mut profile).unwrap();
         let profile = profile.into_profile();
         assert_eq!(
             profile.api_configs["anthropic"].base_url.as_deref(),
