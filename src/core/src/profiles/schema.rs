@@ -369,7 +369,7 @@ fn update_at<T>(
 }
 
 fn serialize_profile(profile: &ProfileDef) -> anyhow::Result<String> {
-    validate(&profile)?;
+    validate(profile)?;
     serde_json::to_string_pretty(profile).context("serialize profile")
 }
 
