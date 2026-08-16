@@ -27,8 +27,7 @@ mod mcp;
 pub mod runtime;
 mod skills;
 
-use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::anyhow;
 
@@ -121,51 +120,6 @@ pub fn uninstall_project_integrations(
     Ok(())
 }
 
-/// Remove VibeAround-managed integrations from global legacy locations and
-/// every known project workspace.
-pub fn uninstall_managed_integrations(remove_mcp: bool, remove_skills: bool) -> anyhow::Result<()> {
-    let mut errors = Vec::new();
-    let workspaces = known_integration_workspaces();
-    for agent in resources::agent_ids() {
-        if remove_mcp {
-            if let Err(error) = uninstall_mcp_config(agent) {
-                errors.push(format!("{} global MCP: {:#}", agent, error));
-            }
-            for workspace in &workspaces {
-                if let Err(error) = uninstall_project_mcp_config(agent, workspace) {
-                    errors.push(format!(
-                        "{} project MCP {}: {:#}",
-                        agent,
-                        workspace.display(),
-                        error
-                    ));
-                }
-            }
-        }
-        if remove_skills {
-            if let Err(error) = uninstall_skill(agent) {
-                errors.push(format!("{} global skill: {:#}", agent, error));
-            }
-            for workspace in &workspaces {
-                if let Err(error) = uninstall_project_skill(agent, workspace) {
-                    errors.push(format!(
-                        "{} project skill {}: {:#}",
-                        agent,
-                        workspace.display(),
-                        error
-                    ));
-                }
-            }
-        }
-    }
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(anyhow!(errors.join("\n")))
-    }
-}
-
 /// Remove VibeAround-managed integrations from legacy global locations only.
 pub fn uninstall_legacy_integrations(remove_mcp: bool, remove_skills: bool) -> anyhow::Result<()> {
     let mut errors = Vec::new();
@@ -200,18 +154,6 @@ fn current_mcp_url() -> String {
             format!("http://127.0.0.1:{}/va/mcp", config::DEFAULT_PORT)
         }
     }
-}
-
-fn known_integration_workspaces() -> Vec<PathBuf> {
-    let cfg = config::ensure_loaded();
-    let mut paths: BTreeSet<PathBuf> = cfg.all_workspaces().into_iter().collect();
-    let agent_prefs = crate::agent_state::read_prefs();
-    for preference in agent_prefs.agents.values() {
-        if let Some(workspace) = &preference.workspace {
-            paths.insert(workspace.clone());
-        }
-    }
-    paths.into_iter().filter(|path| path.is_dir()).collect()
 }
 
 /// Resolve which agents are enabled from settings JSON.
