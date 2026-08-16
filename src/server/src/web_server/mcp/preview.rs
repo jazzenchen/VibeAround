@@ -113,6 +113,22 @@ fn server_preview_message(
     port: u16,
     review_bridge_url: &str,
 ) -> String {
+    let access = preview_access_message(local_owner_url, tunnel_base, owner_slug, share);
+    format!(
+        "Preview ready.\n\n\
+         {access}\n\
+         Port: {port}\n\
+         Text and element review bridge (optional, dev-only):\n\
+         `<script src=\"{review_bridge_url}\"></script>`"
+    )
+}
+
+fn preview_access_message(
+    local_owner_url: &str,
+    tunnel_base: Option<&str>,
+    owner_slug: &str,
+    share: &common::previews::PreviewShare,
+) -> String {
     let remote = match tunnel_base {
         Some(base) => {
             let tunnel_owner = build_preview_url(base, "preview/u", owner_slug);
@@ -135,12 +151,8 @@ fn server_preview_message(
             .to_string(),
     };
     format!(
-        "Preview ready.\n\n\
-         Local owner: `{local_owner_url}`\n\
-         {remote}\n\
-         Port: {port}\n\
-         Text and element review bridge (optional, dev-only):\n\
-         `<script src=\"{review_bridge_url}\"></script>`"
+        "Local owner: `{local_owner_url}`\n\
+         {remote}"
     )
 }
 
@@ -163,33 +175,13 @@ async fn mcp_file_preview(
         initialize_preview_conversation(arguments, metadata, &cwd_path, &owner_slug, state).await;
     let _ = state.preview_refresh_tx.send(owner_slug.clone());
     let tunnel_url = state.tunnels.first_url();
-    let owner_base = tunnel_url
-        .clone()
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", state.port));
-    let owner_url = build_preview_url(&owner_base, "preview/u", &owner_slug);
-    let message = match tunnel_url {
-        Some(base) => {
-            let share_url = build_preview_url(&base, "preview/s", &share.id);
-            let remaining = share
-                .expires_at
-                .saturating_duration_since(std::time::Instant::now());
-            format!(
-                "Markdown preview ready.\n\n\
-                 Owner: `{owner_url}`\n\
-                 Share: `{share_url}`\n\
-                 Access code: `{}`\n\
-                 Link and code expire together in {}:{:02}.",
-                share.code,
-                remaining.as_secs() / 60,
-                remaining.as_secs() % 60
-            )
-        }
-        None => format!(
-            "Markdown preview ready.\n\n\
-             Owner: `{owner_url}`\n\
-             Public sharing is unavailable until a tunnel is running."
-        ),
-    };
+    let local_owner_url = format!(
+        "http://127.0.0.1:{}/va/preview/u/{}",
+        state.port, owner_slug
+    );
+    let access =
+        preview_access_message(&local_owner_url, tunnel_url.as_deref(), &owner_slug, &share);
+    let message = format!("Markdown preview ready.\n\n{access}");
 
     mcp_text(id, &append_preview_warnings(message, warnings))
 }
@@ -292,8 +284,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        append_preview_warnings, preview_source, resolve_preview_file, server_preview_message,
-        PreviewSource,
+        append_preview_warnings, preview_access_message, preview_source, resolve_preview_file,
+        server_preview_message, PreviewSource,
     };
 
     fn share() -> PreviewShare {
@@ -344,6 +336,24 @@ mod tests {
         assert!(message.contains("Public sharing is unavailable until a tunnel is running."));
         assert!(!message.contains("Tunnel Share:"));
         assert!(!message.contains("Access code:"));
+    }
+
+    #[test]
+    fn preview_access_contract_always_keeps_the_local_owner() {
+        let message = preview_access_message(
+            "http://127.0.0.1:12358/va/preview/u/owner-slug",
+            Some("https://preview.example.com/"),
+            "owner-slug",
+            &share(),
+        );
+
+        assert!(message.contains("Local owner: `http://127.0.0.1:12358/va/preview/u/owner-slug`"));
+        assert!(
+            message.contains("Tunnel owner: `https://preview.example.com/va/preview/u/owner-slug`")
+        );
+        assert!(
+            message.contains("Tunnel Share: `https://preview.example.com/va/preview/s/share-id`")
+        );
     }
 
     #[test]
