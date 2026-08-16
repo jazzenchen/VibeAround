@@ -12,28 +12,15 @@ const HEALTH_PROBE_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 pub fn install_for_launch(agent_id: &str, workspace: &Path) -> anyhow::Result<()> {
     let integration_agent_id = project_integration_agent_id(agent_id);
-    if server_is_running() {
-        return common::agent::auto_install_project_integrations(integration_agent_id, workspace)
-            .with_context(|| format!("install project integrations for {}", integration_agent_id));
+    if !server_is_running() {
+        eprintln!(
+            "va-launch: daemon did not respond to the health probe; skipping project integration install for {integration_agent_id}"
+        );
+        return Ok(());
     }
 
-    eprintln!(
-        "va-launch: daemon did not respond to the health probe; removing stale project integrations for {integration_agent_id}"
-    );
-    common::agent::uninstall_project_integrations(
-        integration_agent_id,
-        workspace,
-        common::agent::ProjectIntegrationOptions {
-            mcp: true,
-            skills: true,
-        },
-    )
-    .with_context(|| {
-        format!(
-            "remove stale project integrations for {}",
-            integration_agent_id
-        )
-    })
+    common::agent::auto_install_project_integrations(integration_agent_id, workspace)
+        .with_context(|| format!("install project integrations for {}", integration_agent_id))
 }
 
 fn project_integration_agent_id(agent_id: &str) -> &str {
@@ -144,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn removes_managed_project_integrations_when_server_is_not_running() {
+    fn keeps_managed_project_integrations_when_server_is_not_running() {
         let _guard = crate::env_test_lock().lock().expect("env test lock");
         let dir = temp_dir();
         let workspace = dir.join("workspace");
@@ -166,18 +153,18 @@ mod tests {
         )
         .expect("seed managed integrations");
 
-        install_for_launch("codex", &workspace).expect("remove stale integrations");
+        install_for_launch("codex", &workspace).expect("skip integration install");
 
         restore_env("VIBEAROUND_DATA_DIR", previous);
         common::config::reload();
-        assert!(!workspace
+        assert!(workspace
             .join(".agents")
             .join("skills")
             .join("vibearound")
             .exists());
         let config_body = std::fs::read_to_string(workspace.join(".codex").join("config.toml"))
             .unwrap_or_default();
-        assert!(!config_body.contains("vibearound"));
+        assert!(config_body.contains("vibearound"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
