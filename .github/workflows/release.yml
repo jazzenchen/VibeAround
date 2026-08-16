@@ -67,6 +67,9 @@ jobs:
       - name: Test web dashboard
         run: bun run --cwd src web:test
 
+      - name: Test desktop UI
+        run: bun run --cwd src desktop-ui:test
+
       - name: Resolve release metadata
         id: release
         shell: bash
