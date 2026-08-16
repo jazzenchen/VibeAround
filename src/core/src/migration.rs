@@ -228,6 +228,7 @@ fn canonicalize_settings(settings: &mut serde_json::Value) -> bool {
     changed |= move_alias(root, "search_tool", &["searchTool"]);
     changed |= move_alias(root, "service_side", &["serviceSide"]);
     changed |= move_alias(root, "remote", &["im_remote"]);
+    changed |= root.remove("working_dir").is_some();
 
     if let Some(startkit) = object_at(root, "startkit") {
         changed |= move_alias(startkit, "portable_toolchain", &["portableToolchain"]);

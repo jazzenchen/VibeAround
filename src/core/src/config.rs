@@ -1234,19 +1234,6 @@ fn remove_workspace_from_settings(root: &mut serde_json::Value, path: &Path) -> 
         removed |= arr.len() != before_len;
     }
 
-    {
-        let key = "working_dir";
-        let should_remove = obj
-            .get(key)
-            .and_then(|value| value.as_str())
-            .map(|candidate| settings_path_matches(candidate, path))
-            .unwrap_or(false);
-        if should_remove {
-            obj.remove(key);
-            removed = true;
-        }
-    }
-
     removed
 }
 
@@ -2032,7 +2019,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_workspace_cleans_workspaces_and_legacy_working_dir() {
+    fn remove_workspace_cleans_registered_workspaces() {
         let dir = unique_test_dir("remove-workspace");
         fs::create_dir_all(&dir).unwrap();
         let workspace = dir.join("project-a");
@@ -2042,8 +2029,7 @@ mod tests {
                 workspace.to_string_lossy().to_string(),
                 other.to_string_lossy().to_string()
             ],
-            "default_workspace": workspace.to_string_lossy().to_string(),
-            "working_dir": workspace.to_string_lossy().to_string()
+            "default_workspace": workspace.to_string_lossy().to_string()
         });
 
         assert!(remove_workspace_from_settings(&mut root, &workspace));
@@ -2062,7 +2048,6 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some(workspace.to_string_lossy().as_ref())
         );
-        assert!(root.get("working_dir").is_none());
         fs::remove_dir_all(&dir).unwrap();
     }
 

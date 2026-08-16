@@ -119,6 +119,7 @@ fn backs_up_then_rewrites_settings_aliases_once() {
                     }
                 }
             },
+            "working_dir": "/tmp/legacy-default-workspace",
             "unknown_root": true
         }))
         .unwrap(),
@@ -161,6 +162,7 @@ fn backs_up_then_rewrites_settings_aliases_once() {
     assert_eq!(settings["unknown_root"], true);
     assert!(settings.get("bridge").is_none());
     assert!(settings.get("searchTool").is_none());
+    assert!(settings.get("working_dir").is_none());
     assert!(settings["api_bridge"].get("rate_limit_retry").is_none());
     assert!(settings["search_tool"]["sources"]["exa"]
         .get("apiKey")
