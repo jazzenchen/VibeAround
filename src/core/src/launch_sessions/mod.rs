@@ -57,17 +57,6 @@ pub fn list_for_agent_workspace_with_archived(
     finalize_sessions(agent_id, sessions, limit, include_archived)
 }
 
-pub async fn list_for_agent_workspace_with_archived_async(
-    agent_id: &str,
-    workspace: &Path,
-    limit: usize,
-    include_archived: bool,
-) -> Vec<LaunchSession> {
-    let workspaces = [workspace.to_path_buf()];
-    list_for_agent_workspaces_with_archived_async(agent_id, &workspaces, limit, include_archived)
-        .await
-}
-
 pub async fn list_for_agent_workspaces_with_archived_async(
     agent_id: &str,
     workspaces: &[std::path::PathBuf],
