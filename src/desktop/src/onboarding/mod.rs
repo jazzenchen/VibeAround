@@ -93,12 +93,6 @@ fn read_settings_value() -> Value {
 // Onboarding gate
 // ---------------------------------------------------------------------------
 
-/// Read current settings (exposed for startup integration sync).
-#[allow(dead_code)]
-pub fn get_settings_value() -> serde_json::Value {
-    read_settings_value()
-}
-
 pub fn needs_onboarding() -> bool {
     let val = read_settings_value();
     !val.get("onboarded")
