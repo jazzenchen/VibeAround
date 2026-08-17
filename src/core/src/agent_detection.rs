@@ -221,15 +221,6 @@ pub fn selected_candidate(agent_id: &str) -> Option<AgentCandidate> {
     selected_candidate_for_mode(agent_id, mode)
 }
 
-pub fn resolve_agent_command_for_mode(
-    agent_id: &str,
-    fallback_command: &str,
-    toolchain_mode: &str,
-) -> String {
-    resolve_agent_command_for_mode_strict(agent_id, fallback_command, toolchain_mode)
-        .unwrap_or_else(|_| fallback_command.to_string())
-}
-
 pub fn resolve_agent_command_for_mode_strict(
     agent_id: &str,
     fallback_command: &str,
