@@ -119,6 +119,7 @@ fn backs_up_then_rewrites_settings_aliases_once() {
                     }
                 }
             },
+            "launcher": { "workspace": "/tmp/legacy-launcher-workspace" },
             "working_dir": "/tmp/legacy-default-workspace",
             "unknown_root": true
         }))
@@ -163,6 +164,11 @@ fn backs_up_then_rewrites_settings_aliases_once() {
     assert!(settings.get("bridge").is_none());
     assert!(settings.get("searchTool").is_none());
     assert!(settings.get("working_dir").is_none());
+    assert_eq!(
+        settings["default_workspace"],
+        "/tmp/legacy-launcher-workspace"
+    );
+    assert!(settings["launcher"].get("workspace").is_none());
     assert!(settings["api_bridge"].get("rate_limit_retry").is_none());
     assert!(settings["search_tool"]["sources"]["exa"]
         .get("apiKey")
@@ -182,6 +188,8 @@ fn backs_up_then_rewrites_settings_aliases_once() {
 #[test]
 fn canonical_settings_values_win_over_aliases() {
     let mut settings = serde_json::json!({
+        "default_workspace": "/tmp/canonical-workspace",
+        "launcher": { "workspace": "/tmp/legacy-workspace" },
         "startkit": {
             "portable_toolchain": false,
             "portableToolchain": true
@@ -192,6 +200,8 @@ fn canonical_settings_values_win_over_aliases() {
 
     assert_eq!(settings["startkit"]["portable_toolchain"], false);
     assert!(settings["startkit"].get("portableToolchain").is_none());
+    assert_eq!(settings["default_workspace"], "/tmp/canonical-workspace");
+    assert!(settings["launcher"].get("workspace").is_none());
 }
 
 #[test]

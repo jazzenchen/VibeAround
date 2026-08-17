@@ -230,6 +230,12 @@ fn canonicalize_settings(settings: &mut serde_json::Value) -> bool {
     changed |= move_alias(root, "service_side", &["serviceSide"]);
     changed |= move_alias(root, "remote", &["im_remote"]);
     changed |= root.remove("working_dir").is_some();
+    let legacy_launcher_workspace =
+        object_at(root, "launcher").and_then(|launcher| launcher.remove("workspace"));
+    if let Some(workspace) = legacy_launcher_workspace {
+        root.entry("default_workspace").or_insert(workspace);
+        changed = true;
+    }
 
     if let Some(startkit) = object_at(root, "startkit") {
         changed |= move_alias(startkit, "portable_toolchain", &["portableToolchain"]);

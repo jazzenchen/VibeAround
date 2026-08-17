@@ -94,8 +94,8 @@ pub(super) fn launcher_preferences() -> LauncherPreferences {
     let default_agent = agent_state::resolve_default_agent(&agent_prefs, &cfg);
     let default_profile_id =
         agent_state::resolve_default_profile(&agent_prefs, &cfg, &default_agent);
-    let workspace = resolve_agent_workspace_preference(&selected_agent, &agent_prefs)
-        .unwrap_or_else(|_| terminal::launch_home_dir().unwrap_or_else(|_| config::data_dir()))
+    let workspace = resolve_agent_workspace_preference(&selected_agent, &agent_prefs, &cfg)
+        .unwrap_or_else(|_| cfg.default_workspace.clone())
         .to_string_lossy()
         .to_string();
     let agent_preferences = summarize_agent_preferences(&agent_prefs, &cfg);
