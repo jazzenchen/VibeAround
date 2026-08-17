@@ -835,15 +835,6 @@ fn route_can_rehydrate_runtime(route: &RouteKey) -> bool {
     channel_traits(&route.channel_kind).rehydratable_runtime
 }
 
-#[allow(dead_code)]
-fn workspace_name_from_path(path: &Path) -> String {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or("Workspace")
-        .to_string()
-}
-
 #[cfg(test)]
 #[path = "manager_tests.rs"]
 mod tests;
