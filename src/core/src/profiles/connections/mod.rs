@@ -422,11 +422,6 @@ fn clean_optional_string(value: Option<&str>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-pub fn launch_targets_for_profile(profile: &ProfileDef) -> Vec<ProfileLaunchTarget> {
-    let connections = merged_profile_connections();
-    launch_targets_for_profile_with_connections(profile, &connections)
-}
-
 pub fn launch_targets_for_profile_with_connections(
     profile: &ProfileDef,
     connections: &agent_state::ProfileConnectionPreferences,

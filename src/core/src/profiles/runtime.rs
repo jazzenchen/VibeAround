@@ -49,14 +49,6 @@ pub fn render_for_launch_api_type(
     render(profile, api_type, launch_target, provider)
 }
 
-pub fn env_for_launch(
-    profile: &ProfileDef,
-    launch_target: &str,
-) -> anyhow::Result<Vec<(String, String)>> {
-    let rendered = render_for_launch(profile, launch_target)?;
-    materialize_env_for_profile(profile, rendered)
-}
-
 pub fn render_for_agent_route(
     profile: &ProfileDef,
     launch_target: &str,
