@@ -65,11 +65,6 @@ pub struct EndpointDef {
     #[serde(default)]
     pub capabilities: EndpointCapabilities,
     pub auth_modes: Vec<AuthModeDef>,
-    /// Optional caveat shown to users next to the launch button — e.g.
-    /// "codex 0.X+ requires Responses API and this provider only serves
-    /// chat-completions". `None` for endpoints with no known caveat.
-    #[serde(default)]
-    pub compatibility_warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -333,14 +328,6 @@ pub fn model_matches(model: &ModelDef, model_id: &str) -> bool {
 // user fills everything in.
 // ---------------------------------------------------------------------------
 
-// `compatibility_warning` field stays in EndpointDef for future
-// per-provider caveats, but no v1 catalog entry fills it. Earlier we
-// painted a blanket "codex requires Responses" warning on every
-// openai-chat endpoint; user testing showed at least some third-party
-// providers do serve /v1/responses, so the warning was over-cautious.
-// Re-add per-provider when we have concrete evidence a specific
-// endpoint breaks.
-
 pub fn custom() -> &'static ProviderCatalog {
     static CUSTOM: LazyLock<ProviderCatalog> = LazyLock::new(|| {
         ProviderCatalog {
@@ -360,7 +347,6 @@ pub fn custom() -> &'static ProviderCatalog {
                 auth_header: false,
                 models: Vec::new(),
                 capabilities: EndpointCapabilities::default(),
-                compatibility_warning: None,
                 auth_modes: vec![AuthModeDef {
                     mode: "api_key".to_string(),
                     label: Some("Use API key".to_string()),
@@ -395,7 +381,6 @@ pub fn custom() -> &'static ProviderCatalog {
                     reasoning_effort: true,
                     ..EndpointCapabilities::default()
                 },
-                compatibility_warning: None,
                 auth_modes: vec![AuthModeDef {
                     mode: "api_key".to_string(),
                     label: Some("Use API key".to_string()),
@@ -432,7 +417,6 @@ pub fn custom() -> &'static ProviderCatalog {
                 auth_header: false,
                 models: Vec::new(),
                 capabilities: EndpointCapabilities::default(),
-                compatibility_warning: None,
                 auth_modes: vec![AuthModeDef {
                     mode: "api_key".to_string(),
                     label: Some("Use API key".to_string()),

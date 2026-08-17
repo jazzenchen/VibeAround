@@ -171,11 +171,9 @@ fn model_profile_summary(profile: ProfileDef) -> crate::api_types::ModelProfileS
         Some(catalog) => (catalog.label.clone(), catalog.icon.clone()),
         None => (profile.provider.clone(), None),
     };
-    let api_type_warnings = api_type_warnings(&profile, provider);
     let api_type_models = api_type_models(&profile, provider);
     let api_type_model_options = api_type_model_options(&profile, provider, &api_type_models);
     let api_type_headers = api_type_headers(&profile, provider);
-    let warnings_for_targets = api_type_warnings.clone();
 
     crate::api_types::ModelProfileSummary {
         id: profile.id,
@@ -191,36 +189,14 @@ fn model_profile_summary(profile: ProfileDef) -> crate::api_types::ModelProfileS
                     id: id.to_string(),
                     label: label.to_string(),
                     api_type: api_type.to_string(),
-                    warning: warnings_for_targets.get(api_type).cloned(),
                 },
             )
             .collect(),
         api_types: enabled_api_types,
-        api_type_warnings,
         api_type_models,
         api_type_model_options,
         api_type_headers,
     }
-}
-
-fn api_type_warnings(
-    profile: &ProfileDef,
-    provider: Option<&'static catalog::ProviderCatalog>,
-) -> BTreeMap<String, String> {
-    let mut warnings = BTreeMap::new();
-    let Some(provider) = provider else {
-        return warnings;
-    };
-    for api_type in schema::enabled_api_types(profile) {
-        let endpoint_id = selected_endpoint_id(profile, &api_type);
-        if let Some(endpoint) = catalog::find_endpoint(provider, &api_type, endpoint_id.as_deref())
-        {
-            if let Some(warning) = &endpoint.compatibility_warning {
-                warnings.insert(api_type, warning.clone());
-            }
-        }
-    }
-    warnings
 }
 
 fn api_type_models(

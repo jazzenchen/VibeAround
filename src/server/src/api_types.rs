@@ -127,7 +127,6 @@ pub struct ModelProfileSummary {
     pub auth_mode: AuthMode,
     pub api_types: Vec<String>,
     pub launch_targets: Vec<ModelProfileLaunchTarget>,
-    pub api_type_warnings: BTreeMap<String, String>,
     pub api_type_models: BTreeMap<String, String>,
     pub api_type_model_options: BTreeMap<String, Vec<catalog::ModelDef>>,
     pub api_type_headers: BTreeMap<String, BTreeMap<String, String>>,
@@ -139,8 +138,6 @@ pub struct ModelProfileLaunchTarget {
     pub id: String,
     pub label: String,
     pub api_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub warning: Option<String>,
 }
 
 /// `GET /api/launcher/preferences` response.

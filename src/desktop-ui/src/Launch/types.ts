@@ -25,10 +25,6 @@ export interface ProfileSummary {
   authMode: AuthMode;
   apiTypes: string[];
   launchTargets: LaunchTargetSummary[];
-  /** `api_type → caveat string`. Populated only for api_types whose
-   * catalog endpoint has a `compatibility_warning`. UI shows ⚠ on the
-   * matching launch button. */
-  apiTypeWarnings: Record<string, string>;
   apiTypeModels: Record<string, string>;
   apiTypeModelOptions: Record<string, ModelDef[]>;
   apiTypeHeaders: Record<string, Record<string, string>>;
@@ -38,7 +34,6 @@ export interface LaunchTargetSummary {
   id: string;
   label: string;
   apiType: string;
-  warning?: string | null;
 }
 
 export interface ProfileConnectionPreference {
@@ -174,7 +169,6 @@ export interface EndpointDef {
   models: ModelDef[];
   capabilities?: EndpointCapabilities | null;
   auth_modes: AuthModeDef[];
-  compatibility_warning?: string | null;
 }
 
 export interface EndpointCapabilities {

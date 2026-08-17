@@ -16,7 +16,6 @@ const profile: ProfileSummary = {
   authMode: "api_key",
   apiTypes: ["openai-chat"],
   launchTargets: [],
-  apiTypeWarnings: {},
   apiTypeModels: { "openai-chat": "provider-default" },
   apiTypeModelOptions: {
     "openai-chat": [

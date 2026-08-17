@@ -16,7 +16,6 @@ function profile(): ProfileSummary {
     authMode: "api_key",
     apiTypes: ["openai-chat", "openai-responses", "anthropic"],
     launchTargets: [],
-    apiTypeWarnings: {},
     apiTypeModels: {},
     apiTypeHeaders: {},
     apiTypeModelOptions: {

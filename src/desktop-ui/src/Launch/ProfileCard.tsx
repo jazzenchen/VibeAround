@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { Ref } from "react";
 import {
-  AlertTriangle,
   GripVertical,
   MoreVertical,
   Pencil,
@@ -196,7 +195,6 @@ export function ProfileCard({
               label: connection.agent.label,
               apiType: connection.selectedApiType,
             };
-            const warning = profile.apiTypeWarnings[target.apiType];
             const isDefault =
               connection.status !== "unsupported" &&
               defaultAgent === target.id &&
@@ -228,9 +226,6 @@ export function ProfileCard({
                   : t("{{agent}} is unsupported for this profile", {
                       agent: target.label,
                     });
-            const launchTooltip = warning
-              ? `⚠ ${warning}\n\n(${title})`
-              : title;
             return (
               <span
                 key={target.id}
@@ -281,9 +276,6 @@ export function ProfileCard({
                         <Plug className="w-3 h-3" />
                       )}
                       {isDefault && <Star className="w-3 h-3 fill-current" />}
-                      {warning && (
-                        <AlertTriangle className="w-3 h-3 text-amber-500" />
-                      )}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent
@@ -291,7 +283,7 @@ export function ProfileCard({
                     sideOffset={6}
                     className="max-w-72 whitespace-pre-line text-left"
                   >
-                    {launchTooltip}
+                    {title}
                   </TooltipContent>
                 </Tooltip>
                 {connection.status !== "unsupported" && !isDefault && (
