@@ -57,22 +57,6 @@ pub fn list_for_agent_workspace_with_archived(
     finalize_sessions(agent_id, sessions, limit, include_archived)
 }
 
-pub async fn list_for_agent_workspaces_with_archived_async(
-    agent_id: &str,
-    workspaces: &[std::path::PathBuf],
-    limit: usize,
-    include_archived: bool,
-) -> Vec<LaunchSession> {
-    let mut sessions =
-        native_sessions_for_agent_workspaces_async(agent_id, workspaces, include_archived).await;
-    sessions.extend(
-        workspaces
-            .iter()
-            .flat_map(|workspace| observed_sessions_for_agent_workspace(agent_id, workspace)),
-    );
-    finalize_workspace_sessions(agent_id, sessions, limit, include_archived)
-}
-
 pub async fn list_native_for_agent_workspace_with_archived_async(
     agent_id: &str,
     workspace: &Path,
