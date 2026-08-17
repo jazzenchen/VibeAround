@@ -1,8 +1,7 @@
-//! Wire types for the legacy stdio plugin transport.
+//! Wire types for the current stdio plugin transport.
 //!
 //! These structs flow between the host and stdio plugins via JSON. They
-//! pre-date the ACP-native path that `ws_chat` uses today, but they are still
-//! the common currency for every plugin subprocess.
+//! are the common currency for every plugin subprocess.
 
 use serde::{Deserialize, Serialize};
 
@@ -54,7 +53,7 @@ impl ChannelInboundContext {
     }
 }
 
-/// Legacy envelope kept for stdio plugin compatibility.
+/// Envelope used by the stdio plugin wire contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelEnvelope {
