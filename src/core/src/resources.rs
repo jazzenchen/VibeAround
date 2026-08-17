@@ -607,19 +607,6 @@ fn inject_agent_schema_enums(schema: &mut serde_json::Value, agent_ids: &[serde_
     }
 }
 
-/// Format system commands into help text.
-pub fn format_system_commands_help() -> String {
-    let mut lines = Vec::new();
-    for cmd in &COMMANDS.system_commands {
-        let usage = match &cmd.args {
-            Some(args) => format!("  /{} {} — {}", cmd.name, args, cmd.description),
-            None => format!("  /{} — {}", cmd.name, cmd.description),
-        };
-        lines.push(usage);
-    }
-    lines.join("\n")
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
