@@ -5,7 +5,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
 use serde::Serialize;
@@ -69,22 +68,6 @@ pub fn state_dir() -> PathBuf {
 
 pub fn state_file(name: &str) -> PathBuf {
     state_dir().join(name)
-}
-
-pub fn archive_state_file(path: &Path, reason: &str) -> std::io::Result<PathBuf> {
-    let archive_dir = state_dir().join("archive");
-    std::fs::create_dir_all(&archive_dir)?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("state-file");
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let archive = archive_dir.join(format!("{file_name}.{timestamp}.{reason}"));
-    std::fs::rename(path, &archive)?;
-    Ok(archive)
 }
 
 /// Ensure ~/.vibearound/ exists with settings.json and workspaces/.
