@@ -293,16 +293,6 @@ fn set_agent_workspace_in_settings(
     })
 }
 
-pub fn write_agent_executable_path(
-    agent_id: &str,
-    executable_path: Option<PathBuf>,
-) -> anyhow::Result<()> {
-    write_agent_executable(
-        agent_id,
-        executable_path.map(AgentExecutablePreference::manual),
-    )
-}
-
 pub fn write_agent_executable(
     agent_id: &str,
     executable: Option<AgentExecutablePreference>,

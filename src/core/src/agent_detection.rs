@@ -163,13 +163,6 @@ fn is_compatible_detection_cache(detected: &AgentDetectionFile) -> bool {
     detected.schema_version == DETECTION_SCHEMA_VERSION && detected.platform == current_platform()
 }
 
-pub fn startkit_candidate_for_mode(agent_id: &str, toolchain_mode: &str) -> Option<AgentCandidate> {
-    read_detected_agents()?
-        .agents
-        .get(agent_id)
-        .and_then(|detection| preferred_startkit_candidate(agent_id, detection, toolchain_mode))
-}
-
 pub fn configured_candidate(agent_id: &str) -> Option<AgentCandidate> {
     let prefs = crate::agent_state::read_prefs();
     let configured = crate::agent_state::resolve_agent_executable(&prefs, agent_id)?;
@@ -260,11 +253,6 @@ pub fn resolve_agent_command_for_mode_strict(
     Ok(fallback_command.to_string())
 }
 
-pub fn resolve_agent_command(agent_id: &str, fallback_command: &str) -> String {
-    let mode = crate::config::ensure_loaded().toolchain_mode.as_str();
-    resolve_agent_command_for_mode(agent_id, fallback_command, mode)
-}
-
 pub fn resolve_agent_command_strict(
     agent_id: &str,
     fallback_command: &str,
@@ -310,12 +298,6 @@ fn manual_candidate_from_path(path: PathBuf, source_label: String) -> AgentCandi
         is_user_default: true,
         package: None,
     }
-}
-
-pub fn executable_preference_from_candidate(
-    candidate: &AgentCandidate,
-) -> crate::agent_state::AgentExecutablePreference {
-    executable_preference_from_candidate_path(candidate, Path::new(&candidate.path))
 }
 
 pub fn executable_preference_from_candidate_path(
