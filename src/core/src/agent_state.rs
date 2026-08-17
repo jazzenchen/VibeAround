@@ -83,7 +83,7 @@ pub struct ProfileConnectionPreference {
     pub selected_api_type: Option<String>,
     /// Per client API shape bridge settings. The key is the selected/client
     /// API type, and `target_api_type` is the profile/provider API type.
-    #[serde(default, alias = "proxy", skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bridge: BTreeMap<String, ProfileBridgePreference>,
 }
 

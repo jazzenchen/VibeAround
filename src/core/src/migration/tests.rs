@@ -418,6 +418,58 @@ fn migrates_single_bridge_model_fields_into_models() {
 }
 
 #[test]
+fn migrates_connection_proxy_to_bridge_once() {
+    let dir = test_dir();
+    std::fs::create_dir_all(dir.join("profiles")).unwrap();
+    let path = dir.join("profiles/proxy-old.json");
+    std::fs::write(
+        &path,
+        r#"{
+  "id": "proxy-old",
+  "label": "Proxy Old",
+  "provider": "custom",
+  "auth_mode": "api_key",
+  "api_configs": {
+    "openai-chat": { "enabled": true, "model": "provider-default" }
+  },
+  "connections": {
+    "claude": {
+      "proxy": {
+        "anthropic": { "enabled": true, "targetApiType": "openai-chat" }
+      }
+    },
+    "codex": {
+      "bridge": {
+        "openai-responses": { "enabled": true, "targetApiType": "openai-chat" }
+      },
+      "proxy": {
+        "ignored": { "enabled": true }
+      }
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    run_at(&dir).unwrap();
+
+    let body = std::fs::read_to_string(&path).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(json["connections"]["claude"].get("proxy").is_none());
+    assert!(json["connections"]["claude"]["bridge"]["anthropic"].is_object());
+    assert!(json["connections"]["codex"].get("proxy").is_none());
+    assert!(json["connections"]["codex"]["bridge"]["openai-responses"].is_object());
+    assert!(json["connections"]["codex"]["bridge"]
+        .get("ignored")
+        .is_none());
+    assert_eq!(backup_dirs(&dir).len(), 1);
+
+    run_at(&dir).unwrap();
+    assert_eq!(backup_dirs(&dir).len(), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn numbers_each_backup_for_the_application_version_and_local_date() {
     let dir = test_dir();
     std::fs::create_dir_all(&dir).unwrap();

@@ -107,7 +107,7 @@ impl MigrationProfile {
 struct MigrationProfileConnectionPreference {
     #[serde(default)]
     selected_api_type: Option<String>,
-    #[serde(default, alias = "proxy")]
+    #[serde(default)]
     bridge: BTreeMap<String, MigrationProfileBridgePreference>,
 }
 
@@ -349,18 +349,20 @@ fn legacy_profile_changes(data_dir: &Path) -> Vec<Change> {
                 continue;
             }
         };
-        let value: serde_json::Value = match serde_json::from_str(&body) {
+        let mut value: serde_json::Value = match serde_json::from_str(&body) {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(path = ?path, %error, "skipping invalid profile during migration");
                 continue;
             }
         };
-        let has_legacy_fields = value.as_object().is_some_and(|object| {
-            object.contains_key("api_types")
-                || object.contains_key("overrides")
-                || has_legacy_bridge_fields(object.get("connections"))
-        });
+        let legacy_connection_proxy = migrate_legacy_connection_proxy(value.get_mut("connections"));
+        let has_legacy_fields = legacy_connection_proxy
+            || value.as_object().is_some_and(|object| {
+                object.contains_key("api_types")
+                    || object.contains_key("overrides")
+                    || has_legacy_bridge_fields(object.get("connections"))
+            });
         let mut profile: MigrationProfile = match serde_json::from_value(value) {
             Ok(profile) => profile,
             Err(error) => {
@@ -396,13 +398,30 @@ fn legacy_profile_changes(data_dir: &Path) -> Vec<Change> {
     changes
 }
 
+fn migrate_legacy_connection_proxy(connections: Option<&mut serde_json::Value>) -> bool {
+    let Some(connections) = connections.and_then(serde_json::Value::as_object_mut) else {
+        return false;
+    };
+    let mut changed = false;
+    for preference in connections
+        .values_mut()
+        .filter_map(serde_json::Value::as_object_mut)
+    {
+        if let Some(proxy) = preference.remove("proxy") {
+            preference.entry("bridge").or_insert(proxy);
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn has_legacy_bridge_fields(connections: Option<&serde_json::Value>) -> bool {
     connections
         .and_then(serde_json::Value::as_object)
         .into_iter()
         .flat_map(|connections| connections.values())
         .filter_map(serde_json::Value::as_object)
-        .filter_map(|preference| preference.get("bridge").or_else(|| preference.get("proxy")))
+        .filter_map(|preference| preference.get("bridge"))
         .filter_map(serde_json::Value::as_object)
         .flat_map(|bridge| bridge.values())
         .filter_map(serde_json::Value::as_object)
