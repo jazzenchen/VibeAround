@@ -16,6 +16,7 @@ use crate::resources;
 
 use super::mcp::home_dir;
 
+// Remove this 0.7.x cleanup and its tests in 0.8.x.
 const RETIRED_MANAGED_SKILLS: &[&str] = &["va-md-preview"];
 
 /// Install all skill files for a given agent into a project/workspace.
