@@ -21,7 +21,7 @@ macOS Intel 目前只能源码构建 —— 见[源码构建](build-from-source.
 桌面应用会在首次启动时引导你完成设置：
 
 1. **工具链检查。** VibeAround 需要 Node.js 来运行 Agent 的 ACP 适配器和渠道插件。引导会检测系统工具链；如果你不想动系统环境，也可以安装一份托管工具链（`toolchain` 设置：`system` 或 `managed`）。
-2. **Agent 检测。** 已安装的 Agent CLI（Claude Code、Codex、Gemini CLI 等）会在 PATH 上被检测出来，由你选择启用哪些。启用的 Agent 会在全局配置里注入 VibeAround 的 MCP 端点和技能，让托管会话可以使用集成工具。
+2. **Agent 检测。** 已安装的 Agent CLI（Claude Code、Codex、Gemini CLI 等）会在 PATH 上被检测出来；启用的 Agent 在启动时获得项目级 VibeAround skills 和 MCP 配置。
 3. **模型 Profile（可选）。** 现在添加一个供应商凭据，或先跳过，让 Agent 用自己的官方登录（即 `direct` Profile）。
 4. **渠道（可选）。** 安装并配置 IM 渠道插件。每个渠道都需要平台侧的准备（bot token 等），见[连接渠道](connect-channels.md)；这一步随时可以补做。
 

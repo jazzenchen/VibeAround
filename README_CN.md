@@ -37,15 +37,14 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，也尽量不�
 
 选择合适的 AI Agent，搭配对应的模型，一键启动。
 
-你可以自由组合 AI Agent、模型配置或 API 接口、工作目录，VibeAround 会帮你启动 Claude Code、Codex CLI、Gemini CLI、Pi、OpenCode、Claude Desktop、Codex Desktop 等工具，同时不改变原有的配置（如 SKILL，MCP 等）。
+你可以自由组合 AI Agent、模型配置或 API 接口、工作目录，VibeAround 会帮你启动 Claude Code、Codex CLI、Gemini CLI、Pi、OpenCode、Claude Desktop、Codex Desktop 等工具。
 
 - 从同一个桌面 UI 启动 Claude、Codex 等 AI Agent 和桌面版 Agent。
 - 自由选择 AI Agent、模型配置、API 接口和工作目录等。
 - 开始全新会话，或者继续上次中断的工作。
 - 支持直连启动，也支持基于 Profile 的灵活配置，包括 Claude Desktop 和 Codex Desktop 的 Profile overlay。
 - 记录并检查本次 launch/session 的 API 流量，包括 original request、bridge request、raw response、bridge response 和 search tool 内容。
-- 不改变每个 AI Agent 自己的配置文件、工作流和项目上下文。
-- VibeAround 不会修改原始 CLI 配置文件。如果你使用 CC Switch 等工具，建议手动删除可能冲突的 Profile 配置项，例如 `~/.claude/settings.json` 里的 `env`。
+- 启动前刷新 VibeAround 保留的项目级 skills 和 MCP entry，不替换无关的 Agent 配置。
 
 <p align="center">
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/api-inspector.webp" alt="VibeAround Bridge recorder，可查看请求、响应和搜索细节" width="88%" />
@@ -375,20 +374,6 @@ server 启动后，在浏览器访问 `http://127.0.0.1:12358/va/`。
 
 npm 上的最新 CLI 包是 [`@vibearound/cli@0.0.13`](https://www.npmjs.com/package/@vibearound/cli)，对应平台 payload 也已发布在 [VibeAround CLI 0.0.13](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.13)。
 
-## 升级说明
-
-### v0.7.10 破坏性变更
-
-VibeAround v0.7.10 修改了本地配置的读取和归一化逻辑。部分配置项被合并，部分非必要的运行日志/缓存内容也不再有用。目前建议按下面流程手动清理：
-
-1. 备份 `~/.vibearound/profiles` 和 `~/.vibearound/settings.json`。
-2. 删除整个 `~/.vibearound` 目录。
-3. 将备份的 `profiles` 目录和 `settings.json` 拷贝回 `~/.vibearound`。
-4. 打开 VibeAround Desktop。
-5. 进入 Settings，重新走一遍 onboarding 流程。
-
-已知影响：迁移后 API Bridge 配置可能会丢失。重新在对应 profile 上启用 API Bridge 即可恢复。
-
 ## 本地开发
 
 ```bash
@@ -401,8 +386,6 @@ bun run dev
 环境要求：Rust 1.82+、Bun 1.3+，推荐 Node.js 24 LTS。macOS 需要 Xcode Command Line Tools；Linux 需要安装发行版对应的 WebKitGTK / Tauri 依赖。
 
 ## 文档
-
-文档还在建设中，可能会稍微落后于快速迭代中的功能。
 
 - [安装指南](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide-CN)
 - [Launch、Profiles 与 Models](https://github.com/jazzenchen/VibeAround/wiki/Model-Profiles-and-Agent-Launch-CN)

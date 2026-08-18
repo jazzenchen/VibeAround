@@ -21,10 +21,9 @@ VibeAround 读写的每一个文件，可手动编辑的都附完整 schema。�
 | `.cache/` | 渠道插件 | 下载的聊天附件 | 可安全清空 |
 | `logs/runtime/` | 守护进程 | 按日滚动日志（`vibearound.log.<date>`） | 可安全清空 |
 | `*.jsonl`（workspace/thread/attachment 事件日志） | 守护进程 | 对话状态（[workspace 模块](../internals/modules/workspace.md)） | **不行** —— 只追加的事件日志 |
-| `launcher.json` | 桌面 | 桌面专属启动偏好（终端选择、按 Agent 的 workspace 兼容性） | 优先用 UI |
 | `desktop-apps.detected.json` | 桌面检测 | 缓存的 Claude/Codex Desktop 应用位置 | 不行 —— 缓存 |
 
-VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server 条目 + 技能文件，路径由 Agent 注册表声明 —— 例如 `~/.claude.json` 的 `mcpServers` 和 `~/.claude/skills/vibearound/`）。这些写入带 VibeAround 管理标记，守护进程停机时会被启动期清理移除（[启动流程第 5 步](../internals/flows/native-launch.md)）。
+每次启动前，VibeAround 会替换其保留的项目级 skills，并把当前 daemon MCP credential 写入项目中的 Agent 配置。路径来自 Agent registry；无关配置保持不变（[启动流程第 5 步](../internals/flows/native-launch.md)）。
 
 ## settings.json
 

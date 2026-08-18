@@ -7,7 +7,7 @@
 ```text
 UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3─► va-launch
                                                                │4 validate
-                                                               │5 project integrations
+                                                               │5 workspace preparation
                                                                ▼6
                                                         terminal spawn
                                                                │7
@@ -25,10 +25,8 @@ UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3�
 **4. va-launch validates。** CLI/desktop **执行 sibling `va-launch` binary**（不是进程内 launcher）。它验证 workspace，解析 agent executable（显式 path → `agents.json` → PATH scan，结果缓存），并验证 terminal choice。`--dry-run` 在这里停止并打印 plan。
 → `src/launcher/` (resolution order), `~/.vibearound/agents.json`
 
-**5. Project integrations。** va-launch 探测本地 daemon health endpoint：
-- **Daemon up** → 为这个 agent/workspace 安装 project-scoped MCP config 和 skills（遵守 [`integrations.*` settings](../../reference/configuration.md#settingsjson)）。Desktop-app targets 会安装其**伴随 CLI**的 integrations：`claude-desktop` → `claude`，`codex-desktop` → `codex`。
-- **Daemon down** → *移除* VibeAround-managed project integrations，避免死掉的 MCP server 留在配置里。
-→ `src/launcher/` (health probe), `src/core/src/agent/{mcp,skills}.rs`
+**5. Workspace preparation。** va-launch 替换 Agent 的 VibeAround 保留项目级 skills。`auth-mcp.json` 可用时，同时把当前 daemon MCP credential 写入项目配置。Desktop-app targets 准备其伴随 CLI：`claude-desktop` → `claude`，`codex-desktop` → `codex`。
+→ `src/launcher/`, `src/core/src/agent/{mcp,skills}.rs`
 
 **6. Terminal spawn。** Agent 在选定终端里打开（Terminal.app/iTerm2、PowerShell 或检测到的 Linux terminal）；desktop-app targets 则通过 `open -a` / `Start-Process`。终端启动后 va-launch 的工作结束，CLI 进程属于你，不属于 daemon。
 
@@ -40,13 +38,12 @@ UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3�
 |---|---|
 | 找不到 executable | 在启动任何东西前验证失败；清掉过期的 `agents.json` entry 可强制重新扫描 |
 | Workspace 不存在 | 验证失败 |
-| Launch 时 daemon down | 启动继续；integrations 被移除；bridged model calls 在 daemon 恢复前失败 |
+| Launch 时 daemon down | skills 正常同步；credential 不可用时 MCP 配置保持不变；bridged model calls 失败 |
 | Terminal not found（Linux） | Launch error 会列出尝试过的内容 |
 | JSON shape 错误 | Schema rejection（unknown fields）；producer bug 会立刻暴露 |
 
 ---
 
-*Source anchors: `src/launcher/` (va-launch), `src/core/src/agent/launch.rs` + `src/core/src/profiles/bridge_launch.rs` (provider prep), `src/core/src/agent/{mcp,skills}.rs` (integrations), `src/cli/src/args.rs` (va launch), internal boundary notes in `.docs/va-launch-architecture.md`.*
-*Last verified: v0.7.11*
+*Source anchors: `src/launcher/`, `src/core/src/agent/launch.rs`, `src/core/src/profiles/bridge_launch.rs`, `src/core/src/agent/{mcp,skills}.rs`, `src/cli/src/args.rs`.*
 
 <sub>[◀ Flow: Bridge 请求](bridge-request.md) · [文档索引](../../README.md) · [Flow: 交接 ▶](handover.md)</sub>

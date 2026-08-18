@@ -21,7 +21,7 @@ Install and launch. The app lives in the tray/menu bar; closing the window does 
 The desktop app walks you through setup on first launch:
 
 1. **Toolchain check.** VibeAround needs Node.js for agent ACP adapters and channel plugins. Onboarding detects your system toolchain, or installs a managed one if you prefer not to touch the system (`toolchain` setting: `system` or `managed`).
-2. **Agent detection.** Installed agent CLIs (Claude Code, Codex, Gemini CLI, …) are detected on PATH; you choose which to enable. Agents you enable get VibeAround's MCP endpoint and skills injected into their global config so hosted sessions have the integration tools available.
+2. **Agent detection.** Installed agent CLIs (Claude Code, Codex, Gemini CLI, …) are detected on PATH; enabled agents receive project-scoped VibeAround skills and MCP configuration at launch.
 3. **Model profiles (optional).** Add a provider credential now, or skip and use agents with their own vendor logins (the `direct` profile).
 4. **Channels (optional).** Install and configure IM channel plugins. Each channel needs platform-side setup (bot tokens etc.) covered in [Connect channels](connect-channels.md); you can do this any time later.
 
