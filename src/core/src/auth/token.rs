@@ -19,6 +19,9 @@
 //!   (`~/.vibearound/local-agent-api-auth.json`) route families. Giving an
 //!   agent a bridge credential does not grant access to dashboard/control
 //!   routes or permission to launch another agent.
+//! - MCP uses its own daemon-lifetime token in
+//!   `~/.vibearound/auth-mcp.json`; coding agents never receive the dashboard
+//!   owner token.
 //! - `auth.json` stores `{ "port": <u16>, "token": "<hex>" }` so the Tauri
 //!   tray and desktop-ui can discover both values without a side channel.
 //! - The HTTP layer enforces the token on every protected route via a
@@ -78,6 +81,11 @@ pub fn token_file_path() -> PathBuf {
     config::data_dir().join("auth.json")
 }
 
+/// Path of the MCP-only token file.
+pub fn mcp_token_file_path() -> PathBuf {
+    config::data_dir().join("auth-mcp.json")
+}
+
 /// Path of the local API bridge token file.
 pub fn local_api_token_file_path() -> PathBuf {
     config::data_dir().join("local-api-auth.json")
@@ -94,6 +102,11 @@ pub fn local_agent_api_token_file_path() -> PathBuf {
 /// start, after the token has been generated.
 pub fn write_token_file(port: u16, token: &AuthToken) -> std::io::Result<()> {
     write_auth_file(&token_file_path(), port, token)
+}
+
+/// Write the scoped MCP token file.
+pub fn write_mcp_token_file(port: u16, token: &AuthToken) -> std::io::Result<()> {
+    write_auth_file(&mcp_token_file_path(), port, token)
 }
 
 /// Write the scoped local API bridge token file.
@@ -123,6 +136,11 @@ fn write_auth_file(path: &std::path::Path, port: u16, token: &AuthToken) -> std:
 /// Read the auth token file, if it exists and is well-formed.
 pub fn read_token_file() -> Option<AuthFile> {
     read_auth_file(&token_file_path())
+}
+
+/// Read the scoped MCP token file, if present and well-formed.
+pub fn read_mcp_token_file() -> Option<AuthFile> {
+    read_auth_file(&mcp_token_file_path())
 }
 
 /// Read the scoped local API bridge token file, if present and well-formed.

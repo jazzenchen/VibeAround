@@ -381,7 +381,7 @@ fn is_daemon_authorization(value: &header::HeaderValue, auth: &AuthState) -> boo
                 .strip_prefix("Bearer ")
                 .or_else(|| value.strip_prefix("bearer "))
         })
-        .is_some_and(|token| token.trim() == auth.0.as_str())
+        .is_some_and(|token| token.trim() == auth.owner.as_str())
 }
 
 fn is_hop_by_hop_header(name: &header::HeaderName) -> bool {
@@ -480,11 +480,11 @@ fn verified_server_entry(cookie: &str, auth: &AuthState) -> Option<VerifiedServe
 
 fn routing_signature(slug: &str, auth: &AuthState) -> [u8; 32] {
     let mut digest = Sha256::new();
-    digest.update(auth.0.as_str().as_bytes());
+    digest.update(auth.owner.as_str().as_bytes());
     digest.update([0]);
     digest.update(slug.as_bytes());
     digest.update([0]);
-    digest.update(auth.0.as_str().as_bytes());
+    digest.update(auth.owner.as_str().as_bytes());
     digest.finalize().into()
 }
 

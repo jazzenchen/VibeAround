@@ -334,7 +334,7 @@ fn owner_cookie_valid(req: &Request) -> bool {
     };
     req.extensions()
         .get::<crate::web_server::auth::AuthState>()
-        .is_some_and(|auth| auth.0.matches(&token))
+        .is_some_and(|auth| auth.owner.matches(&token))
 }
 
 #[cfg(test)]

@@ -56,9 +56,18 @@ pub(crate) fn owner_cookie_headers(token: Option<&str>) -> [String; 2] {
     [legacy, scoped]
 }
 
-/// Shared handle to the server's current auth token.
+/// Shared handles to the server's owner and MCP-only tokens.
 #[derive(Clone)]
-pub struct AuthState(pub Arc<AuthToken>);
+pub struct AuthState {
+    pub owner: Arc<AuthToken>,
+    pub mcp: Arc<AuthToken>,
+}
+
+impl AuthState {
+    pub fn new(owner: Arc<AuthToken>, mcp: Arc<AuthToken>) -> Self {
+        Self { owner, mcp }
+    }
+}
 
 pub(crate) fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
     if let Some(value) = headers.get(header::AUTHORIZATION) {
@@ -188,7 +197,7 @@ pub async fn require_local_bridge(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    if local_bridge_access_allowed(&req, &state.0) {
+    if local_bridge_access_allowed(&req, &state.owner) {
         return next.run(req).await;
     }
 
@@ -202,12 +211,7 @@ pub async fn require_auth(
     next: Next,
 ) -> Response {
     let is_mcp = req.uri().path() == "/mcp";
-    let token = extract_token(&req);
-    let authorized = match token.as_deref() {
-        Some(candidate) => state.0.matches(candidate),
-        None => false,
-    };
-    if authorized {
+    if request_is_authorized(&state, &req) {
         return next.run(req).await;
     }
     if is_mcp {
@@ -229,6 +233,15 @@ pub async fn require_auth(
         return (StatusCode::OK, body).into_response();
     }
     StatusCode::UNAUTHORIZED.into_response()
+}
+
+fn request_is_authorized<B>(state: &AuthState, req: &Request<B>) -> bool {
+    let expected = if req.uri().path() == "/mcp" {
+        &state.mcp
+    } else {
+        &state.owner
+    };
+    extract_token(req).is_some_and(|candidate| expected.matches(&candidate))
 }
 
 pub(crate) fn headers_have_allowed_dashboard_origin(

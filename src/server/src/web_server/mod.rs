@@ -194,6 +194,7 @@ pub async fn run_web_server(
     channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
     auth_token: Arc<AuthToken>,
+    mcp_token: Arc<AuthToken>,
     local_api_token: Arc<AuthToken>,
     local_agent_api_token: Arc<AuthToken>,
     host_search_available: bool,
@@ -237,7 +238,7 @@ pub async fn run_web_server(
         local_api_token,
     };
 
-    let auth_state = AuthState(Arc::clone(&auth_token));
+    let auth_state = AuthState::new(Arc::clone(&auth_token), mcp_token);
 
     // --- Protected routes: require a valid token on every request. ----------
     //

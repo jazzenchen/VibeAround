@@ -40,6 +40,8 @@ pub struct ServerDaemon {
     /// Per-session auth token, regenerated on every daemon start.
     /// Exposed so Tauri can append `?token=` when opening the dashboard.
     pub auth_token: Arc<AuthToken>,
+    /// Scoped credential accepted only by the MCP endpoint.
+    mcp_token: Arc<AuthToken>,
     /// Scoped credential accepted only by the local API bridge.
     local_api_token: Arc<AuthToken>,
     /// Scoped credential accepted only by the agent-as-API surface.
@@ -240,6 +242,7 @@ impl ServerDaemon {
             pty: common::pty::new_registry(),
             port,
             auth_token: Arc::new(AuthToken::generate()),
+            mcp_token: Arc::new(AuthToken::generate()),
             local_api_token: Arc::new(AuthToken::generate()),
             local_agent_api_token: Arc::new(AuthToken::generate()),
         }
@@ -264,6 +267,7 @@ impl ServerDaemon {
     /// the daemon's start path has finished persisting it.
     pub fn persist_auth_tokens(&self) -> std::io::Result<()> {
         auth::write_token_file(self.port, &self.auth_token)?;
+        auth::write_mcp_token_file(self.port, &self.mcp_token)?;
         auth::write_local_api_token_file(self.port, &self.local_api_token)?;
         auth::write_local_agent_api_token_file(self.port, &self.local_agent_api_token)
     }
@@ -361,6 +365,7 @@ impl ServerDaemon {
         let web_channel_hub = Arc::clone(&channel_hub);
         let web_channel_manager = Arc::clone(&web_channel);
         let web_auth_token = Arc::clone(&self.auth_token);
+        let web_mcp_token = Arc::clone(&self.mcp_token);
         let web_local_api_token = Arc::clone(&self.local_api_token);
         let web_local_agent_api_token = Arc::clone(&self.local_agent_api_token);
         let web_search_runtime = search_runtime.clone();
@@ -377,6 +382,7 @@ impl ServerDaemon {
                 web_channel_hub,
                 web_channel_manager,
                 web_auth_token,
+                web_mcp_token,
                 web_local_api_token,
                 web_local_agent_api_token,
                 web_search_available,

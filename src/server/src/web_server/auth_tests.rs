@@ -68,6 +68,30 @@ fn no_token_returns_none() {
 }
 
 #[test]
+fn mcp_uses_only_the_scoped_credential() {
+    let owner = Arc::new(AuthToken::generate());
+    let mcp = Arc::new(AuthToken::generate());
+    let state = AuthState::new(Arc::clone(&owner), Arc::clone(&mcp));
+
+    let request = |path: &str, token: &AuthToken| {
+        Request::builder()
+            .uri(format!("{path}?token={}", token.as_str()))
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert!(request_is_authorized(&state, &request("/mcp", &mcp)));
+    assert!(!request_is_authorized(&state, &request("/mcp", &owner)));
+    assert!(request_is_authorized(
+        &state,
+        &request("/api/sessions", &owner)
+    ));
+    assert!(!request_is_authorized(
+        &state,
+        &request("/api/sessions", &mcp)
+    ));
+}
+
+#[test]
 fn url_decode_handles_hex() {
     assert_eq!(url_decode("hello%20world"), "hello world");
     assert_eq!(url_decode("plain"), "plain");
@@ -138,7 +162,7 @@ async fn local_bridge_middleware_enforces_the_desktop_credential() {
     let app = Router::new()
         .route("/", get(|| async { StatusCode::OK }))
         .route_layer(axum::middleware::from_fn_with_state(
-            AuthState(auth),
+            AuthState::new(Arc::clone(&auth), auth),
             require_local_bridge,
         ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
