@@ -8,12 +8,12 @@
 
 | 工具 | 用途 |
 |---|---|
-| `get_session_id` | 解析调用方 Agent 会话的身份 |
-| `prepare_handover` | 签发接续码（4 字符、120 秒 TTL、一次性），用于跨界面连续性 |
-| `register_workspace` | 把当前项目目录注册为 Workspace |
-| `initialize_subagents` | 开始多 Agent 回合 —— 模式：`parallel`、`collaboration`、`brainstorming` |
-| `wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
-| `preview` | 预览一个明确来源：正在运行的 dev-server `port` 或 Markdown `file`；Markdown 由 VibeAround 直接渲染，不会另起服务 |
+| `va_mcp_get_session_id` | 解析调用方 Agent 会话的身份 |
+| `va_mcp_prepare_handover` | 签发接续码（4 字符、120 秒 TTL、一次性），用于跨界面连续性 |
+| `va_mcp_register_workspace` | 把当前项目目录注册为 Workspace |
+| `va_mcp_initialize_subagents` | 开始多 Agent 回合 —— 模式：`parallel`、`collaboration`、`brainstorming` |
+| `va_mcp_wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
+| `va_mcp_preview` | 预览一个明确来源：正在运行的 dev-server `port` 或 Markdown `file`；Markdown 由 VibeAround 直接渲染，不会另起服务 |
 
 每次启动还会用 bundled 版本替换 VibeAround 保留的项目级技能：`vibearound`（交接）、`va-session`、`va-preview`，以及受支持 Agent 的 `agent-collaboration`。
 

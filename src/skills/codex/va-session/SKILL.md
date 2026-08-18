@@ -19,15 +19,15 @@ Read these values if available:
 
 ### Method 1: Via Codex MCP metadata (preferred)
 
-Call the `get_session_id` MCP tool with `agent_kind` set to `codex`. Include
+Call the `va_mcp_get_session_id` MCP tool with `agent_kind` set to `codex`. Include
 only optional arguments whose values are present:
 
 Do not inspect MCP resources or resource templates for this step. VibeAround
-exposes `get_session_id` as a tool; Codex's `/mcp` command can be used only for
+exposes `va_mcp_get_session_id` as a tool; Codex's `/mcp` command can be used only for
 human diagnostics.
 
 ```
-Tool: get_session_id
+Tool: va_mcp_get_session_id
 Server: vibearound
 Arguments:
   agent_kind: "codex"

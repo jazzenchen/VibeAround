@@ -15,21 +15,21 @@ Preview exactly one local source through VibeAround: a running web server or a M
 - **Server**: Reuse the intended server when it is still running. Otherwise start it with the framework's automatic port selection and wait until it is reachable at `127.0.0.1:<port>`. VibeAround registers that port in memory; closing that Preview or the daemon kills the process currently listening there.
 - **Markdown**: Verify that the requested file exists. No separate static-file server is needed.
 
-VibeAround never restores a Preview after restart; call `preview` again when needed. Registered Server ports are cleaned at shutdown and again at the next startup if shutdown was interrupted.
+VibeAround never restores a Preview after restart; call `va_mcp_preview` again when needed. Registered Server ports are cleaned at shutdown and again at the next startup if shutdown was interrupted.
 
 ### 2. Add optional conversation identity
 
 Pass `$VIBEAROUND_THREAD_ID` when present. If an exact current session ID is readily available, pass it with `agent_kind: "kiro"`. Both are optional; do not delay or block Preview when either is unavailable.
 These fields only let Preview chat inherit the current task as context. They never control Preview or server lifetime.
 
-### 3. Call `preview`
+### 3. Call `va_mcp_preview`
 
 Pass exactly one of `port` or `file`, plus `cwd`.
 
 For a server:
 
 ```
-Tool: preview
+Tool: va_mcp_preview
 Server: vibearound
 Arguments:
   port: <local server port>
@@ -43,7 +43,7 @@ Arguments:
 For Markdown:
 
 ```
-Tool: preview
+Tool: va_mcp_preview
 Server: vibearound
 Arguments:
   file: "<absolute path, or path relative to cwd>"
@@ -54,7 +54,7 @@ Arguments:
   title: "<document title>"  (optional)
 ```
 
-If the workspace is not registered, call `register_workspace` with `cwd`, then retry.
+If the workspace is not registered, call `va_mcp_register_workspace` with `cwd`, then retry.
 
 ### 4. Relay returned links
 

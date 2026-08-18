@@ -8,12 +8,12 @@ Served at `/mcp` (JSON-RPC over streamable HTTP). Each daemon start creates an M
 
 | Tool | Purpose |
 |---|---|
-| `get_session_id` | Resolve the calling agent session's identity |
-| `prepare_handover` | Issue a pickup code (4-character, 120 s TTL, one-shot) for cross-surface continuity |
-| `register_workspace` | Register the current project directory as a workspace |
-| `initialize_subagents` | Start a multi-agent turn — modes: `parallel`, `collaboration`, `brainstorming` |
-| `wait_for_subagents` | Block until subagents report completion; returns their reports |
-| `preview` | Preview exactly one source: a running dev-server `port` or a Markdown `file`. Markdown is rendered directly without starting a separate server |
+| `va_mcp_get_session_id` | Resolve the calling agent session's identity |
+| `va_mcp_prepare_handover` | Issue a pickup code (4-character, 120 s TTL, one-shot) for cross-surface continuity |
+| `va_mcp_register_workspace` | Register the current project directory as a workspace |
+| `va_mcp_initialize_subagents` | Start a multi-agent turn — modes: `parallel`, `collaboration`, `brainstorming` |
+| `va_mcp_wait_for_subagents` | Block until subagents report completion; returns their reports |
+| `va_mcp_preview` | Preview exactly one source: a running dev-server `port` or a Markdown `file`. Markdown is rendered directly without starting a separate server |
 
 Every launch also replaces the VibeAround-reserved project skills with the bundled versions: `vibearound` (handover), `va-session`, `va-preview`, and, where supported, `agent-collaboration`.
 

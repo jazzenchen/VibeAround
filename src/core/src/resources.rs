@@ -756,7 +756,7 @@ mod tests {
         // Find a tool with agent_kind property
         let handover = tools_arr
             .iter()
-            .find(|t| t["name"] == "prepare_handover")
+            .find(|t| t["name"] == "va_mcp_prepare_handover")
             .unwrap();
         let agent_kind_enum = &handover["inputSchema"]["properties"]["agent_kind"]["enum"];
         assert!(agent_kind_enum.is_array());

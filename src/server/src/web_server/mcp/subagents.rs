@@ -122,7 +122,7 @@ pub(super) async fn mcp_initialize_subagents(
         "notes": [
             "Subagents are initialized in isolated git worktrees.",
             "Subagents have been assigned their initial tasks.",
-            "Call wait_for_subagents before producing the host final answer.",
+            "Call va_mcp_wait_for_subagents before producing the host final answer.",
             "The host agent remains responsible for review, merge, and cleanup."
         ]
     });

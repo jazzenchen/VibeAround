@@ -5,14 +5,14 @@
 ## 逐跳
 
 ```text
-terminal CLI ──1─► MCP prepare_handover ──2─► code stored (4 chars · 120 s · one-shot)
+terminal CLI ──1─► MCP va_mcp_prepare_handover ──2─► code stored (4 chars · 120 s · one-shot)
                                                    │
 phone IM chat ──3─ /pickup CODE ──4─► consume ──5─► attach external session to thread
                                                    │6
                                             route attached · agent respawned · session resumed
 ```
 
-**1. 请求。** 在 launched agent CLI 里，用户调用 handover skill（`/vibearound handover`）；agent 调 daemon 上的 `prepare_handover` MCP tool，传入自己的 identity（通过注入的 `VIBEAROUND_*` env / session context，由 `get_session_id` 解析）。
+**1. 请求。** 在 launched agent CLI 里，用户调用 handover skill（`/vibearound handover`）；agent 调 daemon 上的 `va_mcp_prepare_handover` MCP tool，传入自己的 identity（通过注入的 `VIBEAROUND_*` env / session context，由 `va_mcp_get_session_id` 解析）。
 → `src/skills/vibearound/`, `src/server/src/web_server/mcp/tools.rs`
 
 **2. 签发短码。** Daemon 把 `{agent_kind, profile_id, session_id, cwd}` 存到一个 4 字符 code 下（32 字符 alphabet，OS RNG）。TTL 120 秒，一次性消费，过期 entry 在访问时 purge。
@@ -46,7 +46,7 @@ phone IM chat ──3─ /pickup CODE ──4─► consume ──5─► attach
 
 ---
 
-*Source anchors: `src/core/src/workspace/handover.rs` (codes), `src/server/src/web_server/mcp/tools.rs` (prepare_handover, get_session_id), `src/core/src/channels/prompt/handler.rs` (pickup), `src/core/src/workspace/manager.rs` (attach_external_session), `src/core/src/launch_sessions/` (session resolution).*
+*Source anchors: `src/core/src/workspace/handover.rs` (codes), `src/server/src/web_server/mcp/tools.rs` (va_mcp_prepare_handover, va_mcp_get_session_id), `src/core/src/channels/prompt/handler.rs` (pickup), `src/core/src/workspace/manager.rs` (attach_external_session), `src/core/src/launch_sessions/` (session resolution).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Flow: Agent 启动](native-launch.md) · [文档索引](../../README.md) · [Flow: PTY 终端 ▶](web-terminal.md)</sub>

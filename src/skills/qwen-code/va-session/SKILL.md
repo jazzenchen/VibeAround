@@ -9,7 +9,7 @@ Resolve your current session ID. Other VibeAround skills reference this skill wh
 
 ## How to Resolve
 
-Call the `get_session_id` MCP tool. Include only optional arguments whose
+Call the `va_mcp_get_session_id` MCP tool. Include only optional arguments whose
 values are present:
 
 Read these values if available:
@@ -21,7 +21,7 @@ Read these values if available:
 - `$VIBEAROUND_CHAT_ID`
 
 ```
-Tool: get_session_id
+Tool: va_mcp_get_session_id
 Server: vibearound
 Arguments:
   agent_kind: "qwen-code"

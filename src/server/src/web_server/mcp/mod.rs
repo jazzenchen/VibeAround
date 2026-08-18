@@ -6,7 +6,7 @@
 //! probe the full MCP surface do not treat VibeAround as disconnected.
 //!
 //! Most MCP tools are stateless — they validate inputs and return text.
-//! Collaboration tools are the exception: `initialize_subagents` creates
+//! Collaboration tools are the exception: `va_mcp_initialize_subagents` creates
 //! git worktrees and records the resulting multi-agent turn on a workspace
 //! thread, but still does not drive live agent processes directly.
 //!
@@ -138,15 +138,15 @@ async fn mcp_tools_call(
     };
 
     match tool_name {
-        "get_session_id" => {
+        "va_mcp_get_session_id" => {
             tools::mcp_get_session_id(id, arguments, params.get("_meta"), state).await
         }
-        "send_file" => tools::mcp_send_file(id, arguments, state).await,
-        "prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
-        "register_workspace" => tools::mcp_register_workspace(id, arguments).await,
-        "initialize_subagents" => subagents::mcp_initialize_subagents(id, arguments, state).await,
-        "wait_for_subagents" => subagents::mcp_wait_for_subagents(id, arguments, state).await,
-        "preview" => preview::mcp_preview(id, arguments, params.get("_meta"), state).await,
+        "va_mcp_send_file" => tools::mcp_send_file(id, arguments, state).await,
+        "va_mcp_prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
+        "va_mcp_register_workspace" => tools::mcp_register_workspace(id, arguments).await,
+        "va_mcp_initialize_subagents" => subagents::mcp_initialize_subagents(id, arguments, state).await,
+        "va_mcp_wait_for_subagents" => subagents::mcp_wait_for_subagents(id, arguments, state).await,
+        "va_mcp_preview" => preview::mcp_preview(id, arguments, params.get("_meta"), state).await,
         _ => jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name)),
     }
 }
@@ -220,7 +220,7 @@ mod tests {
 
         let preview = tools
             .iter()
-            .find(|tool| tool["name"] == "preview")
+            .find(|tool| tool["name"] == "va_mcp_preview")
             .expect("preview tool");
         let properties = preview["inputSchema"]["properties"].as_object().unwrap();
         assert!(properties.contains_key("port"));

@@ -47,7 +47,7 @@ Thread 在某条 Route 第一次需要它时诞生 —— 聊天的第一条消�
 
 交接是把第二条 Route 附着到已有 Thread 上，或把外部 CLI Session 重新绑定进一个 Thread：
 
-1. **终端 → IM。** 在启动的 Agent CLI 里，VibeAround 的 MCP 工具 `prepare_handover` 发出一个短寿命码。在任意已连接的 IM 里输入 `/pickup <code>`，那个聊天的 Route 就附着到绑定同一 Agent、Workspace 和 CLI Session 的 Thread 上 —— Agent 带完整上下文恢复。
+1. **终端 → IM。** 在启动的 Agent CLI 里，VibeAround 的 MCP 工具 `va_mcp_prepare_handover` 发出一个短寿命码。在任意已连接的 IM 里输入 `/pickup <code>`，那个聊天的 Route 就附着到绑定同一 Agent、Workspace 和 CLI Session 的 Thread 上 —— Agent 带完整上下文恢复。
 2. **Web → 手机。** 控制台的交接流程走同一机制：Web Thread 的 Session 被某条 IM Route 接续。
 3. **多个收听者。** 因为附着是叠加式的，输出会扇出到每条已附着的 Route：你可以在 Web 控制台和 Telegram 里同时看同一个回合。
 
@@ -63,7 +63,7 @@ Thread 在某条 Route 第一次需要它时诞生 —— 聊天的第一条消�
 
 ## 多 Agent 回合与子 Agent
 
-Thread 可以运行多 Agent 回合：宿主 Agent 用 `initialize_subagents` / `wait_for_subagents` MCP 工具在同一 Workspace 里拉起具名子 Agent（并行、协作或头脑风暴模式）。每个子 Agent 是拥有自己 CLI Session 的完整 Agent 进程，在 Thread 上被跟踪，完成报告收回到宿主的回合里。被打断的子 Agent 会在 Thread 运行时重建时恢复。
+Thread 可以运行多 Agent 回合：宿主 Agent 用 `va_mcp_initialize_subagents` / `va_mcp_wait_for_subagents` MCP 工具在同一 Workspace 里拉起具名子 Agent（并行、协作或头脑风暴模式）。每个子 Agent 是拥有自己 CLI Session 的完整 Agent 进程，在 Thread 上被跟踪，完成报告收回到宿主的回合里。被打断的子 Agent 会在 Thread 运行时重建时恢复。
 
 ## 计时与上限参考
 
