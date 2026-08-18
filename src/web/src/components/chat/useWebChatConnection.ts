@@ -626,10 +626,7 @@ export function useWebChatConnection({
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
-        // Other ACP update variants (available_commands_update, mode/config,
-        // session metadata, usage, etc.) update surrounding UI rather than the
-        // visible transcript. Ignored here so future SDK additions don't crash
-        // the handler.
+        // Non-transcript ACP updates are handled by surrounding UI state.
         default:
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;

@@ -299,8 +299,7 @@ pub async fn archive_launch_session_handler(
     set_launch_session_archived(agent_id, session_id, body.workspace_path, true).await
 }
 
-/// POST /api/agents/:agent_id/launch-sessions/:session_id/unarchive -- show a
-/// previously hidden session again without relying on a DELETE request body.
+/// POST /api/agents/:agent_id/launch-sessions/:session_id/unarchive.
 pub async fn unarchive_launch_session_handler(
     Path((agent_id, session_id)): Path<(String, String)>,
     Json(body): Json<LaunchSessionArchiveBody>,

@@ -148,7 +148,7 @@ impl TunnelManager {
         self.tunnels.iter().any(|entry| entry.url.is_some())
     }
 
-    /// First public URL we can find, or `None` if no tunnel is up yet.
+    /// First registered public URL.
     pub fn first_url(&self) -> Option<String> {
         self.tunnels.iter().find_map(|entry| entry.url.clone())
     }

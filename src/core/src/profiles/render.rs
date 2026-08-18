@@ -29,10 +29,8 @@ pub struct RenderedProfile {
     pub env: Vec<(String, String)>,
     pub settings_files: Vec<RenderedSettingsFile>,
     pub command_args: Vec<String>,
-    /// Which env var should point at profile-local rendered config once
-    /// the launcher materializes any settings files. We avoid overriding
-    /// agent home dirs such as CODEX_HOME or CLAUDE_CONFIG_DIR so those CLIs
-    /// keep loading the user's own sessions, plugins, and skills.
+    /// Environment variable pointing to profile-local rendered config.
+    /// Agent home variables remain unchanged.
     pub config_env: Option<ConfigEnvTarget>,
 }
 
@@ -83,9 +81,7 @@ pub fn render(
             })?
     };
 
-    // Env vars — drop entries whose substituted value is empty so we don't
-    // end up exporting blank keys (e.g. `ANTHROPIC_MODEL=""` when the user
-    // didn't pick a model override).
+    // Drop empty substituted env values.
     let mut env: Vec<(String, String)> = Vec::new();
     for (k, tmpl) in &render_rules.env {
         if !is_valid_env_key(k) {

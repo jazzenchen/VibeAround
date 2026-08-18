@@ -2,9 +2,8 @@
 //! In system mode, spawns `npx localtunnel --port <DEFAULT_PORT>`.
 //! In VibeAround-managed mode, runs the managed `lt` npm entry with system Node.
 //! Parses the public URL from stdout and keeps the process alive.
-//! Tunnel password: loca.lt uses the tunnel initiator's public IP as the "password" (anti-abuse).
-//! There is no SDK to get it; the only way is to GET https://loca.lt/mytunnelpassword from the same
-//! machine running the tunnel — we do that and parse the IP from the response.
+//! loca.lt uses the tunnel initiator's public IP as its anti-abuse password,
+//! retrieved from `https://loca.lt/mytunnelpassword`.
 
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -83,11 +82,7 @@ pub async fn start(
         }
     };
 
-    // Register Child with the global registry only after URL parsing —
-    // until then we need local ownership to `.take()` the stdout. The
-    // small window where the Child lives on this task's frame is the
-    // only moment kill_all() can't reach it; in practice URL parsing
-    // finishes in <1s so the window is negligible.
+    // Register after stdout yields the public URL.
     let registry_id = ChildRegistry::global().register(ProcessKind::Tunnel, "localtunnel", child);
 
     proc_log!(

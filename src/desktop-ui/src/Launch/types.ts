@@ -153,8 +153,7 @@ export interface AuthModeDef {
   mode: string;
   label?: string | null;
   fields: FieldDef[];
-  // `render` is a tagged-pass-through — the UI never needs to introspect
-  // it, so we keep it as `unknown` to discourage drift with the renderer.
+  // The UI passes `render` through without inspecting it.
   render?: unknown | null;
 }
 

@@ -1,23 +1,6 @@
 //! HTTP/WebSocket API response shapes for the dashboard.
 //!
-//! This module owns the **wire contract** between the server and its
-//! frontends (web dashboard, Tauri desktop-ui, plus any future TUI / CLI
-//! / third-party consumer). Types here exist only to be serialized.
-//!
-//! # Where the data comes from
-//!
-//! Structs in this module are populated by reading `common` core state
-//! (via `config::ensure_loaded()` and `resources::...`). The core does
-//! not know about HTTP; it exposes domain data and this module maps it
-//! to wire shapes. Consumers that aren't HTTP (TUI, CLI) should write
-//! their own mapping alongside core, not reuse these types.
-//!
-//! # Consumers
-//!
-//! The canonical TS validator/types live in
-//! `src/shared/client-ts/src/schemas.ts` (zod). Keep the wire shapes
-//! documented on each struct below so Python/Swift/curl consumers can
-//! derive their own schemas without reading the zod file.
+//! Canonical TypeScript validators live in `src/shared/client-ts/src/schemas.ts`.
 
 use std::collections::BTreeMap;
 
@@ -398,7 +381,7 @@ pub struct PreviewsResponse {
 ///
 /// Lifecycle events (config / agent_ready / session_ready /
 /// command_menu / permission_request / turn_status / system_text / error)
-/// are dashboard meta — our own addition on top of ACP. Streaming tokens
+/// are VibeAround dashboard metadata. Streaming tokens
 /// and tool calls arrive as raw ACP `SessionNotification` payloads under
 /// the `acp_notification` kind.
 /// The frontend imports the matching TS types from
@@ -479,9 +462,7 @@ pub enum ChatEvent {
 
 /// One agent runtime, as returned by `GET /api/agents/runtime`.
 ///
-/// Sources: `WorkspaceThreadManager::list()` → live `ThreadRuntimeState`
-/// entries. Persisted workspace threads that do not currently own a host
-/// process are intentionally omitted.
+/// Sources: live `ThreadRuntimeState` entries from `WorkspaceThreadManager`.
 ///
 /// # Wire format (JSON)
 /// ```json

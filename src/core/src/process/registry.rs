@@ -39,9 +39,7 @@ use std::sync::OnceLock;
 use parking_lot::Mutex;
 use tokio::process::Child;
 
-/// Classification of a registered child, used by `orphan_sweep` to decide
-/// whether a leftover process belongs to us, and by the `Supervisor` for
-/// structured logging.
+/// Classification used for orphan detection and structured logging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessKind {
     /// Channel plugin process (node running from a discovered plugin directory).
@@ -267,12 +265,8 @@ fn process_descendants(root_pid: u32, sys: &sysinfo::System) -> Vec<u32> {
 /// `codex-acp.exe` alive after their parent `node.exe` process is orphaned,
 /// and those descendants can continue holding inherited daemon handles.
 ///
-/// Called at daemon startup BEFORE spawning any new children, so we don't
-/// compete with our own fresh processes.
-///
-/// Cross-platform: `sysinfo` handles process enumeration on macOS, Linux,
-/// and Windows. On Windows there is no PPID==1 invariant, so we instead
-/// check whether the parent PID still maps to a live process.
+/// Runs before daemon child processes are spawned. Windows orphan detection
+/// checks parent-process liveness instead of a PPID invariant.
 pub fn orphan_sweep() {
     use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 

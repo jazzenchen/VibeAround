@@ -1,11 +1,4 @@
-/**
- * Two-step modal: pick a provider, then fill its credentials.
- *
- * Step 1 lets the user click any catalog tile. Step 2 builds a form by
- * intersecting the catalog API kinds' `fields[]`. We default to the
- * api_key auth mode and let custom providers multi-select API kinds when
- * one key supports more than one.
- */
+/** Provider selection and credential form. */
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@va/i18n";
 import { Button } from "@/components/ui/button";

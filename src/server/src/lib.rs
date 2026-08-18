@@ -58,9 +58,7 @@ pub struct RunningDaemon {
     pub search_runtime: Option<Arc<SearchToolRuntime>>,
     pub tunnels: Arc<TunnelManager>,
     pub pty: Registry,
-    /// Signal to the channel-input task that it should unwind.
-    /// Dropped sender = no wake-up ever, so we hold this for the life of
-    /// `RunningDaemon` and signal on `stop()`.
+    /// Signal used to stop the channel-input task.
     channel_input_shutdown: Arc<Notify>,
     /// Signal to Axum so it can stop accepting new connections before the
     /// web task is force-aborted.
@@ -110,8 +108,7 @@ impl RunningDaemon {
         // the tokio runtime tore down first.
         ChildRegistry::global().kill_all();
 
-        // Kill any user-started dev servers we were previewing so they don't
-        // outlive the daemon. Best-effort; failures are logged.
+        // Stop previewed development servers during daemon shutdown.
         common::previews::cleanup_registered_previews();
 
         let pty_manager = PtySessionManager::from_registry(Arc::clone(&pty));
@@ -273,10 +270,7 @@ impl ServerDaemon {
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
-        // Self-heal: kill any leftover plugin/agent-ACP child processes from
-        // a previous crashed run BEFORE we spawn our own. Cheap on the happy
-        // path (no matches) and prevents phantom children from hogging ports
-        // or auth sockets.
+        // Reap plugin and ACP children left by a crashed daemon.
         child_registry::orphan_sweep();
         common::previews::cleanup_registered_previews();
 
@@ -318,11 +312,7 @@ impl ServerDaemon {
             })
         };
 
-        // Start channel input processing loop. The task can't observe mpsc
-        // channel closure on its own — its own `Arc<PluginHost>` transitively
-        // holds the input_tx — so we give it an explicit shutdown `Notify`
-        // and hand the join handle back to
-        // `RunningDaemon` so `stop()` can unwind cleanly.
+        // ChannelManager owns an input sender, so shutdown uses an explicit signal.
         let conversation_ingress = channel_hub.ingress();
         let channel_input_shutdown = Arc::new(Notify::new());
         let input_shutdown_for_task = Arc::clone(&channel_input_shutdown);

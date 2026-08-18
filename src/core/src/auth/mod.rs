@@ -6,8 +6,6 @@
 pub mod pair;
 pub mod token;
 
-// Re-export the most commonly used items so existing `use common::auth::*`
-// call sites keep working without changes.
 pub use token::{
     local_agent_api_token_file_path, local_api_token_file_path, mcp_token_file_path,
     read_local_agent_api_token_file, read_local_api_token_file, read_mcp_token_file,

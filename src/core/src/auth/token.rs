@@ -11,7 +11,7 @@
 //!
 //! ## Design
 //!
-//! - On every daemon start we generate a fresh 32-byte token from `OsRng`.
+//! - Every daemon start generates a fresh 32-byte token from `OsRng`.
 //! - The dashboard token is hex-encoded (64 chars) and written to
 //!   `~/.vibearound/auth.json` with mode `0600` on Unix.
 //! - Separate daemon-lifetime tokens authorize the provider bridge

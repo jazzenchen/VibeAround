@@ -118,13 +118,10 @@ fn default_true() -> bool {
 pub struct ProfileDef {
     pub id: String,
     pub label: String,
-    /// Catalog provider id (e.g. `"moonshot"`). Reserved value `"custom"` is
-    /// not yet supported in v1; UI gates this.
+    /// Catalog provider id (e.g. `"moonshot"`).
     pub provider: String,
     pub auth_mode: AuthMode,
-    /// Free-form credentials — `api_key` is the only field used by v1
-    /// catalog entries, but we keep the bag generic so future plugins can
-    /// declare custom field names without a schema migration.
+    /// Credential values keyed by catalog field name.
     #[serde(default)]
     pub credentials: BTreeMap<String, String>,
     /// Editable API configs cloned from the provider catalog.
@@ -444,9 +441,7 @@ impl LockedProfileFile {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error).with_context(|| format!("remove {:?}", path)),
         }
-        // Best-effort: also drop the per-profile state dir (rendered settings
-        // files, future agent session caches). If the user re-creates a profile
-        // with the same id later, we want a clean slate.
+        // Remove rendered state associated with the deleted profile id.
         let state_dir = config::data_dir().join("profile-state").join(&self.id);
         let _ = std::fs::remove_dir_all(&state_dir);
         Ok(())

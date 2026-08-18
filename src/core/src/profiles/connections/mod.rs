@@ -1,7 +1,7 @@
 //! Profile-to-agent connection routing shared by desktop launch and web
 //! terminal launch.
 //!
-//! A profile's enabled API configs tell us which provider protocols it exposes.
+//! Enabled API configs identify the provider protocols exposed by a profile.
 //! A launch target also depends on per-profile agent preferences: which client
 //! protocol the agent should speak and whether VibeAround should bridge that
 //! client protocol to another provider protocol.

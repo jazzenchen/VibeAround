@@ -197,19 +197,10 @@ fn selected_desktop_app_cached(agent_id: &str, configured_path: Option<&Path>) -
     Path::new(&entry.path).is_file()
 }
 
-/// Open an HTTP URL in the user's default external browser.
-///
-/// We can't use `window.open` from the desktop-ui because it creates a
-/// Tauri child webview instead of hitting the OS-level handler. This
-/// command shells out via the `open` crate, which is what the tray also
-/// uses for "Open Local Dashboard".
-///
-/// Used for dashboard/tunnel links and trusted app-owned external links such
-/// as GitHub release downloads.
+/// Open an app-owned HTTP(S) URL through the OS handler.
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
-    // Minimal guard: only allow http/https schemes. Prevents a rogue
-    // caller from asking us to execute `file://` or `javascript:` URIs.
+    // Only HTTP(S) URLs may reach the OS handler.
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(format!("refused to open non-http URL: {url}"));
     }

@@ -119,15 +119,7 @@ pub fn setup<R: Runtime>(app: &App<R>) -> Result<(), Box<dyn std::error::Error>>
     let app_handle = app.handle().clone();
     let menu = build_menu(&app_handle)?;
 
-    // Embed the tray icon bytes at compile time so the shipped binary
-    // doesn't depend on any filesystem path being present at runtime.
-    //
-    // Using `env!("CARGO_MANIFEST_DIR")` + `Image::from_path` as we did
-    // previously bakes the *build machine's* absolute source path into
-    // the binary. On every other machine `Image::from_path` returns
-    // `Err`, `tray::setup` returns that error, Tauri treats setup failure
-    // as fatal, and the app crashes at launch with an "application quit
-    // unexpectedly" dialog.
+    // Embed the tray icon without a runtime filesystem dependency.
     const TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/32x32.png");
     let icon = Image::from_bytes(TRAY_ICON_PNG)?;
 

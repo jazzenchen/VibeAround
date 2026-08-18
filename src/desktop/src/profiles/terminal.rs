@@ -276,10 +276,7 @@ struct LauncherPrefsFile {
     compatibility_bridge: Option<CompatibilityBridgeMode>,
 }
 
-/// Read the user's preferred terminal. Falls back to Terminal.app whenever
-/// the prefs file is missing, malformed, or names a terminal we don't
-/// recognize anymore (forward-compat: an old prefs file from a future
-/// build that knew about more terminals must not crash this version).
+/// Read the preferred terminal, falling back to the platform default.
 pub fn read_preference() -> TerminalChoice {
     read_prefs_file()
         .terminal

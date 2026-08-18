@@ -1,5 +1,4 @@
 //! One-time migrations for files under the VibeAround data directory.
-//! The 0.7.x compatibility conversions and their tests are removed in 0.8.x.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

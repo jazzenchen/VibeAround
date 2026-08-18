@@ -16,7 +16,6 @@ use crate::resources;
 
 use super::mcp::home_dir;
 
-// Remove these 0.7.x names and their tests in 0.8.x.
 const OLD_MANAGED_SKILL_NAMES: &[&str] = &["va-md-preview"];
 
 /// Replace all VibeAround-reserved skill files for one project/workspace.
@@ -265,12 +264,7 @@ fn is_managed_skill_file(path: &Path) -> anyhow::Result<bool> {
         || content.contains("metadata: vibearound"))
 }
 
-/// All skills to deploy, per agent. Returns (skill_name, content) pairs.
-/// `skill_name` is used to derive both the target directory and filename.
-///
-/// Each agent gets the same set of skills; only the directory (and thus the
-/// embedded content) differs. The macro eliminates 7× repetition of the
-/// skill-name list.
+/// Bundled `(skill_name, content)` pairs for an agent.
 fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
     macro_rules! skills_for {
         ($dir:literal) => {

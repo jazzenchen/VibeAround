@@ -1,5 +1,4 @@
-//! Portable PTY runtime: spawn a shell or tool and bridge stdin/stdout for terminal clients.
-//! Child is wrapped in Mutex so we can poll try_wait() from a thread and send run state to the frontend.
+//! Portable PTY runtime for terminal clients.
 
 use anyhow::Context;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -38,9 +37,7 @@ fn set_pty_env(c: &mut CommandBuilder, theme: Option<&str>, extra_env: &[(String
     for (key, val) in crate::process::env::child_env() {
         c.env(key, val);
     }
-    // Codex.app launches this process with NO_COLOR=1/TERM=dumb in some
-    // contexts. A web xterm PTY is color-capable, so clear the inherited
-    // opt-out before applying our terminal defaults.
+    // Web PTYs override inherited color opt-outs.
     c.env_remove("NO_COLOR");
     let pty_env = &crate::resources::PTY_ENV;
     for (key, val) in &pty_env.env {

@@ -1,8 +1,7 @@
 //! MCP server entry install/uninstall for an agent's settings.
 //!
-//! Supports both JSON (Claude Code, Gemini, Cursor, Kiro, Qwen) and TOML
-//! (Codex) formats. Global helpers are kept only for cleanup/migration;
-//! runtime installation should prefer project-scoped workspace files.
+//! Supports JSON (Claude Code, Gemini, Cursor, Kiro, Qwen) and TOML
+//! (Codex) project configuration. Global helpers remove legacy entries.
 
 use std::path::{Path, PathBuf};
 
@@ -136,7 +135,6 @@ fn install_mcp_config_json(
         Err(error) => return Err(error).with_context(|| format!("Read {:?}", config_path)),
     };
 
-    // Always replace (full replace on every startup)
     let obj = root
         .as_object_mut()
         .ok_or_else(|| anyhow!("{:?} root is not a JSON object", config_path))?;

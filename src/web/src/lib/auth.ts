@@ -1,14 +1,13 @@
 /**
  * Session auth token plumbing for the web dashboard.
  *
- * The Tauri tray (or standalone launcher) opens the dashboard with a
- * `?token=<hex>` query parameter. On first load we:
+ * The Tauri tray or standalone launcher supplies `?token=<hex>`.
  *
  *   1. Read the token from the URL
  *   2. Store it in `sessionStorage` so it survives in-app navigation
  *      but dies when the tab closes
  *   3. Strip the token from the address bar via `history.replaceState`
- *      so it never ends up in browser history or Referer headers
+ *      before navigation continues
  *
  * Subsequent fetches add `Authorization: Bearer <token>` via the global
  * fetch wrapper in `main.tsx`. WebSocket URLs append `&token=<token>` via

@@ -5,16 +5,7 @@
 //!   - `?token=<token>` query parameter (fallback for initial page load
 //!     and for WebSocket upgrades, which cannot carry custom headers)
 //!
-//! On mismatch returns `401 Unauthorized` with an empty body for regular
-//! routes. For the `/mcp` JSON-RPC endpoint we instead return HTTP 200 with
-//! a JSON-RPC error envelope, because MCP clients (Claude Code, Codex, etc.)
-//! try to parse the response body as JSON-RPC and surface "Failed to parse
-//! JSON" on an empty body — that symptom is invisible to end users and
-//! makes stale-token situations extremely confusing.
-//!
-//! The token is loaded once per daemon start (see `common::auth`) and held
-//! as part of `AppState`, so the middleware is a pure function over the
-//! incoming request.
+//! Unauthorized MCP requests return a JSON-RPC error envelope with HTTP 200.
 
 use std::sync::Arc;
 
@@ -89,13 +80,10 @@ fn extract_token<B>(req: &Request<B>) -> Option<String> {
         return Some(token);
     }
 
-    // 2. ?token=<token>  (brittle but good enough — we only look for the
-    //    exact key; real parsing happens via url::form_urlencoded)
+    // Query token fallback for clients that cannot send custom headers.
     if let Some(query) = req.uri().query() {
         for pair in query.split('&') {
             if let Some(rest) = pair.strip_prefix("token=") {
-                // URL-decode the value. `+` is a space in form encoding,
-                // but a hex token never contains one — still, be safe.
                 let decoded = url_decode(rest);
                 return Some(decoded);
             }
@@ -317,8 +305,7 @@ fn parse_origin(value: &str) -> Option<OriginParts> {
     })
 }
 
-/// Minimal percent-decoder for the `?token=` value. We only need to handle
-/// `%HH` sequences; the hex token alphabet is URL-safe.
+/// Percent-decode `%HH` sequences in query-token values.
 fn url_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

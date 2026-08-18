@@ -4,10 +4,7 @@
 //! `profile-catalog/manifest.json` controls which provider files are loaded
 //! and in what order.
 //!
-//! The catalog is still embedded in the desktop binary, but the Rust side no
-//! longer hard-codes provider ids. The JSON manifest is the source of truth for
-//! built-in profile catalog membership; adding fields requires only a serde
-//! `#[serde(default)]` to stay forward-compatible.
+//! The JSON manifest is the source of truth for built-in catalog membership.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;

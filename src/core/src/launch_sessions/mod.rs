@@ -1,7 +1,7 @@
 //! Local coding-agent session discovery for the desktop Launch surface.
 //!
-//! This is intentionally read-only. Each CLI owns its own session store; we
-//! only surface enough metadata for users to choose what to resume.
+//! Each CLI owns its session store. VibeAround exposes resume metadata without
+//! modifying native session data.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;

@@ -37,7 +37,7 @@ pub enum BridgeExit {
     /// Bridge saw a protocol-level failure — malformed frame, handshake
     /// timeout, etc. Counts as a crash for restart policies.
     ProtocolError(anyhow::Error),
-    /// Supervisor asked us to stop via the cancel token.
+    /// Supervisor cancellation.
     Cancelled,
 }
 

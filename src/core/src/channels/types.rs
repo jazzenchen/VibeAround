@@ -80,7 +80,7 @@ impl ChannelEnvelope {
     }
 }
 
-/// Legacy stdio plugin input.
+/// Stdio plugin input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum ChannelInput {
