@@ -29,7 +29,7 @@ A workspace is a directory on your machine that agents work in — typically a p
 
 ## Thread
 
-A thread is one conversation with continuity: the unit that owns "what we were talking about". Each thread lives in exactly one workspace and records which agent hosts it, which CLI sessions it has produced, and its open/closed status. Thread state is persisted as an event log, so closed threads remain inspectable and open threads survive a daemon restart.
+A thread is one continuous conversation. Each thread belongs to one workspace and records its host agent, CLI sessions, and open/closed status. Thread state is persisted as an event log, so closed threads remain inspectable and open threads survive a daemon restart.
 
 - `/new` in a chat closes the current thread and starts a fresh one.
 - `/close` closes the thread without starting a new one.

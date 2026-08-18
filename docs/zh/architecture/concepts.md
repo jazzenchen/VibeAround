@@ -29,7 +29,7 @@ Workspace 是你机器上供 Agent 工作的目录 —— 通常是一个项目�
 
 ## Thread
 
-Thread 是一段有连续性的对话：拥有"我们聊到哪了"的单位。每个 Thread 恰好属于一个 Workspace，记录着哪个 Agent 托管它、它产生过哪些 CLI Session、以及开启/关闭状态。Thread 状态以事件日志持久化，所以关闭的 Thread 仍可查看，开启的 Thread 能挺过守护进程重启。
+Thread 是一段连续对话。每个 Thread 属于一个 Workspace，记录托管 Agent、CLI Session 和开启/关闭状态。Thread 状态以事件日志持久化，所以关闭的 Thread 仍可查看，开启的 Thread 能挺过守护进程重启。
 
 - 聊天里 `/new` 关闭当前 Thread 并开一个新的。
 - `/close` 只关闭，不开新的。
