@@ -113,15 +113,30 @@ fn launch_profile_temp_dir() -> anyhow::Result<PathBuf> {
 }
 
 fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
-    if let Some(path) = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN") {
+    resolve_sidecar_binary("va-launch", "VIBEAROUND_VA_LAUNCH_BIN", "va-launcher")
+}
+
+/// The bundled TUI that VibeAround Agent launches open into.
+pub(super) fn resolve_va_tui_binary() -> anyhow::Result<PathBuf> {
+    resolve_sidecar_binary("va-tui", "VIBEAROUND_VA_TUI_BIN", "va-tui")
+}
+
+/// Locate one of the desktop's bundled Rust sidecars: an explicit env override,
+/// then the Tauri external-bin layout next to the app, then dev target dirs.
+fn resolve_sidecar_binary(
+    binary: &str,
+    env_override: &str,
+    cargo_package: &str,
+) -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os(env_override) {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Ok(path);
         }
-        bail!("VIBEAROUND_VA_LAUNCH_BIN is not a file: {}", path.display());
+        bail!("{env_override} is not a file: {}", path.display());
     }
 
-    let candidate_paths = va_launch_candidate_paths();
+    let candidate_paths = sidecar_candidate_paths(binary);
     if let Some(path) = first_existing_file(candidate_paths.iter()) {
         return Ok(path);
     }
@@ -131,11 +146,11 @@ fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    bail!("va-launch binary not found; searched: {searched}; build va-launcher or set VIBEAROUND_VA_LAUNCH_BIN")
+    bail!("{binary} binary not found; searched: {searched}; build {cargo_package} or set {env_override}")
 }
 
-fn va_launch_candidate_paths() -> Vec<PathBuf> {
-    let names = va_launch_binary_names();
+fn sidecar_candidate_paths(binary: &str) -> Vec<PathBuf> {
+    let names = sidecar_binary_names(binary);
     let mut roots = Vec::new();
 
     if let Ok(current_exe) = std::env::current_exe() {
@@ -178,10 +193,10 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-fn va_launch_binary_names() -> Vec<String> {
-    let plain = plain_va_launch_binary_name().to_string();
+fn sidecar_binary_names(binary: &str) -> Vec<String> {
+    let plain = format!("{binary}{}", executable_extension());
     let mut names = vec![plain.clone()];
-    if let Some(sidecar) = va_launch_sidecar_binary_name() {
+    if let Some(sidecar) = sidecar_binary_name(binary) {
         if sidecar != plain {
             names.push(sidecar);
         }
@@ -189,17 +204,9 @@ fn va_launch_binary_names() -> Vec<String> {
     names
 }
 
-fn plain_va_launch_binary_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "va-launch.exe"
-    } else {
-        "va-launch"
-    }
-}
-
-fn va_launch_sidecar_binary_name() -> Option<String> {
+fn sidecar_binary_name(binary: &str) -> Option<String> {
     Some(format!(
-        "va-launch-{}{}",
+        "{binary}-{}{}",
         current_target_triple()?,
         executable_extension()
     ))
@@ -501,7 +508,7 @@ mod tests {
 
     #[test]
     fn sidecar_binary_name_matches_tauri_external_bin_layout() {
-        let Some(sidecar) = va_launch_sidecar_binary_name() else {
+        let Some(sidecar) = sidecar_binary_name("va-launch") else {
             return;
         };
 

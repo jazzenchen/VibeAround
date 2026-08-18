@@ -422,14 +422,21 @@ fn build_profile_launch_plan(
         })?;
     let rendered = runtime::render_for_agent_route(&profile, &launch_target, launch_id, &route)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let mut env = runtime::materialize_env(&profile.id, rendered.clone())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if route.bridge_target_api_type.is_some() {
-        append_local_bridge_proxy_bypass_env(&mut env);
+    let mut env = if agent_id == "va-agent" {
+        // The terminal opens the TUI; the daemon renders the model profile
+        // itself when it spawns va-agent for the session.
+        Vec::new()
     } else {
-        runtime::append_settings_proxy_env(&profile, &mut env)
-            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    }
+        let mut env = runtime::materialize_env(&profile.id, rendered.clone())
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if route.bridge_target_api_type.is_some() {
+            append_local_bridge_proxy_bypass_env(&mut env);
+        } else {
+            runtime::append_settings_proxy_env(&profile, &mut env)
+                .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        }
+        env
+    };
     append_vibearound_launch_context_env(&mut env, &profile.id, &launch_target, launch_id);
 
     let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);

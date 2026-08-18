@@ -184,6 +184,25 @@ impl<'a> LaunchPlanBuilder<'a> {
                 windows_executable_path: windows_executable_path_for_agent(agent_id),
             });
         }
+        if agent_id == "va-agent" {
+            // The daemon renders the model profile when it spawns va-agent for
+            // the session; the terminal only needs to know which agent /
+            // profile / workspace to open the TUI on.
+            let _ = rendered;
+            let mut env = Vec::new();
+            append_vibearound_launch_context_env(&mut env, profile, launch_target, &self.launch_id);
+            return Ok(LaunchPlan {
+                env,
+                command: va_tui_launch_command()?,
+                args: Vec::new(),
+                cleanup_paths: Vec::new(),
+                window_label: profile.label.clone(),
+                workspace,
+                macos_app_probe: None,
+                windows_process_probe: None,
+                windows_executable_path: None,
+            });
+        }
         if agent_id == "claude-desktop" {
             let _ = rendered;
             claude_desktop::apply_profile_config(profile)
@@ -364,6 +383,18 @@ fn start_process_name(command: &str) -> Option<String> {
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(|name| name.trim_matches('"').to_string())
+}
+
+#[cfg(not(test))]
+fn va_tui_launch_command() -> anyhow::Result<String> {
+    Ok(super::va_launch::resolve_va_tui_binary()?
+        .to_string_lossy()
+        .into_owned())
+}
+
+#[cfg(test)]
+fn va_tui_launch_command() -> anyhow::Result<String> {
+    Ok("va-tui".to_string())
 }
 
 #[cfg(not(test))]
@@ -712,6 +743,30 @@ mod tests {
         assert!(plan
             .env
             .contains(&("VIBEAROUND_LAUNCH_TARGET".to_string(), "claude".to_string())));
+    }
+
+    #[test]
+    fn va_agent_profile_launch_opens_the_tui_with_context_only() {
+        let profile = minimax_anthropic_profile();
+        let plan = LaunchPlanBuilder::with_launch_id("launch-123")
+            .profile(&profile, "va-agent")
+            .build()
+            .expect("va-agent plan");
+
+        assert_eq!(plan.command, "va-tui");
+        assert!(plan.args.is_empty());
+        assert!(plan.env.contains(&(
+            "VIBEAROUND_PROFILE_ID".to_string(),
+            "minimax-test".to_string()
+        )));
+        assert!(plan
+            .env
+            .contains(&("VIBEAROUND_LAUNCH_TARGET".to_string(), "va-agent".to_string())));
+        assert!(plan
+            .env
+            .iter()
+            .all(|(key, _)| !key.starts_with("VIBEAROUND_MODEL_")));
+        assert!(plan.env.iter().all(|(key, _)| !key.contains("API_KEY")));
     }
 
     #[test]

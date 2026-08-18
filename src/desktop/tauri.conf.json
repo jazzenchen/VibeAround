@@ -4,9 +4,9 @@
   "version": "0.7.24",
   "identifier": "com.vibearound.app",
   "build": {
-    "beforeDevCommand": "cargo build -p va-launcher && node ../scripts/prepare-va-launch.mjs --profile debug --desktop && node ../scripts/build-project-plugins.mjs && bun run --cwd ../web build && bun run --cwd ../desktop-ui dev",
+    "beforeDevCommand": "cargo build -p va-launcher -p va-tui && node ../scripts/prepare-va-launch.mjs --profile debug --desktop && node ../scripts/build-project-plugins.mjs && bun run --cwd ../web build && bun run --cwd ../desktop-ui dev",
     "devUrl": "http://localhost:5181",
-    "beforeBuildCommand": "cargo build --release -p va-launcher && node ../scripts/prepare-va-launch.mjs --profile release --desktop && bun run --cwd ../desktop-ui build && bun run --cwd ../web build",
+    "beforeBuildCommand": "cargo build --release -p va-launcher -p va-tui && node ../scripts/prepare-va-launch.mjs --profile release --desktop && bun run --cwd ../desktop-ui build && bun run --cwd ../web build",
     "frontendDist": "../desktop-ui/dist"
   },
   "app": {
@@ -45,7 +45,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/va-launch"
+      "binaries/va-launch",
+      "binaries/va-tui"
     ],
     "resources": [
       "../web/dist/**/*",

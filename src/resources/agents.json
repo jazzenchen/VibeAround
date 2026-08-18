@@ -8,7 +8,7 @@
       "program": "va-agent"
     },
     "pty": {
-      "command": "va-agent"
+      "command": "va tui"
     },
     "global_config": {
       "project_skill_dir": ".agents/skills/vibearound"
