@@ -45,20 +45,9 @@ pub use install::{
 pub use runtime::{Agent, AgentClientHandler, AgentReady, StartupSession};
 
 use mcp::{install_project_mcp_config, uninstall_mcp_config};
-use skills::{install_project_skill, uninstall_skill};
+use skills::{sync_project_skill, uninstall_skill};
 
-#[derive(Debug, Clone, Copy)]
-pub struct ProjectIntegrationOptions {
-    pub mcp: bool,
-    pub skills: bool,
-}
-
-/// Install project-scoped integrations for the current agent/workspace.
-pub fn install_project_integrations(
-    agent: &str,
-    workspace: &Path,
-    options: ProjectIntegrationOptions,
-) -> anyhow::Result<()> {
+fn can_manage_project_files(agent: &str, workspace: &Path) -> anyhow::Result<bool> {
     if !workspace.is_dir() {
         anyhow::bail!("workspace does not exist: {}", workspace.display());
     }
@@ -68,30 +57,30 @@ pub fn install_project_integrations(
             agent,
             workspace
         );
-        return Ok(());
+        return Ok(false);
     }
-
-    let mcp_url = current_mcp_url();
-    if options.mcp {
-        install_project_mcp_config(agent, workspace, &mcp_url)?;
-    }
-    if options.skills {
-        install_project_skill(agent, workspace)?;
-    }
-    Ok(())
+    Ok(true)
 }
 
-/// Install project-scoped integrations according to settings.json auto-install policy.
-pub fn auto_install_project_integrations(agent: &str, workspace: &Path) -> anyhow::Result<()> {
-    let cfg = config::ensure_loaded();
-    install_project_integrations(
-        agent,
-        workspace,
-        ProjectIntegrationOptions {
-            mcp: cfg.integrations.mcp_auto_install,
-            skills: cfg.integrations.skill_auto_install,
-        },
-    )
+/// Replace VibeAround-reserved project skills with the bundled versions.
+pub fn sync_project_skills(agent: &str, workspace: &Path) -> anyhow::Result<()> {
+    if !can_manage_project_files(agent, workspace)? {
+        return Ok(());
+    }
+    sync_project_skill(agent, workspace)
+}
+
+/// Write the current daemon's MCP-only credential into project config.
+pub fn install_project_mcp(agent: &str, workspace: &Path) -> anyhow::Result<()> {
+    if !can_manage_project_files(agent, workspace)? {
+        return Ok(());
+    }
+    let Some(auth) = crate::auth::read_mcp_token_file() else {
+        tracing::info!("[agent] auth-mcp.json missing; skipping project MCP config");
+        return Ok(());
+    };
+    let mcp_url = format!("http://127.0.0.1:{}/va/mcp?token={}", auth.port, auth.token);
+    install_project_mcp_config(agent, workspace, &mcp_url)
 }
 
 /// Remove VibeAround-managed integrations from legacy global locations only.
@@ -114,19 +103,6 @@ pub fn uninstall_legacy_integrations(remove_mcp: bool, remove_skills: bool) -> a
         Ok(())
     } else {
         Err(anyhow!(errors.join("\n")))
-    }
-}
-
-fn current_mcp_url() -> String {
-    match crate::auth::read_token_file() {
-        Some(auth) => format!("http://127.0.0.1:{}/va/mcp?token={}", auth.port, auth.token),
-        None => {
-            tracing::info!(
-                "[agent] auth.json missing — writing MCP config without token; \
-                 coding agents will get 401 until the daemon rewrites it"
-            );
-            format!("http://127.0.0.1:{}/va/mcp", config::DEFAULT_PORT)
-        }
     }
 }
 
