@@ -75,6 +75,67 @@ pub(super) fn render_pi_provider(
     })
 }
 
+/// Render the same provider definition Pi would receive, but as the flat
+/// model config VibeAround Agent reads from its environment.
+pub(super) fn render_va_agent_provider(
+    config: PiProviderLaunchConfig<'_>,
+) -> anyhow::Result<RenderedProfile> {
+    if config.api_key.trim().is_empty() {
+        bail!(
+            "profile '{}' has no api_key credential for VibeAround Agent launch",
+            config.profile_id
+        );
+    }
+    if config.base_url.trim().is_empty() {
+        bail!(
+            "profile '{}' has no base URL configured for VibeAround Agent launch",
+            config.profile_id
+        );
+    }
+    if config.model.trim().is_empty() {
+        bail!(
+            "profile '{}' has no model configured for VibeAround Agent launch",
+            config.profile_id
+        );
+    }
+
+    let context_window = config.model_context_window.unwrap_or(128_000);
+    let mut model_config = Map::new();
+    model_config.insert("provider".to_string(), json!(config.provider_id));
+    model_config.insert("api".to_string(), json!(pi_api_for(config.api_type)?));
+    model_config.insert("baseUrl".to_string(), json!(config.base_url));
+    model_config.insert("model".to_string(), json!(config.model));
+    model_config.insert("contextWindow".to_string(), json!(context_window));
+    model_config.insert("maxTokens".to_string(), json!(context_window.min(16_384)));
+    // Pi's provider registration types accept text and image inputs.
+    let inputs: Vec<&str> = model_inputs(&config.model_capabilities)
+        .into_iter()
+        .filter(|input| *input != "file")
+        .collect();
+    model_config.insert("input".to_string(), json!(inputs));
+    if config.reasoning {
+        model_config.insert("reasoning".to_string(), json!(true));
+    }
+    if !config.headers.is_empty() {
+        model_config.insert("headers".to_string(), json!(config.headers));
+    }
+    if config.auth_header {
+        model_config.insert("authHeader".to_string(), json!(true));
+    }
+    let model_config = serde_json::to_string(&Value::Object(model_config))
+        .context("serialize VibeAround Agent model config")?;
+
+    Ok(RenderedProfile {
+        env: vec![
+            ("VIBEAROUND_MODEL_CONFIG".to_string(), model_config),
+            ("VIBEAROUND_MODEL_API_KEY".to_string(), config.api_key),
+        ],
+        settings_files: Vec::new(),
+        command_args: Vec::new(),
+        config_env: None,
+    })
+}
+
 pub(super) fn provider_id(profile_id: &str, api_type: &str) -> String {
     format!("vibearound-{}-{}", slug(profile_id), slug(api_type))
 }

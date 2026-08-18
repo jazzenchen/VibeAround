@@ -13,7 +13,23 @@ pub struct AppliedProfile {
 }
 
 pub const VIBEAROUND_PROFILE_ID_ENV: &str = "VIBEAROUND_PROFILE_ID";
+pub const VIBEAROUND_AGENT_DIR_ENV: &str = "VIBEAROUND_AGENT_DIR";
 pub const DIRECT_PROFILE_ID: &str = "direct";
+
+pub fn append_agent_runtime_env(env: &mut Vec<(String, String)>, agent_id: &str) {
+    if agent_id != "va-agent" {
+        return;
+    }
+    env.retain(|(key, _)| key != VIBEAROUND_AGENT_DIR_ENV);
+    env.push((
+        VIBEAROUND_AGENT_DIR_ENV.to_string(),
+        crate::config::data_dir()
+            .join("agents")
+            .join("va-agent")
+            .to_string_lossy()
+            .into_owned(),
+    ));
+}
 
 pub fn profile_uses_vibearound_credentials(profile: &str) -> bool {
     !matches!(
@@ -123,5 +139,15 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn va_agent_receives_private_runtime_directory() {
+        let mut env = vec![(VIBEAROUND_AGENT_DIR_ENV.to_string(), "/wrong".to_string())];
+        append_agent_runtime_env(&mut env, "va-agent");
+
+        assert_eq!(env.len(), 1);
+        assert!(std::path::Path::new(&env[0].1)
+            .ends_with(std::path::Path::new("agents").join("va-agent")));
     }
 }

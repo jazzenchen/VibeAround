@@ -1,5 +1,17 @@
 [
   {
+    "id": "va-agent",
+    "display_name": "VibeAround Agent",
+    "description": "Built-in VibeAround coding agent",
+    "aliases": [],
+    "acp": {
+      "program": "va-agent"
+    },
+    "pty": {
+      "command": "va-agent"
+    }
+  },
+  {
     "id": "claude",
     "display_name": "Claude Code",
     "description": "Anthropic Claude Code",

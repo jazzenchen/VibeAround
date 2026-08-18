@@ -267,10 +267,11 @@ impl Agent {
         startup_session: StartupSession,
         client_handler: Arc<dyn AgentClientHandler>,
         extra_args: Vec<String>,
-        extra_env: Vec<(String, String)>,
+        mut extra_env: Vec<(String, String)>,
         cancellation: Option<&mut watch::Receiver<bool>>,
     ) -> anyhow::Result<Option<AgentReady>> {
         crate::resources::validate_acp_runtime_agent(&agent_id).map_err(anyhow::Error::msg)?;
+        super::launch::append_agent_runtime_env(&mut extra_env, &agent_id);
 
         let cwd = workspace.to_path_buf();
         let label = format!("{}:{}", agent_id, route);
@@ -619,6 +620,13 @@ async fn resolve_agent_program(
 )> {
     let agent_def = crate::resources::agent_by_id(agent_id)
         .ok_or_else(|| anyhow!("No resource definition for agent '{}'", agent_id))?;
+    if agent_id == "va-agent" {
+        return Ok((
+            va_agent_program_from_env(std::env::var_os("VIBEAROUND_VA_AGENT_PATH"))?,
+            agent_def.acp.args.clone(),
+            None,
+        ));
+    }
     let config = crate::config::ensure_loaded();
     let selected_candidate =
         resolve_agent_candidate(agent_id, config.toolchain_mode.as_str()).await;
@@ -681,6 +689,20 @@ async fn resolve_agent_program(
             selected_candidate,
         ))
     }
+}
+
+fn va_agent_program_from_env(value: Option<std::ffi::OsString>) -> anyhow::Result<String> {
+    let Some(value) = value else {
+        return Ok("va-agent".to_string());
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| anyhow!("VIBEAROUND_VA_AGENT_PATH must be valid UTF-8"))?;
+    let value = value.trim();
+    if value.is_empty() {
+        anyhow::bail!("VIBEAROUND_VA_AGENT_PATH must not be empty");
+    }
+    Ok(value.to_string())
 }
 
 async fn resolve_agent_candidate(
