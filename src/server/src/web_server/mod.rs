@@ -237,6 +237,10 @@ pub async fn run_web_server(
         bridge_recorder: bridge_recording::BridgeRecorder::default(),
         local_api_token,
     };
+    state
+        .channel_hub
+        .workspace_thread_manager()
+        .set_mcp_over_acp(Arc::new(mcp::AcpMcpDispatcher::new(state.clone())));
 
     let auth_state = AuthState::new(Arc::clone(&auth_token), mcp_token);
 

@@ -59,6 +59,48 @@ pub trait AgentClientHandler: Send + Sync + 'static {
     async fn prompt_finished(&self, _success: bool) -> acp::Result<()> {
         Ok(())
     }
+
+    /// The MCP server VibeAround offers this agent over the ACP connection
+    /// itself (`mcp/connect` / `mcp/message`). `None` means the session has no
+    /// VibeAround tools; the agent's connect request is rejected and it runs
+    /// without them.
+    fn mcp_server(&self) -> Option<Arc<dyn AcpMcpServer>> {
+        None
+    }
+}
+
+/// Serves MCP requests that arrive over ACP. The implementation lives with the
+/// MCP tool set (server crate); core only routes to it.
+#[async_trait::async_trait]
+pub trait AcpMcpServer: Send + Sync + 'static {
+    /// Handle one MCP JSON-RPC request (`initialize`, `tools/list`,
+    /// `tools/call`, ...) and return its `result`, or an MCP error.
+    async fn call(
+        &self,
+        method: &str,
+        params: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<serde_json::Value, AcpMcpError>;
+}
+
+/// JSON-RPC error surfaced from an MCP call served over ACP.
+#[derive(Debug, Clone)]
+pub struct AcpMcpError {
+    pub code: i32,
+    pub message: String,
+}
+
+/// Name and id VibeAround declares for its MCP-over-ACP server.
+pub const VIBEAROUND_ACP_MCP_SERVER: &str = "vibearound";
+
+/// The `mcpServers` entry to declare when the agent advertised MCP over ACP.
+pub fn acp_mcp_servers(initialize: &schema::InitializeResponse) -> Vec<schema::McpServer> {
+    if !initialize.agent_capabilities.mcp_capabilities.acp {
+        return Vec::new();
+    }
+    vec![schema::McpServer::Acp(schema::McpServerAcp::new(
+        VIBEAROUND_ACP_MCP_SERVER,
+        VIBEAROUND_ACP_MCP_SERVER,
+    ))]
 }
 
 /// Handle returned from a successful [`Agent::spawn`].
@@ -564,6 +606,7 @@ impl Agent {
         args: schema::NewSessionRequest,
     ) -> acp::Result<schema::NewSessionResponse> {
         self.allow_startup_notifications();
+        let args = args.mcp_servers(acp_mcp_servers(&self.initialize));
         self.conn.send_request(args).block_task().await
     }
 
@@ -571,6 +614,7 @@ impl Agent {
         &self,
         args: schema::LoadSessionRequest,
     ) -> acp::Result<schema::LoadSessionResponse> {
+        let args = args.mcp_servers(acp_mcp_servers(&self.initialize));
         self.conn.send_request(args).block_task().await
     }
 
@@ -776,6 +820,23 @@ fn env_key_matches(key: &str, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_over_acp_is_declared_only_when_the_agent_advertises_it() {
+        let mut initialize = schema::InitializeResponse::new(acp::schema::ProtocolVersion::V1);
+        assert!(acp_mcp_servers(&initialize).is_empty());
+
+        initialize.agent_capabilities.mcp_capabilities.acp = true;
+        let servers = acp_mcp_servers(&initialize);
+        assert_eq!(servers.len(), 1);
+        match &servers[0] {
+            schema::McpServer::Acp(server) => {
+                assert_eq!(server.name, VIBEAROUND_ACP_MCP_SERVER);
+                assert_eq!(server.server_id.to_string(), VIBEAROUND_ACP_MCP_SERVER);
+            }
+            other => panic!("expected an ACP MCP server, got {other:?}"),
+        }
+    }
 
     #[test]
     fn codex_acp_receives_selected_cli_path() {

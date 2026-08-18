@@ -85,6 +85,8 @@ async fn drive_agent_bridge(
 
     let permission_handler = Arc::clone(&client_handler);
     let notification_handler = Arc::clone(&client_handler);
+    let mcp_connect_handler = Arc::clone(&client_handler);
+    let mcp_message_handler = Arc::clone(&client_handler);
     let suppress_startup_notifications = Arc::new(AtomicBool::new(false));
     let notification_suppression = Arc::clone(&suppress_startup_notifications);
     let agent_id_for_run = agent_id.clone();
@@ -109,6 +111,46 @@ async fn drive_agent_bridge(
                 }
                 notification_handler.session_notification(args).await
             },
+            acp::on_receive_notification!(),
+        )
+        // MCP over ACP: the agent reaches VibeAround's tools through this same
+        // connection. Connections are stateless — one declared server, so the
+        // connection id is the server id.
+        .on_receive_request(
+            async move |args: schema::ConnectMcpRequest, responder, _cx| {
+                let result = match mcp_connect_handler.mcp_server() {
+                    Some(_) => Ok(schema::ConnectMcpResponse::new(args.server_id.to_string())),
+                    None => Err(acp::Error::invalid_params()
+                        .data("this session has no VibeAround MCP server")),
+                };
+                responder.respond_with_result(result)
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |args: schema::MessageMcpRequest, responder, _cx| {
+                let result = match mcp_message_handler.mcp_server() {
+                    Some(server) => match server.call(&args.method, args.params).await {
+                        Ok(value) => serde_json::value::to_raw_value(&value)
+                            .map(|raw| schema::MessageMcpResponse::new(raw.into()))
+                            .map_err(|error| acp::Error::internal_error().data(error.to_string())),
+                        Err(error) => Err(acp::Error::new(error.code, error.message)),
+                    },
+                    None => Err(acp::Error::invalid_params()
+                        .data("this session has no VibeAround MCP server")),
+                };
+                responder.respond_with_result(result)
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |_args: schema::DisconnectMcpRequest, responder, _cx| {
+                responder.respond_with_result(Ok(schema::DisconnectMcpResponse::new()))
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_notification(
+            async move |_args: schema::MessageMcpNotification, _cx| Ok(()),
             acp::on_receive_notification!(),
         )
         .connect_with(transport, async move |conn| {
@@ -137,10 +179,10 @@ async fn drive_agent_bridge(
                 StartupSession::Fresh => None,
                 StartupSession::Load(session_id) => {
                     match conn
-                        .send_request(schema::LoadSessionRequest::new(
-                            session_id.clone(),
-                            cwd.clone(),
-                        ))
+                        .send_request(
+                            schema::LoadSessionRequest::new(session_id.clone(), cwd.clone())
+                                .mcp_servers(super::acp_mcp_servers(&initialize)),
+                        )
                         .block_task()
                         .await
                     {
@@ -183,10 +225,10 @@ async fn drive_agent_bridge(
                         None
                     } else {
                         match conn
-                            .send_request(schema::ResumeSessionRequest::new(
-                                session_id.clone(),
-                                cwd.clone(),
-                            ))
+                            .send_request(
+                                schema::ResumeSessionRequest::new(session_id.clone(), cwd.clone())
+                                    .mcp_servers(super::acp_mcp_servers(&initialize)),
+                            )
                             .block_task()
                             .await
                         {
@@ -216,10 +258,10 @@ async fn drive_agent_bridge(
                         Some(session_id) => Some(session_id),
                         None if allow_load_fallback => {
                             match conn
-                                .send_request(schema::LoadSessionRequest::new(
-                                    session_id.clone(),
-                                    cwd.clone(),
-                                ))
+                                .send_request(
+                                    schema::LoadSessionRequest::new(session_id.clone(), cwd.clone())
+                                        .mcp_servers(super::acp_mcp_servers(&initialize)),
+                                )
                                 .block_task()
                                 .await
                             {

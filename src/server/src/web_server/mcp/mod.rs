@@ -43,6 +43,65 @@ use super::AppState;
 
 use jsonrpc::{jsonrpc_err, jsonrpc_ok, JsonRpcRequest};
 
+/// Serves the same MCP tool set to agents that reach VibeAround over ACP
+/// (`mcp/message`) instead of HTTP. Installed on the workspace thread manager
+/// at boot; thread ACP bridges route the agent's MCP requests here.
+pub(crate) struct AcpMcpDispatcher {
+    state: AppState,
+}
+
+impl AcpMcpDispatcher {
+    pub(crate) fn new(state: AppState) -> Self {
+        Self { state }
+    }
+}
+
+#[async_trait::async_trait]
+impl common::agent::AcpMcpServer for AcpMcpDispatcher {
+    async fn call(
+        &self,
+        method: &str,
+        params: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<serde_json::Value, common::agent::AcpMcpError> {
+        let id = Some(serde_json::Value::Null);
+        let params = params.map(serde_json::Value::Object);
+        let Json(response) = match method {
+            "initialize" => jsonrpc_ok(id, mcp_initialize_result()),
+            "tools/list" => mcp_tools_list(id),
+            "resources/list" => mcp_resources_list(id),
+            "resources/templates/list" => mcp_resource_templates_list(id),
+            "prompts/list" => mcp_prompts_list(id),
+            "tools/call" => mcp_tools_call(id, params, &self.state).await,
+            _ => jsonrpc_err(id, -32601, &format!("Method not found: {method}")),
+        };
+        unwrap_jsonrpc(response)
+    }
+}
+
+/// Split a JSON-RPC response envelope into the MCP result or error.
+fn unwrap_jsonrpc(
+    mut response: serde_json::Value,
+) -> Result<serde_json::Value, common::agent::AcpMcpError> {
+    if let Some(error) = response.get("error") {
+        return Err(common::agent::AcpMcpError {
+            code: error
+                .get("code")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|code| i32::try_from(code).ok())
+                .unwrap_or(-32603),
+            message: error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("MCP call failed")
+                .to_string(),
+        });
+    }
+    Ok(response
+        .get_mut("result")
+        .map(serde_json::Value::take)
+        .unwrap_or(serde_json::Value::Null))
+}
+
 const MCP_SESSION_ID_HEADER: HeaderName = HeaderName::from_static("mcp-session-id");
 const MCP_SSE_KEEPALIVE_SECS: u64 = 15;
 
@@ -87,16 +146,16 @@ pub async fn mcp_sse_handler() -> Sse<impl futures_util::Stream<Item = Result<Ev
     )
 }
 
+fn mcp_initialize_result() -> serde_json::Value {
+    serde_json::json!({
+        "protocolVersion": "2025-03-26",
+        "capabilities": { "tools": {} },
+        "serverInfo": { "name": "vibearound", "version": env!("CARGO_PKG_VERSION") }
+    })
+}
+
 fn mcp_initialize(id: Option<serde_json::Value>) -> axum::response::Response {
-    let mut response = jsonrpc_ok(
-        id,
-        serde_json::json!({
-            "protocolVersion": "2025-03-26",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "vibearound", "version": env!("CARGO_PKG_VERSION") }
-        }),
-    )
-    .into_response();
+    let mut response = jsonrpc_ok(id, mcp_initialize_result()).into_response();
     let session_id = uuid::Uuid::new_v4().to_string();
     response.headers_mut().insert(
         MCP_SESSION_ID_HEADER,
@@ -157,6 +216,23 @@ mod tests {
     use serde_json::json;
 
     use super::MCP_SESSION_ID_HEADER;
+
+    #[test]
+    fn acp_dispatch_unwraps_jsonrpc_envelopes() {
+        let result = super::unwrap_jsonrpc(json!({
+            "jsonrpc": "2.0", "id": null, "result": { "tools": [] }
+        }))
+        .expect("result envelope");
+        assert_eq!(result, json!({ "tools": [] }));
+
+        let error = super::unwrap_jsonrpc(json!({
+            "jsonrpc": "2.0", "id": null,
+            "error": { "code": -32601, "message": "Method not found: nope" }
+        }))
+        .expect_err("error envelope");
+        assert_eq!(error.code, -32601);
+        assert_eq!(error.message, "Method not found: nope");
+    }
 
     #[test]
     fn initialize_returns_mcp_session_id_header() {

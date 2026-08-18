@@ -42,7 +42,10 @@ pub use install::{
     is_program_available, npm_package_bin_name, npm_package_installed,
     npm_package_installed_in_dir, InstallOutput,
 };
-pub use runtime::{Agent, AgentClientHandler, AgentReady, StartupSession};
+pub use runtime::{
+    acp_mcp_servers, AcpMcpError, AcpMcpServer, Agent, AgentClientHandler, AgentReady,
+    StartupSession, VIBEAROUND_ACP_MCP_SERVER,
+};
 
 use mcp::{install_project_mcp_config, uninstall_mcp_config};
 use skills::{sync_project_skill, uninstall_skill};
