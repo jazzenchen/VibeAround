@@ -80,7 +80,6 @@ fn profile(id: &str) -> ModelProfileSummary {
         auth_mode: AuthMode::ApiKey,
         api_types: vec!["chat".into()],
         launch_targets: Vec::new(),
-        api_type_warnings: BTreeMap::new(),
         api_type_models: BTreeMap::new(),
         api_type_model_options: BTreeMap::new(),
         api_type_headers: BTreeMap::new(),
