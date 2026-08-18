@@ -249,9 +249,21 @@ fn canonicalize_settings(settings: &mut serde_json::Value) -> bool {
             changed = true;
         }
     }
-    if let Some(integrations) = object_at(root, "integrations") {
-        changed |= move_alias(integrations, "mcp_auto_install", &["auto_install_mcp"]);
-        changed |= move_alias(integrations, "skill_auto_install", &["auto_install_skills"]);
+    let remove_integrations = if let Some(integrations) = object_at(root, "integrations") {
+        for key in [
+            "mcp_auto_install",
+            "skill_auto_install",
+            "auto_install_mcp",
+            "auto_install_skills",
+        ] {
+            changed |= integrations.remove(key).is_some();
+        }
+        integrations.is_empty()
+    } else {
+        false
+    };
+    if remove_integrations {
+        root.remove("integrations");
     }
     if let Some(proxy) = object_at(root, "proxy") {
         changed |= move_alias(proxy, "http_proxy", &["url"]);

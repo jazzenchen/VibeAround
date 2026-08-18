@@ -130,8 +130,6 @@ pub struct Config {
     /// Validated at load time — entries that don't resolve via
     /// `resources::agent_by_alias` are dropped.
     pub enabled_agents: Vec<String>,
-    // --- Agent integrations ---
-    pub integrations: AgentIntegrationsConfig,
     // --- Optional outbound HTTP proxy ---
     pub proxy: HttpProxyConfig,
     // --- API bridge behavior ---
@@ -191,12 +189,6 @@ impl ToolchainMode {
     pub fn is_managed(self) -> bool {
         matches!(self, Self::Managed)
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AgentIntegrationsConfig {
-    pub mcp_auto_install: bool,
-    pub skill_auto_install: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -279,15 +271,6 @@ pub struct Retry429Config {
     pub enabled: bool,
     pub max_retries: Option<usize>,
     pub delay_seconds: u64,
-}
-
-impl Default for AgentIntegrationsConfig {
-    fn default() -> Self {
-        Self {
-            mcp_auto_install: true,
-            skill_auto_install: true,
-        }
-    }
 }
 
 impl SearchToolConfig {
@@ -516,21 +499,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
                 .collect()
         });
 
-    let integrations = root
-        .get("integrations")
-        .and_then(|value| value.as_object())
-        .map(|integrations| AgentIntegrationsConfig {
-            mcp_auto_install: integrations
-                .get("mcp_auto_install")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(true),
-            skill_auto_install: integrations
-                .get("skill_auto_install")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(true),
-        })
-        .unwrap_or_default();
-
     let api_bridge = load_api_bridge_config(root);
     let local_agent_api = load_local_agent_api_config(root);
     let search_tool = load_search_tool_config(root);
@@ -576,7 +544,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         tmux_detach_others,
         default_agent,
         enabled_agents,
-        integrations,
         proxy,
         api_bridge,
         local_agent_api,
@@ -1251,7 +1218,6 @@ impl Default for Config {
                 .iter()
                 .map(|a| a.id.clone())
                 .collect(),
-            integrations: AgentIntegrationsConfig::default(),
             proxy: HttpProxyConfig::default(),
             api_bridge: ApiBridgeConfig::default(),
             local_agent_api: LocalAgentApiConfig::default(),
@@ -1663,38 +1629,6 @@ mod tests {
             config.remote_channel_defaults("unknown"),
             RemoteChannelDefaults::default()
         );
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn integration_auto_install_defaults_to_enabled() {
-        let dir = unique_test_dir("integrations-default");
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("settings.json");
-        fs::write(&path, "{}").unwrap();
-
-        let config = load_settings_from(&path);
-
-        assert!(config.integrations.mcp_auto_install);
-        assert!(config.integrations.skill_auto_install);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn integration_auto_install_can_be_disabled() {
-        let dir = unique_test_dir("integrations-disabled");
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("settings.json");
-        fs::write(
-            &path,
-            r#"{ "integrations": { "mcp_auto_install": false, "skill_auto_install": false } }"#,
-        )
-        .unwrap();
-
-        let config = load_settings_from(&path);
-
-        assert!(!config.integrations.mcp_auto_install);
-        assert!(!config.integrations.skill_auto_install);
         fs::remove_dir_all(&dir).unwrap();
     }
 

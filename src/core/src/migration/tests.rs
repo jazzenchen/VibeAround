@@ -133,8 +133,7 @@ fn backs_up_then_rewrites_settings_aliases_once() {
     let settings: serde_json::Value = serde_json::from_str(&body).unwrap();
     let config = crate::config::config_from_settings_json(&settings);
     assert!(config.portable_toolchain);
-    assert!(!config.integrations.mcp_auto_install);
-    assert!(!config.integrations.skill_auto_install);
+    assert!(settings.get("integrations").is_none());
     assert_eq!(
         config.proxy.http_proxy.as_deref(),
         Some("http://proxy.test")

@@ -275,15 +275,10 @@ impl Agent {
         let cwd = workspace.to_path_buf();
         let label = format!("{}:{}", agent_id, route);
 
-        let config = crate::config::ensure_loaded();
-        if config.integrations.skill_auto_install {
-            super::sync_project_skills(&agent_id, workspace)
-                .with_context(|| format!("sync project skills for {}", agent_id))?;
-        }
-        if config.integrations.mcp_auto_install {
-            super::install_project_mcp(&agent_id, workspace)
-                .with_context(|| format!("install project MCP for {}", agent_id))?;
-        }
+        super::sync_project_skills(&agent_id, workspace)
+            .with_context(|| format!("sync project skills for {}", agent_id))?;
+        super::install_project_mcp(&agent_id, workspace)
+            .with_context(|| format!("install project MCP for {}", agent_id))?;
 
         // Resolve program + args + install if needed.
         let (program, mut resolved_args, selected_candidate) =

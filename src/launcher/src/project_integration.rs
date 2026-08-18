@@ -4,15 +4,10 @@ use anyhow::Context;
 
 pub fn install_for_launch(agent_id: &str, workspace: &Path) -> anyhow::Result<()> {
     let integration_agent_id = project_integration_agent_id(agent_id);
-    let config = common::config::ensure_loaded();
-    if config.integrations.skill_auto_install {
-        common::agent::sync_project_skills(integration_agent_id, workspace)
-            .with_context(|| format!("sync project skills for {}", integration_agent_id))?;
-    }
-    if config.integrations.mcp_auto_install {
-        common::agent::install_project_mcp(integration_agent_id, workspace)
-            .with_context(|| format!("install project MCP for {}", integration_agent_id))?;
-    }
+    common::agent::sync_project_skills(integration_agent_id, workspace)
+        .with_context(|| format!("sync project skills for {}", integration_agent_id))?;
+    common::agent::install_project_mcp(integration_agent_id, workspace)
+        .with_context(|| format!("install project MCP for {}", integration_agent_id))?;
     Ok(())
 }
 
