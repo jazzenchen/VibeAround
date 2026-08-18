@@ -397,6 +397,34 @@ fn chat_render_shows_multiline_input_with_continuation_indent() {
 }
 
 #[test]
+fn launch_context_opens_a_fresh_session_over_launcher_preferences() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.preferences = Some(launcher_preferences(
+        "codex",
+        Some("codex-profile"),
+        Some("/tmp/codex"),
+    ));
+    app.selected_session = Some("session-1".into());
+
+    app.seed_launch_context(&LaunchContext::default());
+    assert_eq!(app.effective_agent(), Some("codex"));
+    assert_eq!(app.effective_session(), Some("session-1"));
+    assert!(!app.force_new_session);
+
+    app.seed_launch_context(&LaunchContext::from_parts(
+        Some("va-agent".into()),
+        Some("va-profile".into()),
+        Some("/tmp/project".into()),
+    ));
+    assert_eq!(app.effective_agent(), Some("va-agent"));
+    assert_eq!(app.effective_profile(), Some("va-profile"));
+    assert_eq!(app.effective_workspace(), Some("/tmp/project"));
+    assert_eq!(app.effective_session(), None);
+    assert!(app.force_new_session);
+}
+
+#[test]
 fn effective_chat_context_prefers_local_selection_over_launcher_preferences() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);

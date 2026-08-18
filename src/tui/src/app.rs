@@ -4,6 +4,7 @@ use va_client::endpoint::ServerEndpoint;
 use va_client::state::ChatState;
 
 use crate::chat::{ChatMessage, ChatRole};
+use crate::config::LaunchContext;
 use crate::data::{
     fetch_agent_picker, fetch_launcher_preferences, fetch_snapshot, AgentPickerSnapshot,
     DashboardSnapshot,
@@ -115,6 +116,19 @@ impl TuiApp {
 
     /// Seed the chat context from the launcher's current selection so the
     /// header shows the real agent/profile/workspace at startup, not `global`.
+    /// Open straight into a fresh session for the agent / profile / workspace a
+    /// VibeAround launch handed over, instead of the remembered preferences.
+    pub(crate) fn seed_launch_context(&mut self, context: &LaunchContext) {
+        if context.is_empty() {
+            return;
+        }
+        self.selected_agent = context.agent.clone();
+        self.selected_profile = context.profile.clone();
+        self.selected_workspace = context.workspace.clone();
+        self.selected_session = None;
+        self.force_new_session = true;
+    }
+
     pub(crate) async fn sync_launcher_context(&mut self, transport: &HttpTransport) {
         if let Ok(preferences) = fetch_launcher_preferences(transport).await {
             self.agent_picker.preferences = Some(preferences);

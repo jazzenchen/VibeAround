@@ -46,6 +46,48 @@ impl RuntimeEnv {
     }
 }
 
+/// Agent / profile / workspace handed over by a VibeAround launch (desktop
+/// Launch card, web launcher). VibeAround sets these for every profile launch;
+/// the TUI uses them to open straight into a new session instead of the picker.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct LaunchContext {
+    pub(crate) agent: Option<String>,
+    pub(crate) profile: Option<String>,
+    pub(crate) workspace: Option<String>,
+}
+
+impl LaunchContext {
+    pub(crate) fn current() -> Self {
+        Self::from_parts(
+            env_value("VIBEAROUND_LAUNCH_TARGET"),
+            env_value("VIBEAROUND_PROFILE_ID"),
+            env::current_dir()
+                .ok()
+                .map(|dir| dir.to_string_lossy().into_owned()),
+        )
+    }
+
+    pub(crate) fn from_parts(
+        agent: Option<String>,
+        profile: Option<String>,
+        workspace: Option<String>,
+    ) -> Self {
+        let Some(agent) = agent else {
+            return Self::default();
+        };
+        Self {
+            agent: Some(agent),
+            // "direct" is VibeAround's name for "no managed profile".
+            profile: profile.filter(|profile| profile != "direct"),
+            workspace,
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.agent.is_none()
+    }
+}
+
 pub(crate) fn resolve_endpoint(
     args: &Args,
     runtime_env: &RuntimeEnv,
@@ -132,6 +174,19 @@ fn env_value(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_context_requires_a_launch_target() {
+        assert!(LaunchContext::from_parts(None, Some("p".into()), Some("/w".into())).is_empty());
+        let context = LaunchContext::from_parts(
+            Some("va-agent".into()),
+            Some("direct".into()),
+            Some("/w".into()),
+        );
+        assert_eq!(context.agent.as_deref(), Some("va-agent"));
+        assert_eq!(context.profile, None);
+        assert_eq!(context.workspace.as_deref(), Some("/w"));
+    }
 
     #[test]
     fn matching_local_base_url_uses_auth_file_token() {
