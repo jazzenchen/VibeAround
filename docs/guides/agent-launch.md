@@ -29,7 +29,7 @@ A launch profile is a small JSON document (schema version 1): agent, workspace, 
 ## What happens at launch
 
 1. **Validation.** Workspace exists, agent executable resolves (explicit path → `~/.vibearound/agents.json` → PATH scan, cached after first discovery).
-2. **Project integrations.** If the local daemon is running, project-scoped MCP config and skill files for the agent are installed into the workspace (honoring `integrations.mcp_auto_install` and `integrations.skill_auto_install`). If the daemon is **not** running, VibeAround-managed project integrations are removed instead — stale config must not point the agent at a dead MCP server.
+2. **Workspace preparation.** VibeAround removes known old VibeAround skill names and writes the current bundled project skills on every launch. If `auth-mcp.json` is available, it also writes the current daemon-scoped MCP credential into the agent's project config. A missing credential skips only MCP config; it never skips skill sync or deletes project files.
 3. **Terminal spawn.** The agent starts in your terminal with the rendered environment. For bridged profiles, its model traffic flows through `127.0.0.1:12358` — so keep the daemon running for the session's lifetime.
 
 ## Sessions from launches

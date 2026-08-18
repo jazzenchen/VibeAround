@@ -49,10 +49,6 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
   // --- Agent ---
   "default_agent": "claude",
   "enabled_agents": ["claude", "codex"],  // 省略则启用所有已知 Agent
-  "integrations": {
-    "mcp_auto_install": true,        // 把 VibeAround MCP 配置写进 Agent 配置
-    "skill_auto_install": true      // 把 VibeAround 技能写进 Agent 技能目录
-  },
 
   // --- 网络 ---
   "proxy": { "enabled": true, "http_proxy": "http://…", "no_proxy": "…" },

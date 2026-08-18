@@ -29,7 +29,7 @@ va launch --profile codex --dry-run # 校验并打印计划，不实际启动
 ## 启动时发生什么
 
 1. **校验。** Workspace 存在、Agent 可执行文件可解析（显式路径 → `~/.vibearound/agents.json` → PATH 扫描，首次发现后缓存）。
-2. **项目集成。** 本地守护进程在运行时，Agent 的项目级 MCP 配置和技能文件会装进 Workspace（遵循 `integrations.mcp_auto_install` 和 `integrations.skill_auto_install`）。守护进程**没有**运行时则相反 —— 移除 VibeAround 管理的项目集成：过期配置不能把 Agent 指向一个死掉的 MCP 服务。
+2. **Workspace 准备。** 每次启动都会删除已知的旧 VibeAround skill 名称，并写入当前 bundled 项目级 skills。若 `auth-mcp.json` 可用，同时把当前 daemon-scoped MCP credential 写入 Agent 的项目配置；credential 缺失时只跳过 MCP 配置，不会跳过 skill sync，也不会删除项目文件。
 3. **终端拉起。** Agent 带着渲染好的环境在你的终端里启动。Bridge 化的 Profile 下，它的模型流量经过 `127.0.0.1:12358` —— 所以会话存续期间保持守护进程运行。
 
 ## 启动产生的会话

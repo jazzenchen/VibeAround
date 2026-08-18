@@ -49,10 +49,6 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
   // --- Agents ---
   "default_agent": "claude",
   "enabled_agents": ["claude", "codex"],  // omit to enable every known agent
-  "integrations": {
-    "mcp_auto_install": true,        // write VibeAround MCP config into agent configs
-    "skill_auto_install": true      // write VibeAround skills into agent skill dirs
-  },
 
   // --- Networking ---
   "proxy": { "enabled": true, "http_proxy": "http://…", "no_proxy": "…" },
