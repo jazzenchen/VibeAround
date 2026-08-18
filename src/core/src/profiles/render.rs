@@ -18,7 +18,7 @@ use super::catalog::{
     SettingsFileTemplate,
 };
 use super::codex_metadata::{self, CodexModelCatalogSpec};
-use super::schema::{ApiTypeOverrides, AuthMode, ProfileDef};
+use super::schema::{AuthMode, ProfileDef};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,10 +29,8 @@ pub struct RenderedProfile {
     pub env: Vec<(String, String)>,
     pub settings_files: Vec<RenderedSettingsFile>,
     pub command_args: Vec<String>,
-    /// Which env var should point at profile-local rendered config once
-    /// the launcher materializes any settings files. We avoid overriding
-    /// agent home dirs such as CODEX_HOME or CLAUDE_CONFIG_DIR so those CLIs
-    /// keep loading the user's own sessions, plugins, and skills.
+    /// Environment variable pointing to profile-local rendered config.
+    /// Agent home variables remain unchanged.
     pub config_env: Option<ConfigEnvTarget>,
 }
 
@@ -83,9 +81,7 @@ pub fn render(
             })?
     };
 
-    // Env vars — drop entries whose substituted value is empty so we don't
-    // end up exporting blank keys (e.g. `ANTHROPIC_MODEL=""` when the user
-    // didn't pick a model override).
+    // Drop empty substituted env values.
     let mut env: Vec<(String, String)> = Vec::new();
     for (k, tmpl) in &render_rules.env {
         if !is_valid_env_key(k) {
@@ -142,9 +138,9 @@ fn pick_endpoint<'a>(
     api_type: &str,
 ) -> anyhow::Result<&'a EndpointDef> {
     let endpoint_id = profile
-        .overrides
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.endpoint_id.as_deref());
+        .and_then(|config| config.endpoint_id.as_deref());
     catalog::find_endpoint(catalog, api_type, endpoint_id).ok_or_else(|| {
         let suffix = endpoint_id
             .map(|id| format!(" endpoint_id '{id}'"))
@@ -634,11 +630,10 @@ fn build_context(
     endpoint: &EndpointDef,
     catalog: &ProviderCatalog,
 ) -> BTreeMap<String, String> {
-    let overrides = profile
-        .overrides
+    let config = profile
+        .api_configs
         .get(api_type)
-        .cloned()
-        .unwrap_or_else(ApiTypeOverrides::default);
+        .expect("rendered API config must exist");
 
     let mut ctx: BTreeMap<String, String> = BTreeMap::new();
     ctx.insert("provider_id".to_string(), profile.provider.clone());
@@ -646,13 +641,22 @@ fn build_context(
     ctx.insert("api_type".to_string(), api_type.to_string());
     ctx.insert(
         "base_url".to_string(),
-        overrides
+        config
             .base_url
+            .clone()
             .unwrap_or_else(|| endpoint.default_base_url.clone()),
     );
-    let requested_model = overrides
+    let requested_model = config
         .model
+        .clone()
         .filter(|model| !model.trim().is_empty())
+        .or_else(|| {
+            config
+                .models
+                .iter()
+                .find(|model| model.enabled)
+                .map(|model| model.id.clone())
+        })
         .or_else(|| endpoint.models.first().map(|model| model.id.clone()))
         .unwrap_or_default();
     let model_def = catalog::find_model(endpoint, &requested_model);
@@ -668,8 +672,9 @@ fn build_context(
     ctx.insert("model".to_string(), model);
     ctx.insert(
         "reasoning_effort".to_string(),
-        overrides
+        config
             .reasoning_effort
+            .clone()
             .unwrap_or_else(|| "medium".to_string()),
     );
 
@@ -793,7 +798,7 @@ fn is_valid_env_key(key: &str) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::profiles::schema::{ApiTypeOverrides, AuthMode, ProfileDef};
+    use crate::profiles::schema::{AuthMode, ProfileApiConfig, ProfileDef};
     use serde_json::Value;
 
     use super::*;
@@ -1152,15 +1157,15 @@ mod tests {
         let mut credentials = BTreeMap::new();
         credentials.insert("api_key".to_string(), "test-key".to_string());
 
-        let mut overrides = BTreeMap::new();
-        overrides.insert(
+        let mut api_configs = BTreeMap::new();
+        api_configs.insert(
             "anthropic".to_string(),
-            ApiTypeOverrides {
+            ProfileApiConfig {
+                enabled: true,
                 endpoint_id: endpoint_id.map(ToOwned::to_owned),
-                base_url: None,
                 model: Some(model.to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1169,10 +1174,8 @@ mod tests {
             label: format!("{provider} test"),
             provider: provider.to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["anthropic".to_string()],
             credentials,
-            overrides,
-            api_configs: Default::default(),
+            api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -1183,15 +1186,15 @@ mod tests {
         let mut credentials = BTreeMap::new();
         credentials.insert("api_key".to_string(), "test-key".to_string());
 
-        let mut overrides = BTreeMap::new();
-        overrides.insert(
+        let mut api_configs = BTreeMap::new();
+        api_configs.insert(
             "openai-chat".to_string(),
-            ApiTypeOverrides {
+            ProfileApiConfig {
+                enabled: true,
                 endpoint_id: endpoint_id.map(ToOwned::to_owned),
-                base_url: None,
                 model: Some(model.to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1200,10 +1203,8 @@ mod tests {
             label: format!("{provider} test"),
             provider: provider.to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials,
-            overrides,
-            api_configs: Default::default(),
+            api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -1214,15 +1215,14 @@ mod tests {
         let mut credentials = BTreeMap::new();
         credentials.insert("api_key".to_string(), "test-key".to_string());
 
-        let mut overrides = BTreeMap::new();
-        overrides.insert(
+        let mut api_configs = BTreeMap::new();
+        api_configs.insert(
             "openai-responses".to_string(),
-            ApiTypeOverrides {
-                endpoint_id: None,
-                base_url: None,
+            ProfileApiConfig {
+                enabled: true,
                 model: Some(model.to_string()),
                 reasoning_effort: Some("medium".to_string()),
-                capabilities: None,
+                ..Default::default()
             },
         );
 
@@ -1231,10 +1231,8 @@ mod tests {
             label: format!("{provider} test"),
             provider: provider.to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-responses".to_string()],
             credentials,
-            overrides,
-            api_configs: Default::default(),
+            api_configs,
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -1243,9 +1241,9 @@ mod tests {
 
     fn model_for(profile: &ProfileDef) -> &str {
         profile
-            .overrides
+            .api_configs
             .get("anthropic")
-            .and_then(|overrides| overrides.model.as_deref())
+            .and_then(|config| config.model.as_deref())
             .expect("test profile has model")
     }
 }

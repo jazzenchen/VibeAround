@@ -524,15 +524,6 @@ pub fn plan(choices: &StartkitChoices, platform: Option<&str>) -> anyhow::Result
     plan_from_manifest(&manifest, choices, platform.unwrap_or(current_platform()))
 }
 
-#[allow(dead_code)]
-pub async fn scan(
-    settings: &Value,
-    choices: &StartkitChoices,
-    platform: Option<&str>,
-) -> anyhow::Result<StartkitScanReport> {
-    scan_with_progress::<tauri::Wry>(None, settings, choices, platform).await
-}
-
 pub(crate) async fn scan_agent_cli_reports(
     settings: &Value,
     choices: &StartkitChoices,
@@ -737,15 +728,6 @@ async fn scan_item_with_timeout(
         actions: Vec::new(),
         ..base_report(item)
     })
-}
-
-#[allow(dead_code)]
-pub async fn execute_item(
-    settings: &Value,
-    choices: &StartkitChoices,
-    item_id: &str,
-) -> anyhow::Result<StartkitItemReport> {
-    execute_item_with_cancel(settings, choices, item_id, None, None).await
 }
 
 async fn execute_item_with_cancel(

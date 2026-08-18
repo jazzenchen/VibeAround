@@ -1,7 +1,7 @@
 //! Local coding-agent session discovery for the desktop Launch surface.
 //!
-//! This is intentionally read-only. Each CLI owns its own session store; we
-//! only surface enough metadata for users to choose what to resume.
+//! Each CLI owns its session store. VibeAround exposes resume metadata without
+//! modifying native session data.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -55,33 +55,6 @@ pub fn list_for_agent_workspace_with_archived(
     let mut sessions = raw_sessions_for_agent_workspace(agent_id, workspace, include_archived);
     sessions.extend(observed_sessions_for_agent_workspace(agent_id, workspace));
     finalize_sessions(agent_id, sessions, limit, include_archived)
-}
-
-pub async fn list_for_agent_workspace_with_archived_async(
-    agent_id: &str,
-    workspace: &Path,
-    limit: usize,
-    include_archived: bool,
-) -> Vec<LaunchSession> {
-    let workspaces = [workspace.to_path_buf()];
-    list_for_agent_workspaces_with_archived_async(agent_id, &workspaces, limit, include_archived)
-        .await
-}
-
-pub async fn list_for_agent_workspaces_with_archived_async(
-    agent_id: &str,
-    workspaces: &[std::path::PathBuf],
-    limit: usize,
-    include_archived: bool,
-) -> Vec<LaunchSession> {
-    let mut sessions =
-        native_sessions_for_agent_workspaces_async(agent_id, workspaces, include_archived).await;
-    sessions.extend(
-        workspaces
-            .iter()
-            .flat_map(|workspace| observed_sessions_for_agent_workspace(agent_id, workspace)),
-    );
-    finalize_workspace_sessions(agent_id, sessions, limit, include_archived)
 }
 
 pub async fn list_native_for_agent_workspace_with_archived_async(

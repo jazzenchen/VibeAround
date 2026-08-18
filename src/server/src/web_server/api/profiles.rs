@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 
 use axum::{extract::Path, http::StatusCode, Json};
 use common::agent_state;
-use common::profiles::{
-    catalog, normalize_legacy_profile, runtime, schema, AuthMode, ProfileDef, ProfileStoreError,
-};
+use common::profiles::{catalog, runtime, schema, AuthMode, ProfileDef, ProfileStoreError};
 use serde::Deserialize;
 
 /// GET /api/profiles -- list saved profiles and the CLI targets each can launch.
@@ -46,11 +44,8 @@ pub struct ModelProfileDraft {
     pub label: String,
     pub provider: String,
     pub auth_mode: AuthMode,
-    pub api_types: Vec<String>,
     #[serde(default)]
     pub credentials: BTreeMap<String, String>,
-    #[serde(default)]
-    pub overrides: BTreeMap<String, schema::ApiTypeOverrides>,
     #[serde(default)]
     pub api_configs: BTreeMap<String, schema::ProfileApiConfig>,
     #[serde(default)]
@@ -104,16 +99,10 @@ pub async fn create_model_profile_handler(
 /// PUT /api/model-profiles/:id -- replace a profile definition.
 pub async fn update_model_profile_handler(
     Path(id): Path<String>,
-    Json(mut profile): Json<ProfileDef>,
+    Json(draft): Json<ModelProfileDraft>,
 ) -> Result<Json<ProfileDef>, (StatusCode, String)> {
     super::run_blocking_io(move || {
-        if profile.id != id {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("profile id mismatch: path '{id}' body '{}'", profile.id),
-            ));
-        }
-        profile = normalize_legacy_profile(profile);
+        let profile = draft.into_profile(id);
         common::profiles::save_profile(&profile).map_err(profile_store_error)?;
         Ok(Json(profile))
     })
@@ -154,9 +143,7 @@ impl ModelProfileDraft {
             label: self.label,
             provider: self.provider,
             auth_mode: self.auth_mode,
-            api_types: self.api_types,
             credentials: self.credentials,
-            overrides: self.overrides,
             api_configs: self.api_configs,
             use_settings_proxy: self.use_settings_proxy,
             provider_settings: self.provider_settings,
@@ -184,11 +171,9 @@ fn model_profile_summary(profile: ProfileDef) -> crate::api_types::ModelProfileS
         Some(catalog) => (catalog.label.clone(), catalog.icon.clone()),
         None => (profile.provider.clone(), None),
     };
-    let api_type_warnings = api_type_warnings(&profile, provider);
     let api_type_models = api_type_models(&profile, provider);
     let api_type_model_options = api_type_model_options(&profile, provider, &api_type_models);
     let api_type_headers = api_type_headers(&profile, provider);
-    let warnings_for_targets = api_type_warnings.clone();
 
     crate::api_types::ModelProfileSummary {
         id: profile.id,
@@ -204,36 +189,14 @@ fn model_profile_summary(profile: ProfileDef) -> crate::api_types::ModelProfileS
                     id: id.to_string(),
                     label: label.to_string(),
                     api_type: api_type.to_string(),
-                    warning: warnings_for_targets.get(api_type).cloned(),
                 },
             )
             .collect(),
         api_types: enabled_api_types,
-        api_type_warnings,
         api_type_models,
         api_type_model_options,
         api_type_headers,
     }
-}
-
-fn api_type_warnings(
-    profile: &ProfileDef,
-    provider: Option<&'static catalog::ProviderCatalog>,
-) -> BTreeMap<String, String> {
-    let mut warnings = BTreeMap::new();
-    let Some(provider) = provider else {
-        return warnings;
-    };
-    for api_type in schema::enabled_api_types(profile) {
-        let endpoint_id = selected_endpoint_id(profile, Some(provider), &api_type);
-        if let Some(endpoint) = catalog::find_endpoint(provider, &api_type, endpoint_id.as_deref())
-        {
-            if let Some(warning) = &endpoint.compatibility_warning {
-                warnings.insert(api_type, warning.clone());
-            }
-        }
-    }
-    warnings
 }
 
 fn api_type_models(
@@ -244,17 +207,10 @@ fn api_type_models(
         .iter()
         .filter_map(|api_type| {
             let endpoint = endpoint_for(profile, provider, api_type);
-            let config = api_config_for(profile, provider, api_type);
+            let config = api_config_for(profile, api_type);
             let model = config
                 .as_ref()
                 .and_then(|config| clean_string(config.model.as_deref()))
-                .or_else(|| {
-                    profile
-                        .overrides
-                        .get(api_type)
-                        .and_then(|overrides| overrides.model.as_ref())
-                        .and_then(|model| clean_string(Some(model)))
-                })
                 .or_else(|| {
                     config.as_ref().and_then(|config| {
                         config
@@ -282,7 +238,7 @@ fn api_type_model_options(
     schema::enabled_api_types(profile)
         .iter()
         .filter_map(|api_type| {
-            let config = api_config_for(profile, provider, api_type);
+            let config = api_config_for(profile, api_type);
             let mut models = config
                 .as_ref()
                 .map(|config| {
@@ -302,13 +258,6 @@ fn api_type_model_options(
             if let Some(model) = config
                 .as_ref()
                 .and_then(|config| clean_string(config.model.as_deref()))
-                .or_else(|| {
-                    profile
-                        .overrides
-                        .get(api_type)
-                        .and_then(|overrides| overrides.model.as_ref())
-                        .and_then(|model| clean_string(Some(model)))
-                })
             {
                 if !models.iter().any(|item| item.id == model) {
                     models.insert(
@@ -346,7 +295,7 @@ fn api_type_headers(
     schema::enabled_api_types(profile)
         .iter()
         .filter_map(|api_type| {
-            let headers = api_config_for(profile, provider, api_type)
+            let headers = api_config_for(profile, api_type)
                 .map(|config| {
                     config
                         .headers
@@ -384,33 +333,17 @@ fn endpoint_for<'a>(
     api_type: &str,
 ) -> Option<&'a catalog::EndpointDef> {
     provider.and_then(|catalog| {
-        let endpoint_id = selected_endpoint_id(profile, Some(catalog), api_type);
+        let endpoint_id = selected_endpoint_id(profile, api_type);
         catalog::find_endpoint(catalog, api_type, endpoint_id.as_deref())
     })
 }
 
-fn api_config_for(
-    profile: &ProfileDef,
-    provider: Option<&catalog::ProviderCatalog>,
-    api_type: &str,
-) -> Option<schema::ProfileApiConfig> {
-    let provider = provider?;
-    schema::api_config_for(profile, provider, api_type).filter(|config| config.enabled)
+fn api_config_for(profile: &ProfileDef, api_type: &str) -> Option<schema::ProfileApiConfig> {
+    schema::api_config_for(profile, api_type).filter(|config| config.enabled)
 }
 
-fn selected_endpoint_id(
-    profile: &ProfileDef,
-    provider: Option<&catalog::ProviderCatalog>,
-    api_type: &str,
-) -> Option<String> {
-    api_config_for(profile, provider, api_type)
-        .and_then(|config| config.endpoint_id)
-        .or_else(|| {
-            profile
-                .overrides
-                .get(api_type)
-                .and_then(|overrides| overrides.endpoint_id.clone())
-        })
+fn selected_endpoint_id(profile: &ProfileDef, api_type: &str) -> Option<String> {
+    api_config_for(profile, api_type).and_then(|config| config.endpoint_id)
 }
 
 fn clean_string(value: Option<&str>) -> Option<String> {

@@ -20,7 +20,8 @@ use super::{
 use crate::web_server::auth::AuthState;
 
 fn auth_state() -> AuthState {
-    AuthState(Arc::new(common::auth::AuthToken::generate()))
+    let owner = Arc::new(common::auth::AuthToken::generate());
+    AuthState::new(Arc::clone(&owner), owner)
 }
 
 fn proxy_request_for(
@@ -354,7 +355,7 @@ async fn owner_proxy_transparently_forwards_http_to_ipv4_loopback() {
 #[test]
 fn owner_proxy_does_not_forward_the_daemon_bearer_token() {
     let auth = auth_state();
-    let daemon = format!("Bearer {}", auth.0.as_str()).parse().unwrap();
+    let daemon = format!("Bearer {}", auth.owner.as_str()).parse().unwrap();
     let app = "Bearer app-secret".parse().unwrap();
 
     assert!(is_daemon_authorization(&daemon, &auth));
@@ -525,7 +526,7 @@ fn cookie_header_uses_the_root_path_without_exposing_the_owner_token() {
     assert!(cookie.contains("Path=/"));
     assert!(cookie.contains("Secure"));
     assert!(cookie.contains("HttpOnly"));
-    assert!(!cookie.contains(auth.0.as_str()));
+    assert!(!cookie.contains(auth.owner.as_str()));
 }
 
 #[test]

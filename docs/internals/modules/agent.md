@@ -1,10 +1,10 @@
 # Module: agent
 
-`src/core/src/agent/` — one live ACP connection to a coding CLI, and everything needed to start it correctly: launch rendering, config injection, install helpers.
+`src/core/src/agent/` — one live ACP connection to a coding CLI, launch preparation, and install helpers.
 
 ## Responsibility
 
-Wrap a single agent subprocess behind a typed handle (`Agent`) speaking ACP, and prepare the ground it runs on: profile-derived env/args, VibeAround's MCP + skills written into the agent's global config, startup session semantics (fresh / load / resume).
+Wrap a single agent subprocess behind a typed ACP handle and prepare profile env/args, project skills, MCP config, and startup session state.
 
 ## Key types
 
@@ -15,7 +15,7 @@ Wrap a single agent subprocess behind a typed handle (`Agent`) speaking ACP, and
 | `AcpAgentBridge` | `bridge.rs` | ProcessBridge impl: drives the ACP connection, handles startup session attach/fallback |
 | `StartupSession` | `runtime.rs` | Fresh vs resume-by-id startup semantics |
 | `launch` | `launch.rs` | Profile materialization for hosted + native launches (`DIRECT_PROFILE_ID`, credential env, profile-id env) |
-| `mcp` / `skills` | `mcp.rs`, `skills.rs` | Global + project-scoped config injection per agent (paths from the registry's `global_config`) |
+| `mcp` / `skills` | `mcp.rs`, `skills.rs` | Project MCP config and reserved skill synchronization |
 | `install` | `install.rs` | Agent CLI / ACP adapter installation (npm packages from the registry) |
 
 ## Interactions
@@ -29,7 +29,7 @@ Wrap a single agent subprocess behind a typed handle (`Agent`) speaking ACP, and
 
 1. **Crashes surface, not auto-heal**: restart policy is `Never`; the owning thread decides whether to respawn. Do not add silent retry here.
 2. **Startup-session fallback clears the stale id**: if resume fails and the bridge fell back to a fresh agent, the recorded candidate session id must be cleared so a real one is created — otherwise prompts target a dead session.
-3. **Config injection is idempotent and reversible**: MCP/skill writes are marked as VibeAround-managed so launch-time cleanup can remove them when the daemon is down.
+3. **Launch preparation is deterministic**: reserved skills are replaced on every launch; MCP config uses the current `auth-mcp.json` credential.
 4. **Registry-driven identity**: adding an agent is an `agents.json` change (adapter package, pty command, config paths), not new match arms — keep it that way where possible.
 5. `Agent::shutdown` must not return until the supervisor has reaped the child and joined or bounded-aborted that generation's bridge task.
 

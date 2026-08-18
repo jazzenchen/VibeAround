@@ -90,7 +90,7 @@ fn status_response(q: StatusQuery, req: Request) -> Response {
             let Some(auth) = req.extensions().get::<AuthState>() else {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             };
-            let token = auth.0.as_str();
+            let token = auth.owner.as_str();
             let [clear_legacy_cookie, owner_cookie] = owner_cookie_headers_for_request(&req, token);
             // Return the daemon's in-memory token so the SPA can store it in
             // sessionStorage. The verified sid remains idempotent until expiry.
@@ -199,7 +199,7 @@ mod tests {
                 .unwrap();
             request
                 .extensions_mut()
-                .insert(AuthState(Arc::clone(&auth)));
+                .insert(AuthState::new(Arc::clone(&auth), Arc::clone(&auth)));
             let response = super::status_response(super::StatusQuery { sid: sid.clone() }, request);
             assert_eq!(response.status(), StatusCode::OK);
             let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -239,7 +239,7 @@ mod tests {
         let app = Router::new()
             .route("/", post(super::complete_handler))
             .route_layer(middleware::from_fn_with_state(
-                AuthState(auth),
+                AuthState::new(Arc::clone(&auth), auth),
                 require_auth,
             ));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

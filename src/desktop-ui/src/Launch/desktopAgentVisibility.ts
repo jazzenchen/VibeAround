@@ -7,10 +7,7 @@ import type { AgentLaunchPreference } from "./types";
 function hasConfiguredPath(
   preference: AgentLaunchPreference | undefined,
 ): boolean {
-  return Boolean(
-    preference?.executable?.path.trim() ||
-      preference?.executablePath?.trim(),
-  );
+  return Boolean(preference?.executable?.path.trim());
 }
 
 export function visibleLaunchAgents(

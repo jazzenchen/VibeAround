@@ -2,6 +2,7 @@ use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use super::*;
 use common::channels::{ChannelOutput, WebChannelManager};
@@ -113,7 +114,10 @@ fn owner_chat_accepts_a_paired_remote_server_preview() {
     );
     remote
         .extensions_mut()
-        .insert(crate::web_server::auth::AuthState(auth));
+        .insert(crate::web_server::auth::AuthState::new(
+            Arc::clone(&auth),
+            auth,
+        ));
 
     let route = resolve_owner_chat_route(
         &slug,

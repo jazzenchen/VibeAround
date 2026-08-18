@@ -1,8 +1,6 @@
 //! Codex Desktop profile overlay.
 //!
-//! Codex Desktop reads the shared `~/.codex/config.toml`, while the CLI can
-//! take profile-specific `-c` args. For desktop profile launches, reconcile our
-//! previous marker blocks first, then write a fresh VibeAround-owned overlay.
+//! Codex Desktop reads a VibeAround-owned overlay in `~/.codex/config.toml`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -606,9 +604,7 @@ mod tests {
             label: "DeepSeek".to_string(),
             provider: "deepseek".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-responses".to_string()],
             credentials: Default::default(),
-            overrides: Default::default(),
             api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: Default::default(),

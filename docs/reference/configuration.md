@@ -21,10 +21,9 @@ Everything lives under `~/.vibearound/` (override with `VIBEAROUND_DATA_DIR`):
 | `.cache/` | channel plugins | Downloaded chat attachments | Safe to purge |
 | `logs/runtime/` | daemon | Daily rolling log files (`vibearound.log.<date>`) | Safe to purge |
 | `*.jsonl` (workspace/thread/attachment event logs) | daemon | Conversation state ([workspace module](../internals/modules/workspace.md)) | **No** — append-only event logs |
-| `launcher.json` | desktop | Desktop-only launch preferences (terminal choice, per-agent workspace compat) | Prefer the UI |
 | `desktop-apps.detected.json` | desktop detection | Cached Claude/Codex Desktop app locations | No — cache |
 
-VibeAround also writes **into each enabled agent's own global config** (MCP server entry + skill files, at the paths declared in the agent registry — e.g. `~/.claude.json` `mcpServers` and `~/.claude/skills/vibearound/`). These writes are marked VibeAround-managed and are removed by launch-time cleanup when the daemon is down ([launch flow, step 5](../internals/flows/native-launch.md)).
+Before each launch, VibeAround replaces its reserved project skills and writes the current daemon MCP credential into the project's agent config. Paths come from the agent registry; unrelated configuration is unchanged ([launch flow, step 5](../internals/flows/native-launch.md)).
 
 ## settings.json
 
@@ -49,10 +48,6 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
   // --- Agents ---
   "default_agent": "claude",
   "enabled_agents": ["claude", "codex"],  // omit to enable every known agent
-  "integrations": {
-    "mcp_auto_install": true,        // write VibeAround MCP config into agent configs
-    "skill_auto_install": true      // write VibeAround skills into agent skill dirs
-  },
 
   // --- Networking ---
   "proxy": { "enabled": true, "http_proxy": "http://…", "no_proxy": "…" },

@@ -873,10 +873,6 @@ async function writeMatrixHome(home, workspace, upstreamUrl) {
     workspaces: [workspace],
     default_agent: "codex",
     enabled_agents: ["codex", "claude", "pi", "gemini", "opencode"],
-    integrations: {
-      mcp_auto_install: false,
-      skill_auto_install: false,
-    },
     launcher: {
       agents: fakeAgentPreferences(home),
     },

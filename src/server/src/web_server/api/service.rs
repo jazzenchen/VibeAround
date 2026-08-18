@@ -10,7 +10,6 @@ pub async fn health_handler() -> Json<crate::api_types::ServiceHealthResponse> {
         ok: true,
         service: "vibearound-server",
         version: env!("CARGO_PKG_VERSION"),
-        channel_outbox_pending: 0,
     })
 }
 

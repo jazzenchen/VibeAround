@@ -33,7 +33,10 @@ pub fn render_for_launch_api_type(
             api_type
         );
     }
-    if !profile.api_types.iter().any(|t| t == api_type)
+    if !profile
+        .api_configs
+        .get(api_type)
+        .is_some_and(|config| config.enabled)
         || !provider.endpoints.iter().any(|e| e.api_type == api_type)
     {
         bail!(
@@ -44,14 +47,6 @@ pub fn render_for_launch_api_type(
         );
     }
     render(profile, api_type, launch_target, provider)
-}
-
-pub fn env_for_launch(
-    profile: &ProfileDef,
-    launch_target: &str,
-) -> anyhow::Result<Vec<(String, String)>> {
-    let rendered = render_for_launch(profile, launch_target)?;
-    materialize_env_for_profile(profile, rendered)
 }
 
 pub fn render_for_agent_route(
@@ -67,8 +62,6 @@ pub fn render_for_agent_route(
             launch_id,
             &route.client_api_type,
             target_api_type,
-            route.bridge_upstream_model.as_deref(),
-            route.bridge_fake_model_id.as_deref(),
             &route.bridge_models,
         ),
         None => render_for_launch_api_type(profile, launch_target, &route.client_api_type),
@@ -216,7 +209,10 @@ pub fn api_type_for_launch_target<'a>(
     let candidates = api_types_for_launch_target(launch_target);
 
     for candidate in candidates {
-        if profile.api_types.iter().any(|t| t == candidate)
+        if profile
+            .api_configs
+            .get(*candidate)
+            .is_some_and(|config| config.enabled)
             && provider.endpoints.iter().any(|e| e.api_type == *candidate)
         {
             return Ok(candidate);

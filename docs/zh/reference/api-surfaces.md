@@ -4,7 +4,7 @@
 
 ## MCP 工具
 
-在 `/mcp` 提供（streamable HTTP 上的 JSON-RPC，token 认证）。`integrations.mcp_auto_install` 开启时自动注入已启用 Agent 的全局配置。
+在 `/mcp` 提供（streamable HTTP 上的 JSON-RPC）。每次 daemon 启动都会在 `~/.vibearound/auth-mcp.json` 生成一个 MCP-only credential；每次通过 VibeAround 启动 Agent 时，都会把当前 credential 写入该 Agent 的项目级 MCP 配置。Dashboard/control API 不接受这个 credential。
 
 | 工具 | 用途 |
 |---|---|
@@ -15,7 +15,7 @@
 | `wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
 | `preview` | 预览一个明确来源：正在运行的 dev-server `port` 或 Markdown `file`；Markdown 由 VibeAround 直接渲染，不会另起服务 |
 
-按 Agent 安装的配套技能（`skill_auto_install`）：`vibearound`（交接）、`va-session`、`va-preview`、`agent-collaboration`。
+每次启动还会用 bundled 版本替换 VibeAround 保留的项目级技能：`vibearound`（交接）、`va-session`、`va-preview`，以及受支持 Agent 的 `agent-collaboration`。
 
 ## 本地 API 路由族
 

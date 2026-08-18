@@ -41,8 +41,8 @@ fn route_defaults_derive_host_and_workspace_from_one_settings_snapshot() {
         "remote": {
             "channels": {
                 "telegram": {
-                    "agentId": "claude",
-                    "profileId": "channel-profile"
+                    "agent_id": "claude",
+                    "profile_id": "channel-profile"
                 }
             }
         }

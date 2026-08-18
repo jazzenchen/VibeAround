@@ -1,6 +1,5 @@
 //! Cloudflare Tunnel: expose the web dashboard via `cloudflared tunnel run --token <TOKEN>`.
-//! The public URL is configured in Cloudflare Dashboard (Public Hostname), so we read it from
-//! settings.json `tunnel.cloudflare.hostname` instead of parsing stdout.
+//! The public URL comes from `tunnel.cloudflare.hostname`.
 
 use std::path::PathBuf;
 use std::process::Stdio;

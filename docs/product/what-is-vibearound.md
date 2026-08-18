@@ -23,7 +23,7 @@ VibeAround runs a local daemon that hosts your agents and exposes them through e
 
 **Operate everything from a browser.** The web dashboard serves a real terminal (xterm over WebSocket), a web chat with permission cards, dev-server previews, and rendered Markdown previews. Server and Markdown owner links can be reached through a built-in tunnel (ngrok, localtunnel, Cloudflare, or Tailscale Funnel) after pairing; their Shares instead use a reusable six-digit access code and 10-minute deadline. The Server Share page-preview proxy forwards authenticated GET/HEAD paths unchanged, including page data reads; writes, protocol upgrades, service workers, WebSockets, and HMR are unsupported. `/va/*`, owner pages, chat, and review controls are excluded.
 
-**Launch agents your way.** The desktop app and `va launch` open agent CLIs in your own terminal with a saved profile: credentials materialized, model routing configured, project integrations installed.
+**Launch agents your way.** The desktop app and `va launch` open agent CLIs in your terminal with materialized credentials, model routing, synchronized project skills, and MCP config.
 
 **Run multiple agents at once.** Claude on Telegram and Codex on Slack simultaneously, each with independent threads and workspaces. Agents can also spawn parallel subagents for multi-agent turns inside one thread.
 

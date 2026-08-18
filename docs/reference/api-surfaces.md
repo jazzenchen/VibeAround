@@ -4,7 +4,7 @@ The daemon's programmable surfaces: MCP tools for agents, local API routes for m
 
 ## MCP tools
 
-Served at `/mcp` (JSON-RPC over streamable HTTP, token-authenticated). Auto-injected into enabled agents' global configs when `integrations.mcp_auto_install` is on.
+Served at `/mcp` (JSON-RPC over streamable HTTP). Each daemon start creates an MCP-only credential in `~/.vibearound/auth-mcp.json`; every VibeAround launch writes the current credential into that agent's project-scoped MCP config. The credential is rejected by dashboard/control APIs.
 
 | Tool | Purpose |
 |---|---|
@@ -15,7 +15,7 @@ Served at `/mcp` (JSON-RPC over streamable HTTP, token-authenticated). Auto-inje
 | `wait_for_subagents` | Block until subagents report completion; returns their reports |
 | `preview` | Preview exactly one source: a running dev-server `port` or a Markdown `file`. Markdown is rendered directly without starting a separate server |
 
-Companion skills installed per agent (`skill_auto_install`): `vibearound` (handover), `va-session`, `va-preview`, `agent-collaboration`.
+Every launch also replaces the VibeAround-reserved project skills with the bundled versions: `vibearound` (handover), `va-session`, `va-preview`, and, where supported, `agent-collaboration`.
 
 ## Local API route families
 

@@ -227,8 +227,6 @@ export function SettingsDialog({
     () => new Set(),
   );
   const [defaultWorkspace, setDefaultWorkspace] = useState("");
-  const [mcpAutoInstall, setMcpAutoInstall] = useState(true);
-  const [skillAutoInstall, setSkillAutoInstall] = useState(true);
   const [channelConfigs, setChannelConfigs] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -405,8 +403,7 @@ export function SettingsDialog({
       : {};
     const maxRetries = retry429.max_retries;
     const delaySeconds = retry429.delay_seconds;
-    const replaceWebSearch =
-      apiBridge.replace_provider_web_search ?? apiBridge.replaceProviderWebSearch;
+    const replaceWebSearch = apiBridge.replace_provider_web_search;
 
     const nextForm = {
       retry429Enabled:
@@ -436,13 +433,9 @@ export function SettingsDialog({
       ? loadedSettings.search_tool
       : {};
     const sources = isRecord(searchTool.sources) ? searchTool.sources : {};
-    setSearchMaxResults(
-      searchMaxResultsInput(searchTool.max_results ?? searchTool.maxResults),
-    );
+    setSearchMaxResults(searchMaxResultsInput(searchTool.max_results));
     setSearchContextSize(
-      searchContextSizeValue(
-        searchTool.search_context_size ?? searchTool.searchContextSize,
-      ),
+      searchContextSizeValue(searchTool.search_context_size),
     );
     setSearchSources(() => {
       const next = defaultSearchSourceForms();
@@ -465,12 +458,6 @@ export function SettingsDialog({
     setServiceSideImageModel(imageInput?.model?.trim() ?? "");
   }, []);
 
-  const hydrateIntegrations = useCallback((loadedSettings: AppSettings) => {
-    const integrations = loadedSettings.integrations;
-    setMcpAutoInstall(integrations?.mcp_auto_install ?? true);
-    setSkillAutoInstall(integrations?.skill_auto_install ?? true);
-  }, []);
-
   const hydrateGeneral = useCallback((
     loadedSettings: AppSettings,
     effectiveDefaultWorkspace: string,
@@ -486,13 +473,8 @@ export function SettingsDialog({
         ? "managed"
         : "system",
     );
-    const configuredPortableToolchain =
-      loadedSettings.startkit?.portable_toolchain ??
-      loadedSettings.startkit?.portableToolchain;
     setPortableToolchain(
-      typeof configuredPortableToolchain === "boolean"
-        ? configuredPortableToolchain
-        : loadedSettings.startkit?.toolchain_mode === "managed",
+      loadedSettings.startkit?.portable_toolchain === true,
     );
   }, []);
 
@@ -556,7 +538,6 @@ export function SettingsDialog({
       hydrateApiBridge(loadedSettings);
       hydrateSearchTool(loadedSettings);
       hydrateServiceSide(loadedSettings);
-      hydrateIntegrations(loadedSettings);
       hydrateGeneral(loadedSettings, workspaceResponse.default_workspace);
       await readAuthToken();
       setSettingsLoaded(true);
@@ -573,7 +554,6 @@ export function SettingsDialog({
     hydrateApiBridge,
     hydrateChannels,
     hydrateGeneral,
-    hydrateIntegrations,
     hydrateProxy,
     hydrateSearchTool,
     hydrateServiceSide,
@@ -860,8 +840,6 @@ export function SettingsDialog({
         settings,
         agents,
         enabledAgents,
-        mcpAutoInstall,
-        skillAutoInstall,
       });
       const saved = await saveSettingsPatch(settings, nextSettings);
       setSettings(saved.settings);
@@ -881,8 +859,6 @@ export function SettingsDialog({
     settings,
     agents,
     enabledAgents,
-    mcpAutoInstall,
-    skillAutoInstall,
     onServicesRestarted,
   ]);
 
@@ -1613,11 +1589,7 @@ export function SettingsDialog({
                     <AgentSettingsPanel
                       agents={agents}
                       enabledAgents={enabledAgents}
-                      mcpAutoInstall={mcpAutoInstall}
-                      skillAutoInstall={skillAutoInstall}
                       onToggle={toggleAgent}
-                      onMcpAutoInstallChange={setMcpAutoInstall}
-                      onSkillAutoInstallChange={setSkillAutoInstall}
                       onUninstallMcp={() => void uninstallIntegrations("mcp")}
                       onUninstallSkills={() => void uninstallIntegrations("skills")}
                       saving={saving}
@@ -2247,11 +2219,7 @@ function PluginInventoryCard({
 function AgentSettingsPanel({
   agents,
   enabledAgents,
-  mcpAutoInstall,
-  skillAutoInstall,
   onToggle,
-  onMcpAutoInstallChange,
-  onSkillAutoInstallChange,
   onUninstallMcp,
   onUninstallSkills,
   saving,
@@ -2259,11 +2227,7 @@ function AgentSettingsPanel({
 }: {
   agents: AgentSummary[];
   enabledAgents: Set<string>;
-  mcpAutoInstall: boolean;
-  skillAutoInstall: boolean;
   onToggle: (agentId: string) => void;
-  onMcpAutoInstallChange: (value: boolean) => void;
-  onSkillAutoInstallChange: (value: boolean) => void;
   onUninstallMcp: () => void;
   onUninstallSkills: () => void;
   saving: SaveState;
@@ -2333,30 +2297,6 @@ function AgentSettingsPanel({
         </StatusBanner>
       )}
       <div className="rounded-md border border-border">
-        <SettingsActionRow
-          label={t("Auto-install MCP")}
-          description={t("Install VibeAround MCP in the selected workspace when an agent launches.")}
-          action={
-            <Switch
-              checked={mcpAutoInstall}
-              onCheckedChange={onMcpAutoInstallChange}
-              aria-label={t("Auto-install MCP")}
-              size="sm"
-            />
-          }
-        />
-        <SettingsActionRow
-          label={t("Auto-install skills")}
-          description={t("Install VibeAround skills in the selected workspace when an agent launches.")}
-          action={
-            <Switch
-              checked={skillAutoInstall}
-              onCheckedChange={onSkillAutoInstallChange}
-              aria-label={t("Auto-install skills")}
-              size="sm"
-            />
-          }
-        />
         <SettingsActionRow
           label={t("Uninstall legacy MCP")}
           description={t("Remove legacy VibeAround MCP entries from old global config.")}
@@ -3112,24 +3052,15 @@ function buildAgentSettings({
   settings,
   agents,
   enabledAgents,
-  mcpAutoInstall,
-  skillAutoInstall,
 }: {
   settings: AppSettings;
   agents: AgentSummary[];
   enabledAgents: Set<string>;
-  mcpAutoInstall: boolean;
-  skillAutoInstall: boolean;
 }): AppSettings {
   const result: AppSettings = { ...settings };
   result.enabled_agents = agents
     .map((agent) => agent.id)
     .filter((id) => enabledAgents.has(id));
-  result.integrations = {
-    ...(isRecord(settings.integrations) ? settings.integrations : {}),
-    mcp_auto_install: mcpAutoInstall,
-    skill_auto_install: skillAutoInstall,
-  };
   return result;
 }
 
@@ -3213,7 +3144,6 @@ function buildWebSearchSettings({
     ? { ...result.api_bridge }
     : {};
   apiBridge.replace_provider_web_search = replaceProviderWebSearch;
-  delete apiBridge.replaceProviderWebSearch;
   result.api_bridge = apiBridge as AppSettings["api_bridge"];
   return result;
 }

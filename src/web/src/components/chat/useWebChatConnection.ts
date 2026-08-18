@@ -25,6 +25,7 @@ import {
   appendErrorToStreamMessage,
   appendStandaloneAssistantMessage,
   mergeChatMessageSnapshots,
+  setStreamProgressMessage,
   settleStreamActivitiesMessage,
 } from "./chatMessageUpdates";
 import { applyChatTranscriptUpdate } from "./chatTranscriptUpdates";
@@ -625,10 +626,7 @@ export function useWebChatConnection({
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
-        // Other ACP update variants (available_commands_update, mode/config,
-        // session metadata, usage, etc.) update surrounding UI rather than the
-        // visible transcript. Ignored here so future SDK additions don't crash
-        // the handler.
+        // Non-transcript ACP updates are handled by surrounding UI state.
         default:
           if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
@@ -966,24 +964,24 @@ export function useWebChatConnection({
     const ws = wsRef.current;
     const replayContext = resumeReplayRef.current ?? replayCacheContextRef.current;
     const abortedSessionId = replayContext?.sessionId;
-    if (ws?.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(JSON.stringify({ type: "stop" }));
-      } catch (error) {
-        console.warn("[ChatView] failed to stop chat message:", error);
-      }
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(JSON.stringify({ type: "stop" }));
+      setMessages((prev) =>
+        setStreamProgressMessage(prev, t("Stopping…"), "tool"),
+      );
+    } catch (error) {
+      console.warn("[ChatView] failed to stop chat message:", error);
+      return;
     }
     if (abortedSessionId) {
       ignoredReplaySessionsRef.current.add(abortedSessionId);
     }
-    promptInFlightRef.current = false;
-    setStreaming(false);
-    setMessages((prev) => settleStreamActivitiesMessage(prev));
     replayMessageBufferRef.current = null;
     cancelReplayOnNextTurnRef.current = false;
     clearReplayCacheContext();
     updateResumeReplay(null);
-  }, [clearReplayCacheContext, updateResumeReplay]);
+  }, [clearReplayCacheContext, t, updateResumeReplay]);
 
   const sendPermissionResponse = useCallback((requestId: string, optionId: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;

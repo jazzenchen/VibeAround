@@ -7,15 +7,10 @@
 //! [`AgentReady`] to the caller via a oneshot before holding the connection
 //! open until cancellation or child stdout EOF.
 //!
-//! Unlike [`ChannelPluginBridge`], the agent has **no restart policy**
-//! ([`RestartPolicy::Never`]). One bridge = one spawn = one `AgentReady`.
-//! The `BridgeFactory` handed to [`Supervisor::register`] is therefore
-//! single-shot: we build the bridge eagerly and `take()` it from the
-//! `FnMut` factory the first (and only) time the factory is invoked.
+//! ACP agents use [`RestartPolicy::Never`]: one bridge produces one
+//! process spawn and one [`AgentReady`].
 //!
-//! [`ChannelPluginBridge`]: crate::channels::plugin_bridge::ChannelPluginBridge
 //! [`RestartPolicy::Never`]: crate::process::RestartPolicy::Never
-//! [`Supervisor::register`]: crate::process::Supervisor::register
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -167,8 +162,7 @@ async fn drive_agent_bridge(
                 }
                 StartupSession::Resume(session_id) | StartupSession::ResumeOnly(session_id) => {
                     let allow_load_fallback = matches!(startup_session, StartupSession::Resume(_));
-                    // Keep this on after a successful startup attach. `Agent`
-                    // clears it before the first real prompt/new session.
+                    // Suppress startup notifications until the first prompt or session reset.
                     suppress_startup_notifications.store(true, Ordering::SeqCst);
                     let resume_result = if initialize
                         .agent_capabilities

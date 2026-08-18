@@ -83,7 +83,7 @@ pub struct ProfileConnectionPreference {
     pub selected_api_type: Option<String>,
     /// Per client API shape bridge settings. The key is the selected/client
     /// API type, and `target_api_type` is the profile/provider API type.
-    #[serde(default, alias = "proxy", skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bridge: BTreeMap<String, ProfileBridgePreference>,
 }
 
@@ -94,15 +94,6 @@ pub struct ProfileBridgePreference {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_api_type: Option<String>,
-    // TODO(0.7.x): remove these single-model compatibility fields once all
-    // saved bridge preferences have migrated to `models`.
-    /// The real upstream model this bridge route should run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub upstream_model: Option<String>,
-    /// Optional model id exposed to the agent. The bridge maps it back to
-    /// `upstream_model` before calling the provider.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fake_model_id: Option<String>,
     /// Optional per-route model list. Each entry can expose a fake model id to
     /// the agent while routing to a provider-specific upstream model id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -302,16 +293,6 @@ fn set_agent_workspace_in_settings(
     })
 }
 
-pub fn write_agent_executable_path(
-    agent_id: &str,
-    executable_path: Option<PathBuf>,
-) -> anyhow::Result<()> {
-    write_agent_executable(
-        agent_id,
-        executable_path.map(AgentExecutablePreference::manual),
-    )
-}
-
 pub fn write_agent_executable(
     agent_id: &str,
     executable: Option<AgentExecutablePreference>,
@@ -506,18 +487,6 @@ pub(crate) fn connection_preference_is_empty(preference: &ProfileConnectionPrefe
             !bridge.enabled
                 && bridge
                     .target_api_type
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .is_empty()
-                && bridge
-                    .upstream_model
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .is_empty()
-                && bridge
-                    .fake_model_id
                     .as_deref()
                     .map(str::trim)
                     .unwrap_or_default()

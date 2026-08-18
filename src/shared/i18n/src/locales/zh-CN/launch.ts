@@ -401,8 +401,6 @@ export const zhCNLaunch: Record<string, string> = {
     "打开 Codex 配置文件，添加这段配置，或更新已有的 VibeAround 配置块。",
   "Open the Codex config file, then add this snippet or update the existing VibeAround top-level model settings.":
     "打开 Codex 配置文件，添加这段配置，或更新已有的 VibeAround 顶层模型设置。",
-  "Codex 0.134.0 and newer reject the old top-level profile selector, so this snippet leaves that line commented as a migration hint.":
-    "Codex 0.134.0 及更新版本会拒绝旧的顶层 profile 选择器，所以这段片段会把那一行保留为注释，作为迁移提示。",
   "Open the OpenCode config file, then add or merge this provider block.":
     "打开 OpenCode 配置文件，然后添加或合并这段 provider 配置。",
   "Copy the matching parts into the Gemini CLI settings and env files yourself. VibeAround does not edit them automatically.":

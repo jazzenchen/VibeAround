@@ -485,7 +485,7 @@ fn resume_command_for_agent(
 mod tests {
     use std::collections::BTreeMap;
 
-    use ::common::profiles::schema::{ApiTypeOverrides, AuthMode, ProfileDef, ProviderSettings};
+    use ::common::profiles::schema::{AuthMode, ProfileApiConfig, ProfileDef, ProviderSettings};
 
     use super::*;
 
@@ -544,20 +544,19 @@ mod tests {
             label: "MiniMax Test".to_string(),
             provider: "minimax".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["anthropic".to_string()],
             credentials: [("api_key".to_string(), "test-key".to_string())]
                 .into_iter()
                 .collect(),
-            overrides: [(
+            api_configs: [(
                 "anthropic".to_string(),
-                ApiTypeOverrides {
+                ProfileApiConfig {
+                    enabled: true,
                     model: Some("MiniMax-M2.7".to_string()),
                     ..Default::default()
                 },
             )]
             .into_iter()
             .collect::<BTreeMap<_, _>>(),
-            api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
             connections: Default::default(),

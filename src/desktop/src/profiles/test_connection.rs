@@ -4,7 +4,7 @@ use common::config;
 use common::profiles::catalog::{self, EndpointDef, ProviderCatalog};
 use common::profiles::endpoint_url::join_protocol_endpoint;
 use common::profiles::headers::merged_upstream_headers;
-use common::profiles::schema::{AuthMode, ProfileDef};
+use common::profiles::schema::{self, AuthMode, ProfileDef};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -22,7 +22,8 @@ pub async fn test_connection(draft: ProfileDraft) -> Result<ProfileConnectionTes
     if profile.auth_mode != AuthMode::ApiKey {
         return Err("Connection test currently supports API key profiles.".to_string());
     }
-    if profile.api_types.is_empty() {
+    let api_types = schema::enabled_api_types(&profile);
+    if api_types.is_empty() {
         return Err("Pick at least one API type.".to_string());
     }
 
@@ -31,7 +32,7 @@ pub async fn test_connection(draft: ProfileDraft) -> Result<ProfileConnectionTes
     let client = test_http_client(&profile)?;
     let mut tested_api_types = Vec::new();
 
-    for api_type in &profile.api_types {
+    for api_type in &api_types {
         test_api_type(&client, &profile, provider, api_type)
             .await
             .map_err(|error| format!("{api_type}: {error}"))?;
@@ -48,10 +49,13 @@ async fn test_api_type(
     api_type: &str,
 ) -> Result<(), String> {
     let endpoint = selected_endpoint(profile, provider, api_type)?;
-    let base_url = profile
-        .overrides
+    let config = profile
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.base_url.as_deref())
+        .ok_or_else(|| format!("API config '{api_type}' is missing."))?;
+    let base_url = config
+        .base_url
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(endpoint.default_base_url.trim())
@@ -101,9 +105,9 @@ fn selected_endpoint<'a>(
     api_type: &str,
 ) -> Result<&'a EndpointDef, String> {
     let endpoint_id = profile
-        .overrides
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.endpoint_id.as_deref());
+        .and_then(|config| config.endpoint_id.as_deref());
     catalog::find_endpoint(provider, api_type, endpoint_id).ok_or_else(|| {
         let suffix = endpoint_id
             .map(|id| format!(" endpoint_id '{id}'"))
@@ -121,12 +125,21 @@ fn selected_model(
     api_type: &str,
 ) -> Result<String, String> {
     let requested = profile
-        .overrides
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.model.as_deref())
+        .and_then(|config| config.model.as_deref())
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .map(ToString::to_string)
+        .or_else(|| {
+            profile.api_configs.get(api_type).and_then(|config| {
+                config
+                    .models
+                    .iter()
+                    .find(|model| model.enabled)
+                    .map(|model| model.id.clone())
+            })
+        })
         .or_else(|| endpoint.models.first().map(|model| model.id.clone()))
         .ok_or_else(|| "Model is required.".to_string())?;
     Ok(catalog::canonical_model_id(endpoint, &requested).unwrap_or(requested))

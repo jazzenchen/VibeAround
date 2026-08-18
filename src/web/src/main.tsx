@@ -54,10 +54,7 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
     opts.headers = headers;
   }
   const res = await originalFetch.call(this, input, opts);
-  // If the daemon restarted and issued a new token, any same-origin API
-  // call will come back 401 with our stale bearer attached. Drop the
-  // token so the next render sees an unauthenticated state and the
-  // visible app gate takes over.
+  // A 401 invalidates the session credential.
   if (res.status === 401 && isSameOrigin) {
     const isApiCall =
       typeof url === "string" &&
@@ -65,8 +62,7 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
     const hadBearerToken = getAuthToken() !== null;
     if (isApiCall && hadBearerToken) {
       clearAuthToken();
-      // Hard reload so React unmounts and `main.tsx` re-evaluates the gate.
-      // Guard with a one-shot flag so a burst of 401s doesn't loop.
+      // Reload once to re-evaluate the auth gate.
       if (!sessionStorage.getItem("vibearound.auth.reloading")) {
         sessionStorage.setItem("vibearound.auth.reloading", "1");
         window.location.reload();
@@ -76,11 +72,7 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
   return res;
 };
 
-// Auth gate: render the pairing page if we have no token to send.
-// The SPA bundle is fetched through the public `/` + `/assets/*` routes
-// regardless — this only changes what we render once React boots, so
-// anyone who loads the page without a token sees a clear explanation
-// instead of an empty broken-looking dashboard.
+// Render pairing when no session credential is available.
 const hasToken = getAuthToken() !== null;
 const previewSlug = ownerPreviewSlug(window.location.pathname);
 

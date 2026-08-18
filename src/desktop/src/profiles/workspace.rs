@@ -19,14 +19,12 @@ pub struct WorkspaceOption {
 
 pub(super) fn launcher_workspace_options(agent_id: Option<&str>) -> Vec<WorkspaceOption> {
     let builtin = config::builtin_workspaces_dir();
-    let home = terminal::launch_home_dir().unwrap_or_else(|_| config::data_dir());
     let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
     let selected = agent_id
         .map(canonical_agent_id)
-        .and_then(|agent_id| resolve_agent_workspace_preference(&agent_id, &agent_prefs).ok())
-        .or_else(|| terminal::resolve_workspace_preference().ok());
+        .and_then(|agent_id| resolve_agent_workspace_preference(&agent_id, &agent_prefs, &cfg).ok())
+        .or_else(|| terminal::canonical_workspace_path(&cfg.default_workspace).ok());
     let mut out = Vec::new();
-    push_workspace_option(&mut out, &home, "Home", "home", false);
     for workspace in cfg.all_workspaces() {
         let is_default = config::workspace_paths_equal(&workspace, &builtin);
         let kind = if is_default { "built-in" } else { "workspace" };
@@ -87,32 +85,23 @@ pub(super) fn canonical_agent_id(agent_id: &str) -> String {
 pub(super) fn resolve_agent_workspace_preference(
     agent_id: &str,
     agent_prefs: &agent_state::AgentsPrefsFile,
+    cfg: &config::Config,
 ) -> anyhow::Result<PathBuf> {
-    if let Some(workspace) = agent_prefs
-        .agents
-        .get(agent_id)
-        .and_then(|preference| preference.workspace.as_ref())
-    {
-        return terminal::canonical_workspace_path(workspace);
-    }
-    terminal::resolve_workspace_preference()
+    terminal::canonical_workspace_path(&agent_state::resolve_agent_workspace(
+        agent_prefs,
+        cfg,
+        agent_id,
+    ))
 }
 
 pub(super) fn resolve_launch_workspace(agent_id: &str) -> anyhow::Result<PathBuf> {
-    let agent_prefs = agent_state::read_prefs();
-    resolve_agent_workspace_preference(agent_id, &agent_prefs)
+    let (cfg, agent_prefs) = agent_state::read_config_and_prefs();
+    resolve_agent_workspace_preference(agent_id, &agent_prefs, &cfg)
 }
 
 fn should_register_launcher_workspace(path: &Path) -> bool {
     let builtin = config::builtin_workspaces_dir();
     if config::workspace_paths_equal(path, &builtin) {
-        return false;
-    }
-    if terminal::launch_home_dir()
-        .as_ref()
-        .map(|home| config::workspace_paths_equal(path, home))
-        .unwrap_or(false)
-    {
         return false;
     }
     true
@@ -149,5 +138,27 @@ fn path_label(path: &Path) -> String {
         name.to_string()
     } else {
         path.to_string_lossy().to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_agent_workspace_uses_config_default() {
+        let workspace = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let mut cfg = config::Config::default();
+        cfg.default_workspace = workspace.clone();
+
+        assert_eq!(
+            resolve_agent_workspace_preference(
+                "claude",
+                &agent_state::AgentsPrefsFile::default(),
+                &cfg,
+            )
+            .unwrap(),
+            workspace
+        );
     }
 }

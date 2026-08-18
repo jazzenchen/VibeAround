@@ -1,11 +1,3 @@
-import type { AgentLaunchPreference } from "./types";
-
-export type CodexSandboxPreset =
-  | "default"
-  | "read-only"
-  | "workspace-write"
-  | "danger-full-access";
-
 export type LaunchArgParseError =
   | "danglingEscape"
   | "lineBreak"
@@ -91,64 +83,4 @@ export function parseLaunchArgInput(input: string): LaunchArgParseResult {
 
 export function sameArgs(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((arg, index) => arg === right[index]);
-}
-
-export function removeCodexSandboxArgs(args: string[]): string[] {
-  const out: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (
-      arg === "--dangerously-bypass-approvals-and-sandbox" ||
-      arg.startsWith("--sandbox=") ||
-      arg.startsWith("-s=")
-    ) {
-      continue;
-    }
-    if (arg === "--sandbox" || arg === "-s") {
-      index += 1;
-      continue;
-    }
-    out.push(arg);
-  }
-  return out;
-}
-
-export function inferCodexSandboxPreset(args: string[]): CodexSandboxPreset {
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    const next = args[index + 1];
-    if (arg === "--sandbox" || arg === "-s") {
-      if (isCodexSandboxMode(next)) return next;
-    }
-    if (arg.startsWith("--sandbox=") || arg.startsWith("-s=")) {
-      const value = arg.slice(arg.indexOf("=") + 1);
-      if (isCodexSandboxMode(value)) return value;
-    }
-  }
-  return "default";
-}
-
-export function applyCodexSandboxPreset(
-  args: string[],
-  preset: CodexSandboxPreset,
-): string[] {
-  const out = removeCodexSandboxArgs(args);
-  if (preset === "default") return out;
-  out.push("--sandbox", preset);
-  return out;
-}
-
-export function agentLaunchArgCount(preference?: AgentLaunchPreference): number {
-  return (
-    (preference?.launchArgs?.terminal?.length ?? 0) +
-    (preference?.launchArgs?.acp?.length ?? 0)
-  );
-}
-
-function isCodexSandboxMode(value: unknown): value is Exclude<CodexSandboxPreset, "default"> {
-  return (
-    value === "read-only" ||
-    value === "workspace-write" ||
-    value === "danger-full-access"
-  );
 }

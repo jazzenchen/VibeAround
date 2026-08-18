@@ -37,15 +37,14 @@ VibeAround keeps AI coding work together without making you rebuild the environm
 
 Launch the right agent with the right model.
 
-Pick an AI agent, model profile or API endpoint, and workspace. VibeAround launches Claude Code, Codex CLI, Gemini CLI, Pi, OpenCode, Claude Desktop, Codex Desktop and more with 3rd party AI APIs, without changing each agent's own config files, skills, MCP servers, workflow, or project context.
+Pick an AI agent, model profile or API endpoint, and workspace. VibeAround launches Claude Code, Codex CLI, Gemini CLI, Pi, OpenCode, Claude Desktop, Codex Desktop and more with third-party AI APIs.
 
 - Launch AI coding agents and desktop apps like Claude and Codex from one desktop UI.
 - Choose agent, model profile, API endpoint, workspace, terminal, and session before launch.
 - Start new sessions or continue previous sessions.
 - Use direct launch or profile-based launch, including profile overlays for Claude Desktop and Codex Desktop.
 - Record and inspect launch-scoped API traffic, including original request, bridge request, raw response, bridge response, and search tool contents.
-- Keep each agent's own config files, workflow, and project context.
-- VibeAround does not modify original CLI config files. If you use tools such as CC Switch, manually remove conflicting profile fields such as `env` in `~/.claude/settings.json`.
+- Refresh VibeAround-reserved project skills and the VibeAround MCP entry before launch without replacing unrelated agent configuration.
 
 <p align="center">
   <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.7/readme/api-inspector.webp" alt="VibeAround Bridge recorder showing requests, responses, and search details" width="88%" />
@@ -375,20 +374,6 @@ After starting the server, open `http://127.0.0.1:12358/va/` in your browser.
 
 Latest CLI package on npm: [`@vibearound/cli@0.0.13`](https://www.npmjs.com/package/@vibearound/cli), with matching platform payloads in [VibeAround CLI 0.0.13](https://github.com/jazzenchen/VibeAround/releases/tag/va-v0.0.13).
 
-## Upgrade Notes
-
-### v0.7.10 Breaking Change
-
-VibeAround v0.7.10 changes how local configuration is read and normalized. Some configuration fields have been merged, and some non-essential runtime/log data is no longer useful. For now, the recommended migration is a manual cleanup:
-
-1. Back up `~/.vibearound/profiles` and `~/.vibearound/settings.json`.
-2. Delete the `~/.vibearound` directory.
-3. Copy the backed-up `profiles` directory and `settings.json` back into `~/.vibearound`.
-4. Open VibeAround Desktop.
-5. Go to Settings and run the onboarding flow again.
-
-Known impact: API Bridge configuration may be lost during this migration. Re-enable API Bridge on the affected profiles to restore it.
-
 ## Develop Locally
 
 ```bash
@@ -401,8 +386,6 @@ bun run dev
 Prerequisites: Rust 1.82+, Bun 1.3+, and Node.js 24 LTS recommended. macOS also needs Xcode command line tools; Linux needs the WebKitGTK/Tauri system dependencies for your distribution.
 
 ## Documentation
-
-Documentation is still under construction and may lag behind fast-moving features.
 
 - [Setup Guide](https://github.com/jazzenchen/VibeAround/wiki/Setup-Guide)
 - [Launch, Profiles, And Models](https://github.com/jazzenchen/VibeAround/wiki/Model-Profiles-and-Agent-Launch)

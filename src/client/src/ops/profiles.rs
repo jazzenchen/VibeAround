@@ -32,9 +32,9 @@ pub fn model_profile_create(draft: &ModelProfileDraft) -> Result<Operation<Profi
     ))
 }
 
-pub fn model_profile_update(id: &str, profile: &ProfileDef) -> Result<Operation<ProfileDef>> {
+pub fn model_profile_update(id: &str, draft: &ModelProfileDraft) -> Result<Operation<ProfileDef>> {
     Ok(Operation::new(
-        crate::profiles::update_model_profile(id, profile)?,
+        crate::profiles::update_model_profile(id, draft)?,
         crate::profiles::decode_model_profile,
     ))
 }

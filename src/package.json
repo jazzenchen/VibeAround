@@ -7,6 +7,7 @@
     "build": "bun run desktop:build",
     "dev": "bun run desktop",
     "desktop-ui": "bun run --cwd desktop-ui dev",
+    "desktop-ui:test": "bun run --cwd desktop-ui test",
     "desktop-ui:build": "bun run --cwd desktop-ui build",
     "web": "bun run --cwd web dev",
     "web:test": "bun run --cwd web test",

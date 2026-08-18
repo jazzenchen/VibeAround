@@ -1275,24 +1275,27 @@ fn resolved_bridge_model_capabilities(
     upstream_model: Option<&str>,
     capability_overrides: Option<&ContentCapabilities>,
 ) -> ContentCapabilities {
-    let overrides = profile.overrides.get(target_api_type);
+    let api_config = profile
+        .api_configs
+        .get(target_api_type)
+        .filter(|config| config.enabled);
     let mut capabilities = if let Some(capabilities) =
-        overrides.and_then(|overrides| overrides.capabilities.clone())
+        api_config.and_then(|config| config.capabilities.clone())
     {
         capabilities
     } else {
         let Some(provider) = catalog::get(&profile.provider) else {
             return capability_overrides.cloned().unwrap_or_default();
         };
-        let endpoint_id = overrides.and_then(|overrides| overrides.endpoint_id.as_deref());
+        let endpoint_id = api_config.and_then(|config| config.endpoint_id.as_deref());
         let Some(endpoint) = catalog::find_endpoint(provider, target_api_type, endpoint_id) else {
             return capability_overrides.cloned().unwrap_or_default();
         };
         let mut capabilities = endpoint.capabilities.content.clone();
         let model = upstream_model
             .or_else(|| {
-                overrides
-                    .and_then(|overrides| overrides.model.as_deref())
+                api_config
+                    .and_then(|config| config.model.as_deref())
                     .map(str::trim)
                     .filter(|model| !model.is_empty())
             })
@@ -1316,9 +1319,9 @@ fn bridge_model_metadata(
 ) -> BridgeModelMetadata {
     let endpoint = catalog::get(&profile.provider).and_then(|provider| {
         let endpoint_id = profile
-            .overrides
+            .api_configs
             .get(target_api_type)
-            .and_then(|overrides| overrides.endpoint_id.as_deref());
+            .and_then(|config| config.endpoint_id.as_deref());
         catalog::find_endpoint(provider, target_api_type, endpoint_id)
     });
     let Some(endpoint) = endpoint else {
@@ -1373,17 +1376,17 @@ fn provider_adapter_for_profile(
 fn is_moonshot_kimi_coding(profile: &ProfileDef, target_api_type: &str) -> bool {
     target_api_type == "anthropic"
         && profile
-            .overrides
+            .api_configs
             .get("anthropic")
-            .and_then(|overrides| overrides.endpoint_id.as_deref())
+            .and_then(|config| config.endpoint_id.as_deref())
             == Some("kimi-coding")
 }
 
 fn profile_reasoning_enabled(profile: &ProfileDef, api_type: &str) -> Option<bool> {
     profile
-        .overrides
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.reasoning_effort.as_deref())
+        .and_then(|config| config.reasoning_effort.as_deref())
         .map(reasoning_effort_enabled)
 }
 
@@ -1725,9 +1728,7 @@ mod tests {
             label: "Custom Test".to_string(),
             provider: "custom".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["anthropic".to_string()],
             credentials,
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),

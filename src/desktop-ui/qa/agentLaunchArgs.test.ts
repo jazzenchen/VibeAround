@@ -1,11 +1,6 @@
 import { expect, test } from "bun:test";
 
-import {
-  agentLaunchArgCount,
-  applyCodexSandboxPreset,
-  inferCodexSandboxPreset,
-  parseLaunchArgInput,
-} from "../src/Launch/agentLaunchArgs";
+import { parseLaunchArgInput } from "../src/Launch/agentLaunchArgs";
 
 test("parseLaunchArgInput splits shell-like command fragments", () => {
   expect(parseLaunchArgInput("--sandbox danger-full-access")).toEqual({
@@ -35,30 +30,4 @@ test("parseLaunchArgInput reports invalid fragments", () => {
     args: [],
     error: "lineBreak",
   });
-});
-
-test("codex sandbox preset replaces existing sandbox args", () => {
-  expect(
-    applyCodexSandboxPreset(
-      ["--model", "gpt-5", "--sandbox=read-only"],
-      "danger-full-access",
-    ),
-  ).toEqual(["--model", "gpt-5", "--sandbox", "danger-full-access"]);
-  expect(inferCodexSandboxPreset(["-s", "workspace-write"])).toBe(
-    "workspace-write",
-  );
-  expect(
-    applyCodexSandboxPreset(["--sandbox", "read-only", "--foo"], "default"),
-  ).toEqual(["--foo"]);
-});
-
-test("agentLaunchArgCount includes terminal and agent protocol args", () => {
-  expect(
-    agentLaunchArgCount({
-      launchArgs: {
-        terminal: ["--sandbox", "read-only"],
-        acp: ["--strict-config"],
-      },
-    }),
-  ).toBe(3);
 });

@@ -44,7 +44,10 @@ fn remote_owner_request(host: &str, auth: &Arc<common::auth::AuthToken>) -> Requ
     );
     request
         .extensions_mut()
-        .insert(crate::web_server::auth::AuthState(Arc::clone(auth)));
+        .insert(crate::web_server::auth::AuthState::new(
+            Arc::clone(auth),
+            Arc::clone(auth),
+        ));
     request
 }
 
@@ -128,14 +131,18 @@ fn owner_cookie_uses_the_daemon_auth_state() {
     );
     request
         .extensions_mut()
-        .insert(crate::web_server::auth::AuthState(Arc::clone(&auth)));
+        .insert(crate::web_server::auth::AuthState::new(
+            Arc::clone(&auth),
+            Arc::clone(&auth),
+        ));
     assert!(owner_access_allowed(&request));
 
     request
         .extensions_mut()
-        .insert(crate::web_server::auth::AuthState(Arc::new(
-            common::auth::AuthToken::generate(),
-        )));
+        .insert(crate::web_server::auth::AuthState::new(
+            Arc::new(common::auth::AuthToken::generate()),
+            Arc::new(common::auth::AuthToken::generate()),
+        ));
     assert!(!owner_access_allowed(&request));
 }
 

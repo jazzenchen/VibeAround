@@ -70,7 +70,6 @@ function configuredPath(
     resolution?.configuredPath ??
     resolution?.selected?.path ??
     preference?.executable?.path ??
-    preference?.executablePath ??
     fallbackPath
   );
 }

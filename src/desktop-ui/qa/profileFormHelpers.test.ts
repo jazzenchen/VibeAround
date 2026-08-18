@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
 import {
+  apiConfigForEndpoint,
+  apiConfigsForEndpoints,
   defaultAuthMode,
-  overrideForEndpoint,
-  pruneOverrides,
   requiresProfileModel,
   selectedEndpoint,
   shouldShowBaseUrl,
@@ -106,36 +106,22 @@ const mimoProvider: CatalogEntry = {
   ],
 };
 
-test("catalog model endpoints do not create profile model defaults", () => {
+test("catalog endpoint materializes one canonical API config", () => {
   const endpoint = geminiProvider.endpoints.find(
     (candidate) => candidate.api_type === "openai-chat" && candidate.id === "gemini-api",
   )!;
 
-  expect(
-    overrideForEndpoint(endpoint, {
-      model: "gemini-2.5-pro",
-      reasoning_effort: "high",
-    }),
-  ).toEqual({
-    endpoint_id: "gemini-api",
-    base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+  const config = apiConfigForEndpoint(endpoint, {
+    model: "gemini-2.5-pro",
+    reasoning_effort: "high",
   });
-});
-
-test("saving a catalog-backed profile drops legacy model settings", () => {
-  const overrides = {
-    "openai-chat": {
-      endpoint_id: "gemini-api",
-      model: "gemini-2.5-pro",
-      reasoning_effort: "high",
-    },
-  };
-
-  expect(pruneOverrides(overrides, ["openai-chat"], geminiProvider)).toEqual({
-    "openai-chat": {
-      endpoint_id: "gemini-api",
-    },
-  });
+  expect(config.enabled).toBe(true);
+  expect(config.endpoint_id).toBe("gemini-api");
+  expect(config.base_url).toBe(
+    "https://generativelanguage.googleapis.com/v1beta/openai",
+  );
+  expect(config.model).toBe("gemini-2.5-pro");
+  expect(config.reasoning_effort).toBe("high");
 });
 
 test("mimo token plan uses catalog default model without profile override", () => {
@@ -156,69 +142,13 @@ test("mimo token plan uses catalog default model without profile override", () =
     }),
   ).toBe(true);
   expect(
-    overrideForEndpoint(endpoint, {
+    apiConfigForEndpoint(endpoint, {
       model: "mimo-v2.5-pro",
-    }),
-  ).toEqual({
-    endpoint_id: "token-plan-cn",
-    base_url: "https://token-plan-cn.xiaomimimo.com/v1",
-  });
-  expect(
-    pruneOverrides(
-      {
-        "openai-chat": {
-          endpoint_id: "token-plan-cn",
-          model: "mimo-v2.5-pro",
-        },
-      },
-      ["openai-chat"],
-      mimoProvider,
-    ),
-  ).toEqual({
-    "openai-chat": {
-      endpoint_id: "token-plan-cn",
-    },
-  });
+    }).model,
+  ).toBe("mimo-v2.5-pro");
 });
 
-test("catalog-backed default model override is saved only when it changes", () => {
-  expect(
-    pruneOverrides(
-      {
-        "openai-chat": {
-          endpoint_id: "token-plan-cn",
-          model: "mimo-v2.5-pro",
-        },
-      },
-      ["openai-chat"],
-      mimoProvider,
-    ),
-  ).toEqual({
-    "openai-chat": {
-      endpoint_id: "token-plan-cn",
-    },
-  });
-
-  expect(
-    pruneOverrides(
-      {
-        "openai-chat": {
-          endpoint_id: "token-plan-cn",
-          model: "mimo-v2.5",
-        },
-      },
-      ["openai-chat"],
-      mimoProvider,
-    ),
-  ).toEqual({
-    "openai-chat": {
-      endpoint_id: "token-plan-cn",
-      model: "mimo-v2.5",
-    },
-  });
-});
-
-test("legacy loaded profile overrides still select their endpoint", () => {
+test("canonical API config selects its endpoint", () => {
   const endpoint = selectedEndpoint(geminiProvider, "openai-chat", {
     "openai-chat": {
       endpoint_id: "vertex-openai-compatible",
@@ -228,6 +158,30 @@ test("legacy loaded profile overrides still select their endpoint", () => {
   });
 
   expect(endpoint?.id).toBe("vertex-openai-compatible");
+});
+
+test("switching endpoints rewrites endpoint-owned defaults", () => {
+  const vertex = geminiProvider.endpoints.find(
+    (candidate) => candidate.id === "vertex-openai-compatible",
+  )!;
+  const configs = apiConfigsForEndpoints([vertex], {
+    "openai-chat": {
+      enabled: true,
+      endpoint_id: "gemini-api",
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+      model: "gemini-2.5-flash",
+      headers: [{ name: "X-Test", value: "keep-me" }],
+    },
+  });
+
+  expect(configs["openai-chat"]?.endpoint_id).toBe(
+    "vertex-openai-compatible",
+  );
+  expect(configs["openai-chat"]?.base_url).toBeUndefined();
+  expect(configs["openai-chat"]?.model).toBe("google/gemini-2.5-flash");
+  expect(configs["openai-chat"]?.headers).toEqual([
+    { name: "X-Test", value: "keep-me" },
+  ]);
 });
 
 test("google account gemini endpoint defaults to oauth auth", () => {
@@ -244,22 +198,12 @@ test("endpoints without catalog models keep required deployment names", () => {
   const endpoint = azureProvider.endpoints[0];
 
   expect(requiresProfileModel(azureProvider, endpoint)).toBe(true);
-  expect(
-    pruneOverrides(
-      {
-        "openai-responses": {
-          base_url: "https://example.openai.azure.com/openai/v1",
-          model: "prod-gpt-5",
-          reasoning_effort: "high",
-        },
-      },
-      ["openai-responses"],
-      azureProvider,
-    ),
-  ).toEqual({
-    "openai-responses": {
-      base_url: "https://example.openai.azure.com/openai/v1",
-      model: "prod-gpt-5",
-    },
+  const config = apiConfigForEndpoint(endpoint, {
+    base_url: "https://example.openai.azure.com/openai/v1",
+    model: "prod-gpt-5",
+    reasoning_effort: "high",
   });
+  expect(config.base_url).toBe("https://example.openai.azure.com/openai/v1");
+  expect(config.model).toBe("prod-gpt-5");
+  expect(config.reasoning_effort).toBe("high");
 });

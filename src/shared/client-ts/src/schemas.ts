@@ -347,10 +347,7 @@ export const AgentRuntimeListSchema = z.array(AgentRuntimeSchema);
 // do a two-level switch: first on the envelope `kind`, then — inside
 // `acp_notification` — on `payload.update.sessionUpdate`.
 //
-// The ACP payload itself isn't re-validated here (we trust the
-// agent-client-protocol crate on the server side). If you need
-// typed access to specific update variants on the TS side, import
-// them from `@agentclientprotocol/sdk` directly.
+// ACP payload variants use types from `@agentclientprotocol/sdk`.
 // ---------------------------------------------------------------------------
 
 export const ChatEventSchema = z.discriminatedUnion("kind", [

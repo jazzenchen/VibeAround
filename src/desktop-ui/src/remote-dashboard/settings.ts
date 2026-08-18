@@ -103,9 +103,8 @@ export function formForChannel(
 ): ChannelDefaultForm {
   const entry = remote.channels?.[channelId] ?? {};
   return {
-    agentId: stringValue(entry.agent_id ?? entry.agentId ?? entry.agent) ?? FOLLOW_DEFAULT,
-    profileId:
-      stringValue(entry.profile_id ?? entry.profileId ?? entry.profile) ?? FOLLOW_DEFAULT,
+    agentId: stringValue(entry.agent_id) ?? FOLLOW_DEFAULT,
+    profileId: stringValue(entry.profile_id) ?? FOLLOW_DEFAULT,
   };
 }
 
@@ -148,17 +147,6 @@ export function updateRemoteChannelForm(
   }
 
   const entry: RemoteChannelDefaults = { ...(channels[channelId] ?? {}) };
-  for (const key of [
-    "agent",
-    "agentId",
-    "profile",
-    "profileId",
-    "workspace",
-    "workspace_path",
-    "workspacePath",
-  ] as const) {
-    delete entry[key];
-  }
   if (form.agentId === FOLLOW_DEFAULT) delete entry.agent_id;
   else entry.agent_id = form.agentId;
   if (form.profileId === FOLLOW_DEFAULT) delete entry.profile_id;

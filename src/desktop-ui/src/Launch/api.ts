@@ -22,8 +22,8 @@ export function getProfile(id: string): Promise<ProfileDef> {
   return invoke<ProfileDef>("profiles_get", { id });
 }
 
-export function upsertProfile(profile: ProfileDef): Promise<void> {
-  return invoke<void>("profiles_upsert", { profile });
+export function upsertProfile(id: string, draft: ProfileDraft): Promise<void> {
+  return invoke<void>("profiles_upsert", { id, draft });
 }
 
 export function createProfile(draft: ProfileDraft): Promise<ProfileDef> {

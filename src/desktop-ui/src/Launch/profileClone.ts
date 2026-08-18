@@ -56,9 +56,8 @@ export function buildProfileCopyDraft(
     label: copyProfileLabel(profile.label, copySuffix, existingLabels),
     provider: profile.provider,
     auth_mode: profile.auth_mode,
-    api_types: [...profile.api_types],
     credentials: { ...profile.credentials },
-    overrides: structuredClone(profile.overrides),
+    api_configs: structuredClone(profile.api_configs),
     use_settings_proxy: !!profile.use_settings_proxy,
     provider_settings: structuredClone(profile.provider_settings ?? {}),
   };

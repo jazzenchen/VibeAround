@@ -21,10 +21,7 @@ pub(crate) const WARN: Color = Color::Yellow;
 pub(crate) const ERROR: Color = Color::Red;
 pub(crate) const NEUTRAL: Color = Color::Gray;
 
-/// A faint "surface" tint that lifts the chat input off the canvas as a
-/// slim bar (à la Claude Code). This is the one neutral we set beyond the
-/// brand color; index 254 is a near-white gray that reads as a subtle
-/// highlight on light terminals.
+/// Chat-input surface tint.
 pub(crate) const INPUT_BG: Color = Color::Indexed(254);
 /// User messages reuse the input surface without the prompt accent.
 pub(crate) const REQUEST_BG: Color = INPUT_BG;

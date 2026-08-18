@@ -69,10 +69,6 @@ export function buildManualSetting(
       filePath: "~/.codex/config.toml",
       profileName,
       snippet: [
-        `# Codex >= 0.134.0 no longer supports the legacy profile selector below.`,
-        `# Keep this commented migration hint for now; remove it after old configs are migrated.`,
-        `# profile = ${tomlString(profileName)}`,
-        "",
         `model = ${tomlString(model)}`,
         `model_provider = ${tomlString(providerName)}`,
         `model_reasoning_effort = "medium"`,
@@ -264,7 +260,6 @@ export function ManualSettingDialog({
               ) : isCodex ? (
                 <>
                   <li>{t("Open the Codex config file, then add this snippet or update the existing VibeAround top-level model settings.")}</li>
-                  <li>{t("Codex 0.134.0 and newer reject the old top-level profile selector, so this snippet leaves that line commented as a migration hint.")}</li>
                   <li>{t("The top-level model and provider lines make Codex use this VibeAround bridge by default.")}</li>
                   <li>{t("If Codex keeps using account login instead of this bridge config, run codex logout first.")}</li>
                 </>

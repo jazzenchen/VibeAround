@@ -28,8 +28,10 @@
 //! - `forwarder`  — `ChannelOutput` → ACP Client-method dispatch
 //! - `handler`    — `PluginAgentHandler` (`acp::Agent` impl consumed by the plugin)
 //!
-//! Spawn + supervise lives in `process::Supervisor`; the ACP bridge is
-//! wrapped into a `ProcessBridge` by `channels::plugin_bridge`.
+//! Spawn + supervise lives in `process::Supervisor`; [`ChannelPluginRunner`]
+//! wraps this ACP driver into a `ProcessBridge`.
+//!
+//! [`ChannelPluginRunner`]: crate::channels::plugin_runner::ChannelPluginRunner
 
 mod bridge;
 mod forwarder;

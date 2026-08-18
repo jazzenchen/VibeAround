@@ -5,16 +5,7 @@
 //!   - `?token=<token>` query parameter (fallback for initial page load
 //!     and for WebSocket upgrades, which cannot carry custom headers)
 //!
-//! On mismatch returns `401 Unauthorized` with an empty body for regular
-//! routes. For the `/mcp` JSON-RPC endpoint we instead return HTTP 200 with
-//! a JSON-RPC error envelope, because MCP clients (Claude Code, Codex, etc.)
-//! try to parse the response body as JSON-RPC and surface "Failed to parse
-//! JSON" on an empty body — that symptom is invisible to end users and
-//! makes stale-token situations extremely confusing.
-//!
-//! The token is loaded once per daemon start (see `common::auth`) and held
-//! as part of `AppState`, so the middleware is a pure function over the
-//! incoming request.
+//! Unauthorized MCP requests return a JSON-RPC error envelope with HTTP 200.
 
 use std::sync::Arc;
 
@@ -56,9 +47,18 @@ pub(crate) fn owner_cookie_headers(token: Option<&str>) -> [String; 2] {
     [legacy, scoped]
 }
 
-/// Shared handle to the server's current auth token.
+/// Shared handles to the server's owner and MCP-only tokens.
 #[derive(Clone)]
-pub struct AuthState(pub Arc<AuthToken>);
+pub struct AuthState {
+    pub owner: Arc<AuthToken>,
+    pub mcp: Arc<AuthToken>,
+}
+
+impl AuthState {
+    pub fn new(owner: Arc<AuthToken>, mcp: Arc<AuthToken>) -> Self {
+        Self { owner, mcp }
+    }
+}
 
 pub(crate) fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
     if let Some(value) = headers.get(header::AUTHORIZATION) {
@@ -80,13 +80,10 @@ fn extract_token<B>(req: &Request<B>) -> Option<String> {
         return Some(token);
     }
 
-    // 2. ?token=<token>  (brittle but good enough — we only look for the
-    //    exact key; real parsing happens via url::form_urlencoded)
+    // Query token fallback for clients that cannot send custom headers.
     if let Some(query) = req.uri().query() {
         for pair in query.split('&') {
             if let Some(rest) = pair.strip_prefix("token=") {
-                // URL-decode the value. `+` is a space in form encoding,
-                // but a hex token never contains one — still, be safe.
                 let decoded = url_decode(rest);
                 return Some(decoded);
             }
@@ -188,7 +185,7 @@ pub async fn require_local_bridge(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    if local_bridge_access_allowed(&req, &state.0) {
+    if local_bridge_access_allowed(&req, &state.owner) {
         return next.run(req).await;
     }
 
@@ -202,12 +199,7 @@ pub async fn require_auth(
     next: Next,
 ) -> Response {
     let is_mcp = req.uri().path() == "/mcp";
-    let token = extract_token(&req);
-    let authorized = match token.as_deref() {
-        Some(candidate) => state.0.matches(candidate),
-        None => false,
-    };
-    if authorized {
+    if request_is_authorized(&state, &req) {
         return next.run(req).await;
     }
     if is_mcp {
@@ -229,6 +221,15 @@ pub async fn require_auth(
         return (StatusCode::OK, body).into_response();
     }
     StatusCode::UNAUTHORIZED.into_response()
+}
+
+fn request_is_authorized<B>(state: &AuthState, req: &Request<B>) -> bool {
+    let expected = if req.uri().path() == "/mcp" {
+        &state.mcp
+    } else {
+        &state.owner
+    };
+    extract_token(req).is_some_and(|candidate| expected.matches(&candidate))
 }
 
 pub(crate) fn headers_have_allowed_dashboard_origin(
@@ -304,8 +305,7 @@ fn parse_origin(value: &str) -> Option<OriginParts> {
     })
 }
 
-/// Minimal percent-decoder for the `?token=` value. We only need to handle
-/// `%HH` sequences; the hex token alphabet is URL-safe.
+/// Percent-decode `%HH` sequences in query-token values.
 fn url_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
