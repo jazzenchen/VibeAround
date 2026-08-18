@@ -292,6 +292,7 @@ fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
         "cursor" => skills_for!("cursor"),
         "kiro" => skills_for!("kiro"),
         "qwen-code" => skills_for!("qwen-code"),
+        "va-agent" => skills_for!("va-agent"),
         // Generic fallback — top-level skills dir (no agent subdirectory).
         _ => vec![
             (
@@ -361,7 +362,7 @@ mod tests {
 
     #[test]
     fn skill_frontmatter_descriptions_quote_mapping_colons() {
-        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro"] {
+        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro", "va-agent"] {
             for (skill_name, content) in agent_skills(agent) {
                 let Some(description) = frontmatter_field(content, "description") else {
                     continue;
@@ -378,7 +379,7 @@ mod tests {
 
     #[test]
     fn active_preview_skill_covers_both_sources_without_the_retired_tool() {
-        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro"] {
+        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro", "va-agent"] {
             let skills = agent_skills(agent);
             assert!(skills.iter().all(|(name, _)| *name != "va-md-preview"));
             let preview = skills
@@ -418,6 +419,26 @@ mod tests {
         assert!(codex_session_skill.contains("Codex only"));
         assert!(codex_session_skill.contains("agent_kind: \"codex\""));
         assert!(codex_session_skill.contains("Do not inspect MCP resources"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn va_agent_project_skills_use_built_in_session_tool() {
+        let dir = unique_test_dir("va-agent");
+        fs::create_dir_all(&dir).unwrap();
+
+        sync_project_skill("va-agent", &dir).unwrap();
+
+        let session_skill =
+            fs::read_to_string(dir.join(".agents/skills/va-session/SKILL.md")).unwrap();
+        assert!(session_skill.contains("VibeAround Agent only"));
+        assert!(session_skill.contains("Tool: get_session_id"));
+        assert!(!session_skill.contains("Tool: va_mcp_get_session_id"));
+        let handover_skill =
+            fs::read_to_string(dir.join(".agents/skills/vibearound/SKILL.md")).unwrap();
+        assert!(handover_skill.contains("agent_kind: \"va-agent\""));
+        assert!(dir.join(".agents/skills/va-preview/SKILL.md").exists());
 
         fs::remove_dir_all(&dir).unwrap();
     }

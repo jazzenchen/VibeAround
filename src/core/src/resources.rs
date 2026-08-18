@@ -340,6 +340,10 @@ fn current_platform() -> &'static str {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentGlobalConfig {
+    /// Settings file that receives the VibeAround MCP entry. Empty when the
+    /// agent reaches VibeAround's MCP some other way (va-agent goes over ACP)
+    /// and only uses the skill fields below.
+    #[serde(default)]
     pub settings_path: String,
     /// Legacy config path — also written to for backward compat (e.g. older Claude Code).
     #[serde(default)]
@@ -347,7 +351,9 @@ pub struct AgentGlobalConfig {
     /// Config file format: "json" (default) or "toml".
     #[serde(default)]
     pub settings_format: Option<String>,
+    #[serde(default)]
     pub mcp_key: String,
+    #[serde(default)]
     pub mcp_entry: serde_json::Value,
     #[serde(default)]
     pub skill_dir: Option<String>,

@@ -20,8 +20,8 @@ pub(super) fn install_project_mcp_config(
         None => return Ok(()),
     };
     let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
+        Some(cfg) if writes_mcp_config(cfg) => cfg,
+        _ => return Ok(()),
     };
 
     let config_path = workspace.join(project_mcp_settings_path(agent, global_config));
@@ -37,8 +37,8 @@ pub(super) fn uninstall_mcp_config(agent: &str) -> anyhow::Result<()> {
         None => return Ok(()),
     };
     let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
+        Some(cfg) if writes_mcp_config(cfg) => cfg,
+        _ => return Ok(()),
     };
 
     let config_path = home.join(&global_config.settings_path);
@@ -95,6 +95,12 @@ fn project_mcp_settings_path(agent: &str, global_config: &resources::AgentGlobal
         "claude" => PathBuf::from(".mcp.json"),
         _ => PathBuf::from(&global_config.settings_path),
     }
+}
+
+/// Agents whose MCP entry lives in a settings file. Rows without `mcp_key`
+/// only carry skill locations.
+fn writes_mcp_config(global_config: &resources::AgentGlobalConfig) -> bool {
+    !global_config.mcp_key.is_empty()
 }
 
 /// Check if the agent uses TOML config format.
@@ -328,6 +334,17 @@ mod tests {
             "vibearound-mcp-{name}-{}-{nonce}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn skill_only_agents_write_no_project_mcp_config() {
+        let dir = unique_test_dir("va-agent-skip");
+        fs::create_dir_all(&dir).unwrap();
+
+        install_project_mcp_config("va-agent", &dir, "http://127.0.0.1:12358/va/mcp").unwrap();
+
+        assert!(fs::read_dir(&dir).unwrap().next().is_none());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

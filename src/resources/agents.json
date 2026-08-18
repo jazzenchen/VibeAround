@@ -9,6 +9,9 @@
     },
     "pty": {
       "command": "va-agent"
+    },
+    "global_config": {
+      "project_skill_dir": ".agents/skills/vibearound"
     }
   },
   {
