@@ -416,12 +416,23 @@ fn launch_context_opens_a_fresh_session_over_launcher_preferences() {
         Some("va-agent".into()),
         Some("va-profile".into()),
         Some("/tmp/project".into()),
+        None,
     ));
     assert_eq!(app.effective_agent(), Some("va-agent"));
     assert_eq!(app.effective_profile(), Some("va-profile"));
     assert_eq!(app.effective_workspace(), Some("/tmp/project"));
     assert_eq!(app.effective_session(), None);
     assert!(app.force_new_session);
+
+    // A resume launch opens on that session instead of a fresh one.
+    app.seed_launch_context(&LaunchContext::from_parts(
+        Some("va-agent".into()),
+        Some("va-profile".into()),
+        Some("/tmp/project".into()),
+        Some("session-9".into()),
+    ));
+    assert_eq!(app.effective_session(), Some("session-9"));
+    assert!(!app.force_new_session);
 }
 
 #[test]

@@ -125,8 +125,8 @@ impl TuiApp {
         self.selected_agent = context.agent.clone();
         self.selected_profile = context.profile.clone();
         self.selected_workspace = context.workspace.clone();
-        self.selected_session = None;
-        self.force_new_session = true;
+        self.selected_session = context.session.clone();
+        self.force_new_session = context.session.is_none();
     }
 
     pub(crate) async fn sync_launcher_context(&mut self, transport: &HttpTransport) {

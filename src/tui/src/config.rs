@@ -54,6 +54,8 @@ pub(crate) struct LaunchContext {
     pub(crate) agent: Option<String>,
     pub(crate) profile: Option<String>,
     pub(crate) workspace: Option<String>,
+    /// Set when the launch resumes an existing session instead of starting one.
+    pub(crate) session: Option<String>,
 }
 
 impl LaunchContext {
@@ -64,6 +66,7 @@ impl LaunchContext {
             env::current_dir()
                 .ok()
                 .map(|dir| dir.to_string_lossy().into_owned()),
+            env_value("VIBEAROUND_SESSION_ID"),
         )
     }
 
@@ -71,6 +74,7 @@ impl LaunchContext {
         agent: Option<String>,
         profile: Option<String>,
         workspace: Option<String>,
+        session: Option<String>,
     ) -> Self {
         let Some(agent) = agent else {
             return Self::default();
@@ -80,6 +84,7 @@ impl LaunchContext {
             // "direct" is VibeAround's name for "no managed profile".
             profile: profile.filter(|profile| profile != "direct"),
             workspace,
+            session,
         }
     }
 
@@ -177,15 +182,19 @@ mod tests {
 
     #[test]
     fn launch_context_requires_a_launch_target() {
-        assert!(LaunchContext::from_parts(None, Some("p".into()), Some("/w".into())).is_empty());
+        assert!(
+            LaunchContext::from_parts(None, Some("p".into()), Some("/w".into()), None).is_empty()
+        );
         let context = LaunchContext::from_parts(
             Some("va-agent".into()),
             Some("direct".into()),
             Some("/w".into()),
+            Some("session-9".into()),
         );
         assert_eq!(context.agent.as_deref(), Some("va-agent"));
         assert_eq!(context.profile, None);
         assert_eq!(context.workspace.as_deref(), Some("/w"));
+        assert_eq!(context.session.as_deref(), Some("session-9"));
     }
 
     #[test]

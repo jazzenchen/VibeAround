@@ -606,7 +606,8 @@ impl Agent {
         args: schema::NewSessionRequest,
     ) -> acp::Result<schema::NewSessionResponse> {
         self.allow_startup_notifications();
-        let args = args.mcp_servers(acp_mcp_servers(&self.initialize));
+        let mut args = args;
+        args.mcp_servers.extend(acp_mcp_servers(&self.initialize));
         self.conn.send_request(args).block_task().await
     }
 
@@ -614,7 +615,8 @@ impl Agent {
         &self,
         args: schema::LoadSessionRequest,
     ) -> acp::Result<schema::LoadSessionResponse> {
-        let args = args.mcp_servers(acp_mcp_servers(&self.initialize));
+        let mut args = args;
+        args.mcp_servers.extend(acp_mcp_servers(&self.initialize));
         self.conn.send_request(args).block_task().await
     }
 
@@ -664,9 +666,11 @@ async fn resolve_agent_program(
 )> {
     let agent_def = crate::resources::agent_by_id(agent_id)
         .ok_or_else(|| anyhow!("No resource definition for agent '{}'", agent_id))?;
-    if agent_id == "va-agent" {
+    if agent_def.built_in {
+        // Ships with VibeAround: env override, then next to this executable,
+        // then PATH. Never installed through the agent toolchain.
         return Ok((
-            va_agent_program_from_env(std::env::var_os("VIBEAROUND_VA_AGENT_PATH"))?,
+            crate::sidecar::command(&agent_def.acp.program, "VIBEAROUND_VA_AGENT_PATH"),
             agent_def.acp.args.clone(),
             None,
         ));
@@ -733,20 +737,6 @@ async fn resolve_agent_program(
             selected_candidate,
         ))
     }
-}
-
-fn va_agent_program_from_env(value: Option<std::ffi::OsString>) -> anyhow::Result<String> {
-    let Some(value) = value else {
-        return Ok("va-agent".to_string());
-    };
-    let value = value
-        .into_string()
-        .map_err(|_| anyhow!("VIBEAROUND_VA_AGENT_PATH must be valid UTF-8"))?;
-    let value = value.trim();
-    if value.is_empty() {
-        anyhow::bail!("VIBEAROUND_VA_AGENT_PATH must not be empty");
-    }
-    Ok(value.to_string())
 }
 
 async fn resolve_agent_candidate(
