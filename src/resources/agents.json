@@ -4,6 +4,7 @@
     "display_name": "VibeAround Agent",
     "description": "Built-in VibeAround coding agent",
     "aliases": [],
+    "built_in": true,
     "acp": {
       "program": "va-agent"
     },

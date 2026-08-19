@@ -47,6 +47,10 @@ pub struct AgentDef {
     pub platforms: Vec<String>,
     #[serde(default)]
     pub direct_only: bool,
+    /// Ships with VibeAround itself: always enabled, never installed or
+    /// toggled by the user.
+    #[serde(default)]
+    pub built_in: bool,
     #[serde(default)]
     pub install: Option<AgentInstallInfo>,
     pub acp: AgentAcpConfig,

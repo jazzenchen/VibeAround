@@ -2249,7 +2249,7 @@ function AgentSettingsPanel({
         {notice}
       </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
-        {agents.map((agent) => {
+        {agents.filter((agent) => !agent.built_in).map((agent) => {
           const isEnabled = enabledAgents.has(agent.id);
           return (
             <button

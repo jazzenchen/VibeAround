@@ -17,6 +17,9 @@ export function visibleLaunchAgents(
   agentPreferences: Record<string, AgentLaunchPreference>,
 ): AgentSummary[] {
   return agents.filter((agent) => {
+    if (agent.built_in) {
+      return true;
+    }
     if (!agent.direct_only) {
       return enabledAgentIds ? enabledAgentIds.has(agent.id) : true;
     }
