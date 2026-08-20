@@ -540,6 +540,9 @@ export function FormBody({
                             : "Base URL"
                         }
                         required={ep.default_base_url === ""}
+                        hint={t(
+                          "Enter it as your provider documents it, usually ending in /v1. Some clients append /v1 themselves — if requests fail on a doubled /v1 path, drop the trailing /v1 here.",
+                        )}
                       >
                         <Input
                           type="text"
@@ -1398,10 +1401,12 @@ function CredentialField({
 function FieldRow({
   label,
   required,
+  hint,
   children,
 }: {
   label: string;
   required?: boolean;
+  hint?: string;
   children: ReactNode;
 }) {
   const { t } = useI18n();
@@ -1413,6 +1418,11 @@ function FieldRow({
         {required && <span className="text-destructive ml-0.5">*</span>}
       </div>
       {children}
+      {hint && (
+        <div className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+          {hint}
+        </div>
+      )}
     </label>
   );
 }
