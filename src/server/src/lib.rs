@@ -258,7 +258,7 @@ impl ServerDaemon {
         // Persist before swapping: a token the disk never received would be
         // demanded by the running daemon and known to nobody.
         let next = AuthToken::generate();
-        auth::write_local_agent_api_token_file(self.port, &next)?;
+        self.write_auth_file(&next)?;
         self.local_agent_api_token.replace(next.clone());
         Ok(next.as_str().to_string())
     }
@@ -273,18 +273,29 @@ impl ServerDaemon {
         Arc::clone(&self.auth_token)
     }
 
-    /// Write daemon-lifetime token files so their respective
-    /// out-of-process clients can authenticate without an IPC round-trip.
+    /// Write the auth file so out-of-process clients can authenticate without
+    /// an IPC round-trip.
     ///
     /// Safe to call before `start_background()` — the file will be
     /// overwritten there too, but the contents are identical, so the early
     /// write avoids a race where the desktop-ui queries the token before
     /// the daemon's start path has finished persisting it.
     pub fn persist_auth_tokens(&self) -> std::io::Result<()> {
-        auth::write_token_file(self.port, &self.auth_token)?;
-        auth::write_mcp_token_file(self.port, &self.mcp_token)?;
-        auth::write_local_api_token_file(self.port, &self.local_api_token)?;
-        auth::write_local_agent_api_token_file(self.port, &self.local_agent_api_token.snapshot())
+        self.write_auth_file(&self.local_agent_api_token.snapshot())
+    }
+
+    /// Serialize the whole credential set from memory, never read-modify-write,
+    /// so a concurrent write cannot drop a token that is not in this snapshot.
+    fn write_auth_file(&self, agent: &AuthToken) -> std::io::Result<()> {
+        auth::write_auth_file(
+            self.port,
+            auth::DaemonTokens {
+                dashboard: &self.auth_token,
+                mcp: &self.mcp_token,
+                bridge: &self.local_api_token,
+                agent,
+            },
+        )
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
