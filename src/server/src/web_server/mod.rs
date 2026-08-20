@@ -196,7 +196,7 @@ pub async fn run_web_server(
     auth_token: Arc<AuthToken>,
     mcp_token: Arc<AuthToken>,
     local_api_token: Arc<AuthToken>,
-    local_agent_api_token: Arc<AuthToken>,
+    local_agent_api_token: common::auth::SharedAuthToken,
     host_search_available: bool,
     replace_provider_web_search: bool,
     service_side: common::config::ServiceSideConfig,

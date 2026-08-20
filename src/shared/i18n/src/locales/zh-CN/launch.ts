@@ -389,6 +389,10 @@ export const zhCNLaunch: Record<string, string> = {
   "VibeAround writes this desktop configuration during launch. Copy this only if you are configuring the desktop app by hand.":
     "VibeAround 会在启动时写入这段桌面应用配置。只有手动配置桌面应用时才需要复制。",
   "Click a value to copy.": "点击字段值即可复制。",
+  "This key stays the same across restarts.": "该 key 在重启后保持不变。",
+  "Generate a new API key": "重新生成 API key",
+  "Generate a new API key? Profiles using the current key stop working until you paste the new one.":
+    "确定重新生成 API key？在把新 key 粘贴过去之前，正在使用当前 key 的配置会失效。",
   "Use any non-empty API key value when the local API bridge is already running with a saved profile key.":
     "本地 API 转接已使用保存的配置 key 运行时，此处填写任意非空值即可。",
   "Manual setting": "手动配置",

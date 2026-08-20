@@ -54,6 +54,14 @@ export async function getLocalAgentApiToken(): Promise<string | null> {
 }
 
 /**
+ * Replace the agent-as-API key. The previous key stops working at once, so
+ * profiles carrying it need the new value.
+ */
+export async function rotateLocalAgentApiToken(): Promise<string> {
+  return invoke<string>("rotate_local_agent_api_token");
+}
+
+/**
  * Authenticated fetch against the daemon. Transparently re-fetches the
  * token on a 401 (daemon restart invalidates the previous token).
  */

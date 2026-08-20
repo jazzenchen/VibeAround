@@ -15,7 +15,7 @@ use anyhow::anyhow;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use common::auth::{self, AuthToken};
+use common::auth::{self, AuthToken, SharedAuthToken};
 use common::channels::{ChannelManager, WebChannelManager};
 use common::config;
 use common::plugins;
@@ -45,7 +45,10 @@ pub struct ServerDaemon {
     /// Scoped credential accepted only by the local API bridge.
     local_api_token: Arc<AuthToken>,
     /// Scoped credential accepted only by the agent-as-API surface.
-    local_agent_api_token: Arc<AuthToken>,
+    ///
+    /// Persisted across restarts and rotated only on request — users paste it
+    /// into provider profiles by hand.
+    local_agent_api_token: SharedAuthToken,
 }
 
 pub struct RunningDaemon {
@@ -241,8 +244,20 @@ impl ServerDaemon {
             auth_token: Arc::new(AuthToken::generate()),
             mcp_token: Arc::new(AuthToken::generate()),
             local_api_token: Arc::new(AuthToken::generate()),
-            local_agent_api_token: Arc::new(AuthToken::generate()),
+            local_agent_api_token: SharedAuthToken::new(
+                auth::load_or_create_local_agent_api_token(),
+            ),
         }
+    }
+
+    /// Mint a replacement agent-as-API credential and persist it.
+    ///
+    /// The previous key stops working immediately, so profiles carrying it
+    /// need the new value pasted in.
+    pub fn rotate_local_agent_api_token(&self) -> std::io::Result<String> {
+        let token = self.local_agent_api_token.rotate();
+        auth::write_local_agent_api_token_file(self.port, &token)?;
+        Ok(token.as_str().to_string())
     }
 
     pub fn tunnels(&self) -> Arc<TunnelManager> {
@@ -266,7 +281,7 @@ impl ServerDaemon {
         auth::write_token_file(self.port, &self.auth_token)?;
         auth::write_mcp_token_file(self.port, &self.mcp_token)?;
         auth::write_local_api_token_file(self.port, &self.local_api_token)?;
-        auth::write_local_agent_api_token_file(self.port, &self.local_agent_api_token)
+        auth::write_local_agent_api_token_file(self.port, &self.local_agent_api_token.snapshot())
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
@@ -283,8 +298,9 @@ impl ServerDaemon {
         let tunnels = Arc::clone(&self.tunnels);
         let pty = Arc::clone(&self.pty);
 
-        // Persist both daemon-lifetime tokens. Overwriting stale files makes
-        // credentials from the previous run invalid immediately.
+        // Rewrite the token files. Session tokens from the previous run go
+        // invalid immediately; the agent-as-API credential is restored, not
+        // regenerated, so profiles holding it keep working.
         if let Err(e) = self.persist_auth_tokens() {
             tracing::warn!(
                 error = %e,
@@ -357,7 +373,7 @@ impl ServerDaemon {
         let web_auth_token = Arc::clone(&self.auth_token);
         let web_mcp_token = Arc::clone(&self.mcp_token);
         let web_local_api_token = Arc::clone(&self.local_api_token);
-        let web_local_agent_api_token = Arc::clone(&self.local_agent_api_token);
+        let web_local_agent_api_token = self.local_agent_api_token.clone();
         let web_search_runtime = search_runtime.clone();
         let web_search_available = host_search_available;
         let web_replace_provider_search = replace_provider_web_search;
