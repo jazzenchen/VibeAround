@@ -255,9 +255,12 @@ impl ServerDaemon {
     /// The previous key stops working immediately, so profiles carrying it
     /// need the new value pasted in.
     pub fn rotate_local_agent_api_token(&self) -> std::io::Result<String> {
-        let token = self.local_agent_api_token.rotate();
-        auth::write_local_agent_api_token_file(self.port, &token)?;
-        Ok(token.as_str().to_string())
+        // Persist before swapping: a token the disk never received would be
+        // demanded by the running daemon and known to nobody.
+        let next = AuthToken::generate();
+        auth::write_local_agent_api_token_file(self.port, &next)?;
+        self.local_agent_api_token.replace(next.clone());
+        Ok(next.as_str().to_string())
     }
 
     pub fn tunnels(&self) -> Arc<TunnelManager> {

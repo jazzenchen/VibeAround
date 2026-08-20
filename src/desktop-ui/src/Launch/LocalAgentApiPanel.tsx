@@ -88,6 +88,7 @@ export function LocalAgentApiPanel({
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [clientKey, setClientKey] = useState("");
   const [rotatingKey, setRotatingKey] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
 
   const basePath = localAgentBasePath(target);
   const baseUrl = `${API_BASE}${basePath}`;
@@ -121,6 +122,7 @@ export function LocalAgentApiPanel({
     setTestResult(null);
     setClientKey("");
     setRotatingKey(false);
+    setRotateError(null);
     void getLocalAgentApiToken().then((token) => {
       if (!cancelled && token) setClientKey(token);
     });
@@ -192,10 +194,13 @@ export function LocalAgentApiPanel({
       return;
     }
     setRotatingKey(true);
+    setRotateError(null);
     try {
       setClientKey(await rotateLocalAgentApiToken());
     } catch (error) {
-      console.warn("[desktop-ui] rotate_local_agent_api_token failed:", error);
+      // Rotation is the one destructive action here, so a failure has to be
+      // visible: the row keeps showing the old key either way.
+      setRotateError(error instanceof Error ? error.message : String(error));
     } finally {
       setRotatingKey(false);
     }
@@ -458,6 +463,14 @@ export function LocalAgentApiPanel({
             <div className="pl-[86px] text-[11px] leading-4 text-muted-foreground">
               {t("This key stays the same across restarts.")}
             </div>
+            {rotateError && (
+              <div className="flex min-w-0 items-start gap-1 pl-[86px] text-[11px] leading-4 text-destructive">
+                <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span className="min-w-0">
+                  {t("Could not generate a new API key.")} {rotateError}
+                </span>
+              </div>
+            )}
           </>
         )}
         <ModelListField

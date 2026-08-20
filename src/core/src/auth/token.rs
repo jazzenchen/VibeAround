@@ -113,12 +113,13 @@ impl SharedAuthToken {
         self.read().clone()
     }
 
-    /// Swap in a freshly generated token, invalidating the previous one, and
-    /// return the replacement.
-    pub fn rotate(&self) -> AuthToken {
-        let next = AuthToken::generate();
-        *self.write() = next.clone();
-        next
+    /// Swap in a replacement, invalidating the previous token.
+    ///
+    /// Callers that also persist the token must write it first: a swap the
+    /// disk never received would leave the daemon demanding a credential
+    /// nobody holds.
+    pub fn replace(&self, token: AuthToken) {
+        *self.write() = token;
     }
 
     fn read(&self) -> RwLockReadGuard<'_, AuthToken> {
@@ -323,22 +324,24 @@ mod tests {
     }
 
     #[test]
-    fn rotating_a_shared_token_invalidates_the_previous_value() {
+    fn replacing_a_shared_token_invalidates_the_previous_value() {
         let shared = SharedAuthToken::new(AuthToken::generate());
         let previous = shared.snapshot();
         assert!(shared.matches(previous.as_str()));
 
-        let next = shared.rotate();
+        let next = AuthToken::generate();
+        shared.replace(next.clone());
         assert!(!shared.matches(previous.as_str()));
         assert!(shared.matches(next.as_str()));
         assert_eq!(shared.snapshot(), next);
     }
 
     #[test]
-    fn shared_token_clones_observe_a_rotation() {
+    fn shared_token_clones_observe_a_replacement() {
         let shared = SharedAuthToken::new(AuthToken::generate());
         let handler_copy = shared.clone();
-        let next = shared.rotate();
+        let next = AuthToken::generate();
+        shared.replace(next.clone());
         assert!(handler_copy.matches(next.as_str()));
     }
 
