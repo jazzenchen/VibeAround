@@ -368,28 +368,6 @@ export function LocalAgentApiPanel({
 
   return (
     <section className={cn("grid gap-3", className)}>
-      <div className="flex flex-wrap items-center gap-3">
-        <Tabs
-          value={protocol}
-          onValueChange={(value) => {
-            setProtocol(value as LocalApiProtocol);
-            setTestResult(null);
-          }}
-        >
-          <TabsList className="h-8">
-            {LOCAL_API_PROTOCOLS.map((item) => (
-              <TabsTrigger
-                key={item.id}
-                value={item.id}
-                className="px-3 text-xs"
-              >
-                {item.shortLabel}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </div>
-
       <div className="grid gap-1 rounded-md border border-border/70 p-2">
         <div className="flex min-h-5 flex-wrap items-center gap-2">
           <div className="text-xs font-semibold">
@@ -399,18 +377,58 @@ export function LocalAgentApiPanel({
             {t("Click a value to copy.")}
           </div>
         </div>
+
+        {/* The API selector and the one value it drives. */}
+        <div className="grid grid-cols-[78px_minmax(0,1fr)] items-center gap-2">
+          <div className="min-w-0 text-[11px] leading-5 text-muted-foreground">
+            <span className="truncate">{t("API")}</span>
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <Tabs
+              className="shrink-0"
+              value={protocol}
+              onValueChange={(value) => {
+                setProtocol(value as LocalApiProtocol);
+                setTestResult(null);
+              }}
+            >
+              {/* `!h-6` is required: tabsListVariants sets the height through
+                  group-data-[orientation=horizontal]/tabs:h-9, which a bare
+                  height utility cannot override. */}
+              <TabsList
+                className="!h-6 rounded-md bg-muted/60 p-0.5"
+                aria-label={t("API")}
+              >
+                {LOCAL_API_PROTOCOLS.map((item) => (
+                  <TabsTrigger
+                    key={item.id}
+                    value={item.id}
+                    className="h-5 rounded-[5px] px-2.5 text-[11px] font-medium"
+                  >
+                    {item.shortLabel}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground">
+              {selectedProtocol.label}
+            </span>
+          </div>
+        </div>
         <ManualField
-          label={t("Base URL")}
+          label={t("Endpoint")}
           value={endpointUrl}
+          tone="primary"
           copied={copiedKey === protocol}
           onCopy={() => copyValue(protocol, endpointUrl)}
         />
-        <ManualField
-          label={t("Models API")}
-          value={modelsUrl}
-          copied={copiedKey === "models"}
-          onCopy={() => copyValue("models", modelsUrl)}
-        />
+        <div className="pl-[86px] text-[11px] leading-4 text-muted-foreground">
+          {t("This URL changes with the selected API.")}
+        </div>
+
+        <div aria-hidden className="-mx-2 my-1 h-px bg-border" />
+
+        {/* Same for every API. */}
         {clientKey && (
           <>
             <ManualField
@@ -457,6 +475,12 @@ export function LocalAgentApiPanel({
           copiedKey={copiedKey}
           onCopy={(modelId) => copyValue(`model:${modelId}`, modelId)}
         />
+        <ManualField
+          label={t("Models API")}
+          value={modelsUrl}
+          copied={copiedKey === "models"}
+          onCopy={() => copyValue("models", modelsUrl)}
+        />
       </div>
 
       <div className="grid gap-2 rounded-md border border-border/70 p-3">
@@ -465,6 +489,11 @@ export function LocalAgentApiPanel({
             <MessageSquare className="h-4 w-4 text-primary" />
             {t("Test message")}
           </div>
+          {/* runTest posts to the selected protocol's endpoint; the switcher
+              now lives in the block above, so name the target here. */}
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+            {selectedProtocol.label}
+          </span>
         </div>
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-2">
           <div className="grid gap-1 text-[11px] text-muted-foreground">
@@ -661,7 +690,7 @@ function ManualField({
           type="button"
           className={`flex h-5 w-full min-w-0 cursor-pointer items-center rounded px-1.5 text-left font-mono text-[11px] leading-5 transition-colors ${
             tone === "primary"
-              ? "bg-primary/5 text-primary hover:bg-primary/10"
+              ? "bg-primary/10 text-primary hover:bg-primary/15"
               : "bg-muted/35 text-foreground hover:bg-muted/60"
           }`}
           aria-label={t("Copy")}

@@ -392,6 +392,7 @@ export const zhCNLaunch: Record<string, string> = {
   "Enter it as your provider documents it, usually ending in /v1. Some clients append /v1 themselves — if requests fail on a doubled /v1 path, drop the trailing /v1 here.":
     "按服务商文档填写，通常以 /v1 结尾。部分客户端会自行追加 /v1——如果请求因为路径里出现两个 /v1 而失败，就去掉这里结尾的 /v1。",
   "This key stays the same across restarts.": "该 key 在重启后保持不变。",
+  "This URL changes with the selected API.": "该 URL 会随所选 API 变化。",
   "Generate a new API key": "重新生成 API key",
   "Generate a new API key? Profiles using the current key stop working until you paste the new one.":
     "确定重新生成 API key？在把新 key 粘贴过去之前，正在使用当前 key 的配置会失效。",
