@@ -22,6 +22,7 @@ import { z } from "zod";
  *  When that file adds an entry, add it here too and the `Record<AgentId, ...>`
  *  consumers (display-name maps) will force you to supply the rest. */
 export const AGENT_IDS = [
+  "va-agent",
   "claude",
   "gemini",
   "opencode",
@@ -44,6 +45,7 @@ export const AgentInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  requires_profile: z.boolean().default(false),
 });
 export type AgentInfo = z.infer<typeof AgentInfoSchema>;
 

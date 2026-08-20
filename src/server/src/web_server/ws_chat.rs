@@ -112,6 +112,22 @@ fn initial_route(client: ChatSocketClient, chat_id: Option<String>) -> RouteKey 
     )
 }
 
+fn agent_ids_with_bound_host(
+    enabled_agent_ids: &[String],
+    bound_agent_id: Option<&str>,
+) -> Vec<String> {
+    let mut agent_ids = enabled_agent_ids.to_vec();
+    if let Some(agent_id) = bound_agent_id {
+        if !agent_ids
+            .iter()
+            .any(|enabled_agent_id| enabled_agent_id == agent_id)
+        {
+            agent_ids.push(agent_id.to_string());
+        }
+    }
+    agent_ids
+}
+
 async fn read_config_and_prefs_snapshot() -> Option<(config::Config, agent_state::AgentsPrefsFile)>
 {
     match tokio::task::spawn_blocking(agent_state::read_config_and_prefs).await {
@@ -160,10 +176,25 @@ async fn handle_chat_socket(
         return;
     };
 
+    let bound_agent_id = match state
+        .channel_hub
+        .workspace_thread_manager()
+        .active_route_runtime(&active_route)
+        .await
+    {
+        Ok(Some(runtime)) => Some(runtime.state().await.host_binding.agent_id),
+        Ok(None) => None,
+        Err(error) => {
+            tracing::warn!(%error, route = %active_route, "failed to resolve bound chat agent");
+            None
+        }
+    };
+    let agent_ids = agent_ids_with_bound_host(&cfg.enabled_agents, bound_agent_id.as_deref());
+
     // Send initial config event.
     let config_event = ChatEvent::Config {
         channel_id: channel_id.clone(),
-        agents: AgentInfo::for_ids(&cfg.enabled_agents),
+        agents: AgentInfo::for_ids(&agent_ids),
         default_agent: agent_state::resolve_default_agent(&agent_prefs, &cfg),
     };
     if send_event(&mut ws_tx, &config_event).await.is_err() {
@@ -1075,6 +1106,20 @@ mod tests {
         assert!(super::should_replay_initial_route_history(&Some(
             "ws_thread".to_string()
         )));
+    }
+
+    #[test]
+    fn bound_agent_is_included_without_changing_enabled_order() {
+        let enabled = vec!["codex".to_string(), "claude".to_string()];
+
+        assert_eq!(
+            super::agent_ids_with_bound_host(&enabled, Some("va-agent")),
+            vec!["codex", "claude", "va-agent"]
+        );
+        assert_eq!(
+            super::agent_ids_with_bound_host(&enabled, Some("codex")),
+            enabled
+        );
     }
 
     #[test]

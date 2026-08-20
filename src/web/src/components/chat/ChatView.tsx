@@ -6,6 +6,7 @@ import {
   createWorkspace,
   getLaunchSessionsBatch,
   getProfiles,
+  getWorkspaceThread,
   getWorkspaces,
   initWorkspaceThread,
 } from "@/api/sessions";
@@ -64,13 +65,21 @@ import { SubagentPanel } from "./SubagentPanel";
 import { currentUnixSeconds } from "./chatTime";
 import type { ChatSessionSelection } from "./chatTypes";
 import { useChatAttachments } from "./useChatAttachments";
+import {
+  clearWebChatHandoff,
+  readWebChatHandoffThreadId,
+} from "./webChatHandoff";
+import {
+  DIRECT_PROFILE_ID,
+  launchSelectionIsValid,
+  profileIdForAgent,
+  shouldApplySocketAgentSelection,
+} from "./chatLaunchContract";
 
 interface ChatViewProps {
   webSettings: WebVerboseSettings;
   onOpenAppSidebar?: () => void;
 }
-
-const DIRECT_PROFILE_ID = "direct";
 
 export function ChatView({
   webSettings,
@@ -78,6 +87,9 @@ export function ChatView({
 }: ChatViewProps) {
   const { t } = useI18n();
   const [storedLaunchSelection] = useState(readStoredLaunchSelection);
+  const [handoffThreadId] = useState(readWebChatHandoffThreadId);
+  const [handoffPending, setHandoffPending] = useState(Boolean(handoffThreadId));
+  const [handoffError, setHandoffError] = useState<string | undefined>();
   const [input, setInput] = useState("");
   const {
     attachments,
@@ -154,13 +166,63 @@ export function ChatView({
     activeRuntimeKeyRef.current = activeRuntimeKey;
   }, [activeRuntimeKey]);
 
+  useEffect(() => {
+    if (!handoffThreadId) return;
+    let cancelled = false;
+    restoredActiveLaunchSessionRef.current = true;
+    clearStoredActiveLaunchSession();
+    storedActiveLaunchSessionKeyRef.current = undefined;
+    void getWorkspaceThread(handoffThreadId)
+      .then((response) => {
+        if (cancelled) return;
+        const profileId = response.profile_id ?? DIRECT_PROFILE_ID;
+        const runtimeKey = INITIAL_RUNTIME_KEY;
+        setRuntimeSpecs((prev) => ({
+          ...prev,
+          [runtimeKey]: {
+            agentId: response.agent_id,
+            profileId,
+            workspacePath: response.workspace,
+            threadId: response.thread_id,
+            chatId: response.chat_id || chatIdForThread(response.thread_id),
+          },
+        }));
+        setSelectedAgent(response.agent_id);
+        setProfileSelections((prev) => ({
+          ...prev,
+          [response.agent_id]: profileId,
+        }));
+        setSelectedWorkspacePath(response.workspace);
+        clearWebChatHandoff();
+        setHandoffPending(false);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn("[ChatView] failed to restore workspace thread handoff:", error);
+          clearWebChatHandoff();
+          setHandoffError(error instanceof Error ? error.message : String(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [handoffThreadId]);
+
   const handleSocketAgentSelected = useCallback(
     (runtimeKey: string, agentId: string, source: "config" | "system") => {
       if (runtimeKey !== activeRuntimeKeyRef.current) return;
-      if (source === "config" && storedLaunchSelection.agentId) return;
+      if (
+        !shouldApplySocketAgentSelection(
+          source,
+          Boolean(handoffThreadId),
+          Boolean(storedLaunchSelection.agentId),
+        )
+      ) {
+        return;
+      }
       setSelectedAgent(agentId);
     },
-    [storedLaunchSelection.agentId],
+    [handoffThreadId, storedLaunchSelection.agentId],
   );
 
   const handleRuntimeSnapshot = useCallback(
@@ -646,6 +708,7 @@ export function ChatView({
     }
 
     for (const [runtimeKey, spec] of Object.entries(runtimeSpecs)) {
+      if (handoffPending && runtimeKey === INITIAL_RUNTIME_KEY) continue;
       if (spec.threadId || spec.launchSession?.thread_id) continue;
       const workspacePath =
         spec.launchSession?.workspace ??
@@ -655,6 +718,8 @@ export function ChatView({
       if (!workspacePath) continue;
       const sessionId = spec.launchSession?.session_id;
       const profileId = spec.launchSession?.host_profile_id ?? spec.profileId;
+      const agent = agents.find((candidate) => candidate.id === spec.agentId);
+      if (agent && !launchSelectionIsValid(agent, profileId)) continue;
       const signature = [
         spec.agentId,
         profileId ?? "",
@@ -785,6 +850,8 @@ export function ChatView({
     }
   }, [
     defaultWorkspacePath,
+    agents,
+    handoffPending,
     profileLabelForId,
     profilesById,
     runtimeSpecs,
@@ -810,21 +877,35 @@ export function ChatView({
 
   useEffect(() => {
     if (!selectedAgent) return;
+    const agent = agents.find((candidate) => candidate.id === selectedAgent);
     setProfileSelections((prev) =>
       prev[selectedAgent] === undefined
-        ? { ...prev, [selectedAgent]: DIRECT_PROFILE_ID }
+        ? {
+            ...prev,
+            [selectedAgent]: profileIdForAgent(agent, profiles),
+          }
         : prev,
     );
-  }, [selectedAgent]);
+  }, [agents, profiles, selectedAgent]);
 
   useEffect(() => {
     if (!selectedAgent || profiles.length === 0) return;
+    const agent = agents.find((candidate) => candidate.id === selectedAgent);
     const profileId = profileSelections[selectedAgent] ?? DIRECT_PROFILE_ID;
-    if (profileId === DIRECT_PROFILE_ID) return;
+    if (profileId === DIRECT_PROFILE_ID) {
+      if (!agent?.requires_profile) return;
+      const nextProfileId = profileIdForAgent(agent, profiles, profileId);
+      if (nextProfileId === DIRECT_PROFILE_ID) return;
+      setProfileSelections((prev) => ({ ...prev, [selectedAgent]: nextProfileId }));
+      return;
+    }
     const profile = profiles.find((item) => item.id === profileId);
     if (profile && profileTargetsAgent(profile, selectedAgent)) return;
-    setProfileSelections((prev) => ({ ...prev, [selectedAgent]: DIRECT_PROFILE_ID }));
-  }, [profiles, profileSelections, selectedAgent]);
+    setProfileSelections((prev) => ({
+      ...prev,
+      [selectedAgent]: profileIdForAgent(agent, profiles),
+    }));
+  }, [agents, profiles, profileSelections, selectedAgent]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -837,8 +918,12 @@ export function ChatView({
   useEffect(() => {
     if (agents.length === 0) return;
     if (agents.some((agent) => agent.id === selectedAgent)) return;
+    const boundAgentId = runtimeSpecs[INITIAL_RUNTIME_KEY]?.threadId
+      ? runtimeSpecs[INITIAL_RUNTIME_KEY]?.agentId
+      : undefined;
+    if (boundAgentId === selectedAgent) return;
     setSelectedAgent(agents[0]?.id ?? selectedAgent);
-  }, [agents, selectedAgent]);
+  }, [agents, runtimeSpecs, selectedAgent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1042,6 +1127,10 @@ export function ChatView({
 
   useEffect(() => {
     if (restoredActiveLaunchSessionRef.current) return;
+    if (handoffThreadId) {
+      restoredActiveLaunchSessionRef.current = true;
+      return;
+    }
     const stored = readStoredActiveLaunchSession();
     if (!stored) {
       restoredActiveLaunchSessionRef.current = true;
@@ -1059,7 +1148,7 @@ export function ChatView({
     }));
     storedActiveLaunchSessionKeyRef.current = chatSessionKey(session);
     activateRuntimeForSession(session);
-  }, [activateRuntimeForSession]);
+  }, [activateRuntimeForSession, handoffThreadId]);
 
   useEffect(() => {
     const spec = runtimeSpecs[activeRuntimeKey];
@@ -1123,7 +1212,8 @@ export function ChatView({
   ]);
 
   const handleLaunchChange = useCallback((agentId: string, profileId?: string) => {
-    const nextProfileId = profileId ?? DIRECT_PROFILE_ID;
+    const agent = agents.find((candidate) => candidate.id === agentId);
+    const nextProfileId = profileIdForAgent(agent, profiles, profileId);
     setSelectedAgent(agentId);
     setProfileSelections((prev) => {
       return { ...prev, [agentId]: nextProfileId };
@@ -1133,7 +1223,7 @@ export function ChatView({
       nextProfileId,
       selectedWorkspace?.path ?? defaultWorkspacePath,
     );
-  }, [defaultWorkspacePath, selectedWorkspace?.path, updateActiveDraftRuntime]);
+  }, [agents, defaultWorkspacePath, profiles, selectedWorkspace?.path, updateActiveDraftRuntime]);
 
   const handleWorkspaceSelectionChange = useCallback(
     (workspacePath: string) => {
@@ -1355,6 +1445,8 @@ export function ChatView({
     const messageWorkspacePath = selectedWorkspace?.path ?? defaultWorkspacePath;
     const messageAgentId = activeSpec?.agentId ?? selectedAgent;
     const messageProfileId = activeSpec?.profileId ?? selectedProfileId;
+    const messageAgent = agents.find((agent) => agent.id === messageAgentId);
+    if (!launchSelectionIsValid(messageAgent, messageProfileId)) return;
     const messageLaunchSession = activeLaunchSession ?? selectedLaunchSession;
     const messageSessionSelection =
       activeSessionSelection.kind === "new" && activeLaunchSession
@@ -1401,6 +1493,7 @@ export function ChatView({
     activeSpec,
     attachments,
     attachmentsUploading,
+    agents,
     clearAttachments,
     input,
     replayBlocksInput,
@@ -1415,6 +1508,11 @@ export function ChatView({
     t,
   ]);
 
+  const activeLaunchSelectionValid = launchSelectionIsValid(
+    activeAgentInfo,
+    activeProfileId,
+  );
+
   const handleSessionModeChange = useCallback(
     (value: string) => {
       if (!sessionMode) return;
@@ -1428,6 +1526,22 @@ export function ChatView({
     },
     [sessionMode, setSessionConfigOption, setSessionMode],
   );
+
+  if (handoffError) {
+    return (
+      <div className="flex h-full items-center justify-center bg-background p-6">
+        <div
+          role="alert"
+          className="max-w-lg rounded-md border border-destructive/30 p-4"
+        >
+          <p className="text-sm font-medium text-destructive">
+            {t("Could not open this VibeAround Agent chat")}
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">{handoffError}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full overflow-hidden bg-background">
@@ -1535,8 +1649,13 @@ export function ChatView({
                 attachmentError={attachmentError}
                 onFilesSelected={handleFilesSelected}
                 onRemoveAttachment={handleRemoveAttachment}
-                disabled={!connected}
-                submitDisabled={streaming || replayBlocksInput || attachmentsUploading}
+                disabled={!connected || !activeLaunchSelectionValid}
+                submitDisabled={
+                  streaming ||
+                  replayBlocksInput ||
+                  attachmentsUploading ||
+                  !activeLaunchSelectionValid
+                }
                 isStreaming={streaming}
                 sendWithModifierEnter={webSettings.send_with_modifier_enter}
                 sessionMode={sessionMode}
@@ -1604,8 +1723,13 @@ export function ChatView({
               attachmentError={attachmentError}
               onFilesSelected={handleFilesSelected}
               onRemoveAttachment={handleRemoveAttachment}
-              disabled={!connected || replayBlocksInput}
-              submitDisabled={streaming || replayBlocksInput || attachmentsUploading}
+              disabled={!connected || replayBlocksInput || !activeLaunchSelectionValid}
+              submitDisabled={
+                streaming ||
+                replayBlocksInput ||
+                attachmentsUploading ||
+                !activeLaunchSelectionValid
+              }
               isStreaming={streaming}
               sendWithModifierEnter={webSettings.send_with_modifier_enter}
               sessionMode={sessionMode}

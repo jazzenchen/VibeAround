@@ -5,8 +5,11 @@ import { useI18n } from "@va/i18n";
 
 import { BrandIcon } from "@/components/brand-icon";
 import { cn } from "@/lib/utils";
-
-const DIRECT_PROFILE_ID = "direct";
+import {
+  DIRECT_PROFILE_ID,
+  launchProfilesForAgent,
+  profileIdForAgent,
+} from "./chatLaunchContract";
 
 interface NewChatAgentPickerProps {
   agents: AgentInfo[];
@@ -16,13 +19,6 @@ interface NewChatAgentPickerProps {
   fallbackAgentLabel: string;
   onLaunchChange: (agentId: string, profileId?: string) => void;
   className?: string;
-}
-
-function launchProfilesForAgent(profiles: ProfileLaunchOption[], agentId: string) {
-  return profiles.flatMap((profile) => {
-    const target = profile.launch_targets.find((target) => target.id === agentId);
-    return target ? [profile] : [];
-  });
 }
 
 function SectionTitle({ label }: { label: string }) {
@@ -48,12 +44,7 @@ export function NewChatAgentPicker({
   const selectedAgentProfiles = launchProfilesForAgent(profiles, selectedAgentId);
 
   const chooseAgent = (agent: AgentInfo) => {
-    const nextAgentProfiles = launchProfilesForAgent(profiles, agent.id);
-    const nextProfileId =
-      selectedProfileId === DIRECT_PROFILE_ID ||
-      nextAgentProfiles.some((profile) => profile.id === selectedProfileId)
-        ? selectedProfileId
-        : DIRECT_PROFILE_ID;
+    const nextProfileId = profileIdForAgent(agent, profiles, selectedProfileId);
     onLaunchChange(agent.id, nextProfileId);
   };
 
@@ -109,20 +100,22 @@ export function NewChatAgentPicker({
       <section className={cn("w-full", className)}>
         <SectionTitle label={t("Profile")} />
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            className={optionButtonClass(selectedProfileId === DIRECT_PROFILE_ID)}
-            aria-pressed={selectedProfileId === DIRECT_PROFILE_ID}
-            onClick={() => onLaunchChange(selectedAgentId, DIRECT_PROFILE_ID)}
-          >
-            <BrandIcon
-              kind="cli"
-              id={selectedAgentId}
-              label={selectedAgentName}
-              className="h-5 w-5"
-            />
-            <span className="min-w-0 flex-1 truncate font-medium">{t("Direct")}</span>
-          </button>
+          {!selectedAgent?.requires_profile && (
+            <button
+              type="button"
+              className={optionButtonClass(selectedProfileId === DIRECT_PROFILE_ID)}
+              aria-pressed={selectedProfileId === DIRECT_PROFILE_ID}
+              onClick={() => onLaunchChange(selectedAgentId, DIRECT_PROFILE_ID)}
+            >
+              <BrandIcon
+                kind="cli"
+                id={selectedAgentId}
+                label={selectedAgentName}
+                className="h-5 w-5"
+              />
+              <span className="min-w-0 flex-1 truncate font-medium">{t("Direct")}</span>
+            </button>
+          )}
           {selectedAgentProfiles.map((profile) => (
             <button
               key={profile.id}

@@ -51,6 +51,9 @@ pub struct AgentDef {
     /// toggled by the user.
     #[serde(default)]
     pub built_in: bool,
+    /// Has no login of its own, so it must be pointed at a model profile.
+    #[serde(default)]
+    pub requires_profile: bool,
     #[serde(default)]
     pub install: Option<AgentInstallInfo>,
     pub acp: AgentAcpConfig,

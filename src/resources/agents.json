@@ -5,6 +5,7 @@
     "description": "Built-in VibeAround coding agent",
     "aliases": [],
     "built_in": true,
+    "requires_profile": true,
     "acp": {
       "program": "va-agent"
     },

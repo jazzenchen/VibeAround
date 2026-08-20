@@ -56,6 +56,7 @@ pub struct AgentInfo {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub requires_profile: bool,
 }
 
 /// `GET /api/agents` response envelope.
@@ -190,6 +191,7 @@ impl AgentInfo {
                     id: id.clone(),
                     name: def.display_name.clone(),
                     description: def.description.clone(),
+                    requires_profile: def.requires_profile,
                 })
             })
             .collect()
