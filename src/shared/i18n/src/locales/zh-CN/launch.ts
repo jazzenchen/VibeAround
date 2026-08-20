@@ -154,6 +154,7 @@ export const zhCNLaunch: Record<string, string> = {
   "Model routes": "模型映射",
   Endpoint: "Endpoint",
   "Endpoint URL required": "必须填写 Endpoint URL",
+  Tested: "实际请求",
   "Base URL": "Base URL",
   "Leave blank to use the catalog default.": "留空则使用内置默认值。",
   "Required for custom endpoints.": "自定义 endpoint 必填。",

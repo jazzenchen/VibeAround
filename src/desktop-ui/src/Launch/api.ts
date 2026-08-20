@@ -84,8 +84,13 @@ export function googleOAuthLogin(): Promise<GoogleOAuthStatus> {
   return invoke<GoogleOAuthStatus>("profiles_google_oauth_login");
 }
 
+export interface TestedEndpoint {
+  apiType: string;
+  url: string;
+}
+
 export interface ProfileConnectionTestResult {
-  testedApiTypes: string[];
+  testedEndpoints: TestedEndpoint[];
 }
 
 export function testProfileConnection(

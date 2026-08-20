@@ -73,11 +73,11 @@ import type {
 import type { ProviderSettings } from "./types";
 import { apiTypeLabel, apiTypeShort } from "./types";
 
-type ModelTestOutcome = { ok: boolean; message: string };
+type ModelTestOutcome = { ok: boolean; message: string; url?: string };
 type ModelTestStatus =
   | { state: "idle" }
   | { state: "testing" }
-  | { state: "success"; message: string }
+  | { state: "success"; message: string; url?: string }
   | { state: "error"; message: string };
 
 interface FormBodyProps {
@@ -313,7 +313,7 @@ export function FormBody({
       setModelTestStatus((current) => ({
         ...current,
         [statusKey]: result.ok
-          ? { state: "success", message: result.message }
+          ? { state: "success", message: result.message, url: result.url }
           : { state: "error", message: result.message },
       }));
     }
@@ -797,6 +797,12 @@ function ModelCatalogDialog({
   const [customModel, setCustomModel] = useState("");
   const modelRows = models;
   const allModelIds = modelRows.map((model) => model.id);
+  // Every model on this endpoint is tested against the same URL, so any row
+  // that passed answers "where did the request actually go?" for the dialog.
+  const testedUrl = modelRows.reduce<string | undefined>((found, model) => {
+    const status = statuses[statusKeyFor(model.id)];
+    return status?.state === "success" && status.url ? status.url : found;
+  }, undefined);
   const allChecked =
     allModelIds.length > 0 &&
     allModelIds.every((model) => checkedModels.includes(model));
@@ -854,6 +860,19 @@ function ModelCatalogDialog({
           <div className="min-w-0 truncate pt-1 font-mono text-xs text-muted-foreground">
             {baseUrl || t("Endpoint URL required")}
           </div>
+          {testedUrl && (
+            <div className="flex min-w-0 items-baseline gap-1.5 pt-0.5 text-[11px]">
+              <span className="shrink-0 text-muted-foreground">
+                {t("Tested")}
+              </span>
+              <span
+                className="min-w-0 truncate font-mono text-primary"
+                title={testedUrl}
+              >
+                {testedUrl}
+              </span>
+            </div>
+          )}
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-auto px-5 py-3 [scrollbar-gutter:stable]">
