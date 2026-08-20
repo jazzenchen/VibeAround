@@ -196,7 +196,9 @@ fn pi_extension_contents(config: &PiProviderLaunchConfig<'_>) -> anyhow::Result<
     let mut provider = Map::new();
     provider.insert("name".to_string(), json!(config.provider_label));
     provider.insert("baseUrl".to_string(), json!(config.base_url));
-    provider.insert("apiKey".to_string(), json!("VIBEAROUND_PI_API_KEY"));
+    // Pi resolves config values via $VAR/${VAR} templates; a bare string is
+    // treated as a literal key, not an env var name.
+    provider.insert("apiKey".to_string(), json!("$VIBEAROUND_PI_API_KEY"));
     provider.insert("api".to_string(), json!(pi_api_for(config.api_type)?));
     provider.insert(
         "models".to_string(),

@@ -1144,7 +1144,7 @@ mod tests {
             .contains("\"baseUrl\": \"https://coding-intl.dashscope.aliyuncs.com/v1\""));
         assert!(extension
             .contents
-            .contains("\"apiKey\": \"VIBEAROUND_PI_API_KEY\""));
+            .contains("\"apiKey\": \"$VIBEAROUND_PI_API_KEY\""));
         assert!(extension
             .contents
             .contains("\"X-DashScope-AuthType\": \"openai\""));
