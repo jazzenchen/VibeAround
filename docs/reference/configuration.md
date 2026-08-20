@@ -11,9 +11,7 @@ Everything lives under `~/.vibearound/` (override with `VIBEAROUND_DATA_DIR`):
 | `settings.json` | you, desktop settings UI, onboarding | Main configuration — [full schema below](#settingsjson) | **Yes** (then `va settings reload`) |
 | `agents.json` | desktop Launch UI, `va-launch` (executable discovery) | Per-agent launch preferences — [schema below](#agentsjson) | Yes, carefully |
 | `launch/profiles/<name>.json` | you, desktop (temp materialized copies) | Saved native-launch profiles — [schema below](#launch-profile-json-schema-v1) | **Yes** (that is the point) |
-| `auth.json` | daemon, every start | `{port, token}` for out-of-process clients | No — rewritten each start |
-| `local-api-auth.json` | daemon, every start | Scoped `{port, token}` for profile-backed model bridge clients | No — rewritten each start |
-| `local-agent-api-auth.json` | daemon, every start | Scoped `{port, token}` for agent-as-API clients | No — rewritten each start |
+| `auth.json` | daemon, every start | `{port, token, mcp_token, bridge_token, agent_token}` — one credential per route family: `token` for dashboard/control, `mcp_token` for `/mcp`, `bridge_token` for `/local-api`, `agent_token` for `/local-agent` | No — rewritten each start, except `agent_token`, which is carried over |
 | `profiles/<profile-id>.json` | desktop/dashboard profile UI | Saved model profiles (provider, endpoint, key, model routes) | Prefer the UI; hand-edits are read on reload |
 | `profile-state/<profile-id>/` | profile rendering | Rendered per-profile agent config files (settings overlays); env pointers reference these ([launch internals](../internals/launch.md#environment-assembly-layer-by-layer)) | No — regenerated per render |
 | `plugins/<kind>/` | desktop plugin manager | Installed channel plugins + manifests | Only during plugin development |
@@ -155,9 +153,7 @@ Two "profile" concepts meet here and must not be confused: a **provider profile*
 ```text
 ~/.vibearound/
 ├── settings.json           # configuration (this page)
-├── auth.json               # dashboard token, rewritten each daemon start
-├── local-api-auth.json     # profile bridge token, rewritten each daemon start
-├── local-agent-api-auth.json # agent-as-API token, rewritten each daemon start
+├── auth.json               # port + dashboard, MCP, bridge and agent-as-API tokens
 ├── agents.json             # resolved agent executables (va-launch cache)
 ├── plugins/<kind>/         # installed channel plugins
 ├── launch/profiles/        # saved launch profile JSON (schema v1)

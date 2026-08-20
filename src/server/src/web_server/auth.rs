@@ -158,10 +158,32 @@ pub(crate) fn request_is_local_dashboard<B>(req: &Request<B>) -> bool {
     request_is_loopback(req) && request_origin_is_local_dashboard(req)
 }
 
-/// Preview's local bypass requires both a loopback peer and loopback Host.
-/// Tunnel forwarders also connect over loopback, so peer alone is insufficient.
+/// Headers a reverse proxy stamps onto every request it forwards.
+///
+/// Tailscale Funnel routes on the TLS SNI and forwards the caller's Host
+/// unchanged, so a public caller can send `Host: localhost:<port>` and satisfy
+/// both loopback checks below — the peer is the local forwarder either way.
+/// The forwarder overwrites these headers with `Set`, so a caller cannot
+/// suppress them, which makes their presence a reliable "not local" signal.
+const PROXY_FORWARDED_HEADERS: [&str; 4] = [
+    "tailscale-funnel-request",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "forwarded",
+];
+
+fn request_was_forwarded<B>(req: &Request<B>) -> bool {
+    PROXY_FORWARDED_HEADERS
+        .iter()
+        .any(|name| req.headers().contains_key(*name))
+}
+
+/// Preview's local bypass requires a loopback peer, a loopback Host, and no
+/// forwarder headers. Tunnel forwarders also connect over loopback, so peer
+/// alone is insufficient, and they can carry a spoofed loopback Host, so the
+/// headers they stamp on the way through are the third check.
 pub(crate) fn request_is_loopback<B>(req: &Request<B>) -> bool {
-    request_peer_is_loopback(req) && request_host_is_loopback(req)
+    request_peer_is_loopback(req) && request_host_is_loopback(req) && !request_was_forwarded(req)
 }
 
 fn request_is_local_bridge<B>(req: &Request<B>) -> bool {

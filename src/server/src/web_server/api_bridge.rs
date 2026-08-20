@@ -1451,13 +1451,13 @@ fn validate_manual_scope(scope: &str) -> Result<(), (StatusCode, String)> {
 
 #[derive(Clone)]
 pub(crate) struct LocalAgentCredential {
-    token: Arc<common::auth::AuthToken>,
+    token: common::auth::SharedAuthToken,
     owner_token: Arc<common::auth::AuthToken>,
 }
 
 impl LocalAgentCredential {
     pub(crate) fn new(
-        token: Arc<common::auth::AuthToken>,
+        token: common::auth::SharedAuthToken,
         owner_token: Arc<common::auth::AuthToken>,
     ) -> Self {
         Self { token, owner_token }
@@ -1478,7 +1478,7 @@ pub(crate) async fn require_local_agent_credential(
 }
 
 fn validate_local_agent_client_token(
-    auth_token: &common::auth::AuthToken,
+    auth_token: &common::auth::SharedAuthToken,
     owner_token: &common::auth::AuthToken,
     headers: &HeaderMap,
 ) -> Option<Response> {
@@ -1575,7 +1575,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
-    use common::auth::AuthToken;
+    use common::auth::{AuthToken, SharedAuthToken};
     use common::config::HttpProxyConfig;
     use common::profiles::schema::{AuthMode, ProfileDef};
 
@@ -1656,7 +1656,7 @@ mod tests {
 
     #[test]
     fn local_agent_api_rejects_bridge_token() {
-        let local_agent_api_token = AuthToken::generate();
+        let local_agent_api_token = SharedAuthToken::new(AuthToken::generate());
         let bridge_token = AuthToken::generate();
         let owner_token = AuthToken::generate();
         let mut headers = HeaderMap::new();
@@ -1673,9 +1673,9 @@ mod tests {
 
     #[test]
     fn local_agent_api_accepts_scoped_and_owner_tokens() {
-        let local_agent_api_token = AuthToken::generate();
+        let local_agent_api_token = SharedAuthToken::new(AuthToken::generate());
         let owner_token = AuthToken::generate();
-        for token in [&local_agent_api_token, &owner_token] {
+        for token in [local_agent_api_token.snapshot(), owner_token.clone()] {
             let mut headers = HeaderMap::new();
             headers.insert(
                 header::AUTHORIZATION,

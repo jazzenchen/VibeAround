@@ -84,6 +84,9 @@ pub struct WorkspaceThreadManager {
     runtimes: RuntimeRegistry,
     change_tx: broadcast::Sender<()>,
     preview_lifecycle: Mutex<()>,
+    /// VibeAround's MCP tools served over ACP to thread agents. Installed by
+    /// the server at boot; thread handlers hand it to their ACP bridge.
+    mcp_over_acp: std::sync::OnceLock<Arc<dyn crate::agent::AcpMcpServer>>,
 }
 
 impl WorkspaceThreadManager {
@@ -98,7 +101,17 @@ impl WorkspaceThreadManager {
             runtimes: RuntimeRegistry::new(),
             change_tx,
             preview_lifecycle: Mutex::new(()),
+            mcp_over_acp: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Install the MCP-over-ACP server once at boot. Later calls are ignored.
+    pub fn set_mcp_over_acp(&self, server: Arc<dyn crate::agent::AcpMcpServer>) {
+        let _ = self.mcp_over_acp.set(server);
+    }
+
+    pub fn mcp_over_acp(&self) -> Option<Arc<dyn crate::agent::AcpMcpServer>> {
+        self.mcp_over_acp.get().cloned()
     }
 
     pub fn with_paths(
@@ -114,6 +127,7 @@ impl WorkspaceThreadManager {
             runtimes: RuntimeRegistry::new(),
             change_tx,
             preview_lifecycle: Mutex::new(()),
+            mcp_over_acp: std::sync::OnceLock::new(),
         })
     }
 

@@ -60,7 +60,7 @@ Markdown 解析器和净化器都随守护进程内置，Preview 不执行远程
 ## 凭据处理
 
 - 供应商 API key 存在 `~/.vibearound/` 下的 Profile 存储里，**由守护进程**注入上游请求。渲染给 Agent 的配置只含本地 Bridge URL —— Agent 配置泄露不会暴露任何供应商 key。
-- Bridge 和 agent-as-API 端点仅监听回环地址，且有本地 bridge 门；隧道无法触达。主路径 `/local-api` 和 `/local-agent` 各有独立、随守护进程轮换的 scoped token，因此模型 Bridge 客户端不能启动 Agent。
+- Bridge 和 agent-as-API 端点仅监听回环地址，且有本地 bridge 门；隧道无法触达。主路径 `/local-api` 和 `/local-agent` 各有独立的 scoped token，因此模型 Bridge 客户端不能启动 Agent。Bridge token 每次守护进程启动都会重新生成；Agent-as-API token 因为要由用户粘贴进 Profile，会跨重启保持不变，只在重新生成时更换。
 - 守护进程自己的 token 文件是家目录里的明文（信任级别等同 `~/.ssh`）；备份时相应对待。
 - 启动弹窗的 Bridge 请求/响应记录只在内存里，从不落盘。
 

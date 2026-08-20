@@ -42,7 +42,10 @@ pub use install::{
     is_program_available, npm_package_bin_name, npm_package_installed,
     npm_package_installed_in_dir, InstallOutput,
 };
-pub use runtime::{Agent, AgentClientHandler, AgentReady, StartupSession};
+pub use runtime::{
+    acp_mcp_servers, AcpMcpError, AcpMcpServer, Agent, AgentClientHandler, AgentReady,
+    StartupSession, VIBEAROUND_ACP_MCP_SERVER,
+};
 
 use mcp::{install_project_mcp_config, uninstall_mcp_config};
 use skills::{sync_project_skill, uninstall_skill};
@@ -76,7 +79,7 @@ pub fn install_project_mcp(agent: &str, workspace: &Path) -> anyhow::Result<()> 
         return Ok(());
     }
     let Some(auth) = crate::auth::read_mcp_token_file() else {
-        tracing::info!("[agent] auth-mcp.json missing; skipping project MCP config");
+        tracing::info!("[agent] no MCP credential in auth.json; skipping project MCP config");
         return Ok(());
     };
     let mcp_url = format!("http://127.0.0.1:{}/va/mcp?token={}", auth.port, auth.token);

@@ -289,8 +289,12 @@ export function ProfileFormDialog({
     };
 
     try {
-      await testProfileConnection(testDraft);
-      return { ok: true, message: t("Test passed") };
+      const result = await testProfileConnection(testDraft);
+      return {
+        ok: true,
+        message: t("Test passed"),
+        url: result.testedEndpoints[0]?.url,
+      };
     } catch (e) {
       return {
         ok: false,

@@ -13,7 +13,7 @@ use va_client::http::AuthRequirement;
 use va_client::Operation;
 
 use crate::args::{usage, Command, Options};
-use crate::config::endpoint_for;
+use crate::config::{resolve_endpoint_env, RuntimeEnv};
 use crate::error::CliError;
 use crate::transport::HttpTransport;
 
@@ -89,7 +89,13 @@ pub(super) fn transport_for(
     options: &Options,
     auth: AuthRequirement,
 ) -> Result<HttpTransport, CliError> {
-    Ok(HttpTransport::new(endpoint_for(options, auth)?))
+    let resolved = resolve_endpoint_env(options, auth, &RuntimeEnv::current())?;
+    // Only a token we read from disk can be refreshed; an explicit --token is
+    // the caller's choice and must not be swapped out from under them.
+    let refreshable = (resolved.auth_source == "auth-file")
+        .then_some(resolved.auth_file)
+        .flatten();
+    Ok(HttpTransport::new(resolved.endpoint).refreshing_from(refreshable))
 }
 
 pub(crate) fn print_json(value: Value) -> Result<(), CliError> {

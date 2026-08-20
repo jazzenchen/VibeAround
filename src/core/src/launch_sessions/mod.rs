@@ -21,6 +21,7 @@ mod gemini;
 mod opencode;
 mod pi;
 mod qwen;
+mod va_agent;
 
 static OBSERVED_STORE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -152,6 +153,7 @@ fn raw_sessions_for_agent_workspace(
         "opencode" => opencode::sessions(workspace),
         "pi" => pi::sessions(workspace),
         "qwen-code" => qwen::sessions(workspace),
+        "va-agent" => va_agent::sessions(workspace),
         _ => Vec::new(),
     }
 }

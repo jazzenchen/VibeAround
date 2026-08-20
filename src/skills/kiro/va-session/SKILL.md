@@ -8,7 +8,7 @@ description: Resolve your current session ID for use with other VibeAround tools
 
 ## How to Resolve
 
-Call the `get_session_id` MCP tool. Include only optional arguments whose
+Call the `va_mcp_get_session_id` MCP tool. Include only optional arguments whose
 values are present:
 
 Read these values if available:
@@ -20,7 +20,7 @@ Read these values if available:
 - `$VIBEAROUND_CHAT_ID`
 
 ```
-Tool: get_session_id
+Tool: va_mcp_get_session_id
 Server: vibearound
 Arguments:
   agent_kind: "kiro"

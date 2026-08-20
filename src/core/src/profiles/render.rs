@@ -65,6 +65,9 @@ pub fn render(
     if launch_target == "pi" {
         return render_pi_profile(profile, api_type, endpoint, catalog, &context);
     }
+    if launch_target == "va-agent" {
+        return render_va_agent_profile(profile, api_type, endpoint, catalog, &context);
+    }
 
     let opencode_rules;
     let render_rules = if launch_target == "opencode" {
@@ -248,6 +251,42 @@ fn render_pi_profile(
     catalog: &ProviderCatalog,
     context: &BTreeMap<String, String>,
 ) -> anyhow::Result<RenderedProfile> {
+    let provider_id = super::pi_launch::provider_id(&profile.id, api_type);
+    super::pi_launch::render_pi_provider(pi_provider_launch_config(
+        profile,
+        api_type,
+        endpoint,
+        catalog,
+        context,
+        provider_id,
+    ))
+}
+
+fn render_va_agent_profile(
+    profile: &ProfileDef,
+    api_type: &str,
+    endpoint: &EndpointDef,
+    catalog: &ProviderCatalog,
+    context: &BTreeMap<String, String>,
+) -> anyhow::Result<RenderedProfile> {
+    super::pi_launch::render_va_agent_provider(pi_provider_launch_config(
+        profile,
+        api_type,
+        endpoint,
+        catalog,
+        context,
+        profile.provider.clone(),
+    ))
+}
+
+fn pi_provider_launch_config<'a>(
+    profile: &'a ProfileDef,
+    api_type: &'a str,
+    endpoint: &EndpointDef,
+    catalog: &'a ProviderCatalog,
+    context: &BTreeMap<String, String>,
+    provider_id: String,
+) -> super::pi_launch::PiProviderLaunchConfig<'a> {
     let model = context
         .get("model")
         .map(String::as_str)
@@ -256,8 +295,7 @@ fn render_pi_profile(
     let model_capabilities = model_def
         .map(|model_def| endpoint.capabilities.content.merge(&model_def.capabilities))
         .unwrap_or_else(|| endpoint.capabilities.content.clone());
-    let provider_id = super::pi_launch::provider_id(&profile.id, api_type);
-    super::pi_launch::render_pi_provider(super::pi_launch::PiProviderLaunchConfig {
+    super::pi_launch::PiProviderLaunchConfig {
         profile_id: &profile.id,
         provider_id: provider_id.clone(),
         provider_label: &catalog.label,
@@ -271,7 +309,7 @@ fn render_pi_profile(
         headers: endpoint.headers.clone(),
         auth_header: endpoint.auth_header,
         file_stem: provider_id,
-    })
+    }
 }
 
 fn command_args_for(launch_target: &str, ctx: &BTreeMap<String, String>) -> Vec<String> {
@@ -1106,7 +1144,7 @@ mod tests {
             .contains("\"baseUrl\": \"https://coding-intl.dashscope.aliyuncs.com/v1\""));
         assert!(extension
             .contents
-            .contains("\"apiKey\": \"VIBEAROUND_PI_API_KEY\""));
+            .contains("\"apiKey\": \"$VIBEAROUND_PI_API_KEY\""));
         assert!(extension
             .contents
             .contains("\"X-DashScope-AuthType\": \"openai\""));
@@ -1151,6 +1189,62 @@ mod tests {
         assert!(extension
             .contents
             .contains("\"User-Agent\": \"claude-code/0.1.0\""));
+    }
+
+    #[test]
+    fn va_agent_launch_renders_direct_model_env() {
+        let profile = openai_chat_profile("dashscope", Some("coding-plan"), "qwen3.6-plus");
+        let provider = catalog::get(&profile.provider).expect("provider exists");
+
+        let rendered =
+            render(&profile, "openai-chat", "va-agent", provider).expect("va-agent renders");
+
+        assert!(rendered.settings_files.is_empty());
+        assert!(rendered.command_args.is_empty());
+        assert!(rendered.config_env.is_none());
+        assert!(rendered
+            .env
+            .contains(&("VIBEAROUND_MODEL_API_KEY".to_string(), "test-key".to_string())));
+        let (_, config) = rendered
+            .env
+            .iter()
+            .find(|(key, _)| key == "VIBEAROUND_MODEL_CONFIG")
+            .expect("model config env");
+        let config: serde_json::Value = serde_json::from_str(config).expect("valid JSON");
+        assert_eq!(config["provider"], "dashscope");
+        assert_eq!(config["api"], "openai-completions");
+        assert_eq!(
+            config["baseUrl"],
+            "https://coding-intl.dashscope.aliyuncs.com/v1"
+        );
+        assert_eq!(config["model"], "qwen3.6-plus");
+        assert_eq!(config["contextWindow"], 1_000_000);
+        assert_eq!(config["maxTokens"], 16_384);
+        assert_eq!(config["headers"]["X-DashScope-AuthType"], "openai");
+        assert!(config["input"]
+            .as_array()
+            .expect("input list")
+            .iter()
+            .any(|value| value == "image"));
+        assert!(config.get("apiKey").is_none());
+    }
+
+    #[test]
+    fn va_agent_launch_preserves_anthropic_auth_header() {
+        let profile = anthropic_profile("dashscope", Some("coding-plan"), "qwen3.6-plus");
+        let provider = catalog::get(&profile.provider).expect("provider exists");
+
+        let rendered =
+            render(&profile, "anthropic", "va-agent", provider).expect("va-agent renders");
+        let (_, config) = rendered
+            .env
+            .iter()
+            .find(|(key, _)| key == "VIBEAROUND_MODEL_CONFIG")
+            .expect("model config env");
+        let config: serde_json::Value = serde_json::from_str(config).expect("valid JSON");
+        assert_eq!(config["api"], "anthropic-messages");
+        assert_eq!(config["authHeader"], true);
+        assert_eq!(config["headers"]["User-Agent"], "claude-code/0.1.0");
     }
 
     fn anthropic_profile(provider: &str, endpoint_id: Option<&str>, model: &str) -> ProfileDef {

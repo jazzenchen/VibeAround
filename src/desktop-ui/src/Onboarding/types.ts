@@ -9,6 +9,7 @@ export interface AgentSummary {
   install_type?: "npm" | "script" | "path";
   pty_command?: string;
   direct_only?: boolean;
+  built_in?: boolean;
   acp_program?: string;
   acp_args?: string[];
   acp_npm_package?: string | null;

@@ -89,6 +89,12 @@ impl<'a> LaunchPlanBuilder<'a> {
         profile: &ProfileDef,
         launch_target: &str,
     ) -> anyhow::Result<LaunchPlan> {
+        let agent_id = profiles::runtime::agent_id_for(launch_target)?;
+        let agent = resources::agent_by_id(agent_id)
+            .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
+        if agent.built_in {
+            return self.build_tui_plan(agent_id, agent, Some(profile), launch_target);
+        }
         let rendered = bridge::render_for_launch(profile, launch_target, &self.launch_id)?;
 
         match self.session_id {
@@ -102,9 +108,50 @@ impl<'a> LaunchPlanBuilder<'a> {
         }
     }
 
+    /// Built-in agents have no CLI of their own: every terminal launch (direct,
+    /// profile, resume) opens the TUI, which drives the agent through the
+    /// daemon. The terminal only gets the launch context; the daemon renders
+    /// the model profile when it spawns the agent.
+    fn build_tui_plan(
+        &self,
+        agent_id: &str,
+        agent: &resources::AgentDef,
+        profile: Option<&ProfileDef>,
+        launch_target: &str,
+    ) -> anyhow::Result<LaunchPlan> {
+        let mut env = Vec::new();
+        append_vibearound_launch_context_env(&mut env, profile, launch_target, &self.launch_id);
+        if let Some(session_id) = self.session_id {
+            env.push((
+                agent_integrations::launch::VIBEAROUND_SESSION_ID_ENV.to_string(),
+                session_id.to_string(),
+            ));
+        }
+        let label = match (profile, self.session_id) {
+            (Some(profile), Some(_)) => format!("{} (resume)", profile.label),
+            (Some(profile), None) => profile.label.clone(),
+            (None, Some(_)) => format!("{} (resume)", agent.display_name),
+            (None, None) => format!("{} (direct)", agent.display_name),
+        };
+        Ok(LaunchPlan {
+            env,
+            command: va_tui_launch_command()?,
+            args: Vec::new(),
+            cleanup_paths: Vec::new(),
+            window_label: label,
+            workspace: crate::profiles::resolve_launch_workspace(agent_id)?,
+            macos_app_probe: None,
+            windows_process_probe: None,
+            windows_executable_path: None,
+        })
+    }
+
     fn build_direct_plan(&self, agent_id: &str) -> anyhow::Result<LaunchPlan> {
         let agent = resources::agent_by_id(agent_id)
             .ok_or_else(|| anyhow!("agent '{}' not found in the agent registry", agent_id))?;
+        if agent.built_in {
+            return self.build_tui_plan(agent_id, agent, None, agent_id);
+        }
         let workspace = crate::profiles::resolve_launch_workspace(agent_id)?;
 
         let Some(session_id) = self.session_id else {
@@ -161,7 +208,7 @@ impl<'a> LaunchPlanBuilder<'a> {
         if agent_id == "codex-desktop" {
             let mut env = Vec::new();
             let mut args = Vec::new();
-            append_vibearound_launch_context_env(&mut env, profile, launch_target, &self.launch_id);
+            append_vibearound_launch_context_env(&mut env, Some(profile), launch_target, &self.launch_id);
             if bridge::launch_uses_local_bridge(profile, launch_target)? {
                 append_local_bridge_proxy_bypass_env(&mut env);
                 args.extend(codex_desktop_local_bridge_args());
@@ -189,7 +236,7 @@ impl<'a> LaunchPlanBuilder<'a> {
             claude_desktop::apply_profile_config(profile)
                 .with_context(|| format!("prepare Claude Desktop profile '{}'", profile.id))?;
             let mut env = Vec::new();
-            append_vibearound_launch_context_env(&mut env, profile, launch_target, &self.launch_id);
+            append_vibearound_launch_context_env(&mut env, Some(profile), launch_target, &self.launch_id);
             return Ok(LaunchPlan {
                 env,
                 command: direct_launch_command_for_agent(
@@ -367,6 +414,18 @@ fn start_process_name(command: &str) -> Option<String> {
 }
 
 #[cfg(not(test))]
+fn va_tui_launch_command() -> anyhow::Result<String> {
+    Ok(super::va_launch::resolve_va_tui_binary()?
+        .to_string_lossy()
+        .into_owned())
+}
+
+#[cfg(test)]
+fn va_tui_launch_command() -> anyhow::Result<String> {
+    Ok("va-tui".to_string())
+}
+
+#[cfg(not(test))]
 fn launch_command_for_agent(agent_id: &str, fallback_command: &str) -> anyhow::Result<String> {
     ::common::agent_detection::resolve_agent_command_strict(agent_id, fallback_command)
 }
@@ -388,13 +447,13 @@ fn materialized_profile_env(
     } else {
         profiles::runtime::append_settings_proxy_env(profile, &mut env)?;
     }
-    append_vibearound_launch_context_env(&mut env, profile, launch_target, launch_id);
+    append_vibearound_launch_context_env(&mut env, Some(profile), launch_target, launch_id);
     Ok(env)
 }
 
 fn append_vibearound_launch_context_env(
     env: &mut Vec<(String, String)>,
-    profile: &ProfileDef,
+    profile: Option<&ProfileDef>,
     launch_target: &str,
     launch_id: &str,
 ) {
@@ -404,10 +463,12 @@ fn append_vibearound_launch_context_env(
             && key != VIBEAROUND_LAUNCH_TARGET_ENV
     });
     env.push((VIBEAROUND_LAUNCH_ID_ENV.to_string(), launch_id.to_string()));
-    env.push((
-        agent_integrations::launch::VIBEAROUND_PROFILE_ID_ENV.to_string(),
-        profile.id.clone(),
-    ));
+    if let Some(profile) = profile {
+        env.push((
+            agent_integrations::launch::VIBEAROUND_PROFILE_ID_ENV.to_string(),
+            profile.id.clone(),
+        ));
+    }
     env.push((
         VIBEAROUND_LAUNCH_TARGET_ENV.to_string(),
         launch_target.to_string(),
@@ -712,6 +773,62 @@ mod tests {
         assert!(plan
             .env
             .contains(&("VIBEAROUND_LAUNCH_TARGET".to_string(), "claude".to_string())));
+    }
+
+    #[test]
+    fn built_in_agent_direct_and_resume_launches_open_the_tui() {
+        let direct = LaunchPlanBuilder::with_launch_id("launch-1")
+            .direct("va-agent")
+            .build()
+            .expect("direct plan");
+        assert_eq!(direct.command, "va-tui");
+        assert!(direct.args.is_empty());
+        assert!(direct
+            .env
+            .contains(&("VIBEAROUND_LAUNCH_TARGET".to_string(), "va-agent".to_string())));
+        assert!(direct.env.iter().all(|(key, _)| key != "VIBEAROUND_PROFILE_ID"));
+        assert!(direct.env.iter().all(|(key, _)| key != "VIBEAROUND_SESSION_ID"));
+
+        let profile = minimax_anthropic_profile();
+        let resume = LaunchPlanBuilder::with_launch_id("launch-2")
+            .profile(&profile, "va-agent")
+            .resume("session-9")
+            .build()
+            .expect("resume plan");
+        assert_eq!(resume.command, "va-tui");
+        assert!(resume.env.contains(&(
+            "VIBEAROUND_SESSION_ID".to_string(),
+            "session-9".to_string()
+        )));
+        assert!(resume.env.contains(&(
+            "VIBEAROUND_PROFILE_ID".to_string(),
+            "minimax-test".to_string()
+        )));
+        assert_eq!(resume.window_label, "MiniMax Test (resume)");
+    }
+
+    #[test]
+    fn va_agent_profile_launch_opens_the_tui_with_context_only() {
+        let profile = minimax_anthropic_profile();
+        let plan = LaunchPlanBuilder::with_launch_id("launch-123")
+            .profile(&profile, "va-agent")
+            .build()
+            .expect("va-agent plan");
+
+        assert_eq!(plan.command, "va-tui");
+        assert!(plan.args.is_empty());
+        assert!(plan.env.contains(&(
+            "VIBEAROUND_PROFILE_ID".to_string(),
+            "minimax-test".to_string()
+        )));
+        assert!(plan
+            .env
+            .contains(&("VIBEAROUND_LAUNCH_TARGET".to_string(), "va-agent".to_string())));
+        assert!(plan
+            .env
+            .iter()
+            .all(|(key, _)| !key.starts_with("VIBEAROUND_MODEL_")));
+        assert!(plan.env.iter().all(|(key, _)| !key.contains("API_KEY")));
     }
 
     #[test]

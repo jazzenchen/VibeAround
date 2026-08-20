@@ -13,7 +13,33 @@ pub struct AppliedProfile {
 }
 
 pub const VIBEAROUND_PROFILE_ID_ENV: &str = "VIBEAROUND_PROFILE_ID";
+pub const VIBEAROUND_AGENT_DIR_ENV: &str = "VIBEAROUND_AGENT_DIR";
+pub const VIBEAROUND_DATA_DIR_ENV: &str = "VIBEAROUND_DATA_DIR";
+/// Session a terminal launch resumes; the TUI opens on it for built-in agents.
+pub const VIBEAROUND_SESSION_ID_ENV: &str = "VIBEAROUND_SESSION_ID";
 pub const DIRECT_PROFILE_ID: &str = "direct";
+
+/// Built-in agents get their private state dir and VibeAround's data dir; the
+/// latter lets them refuse reads of product data without guessing where it is.
+pub fn append_agent_runtime_env(env: &mut Vec<(String, String)>, agent_id: &str) {
+    if !crate::resources::agent_by_id(agent_id).is_some_and(|agent| agent.built_in) {
+        return;
+    }
+    let data_dir = crate::config::data_dir();
+    env.retain(|(key, _)| key != VIBEAROUND_AGENT_DIR_ENV && key != VIBEAROUND_DATA_DIR_ENV);
+    env.push((
+        VIBEAROUND_AGENT_DIR_ENV.to_string(),
+        data_dir
+            .join("agents")
+            .join(agent_id)
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    env.push((
+        VIBEAROUND_DATA_DIR_ENV.to_string(),
+        data_dir.to_string_lossy().into_owned(),
+    ));
+}
 
 pub fn profile_uses_vibearound_credentials(profile: &str) -> bool {
     !matches!(
@@ -123,5 +149,22 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn built_in_agents_receive_their_state_dir_and_the_data_dir() {
+        let mut env = vec![(VIBEAROUND_AGENT_DIR_ENV.to_string(), "/wrong".to_string())];
+        append_agent_runtime_env(&mut env, "va-agent");
+
+        assert_eq!(env.len(), 2);
+        let agent_dir = std::path::Path::new(&env[0].1);
+        let data_dir = std::path::Path::new(&env[1].1);
+        assert_eq!(env[0].0, VIBEAROUND_AGENT_DIR_ENV);
+        assert_eq!(env[1].0, VIBEAROUND_DATA_DIR_ENV);
+        assert_eq!(agent_dir, data_dir.join("agents").join("va-agent"));
+
+        let mut other = Vec::new();
+        append_agent_runtime_env(&mut other, "claude");
+        assert!(other.is_empty());
     }
 }

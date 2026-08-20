@@ -24,12 +24,12 @@ session ID:
 ${CLAUDE_SESSION_ID}
 ```
 
-Call the `get_session_id` MCP tool. Include only optional arguments whose
+Call the `va_mcp_get_session_id` MCP tool. Include only optional arguments whose
 values are present. If the rendered Claude value is empty or is still the
 literal placeholder text, omit `session_id`.
 
 ```
-Tool: get_session_id
+Tool: va_mcp_get_session_id
 Server: vibearound
 Arguments:
   agent_kind: "claude"

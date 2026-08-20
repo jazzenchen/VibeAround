@@ -1,6 +1,6 @@
 [
   {
-    "name": "get_session_id",
+    "name": "va_mcp_get_session_id",
     "description": "Resolve and record the current agent session ID. Pass explicit session_id when the agent exposes one, channel_kind/chat_id for VibeAround-managed ACP sessions, or agent_kind=codex so VibeAround can read Codex MCP metadata. Include launch_id/profile_id/cwd when available so VibeAround can update the launch record.",
     "inputSchema": {
       "type": "object",
@@ -41,7 +41,7 @@
     }
   },
   {
-    "name": "send_file",
+    "name": "va_mcp_send_file",
     "description": "Send a file from the active VibeAround workspace to the conversation that owns the current agent turn. Use this when the user explicitly asks you to send or attach a generated workspace file. Pass $VIBEAROUND_THREAD_ID as thread_id. The file must exist inside that thread's workspace.",
     "inputSchema": {
       "type": "object",
@@ -59,7 +59,7 @@
     }
   },
   {
-    "name": "prepare_handover",
+    "name": "va_mcp_prepare_handover",
     "description": "Prepare a session handover. Returns a /pickup command that the user can send in any IM channel connected to VibeAround to resume the session there.",
     "inputSchema": {
       "type": "object",
@@ -85,7 +85,7 @@
     }
   },
   {
-    "name": "register_workspace",
+    "name": "va_mcp_register_workspace",
     "description": "Register a project workspace directory in VibeAround. Required before handover if the workspace is not already registered.",
     "inputSchema": {
       "type": "object",
@@ -103,7 +103,7 @@
     }
   },
   {
-    "name": "initialize_subagents",
+    "name": "va_mcp_initialize_subagents",
     "description": "Initialize a VibeAround multi-agent turn. Creates one git branch/worktree per subagent, records the turn on the workspace thread, and returns a va-agent-protocol structure. The first supported mode is parallel.",
     "inputSchema": {
       "type": "object",
@@ -157,8 +157,8 @@
     }
   },
   {
-    "name": "wait_for_subagents",
-    "description": "Wait for a VibeAround multi-agent turn to finish and return structured subagent reports. Host agents should call this after initialize_subagents before producing their final answer.",
+    "name": "va_mcp_wait_for_subagents",
+    "description": "Wait for a VibeAround multi-agent turn to finish and return structured subagent reports. Host agents should call this after va_mcp_initialize_subagents before producing their final answer.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -179,7 +179,7 @@
     }
   },
   {
-    "name": "preview",
+    "name": "va_mcp_preview",
     "description": "Preview exactly one source: a running localhost server via port, or a Markdown document via file. Markdown is rendered directly by VibeAround and does not need a separate static server. Returns owner access and, when a public tunnel is running, a Share URL plus a reusable six-digit access code. The Share URL and code expire together after 10 minutes. Pass thread_id or agent_kind with session_id when available to link the review child to the current task; without an explicit identity, VibeAround can create a standalone Preview conversation.",
     "inputSchema": {
       "type": "object",

@@ -1,5 +1,22 @@
 [
   {
+    "id": "va-agent",
+    "display_name": "VibeAround Agent",
+    "description": "Built-in VibeAround coding agent",
+    "aliases": [],
+    "built_in": true,
+    "requires_profile": true,
+    "acp": {
+      "program": "va-agent"
+    },
+    "pty": {
+      "command": "va tui"
+    },
+    "global_config": {
+      "project_skill_dir": ".agents/skills/vibearound"
+    }
+  },
+  {
     "id": "claude",
     "display_name": "Claude Code",
     "description": "Anthropic Claude Code",

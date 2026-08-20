@@ -15,7 +15,7 @@ use anyhow::anyhow;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use common::auth::{self, AuthToken};
+use common::auth::{self, AuthToken, SharedAuthToken};
 use common::channels::{ChannelManager, WebChannelManager};
 use common::config;
 use common::plugins;
@@ -45,7 +45,10 @@ pub struct ServerDaemon {
     /// Scoped credential accepted only by the local API bridge.
     local_api_token: Arc<AuthToken>,
     /// Scoped credential accepted only by the agent-as-API surface.
-    local_agent_api_token: Arc<AuthToken>,
+    ///
+    /// Persisted across restarts and rotated only on request — users paste it
+    /// into provider profiles by hand.
+    local_agent_api_token: SharedAuthToken,
 }
 
 pub struct RunningDaemon {
@@ -241,8 +244,23 @@ impl ServerDaemon {
             auth_token: Arc::new(AuthToken::generate()),
             mcp_token: Arc::new(AuthToken::generate()),
             local_api_token: Arc::new(AuthToken::generate()),
-            local_agent_api_token: Arc::new(AuthToken::generate()),
+            local_agent_api_token: SharedAuthToken::new(
+                auth::load_or_create_local_agent_api_token(),
+            ),
         }
+    }
+
+    /// Mint a replacement agent-as-API credential and persist it.
+    ///
+    /// The previous key stops working immediately, so profiles carrying it
+    /// need the new value pasted in.
+    pub fn rotate_local_agent_api_token(&self) -> std::io::Result<String> {
+        // Persist before swapping: a token the disk never received would be
+        // demanded by the running daemon and known to nobody.
+        let next = AuthToken::generate();
+        self.write_auth_file(&next)?;
+        self.local_agent_api_token.replace(next.clone());
+        Ok(next.as_str().to_string())
     }
 
     pub fn tunnels(&self) -> Arc<TunnelManager> {
@@ -255,18 +273,29 @@ impl ServerDaemon {
         Arc::clone(&self.auth_token)
     }
 
-    /// Write daemon-lifetime token files so their respective
-    /// out-of-process clients can authenticate without an IPC round-trip.
+    /// Write the auth file so out-of-process clients can authenticate without
+    /// an IPC round-trip.
     ///
     /// Safe to call before `start_background()` — the file will be
     /// overwritten there too, but the contents are identical, so the early
     /// write avoids a race where the desktop-ui queries the token before
     /// the daemon's start path has finished persisting it.
     pub fn persist_auth_tokens(&self) -> std::io::Result<()> {
-        auth::write_token_file(self.port, &self.auth_token)?;
-        auth::write_mcp_token_file(self.port, &self.mcp_token)?;
-        auth::write_local_api_token_file(self.port, &self.local_api_token)?;
-        auth::write_local_agent_api_token_file(self.port, &self.local_agent_api_token)
+        self.write_auth_file(&self.local_agent_api_token.snapshot())
+    }
+
+    /// Serialize the whole credential set from memory, never read-modify-write,
+    /// so a concurrent write cannot drop a token that is not in this snapshot.
+    fn write_auth_file(&self, agent: &AuthToken) -> std::io::Result<()> {
+        auth::write_auth_file(
+            self.port,
+            auth::DaemonTokens {
+                dashboard: &self.auth_token,
+                mcp: &self.mcp_token,
+                bridge: &self.local_api_token,
+                agent,
+            },
+        )
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
@@ -283,12 +312,13 @@ impl ServerDaemon {
         let tunnels = Arc::clone(&self.tunnels);
         let pty = Arc::clone(&self.pty);
 
-        // Persist both daemon-lifetime tokens. Overwriting stale files makes
-        // credentials from the previous run invalid immediately.
+        // Rewrite the auth file. Session tokens from the previous run go
+        // invalid immediately; the agent-as-API credential is restored, not
+        // regenerated, so profiles holding it keep working.
         if let Err(e) = self.persist_auth_tokens() {
             tracing::warn!(
                 error = %e,
-                "failed to write auth token files — authenticated local clients may be unavailable"
+                "failed to write the auth file — authenticated local clients may be unavailable"
             );
         }
 
@@ -357,7 +387,7 @@ impl ServerDaemon {
         let web_auth_token = Arc::clone(&self.auth_token);
         let web_mcp_token = Arc::clone(&self.mcp_token);
         let web_local_api_token = Arc::clone(&self.local_api_token);
-        let web_local_agent_api_token = Arc::clone(&self.local_agent_api_token);
+        let web_local_agent_api_token = self.local_agent_api_token.clone();
         let web_search_runtime = search_runtime.clone();
         let web_search_available = host_search_available;
         let web_replace_provider_search = replace_provider_web_search;

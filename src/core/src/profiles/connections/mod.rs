@@ -551,7 +551,7 @@ fn agent_client_api_types(agent_id: &str) -> &'static [&'static str] {
         "codex" | "codex-desktop" => &["openai-responses"],
         "gemini" => &["gemini"],
         "opencode" => &["openai-responses", "openai-chat", "anthropic"],
-        "pi" => &["anthropic", "openai-responses", "openai-chat"],
+        "pi" | "va-agent" => &["anthropic", "openai-responses", "openai-chat"],
         _ => &[],
     }
 }
@@ -572,6 +572,7 @@ fn launch_target_defs() -> &'static [(&'static str, &'static str)] {
         ("codex", "Codex"),
         ("codex-desktop", "ChatGPT Desktop (Codex)"),
         ("gemini", "Gemini CLI"),
+        ("va-agent", "VibeAround Agent"),
         ("pi", "Pi"),
         ("opencode", "OpenCode"),
     ]

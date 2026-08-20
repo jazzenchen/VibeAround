@@ -2,7 +2,6 @@ use super::*;
 use std::collections::BTreeMap;
 
 use crate::chat_socket::ChatSocketEvent;
-use crate::config::DEFAULT_BASE_URL;
 use crate::popup::Popup;
 use crate::render;
 use crate::runtime_socket::{RuntimeSocketEvent, RuntimeStream};
@@ -13,6 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 use va_client::launcher::{LauncherAgentPreferenceSummary, LauncherPreferencesResponse};
+use va_client::local_endpoint::DEFAULT_BASE_URL;
 use va_client::profiles::{AuthMode, ModelProfileSummary};
 use va_client::runtime::{
     AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
@@ -80,7 +80,6 @@ fn profile(id: &str) -> ModelProfileSummary {
         auth_mode: AuthMode::ApiKey,
         api_types: vec!["chat".into()],
         launch_targets: Vec::new(),
-        api_type_warnings: BTreeMap::new(),
         api_type_models: BTreeMap::new(),
         api_type_model_options: BTreeMap::new(),
         api_type_headers: BTreeMap::new(),
@@ -395,6 +394,45 @@ fn chat_render_shows_multiline_input_with_continuation_indent() {
     terminal
         .backend_mut()
         .assert_cursor_position(Position::new(18, 20));
+}
+
+#[test]
+fn launch_context_opens_a_fresh_session_over_launcher_preferences() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.preferences = Some(launcher_preferences(
+        "codex",
+        Some("codex-profile"),
+        Some("/tmp/codex"),
+    ));
+    app.selected_session = Some("session-1".into());
+
+    app.seed_launch_context(&LaunchContext::default());
+    assert_eq!(app.effective_agent(), Some("codex"));
+    assert_eq!(app.effective_session(), Some("session-1"));
+    assert!(!app.force_new_session);
+
+    app.seed_launch_context(&LaunchContext::from_parts(
+        Some("va-agent".into()),
+        Some("va-profile".into()),
+        Some("/tmp/project".into()),
+        None,
+    ));
+    assert_eq!(app.effective_agent(), Some("va-agent"));
+    assert_eq!(app.effective_profile(), Some("va-profile"));
+    assert_eq!(app.effective_workspace(), Some("/tmp/project"));
+    assert_eq!(app.effective_session(), None);
+    assert!(app.force_new_session);
+
+    // A resume launch opens on that session instead of a fresh one.
+    app.seed_launch_context(&LaunchContext::from_parts(
+        Some("va-agent".into()),
+        Some("va-profile".into()),
+        Some("/tmp/project".into()),
+        Some("session-9".into()),
+    ));
+    assert_eq!(app.effective_session(), Some("session-9"));
+    assert!(!app.force_new_session);
 }
 
 #[test]

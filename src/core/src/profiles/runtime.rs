@@ -176,6 +176,7 @@ pub fn launch_targets_for_api_types(
         out.push(("gemini", "Gemini CLI", "gemini"));
     }
     if let Some(api_type) = pi_api_type_for(api_types) {
+        out.push(("va-agent", "VibeAround Agent", api_type));
         out.push(("pi", "Pi", api_type));
     }
     if has("openai-responses") {
@@ -196,6 +197,7 @@ pub fn agent_id_for(launch_target: &str) -> anyhow::Result<&'static str> {
         "codex-desktop" => Ok("codex-desktop"),
         "gemini" => Ok("gemini"),
         "opencode" => Ok("opencode"),
+        "va-agent" => Ok("va-agent"),
         "pi" => Ok("pi"),
         other => bail!("unsupported launch target: '{}'", other),
     }
@@ -233,7 +235,7 @@ fn api_types_for_launch_target(launch_target: &str) -> &'static [&'static str] {
         "codex" | "codex-desktop" => &["openai-responses"],
         "gemini" => &["gemini"],
         "opencode" => &["openai-responses", "openai-chat", "anthropic"],
-        "pi" => &["anthropic", "openai-responses", "openai-chat"],
+        "pi" | "va-agent" => &["anthropic", "openai-responses", "openai-chat"],
         _ => &[],
     }
 }

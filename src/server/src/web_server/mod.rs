@@ -196,7 +196,7 @@ pub async fn run_web_server(
     auth_token: Arc<AuthToken>,
     mcp_token: Arc<AuthToken>,
     local_api_token: Arc<AuthToken>,
-    local_agent_api_token: Arc<AuthToken>,
+    local_agent_api_token: common::auth::SharedAuthToken,
     host_search_available: bool,
     replace_provider_web_search: bool,
     service_side: common::config::ServiceSideConfig,
@@ -237,6 +237,10 @@ pub async fn run_web_server(
         bridge_recorder: bridge_recording::BridgeRecorder::default(),
         local_api_token,
     };
+    state
+        .channel_hub
+        .workspace_thread_manager()
+        .set_mcp_over_acp(Arc::new(mcp::AcpMcpDispatcher::new(state.clone())));
 
     let auth_state = AuthState::new(Arc::clone(&auth_token), mcp_token);
 

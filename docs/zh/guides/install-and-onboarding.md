@@ -59,7 +59,7 @@ VibeAround 持久化的一切都在 `~/.vibearound/`（可用 `VIBEAROUND_DATA_D
 ```text
 ~/.vibearound/
 ├── settings.json         # 主配置
-├── auth.json             # 控制台认证 token（每次启动重新生成）
+├── auth.json             # 控制台、MCP、Bridge、Agent-as-API 四把 token
 ├── agents.json           # 检测到的 Agent 可执行文件
 ├── plugins/              # 已安装的渠道插件
 ├── workspaces/           # 新建 Workspace 的默认根目录

@@ -288,11 +288,12 @@ fn agent_skills(agent: &str) -> Vec<(&'static str, &'static str)> {
     let mut skills = match agent {
         "claude" => skills_for!("claude"),
         "gemini" => skills_for!("gemini"),
-        "codex" => skills_for!("codex"),
         "cursor" => skills_for!("cursor"),
         "kiro" => skills_for!("kiro"),
         "qwen-code" => skills_for!("qwen-code"),
         // Generic fallback — top-level skills dir (no agent subdirectory).
+        // Agents that share the workspace-level `.agents/skills/` directory
+        // (codex, va-agent) all use this so the files never disagree.
         _ => vec![
             (
                 "vibearound",
@@ -361,7 +362,7 @@ mod tests {
 
     #[test]
     fn skill_frontmatter_descriptions_quote_mapping_colons() {
-        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro"] {
+        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro", "va-agent"] {
             for (skill_name, content) in agent_skills(agent) {
                 let Some(description) = frontmatter_field(content, "description") else {
                     continue;
@@ -378,7 +379,7 @@ mod tests {
 
     #[test]
     fn active_preview_skill_covers_both_sources_without_the_retired_tool() {
-        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro"] {
+        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro", "va-agent"] {
             let skills = agent_skills(agent);
             assert!(skills.iter().all(|(name, _)| *name != "va-md-preview"));
             let preview = skills
@@ -415,9 +416,39 @@ mod tests {
         assert!(!dir.join(".codex/config.toml").exists());
         let codex_session_skill =
             fs::read_to_string(dir.join(".agents/skills/va-session/SKILL.md")).unwrap();
-        assert!(codex_session_skill.contains("Codex only"));
-        assert!(codex_session_skill.contains("agent_kind: \"codex\""));
         assert!(codex_session_skill.contains("Do not inspect MCP resources"));
+        assert!(codex_session_skill.contains("e.g. claude, codex, gemini"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn agents_sharing_the_agents_skills_dir_get_identical_files() {
+        // codex and va-agent both sync into `.agents/skills/`; the content must
+        // be the same so alternating launches never overwrite each other with
+        // agent-specific text.
+        let dir = unique_test_dir("shared-agents-dir");
+        fs::create_dir_all(&dir).unwrap();
+
+        sync_project_skill("va-agent", &dir).unwrap();
+        let va_agent_files: Vec<String> = ["va-session", "vibearound", "va-preview"]
+            .iter()
+            .map(|name| {
+                fs::read_to_string(dir.join(format!(".agents/skills/{name}/SKILL.md"))).unwrap()
+            })
+            .collect();
+        sync_project_skill("codex", &dir).unwrap();
+        let codex_files: Vec<String> = ["va-session", "vibearound", "va-preview"]
+            .iter()
+            .map(|name| {
+                fs::read_to_string(dir.join(format!(".agents/skills/{name}/SKILL.md"))).unwrap()
+            })
+            .collect();
+        assert_eq!(va_agent_files, codex_files);
+
+        // The shared session skill points at the built-in tool when present.
+        assert!(va_agent_files[0].contains("VibeAround Agent exposes `get_session_id`"));
+        assert!(va_agent_files[0].contains("Tool: va_mcp_get_session_id"));
 
         fs::remove_dir_all(&dir).unwrap();
     }

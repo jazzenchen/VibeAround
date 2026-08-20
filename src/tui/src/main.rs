@@ -31,7 +31,7 @@ mod transport;
 
 use app::{AppView, TuiApp};
 use chat_socket::{run_chat_socket, ChatSocketEvent};
-use config::{resolve_endpoint, Args, RuntimeEnv};
+use config::{resolve_endpoint_with_refresh, Args, LaunchContext, RuntimeEnv};
 use data::{fetch_snapshot, DashboardSnapshot};
 use runtime_socket::{run_runtime_sockets, RuntimeSocketEvent};
 use transport::{HttpTransport, TuiError};
@@ -51,21 +51,28 @@ async fn main() {
 
 async fn run() -> Result<(), TuiError> {
     let args = Args::parse();
-    let endpoint = resolve_endpoint(&args, &RuntimeEnv::current())?;
-    let transport = HttpTransport::new(endpoint.clone());
+    let (endpoint, refreshable_auth_file) =
+        resolve_endpoint_with_refresh(&args, &RuntimeEnv::current())?;
+    let transport = HttpTransport::new(endpoint.clone()).refreshing_from(refreshable_auth_file);
     if args.once {
         let snapshot = fetch_snapshot(&transport).await?;
         print_once(&endpoint, &snapshot);
         return Ok(());
     }
-    run_dashboard(endpoint, transport).await
+    run_dashboard(endpoint, transport, LaunchContext::current()).await
 }
 
-async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Result<(), TuiError> {
+async fn run_dashboard(
+    endpoint: ServerEndpoint,
+    transport: HttpTransport,
+    launch: LaunchContext,
+) -> Result<(), TuiError> {
     let (mut terminal, _guard) = enter_terminal()?;
     let mut app = TuiApp::new(&endpoint);
-    // Seed the header with the launcher's current agent/profile/workspace.
+    // Seed the header with the launcher's current agent/profile/workspace,
+    // then let an explicit VibeAround launch override it.
     app.sync_launcher_context(&transport).await;
+    app.seed_launch_context(&launch);
     let (chat_tx, chat_rx) = mpsc::unbounded_channel::<ChatClientMessage>();
     let (socket_event_tx, mut socket_event_rx) = mpsc::unbounded_channel::<ChatSocketEvent>();
     let chat_task = tokio::spawn(run_chat_socket(endpoint.clone(), chat_rx, socket_event_tx));

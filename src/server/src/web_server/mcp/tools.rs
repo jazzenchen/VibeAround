@@ -21,7 +21,7 @@ use super::session_identity::{argument_string, codex_session_id_from_mcp_metadat
 use super::sessions::find_latest_session;
 
 // ---------------------------------------------------------------------------
-// get_session_id — resolve the current ACP session ID from route info
+// va_mcp_get_session_id — resolve the current ACP session ID from route info
 // ---------------------------------------------------------------------------
 
 pub(super) async fn mcp_get_session_id(
@@ -159,7 +159,7 @@ fn record_mcp_session_observation(
 }
 
 // ---------------------------------------------------------------------------
-// send_file — deliver one workspace file to the current turn target
+// va_mcp_send_file — deliver one workspace file to the current turn target
 // ---------------------------------------------------------------------------
 
 pub(super) async fn mcp_send_file(
@@ -192,7 +192,7 @@ pub(super) async fn mcp_send_file(
     let Some(target) = runtime.active_turn_target().current() else {
         return mcp_error_text(
             id,
-            "send_file can only be called during an active VibeAround turn.",
+            "va_mcp_send_file can only be called during an active VibeAround turn.",
         );
     };
     let snapshot = runtime.state().await;
@@ -288,7 +288,7 @@ fn resolve_workspace_file(workspace: &Path, file: &str) -> anyhow::Result<PathBu
 }
 
 // ---------------------------------------------------------------------------
-// prepare_handover — issue a short-lived code consumed by /pickup
+// va_mcp_prepare_handover — issue a short-lived code consumed by /pickup
 // ---------------------------------------------------------------------------
 
 pub(super) async fn mcp_prepare_handover(
@@ -352,7 +352,7 @@ pub(super) async fn mcp_prepare_handover(
             id,
             &format!(
                 "Workspace {} is not registered in VibeAround.\n\
-             Use the `register_workspace` tool to add it first, then retry.",
+             Use the `va_mcp_register_workspace` tool to add it first, then retry.",
                 cwd_path.to_string_lossy()
             ),
         );
@@ -402,7 +402,7 @@ pub(super) async fn mcp_prepare_handover(
 }
 
 // ---------------------------------------------------------------------------
-// register_workspace — writes to VibeAround settings.json
+// va_mcp_register_workspace — writes to VibeAround settings.json
 // ---------------------------------------------------------------------------
 
 pub(super) async fn mcp_register_workspace(
@@ -479,7 +479,7 @@ pub(super) fn validate_workspace(
             id,
             &format!(
                 "Workspace {} is not registered in VibeAround.\n\
-             Use the `register_workspace` tool to add it first, then retry.",
+             Use the `va_mcp_register_workspace` tool to add it first, then retry.",
                 cwd_path.display()
             ),
         ));

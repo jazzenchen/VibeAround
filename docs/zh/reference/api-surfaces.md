@@ -4,16 +4,16 @@
 
 ## MCP 工具
 
-在 `/mcp` 提供（streamable HTTP 上的 JSON-RPC）。每次 daemon 启动都会在 `~/.vibearound/auth-mcp.json` 生成一个 MCP-only credential；每次通过 VibeAround 启动 Agent 时，都会把当前 credential 写入该 Agent 的项目级 MCP 配置。Dashboard/control API 不接受这个 credential。
+在 `/mcp` 提供（streamable HTTP 上的 JSON-RPC）。每次 daemon 启动都会生成一个 MCP-only credential，存在 `~/.vibearound/auth.json` 的 `mcp_token` 字段；每次通过 VibeAround 启动 Agent 时，都会把当前 credential 写入该 Agent 的项目级 MCP 配置。Dashboard/control API 不接受这个 credential。
 
 | 工具 | 用途 |
 |---|---|
-| `get_session_id` | 解析调用方 Agent 会话的身份 |
-| `prepare_handover` | 签发接续码（4 字符、120 秒 TTL、一次性），用于跨界面连续性 |
-| `register_workspace` | 把当前项目目录注册为 Workspace |
-| `initialize_subagents` | 开始多 Agent 回合 —— 模式：`parallel`、`collaboration`、`brainstorming` |
-| `wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
-| `preview` | 预览一个明确来源：正在运行的 dev-server `port` 或 Markdown `file`；Markdown 由 VibeAround 直接渲染，不会另起服务 |
+| `va_mcp_get_session_id` | 解析调用方 Agent 会话的身份 |
+| `va_mcp_prepare_handover` | 签发接续码（4 字符、120 秒 TTL、一次性），用于跨界面连续性 |
+| `va_mcp_register_workspace` | 把当前项目目录注册为 Workspace |
+| `va_mcp_initialize_subagents` | 开始多 Agent 回合 —— 模式：`parallel`、`collaboration`、`brainstorming` |
+| `va_mcp_wait_for_subagents` | 阻塞到子 Agent 报告完成；返回它们的报告 |
+| `va_mcp_preview` | 预览一个明确来源：正在运行的 dev-server `port` 或 Markdown `file`；Markdown 由 VibeAround 直接渲染，不会另起服务 |
 
 每次启动还会用 bundled 版本替换 VibeAround 保留的项目级技能：`vibearound`（交接）、`va-session`、`va-preview`，以及受支持 Agent 的 `agent-collaboration`。
 
@@ -31,7 +31,7 @@
 
 ### 可直接复制的示例
 
-把 `LOCAL_API_KEY` 设为 `~/.vibearound/local-api-auth.json` 中的 `token`，把 `LOCAL_AGENT_API_KEY` 设为 `~/.vibearound/local-agent-api-auth.json` 中的 `token`。两者都会在守护进程重启时轮换。桌面端的本地 API 面板也可直接复制 Agent-as-API key。
+两把 key 都在 `~/.vibearound/auth.json` 里：把 `LOCAL_API_KEY` 设为 `bridge_token`，把 `LOCAL_AGENT_API_KEY` 设为 `agent_token`。Bridge key 每次守护进程重启都会轮换；Agent-as-API key 会跨重启保持不变，只有你在桌面端本地 API 面板点重新生成时才会更换，该面板也可直接复制它。
 
 列出某个 Profile 提供的模型：
 

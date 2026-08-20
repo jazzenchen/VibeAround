@@ -48,6 +48,11 @@ impl DaemonController {
         }
     }
 
+    /// Mint and persist a replacement agent-as-API credential.
+    pub fn rotate_local_agent_api_token(&self) -> std::io::Result<String> {
+        self.daemon.rotate_local_agent_api_token()
+    }
+
     pub async fn start(&self) -> Result<(), String> {
         let mut running = self.running.lock().await;
         if running.is_some() {
@@ -113,6 +118,19 @@ fn get_auth_token() -> Option<common::auth::AuthFile> {
 #[tauri::command]
 fn get_local_agent_api_token() -> Option<common::auth::AuthFile> {
     common::auth::read_local_agent_api_token_file()
+}
+
+/// Replace the agent-as-API credential and return the new value.
+///
+/// The key is otherwise stable across restarts, so profiles keep working
+/// until the user asks for a new one here.
+#[tauri::command]
+fn rotate_local_agent_api_token(
+    controller: tauri::State<'_, DaemonController>,
+) -> Result<String, String> {
+    controller
+        .rotate_local_agent_api_token()
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -232,8 +250,8 @@ fn main() {
     let tunnels = daemon.tunnels();
     let graceful_exit_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Persist both daemon-lifetime tokens before the desktop-ui starts
-    // rendering or a bridge-backed agent can be launched.
+    // Persist the auth file before the desktop-ui starts rendering or a
+    // bridge-backed agent can be launched.
     if let Err(e) = daemon.persist_auth_tokens() {
         tracing::info!("[VibeAround] Failed to persist auth tokens: {}", e);
     }
@@ -267,6 +285,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_auth_token,
             get_local_agent_api_token,
+            rotate_local_agent_api_token,
             get_app_info,
             rescan_agent_entries,
             rescan_desktop_app_entries,

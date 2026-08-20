@@ -329,6 +329,10 @@ fn delivery_targets(
 
 #[async_trait::async_trait]
 impl AgentClientHandler for ChannelBridgeHandler {
+    fn mcp_server(&self) -> Option<Arc<dyn crate::agent::AcpMcpServer>> {
+        self.workspace_threads.upgrade()?.mcp_over_acp()
+    }
+
     async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
         let Some(payload) = self.filter_host_protocol_notification(&args).await? else {
             return Ok(());

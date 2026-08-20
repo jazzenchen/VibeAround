@@ -154,7 +154,7 @@ export function useOnboardingInitialLoad({
 
 function orderAgents(agentDefs: AgentSummary[]): AgentSummary[] {
   const rank = new Map(AGENT_DISPLAY_ORDER.map((id, index) => [id, index]));
-  return agentDefs.filter((agent) => !agent.direct_only).sort(
+  return agentDefs.filter((agent) => !agent.direct_only && !agent.built_in).sort(
     (a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999),
   );
 }

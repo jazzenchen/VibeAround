@@ -25,7 +25,7 @@ UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3�
 **4. va-launch validates。** CLI/desktop **执行 sibling `va-launch` binary**（不是进程内 launcher）。它验证 workspace，解析 agent executable（显式 path → `agents.json` → PATH scan，结果缓存），并验证 terminal choice。`--dry-run` 在这里停止并打印 plan。
 → `src/launcher/` (resolution order), `~/.vibearound/agents.json`
 
-**5. Workspace preparation。** va-launch 替换 Agent 的 VibeAround 保留项目级 skills。`auth-mcp.json` 可用时，同时把当前 daemon MCP credential 写入项目配置。Desktop-app targets 准备其伴随 CLI：`claude-desktop` → `claude`，`codex-desktop` → `codex`。
+**5. Workspace preparation。** va-launch 替换 Agent 的 VibeAround 保留项目级 skills。`auth.json` 里有 MCP credential 时，同时把它写入项目配置。Desktop-app targets 准备其伴随 CLI：`claude-desktop` → `claude`，`codex-desktop` → `codex`。
 → `src/launcher/`, `src/core/src/agent/{mcp,skills}.rs`
 
 **6. Terminal spawn。** Agent 在选定终端里打开（Terminal.app/iTerm2、PowerShell 或检测到的 Linux terminal）；desktop-app targets 则通过 `open -a` / `Start-Process`。终端启动后 va-launch 的工作结束，CLI 进程属于你，不属于 daemon。

@@ -95,8 +95,8 @@ mod tests {
 
     fn write_mcp_auth_file(data_dir: &Path, port: u16) {
         std::fs::write(
-            data_dir.join("auth-mcp.json"),
-            format!(r#"{{"port":{port},"token":"test-token"}}"#),
+            data_dir.join("auth.json"),
+            format!(r#"{{"port":{port},"token":"dashboard","mcp_token":"test-token"}}"#),
         )
         .expect("write auth file");
     }

@@ -14,7 +14,18 @@ use super::store::ProfileDraft;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileConnectionTestResult {
-    pub tested_api_types: Vec<String>,
+    pub tested_endpoints: Vec<TestedEndpoint>,
+}
+
+/// The URL a test actually requested.
+///
+/// Clients disagree about who appends the version segment, so a passing test
+/// says little unless the caller can see the URL it went to.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestedEndpoint {
+    pub api_type: String,
+    pub url: String,
 }
 
 pub async fn test_connection(draft: ProfileDraft) -> Result<ProfileConnectionTestResult, String> {
@@ -30,16 +41,19 @@ pub async fn test_connection(draft: ProfileDraft) -> Result<ProfileConnectionTes
     let provider = catalog::get(&profile.provider)
         .ok_or_else(|| format!("unknown provider '{}'", profile.provider))?;
     let client = test_http_client(&profile)?;
-    let mut tested_api_types = Vec::new();
+    let mut tested_endpoints = Vec::new();
 
     for api_type in &api_types {
-        test_api_type(&client, &profile, provider, api_type)
+        let url = test_api_type(&client, &profile, provider, api_type)
             .await
             .map_err(|error| format!("{api_type}: {error}"))?;
-        tested_api_types.push(api_type.clone());
+        tested_endpoints.push(TestedEndpoint {
+            api_type: api_type.clone(),
+            url,
+        });
     }
 
-    Ok(ProfileConnectionTestResult { tested_api_types })
+    Ok(ProfileConnectionTestResult { tested_endpoints })
 }
 
 async fn test_api_type(
@@ -47,7 +61,7 @@ async fn test_api_type(
     profile: &ProfileDef,
     provider: &ProviderCatalog,
     api_type: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let endpoint = selected_endpoint(profile, provider, api_type)?;
     let config = profile
         .api_configs
@@ -78,7 +92,7 @@ async fn test_api_type(
         merged_upstream_headers(&endpoint.headers, None).map_err(|error| error.to_string())?;
     let request = apply_auth(
         client
-            .post(url)
+            .post(&url)
             .header(CONTENT_TYPE, "application/json")
             .headers(headers)
             .json(&payload),
@@ -91,12 +105,15 @@ async fn test_api_type(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(format!("HTTP {status}: {}", compact_error_body(&body)));
+        return Err(format!(
+            "HTTP {status} at {url}: {}",
+            compact_error_body(&body)
+        ));
     }
     if body.trim().is_empty() {
-        return Err("Provider returned an empty response.".to_string());
+        return Err(format!("Provider returned an empty response from {url}."));
     }
-    Ok(())
+    Ok(url)
 }
 
 fn selected_endpoint<'a>(

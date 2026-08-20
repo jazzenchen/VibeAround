@@ -483,7 +483,7 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "claude".to_string());
 
-    let enabled_agents = root
+    let mut enabled_agents = root
         .get("enabled_agents")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -498,6 +498,12 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
                 .map(|a| a.id.clone())
                 .collect()
         });
+    // Built-in agents are always on; the user's list is never rewritten.
+    for agent in crate::resources::AGENTS.iter().filter(|agent| agent.built_in) {
+        if !enabled_agents.contains(&agent.id) {
+            enabled_agents.push(agent.id.clone());
+        }
+    }
 
     let api_bridge = load_api_bridge_config(root);
     let local_agent_api = load_local_agent_api_config(root);
@@ -1515,15 +1521,23 @@ mod tests {
     }
 
     #[test]
-    fn empty_enabled_agents_stays_empty() {
+    fn built_in_agents_are_enabled_regardless_of_the_list() {
         let dir = unique_test_dir("enabled-agents");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("settings.json");
+
+        // An empty list still leaves only the built-in agent on.
         fs::write(&path, r#"{ "enabled_agents": [] }"#).unwrap();
-
         let config = load_settings_from(&path);
+        assert_eq!(config.enabled_agents, vec!["va-agent".to_string()]);
 
-        assert!(config.enabled_agents.is_empty());
+        // An explicit list that omits it gains it; the rest is untouched.
+        fs::write(&path, r#"{ "enabled_agents": ["claude", "codex"] }"#).unwrap();
+        let config = load_settings_from(&path);
+        assert_eq!(
+            config.enabled_agents,
+            vec!["claude".to_string(), "codex".to_string(), "va-agent".to_string()]
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
