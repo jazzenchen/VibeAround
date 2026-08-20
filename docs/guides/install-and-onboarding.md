@@ -59,7 +59,7 @@ Everything VibeAround persists lives in `~/.vibearound/` (override with `VIBEARO
 ```text
 ~/.vibearound/
 ├── settings.json         # main configuration
-├── auth.json             # dashboard auth token (regenerated each start)
+├── auth.json             # dashboard, MCP, bridge and agent-as-API tokens
 ├── agents.json           # detected agent executables
 ├── plugins/              # installed channel plugins
 ├── workspaces/           # default root for created workspaces

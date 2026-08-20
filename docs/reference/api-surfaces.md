@@ -4,7 +4,7 @@ The daemon's programmable surfaces: MCP tools for agents, local API routes for m
 
 ## MCP tools
 
-Served at `/mcp` (JSON-RPC over streamable HTTP). Each daemon start creates an MCP-only credential in `~/.vibearound/auth-mcp.json`; every VibeAround launch writes the current credential into that agent's project-scoped MCP config. The credential is rejected by dashboard/control APIs.
+Served at `/mcp` (JSON-RPC over streamable HTTP). Each daemon start creates an MCP-only credential, stored as `mcp_token` in `~/.vibearound/auth.json`; every VibeAround launch writes the current credential into that agent's project-scoped MCP config. The credential is rejected by dashboard/control APIs.
 
 | Tool | Purpose |
 |---|---|
@@ -31,7 +31,7 @@ Loopback-only and gated by the local-bridge check; the primary `/local-api` and 
 
 ### Copy-paste examples
 
-Set `LOCAL_API_KEY` to the `token` in `~/.vibearound/local-api-auth.json`, and `LOCAL_AGENT_API_KEY` to the `token` in `~/.vibearound/local-agent-api-auth.json`. Both rotate on daemon restart. The desktop Local API panel exposes the agent-as-API key for copying.
+Both keys live in `~/.vibearound/auth.json`: set `LOCAL_API_KEY` to `bridge_token` and `LOCAL_AGENT_API_KEY` to `agent_token`. The bridge key rotates on every daemon restart; the agent-as-API key persists across restarts and changes only when you regenerate it from the desktop Local API panel, which also exposes it for copying.
 
 List the models a profile serves:
 

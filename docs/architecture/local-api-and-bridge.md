@@ -37,7 +37,7 @@ Each family exposes the standard sub-paths clients expect: `/v1/chat/completions
 
 **Agent-as-API (`local-agent`).** Turns a hosted coding agent itself into an OpenAI/Anthropic-compatible endpoint: requests become prompts to a real agent (with its tools and workspace), responses stream back in the requested dialect. This lets any OpenAI-compatible tool drive a full coding agent.
 
-The primary profile bridge and agent-as-API families use separate daemon-lifetime credentials. A client configured with `local-api-auth.json` can call `/local-api` but cannot start an agent; agent-as-API clients use `local-agent-api-auth.json`.
+The primary profile bridge and agent-as-API families use separate daemon-lifetime credentials. A client configured with the `bridge_token` from `~/.vibearound/auth.json` can call `/local-api` but cannot start an agent; agent-as-API clients use `agent_token` from the same file.
 
 ## What happens to a request
 

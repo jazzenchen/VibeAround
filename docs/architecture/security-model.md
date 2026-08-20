@@ -60,7 +60,7 @@ The Markdown parser and sanitizer are bundled with the daemon; Preview does not 
 ## Credential handling
 
 - Provider API keys are stored in the profile store under `~/.vibearound/` and injected into upstream requests **by the daemon**. Rendered agent configs contain only local bridge URLs — a leaked agent config exposes no provider key.
-- The bridge and agent-as-API endpoints are loopback-only and sit behind a local-bridge gate; they are not reachable through tunnels. The primary `/local-api` and `/local-agent` families have separate rotating scoped tokens, so a model bridge client cannot launch an agent.
+- The bridge and agent-as-API endpoints are loopback-only and sit behind a local-bridge gate; they are not reachable through tunnels. The primary `/local-api` and `/local-agent` families have separate scoped tokens, so a model bridge client cannot launch an agent. The bridge token is re-minted on every daemon start; the agent-as-API token persists across restarts because users paste it into provider profiles, and changes only when regenerated.
 - The daemon's own auth token file is plaintext in your home directory (same trust level as `~/.ssh`); treat backups accordingly.
 - Bridge request/response recording for the launch popup is held in memory only and never written to disk.
 

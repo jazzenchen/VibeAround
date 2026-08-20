@@ -11,9 +11,9 @@ Generate and persist the daemon auth token, and manage the pairing-code table th
 | Type | File | Role |
 |---|---|---|
 | `AuthToken` | `token.rs` | Random per-daemon-start bearer token |
-| `write_token_file` | `mod.rs` | Persists `{port, token}` to `~/.vibearound/auth.json` for out-of-process consumers (tray, CLI, desktop-ui) |
-| `write_local_api_token_file` | `mod.rs` | Persists the credential accepted only by the profile-backed model bridge |
-| `write_local_agent_api_token_file` | `mod.rs` | Persists the credential accepted only by the agent-as-API surface |
+| `SharedAuthToken` | `token.rs` | A token handlers share that the user can rotate while the daemon runs |
+| `write_auth_file` | `mod.rs` | Persists all four credentials to `~/.vibearound/auth.json` in one pass, for out-of-process consumers (tray, CLI, desktop-ui) |
+| `read_mcp_token_file` / `read_local_api_token_file` / `read_local_agent_api_token_file` | `mod.rs` | Take one scoped credential out of that file |
 | `pair` | `pair.rs` | 6-digit codes, 60 s TTL, verified via a trusted surface; `validate(code)` returns the token on success |
 
 ## Interactions

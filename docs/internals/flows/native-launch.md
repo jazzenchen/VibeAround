@@ -25,7 +25,7 @@ UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3�
 **4. va-launch validates.** The CLI/desktop **execs the sibling `va-launch` binary** (no in-process launcher). It validates the workspace, resolves the agent executable (explicit path → `agents.json` → PATH scan, cached), and validates the terminal choice. `--dry-run` stops here and prints the plan.
 → `src/launcher/` (resolution order), `~/.vibearound/agents.json`
 
-**5. Workspace preparation.** va-launch replaces the agent's VibeAround-reserved project skills. When `auth-mcp.json` is available, it also writes the current daemon MCP credential into project config. Desktop-app targets prepare their companion CLI: `claude-desktop` → `claude`, `codex-desktop` → `codex`.
+**5. Workspace preparation.** va-launch replaces the agent's VibeAround-reserved project skills. When `auth.json` carries an MCP credential, it also writes it into project config. Desktop-app targets prepare their companion CLI: `claude-desktop` → `claude`, `codex-desktop` → `codex`.
 → `src/launcher/`, `src/core/src/agent/{mcp,skills}.rs`
 
 **6. Terminal spawn.** The agent opens in the chosen terminal (Terminal.app/iTerm2, PowerShell, or a detected Linux terminal); desktop-app targets go through `open -a` / `Start-Process` instead. va-launch's job ends when the terminal is spawned — the CLI process belongs to you, not the daemon.

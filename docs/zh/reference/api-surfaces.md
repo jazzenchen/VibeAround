@@ -4,7 +4,7 @@
 
 ## MCP 工具
 
-在 `/mcp` 提供（streamable HTTP 上的 JSON-RPC）。每次 daemon 启动都会在 `~/.vibearound/auth-mcp.json` 生成一个 MCP-only credential；每次通过 VibeAround 启动 Agent 时，都会把当前 credential 写入该 Agent 的项目级 MCP 配置。Dashboard/control API 不接受这个 credential。
+在 `/mcp` 提供（streamable HTTP 上的 JSON-RPC）。每次 daemon 启动都会生成一个 MCP-only credential，存在 `~/.vibearound/auth.json` 的 `mcp_token` 字段；每次通过 VibeAround 启动 Agent 时，都会把当前 credential 写入该 Agent 的项目级 MCP 配置。Dashboard/control API 不接受这个 credential。
 
 | 工具 | 用途 |
 |---|---|
@@ -31,7 +31,7 @@
 
 ### 可直接复制的示例
 
-把 `LOCAL_API_KEY` 设为 `~/.vibearound/local-api-auth.json` 中的 `token`，把 `LOCAL_AGENT_API_KEY` 设为 `~/.vibearound/local-agent-api-auth.json` 中的 `token`。两者都会在守护进程重启时轮换。桌面端的本地 API 面板也可直接复制 Agent-as-API key。
+两把 key 都在 `~/.vibearound/auth.json` 里：把 `LOCAL_API_KEY` 设为 `bridge_token`，把 `LOCAL_AGENT_API_KEY` 设为 `agent_token`。Bridge key 每次守护进程重启都会轮换；Agent-as-API key 会跨重启保持不变，只有你在桌面端本地 API 面板点重新生成时才会更换，该面板也可直接复制它。
 
 列出某个 Profile 提供的模型：
 
