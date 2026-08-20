@@ -79,7 +79,7 @@ pub fn install_project_mcp(agent: &str, workspace: &Path) -> anyhow::Result<()> 
         return Ok(());
     }
     let Some(auth) = crate::auth::read_mcp_token_file() else {
-        tracing::info!("[agent] auth-mcp.json missing; skipping project MCP config");
+        tracing::info!("[agent] no MCP credential in auth.json; skipping project MCP config");
         return Ok(());
     };
     let mcp_url = format!("http://127.0.0.1:{}/va/mcp?token={}", auth.port, auth.token);

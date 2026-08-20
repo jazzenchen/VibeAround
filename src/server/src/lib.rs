@@ -312,13 +312,13 @@ impl ServerDaemon {
         let tunnels = Arc::clone(&self.tunnels);
         let pty = Arc::clone(&self.pty);
 
-        // Rewrite the token files. Session tokens from the previous run go
+        // Rewrite the auth file. Session tokens from the previous run go
         // invalid immediately; the agent-as-API credential is restored, not
         // regenerated, so profiles holding it keep working.
         if let Err(e) = self.persist_auth_tokens() {
             tracing::warn!(
                 error = %e,
-                "failed to write auth token files — authenticated local clients may be unavailable"
+                "failed to write the auth file — authenticated local clients may be unavailable"
             );
         }
 

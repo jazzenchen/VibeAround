@@ -178,9 +178,10 @@ fn request_was_forwarded<B>(req: &Request<B>) -> bool {
         .any(|name| req.headers().contains_key(*name))
 }
 
-/// Preview's local bypass requires both a loopback peer and loopback Host.
-/// Tunnel forwarders also connect over loopback, so peer alone is insufficient,
-/// and they can carry a spoofed loopback Host, so Host alone is not either.
+/// Preview's local bypass requires a loopback peer, a loopback Host, and no
+/// forwarder headers. Tunnel forwarders also connect over loopback, so peer
+/// alone is insufficient, and they can carry a spoofed loopback Host, so the
+/// headers they stamp on the way through are the third check.
 pub(crate) fn request_is_loopback<B>(req: &Request<B>) -> bool {
     request_peer_is_loopback(req) && request_host_is_loopback(req) && !request_was_forwarded(req)
 }

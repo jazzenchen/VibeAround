@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
 use va_client::auth::{local_server_port, AuthFile};
 use va_client::endpoint::ServerEndpoint;
 use va_client::http::AuthRequirement;
@@ -166,10 +167,15 @@ fn save_auth_file_with_env(
             source,
         })?;
     }
-    let body = serde_json::to_string_pretty(&serde_json::json!({
-        "port": port,
-        "token": token
-    }))?;
+    // The daemon keeps its scoped credentials in this same file, and one of
+    // them survives restarts by design. Replace only what pairing owns.
+    let mut record = fs::read_to_string(&path)
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Map<String, Value>>(&body).ok())
+        .unwrap_or_default();
+    record.insert("port".to_string(), serde_json::json!(port));
+    record.insert("token".to_string(), serde_json::json!(token));
+    let body = serde_json::to_string_pretty(&Value::Object(record))?;
     fs::write(&path, body).map_err(|source| CliError::Io {
         action: "writing auth file",
         source,
@@ -419,6 +425,37 @@ mod tests {
             local_auth_port("https://example.test/va"),
             Err(CliError::Usage(_))
         ));
+    }
+
+    #[test]
+    fn saving_paired_auth_keeps_the_daemon_scoped_tokens() {
+        let path = std::env::temp_dir().join(format!(
+            "va-cli-auth-test-{}-{}.json",
+            std::process::id(),
+            line!()
+        ));
+        // The daemon's file: one of these credentials is pasted into provider
+        // profiles by hand and must survive pairing.
+        fs::write(
+            &path,
+            r#"{"port":12358,"token":"old","mcp_token":"m","bridge_token":"b","agent_token":"a"}"#,
+        )
+        .expect("seed");
+        let options = Options {
+            auth_file: Some(path.clone()),
+            ..Default::default()
+        };
+
+        save_auth_file_with_env(&options, &RuntimeEnv::default(), 12358, "paired").expect("save");
+
+        let record: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("body")).expect("json");
+        assert_eq!(record["token"], "paired");
+        assert_eq!(record["agent_token"], "a");
+        assert_eq!(record["mcp_token"], "m");
+        assert_eq!(record["bridge_token"], "b");
+
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

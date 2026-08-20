@@ -250,8 +250,8 @@ fn main() {
     let tunnels = daemon.tunnels();
     let graceful_exit_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Persist both daemon-lifetime tokens before the desktop-ui starts
-    // rendering or a bridge-backed agent can be launched.
+    // Persist the auth file before the desktop-ui starts rendering or a
+    // bridge-backed agent can be launched.
     if let Err(e) = daemon.persist_auth_tokens() {
         tracing::info!("[VibeAround] Failed to persist auth tokens: {}", e);
     }

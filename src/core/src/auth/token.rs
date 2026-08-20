@@ -37,9 +37,9 @@
 //!   will 401 and the user reloads the tray's "Open Local Dashboard" entry.
 //! - The agent-as-API credential is the exception: users copy it into a
 //!   provider profile by hand, so rotating it on every start would break
-//!   every profile that points at a local agent. It is restored from
-//!   `local-agent-api-auth.json` on start and only changes when the user asks
-//!   for a new one, which invalidates the old one immediately.
+//!   every profile that points at a local agent. It is restored from the
+//!   auth file on start and only changes when the user asks for a new one,
+//!   which invalidates the old one immediately.
 
 use std::fs;
 use std::path::PathBuf;
