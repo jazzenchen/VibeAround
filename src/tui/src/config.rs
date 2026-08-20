@@ -91,10 +91,12 @@ impl LaunchContext {
     }
 }
 
-pub(crate) fn resolve_endpoint(
+/// Resolve the endpoint, and say which file the token came from so a rotated
+/// credential can be picked up without restarting.
+pub(crate) fn resolve_endpoint_with_refresh(
     args: &Args,
     runtime_env: &RuntimeEnv,
-) -> Result<ServerEndpoint, TuiError> {
+) -> Result<(ServerEndpoint, Option<PathBuf>), TuiError> {
     let overrides = EndpointOverrides {
         base_url: args
             .base_url
@@ -122,7 +124,10 @@ pub(crate) fn resolve_endpoint(
             }
         })?;
 
-    Ok(resolved.endpoint)
+    // Only a token read from disk can be refreshed; an explicit --token is the
+    // caller's choice and must not be swapped out from under them.
+    let refreshable = (resolved.auth_source == "auth-file").then_some(auth_path);
+    Ok((resolved.endpoint, refreshable))
 }
 
 fn read_auth_file(path: &Path) -> Result<va_client::auth::AuthFile, TuiError> {
@@ -191,7 +196,8 @@ mod tests {
             once: false,
         };
 
-        let endpoint = resolve_endpoint(&args, &RuntimeEnv::default()).expect("endpoint");
+        let (endpoint, _) =
+            resolve_endpoint_with_refresh(&args, &RuntimeEnv::default()).expect("endpoint");
 
         assert_eq!(endpoint.base_url(), "http://127.0.0.1:12358/va");
         assert_eq!(endpoint.token(), Some("secret"));
@@ -216,7 +222,7 @@ mod tests {
         };
 
         assert!(matches!(
-            resolve_endpoint(&args, &RuntimeEnv::default()),
+            resolve_endpoint_with_refresh(&args, &RuntimeEnv::default()),
             Err(TuiError::Usage(_))
         ));
 
@@ -240,7 +246,7 @@ mod tests {
         };
 
         assert!(matches!(
-            resolve_endpoint(&args, &RuntimeEnv::default()),
+            resolve_endpoint_with_refresh(&args, &RuntimeEnv::default()),
             Err(TuiError::Usage(_))
         ));
 

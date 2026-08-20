@@ -31,7 +31,7 @@ mod transport;
 
 use app::{AppView, TuiApp};
 use chat_socket::{run_chat_socket, ChatSocketEvent};
-use config::{resolve_endpoint, Args, LaunchContext, RuntimeEnv};
+use config::{resolve_endpoint_with_refresh, Args, LaunchContext, RuntimeEnv};
 use data::{fetch_snapshot, DashboardSnapshot};
 use runtime_socket::{run_runtime_sockets, RuntimeSocketEvent};
 use transport::{HttpTransport, TuiError};
@@ -51,8 +51,9 @@ async fn main() {
 
 async fn run() -> Result<(), TuiError> {
     let args = Args::parse();
-    let endpoint = resolve_endpoint(&args, &RuntimeEnv::current())?;
-    let transport = HttpTransport::new(endpoint.clone());
+    let (endpoint, refreshable_auth_file) =
+        resolve_endpoint_with_refresh(&args, &RuntimeEnv::current())?;
+    let transport = HttpTransport::new(endpoint.clone()).refreshing_from(refreshable_auth_file);
     if args.once {
         let snapshot = fetch_snapshot(&transport).await?;
         print_once(&endpoint, &snapshot);
