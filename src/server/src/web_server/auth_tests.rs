@@ -13,6 +13,19 @@ fn local_request(host: &str, peer: &str) -> Request<Body> {
     request
 }
 
+fn forwarded_request(host: &str, peer: &str, header_name: &str) -> Request<Body> {
+    let mut request = Request::builder()
+        .uri("/preview/u/test")
+        .header(header::HOST, host)
+        .header(header_name, "spoofed")
+        .body(Body::empty())
+        .unwrap();
+    request.extensions_mut().insert(ConnectInfo(
+        peer.parse::<SocketAddr>().expect("valid peer address"),
+    ));
+    request
+}
+
 fn req_with_header(value: &str) -> Request<Body> {
     Request::builder()
         .uri("/api/sessions")
@@ -129,6 +142,29 @@ fn loopback_request_requires_loopback_peer_and_host() {
         "127.0.0.1:12358",
         "192.0.2.10:45000"
     )));
+}
+
+#[test]
+fn a_forwarded_request_is_never_local_even_with_a_loopback_host() {
+    // Tailscale Funnel routes on TLS SNI and passes the caller's Host through,
+    // so a public request can arrive from the local forwarder claiming to be
+    // loopback. The forwarder's own headers are what give it away.
+    for header_name in [
+        "tailscale-funnel-request",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "forwarded",
+    ] {
+        let forwarded = forwarded_request("localhost:12358", "127.0.0.1:54321", header_name);
+        assert!(
+            !request_is_loopback(&forwarded),
+            "{header_name} must not pass as a loopback request"
+        );
+        assert!(
+            !request_is_local_dashboard(&forwarded),
+            "{header_name} must not reach the tokenless local bypass"
+        );
+    }
 }
 
 #[test]
