@@ -10,6 +10,7 @@ pub mod error;
 pub mod events;
 pub mod http;
 pub mod launcher;
+pub mod local_endpoint;
 pub mod operation;
 pub mod ops;
 pub mod previews;

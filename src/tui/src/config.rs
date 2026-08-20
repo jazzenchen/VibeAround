@@ -3,12 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use va_client::auth::auth_file_matches_base_url;
 use va_client::endpoint::ServerEndpoint;
+use va_client::local_endpoint::{self, EndpointOverrides, ResolveError, Sourced};
 
 use crate::transport::TuiError;
-
-pub(crate) const DEFAULT_BASE_URL: &str = "http://127.0.0.1:12358/va";
 
 #[derive(Debug, Parser)]
 #[command(name = "va-tui", version, about = "VibeAround terminal dashboard")]
@@ -97,33 +95,34 @@ pub(crate) fn resolve_endpoint(
     args: &Args,
     runtime_env: &RuntimeEnv,
 ) -> Result<ServerEndpoint, TuiError> {
-    let base_url = args.base_url.as_deref().or(runtime_env.base_url.as_deref());
-    let token = args.token.as_deref().or(runtime_env.token.as_deref());
+    let overrides = EndpointOverrides {
+        base_url: args
+            .base_url
+            .as_deref()
+            .or(runtime_env.base_url.as_deref())
+            .map(|value| Sourced::new(value, "args")),
+        token: args
+            .token
+            .as_deref()
+            .or(runtime_env.token.as_deref())
+            .map(|value| Sourced::new(value, "args")),
+    };
+
     let auth_path = auth_file_path(args, runtime_env);
+    let auth_file = auth_path
+        .exists()
+        .then(|| read_auth_file(&auth_path))
+        .transpose()?;
 
-    if let Some(base_url) = base_url {
-        let endpoint = ServerEndpoint::new(base_url);
-        if let Some(token) = token {
-            return Ok(endpoint.with_token(token));
-        }
-        if auth_path.exists() {
-            let auth = read_auth_file(&auth_path)?;
-            require_matching_local_auth(base_url, &auth)?;
-            return Ok(endpoint.with_token(auth.token));
-        }
-        return Err(TuiError::MissingAuth(auth_path.display().to_string()));
-    }
+    let resolved =
+        local_endpoint::resolve_endpoint(overrides, auth_file.as_ref(), true).map_err(|error| {
+            match error {
+                ResolveError::MissingAuth => TuiError::MissingAuth(auth_path.display().to_string()),
+                other => TuiError::Usage(other.to_string()),
+            }
+        })?;
 
-    if let Some(token) = token {
-        return Ok(ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token));
-    }
-
-    if auth_path.exists() {
-        let auth = read_auth_file(&auth_path)?;
-        return Ok(ServerEndpoint::from_auth_file(&auth));
-    }
-
-    Err(TuiError::MissingAuth(auth_path.display().to_string()))
+    Ok(resolved.endpoint)
 }
 
 fn read_auth_file(path: &Path) -> Result<va_client::auth::AuthFile, TuiError> {
@@ -134,20 +133,6 @@ fn read_auth_file(path: &Path) -> Result<va_client::auth::AuthFile, TuiError> {
     va_client::auth::parse_auth_file(&body).map_err(TuiError::from)
 }
 
-fn require_matching_local_auth(
-    base_url: &str,
-    auth_file: &va_client::auth::AuthFile,
-) -> Result<(), TuiError> {
-    let matches = auth_file_matches_base_url(base_url, auth_file)
-        .map_err(|_| TuiError::Usage(format!("invalid base url: {base_url}")))?;
-    if matches {
-        return Ok(());
-    }
-    Err(TuiError::Usage(format!(
-        "refusing to reuse local auth for {base_url}; pass --token explicitly"
-    )))
-}
-
 fn auth_file_path(args: &Args, runtime_env: &RuntimeEnv) -> PathBuf {
     args.auth_file
         .clone()
@@ -155,18 +140,11 @@ fn auth_file_path(args: &Args, runtime_env: &RuntimeEnv) -> PathBuf {
 }
 
 fn default_auth_path(runtime_env: &RuntimeEnv) -> PathBuf {
-    if let Some(path) = &runtime_env.auth_file {
-        return PathBuf::from(path);
-    }
-    if let Some(path) = &runtime_env.data_dir {
-        return PathBuf::from(path).join("auth.json");
-    }
-    runtime_env
-        .home_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".vibearound")
-        .join("auth.json")
+    local_endpoint::auth_file_path(
+        runtime_env.auth_file.as_deref().map(Path::new),
+        runtime_env.data_dir.as_deref(),
+        runtime_env.home_dir.as_deref(),
+    )
 }
 
 fn env_value(key: &str) -> Option<String> {

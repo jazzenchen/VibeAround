@@ -2,14 +2,13 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use va_client::auth::{auth_file_matches_base_url, local_server_port, AuthFile};
+use va_client::auth::{local_server_port, AuthFile};
 use va_client::endpoint::ServerEndpoint;
 use va_client::http::AuthRequirement;
+use va_client::local_endpoint::{self, EndpointOverrides, ResolveError, Sourced};
 
 use crate::args::Options;
 use crate::error::CliError;
-
-pub(crate) const DEFAULT_BASE_URL: &str = "http://127.0.0.1:12358/va";
 
 #[derive(Debug, Default)]
 pub(crate) struct RuntimeEnv {
@@ -53,90 +52,51 @@ pub(crate) fn resolve_endpoint_env(
     auth: AuthRequirement,
     runtime_env: &RuntimeEnv,
 ) -> Result<ResolvedEndpoint, CliError> {
-    let base_url = options
-        .base_url
-        .as_deref()
-        .or(runtime_env.base_url.as_deref());
-    let base_url_source = if options.base_url.is_some() {
-        "cli"
-    } else if runtime_env.base_url.is_some() {
-        "env"
-    } else {
-        "default"
+    let overrides = EndpointOverrides {
+        base_url: options
+            .base_url
+            .as_deref()
+            .map(|value| Sourced::new(value, "cli"))
+            .or_else(|| {
+                runtime_env
+                    .base_url
+                    .as_deref()
+                    .map(|value| Sourced::new(value, "env"))
+            }),
+        token: options
+            .token
+            .as_deref()
+            .map(|value| Sourced::new(value, "cli-token"))
+            .or_else(|| {
+                runtime_env
+                    .token
+                    .as_deref()
+                    .map(|value| Sourced::new(value, "env-token"))
+            }),
     };
-    let token = options
-        .token
-        .as_deref()
-        .map(|token| ("cli-token", token))
-        .or_else(|| {
-            runtime_env
-                .token
-                .as_deref()
-                .map(|token| ("env-token", token))
-        });
 
     let auth_path = auth_file_path_with_env(options, runtime_env);
+    let auth_file = auth_path
+        .exists()
+        .then(|| read_auth_file(&auth_path))
+        .transpose()?;
 
-    if let Some(base_url) = base_url {
-        let endpoint = ServerEndpoint::new(base_url);
-        if let Some((auth_source, token)) = token {
-            return Ok(ResolvedEndpoint {
-                endpoint: endpoint.with_token(token),
-                base_url_source,
-                auth_source,
-                auth_file: None,
-            });
-        }
-        if matches!(auth, AuthRequirement::BearerToken) {
-            if auth_path.exists() {
-                let auth_file = read_auth_file(&auth_path)?;
-                require_matching_local_auth(base_url, &auth_file)?;
-                return Ok(ResolvedEndpoint {
-                    endpoint: endpoint.with_token(auth_file.token),
-                    base_url_source,
-                    auth_source: "auth-file",
-                    auth_file: Some(auth_path),
-                });
-            }
-            return Err(CliError::MissingAuth(auth_path.display().to_string()));
-        }
-        return Ok(ResolvedEndpoint {
-            endpoint,
-            base_url_source,
-            auth_source: "none",
-            auth_file: None,
-        });
-    }
+    let resolved = local_endpoint::resolve_endpoint(
+        overrides,
+        auth_file.as_ref(),
+        matches!(auth, AuthRequirement::BearerToken),
+    )
+    .map_err(|error| match error {
+        ResolveError::MissingAuth => CliError::MissingAuth(auth_path.display().to_string()),
+        other => CliError::Usage(other.to_string()),
+    })?;
 
-    if let Some((auth_source, token)) = token {
-        return Ok(ResolvedEndpoint {
-            endpoint: ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token),
-            base_url_source: "default",
-            auth_source,
-            auth_file: None,
-        });
-    }
-
-    if auth_path.exists() {
-        let auth = read_auth_file(&auth_path)?;
-        return Ok(ResolvedEndpoint {
-            endpoint: ServerEndpoint::from_auth_file(&auth),
-            base_url_source: "auth-file",
-            auth_source: "auth-file",
-            auth_file: Some(auth_path),
-        });
-    }
-
-    if matches!(auth, AuthRequirement::None) {
-        return Ok(ResolvedEndpoint {
-            endpoint: ServerEndpoint::new(DEFAULT_BASE_URL),
-            base_url_source: "default",
-            auth_source: "none",
-            auth_file: Some(auth_path),
-        });
-    }
-
-    Err(CliError::MissingAuth(auth_path.display().to_string()))
+    Ok(ResolvedEndpoint {
+        endpoint: resolved.endpoint,
+        base_url_source: resolved.base_url_source,
+        auth_source: resolved.auth_source,
+        auth_file: resolved.auth_file_consulted.then_some(auth_path),
+    })
 }
 
 pub(crate) fn auth_file_path(options: &Options) -> PathBuf {
@@ -168,17 +128,6 @@ pub(crate) fn local_auth_port(base_url: &str) -> Result<u16, CliError> {
         ));
     };
     Ok(port)
-}
-
-fn require_matching_local_auth(base_url: &str, auth_file: &AuthFile) -> Result<(), CliError> {
-    let matches = auth_file_matches_base_url(base_url, auth_file)
-        .map_err(|_| CliError::Usage(format!("invalid base url: {base_url}")))?;
-    if matches {
-        return Ok(());
-    }
-    Err(CliError::Usage(format!(
-        "refusing to reuse local auth for {base_url}; pass --token explicitly"
-    )))
 }
 
 pub(crate) fn remove_auth_file(options: &Options) -> Result<Option<PathBuf>, CliError> {
@@ -233,22 +182,11 @@ fn save_auth_file_with_env(
 }
 
 fn default_auth_path_with_env(runtime_env: &RuntimeEnv) -> PathBuf {
-    if let Some(path) = &runtime_env.auth_file {
-        return PathBuf::from(path);
-    }
-    if let Some(path) = &runtime_env.data_dir {
-        return PathBuf::from(path).join("auth.json");
-    }
-    home_dir_with_env(runtime_env)
-        .join(".vibearound")
-        .join("auth.json")
-}
-
-fn home_dir_with_env(runtime_env: &RuntimeEnv) -> PathBuf {
-    runtime_env
-        .home_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("."))
+    local_endpoint::auth_file_path(
+        runtime_env.auth_file.as_deref().map(Path::new),
+        runtime_env.data_dir.as_deref(),
+        runtime_env.home_dir.as_deref(),
+    )
 }
 
 fn env_value(key: &str) -> Option<String> {
@@ -391,7 +329,10 @@ mod tests {
             &RuntimeEnv::default(),
         )
         .expect("endpoint");
-        assert_eq!(endpoint.endpoint.base_url(), DEFAULT_BASE_URL);
+        assert_eq!(
+            endpoint.endpoint.base_url(),
+            va_client::local_endpoint::DEFAULT_BASE_URL
+        );
         assert_eq!(endpoint.endpoint.token(), Some("abc"));
     }
 

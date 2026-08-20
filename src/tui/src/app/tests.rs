@@ -2,7 +2,6 @@ use super::*;
 use std::collections::BTreeMap;
 
 use crate::chat_socket::ChatSocketEvent;
-use crate::config::DEFAULT_BASE_URL;
 use crate::popup::Popup;
 use crate::render;
 use crate::runtime_socket::{RuntimeSocketEvent, RuntimeStream};
@@ -13,6 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 use va_client::launcher::{LauncherAgentPreferenceSummary, LauncherPreferencesResponse};
+use va_client::local_endpoint::DEFAULT_BASE_URL;
 use va_client::profiles::{AuthMode, ModelProfileSummary};
 use va_client::runtime::{
     AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
