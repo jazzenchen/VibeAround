@@ -46,7 +46,7 @@ bun run build            # desktop-ui + web SPA，然后 tauri build
 bun run dev              # tauri dev（desktop-ui 由 vite 提供）
 ```
 
-Tauri 构建会自动把 `va-launch` 准备为 sidecar 二进制（`scripts/prepare-va-launch.mjs`），并打出各平台的包（DMG/EXE/MSI/AppImage/deb）。
+Tauri 构建会自动把 `va-launch` 和 `va-tui` 准备为 sidecar 二进制（`scripts/prepare-va-launch.mjs` 会把它们拷进 `src/desktop/binaries/`，该目录已被 gitignore），并打出各平台的包（DMG/EXE/MSI/AppImage/deb）。debug 构建还会通过 `scripts/build-project-plugins.mjs` 额外构建 `src/plugins/` 下的渠道插件检出。
 
 ## 运行测试
 
@@ -65,10 +65,23 @@ JS 部分用 `bun run web:build` 和 `bun run desktop-ui:build` 做构建检查�
 
 超出本地未签名构建的发布打包，用到维护者私有、刻意不入库的配置：
 
-- **macOS 签名/公证**（`apple-sign` 配置）—— 本地 DMG 未签名也能用，但 Gatekeeper 会告警。
-- **发布构建脚本**（`build.sh`）和更新通道发布。
+- **macOS 签名/公证**（`src/apple-sign.config`）—— 本地 DMG 未签名也能用，但 Gatekeeper 会告警。
+- **仓库发布** —— `@vibearound/cli` 由 GitHub Actions 工作流用仓库 secret 发布；Windows 和 Linux 的发行包在打 tag 后由 CI 构建。
 
-完整可用的本地构建所需的一切都是公开的；只有发行签名是私有的。
+完整可用的本地构建所需的一切都是公开的；只有发行签名和仓库凭据是私有的。
+
+## 内置 Agent（va-agent）
+
+`va-agent` 在自己的仓库里（[jazzenchen/va-agent](https://github.com/jazzenchen/va-agent)），不属于 Cargo 或 Bun 工作区。你不需要自己构建它：VibeAround 会在首次使用时从 npm 安装钉好版本的 `@vibearound/agent`，和其他 ACP 适配器一样。
+
+想改用本地构建：
+
+```bash
+git clone https://github.com/jazzenchen/va-agent
+cd va-agent && npm install && npm run build   # → dist/va-agent.js
+```
+
+然后把 `VIBEAROUND_VA_AGENT_PATH` 设成 `dist/va-agent.js` 的绝对路径。这个覆盖优先于 npm 安装的副本；不设置时不会再回落到 `PATH`。
 
 ## 插件与 SDK
 
@@ -77,6 +90,6 @@ JS 部分用 `bun run web:build` 和 `bun run desktop-ui:build` 做构建检查�
 ---
 
 *Source anchors: `src/package.json` (build scripts), `src/Cargo.toml` (workspace members), `src/scripts/prepare-va-launch.mjs` (sidecar), `src/npm/cli/` (npm packaging).*
-*Last verified: v0.7.11*
+*Last verified: v0.7.24*
 
 <sub>[◀ 开发渠道插件](build-a-channel-plugin.md) · [文档索引](../README.md) · [故障排查与 FAQ ▶](troubleshooting-and-faq.md)</sub>

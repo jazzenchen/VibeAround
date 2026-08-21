@@ -91,7 +91,6 @@ jobs:
     runs-on: ubuntu-22.04
     needs: pack
     if: ${{ inputs.publish }}
-    environment: npm
 
     steps:
       - name: Setup Node
@@ -100,6 +99,10 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org/
 
+      - name: Upgrade npm
+        # Trusted publishing needs npm >= 11.5.1; the bundled npm can be older.
+        run: npm install -g npm@latest
+
       - name: Download npm tarball
         uses: actions/download-artifact@v5
         with:
@@ -107,14 +110,10 @@ jobs:
           path: npm-dist
 
       - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # No NODE_AUTH_TOKEN: auth comes from the OIDC id-token via npm
+        # trusted publishing, configured on npmjs.com for this package.
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is not configured" >&2
-            exit 1
-          fi
           tarball="$(find npm-dist -type f -name 'vibearound-cli-*.tgz' | sort | head -1)"
           if [ -z "${tarball}" ]; then
             echo "npm tarball not found under npm-dist" >&2
