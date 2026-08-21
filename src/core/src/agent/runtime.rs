@@ -26,7 +26,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use tokio::sync::{oneshot, watch};
 
 use acp::schema::v1 as schema;
@@ -667,13 +667,29 @@ async fn resolve_agent_program(
     let agent_def = crate::resources::agent_by_id(agent_id)
         .ok_or_else(|| anyhow!("No resource definition for agent '{}'", agent_id))?;
     if agent_def.built_in {
-        // Ships with VibeAround: env override, then next to this executable,
-        // then PATH. Never installed through the agent toolchain.
-        return Ok((
-            crate::sidecar::command(&agent_def.acp.program, "VIBEAROUND_VA_AGENT_PATH"),
-            agent_def.acp.args.clone(),
-            None,
-        ));
+        // Never gated on the toolchain mode or on a detected system CLI: the
+        // built-in agent has to be available unconditionally. A local build
+        // wins when the override points at one, otherwise it comes from npm
+        // like every other ACP adapter.
+        if let Some(path) = std::env::var_os("VIBEAROUND_VA_AGENT_PATH") {
+            let path = std::path::PathBuf::from(path);
+            if !path.is_file() {
+                bail!("VIBEAROUND_VA_AGENT_PATH is not a file: {}", path.display());
+            }
+            return Ok((
+                "node".to_string(),
+                vec![path.to_string_lossy().into_owned()],
+                None,
+            ));
+        }
+        let npm_pkg = agent_def
+            .acp
+            .npm_package
+            .as_deref()
+            .ok_or_else(|| anyhow!("built-in agent '{}' declares no npm package", agent_id))?;
+        let entry =
+            resolve_npm_acp_entry(agent_id, npm_pkg, agent_def.acp.bin_name.as_deref()).await?;
+        return Ok(("node".to_string(), vec![entry], None));
     }
     let config = crate::config::ensure_loaded();
     let selected_candidate =
@@ -689,23 +705,9 @@ async fn resolve_agent_program(
     // 2. binary-download agents → install via install_cmd, run from PATH
     // 3. native agents → program + args from PATH
     if let Some(npm_pkg) = &agent_def.acp.npm_package {
-        let default_bin_name = super::install::npm_package_bin_name(npm_pkg);
-        let bin_name = agent_def
-            .acp
-            .bin_name
-            .as_deref()
-            .unwrap_or(&default_bin_name);
-        if !super::install::npm_package_installed(npm_pkg, bin_name) {
-            tracing::info!("[{}-agent] auto-installing {} ...", agent_id, npm_pkg);
-            super::install::auto_install_npm_agent(npm_pkg).await?;
-        }
-        let entry = crate::process::env::resolve_acp_agent_bin(bin_name)
-            .with_context(|| format!("Resolving ACP agent '{}' (npm: {})", agent_id, npm_pkg))?;
-        Ok((
-            "node".to_string(),
-            vec![entry.to_string_lossy().to_string()],
-            selected_candidate,
-        ))
+        let entry =
+            resolve_npm_acp_entry(agent_id, npm_pkg, agent_def.acp.bin_name.as_deref()).await?;
+        Ok(("node".to_string(), vec![entry], selected_candidate))
     } else if let Some(install_cmd) = &agent_def.acp.install_cmd {
         if let Some(candidate) = selected_candidate.as_ref() {
             return Ok((
@@ -737,6 +739,24 @@ async fn resolve_agent_program(
             selected_candidate,
         ))
     }
+}
+
+/// Install the npm ACP adapter when it is missing, then resolve the JS entry
+/// point VibeAround runs with `node`.
+async fn resolve_npm_acp_entry(
+    agent_id: &str,
+    npm_package: &str,
+    bin_name: Option<&str>,
+) -> anyhow::Result<String> {
+    let default_bin_name = super::install::npm_package_bin_name(npm_package);
+    let bin_name = bin_name.unwrap_or(&default_bin_name);
+    if !super::install::npm_package_installed(npm_package, bin_name) {
+        tracing::info!("[{}-agent] auto-installing {} ...", agent_id, npm_package);
+        super::install::auto_install_npm_agent(npm_package).await?;
+    }
+    let entry = crate::process::env::resolve_acp_agent_bin(bin_name)
+        .with_context(|| format!("Resolving ACP agent '{}' (npm: {})", agent_id, npm_package))?;
+    Ok(entry.to_string_lossy().to_string())
 }
 
 async fn resolve_agent_candidate(

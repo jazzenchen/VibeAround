@@ -1,5 +1,5 @@
-//! Locating binaries that ship next to VibeAround itself (va-launch, va-tui,
-//! va-agent). One lookup serves the desktop app (Tauri external-bin layout),
+//! Locating binaries that ship next to VibeAround itself (va-launch,
+//! va-tui). One lookup serves the desktop app (Tauri external-bin layout),
 //! the npm CLI (platform binaries side by side), and development checkouts
 //! (`target/{debug,release}`).
 
