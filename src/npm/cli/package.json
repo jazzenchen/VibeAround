@@ -3,6 +3,11 @@
   "version": "0.0.13",
   "description": "VibeAround command-line tools",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jazzenchen/VibeAround.git",
+    "directory": "src/npm/cli"
+  },
   "type": "module",
   "bin": {
     "vibearound": "bin/vibearound.mjs",

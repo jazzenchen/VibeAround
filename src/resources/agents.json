@@ -11,7 +11,7 @@
     },
     "acp": {
       "program": "node",
-      "npm_package": "@vibearound/agent@0.1.0",
+      "npm_package": "@vibearound/agent@0.1.2",
       "bin_name": "va-agent"
     },
     "pty": {
