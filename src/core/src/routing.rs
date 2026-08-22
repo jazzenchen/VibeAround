@@ -47,8 +47,9 @@ pub struct ChannelTraits {
     pub default_workspace: DefaultWorkspaceKind,
     pub rich_agent_events: bool,
     /// Workspace, agent, profile, session and thread are chosen by chat
-    /// command. Surfaces that offer their own pickers own those choices
-    /// instead, and refuse the command form so the two cannot disagree.
+    /// command. True only for IM, which has no other way to ask. Web and the
+    /// TUI drive these from their own pickers and refuse the command form so
+    /// the picker and the route cannot disagree.
     pub context_commands: bool,
 }
 
@@ -66,7 +67,7 @@ pub fn channel_traits(channel_kind: &str) -> ChannelTraits {
             startup_replay: true,
             default_workspace: DefaultWorkspaceKind::ChannelDefault,
             rich_agent_events: true,
-            context_commands: true,
+            context_commands: false,
         },
         _ => ChannelTraits {
             // IM routes keep their WorkspaceThread attachment when a warm
@@ -358,7 +359,7 @@ mod tests {
         assert!(tui.startup_replay);
         assert_eq!(tui.default_workspace, DefaultWorkspaceKind::ChannelDefault);
         assert!(tui.rich_agent_events);
-        assert!(tui.context_commands);
+        assert!(!tui.context_commands);
 
         let im = channel_traits("feishu");
         assert!(im.rehydratable_runtime);

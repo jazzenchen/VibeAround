@@ -178,8 +178,9 @@ mod tests {
         let (input_tx, _input_rx) = mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx));
         let (output_tx, output_rx) = mpsc::unbounded_channel();
-        // Both surfaces drain into one receiver; every assertion names its route.
+        // Every surface drains into one receiver; each assertion names its route.
         plugin_host.register_websocket_plugin("web", output_tx.clone());
+        plugin_host.register_websocket_plugin("tui", output_tx.clone());
         plugin_host.register_websocket_plugin("feishu", output_tx);
         (
             ConversationIngress::new(workspace_threads, plugin_host),
@@ -367,9 +368,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn web_refuses_the_commands_its_own_pickers_own() {
+    async fn picker_surfaces_refuse_the_commands_they_already_own() {
+        for channel_kind in ["web", "tui"] {
+            picker_surface_refuses_context_commands(channel_kind).await;
+        }
+    }
+
+    async fn picker_surface_refuses_context_commands(channel_kind: &str) {
         let (ingress, mut output_rx) = test_ingress_with_output();
-        let route = RouteKey::new("web", "picker-chat");
+        let route = RouteKey::new(channel_kind, "picker-chat");
 
         for command in [
             "/workspace",
@@ -387,7 +394,7 @@ mod tests {
             let text = run_command(&ingress, &mut output_rx, &route, command).await;
             assert!(
                 text.contains("Use the UI"),
-                "{command} was not refused on web: {text}"
+                "{command} was not refused on {channel_kind}: {text}"
             );
         }
 
