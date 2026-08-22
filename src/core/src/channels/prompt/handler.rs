@@ -15,7 +15,7 @@ use crate::channels::types::{
     ChannelOutput, ChannelSessionAgent, ChannelSessionInfo, ChannelSessionStart,
 };
 use crate::profiles::{self, connections};
-use crate::routing::{ChannelTarget, RouteKey};
+use crate::routing::{channel_traits, ChannelTarget, RouteKey};
 use crate::workspace::manager::{default_profile_for_agent, ExternalSessionAttachMode};
 use crate::workspace::threads::runtime::{
     cancelled_prompt_response, route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
@@ -37,10 +37,8 @@ pub(crate) async fn handle_prompt(
     let text = first_text(&content_blocks).unwrap_or_default();
 
     let route = &target.route;
-    if commands_enabled_for_route(route) {
-        if let Some(command) = parse_thread_command(&text) {
-            return handle_command(workspace_threads, plugin_host, &target, command).await;
-        }
+    if let Some(command) = parse_thread_command(&text) {
+        return handle_command(workspace_threads, plugin_host, &target, command).await;
     }
 
     if content_blocks.is_empty() {
@@ -85,6 +83,14 @@ async fn handle_command(
     command: ThreadCommand,
 ) -> acp::Result<acp::PromptResponse> {
     let route = &target.route;
+    if !channel_traits(&route.channel_kind).context_commands && command_manages_context(&command) {
+        send_system_text_to_target(
+            plugin_host,
+            target,
+            "Use the UI to start a new chat or to change workspace, agent, profile, or session.",
+        );
+        return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+    }
     if crate::workspace::manager::preview_slug_from_web_route(route).is_some()
         && preview_command_changes_context(&command)
     {
@@ -768,6 +774,20 @@ enum ThreadCommand {
     Unknown(String),
 }
 
+/// Commands a surface with its own pickers already answers for itself.
+/// Executing them there would leave the picker showing one thing while the
+/// route points at another.
+fn command_manages_context(command: &ThreadCommand) -> bool {
+    matches!(
+        command,
+        ThreadCommand::New
+            | ThreadCommand::Close
+            | ThreadCommand::SwitchWorkspace(_)
+            | ThreadCommand::SwitchHost { .. }
+            | ThreadCommand::Resource { .. }
+    )
+}
+
 fn preview_command_changes_context(command: &ThreadCommand) -> bool {
     matches!(
         command,
@@ -965,10 +985,6 @@ fn agent_command_text(rest: &str) -> String {
     } else {
         format!("/{trimmed}")
     }
-}
-
-fn commands_enabled_for_route(_route: &RouteKey) -> bool {
-    true
 }
 
 fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
@@ -1321,14 +1337,37 @@ mod tests {
     }
 
     #[test]
-    fn slash_commands_are_enabled_for_web_chat() {
-        assert!(commands_enabled_for_route(&RouteKey::new("web", "chat-a")));
-        assert!(commands_enabled_for_route(&RouteKey::new(
-            "slack", "chat-a"
-        )));
-        assert!(commands_enabled_for_route(&RouteKey::new(
-            "feishu", "chat-a"
-        )));
+    fn only_picker_owned_commands_are_surface_gated() {
+        for command in [
+            ThreadCommand::New,
+            ThreadCommand::Close,
+            ThreadCommand::SwitchWorkspace("ws_a".to_string()),
+            ThreadCommand::SwitchHost {
+                agent: "codex".to_string(),
+                profile: None,
+            },
+            ThreadCommand::Resource {
+                kind: ResourceKind::Agent,
+                action: ResourceAction::List,
+            },
+            ThreadCommand::Resource {
+                kind: ResourceKind::Session,
+                action: ResourceAction::Switch("abc".to_string()),
+            },
+        ] {
+            assert!(command_manages_context(&command), "{command:?}");
+        }
+
+        for command in [
+            ThreadCommand::Help,
+            ThreadCommand::Status,
+            ThreadCommand::Pair("049778".to_string()),
+            ThreadCommand::Pickup("ABCD".to_string()),
+            ThreadCommand::AgentPassThrough("/compact".to_string()),
+            ThreadCommand::Unknown("/nope".to_string()),
+        ] {
+            assert!(!command_manages_context(&command), "{command:?}");
+        }
     }
 
     #[test]

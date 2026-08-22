@@ -178,7 +178,9 @@ mod tests {
         let (input_tx, _input_rx) = mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx));
         let (output_tx, output_rx) = mpsc::unbounded_channel();
-        plugin_host.register_websocket_plugin("web", output_tx);
+        // Both surfaces drain into one receiver; every assertion names its route.
+        plugin_host.register_websocket_plugin("web", output_tx.clone());
+        plugin_host.register_websocket_plugin("feishu", output_tx);
         (
             ConversationIngress::new(workspace_threads, plugin_host),
             output_rx,
@@ -342,7 +344,7 @@ mod tests {
     #[tokio::test]
     async fn system_commands_run_end_to_end_through_the_route_lane() {
         let (ingress, mut output_rx) = test_ingress_with_output();
-        let route = RouteKey::new("web", "command-chat");
+        let route = RouteKey::new("feishu", "command-chat");
 
         for (command, expected) in [
             ("/help", "Commands:"),
@@ -354,6 +356,43 @@ mod tests {
             ("/definitely-unknown", "Unknown command:"),
             ("/close", "Thread closed."),
         ] {
+            let text = run_command(&ingress, &mut output_rx, &route, command).await;
+            assert!(
+                text.contains(expected),
+                "{command} returned unexpected output: {text}"
+            );
+        }
+
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
+    async fn web_refuses_the_commands_its_own_pickers_own() {
+        let (ingress, mut output_rx) = test_ingress_with_output();
+        let route = RouteKey::new("web", "picker-chat");
+
+        for command in [
+            "/workspace",
+            "/workspace --switch ws_a",
+            "/agent",
+            "/agent --switch codex",
+            "/profile",
+            "/profile --switch deepseek",
+            "/session",
+            "/session --switch abc123",
+            "/switch codex",
+            "/new",
+            "/close",
+        ] {
+            let text = run_command(&ingress, &mut output_rx, &route, command).await;
+            assert!(
+                text.contains("Use the UI"),
+                "{command} was not refused on web: {text}"
+            );
+        }
+
+        // Everything else still works here.
+        for (command, expected) in [("/help", "Commands:"), ("/status", "Status:")] {
             let text = run_command(&ingress, &mut output_rx, &route, command).await;
             assert!(
                 text.contains(expected),

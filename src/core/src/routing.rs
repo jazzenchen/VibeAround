@@ -46,6 +46,10 @@ pub struct ChannelTraits {
     pub startup_replay: bool,
     pub default_workspace: DefaultWorkspaceKind,
     pub rich_agent_events: bool,
+    /// Workspace, agent, profile, session and thread are chosen by chat
+    /// command. Surfaces that offer their own pickers own those choices
+    /// instead, and refuse the command form so the two cannot disagree.
+    pub context_commands: bool,
 }
 
 pub fn channel_traits(channel_kind: &str) -> ChannelTraits {
@@ -55,12 +59,14 @@ pub fn channel_traits(channel_kind: &str) -> ChannelTraits {
             startup_replay: true,
             default_workspace: DefaultWorkspaceKind::General,
             rich_agent_events: true,
+            context_commands: false,
         },
         "tui" => ChannelTraits {
             rehydratable_runtime: true,
             startup_replay: true,
             default_workspace: DefaultWorkspaceKind::ChannelDefault,
             rich_agent_events: true,
+            context_commands: true,
         },
         _ => ChannelTraits {
             // IM routes keep their WorkspaceThread attachment when a warm
@@ -70,6 +76,7 @@ pub fn channel_traits(channel_kind: &str) -> ChannelTraits {
             startup_replay: false,
             default_workspace: DefaultWorkspaceKind::ChannelDefault,
             rich_agent_events: false,
+            context_commands: true,
         },
     }
 }
@@ -344,18 +351,21 @@ mod tests {
         assert!(web.startup_replay);
         assert_eq!(web.default_workspace, DefaultWorkspaceKind::General);
         assert!(web.rich_agent_events);
+        assert!(!web.context_commands);
 
         let tui = channel_traits("tui");
         assert!(tui.rehydratable_runtime);
         assert!(tui.startup_replay);
         assert_eq!(tui.default_workspace, DefaultWorkspaceKind::ChannelDefault);
         assert!(tui.rich_agent_events);
+        assert!(tui.context_commands);
 
         let im = channel_traits("feishu");
         assert!(im.rehydratable_runtime);
         assert!(!im.startup_replay);
         assert_eq!(im.default_workspace, DefaultWorkspaceKind::ChannelDefault);
         assert!(!im.rich_agent_events);
+        assert!(im.context_commands);
     }
 
     #[test]
