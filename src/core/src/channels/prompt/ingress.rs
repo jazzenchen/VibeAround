@@ -78,7 +78,7 @@ enum IngressCommand {
         command: LaneCommand,
         accepted: Option<oneshot::Sender<bool>>,
     },
-    Stop(RouteKey),
+    Cancel(RouteKey),
     LaneCompleted {
         route: RouteKey,
         lane_id: u64,
@@ -166,7 +166,7 @@ impl IngressOwner {
         }
     }
 
-    fn stop(&mut self, ingress: &Arc<ConversationIngress>, route: RouteKey) {
+    fn cancel(&mut self, ingress: &Arc<ConversationIngress>, route: RouteKey) {
         if let Some(lane) = self.lanes.get_mut(&route) {
             lane.cancel_tx.send_replace(true);
             lane.cancel_tx = watch::channel(false).0;
@@ -262,14 +262,14 @@ impl ConversationIngress {
             .unwrap_or_else(|_| Err(acp::Error::new(-32603, "conversation route stopped")))
     }
 
-    /// Dispatch a channel command. Stop, Close, and log records bypass route queues;
+    /// Dispatch a channel command. Cancel, Close, and log records bypass route queues;
     /// every other command is accepted into the route's bounded FIFO lane.
     pub fn dispatch(self: &Arc<Self>, input: ChannelInput) {
         let input = match input {
-            ChannelInput::Stop { route } => {
+            ChannelInput::Cancel { route } => {
                 if self
                     .command_tx
-                    .send(IngressCommand::Stop(route.clone()))
+                    .send(IngressCommand::Cancel(route.clone()))
                     .is_err()
                 {
                     let workspace_threads = Arc::clone(&self.workspace_threads);
@@ -355,11 +355,11 @@ impl ConversationIngress {
                         let _ = accepted.send(was_accepted);
                     }
                 }
-                IngressCommand::Stop(route) => {
+                IngressCommand::Cancel(route) => {
                     let Some(ingress) = ingress.upgrade() else {
                         break;
                     };
-                    owner.stop(&ingress, route);
+                    owner.cancel(&ingress, route);
                 }
                 IngressCommand::LaneCompleted {
                     route,

@@ -94,7 +94,7 @@ pub enum ChannelInput {
         #[serde(default)]
         action_value: Option<String>,
     },
-    Stop {
+    Cancel {
         route: RouteKey,
     },
     Close {
@@ -117,9 +117,9 @@ impl ChannelInput {
     pub fn route_key(&self) -> Option<&RouteKey> {
         match self {
             Self::Message { envelope } | Self::Callback { envelope, .. } => Some(&envelope.route),
-            Self::Stop { route } | Self::Close { route, .. } | Self::SwitchAgent { route, .. } => {
-                Some(route)
-            }
+            Self::Cancel { route }
+            | Self::Close { route, .. }
+            | Self::SwitchAgent { route, .. } => Some(route),
             Self::Log { .. } => None,
         }
     }

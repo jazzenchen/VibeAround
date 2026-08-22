@@ -136,7 +136,7 @@ async fn handle_owner_chat_socket(
                             .await;
                         state.channel_hub.handle_input(input);
                     }
-                    BoundChatInput::Stop(input) => state.channel_hub.handle_input(input),
+                    BoundChatInput::Cancel(input) => state.channel_hub.handle_input(input),
                     BoundChatInput::PermissionResponse {
                         request_id,
                         response,

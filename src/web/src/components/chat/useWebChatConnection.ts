@@ -835,7 +835,7 @@ export function useWebChatConnection({
       ws?.readyState === WebSocket.OPEN
     ) {
       try {
-        ws.send(JSON.stringify({ type: "stop" }));
+        ws.send(JSON.stringify({ type: "cancel" }));
       } catch (error) {
         console.warn("[ChatView] failed to abort session replay:", error);
       }
@@ -966,7 +966,7 @@ export function useWebChatConnection({
     const abortedSessionId = replayContext?.sessionId;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     try {
-      ws.send(JSON.stringify({ type: "stop" }));
+      ws.send(JSON.stringify({ type: "cancel" }));
       setMessages((prev) =>
         setStreamProgressMessage(prev, t("Stopping…"), "tool"),
       );

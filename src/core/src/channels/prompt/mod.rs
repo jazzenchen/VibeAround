@@ -514,7 +514,7 @@ mod tests {
             .await
             .unwrap();
 
-        ingress.dispatch(ChannelInput::Stop { route });
+        ingress.dispatch(ChannelInput::Cancel { route });
 
         assert!(active_done.await.is_err(), "active work survived stop");
         assert!(queued_done.await.is_err(), "queued work survived stop");
@@ -537,7 +537,7 @@ mod tests {
             .expect("active turn target");
 
         assert_eq!(ingress.active_lane_count().await, 0);
-        ingress.dispatch(ChannelInput::Stop { route });
+        ingress.dispatch(ChannelInput::Cancel { route });
 
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -643,7 +643,7 @@ mod tests {
             .unwrap();
         started_rx.await.unwrap();
 
-        ingress.dispatch(ChannelInput::Stop {
+        ingress.dispatch(ChannelInput::Cancel {
             route: route.clone(),
         });
 

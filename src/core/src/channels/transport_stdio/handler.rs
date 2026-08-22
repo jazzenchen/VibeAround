@@ -262,7 +262,7 @@ impl PluginAgentHandler {
             chat_id = %chat_id
         );
 
-        self.ingress.dispatch(ChannelInput::Stop { route });
+        self.ingress.dispatch(ChannelInput::Cancel { route });
         Ok(())
     }
 

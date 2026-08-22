@@ -332,7 +332,7 @@ async fn handle_chat_socket(
                             )
                             .await;
                         }
-                        WebChatInput::Stop(input) => {
+                        WebChatInput::Cancel(input) => {
                             abort_direct_resume_task(
                                 &mut direct_resume_task,
                                 &state,
@@ -500,7 +500,7 @@ fn input_route(input: &ChannelInput) -> Option<RouteKey> {
             envelope,
             action_value: _,
         } => Some(envelope.route.clone()),
-        ChannelInput::Stop { route } | ChannelInput::Close { route, .. } => Some(route.clone()),
+        ChannelInput::Cancel { route } | ChannelInput::Close { route, .. } => Some(route.clone()),
         ChannelInput::SwitchAgent { route, .. } => Some(route.clone()),
         ChannelInput::Log { .. } => None,
     }
@@ -1169,12 +1169,15 @@ mod tests {
                 },
             },
         );
-        enqueue_channel_input(&channel_hub, ChannelInput::Stop { route });
+        enqueue_channel_input(&channel_hub, ChannelInput::Cancel { route });
 
         assert!(matches!(
             input_rx.try_recv(),
             Ok(ChannelInput::Message { .. })
         ));
-        assert!(matches!(input_rx.try_recv(), Ok(ChannelInput::Stop { .. })));
+        assert!(matches!(
+            input_rx.try_recv(),
+            Ok(ChannelInput::Cancel { .. })
+        ));
     }
 }

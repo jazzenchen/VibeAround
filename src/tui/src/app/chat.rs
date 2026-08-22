@@ -493,7 +493,7 @@ impl TuiApp {
                 true
             }
             "/stop" => {
-                self.send_chat_command(ChatClientMessage::stop(), chat_tx);
+                self.send_chat_command(ChatClientMessage::cancel(), chat_tx);
                 true
             }
             "/allow" => {

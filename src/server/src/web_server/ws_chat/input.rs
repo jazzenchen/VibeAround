@@ -19,7 +19,7 @@ pub(super) enum WebChatInput {
         config_id: String,
         value: String,
     },
-    Stop(ChannelInput),
+    Cancel(ChannelInput),
     PermissionResponse {
         request_id: String,
         response: acp::RequestPermissionResponse,
@@ -119,7 +119,7 @@ pub(super) fn parse_web_chat_input(
                         cwd,
                     })
                 }
-                "stop" => Some(WebChatInput::Stop(ChannelInput::Stop {
+                "cancel" => Some(WebChatInput::Cancel(ChannelInput::Cancel {
                     route: route.clone(),
                 })),
                 "permission_response" => {
@@ -384,11 +384,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_stop_message() {
-        let input = parse_web_chat_input("chat-1", r#"{"type":"stop"}"#).expect("stop input");
+    fn parses_cancel_message() {
+        let input = parse_web_chat_input("chat-1", r#"{"type":"cancel"}"#).expect("cancel input");
 
-        let WebChatInput::Stop(ChannelInput::Stop { route }) = input else {
-            panic!("expected stop input");
+        let WebChatInput::Cancel(ChannelInput::Cancel { route }) = input else {
+            panic!("expected cancel input");
         };
 
         assert_eq!(route, RouteKey::new("web", "chat-1"));
