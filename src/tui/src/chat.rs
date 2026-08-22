@@ -97,8 +97,8 @@ pub(crate) const SLASH_COMMANDS: &[SlashCommand] = &[
         summary: "clear the conversation",
     },
     SlashCommand {
-        name: "/stop",
-        summary: "stop the current turn",
+        name: "/cancel",
+        summary: "interrupt the current turn",
     },
     SlashCommand {
         name: "/help",

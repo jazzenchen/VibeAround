@@ -814,9 +814,26 @@ enum ResourceAction {
     Switch(String),
 }
 
+/// Interrupting a turn cannot queue behind the turn it interrupts, so the
+/// ingress recognises this before enqueueing instead of letting it arrive here
+/// as a command. Every `/va`-style prefix works, same as any other command.
+pub(super) fn is_cancel_command(text: &str) -> bool {
+    matches!(
+        canonical_thread_command(&collapse_whitespace(text)).as_str(),
+        "/cancel" | "/stop"
+    )
+}
+
+pub(super) fn is_cancel_prompt(content_blocks: &[acp::ContentBlock]) -> bool {
+    first_text(content_blocks).is_some_and(|text| is_cancel_command(&text))
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    text.trim().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
-    let trimmed = text.trim();
-    let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = collapse_whitespace(text);
     let normalized = canonical_thread_command(&normalized);
     let normalized = normalized.as_str();
     if !normalized.starts_with('/') {
@@ -1009,10 +1026,10 @@ fn command_help_text() -> &'static str {
 /pair <code>
 /pickup <code>
 /new
-/stop
+/cancel
 /close
 
-Bare /workspace, /agent, /profile, and /session default to --list. Prefix with /va, /vibearound, va, or vibearound when a channel cannot send slash commands. Legacy /switch commands still work."
+Bare /workspace, /agent, /profile, and /session default to --list. /stop is an alias for /cancel. Prefix with /va, /vibearound, va, or vibearound when a channel cannot send slash commands. Legacy /switch commands still work."
 }
 
 fn format_status(state: &ThreadRuntimeState) -> String {
@@ -1334,6 +1351,25 @@ mod tests {
                 profile: None
             })
         );
+    }
+
+    #[test]
+    fn cancel_is_recognised_through_every_prefix_and_alias() {
+        for text in [
+            "/cancel",
+            "/stop",
+            "  /cancel  ",
+            "/va cancel",
+            "/vibearound stop",
+            "va cancel",
+            "vibearound stop",
+        ] {
+            assert!(is_cancel_command(text), "{text}");
+        }
+
+        for text in ["/cancelled", "/status", "cancel", "stop the build", ""] {
+            assert!(!is_cancel_command(text), "{text}");
+        }
     }
 
     #[test]

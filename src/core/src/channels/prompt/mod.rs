@@ -594,6 +594,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn typed_cancel_bypasses_an_occupied_route_lane() {
+        let (ingress, _output_rx) = test_ingress_with_output();
+        let route = RouteKey::new("web", "cancel-chat");
+        let (started, started_rx) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let active_done = ingress
+            .enqueue_probe(route.clone(), async move {
+                let _ = started.send(());
+                let _ = release_rx.await;
+            })
+            .await
+            .unwrap();
+        started_rx.await.unwrap();
+
+        // The interrupt has to answer while the lane is still busy; queueing it
+        // behind the turn it interrupts would never resolve.
+        let response = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            ingress.prompt(
+                ChannelTarget::new(route.clone(), None),
+                vec![acp::ContentBlock::Text(acp::TextContent::new("/cancel"))],
+            ),
+        )
+        .await
+        .expect("typed cancel waited behind the occupied route lane")
+        .expect("cancel prompt failed");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+        assert!(
+            active_done.await.is_err(),
+            "the in-flight turn survived the typed cancel"
+        );
+
+        let _ = release.send(());
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
     async fn switch_agent_bypasses_an_occupied_route_lane() {
         let (ingress, mut output_rx) = test_ingress_with_output();
         let route = RouteKey::new("web", "switch-chat");

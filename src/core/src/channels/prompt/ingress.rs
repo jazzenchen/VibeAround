@@ -241,6 +241,10 @@ impl ConversationIngress {
         target: ChannelTarget,
         content_blocks: Vec<acp::ContentBlock>,
     ) -> acp::Result<acp::PromptResponse> {
+        if super::handler::is_cancel_prompt(&content_blocks) {
+            self.cancel(target.route);
+            return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+        }
         let (reply, response) = oneshot::channel();
         if self
             .command_tx
@@ -262,21 +266,26 @@ impl ConversationIngress {
             .unwrap_or_else(|_| Err(acp::Error::new(-32603, "conversation route stopped")))
     }
 
+    /// Interrupt the running turn on a route, ahead of anything queued for it.
+    fn cancel(self: &Arc<Self>, route: RouteKey) {
+        if self
+            .command_tx
+            .send(IngressCommand::Cancel(route.clone()))
+            .is_err()
+        {
+            let workspace_threads = Arc::clone(&self.workspace_threads);
+            tokio::spawn(async move {
+                let _ = workspace_threads.cancel_route(&route).await;
+            });
+        }
+    }
+
     /// Dispatch a channel command. Cancel, Close, and log records bypass route queues;
     /// every other command is accepted into the route's bounded FIFO lane.
     pub fn dispatch(self: &Arc<Self>, input: ChannelInput) {
         let input = match input {
             ChannelInput::Cancel { route } => {
-                if self
-                    .command_tx
-                    .send(IngressCommand::Cancel(route.clone()))
-                    .is_err()
-                {
-                    let workspace_threads = Arc::clone(&self.workspace_threads);
-                    tokio::spawn(async move {
-                        let _ = workspace_threads.cancel_route(&route).await;
-                    });
-                }
+                self.cancel(route);
                 return;
             }
             ChannelInput::Close { route, reason } => {
@@ -302,7 +311,13 @@ impl ConversationIngress {
                 );
                 return;
             }
-            ChannelInput::Message { envelope } => OrderedInput::Message { envelope },
+            ChannelInput::Message { envelope } => {
+                if super::handler::is_cancel_command(&envelope.text) {
+                    self.cancel(envelope.route);
+                    return;
+                }
+                OrderedInput::Message { envelope }
+            }
             ChannelInput::Callback {
                 envelope,
                 action_value,

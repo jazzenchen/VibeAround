@@ -492,7 +492,7 @@ impl TuiApp {
                 self.go_back();
                 true
             }
-            "/stop" => {
+            "/cancel" | "/stop" => {
                 self.send_chat_command(ChatClientMessage::cancel(), chat_tx);
                 true
             }
@@ -541,7 +541,7 @@ impl TuiApp {
     }
 
     fn push_help_message(&mut self) {
-        self.chat_messages.push(ChatMessage::new(ChatRole::Notice, "Commands\n/status runtime status\n/settings agent context settings\n/agent choose agent\n/profile choose profile\n/workspaces choose workspace\n/sessions choose or resume session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail"));
+        self.chat_messages.push(ChatMessage::new(ChatRole::Notice, "Commands\n/status runtime status\n/settings agent context settings\n/agent choose agent\n/profile choose profile\n/workspaces choose workspace\n/sessions choose or resume session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/cancel interrupt current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail"));
         self.follow_chat_tail();
     }
 
