@@ -635,6 +635,27 @@ fn launch_setting_profile_for_agent(agent_id: &str) -> Option<String> {
         .map(|profile| normalize_launch_profile_id(Some(&profile)))
 }
 
+/// The profile a binding gets when no profile was named: the channel's own
+/// configured profile, else the agent's default, which itself falls back to
+/// the launch selection.
+pub fn default_profile_for_agent(channel_kind: &str, agent_id: &str) -> Option<String> {
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
+    default_profile_for_agent_from_settings(channel_kind, agent_id, &cfg, &prefs)
+}
+
+fn default_profile_for_agent_from_settings(
+    channel_kind: &str,
+    agent_id: &str,
+    cfg: &crate::config::Config,
+    prefs: &agent_state::AgentsPrefsFile,
+) -> Option<String> {
+    let profile_id = cfg
+        .remote_channel_defaults(channel_kind)
+        .profile_id
+        .or_else(|| agent_state::resolve_default_profile(prefs, cfg, agent_id))?;
+    Some(normalize_launch_profile_id(Some(&profile_id)))
+}
+
 fn default_route_binding_and_workspace(route: &RouteKey) -> (HostBinding, PathBuf) {
     let (cfg, prefs) = agent_state::read_config_and_prefs();
     default_route_binding_and_workspace_from_settings(route, &cfg, &prefs)
@@ -679,14 +700,7 @@ fn default_channel_binding_and_workspace(
                     .any(|enabled_agent| enabled_agent == agent)
         })
         .unwrap_or_else(|| agent_state::resolve_default_agent(prefs, cfg));
-    let profile_id = defaults
-        .profile_id
-        .as_deref()
-        .map(|profile| normalize_launch_profile_id(Some(profile)))
-        .or_else(|| {
-            agent_state::resolve_default_profile(prefs, cfg, &agent_id)
-                .map(|profile| normalize_launch_profile_id(Some(&profile)))
-        });
+    let profile_id = default_profile_for_agent_from_settings(channel_kind, &agent_id, cfg, prefs);
     let workspace = im_workspace_for_channel(cfg, channel_kind);
 
     (HostBinding::new(agent_id, profile_id), workspace)

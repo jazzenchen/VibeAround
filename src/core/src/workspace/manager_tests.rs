@@ -72,6 +72,44 @@ fn route_defaults_derive_host_and_workspace_from_one_settings_snapshot() {
     );
 }
 
+#[test]
+fn switch_defaults_take_the_channel_profile_then_the_agent_default() {
+    let settings = serde_json::json!({
+        "default_workspace": std::env::temp_dir().join("vibearound-switch-workspace"),
+        "enabled_agents": ["claude", "codex"],
+        "launcher": {
+            "default_agent": "codex",
+            "default_profile_id": "launch-profile",
+            "agents": {
+                "claude": { "profile_id": "claude-profile" }
+            }
+        },
+        "remote": {
+            "channels": {
+                "telegram": { "profile_id": "channel-profile" }
+            }
+        }
+    });
+    let cfg = crate::config::config_from_settings_json(&settings);
+    let prefs = agent_state::prefs_from_settings_json(&settings);
+
+    // A channel that pins a profile wins for whichever agent is switched to.
+    assert_eq!(
+        default_profile_for_agent_from_settings("telegram", "claude", &cfg, &prefs).as_deref(),
+        Some("channel-profile")
+    );
+    // Otherwise the agent keeps its own launch-screen profile.
+    assert_eq!(
+        default_profile_for_agent_from_settings("feishu", "claude", &cfg, &prefs).as_deref(),
+        Some("claude-profile")
+    );
+    // The launcher default agent inherits the launcher profile.
+    assert_eq!(
+        default_profile_for_agent_from_settings("feishu", "codex", &cfg, &prefs).as_deref(),
+        Some("launch-profile")
+    );
+}
+
 async fn seed_session_thread(
     manager: &WorkspaceThreadManager,
     root: PathBuf,

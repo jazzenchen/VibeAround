@@ -16,7 +16,7 @@ use crate::channels::types::{
 };
 use crate::profiles::{self, connections};
 use crate::routing::{ChannelTarget, RouteKey};
-use crate::workspace::manager::ExternalSessionAttachMode;
+use crate::workspace::manager::{default_profile_for_agent, ExternalSessionAttachMode};
 use crate::workspace::threads::runtime::{
     cancelled_prompt_response, route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
 };
@@ -329,7 +329,8 @@ async fn switch_host(
     profile: Option<String>,
 ) -> acp::Result<()> {
     let route = &channel_target.route;
-    let host_binding = resolve_host_binding(agent, profile.as_deref()).map_err(invalid_params)?;
+    let host_binding =
+        resolve_host_binding(route, agent, profile.as_deref()).map_err(invalid_params)?;
     let preview_route = crate::workspace::manager::preview_slug_from_web_route(route).is_some();
     let active_runtime = if preview_route {
         Some(
@@ -1175,10 +1176,19 @@ fn invalid_params(error: String) -> acp::Error {
     acp::Error::new(-32602, error)
 }
 
-fn resolve_host_binding(agent: &str, profile: Option<&str>) -> Result<HostBinding, String> {
+fn resolve_host_binding(
+    route: &RouteKey,
+    agent: &str,
+    profile: Option<&str>,
+) -> Result<HostBinding, String> {
     let agent_id = crate::resources::resolve_agent_id(agent)?;
-    let profile_id = crate::agent::launch::normalize_launch_profile_id(profile);
-    Ok(HostBinding::new(agent_id, Some(profile_id)))
+    // No profile named means "whatever this route would launch by default",
+    // the same answer a freshly created thread gets.
+    let profile_id = match profile {
+        Some(profile) => Some(normalize_launch_profile_id(Some(profile))),
+        None => default_profile_for_agent(&route.channel_kind, &agent_id),
+    };
+    Ok(HostBinding::new(agent_id, profile_id))
 }
 
 #[cfg(test)]
