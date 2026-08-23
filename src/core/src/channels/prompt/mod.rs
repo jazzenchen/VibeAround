@@ -91,12 +91,6 @@ fn attachment_uri(file_key: &str) -> Option<String> {
     ))
 }
 
-/// Fire-and-forget helper: emit a `SystemText` to the plugin for this route.
-/// Shared by every sub-module in this folder.
-pub(super) fn send_system_text(plugin_host: &Arc<PluginHost>, route: &RouteKey, text: &str) {
-    send_system_text_to_target(plugin_host, &ChannelTarget::for_route(route.clone()), text);
-}
-
 /// Emit system text for one inbound turn, preserving its platform reply target.
 pub(super) fn send_system_text_to_target(
     plugin_host: &Arc<PluginHost>,
