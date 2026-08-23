@@ -295,9 +295,6 @@ impl WebChannelState {
 
     pub fn dispatch_output(&mut self, output: ChannelOutput) {
         let route = output.route_key().clone();
-        if matches!(output, ChannelOutput::SessionInfo { .. }) {
-            return;
-        }
         let mut follow_up_outputs = Vec::new();
         if let ChannelOutput::SessionReady { session_id, .. } = &output {
             self.bind_route_session(&route, session_id);
@@ -449,6 +446,46 @@ mod tests {
             ChannelOutput::TurnStatus {
                 route,
                 active: true,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn session_info_reaches_the_browser() {
+        let manager = WebChannelManager::new();
+        let route = RouteKey::new("web", "chat-1");
+        let (tx, mut rx) = manager.sender();
+        manager
+            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .await;
+        let info = crate::channels::types::ChannelSessionInfo {
+            workspace_id: "ws_general".to_string(),
+            workspace_path: "/tmp/project".to_string(),
+            thread_id: "wt_1".to_string(),
+            agent: crate::channels::types::ChannelSessionAgent {
+                id: "codex".to_string(),
+                name: "Codex".to_string(),
+                version: String::new(),
+                profile_id: Some("deepseek".to_string()),
+            },
+            session_id: "sid-1".to_string(),
+            start: crate::channels::types::ChannelSessionStart::New,
+        };
+
+        manager
+            .dispatch_output(ChannelOutput::SessionInfo {
+                route: route.clone(),
+                reply_to: None,
+                info: info.clone(),
+            })
+            .await;
+
+        assert_eq!(
+            rx.try_recv().expect("session info"),
+            ChannelOutput::SessionInfo {
+                route,
+                reply_to: None,
+                info,
             }
         );
     }

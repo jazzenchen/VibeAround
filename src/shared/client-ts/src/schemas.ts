@@ -341,6 +341,21 @@ export type AgentRuntime = z.infer<typeof AgentRuntimeSchema>;
 export const AgentRuntimeListSchema = z.array(AgentRuntimeSchema);
 
 // ---------------------------------------------------------------------------
+export const SessionInfoSchema = z.object({
+  workspaceId: z.string(),
+  workspacePath: z.string(),
+  threadId: z.string(),
+  agent: z.object({
+    id: z.string(),
+    name: z.string(),
+    version: z.string().default(""),
+    profileId: z.string().optional(),
+  }),
+  sessionId: z.string(),
+  start: z.enum(["new", "resumed"]),
+});
+export type SessionInfo = z.infer<typeof SessionInfoSchema>;
+
 // /ws/chat — ChatEvent envelope
 //
 // Lifecycle events have hand-curated fields; streaming agent output
@@ -367,6 +382,10 @@ export const ChatEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("session_ready"),
     session_id: z.string(),
+  }),
+  z.object({
+    kind: z.literal("session_info"),
+    info: SessionInfoSchema,
   }),
   z.object({
     kind: z.literal("session_mode"),

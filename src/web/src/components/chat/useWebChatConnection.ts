@@ -441,6 +441,20 @@ export function useWebChatConnection({
           }
           break;
         }
+        case "session_info": {
+          // The server's own answer, which outranks anything this tab chose.
+          const info = parsed.info;
+          setMeta((prev) => ({
+            ...prev,
+            threadId: info.threadId,
+            workspacePath: info.workspacePath,
+            agentId: info.agent.id,
+            agentName: info.agent.name,
+            agentVersion: info.agent.version,
+            profileId: info.agent.profileId,
+          }));
+          break;
+        }
         case "session_mode": {
           setSessionModeState(parseSessionModeState(parsed.session_mode));
           break;

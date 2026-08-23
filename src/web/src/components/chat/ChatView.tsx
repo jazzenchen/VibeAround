@@ -297,6 +297,37 @@ export function ChatView({
     });
   }, [runtimeSnapshots, runtimeSpecs]);
 
+  // `session_info` is the server telling us what a route actually runs. It
+  // outranks whatever this tab picked, so the spec follows it rather than the
+  // other way round.
+  useEffect(() => {
+    setRuntimeSpecs((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [runtimeKey, spec] of Object.entries(prev)) {
+        const meta = runtimeSnapshots[runtimeKey]?.meta;
+        if (!meta?.threadId) continue;
+        if (
+          spec.threadId === meta.threadId &&
+          spec.agentId === meta.agentId &&
+          spec.profileId === meta.profileId &&
+          spec.workspacePath === meta.workspacePath
+        ) {
+          continue;
+        }
+        next[runtimeKey] = {
+          ...spec,
+          threadId: meta.threadId,
+          agentId: meta.agentId ?? spec.agentId,
+          profileId: meta.profileId,
+          workspacePath: meta.workspacePath ?? spec.workspacePath,
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [runtimeSnapshots]);
+
   const activeRuntime = runtimeSnapshots[activeRuntimeKey] ?? EMPTY_RUNTIME_SNAPSHOT;
   const activeRuntimeActions = runtimeActionsRef.current[activeRuntimeKey];
   const messages = activeRuntime.messages;
