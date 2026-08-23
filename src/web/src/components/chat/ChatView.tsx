@@ -6,7 +6,6 @@ import {
   createWorkspace,
   getLaunchSessionsBatch,
   getProfiles,
-  getWorkspaceThread,
   getWorkspaces,
   initWorkspaceThread,
 } from "@/api/sessions";
@@ -22,7 +21,6 @@ import { ChatHeader } from "./ChatHeader";
 import { ChatRuntimeHost } from "./ChatRuntimeHost";
 import {
   chatRuntimeKeyForSession,
-  chatIdForThread,
   createDraftRuntimeKey,
   INITIAL_RUNTIME_KEY,
 } from "./chatRuntimeKeys";
@@ -172,7 +170,7 @@ export function ChatView({
     restoredActiveLaunchSessionRef.current = true;
     clearStoredActiveLaunchSession();
     storedActiveLaunchSessionKeyRef.current = undefined;
-    void getWorkspaceThread(handoffThreadId)
+    void initWorkspaceThread({ thread_id: handoffThreadId })
       .then((response) => {
         if (cancelled) return;
         const profileId = response.profile_id ?? DIRECT_PROFILE_ID;
@@ -184,7 +182,7 @@ export function ChatView({
             profileId,
             workspacePath: response.workspace,
             threadId: response.thread_id,
-            chatId: response.chat_id || chatIdForThread(response.thread_id),
+            chatId: response.chat_id,
           },
         }));
         setSelectedAgent(response.agent_id);
@@ -637,10 +635,7 @@ export function ChatView({
             profileId: sessionProfileId,
             workspacePath: session.workspace,
             threadId: session.thread_id ?? prev[runtimeKey]?.threadId,
-            chatId:
-              session.thread_id !== undefined && session.thread_id !== null
-                ? chatIdForThread(session.thread_id)
-                : prev[runtimeKey]?.chatId,
+            chatId: prev[runtimeKey]?.chatId,
             launchSession: session,
             title: session.title,
           },
@@ -662,7 +657,7 @@ export function ChatView({
                 profileId: sessionProfileId,
                 workspacePath: session.workspace,
                 threadId: session.thread_id ?? undefined,
-                chatId: session.thread_id ? chatIdForThread(session.thread_id) : undefined,
+                chatId: undefined,
                 launchSession: session,
                 title: session.title,
                 initialResume: {
@@ -687,7 +682,7 @@ export function ChatView({
   useEffect(() => {
     const knownThreadUpdates = Object.entries(runtimeSpecs).filter(([, spec]) => {
       const threadId = spec.threadId ?? spec.launchSession?.thread_id ?? undefined;
-      return Boolean(threadId) && (spec.threadId !== threadId || !spec.chatId);
+      return Boolean(threadId) && spec.threadId !== threadId;
     });
     if (knownThreadUpdates.length > 0) {
       setRuntimeSpecs((prev) => {
@@ -697,10 +692,8 @@ export function ChatView({
           const current = next[runtimeKey];
           if (!current) continue;
           const threadId = current.threadId ?? current.launchSession?.thread_id ?? undefined;
-          if (!threadId) continue;
-          const chatId = chatIdForThread(threadId);
-          if (current.threadId === threadId && current.chatId === chatId) continue;
-          next[runtimeKey] = { ...current, threadId, chatId };
+          if (!threadId || current.threadId === threadId) continue;
+          next[runtimeKey] = { ...current, threadId };
           changed = true;
         }
         return changed ? next : prev;
@@ -709,7 +702,7 @@ export function ChatView({
 
     for (const [runtimeKey, spec] of Object.entries(runtimeSpecs)) {
       if (handoffPending && runtimeKey === INITIAL_RUNTIME_KEY) continue;
-      if (spec.threadId || spec.launchSession?.thread_id) continue;
+      if (spec.chatId) continue;
       const workspacePath =
         spec.launchSession?.workspace ??
         spec.workspacePath ??
@@ -717,6 +710,7 @@ export function ChatView({
         defaultWorkspacePath;
       if (!workspacePath) continue;
       const sessionId = spec.launchSession?.session_id;
+      const threadId = spec.threadId ?? spec.launchSession?.thread_id ?? undefined;
       const profileId = spec.launchSession?.host_profile_id ?? spec.profileId;
       const agent = agents.find((candidate) => candidate.id === spec.agentId);
       if (agent && !launchSelectionIsValid(agent, profileId)) continue;
@@ -725,6 +719,7 @@ export function ChatView({
         profileId ?? "",
         workspacePath,
         sessionId ?? "",
+        threadId ?? "",
       ].join("\u0000");
       if (runtimeThreadInitRef.current[runtimeKey] === signature) continue;
       runtimeThreadInitRef.current[runtimeKey] = signature;
@@ -732,12 +727,13 @@ export function ChatView({
       void initWorkspaceThread({
         agent_id: spec.agentId,
         profile_id: profileId,
+        thread_id: threadId,
         session_id: sessionId,
         workspace_path: workspacePath,
       })
         .then((response) => {
           const threadId = response.thread_id;
-          const chatId = response.chat_id || chatIdForThread(threadId);
+          const chatId = response.chat_id;
           setRuntimeSpecs((prev) => {
             const current = prev[runtimeKey];
             if (!current) return prev;
@@ -751,6 +747,7 @@ export function ChatView({
               current.launchSession?.host_profile_id ?? current.profileId ?? "",
               currentWorkspace ?? "",
               current.launchSession?.session_id ?? "",
+              current.threadId ?? current.launchSession?.thread_id ?? "",
             ].join("\u0000");
             if (currentSignature !== signature) return prev;
             const responseProfileId = response.profile_id ?? profileId;

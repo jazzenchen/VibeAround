@@ -44,6 +44,23 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(thread).await
     }
 
+    /// Give an existing thread its own web route, whoever created it. The web
+    /// chat id is the thread id, so this is what makes that name true rather
+    /// than letting the browser assume it.
+    pub async fn attach_web_route_to_thread(
+        &self,
+        thread_id: &WorkspaceThreadId,
+    ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        let thread = self
+            .thread(thread_id)
+            .await?
+            .ok_or_else(|| anyhow!("thread {} not found", thread_id))?;
+        let route = web_route_for_thread(&thread.id);
+        self.attach_route(route, thread.workspace_id.clone(), thread.id.clone())
+            .await?;
+        self.runtime_from_thread(thread).await
+    }
+
     pub async fn create_web_thread_for_cwd_with_host(
         &self,
         agent_id: String,

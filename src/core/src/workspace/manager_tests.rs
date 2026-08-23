@@ -171,6 +171,45 @@ async fn route_resolves_to_stable_thread_attachment() {
 }
 
 #[tokio::test]
+async fn adopting_a_thread_adds_a_web_route_without_taking_its_own() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let im_route = RouteKey::new("feishu", "oc_abc");
+    let thread_id = manager
+        .resolve_route_runtime(&im_route)
+        .await
+        .unwrap()
+        .state()
+        .await
+        .thread_id;
+
+    let adopted = manager
+        .attach_web_route_to_thread(&thread_id)
+        .await
+        .unwrap();
+    assert_eq!(adopted.state().await.thread_id, thread_id);
+
+    // The web chat id is the thread id, and now it is true.
+    let web_route = web_route_for_thread(&thread_id);
+    assert_eq!(
+        manager
+            .current_attachment(&web_route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        thread_id
+    );
+    // The channel that created the thread keeps talking to it.
+    let mut routes = manager
+        .attached_routes_for_thread(&thread_id)
+        .await
+        .unwrap();
+    routes.sort_by(|a, b| a.chat_id.cmp(&b.chat_id));
+    assert_eq!(routes, vec![im_route, web_route]);
+}
+
+#[tokio::test]
 async fn explicit_new_reloads_im_channel_host_defaults() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);

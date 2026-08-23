@@ -306,7 +306,11 @@ pub struct LaunchSessionInfo {
 /// `POST /api/workspace-threads/init` request.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkspaceThreadInitRequest {
-    pub agent_id: String,
+    /// Adopt this existing thread and answer with its web identity. The thread
+    /// already knows its agent, profile and workspace, so the other fields are
+    /// ignored when it is set.
+    pub thread_id: Option<String>,
+    pub agent_id: Option<String>,
     pub profile_id: Option<String>,
     pub session_id: Option<String>,
     pub workspace_path: Option<String>,

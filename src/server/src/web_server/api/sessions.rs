@@ -237,39 +237,48 @@ fn profile_provider_label(profile_id: Option<&str>) -> (Option<String>, Option<S
     (Some(provider_id), Some(provider_label))
 }
 
+fn trimmed(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 pub async fn init_workspace_thread_handler(
     State(state): State<AppState>,
     Json(body): Json<crate::api_types::WorkspaceThreadInitRequest>,
 ) -> Result<Json<crate::api_types::WorkspaceThreadInitResponse>, (StatusCode, String)> {
-    let agent_id = common::resources::resolve_agent_id(&body.agent_id)
-        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
-    let workspace = body
-        .workspace_path
-        .as_deref()
-        .map(std::path::PathBuf::from)
-        .map(common::workspace::normalize_workspace_cwd)
-        .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
     let manager = state.channel_hub.workspace_thread_manager();
-    let trimmed_session_id = body
-        .session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|session_id| !session_id.is_empty())
-        .map(ToOwned::to_owned);
-    let runtime = if let Some(session_id) = trimmed_session_id {
-        manager
-            .attach_external_session_to_web_thread(
-                agent_id,
-                body.profile_id,
-                session_id,
-                workspace,
-                ExternalSessionAttachMode::ReuseOpenThread,
-            )
-            .await
+    let runtime = if let Some(thread_id) = trimmed(body.thread_id.as_deref()) {
+        manager.attach_web_route_to_thread(&thread_id.into()).await
     } else {
-        manager
-            .create_web_thread_for_cwd_with_host(agent_id, body.profile_id, workspace)
-            .await
+        let agent_id =
+            common::resources::resolve_agent_id(body.agent_id.as_deref().unwrap_or_default())
+                .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+        let workspace = body
+            .workspace_path
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .map(common::workspace::normalize_workspace_cwd)
+            .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
+        match trimmed(body.session_id.as_deref()) {
+            Some(session_id) => {
+                manager
+                    .attach_external_session_to_web_thread(
+                        agent_id,
+                        body.profile_id,
+                        session_id,
+                        workspace,
+                        ExternalSessionAttachMode::ReuseOpenThread,
+                    )
+                    .await
+            }
+            None => {
+                manager
+                    .create_web_thread_for_cwd_with_host(agent_id, body.profile_id, workspace)
+                    .await
+            }
+        }
     }
     .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
     let runtime_state = runtime.state().await;
