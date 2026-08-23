@@ -549,51 +549,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_bypasses_an_occupied_route_lane() {
-        let (ingress, workspace_threads) = test_ingress_with_manager();
-        let route = RouteKey::new("web", "close-chat");
-        workspace_threads
-            .resolve_route_runtime(&route)
-            .await
-            .unwrap();
-        let (started, started_rx) = oneshot::channel();
-        let (release, release_rx) = oneshot::channel();
-        let active_done = ingress
-            .enqueue_probe(route.clone(), async move {
-                let _ = started.send(());
-                let _ = release_rx.await;
-            })
-            .await
-            .unwrap();
-        started_rx.await.unwrap();
-
-        ingress.dispatch(ChannelInput::Close {
-            route: route.clone(),
-            reason: Some("user closed".to_string()),
-        });
-
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            loop {
-                if workspace_threads
-                    .current_attachment(&route)
-                    .await
-                    .unwrap()
-                    .is_none()
-                {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("close waited behind the occupied route lane");
-
-        release.send(()).unwrap();
-        active_done.await.unwrap();
-        wait_for_lanes_to_drain(&ingress).await;
-    }
-
-    #[tokio::test]
     async fn typed_cancel_bypasses_an_occupied_route_lane() {
         let (ingress, _output_rx) = test_ingress_with_output();
         let route = RouteKey::new("web", "cancel-chat");
@@ -627,41 +582,6 @@ mod tests {
         );
 
         let _ = release.send(());
-        wait_for_lanes_to_drain(&ingress).await;
-    }
-
-    #[tokio::test]
-    async fn switch_agent_bypasses_an_occupied_route_lane() {
-        let (ingress, mut output_rx) = test_ingress_with_output();
-        let route = RouteKey::new("web", "switch-chat");
-        let (started, started_rx) = oneshot::channel();
-        let (release, release_rx) = oneshot::channel();
-        let active_done = ingress
-            .enqueue_probe(route.clone(), async move {
-                let _ = started.send(());
-                let _ = release_rx.await;
-            })
-            .await
-            .unwrap();
-        started_rx.await.unwrap();
-        assert!(matches!(
-            output_rx.recv().await.expect("active turn status"),
-            ChannelOutput::TurnStatus { active: true, .. }
-        ));
-
-        ingress.dispatch(ChannelInput::SwitchAgent {
-            route,
-            agent_kind: "claude".to_string(),
-        });
-
-        let output = tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv())
-            .await
-            .expect("switch agent waited behind the occupied route lane")
-            .expect("output channel closed");
-        assert!(matches!(output, ChannelOutput::SystemText { .. }));
-
-        release.send(()).unwrap();
-        active_done.await.unwrap();
         wait_for_lanes_to_drain(&ingress).await;
     }
 

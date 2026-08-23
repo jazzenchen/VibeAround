@@ -500,8 +500,7 @@ fn input_route(input: &ChannelInput) -> Option<RouteKey> {
             envelope,
             action_value: _,
         } => Some(envelope.route.clone()),
-        ChannelInput::Cancel { route } | ChannelInput::Close { route, .. } => Some(route.clone()),
-        ChannelInput::SwitchAgent { route, .. } => Some(route.clone()),
+        ChannelInput::Cancel { route } => Some(route.clone()),
         ChannelInput::Log { .. } => None,
     }
 }

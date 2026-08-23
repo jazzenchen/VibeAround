@@ -11,8 +11,8 @@ use crate::workspace::WorkspaceThreadManager;
 
 use super::{
     auto_close_reason_for_prompt_error, effective_input_text, envelope_content_blocks, handler,
-    send_system_text, send_system_text_to_target, send_turn_status, ChannelEnvelope, ChannelInput,
-    PluginHost, RouteKey,
+    send_system_text_to_target, send_turn_status, ChannelEnvelope, ChannelInput, PluginHost,
+    RouteKey,
 };
 
 pub(super) const ROUTE_LANE_CAPACITY: usize = 16;
@@ -280,7 +280,7 @@ impl ConversationIngress {
         }
     }
 
-    /// Dispatch a channel command. Cancel, Close, and log records bypass route queues;
+    /// Dispatch a channel command. Cancel and log records bypass route queues;
     /// every other command is accepted into the route's bounded FIFO lane.
     pub fn dispatch(self: &Arc<Self>, input: ChannelInput) {
         let input = match input {
@@ -288,26 +288,11 @@ impl ConversationIngress {
                 self.cancel(route);
                 return;
             }
-            ChannelInput::Close { route, reason } => {
-                let workspace_threads = Arc::clone(&self.workspace_threads);
-                tokio::spawn(async move {
-                    let _ = workspace_threads.close_route(&route, reason).await;
-                });
-                return;
-            }
             ChannelInput::Log { level, message } => {
                 tracing::info!(
                     level = %level.unwrap_or_else(|| "info".to_string()),
                     message = %message,
                     "channel log"
-                );
-                return;
-            }
-            ChannelInput::SwitchAgent { route, agent_kind } => {
-                send_system_text(
-                    &self.plugin_host,
-                    &route,
-                    &format!("Use /switch host {} with workspace threads.", agent_kind),
                 );
                 return;
             }

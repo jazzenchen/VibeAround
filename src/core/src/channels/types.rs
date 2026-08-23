@@ -97,15 +97,6 @@ pub enum ChannelInput {
     Cancel {
         route: RouteKey,
     },
-    Close {
-        route: RouteKey,
-        #[serde(default)]
-        reason: Option<String>,
-    },
-    SwitchAgent {
-        route: RouteKey,
-        agent_kind: String,
-    },
     Log {
         #[serde(default)]
         level: Option<String>,
@@ -117,9 +108,7 @@ impl ChannelInput {
     pub fn route_key(&self) -> Option<&RouteKey> {
         match self {
             Self::Message { envelope } | Self::Callback { envelope, .. } => Some(&envelope.route),
-            Self::Cancel { route }
-            | Self::Close { route, .. }
-            | Self::SwitchAgent { route, .. } => Some(route),
+            Self::Cancel { route } => Some(route),
             Self::Log { .. } => None,
         }
     }
