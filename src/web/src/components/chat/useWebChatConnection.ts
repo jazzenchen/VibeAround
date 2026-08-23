@@ -755,24 +755,15 @@ export function useWebChatConnection({
         if (profileId !== undefined) {
           payload.profileId = profileId;
         }
-        const currentSessionId =
-          sessionSelection.kind === "current" ? meta.sessionId : undefined;
+        // The route already runs the session this chat is about: init bound it,
+        // and `resume_session` is what asks for a different one. Restating it
+        // on every turn only gives the server a stale claim to act on.
         const resumedSessionId =
           sessionSelection.kind === "resume" && launchSession
             ? launchSession.session_id
-            : currentSessionId;
+            : meta.sessionId;
         if (threadId) {
           payload.threadId = threadId;
-        }
-        if (sessionSelection.kind === "new" && !threadId) {
-          payload.sessionAction = "new";
-          if (workspacePath) {
-            payload.sessionWorkspace = workspacePath;
-          }
-        } else if (resumedSessionId) {
-          payload.sessionAction = "resume";
-          payload.sessionId = resumedSessionId;
-          payload.sessionWorkspace = launchSession?.workspace ?? workspacePath;
         }
         ws.send(JSON.stringify(payload));
         const cacheContext: TranscriptCacheContext = {
