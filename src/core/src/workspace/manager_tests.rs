@@ -19,6 +19,24 @@ fn normalize_platform_cwd_strips_windows_verbatim_prefixes() {
     );
 }
 
+/// A web thread that actually exists: drafted, then materialised the way a
+/// first prompt would.
+async fn materialised_web_thread(
+    manager: &WorkspaceThreadManager,
+    agent_id: &str,
+    profile_id: Option<&str>,
+    cwd: PathBuf,
+) -> Arc<ThreadRuntime> {
+    let (thread, _) = manager
+        .draft_web_thread(agent_id.to_string(), profile_id.map(ToOwned::to_owned), cwd)
+        .await
+        .unwrap();
+    manager
+        .resolve_route_runtime(&web_route_for_thread(&thread.id))
+        .await
+        .unwrap()
+}
+
 fn temp_paths() -> (PathBuf, PathBuf, PathBuf) {
     let root = std::env::temp_dir().join(format!("vibearound-wtm-{}", Uuid::new_v4()));
     (
@@ -171,6 +189,45 @@ async fn route_resolves_to_stable_thread_attachment() {
 }
 
 #[tokio::test]
+async fn a_draft_writes_nothing_until_the_first_prompt() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let root = std::env::temp_dir().join(format!("vibearound-draft-{}", Uuid::new_v4()));
+    let (draft, workspace) = manager
+        .draft_web_thread(
+            "codex".to_string(),
+            Some("deepseek".to_string()),
+            root.clone(),
+        )
+        .await
+        .unwrap();
+    let route = web_route_for_thread(&draft.id);
+
+    // The browser has an id and a chat to open, and the stores have nothing.
+    assert_eq!(workspace, normalize_workspace_cwd(root));
+    assert!(manager.thread(&draft.id).await.unwrap().is_none());
+    assert!(manager.current_attachment(&route).await.unwrap().is_none());
+
+    // Resolving the route is what a first prompt does, and it makes the same
+    // thread real -- same id, and the agent and profile the user picked.
+    let runtime = manager.resolve_route_runtime(&route).await.unwrap();
+    let state = runtime.state().await;
+    assert_eq!(state.thread_id, draft.id);
+    assert_eq!(state.host_binding.agent_id, "codex");
+    assert_eq!(state.host_binding.profile_id.as_deref(), Some("deepseek"));
+    assert!(manager.thread(&draft.id).await.unwrap().is_some());
+    assert_eq!(
+        manager
+            .current_attachment(&route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        draft.id
+    );
+}
+
+#[tokio::test]
 async fn adopting_a_thread_adds_a_web_route_without_taking_its_own() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
@@ -272,14 +329,7 @@ async fn seed_preview_child(
     std::fs::create_dir_all(&root).unwrap();
     let file = root.join("README.md");
     std::fs::write(&file, "# Preview").unwrap();
-    let parent = manager
-        .create_web_thread_for_cwd_with_host(
-            "codex".to_string(),
-            Some("direct".to_string()),
-            root.clone(),
-        )
-        .await
-        .unwrap();
+    let parent = materialised_web_thread(&manager, "codex", Some("direct"), root.clone()).await;
     let parent_id = parent.state().await.thread_id;
     let (slug, _) = crate::previews::ensure_file(file, root, label.to_string());
     let child = manager
@@ -399,14 +449,13 @@ async fn preview_child_reuses_global_slug_across_parents_and_reload() {
     );
 
     let preview = crate::previews::lookup_owner(&slug).unwrap();
-    let other_parent = manager
-        .create_web_thread_for_cwd_with_host(
-            "claude".to_string(),
-            Some("direct".to_string()),
-            preview.workspace.clone(),
-        )
-        .await
-        .unwrap();
+    let other_parent = materialised_web_thread(
+        &manager,
+        "claude",
+        Some("direct"),
+        preview.workspace.clone(),
+    )
+    .await;
     let other_parent_id = other_parent.state().await.thread_id;
     let reused = manager
         .ensure_preview_web_thread(Some(&other_parent_id), &slug)

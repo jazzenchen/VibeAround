@@ -249,49 +249,67 @@ pub async fn init_workspace_thread_handler(
     Json(body): Json<crate::api_types::WorkspaceThreadInitRequest>,
 ) -> Result<Json<crate::api_types::WorkspaceThreadInitResponse>, (StatusCode, String)> {
     let manager = state.channel_hub.workspace_thread_manager();
-    let runtime = if let Some(thread_id) = trimmed(body.thread_id.as_deref()) {
-        manager.attach_web_route_to_thread(&thread_id.into()).await
-    } else {
-        let agent_id =
-            common::resources::resolve_agent_id(body.agent_id.as_deref().unwrap_or_default())
-                .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
-        let workspace = body
-            .workspace_path
-            .as_deref()
-            .map(std::path::PathBuf::from)
-            .map(common::workspace::normalize_workspace_cwd)
-            .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
-        match trimmed(body.session_id.as_deref()) {
-            Some(session_id) => {
-                manager
-                    .attach_external_session_to_web_thread(
-                        agent_id,
-                        body.profile_id,
-                        session_id,
-                        workspace,
-                        ExternalSessionAttachMode::ReuseOpenThread,
-                    )
-                    .await
-            }
-            None => {
-                manager
-                    .create_web_thread_for_cwd_with_host(agent_id, body.profile_id, workspace)
-                    .await
-            }
-        }
+    let bad_request = |error: anyhow::Error| (StatusCode::BAD_REQUEST, error.to_string());
+
+    if let Some(thread_id) = trimmed(body.thread_id.as_deref()) {
+        let runtime = manager
+            .attach_web_route_to_thread(&thread_id.into())
+            .await
+            .map_err(bad_request)?;
+        return Ok(Json(web_thread_response(&runtime).await));
     }
-    .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-    let runtime_state = runtime.state().await;
-    let thread_id = runtime_state.thread_id.to_string();
-    let chat_id = common::workspace::manager::web_chat_id_for_thread(&runtime_state.thread_id);
+
+    let agent_id =
+        common::resources::resolve_agent_id(body.agent_id.as_deref().unwrap_or_default())
+            .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    let workspace = body
+        .workspace_path
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .map(common::workspace::normalize_workspace_cwd)
+        .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
+
+    if let Some(session_id) = trimmed(body.session_id.as_deref()) {
+        let runtime = manager
+            .attach_external_session_to_web_thread(
+                agent_id,
+                body.profile_id,
+                session_id,
+                workspace,
+                ExternalSessionAttachMode::ReuseOpenThread,
+            )
+            .await
+            .map_err(bad_request)?;
+        return Ok(Json(web_thread_response(&runtime).await));
+    }
+
+    // Nothing exists yet, so nothing is created yet.
+    let (thread, workspace) = manager
+        .draft_web_thread(agent_id, body.profile_id, workspace)
+        .await
+        .map_err(bad_request)?;
     Ok(Json(crate::api_types::WorkspaceThreadInitResponse {
-        thread_id,
-        chat_id,
-        agent_id: runtime_state.host_binding.agent_id,
-        profile_id: runtime_state.host_binding.profile_id,
-        session_id: runtime_state.session_id,
-        workspace: runtime_state.workspace.to_string_lossy().to_string(),
+        chat_id: common::workspace::manager::web_chat_id_for_thread(&thread.id),
+        thread_id: thread.id.to_string(),
+        agent_id: thread.host_binding.agent_id,
+        profile_id: thread.host_binding.profile_id,
+        session_id: None,
+        workspace: workspace.to_string_lossy().to_string(),
     }))
+}
+
+async fn web_thread_response(
+    runtime: &common::workspace::threads::runtime::ThreadRuntime,
+) -> crate::api_types::WorkspaceThreadInitResponse {
+    let state = runtime.state().await;
+    crate::api_types::WorkspaceThreadInitResponse {
+        chat_id: common::workspace::manager::web_chat_id_for_thread(&state.thread_id),
+        thread_id: state.thread_id.to_string(),
+        agent_id: state.host_binding.agent_id,
+        profile_id: state.host_binding.profile_id,
+        session_id: state.session_id,
+        workspace: state.workspace.to_string_lossy().to_string(),
+    }
 }
 
 #[derive(serde::Deserialize)]

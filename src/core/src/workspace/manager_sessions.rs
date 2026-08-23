@@ -61,22 +61,26 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(thread).await
     }
 
-    pub async fn create_web_thread_for_cwd_with_host(
+    /// Promise the web a thread without creating one. Nothing is written and no
+    /// agent is contacted; the record waits on its own route until a first
+    /// prompt arrives, and a conversation the user never starts leaves no
+    /// trace. Answers with the record and the workspace it would live in.
+    pub async fn draft_web_thread(
         &self,
         agent_id: String,
         profile_id: Option<String>,
         cwd: PathBuf,
-    ) -> anyhow::Result<Arc<ThreadRuntime>> {
+    ) -> anyhow::Result<(WorkspaceThread, PathBuf)> {
         let profile_id = normalize_optional_launch_profile_id(profile_id.as_deref())
             .or_else(|| launch_setting_profile_for_agent(&agent_id));
         let workspace = self.ensure_workspace_for_cwd(cwd).await?;
         let host_binding = HostBinding::new(agent_id, profile_id);
         let thread = self.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
-        let route = web_route_for_thread(&thread.id);
-        self.ensure_thread_persisted(&thread).await?;
-        self.attach_route(route, workspace.id, thread.id.clone())
-            .await?;
-        self.runtime_from_thread(thread).await
+        self.drafts
+            .lock()
+            .await
+            .insert(web_route_for_thread(&thread.id), thread.clone());
+        Ok((thread, workspace.cwd))
     }
 
     pub async fn switch_workspace(

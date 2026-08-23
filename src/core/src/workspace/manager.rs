@@ -84,6 +84,10 @@ pub struct WorkspaceThreadManager {
     runtimes: RuntimeRegistry,
     change_tx: broadcast::Sender<()>,
     preview_lifecycle: Mutex<()>,
+    /// Threads the web has been promised but nobody has written to yet. They
+    /// hold an id and a host binding and nothing else; the first prompt on
+    /// their route is what makes them real.
+    drafts: Mutex<HashMap<RouteKey, WorkspaceThread>>,
     /// VibeAround's MCP tools served over ACP to thread agents. Installed by
     /// the server at boot; thread handlers hand it to their ACP bridge.
     mcp_over_acp: std::sync::OnceLock<Arc<dyn crate::agent::AcpMcpServer>>,
@@ -101,6 +105,7 @@ impl WorkspaceThreadManager {
             runtimes: RuntimeRegistry::new(),
             change_tx,
             preview_lifecycle: Mutex::new(()),
+            drafts: Mutex::new(HashMap::new()),
             mcp_over_acp: std::sync::OnceLock::new(),
         })
     }
@@ -127,6 +132,7 @@ impl WorkspaceThreadManager {
             runtimes: RuntimeRegistry::new(),
             change_tx,
             preview_lifecycle: Mutex::new(()),
+            drafts: Mutex::new(HashMap::new()),
             mcp_over_acp: std::sync::OnceLock::new(),
         })
     }
@@ -145,6 +151,16 @@ impl WorkspaceThreadManager {
 
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
             return Ok(runtime);
+        }
+        if let Some(thread) = self.drafts.lock().await.remove(route) {
+            self.ensure_thread_persisted(&thread).await?;
+            self.attach_route(
+                route.clone(),
+                thread.workspace_id.clone(),
+                thread.id.clone(),
+            )
+            .await?;
+            return self.runtime_from_thread(thread).await;
         }
 
         let (host_binding, workspace_path) = default_route_binding_and_workspace(route);
