@@ -523,7 +523,7 @@ impl TuiApp {
                 }
                 true
             }
-            "/deny" | "/cancel" => {
+            "/deny" => {
                 if let Some(request_id) = self.chat_state.pending_permission_request_id.clone() {
                     if self.send_chat_command(
                         ChatClientMessage::permission_cancelled(request_id),

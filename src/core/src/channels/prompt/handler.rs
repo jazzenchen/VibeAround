@@ -829,7 +829,7 @@ pub(super) fn is_cancel_prompt(content_blocks: &[acp::ContentBlock]) -> bool {
 }
 
 fn collapse_whitespace(text: &str) -> String {
-    text.trim().split_whitespace().collect::<Vec<_>>().join(" ")
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
