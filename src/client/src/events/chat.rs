@@ -103,7 +103,7 @@ pub enum ChatClientMessage {
         #[serde(rename = "sessionWorkspace", skip_serializing_if = "Option::is_none")]
         session_workspace: Option<String>,
     },
-    Stop,
+    Cancel,
     PermissionResponse {
         #[serde(rename = "requestId")]
         request_id: String,
@@ -182,8 +182,8 @@ impl ChatClientMessage {
         }
     }
 
-    pub fn stop() -> Self {
-        Self::Stop
+    pub fn cancel() -> Self {
+        Self::Cancel
     }
 
     pub fn permission_selected(
@@ -412,9 +412,9 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::to_value(ChatClientMessage::stop()).expect("json"),
+            serde_json::to_value(ChatClientMessage::cancel()).expect("json"),
             json!({
-                "type": "stop"
+                "type": "cancel"
             })
         );
     }

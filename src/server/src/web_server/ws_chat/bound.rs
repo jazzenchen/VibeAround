@@ -10,7 +10,7 @@ use super::input::{parse_web_chat_input, WebChatInput};
 
 pub(in crate::web_server) enum BoundChatInput {
     Message(ChannelInput),
-    Stop(ChannelInput),
+    Cancel(ChannelInput),
     PermissionResponse {
         request_id: String,
         response: acp::RequestPermissionResponse,
@@ -33,7 +33,7 @@ pub(in crate::web_server) fn parse_bound_chat_input(
             envelope.cli_kind = None;
             Some(BoundChatInput::Message(input))
         }
-        WebChatInput::Stop(input) => Some(BoundChatInput::Stop(input)),
+        WebChatInput::Cancel(input) => Some(BoundChatInput::Cancel(input)),
         WebChatInput::PermissionResponse {
             request_id,
             response,
@@ -111,13 +111,13 @@ mod tests {
     }
 
     #[test]
-    fn bound_stop_uses_the_fixed_route() {
-        let input = parse_bound_chat_input(&route(), "preview-owner", r#"{"type":"stop"}"#)
-            .expect("stop input");
+    fn bound_cancel_uses_the_fixed_route() {
+        let input = parse_bound_chat_input(&route(), "preview-owner", r#"{"type":"cancel"}"#)
+            .expect("cancel input");
 
-        let BoundChatInput::Stop(ChannelInput::Stop { route: stopped }) = input else {
-            panic!("expected stop");
+        let BoundChatInput::Cancel(ChannelInput::Cancel { route: cancelled }) = input else {
+            panic!("expected cancel");
         };
-        assert_eq!(stopped, route());
+        assert_eq!(cancelled, route());
     }
 }

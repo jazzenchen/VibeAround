@@ -10,7 +10,7 @@
     { "name": "session", "args": "[--list|--switch <session_id>]", "description": "List or resume coding-agent sessions" },
     { "name": "switch", "args": "<agent> [profile]", "description": "Switch agent launch target" },
     { "name": "new", "description": "Reset session" },
-    { "name": "stop", "description": "Interrupt the active turn on this channel route" },
+    { "name": "cancel", "aliases": ["stop"], "description": "Interrupt the active turn on this channel route" },
     { "name": "mode", "args": "<default|plan|acceptEdits|bypassPermissions|dontAsk>", "description": "Set session permission mode" },
     { "name": "plan", "description": "Switch to plan mode" },
     { "name": "pair", "args": "<code>", "description": "Pair a browser with this VibeAround instance" },

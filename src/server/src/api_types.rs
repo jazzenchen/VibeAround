@@ -306,7 +306,11 @@ pub struct LaunchSessionInfo {
 /// `POST /api/workspace-threads/init` request.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkspaceThreadInitRequest {
-    pub agent_id: String,
+    /// Adopt this existing thread and answer with its web identity. The thread
+    /// already knows its agent, profile and workspace, so the other fields are
+    /// ignored when it is set.
+    pub thread_id: Option<String>,
+    pub agent_id: Option<String>,
     pub profile_id: Option<String>,
     pub session_id: Option<String>,
     pub workspace_path: Option<String>,
@@ -403,6 +407,7 @@ pub struct PreviewsResponse {
 /// { "kind": "subagent_status", "agent": { ... } }
 /// { "kind": "subagent_acp_notification", "agent": { ... }, "payload": { ... } }
 /// { "kind": "command_menu", "system_commands": [...], "agent_commands": [...] }
+/// { "kind": "session_info", "info": { "threadId": "wt_...", "agent": { ... } } }
 /// { "kind": "turn_status", "active": false }
 /// { "kind": "preview_refresh" }
 /// { "kind": "error", "error": "spawn failed: ..." }
@@ -421,6 +426,11 @@ pub enum ChatEvent {
     },
     SessionReady {
         session_id: String,
+    },
+    /// What the route actually runs now: workspace, thread, agent, profile and
+    /// session. The one answer a surface can trust over its own selection.
+    SessionInfo {
+        info: common::channels::types::ChannelSessionInfo,
     },
     SessionMode {
         session_mode: serde_json::Value,

@@ -86,6 +86,11 @@ export type ChatMeta = {
   agentTitle?: string;
   agentVersion?: string;
   agentName?: string;
+  /** From `session_info`: what the route actually runs, as the server sees it. */
+  threadId?: string;
+  workspacePath?: string;
+  agentId?: string;
+  profileId?: string;
 };
 
 export type SessionModeOption = {

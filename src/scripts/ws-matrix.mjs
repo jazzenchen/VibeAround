@@ -1292,8 +1292,8 @@ class BridgeConversation {
   }
 
   bridgeClientKey() {
-    const authPath = path.join(process.env.HOME, ".vibearound", "local-api-auth.json");
-    const key = JSON.parse(readFileSync(authPath, "utf8")).token;
+    const authPath = path.join(process.env.HOME, ".vibearound", "auth.json");
+    const key = JSON.parse(readFileSync(authPath, "utf8")).bridge_token;
     if (!key) throw new Error("missing local bridge client key");
     return key;
   }

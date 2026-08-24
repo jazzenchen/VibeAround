@@ -30,7 +30,3 @@ export function chatRuntimeKeyForSession(
 export function chatRuntimeKeyForThread(threadId: string) {
   return `${THREAD_RUNTIME_PREFIX}:${threadId}`;
 }
-
-export function chatIdForThread(threadId: string) {
-  return `ws_${threadId}`;
-}

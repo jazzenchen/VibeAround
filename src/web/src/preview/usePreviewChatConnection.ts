@@ -205,7 +205,7 @@ export function usePreviewChatConnection(
       return false;
     }
     try {
-      socket.send(JSON.stringify({ type: "stop" }));
+      socket.send(JSON.stringify({ type: "cancel" }));
       setMessages((current) =>
         setStreamProgressMessage(current, "Stopping…", "tool"),
       );

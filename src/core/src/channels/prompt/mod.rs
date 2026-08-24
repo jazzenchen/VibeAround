@@ -91,12 +91,6 @@ fn attachment_uri(file_key: &str) -> Option<String> {
     ))
 }
 
-/// Fire-and-forget helper: emit a `SystemText` to the plugin for this route.
-/// Shared by every sub-module in this folder.
-pub(super) fn send_system_text(plugin_host: &Arc<PluginHost>, route: &RouteKey, text: &str) {
-    send_system_text_to_target(plugin_host, &ChannelTarget::for_route(route.clone()), text);
-}
-
 /// Emit system text for one inbound turn, preserving its platform reply target.
 pub(super) fn send_system_text_to_target(
     plugin_host: &Arc<PluginHost>,
@@ -178,7 +172,10 @@ mod tests {
         let (input_tx, _input_rx) = mpsc::unbounded_channel();
         let plugin_host = Arc::new(PluginHost::new(input_tx));
         let (output_tx, output_rx) = mpsc::unbounded_channel();
-        plugin_host.register_websocket_plugin("web", output_tx);
+        // Every surface drains into one receiver; each assertion names its route.
+        plugin_host.register_websocket_plugin("web", output_tx.clone());
+        plugin_host.register_websocket_plugin("tui", output_tx.clone());
+        plugin_host.register_websocket_plugin("feishu", output_tx);
         (
             ConversationIngress::new(workspace_threads, plugin_host),
             output_rx,
@@ -342,7 +339,7 @@ mod tests {
     #[tokio::test]
     async fn system_commands_run_end_to_end_through_the_route_lane() {
         let (ingress, mut output_rx) = test_ingress_with_output();
-        let route = RouteKey::new("web", "command-chat");
+        let route = RouteKey::new("feishu", "command-chat");
 
         for (command, expected) in [
             ("/help", "Commands:"),
@@ -354,6 +351,49 @@ mod tests {
             ("/definitely-unknown", "Unknown command:"),
             ("/close", "Thread closed."),
         ] {
+            let text = run_command(&ingress, &mut output_rx, &route, command).await;
+            assert!(
+                text.contains(expected),
+                "{command} returned unexpected output: {text}"
+            );
+        }
+
+        wait_for_lanes_to_drain(&ingress).await;
+    }
+
+    #[tokio::test]
+    async fn picker_surfaces_refuse_the_commands_they_already_own() {
+        for channel_kind in ["web", "tui"] {
+            picker_surface_refuses_context_commands(channel_kind).await;
+        }
+    }
+
+    async fn picker_surface_refuses_context_commands(channel_kind: &str) {
+        let (ingress, mut output_rx) = test_ingress_with_output();
+        let route = RouteKey::new(channel_kind, "picker-chat");
+
+        for command in [
+            "/workspace",
+            "/workspace --switch ws_a",
+            "/agent",
+            "/agent --switch codex",
+            "/profile",
+            "/profile --switch deepseek",
+            "/session",
+            "/session --switch abc123",
+            "/switch codex",
+            "/new",
+            "/close",
+        ] {
+            let text = run_command(&ingress, &mut output_rx, &route, command).await;
+            assert!(
+                text.contains("Use the UI"),
+                "{command} was not refused on {channel_kind}: {text}"
+            );
+        }
+
+        // Everything else still works here.
+        for (command, expected) in [("/help", "Commands:"), ("/status", "Status:")] {
             let text = run_command(&ingress, &mut output_rx, &route, command).await;
             assert!(
                 text.contains(expected),
@@ -468,7 +508,7 @@ mod tests {
             .await
             .unwrap();
 
-        ingress.dispatch(ChannelInput::Stop { route });
+        ingress.dispatch(ChannelInput::Cancel { route });
 
         assert!(active_done.await.is_err(), "active work survived stop");
         assert!(queued_done.await.is_err(), "queued work survived stop");
@@ -491,7 +531,7 @@ mod tests {
             .expect("active turn target");
 
         assert_eq!(ingress.active_lane_count().await, 0);
-        ingress.dispatch(ChannelInput::Stop { route });
+        ingress.dispatch(ChannelInput::Cancel { route });
 
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -503,13 +543,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_bypasses_an_occupied_route_lane() {
-        let (ingress, workspace_threads) = test_ingress_with_manager();
-        let route = RouteKey::new("web", "close-chat");
-        workspace_threads
-            .resolve_route_runtime(&route)
-            .await
-            .unwrap();
+    async fn typed_cancel_bypasses_an_occupied_route_lane() {
+        let (ingress, _output_rx) = test_ingress_with_output();
+        let route = RouteKey::new("web", "cancel-chat");
         let (started, started_rx) = oneshot::channel();
         let (release, release_rx) = oneshot::channel();
         let active_done = ingress
@@ -521,64 +557,25 @@ mod tests {
             .unwrap();
         started_rx.await.unwrap();
 
-        ingress.dispatch(ChannelInput::Close {
-            route: route.clone(),
-            reason: Some("user closed".to_string()),
-        });
-
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            loop {
-                if workspace_threads
-                    .current_attachment(&route)
-                    .await
-                    .unwrap()
-                    .is_none()
-                {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
+        // The interrupt has to answer while the lane is still busy; queueing it
+        // behind the turn it interrupts would never resolve.
+        let response = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            ingress.prompt(
+                ChannelTarget::new(route.clone(), None),
+                vec![acp::ContentBlock::Text(acp::TextContent::new("/cancel"))],
+            ),
+        )
         .await
-        .expect("close waited behind the occupied route lane");
+        .expect("typed cancel waited behind the occupied route lane")
+        .expect("cancel prompt failed");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+        assert!(
+            active_done.await.is_err(),
+            "the in-flight turn survived the typed cancel"
+        );
 
-        release.send(()).unwrap();
-        active_done.await.unwrap();
-        wait_for_lanes_to_drain(&ingress).await;
-    }
-
-    #[tokio::test]
-    async fn switch_agent_bypasses_an_occupied_route_lane() {
-        let (ingress, mut output_rx) = test_ingress_with_output();
-        let route = RouteKey::new("web", "switch-chat");
-        let (started, started_rx) = oneshot::channel();
-        let (release, release_rx) = oneshot::channel();
-        let active_done = ingress
-            .enqueue_probe(route.clone(), async move {
-                let _ = started.send(());
-                let _ = release_rx.await;
-            })
-            .await
-            .unwrap();
-        started_rx.await.unwrap();
-        assert!(matches!(
-            output_rx.recv().await.expect("active turn status"),
-            ChannelOutput::TurnStatus { active: true, .. }
-        ));
-
-        ingress.dispatch(ChannelInput::SwitchAgent {
-            route,
-            agent_kind: "claude".to_string(),
-        });
-
-        let output = tokio::time::timeout(std::time::Duration::from_millis(100), output_rx.recv())
-            .await
-            .expect("switch agent waited behind the occupied route lane")
-            .expect("output channel closed");
-        assert!(matches!(output, ChannelOutput::SystemText { .. }));
-
-        release.send(()).unwrap();
-        active_done.await.unwrap();
+        let _ = release.send(());
         wait_for_lanes_to_drain(&ingress).await;
     }
 
@@ -597,7 +594,7 @@ mod tests {
             .unwrap();
         started_rx.await.unwrap();
 
-        ingress.dispatch(ChannelInput::Stop {
+        ingress.dispatch(ChannelInput::Cancel {
             route: route.clone(),
         });
 

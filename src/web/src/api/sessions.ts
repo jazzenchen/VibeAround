@@ -127,7 +127,10 @@ export async function getLaunchSessionsBatch(
 }
 
 export interface InitWorkspaceThreadRequest {
-  agent_id: string;
+  /** Adopt this existing thread. The thread already knows its agent, profile
+   *  and workspace, so the other fields are ignored when it is set. */
+  thread_id?: string;
+  agent_id?: string;
   profile_id?: string;
   session_id?: string;
   workspace_path?: string;
@@ -145,18 +148,6 @@ export async function initWorkspaceThread(
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || `POST ${path}: ${res.status}`);
-  }
-  return WorkspaceThreadInitResponseSchema.parse(await res.json());
-}
-
-export async function getWorkspaceThread(
-  threadId: string,
-): Promise<WorkspaceThreadInitResponse> {
-  const path = `/api/workspace-threads/${encodeURIComponent(threadId)}`;
-  const res = await fetch(`${browserBaseUrl()}${path}`);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `GET ${path}: ${res.status}`);
   }
   return WorkspaceThreadInitResponseSchema.parse(await res.json());
 }

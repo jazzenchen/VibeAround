@@ -84,6 +84,10 @@ pub struct WorkspaceThreadManager {
     runtimes: RuntimeRegistry,
     change_tx: broadcast::Sender<()>,
     preview_lifecycle: Mutex<()>,
+    /// Threads the web has been promised but nobody has written to yet. They
+    /// hold an id and a host binding and nothing else; the first prompt on
+    /// their route is what makes them real.
+    drafts: Mutex<HashMap<RouteKey, WorkspaceThread>>,
     /// VibeAround's MCP tools served over ACP to thread agents. Installed by
     /// the server at boot; thread handlers hand it to their ACP bridge.
     mcp_over_acp: std::sync::OnceLock<Arc<dyn crate::agent::AcpMcpServer>>,
@@ -101,6 +105,7 @@ impl WorkspaceThreadManager {
             runtimes: RuntimeRegistry::new(),
             change_tx,
             preview_lifecycle: Mutex::new(()),
+            drafts: Mutex::new(HashMap::new()),
             mcp_over_acp: std::sync::OnceLock::new(),
         })
     }
@@ -127,6 +132,7 @@ impl WorkspaceThreadManager {
             runtimes: RuntimeRegistry::new(),
             change_tx,
             preview_lifecycle: Mutex::new(()),
+            drafts: Mutex::new(HashMap::new()),
             mcp_over_acp: std::sync::OnceLock::new(),
         })
     }
@@ -145,6 +151,16 @@ impl WorkspaceThreadManager {
 
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
             return Ok(runtime);
+        }
+        if let Some(thread) = self.drafts.lock().await.remove(route) {
+            self.ensure_thread_persisted(&thread).await?;
+            self.attach_route(
+                route.clone(),
+                thread.workspace_id.clone(),
+                thread.id.clone(),
+            )
+            .await?;
+            return self.runtime_from_thread(thread).await;
         }
 
         let (host_binding, workspace_path) = default_route_binding_and_workspace(route);
@@ -635,6 +651,27 @@ fn launch_setting_profile_for_agent(agent_id: &str) -> Option<String> {
         .map(|profile| normalize_launch_profile_id(Some(&profile)))
 }
 
+/// The profile a binding gets when no profile was named: the channel's own
+/// configured profile, else the agent's default, which itself falls back to
+/// the launch selection.
+pub fn default_profile_for_agent(channel_kind: &str, agent_id: &str) -> Option<String> {
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
+    default_profile_for_agent_from_settings(channel_kind, agent_id, &cfg, &prefs)
+}
+
+fn default_profile_for_agent_from_settings(
+    channel_kind: &str,
+    agent_id: &str,
+    cfg: &crate::config::Config,
+    prefs: &agent_state::AgentsPrefsFile,
+) -> Option<String> {
+    let profile_id = cfg
+        .remote_channel_defaults(channel_kind)
+        .profile_id
+        .or_else(|| agent_state::resolve_default_profile(prefs, cfg, agent_id))?;
+    Some(normalize_launch_profile_id(Some(&profile_id)))
+}
+
 fn default_route_binding_and_workspace(route: &RouteKey) -> (HostBinding, PathBuf) {
     let (cfg, prefs) = agent_state::read_config_and_prefs();
     default_route_binding_and_workspace_from_settings(route, &cfg, &prefs)
@@ -679,14 +716,7 @@ fn default_channel_binding_and_workspace(
                     .any(|enabled_agent| enabled_agent == agent)
         })
         .unwrap_or_else(|| agent_state::resolve_default_agent(prefs, cfg));
-    let profile_id = defaults
-        .profile_id
-        .as_deref()
-        .map(|profile| normalize_launch_profile_id(Some(profile)))
-        .or_else(|| {
-            agent_state::resolve_default_profile(prefs, cfg, &agent_id)
-                .map(|profile| normalize_launch_profile_id(Some(&profile)))
-        });
+    let profile_id = default_profile_for_agent_from_settings(channel_kind, &agent_id, cfg, prefs);
     let workspace = im_workspace_for_channel(cfg, channel_kind);
 
     (HostBinding::new(agent_id, profile_id), workspace)

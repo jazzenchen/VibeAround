@@ -441,6 +441,20 @@ export function useWebChatConnection({
           }
           break;
         }
+        case "session_info": {
+          // The server's own answer, which outranks anything this tab chose.
+          const info = parsed.info;
+          setMeta((prev) => ({
+            ...prev,
+            threadId: info.threadId,
+            workspacePath: info.workspacePath,
+            agentId: info.agent.id,
+            agentName: info.agent.name,
+            agentVersion: info.agent.version,
+            profileId: info.agent.profileId,
+          }));
+          break;
+        }
         case "session_mode": {
           setSessionModeState(parseSessionModeState(parsed.session_mode));
           break;
@@ -741,24 +755,15 @@ export function useWebChatConnection({
         if (profileId !== undefined) {
           payload.profileId = profileId;
         }
-        const currentSessionId =
-          sessionSelection.kind === "current" ? meta.sessionId : undefined;
+        // The route already runs the session this chat is about: init bound it,
+        // and `resume_session` is what asks for a different one. Restating it
+        // on every turn only gives the server a stale claim to act on.
         const resumedSessionId =
           sessionSelection.kind === "resume" && launchSession
             ? launchSession.session_id
-            : currentSessionId;
+            : meta.sessionId;
         if (threadId) {
           payload.threadId = threadId;
-        }
-        if (sessionSelection.kind === "new" && !threadId) {
-          payload.sessionAction = "new";
-          if (workspacePath) {
-            payload.sessionWorkspace = workspacePath;
-          }
-        } else if (resumedSessionId) {
-          payload.sessionAction = "resume";
-          payload.sessionId = resumedSessionId;
-          payload.sessionWorkspace = launchSession?.workspace ?? workspacePath;
         }
         ws.send(JSON.stringify(payload));
         const cacheContext: TranscriptCacheContext = {
@@ -835,7 +840,7 @@ export function useWebChatConnection({
       ws?.readyState === WebSocket.OPEN
     ) {
       try {
-        ws.send(JSON.stringify({ type: "stop" }));
+        ws.send(JSON.stringify({ type: "cancel" }));
       } catch (error) {
         console.warn("[ChatView] failed to abort session replay:", error);
       }
@@ -966,7 +971,7 @@ export function useWebChatConnection({
     const abortedSessionId = replayContext?.sessionId;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     try {
-      ws.send(JSON.stringify({ type: "stop" }));
+      ws.send(JSON.stringify({ type: "cancel" }));
       setMessages((prev) =>
         setStreamProgressMessage(prev, t("Stopping…"), "tool"),
       );

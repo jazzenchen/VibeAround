@@ -15,8 +15,8 @@ use crate::channels::types::{
     ChannelOutput, ChannelSessionAgent, ChannelSessionInfo, ChannelSessionStart,
 };
 use crate::profiles::{self, connections};
-use crate::routing::{ChannelTarget, RouteKey};
-use crate::workspace::manager::ExternalSessionAttachMode;
+use crate::routing::{channel_traits, ChannelTarget, RouteKey};
+use crate::workspace::manager::{default_profile_for_agent, ExternalSessionAttachMode};
 use crate::workspace::threads::runtime::{
     cancelled_prompt_response, route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
 };
@@ -37,10 +37,8 @@ pub(crate) async fn handle_prompt(
     let text = first_text(&content_blocks).unwrap_or_default();
 
     let route = &target.route;
-    if commands_enabled_for_route(route) {
-        if let Some(command) = parse_thread_command(&text) {
-            return handle_command(workspace_threads, plugin_host, &target, command).await;
-        }
+    if let Some(command) = parse_thread_command(&text) {
+        return handle_command(workspace_threads, plugin_host, &target, command).await;
     }
 
     if content_blocks.is_empty() {
@@ -85,6 +83,14 @@ async fn handle_command(
     command: ThreadCommand,
 ) -> acp::Result<acp::PromptResponse> {
     let route = &target.route;
+    if !channel_traits(&route.channel_kind).context_commands && command_manages_context(&command) {
+        send_system_text_to_target(
+            plugin_host,
+            target,
+            "Use the UI to start a new chat or to change workspace, agent, profile, or session.",
+        );
+        return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+    }
     if crate::workspace::manager::preview_slug_from_web_route(route).is_some()
         && preview_command_changes_context(&command)
     {
@@ -329,7 +335,8 @@ async fn switch_host(
     profile: Option<String>,
 ) -> acp::Result<()> {
     let route = &channel_target.route;
-    let host_binding = resolve_host_binding(agent, profile.as_deref()).map_err(invalid_params)?;
+    let host_binding =
+        resolve_host_binding(route, agent, profile.as_deref()).map_err(invalid_params)?;
     let preview_route = crate::workspace::manager::preview_slug_from_web_route(route).is_some();
     let active_runtime = if preview_route {
         Some(
@@ -767,6 +774,20 @@ enum ThreadCommand {
     Unknown(String),
 }
 
+/// Commands a surface with its own pickers already answers for itself.
+/// Executing them there would leave the picker showing one thing while the
+/// route points at another.
+fn command_manages_context(command: &ThreadCommand) -> bool {
+    matches!(
+        command,
+        ThreadCommand::New
+            | ThreadCommand::Close
+            | ThreadCommand::SwitchWorkspace(_)
+            | ThreadCommand::SwitchHost { .. }
+            | ThreadCommand::Resource { .. }
+    )
+}
+
 fn preview_command_changes_context(command: &ThreadCommand) -> bool {
     matches!(
         command,
@@ -793,9 +814,26 @@ enum ResourceAction {
     Switch(String),
 }
 
+/// Interrupting a turn cannot queue behind the turn it interrupts, so the
+/// ingress recognises this before enqueueing instead of letting it arrive here
+/// as a command. Every `/va`-style prefix works, same as any other command.
+pub(super) fn is_cancel_command(text: &str) -> bool {
+    matches!(
+        canonical_thread_command(&collapse_whitespace(text)).as_str(),
+        "/cancel" | "/stop"
+    )
+}
+
+pub(super) fn is_cancel_prompt(content_blocks: &[acp::ContentBlock]) -> bool {
+    first_text(content_blocks).is_some_and(|text| is_cancel_command(&text))
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
-    let trimmed = text.trim();
-    let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = collapse_whitespace(text);
     let normalized = canonical_thread_command(&normalized);
     let normalized = normalized.as_str();
     if !normalized.starts_with('/') {
@@ -966,10 +1004,6 @@ fn agent_command_text(rest: &str) -> String {
     }
 }
 
-fn commands_enabled_for_route(_route: &RouteKey) -> bool {
-    true
-}
-
 fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
     content_blocks.iter().find_map(|block| match block {
         acp::ContentBlock::Text(text) => Some(text.text.clone()),
@@ -992,10 +1026,10 @@ fn command_help_text() -> &'static str {
 /pair <code>
 /pickup <code>
 /new
-/stop
+/cancel
 /close
 
-Bare /workspace, /agent, /profile, and /session default to --list. Prefix with /va, /vibearound, va, or vibearound when a channel cannot send slash commands. Legacy /switch commands still work."
+Bare /workspace, /agent, /profile, and /session default to --list. /stop is an alias for /cancel. Prefix with /va, /vibearound, va, or vibearound when a channel cannot send slash commands. Legacy /switch commands still work."
 }
 
 fn format_status(state: &ThreadRuntimeState) -> String {
@@ -1175,10 +1209,19 @@ fn invalid_params(error: String) -> acp::Error {
     acp::Error::new(-32602, error)
 }
 
-fn resolve_host_binding(agent: &str, profile: Option<&str>) -> Result<HostBinding, String> {
+fn resolve_host_binding(
+    route: &RouteKey,
+    agent: &str,
+    profile: Option<&str>,
+) -> Result<HostBinding, String> {
     let agent_id = crate::resources::resolve_agent_id(agent)?;
-    let profile_id = crate::agent::launch::normalize_launch_profile_id(profile);
-    Ok(HostBinding::new(agent_id, Some(profile_id)))
+    // No profile named means "whatever this route would launch by default",
+    // the same answer a freshly created thread gets.
+    let profile_id = match profile {
+        Some(profile) => Some(normalize_launch_profile_id(Some(profile))),
+        None => default_profile_for_agent(&route.channel_kind, &agent_id),
+    };
+    Ok(HostBinding::new(agent_id, profile_id))
 }
 
 #[cfg(test)]
@@ -1311,14 +1354,56 @@ mod tests {
     }
 
     #[test]
-    fn slash_commands_are_enabled_for_web_chat() {
-        assert!(commands_enabled_for_route(&RouteKey::new("web", "chat-a")));
-        assert!(commands_enabled_for_route(&RouteKey::new(
-            "slack", "chat-a"
-        )));
-        assert!(commands_enabled_for_route(&RouteKey::new(
-            "feishu", "chat-a"
-        )));
+    fn cancel_is_recognised_through_every_prefix_and_alias() {
+        for text in [
+            "/cancel",
+            "/stop",
+            "  /cancel  ",
+            "/va cancel",
+            "/vibearound stop",
+            "va cancel",
+            "vibearound stop",
+        ] {
+            assert!(is_cancel_command(text), "{text}");
+        }
+
+        for text in ["/cancelled", "/status", "cancel", "stop the build", ""] {
+            assert!(!is_cancel_command(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn only_picker_owned_commands_are_surface_gated() {
+        for command in [
+            ThreadCommand::New,
+            ThreadCommand::Close,
+            ThreadCommand::SwitchWorkspace("ws_a".to_string()),
+            ThreadCommand::SwitchHost {
+                agent: "codex".to_string(),
+                profile: None,
+            },
+            ThreadCommand::Resource {
+                kind: ResourceKind::Agent,
+                action: ResourceAction::List,
+            },
+            ThreadCommand::Resource {
+                kind: ResourceKind::Session,
+                action: ResourceAction::Switch("abc".to_string()),
+            },
+        ] {
+            assert!(command_manages_context(&command), "{command:?}");
+        }
+
+        for command in [
+            ThreadCommand::Help,
+            ThreadCommand::Status,
+            ThreadCommand::Pair("049778".to_string()),
+            ThreadCommand::Pickup("ABCD".to_string()),
+            ThreadCommand::AgentPassThrough("/compact".to_string()),
+            ThreadCommand::Unknown("/nope".to_string()),
+        ] {
+            assert!(!command_manages_context(&command), "{command:?}");
+        }
     }
 
     #[test]

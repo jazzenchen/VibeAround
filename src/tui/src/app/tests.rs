@@ -1812,10 +1812,10 @@ fn editing_recalled_history_exits_browsing_mode() {
 fn slash_popup_filters_and_navigates() {
     use crate::chat::slash_command_matches;
     assert_eq!(slash_command_matches("/").map(|m| m.len()), Some(12));
-    let st = slash_command_matches("/st").expect("matches");
+    let c = slash_command_matches("/c").expect("matches");
     assert_eq!(
-        st.iter().map(|c| c.name).collect::<Vec<_>>(),
-        vec!["/status", "/stop"]
+        c.iter().map(|c| c.name).collect::<Vec<_>>(),
+        vec!["/clear", "/cancel"]
     );
     assert_eq!(slash_command_matches("/status").map(|m| m.len()), Some(1));
     assert_eq!(slash_command_matches("/settings").map(|m| m.len()), Some(1));
@@ -1834,21 +1834,21 @@ fn slash_popup_filters_and_navigates() {
 
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.set_chat_input_for_test("/st");
+    app.set_chat_input_for_test("/c");
     assert!(app.slash_popup_open());
-    assert_eq!(app.slash_selected().map(|c| c.name), Some("/status"));
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/clear"));
     app.slash_select_next();
-    assert_eq!(app.slash_selected().map(|c| c.name), Some("/stop"));
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/cancel"));
     app.slash_select_next();
     assert_eq!(
         app.slash_selected().map(|c| c.name),
-        Some("/status"),
+        Some("/clear"),
         "wraps"
     );
     app.slash_select_prev();
     assert_eq!(
         app.slash_selected().map(|c| c.name),
-        Some("/stop"),
+        Some("/cancel"),
         "wraps back"
     );
 }
