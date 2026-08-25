@@ -147,8 +147,10 @@ pub async fn kill_tunnel_handler(
     }
 }
 
-/// DELETE /api/agents/:thread_id -- stop a live workspace thread host.
-pub async fn kill_agent_handler(
+/// POST /api/workspace-threads/:thread_id/shutdown-host -- stop the ACP host
+/// process of a live workspace thread. The thread, its session and its route
+/// attachments survive; the next message starts the host again and resumes.
+pub async fn shutdown_thread_host_handler(
     State(state): State<AppState>,
     Path(thread_id): Path<String>,
 ) -> impl IntoResponse {
@@ -162,7 +164,7 @@ pub async fn kill_agent_handler(
     {
         return (
             StatusCode::NOT_FOUND,
-            format!("Agent runtime not found: {}", thread_id),
+            format!("No live host for thread {}", thread_id),
         );
     }
 
@@ -170,10 +172,13 @@ pub async fn kill_agent_handler(
         .shutdown_thread_host(&resolved_thread_id)
         .await
     {
-        Ok(()) => (StatusCode::OK, format!("Stopped agent {}", thread_id)),
+        Ok(()) => (
+            StatusCode::OK,
+            format!("Host stopped for thread {}", thread_id),
+        ),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to stop agent {}: {}", thread_id, error),
+            format!("Failed to stop host for thread {}: {}", thread_id, error),
         ),
     }
 }
