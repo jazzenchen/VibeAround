@@ -51,7 +51,7 @@ Env 在 `va-launch` 上游构建，并放在 plan 的 `env` map 里（BTreeMap�
 
 | OS | 机制 | 终端选择 |
 |---|---|---|
-| macOS | `open -a <App> <script.command>` | `terminal`（Terminal.app，默认）、`iterm2`；其它值报错 |
+| macOS | `open -b <bundle-id> <script.command>`（按 bundle id 解析，装在哪里都能找到） | `terminal`（Terminal.app，默认）、`iterm2`（检测 `/Applications` 与 `~/Applications` 下的 `iTerm.app` 或 `iTerm 2.app`）；其它值报错 |
 | Windows | `open::with(script, "powershell.exe")`；app target 用 `Start-Process` 和 `windowsExecutablePath` 归一化；`windows_process_probe` 检查运行进程 | `powershell`（默认） |
 | Linux | 通过候选列表启动脚本 | `system-terminal`（默认按顺序尝试：`xdg-terminal-exec`、`x-terminal-emulator`、`gnome-terminal --`、`konsole -e` 等）或显式 `gnome-terminal`、`konsole`、`xfce4-terminal`、`xterm`、`kitty`、`alacritty`、`wezterm` |
 

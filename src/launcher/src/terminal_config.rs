@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 use serde_json::{Map, Value};
@@ -121,10 +121,26 @@ fn platform_choices() -> &'static [TerminalChoice] {
     }
 }
 
+/// iTerm2 normally installs as `/Applications/iTerm.app`, but users also keep
+/// it in `~/Applications`, sometimes under the historical `iTerm 2.app` bundle
+/// name. Probe every combination before declaring it absent.
+pub fn iterm2_installed() -> bool {
+    iterm2_bundle_in(&[
+        PathBuf::from("/Applications"),
+        common::config::home_dir().join("Applications"),
+    ])
+}
+
+fn iterm2_bundle_in(dirs: &[PathBuf]) -> bool {
+    const BUNDLE_NAMES: [&str; 2] = ["iTerm.app", "iTerm 2.app"];
+    dirs.iter()
+        .any(|dir| BUNDLE_NAMES.iter().any(|name| dir.join(name).exists()))
+}
+
 fn is_installed(choice: TerminalChoice) -> bool {
     match choice {
         TerminalChoice::Terminal => cfg!(target_os = "macos"),
-        TerminalChoice::Iterm2 => Path::new("/Applications/iTerm.app").exists(),
+        TerminalChoice::Iterm2 => iterm2_installed(),
         TerminalChoice::PowerShell => {
             cfg!(target_os = "windows") && command_in_path("powershell.exe")
         }
@@ -300,6 +316,31 @@ mod tests {
 
         assert_eq!(resolved, choice);
         assert_eq!(current, original);
+    }
+
+    #[test]
+    fn iterm2_bundle_found_under_either_name() {
+        for name in ["iTerm.app", "iTerm 2.app"] {
+            let dir = temp_dir();
+            fs::create_dir_all(dir.join(name)).expect("create bundle dir");
+
+            let found = iterm2_bundle_in(&[dir.clone()]);
+
+            let _ = fs::remove_dir_all(&dir);
+            assert!(found, "expected {name} to be detected");
+        }
+    }
+
+    #[test]
+    fn iterm2_bundle_absent_when_dirs_empty_or_missing() {
+        let empty = temp_dir();
+        fs::create_dir_all(&empty).expect("create temp dir");
+        let missing = temp_dir();
+
+        let found = iterm2_bundle_in(&[empty.clone(), missing]);
+
+        let _ = fs::remove_dir_all(&empty);
+        assert!(!found);
     }
 
     fn temp_dir() -> PathBuf {
