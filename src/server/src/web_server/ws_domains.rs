@@ -185,53 +185,7 @@ async fn build_agents_runtime(
     workspace_threads: &common::workspace::WorkspaceThreadManager,
 ) -> Vec<crate::api_types::AgentRuntime> {
     let entries = workspace_threads.list().await;
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let st = entry.state;
-        let (agent_name, agent_title, agent_version) = st
-            .initialize
-            .as_ref()
-            .and_then(|i| i.agent_info.as_ref())
-            .map(|info| {
-                (
-                    Some(info.name.clone()),
-                    info.title.clone(),
-                    Some(info.version.clone()),
-                )
-            })
-            .unwrap_or((None, None, None));
-        let route_key = st.thread_id.to_string();
-        let (channel_kind, chat_id) = match entry.route {
-            Some(route) => (route.channel_kind.clone(), route.chat_id.clone()),
-            None => ("workspace".to_string(), st.thread_id.to_string()),
-        };
-        let profile = st.host_binding.profile_id.clone();
-        let profile_label = crate::api_types::agent_profile_label(profile.as_deref());
-        out.push(crate::api_types::AgentRuntime {
-            route_key,
-            channel_kind,
-            chat_id,
-            attached_routes: entry
-                .attached_routes
-                .iter()
-                .map(crate::api_types::AgentAttachedRoute::from)
-                .collect(),
-            cli_kind: Some(st.host_binding.agent_id.clone()),
-            profile,
-            profile_label,
-            session_id: st.session_id,
-            workspace: Some(st.workspace.to_string_lossy().to_string()),
-            busy: st.busy,
-            failed: st.failed,
-            started_at: 0,
-            agent_name,
-            agent_title,
-            agent_version,
-            multi_agent_turns: st.multi_agent_turns,
-            subagents: st.agents,
-        });
-    }
-    out
+    entries.into_iter().map(Into::into).collect()
 }
 
 // ---------------------------------------------------------------------------
