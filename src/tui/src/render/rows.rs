@@ -60,7 +60,7 @@ pub(super) fn agent_row(agent: &AgentRuntime) -> Vec<Span<'static>> {
         .unwrap_or("-");
     vec![
         Span::styled(
-            fixed(&agent.route_key, 18),
+            fixed(&agent.thread_id, 18),
             Style::default().add_modifier(Modifier::BOLD),
         ),
         status_span(

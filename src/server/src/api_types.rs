@@ -494,7 +494,7 @@ impl From<common::workspace::manager::WorkspaceThreadRuntimeEntry> for AgentRunt
         let profile = st.host_binding.profile_id.clone();
         let profile_label = agent_profile_label(profile.as_deref());
         Self {
-            route_key: st.thread_id.to_string(),
+            thread_id: st.thread_id.to_string(),
             channel_kind,
             chat_id,
             attached_routes: entry.attached_routes.iter().map(Into::into).collect(),
@@ -542,7 +542,7 @@ pub fn agent_profile_label(profile_id: Option<&str>) -> Option<String> {
 /// # Wire format (JSON)
 /// ```json
 /// {
-///   "route_key": "wt_0123456789abcdef",
+///   "thread_id": "wt_0123456789abcdef",
 ///   "channel_kind": "telegram",
 ///   "chat_id": "chat_42",
 ///   "cli_kind": "claude",
@@ -559,7 +559,7 @@ pub fn agent_profile_label(profile_id: Option<&str>) -> Option<String> {
 /// ```
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentRuntime {
-    pub route_key: String,
+    pub thread_id: String,
     pub channel_kind: String,
     pub chat_id: String,
     pub attached_routes: Vec<AgentAttachedRoute>,

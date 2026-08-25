@@ -916,7 +916,7 @@ function ChannelRemoteDetail({
             <div className="grid gap-1.5">
               {activeAgents.map((agent) => (
                 <div
-                  key={agent.route_key}
+                  key={agent.thread_id}
                   className="flex min-h-[42px] items-center justify-between gap-3 rounded-md border border-border/70 px-2 py-1.5"
                 >
                   <div className="flex min-w-0 items-center gap-2">

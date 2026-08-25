@@ -318,7 +318,7 @@ export const AgentAttachedRouteSchema = z.object({
 export type AgentAttachedRoute = z.infer<typeof AgentAttachedRouteSchema>;
 
 export const AgentRuntimeSchema = z.object({
-  route_key: z.string(),
+  thread_id: z.string(),
   channel_kind: z.string(),
   chat_id: z.string(),
   attached_routes: z.array(AgentAttachedRouteSchema).optional().default([]),
