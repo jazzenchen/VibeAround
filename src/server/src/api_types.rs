@@ -518,7 +518,6 @@ impl From<common::workspace::manager::WorkspaceThreadRuntimeEntry> for AgentRunt
 /// One route subscribed to a thread, as listed under `attached_routes`.
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentAttachedRoute {
-    pub route_key: String,
     pub channel_kind: String,
     pub chat_id: String,
 }
@@ -526,7 +525,6 @@ pub struct AgentAttachedRoute {
 impl From<&RouteKey> for AgentAttachedRoute {
     fn from(route: &RouteKey) -> Self {
         Self {
-            route_key: route.display_key(),
             channel_kind: route.channel_kind.clone(),
             chat_id: route.chat_id.clone(),
         }

@@ -86,7 +86,6 @@ export function agentAttachedApps(agent: AgentRuntime): string[] {
       : agent.channel_kind && agent.channel_kind !== "workspace"
         ? [
             {
-              route_key: agent.route_key,
               channel_kind: agent.channel_kind,
               chat_id: agent.chat_id,
             },

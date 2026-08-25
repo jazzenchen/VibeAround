@@ -312,7 +312,6 @@ export const ThreadAgentSchema = z.object({
 export type ThreadAgent = z.infer<typeof ThreadAgentSchema>;
 
 export const AgentAttachedRouteSchema = z.object({
-  route_key: z.string(),
   channel_kind: z.string(),
   chat_id: z.string(),
 });

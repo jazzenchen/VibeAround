@@ -79,7 +79,6 @@ pub enum TunnelStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AgentAttachedRoute {
-    pub route_key: String,
     pub channel_kind: String,
     pub chat_id: String,
 }
