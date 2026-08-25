@@ -275,24 +275,25 @@ mod macos {
         std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
             .with_context(|| format!("chmod launch script {}", script_path.display()))?;
 
-        let app_name = match plan.terminal {
-            TerminalChoice::Terminal => "Terminal",
-            TerminalChoice::Iterm2 => "iTerm",
+        // Resolve by bundle id, not app name: LaunchServices then finds the
+        // app wherever it lives (e.g. `~/Applications/iTerm 2.app`).
+        let (bundle_id, app_label) = match plan.terminal {
+            TerminalChoice::Terminal => ("com.apple.Terminal", "Terminal.app"),
+            TerminalChoice::Iterm2 => ("com.googlecode.iterm2", "iTerm2"),
             other => bail!("terminal '{}' is not supported on macOS", other.id()),
         };
         let mut command = std::process::Command::new("open");
         append_macos_open_update_suppression_args(&mut command);
         let status = command
-            .arg("-a")
-            .arg(app_name)
+            .arg("-b")
+            .arg(bundle_id)
             .arg(&script_path)
             .status()
-            .with_context(|| format!("invoke `open -a {app_name}`"))?;
+            .with_context(|| format!("invoke `open -b {bundle_id}`"))?;
         if !status.success() {
             let _ = std::fs::remove_file(&script_path);
             bail!(
-                "`open -a {}` failed (exit {:?}). Make sure {0}.app is installed and try again.",
-                app_name,
+                "`open -b {bundle_id}` failed (exit {:?}). Make sure {app_label} is installed and try again.",
                 status.code()
             );
         }
