@@ -98,7 +98,12 @@ pub(super) async fn kill_tunnel(options: &Options, provider: &str) -> Result<(),
 }
 
 pub(super) async fn kill_agent(options: &Options, thread_id: &str) -> Result<(), CliError> {
-    run_unit(options, ops::runtime_kill_agent(thread_id), "agent killed").await
+    run_unit(
+        options,
+        ops::runtime_shutdown_thread_host(thread_id),
+        "host stopped",
+    )
+    .await
 }
 
 pub(super) async fn kill_pty(options: &Options, session_id: &str) -> Result<(), CliError> {

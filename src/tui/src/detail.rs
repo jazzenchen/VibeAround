@@ -66,9 +66,9 @@ pub(crate) fn tunnel_detail(tunnel: &TunnelRuntime) -> DetailContent {
 
 pub(crate) fn agent_detail(agent: &AgentRuntime) -> DetailContent {
     DetailContent {
-        title: format!("agent {}", agent.route_key),
+        title: format!("agent {}", agent.thread_id),
         lines: vec![
-            format!("route_key: {}", agent.route_key),
+            format!("thread_id: {}", agent.thread_id),
             format!("channel_kind: {}", agent.channel_kind),
             format!("chat_id: {}", agent.chat_id),
             format!("cli_kind: {}", agent.cli_kind.as_deref().unwrap_or("-")),

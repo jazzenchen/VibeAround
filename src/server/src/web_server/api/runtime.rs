@@ -88,53 +88,7 @@ pub async fn list_agents_runtime_handler(
     State(state): State<AppState>,
 ) -> Json<Vec<crate::api_types::AgentRuntime>> {
     let entries = state.channel_hub.workspace_thread_manager().list().await;
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let st = entry.state;
-        let (agent_name, agent_title, agent_version) = st
-            .initialize
-            .as_ref()
-            .and_then(|i| i.agent_info.as_ref())
-            .map(|info| {
-                (
-                    Some(info.name.clone()),
-                    info.title.clone(),
-                    Some(info.version.clone()),
-                )
-            })
-            .unwrap_or((None, None, None));
-        let route_key = st.thread_id.to_string();
-        let (channel_kind, chat_id) = match entry.route {
-            Some(route) => (route.channel_kind.clone(), route.chat_id.clone()),
-            None => ("workspace".to_string(), st.thread_id.to_string()),
-        };
-        let profile = st.host_binding.profile_id.clone();
-        let profile_label = crate::api_types::agent_profile_label(profile.as_deref());
-        out.push(crate::api_types::AgentRuntime {
-            route_key,
-            channel_kind,
-            chat_id,
-            attached_routes: entry
-                .attached_routes
-                .iter()
-                .map(crate::api_types::AgentAttachedRoute::from)
-                .collect(),
-            cli_kind: Some(st.host_binding.agent_id.clone()),
-            profile,
-            profile_label,
-            session_id: st.session_id,
-            workspace: Some(st.workspace.to_string_lossy().to_string()),
-            busy: st.busy,
-            failed: st.failed,
-            started_at: 0,
-            agent_name,
-            agent_title,
-            agent_version,
-            multi_agent_turns: st.multi_agent_turns,
-            subagents: st.agents,
-        });
-    }
-    Json(out)
+    Json(entries.into_iter().map(Into::into).collect())
 }
 
 /// POST /api/channels/:instance_id/stop -- user-initiated stop of a channel
@@ -193,8 +147,10 @@ pub async fn kill_tunnel_handler(
     }
 }
 
-/// DELETE /api/agents/:thread_id -- stop a live workspace thread host.
-pub async fn kill_agent_handler(
+/// POST /api/workspace-threads/:thread_id/shutdown-host -- stop the ACP host
+/// process of a live workspace thread. The thread, its session and its route
+/// attachments survive; the next message starts the host again and resumes.
+pub async fn shutdown_thread_host_handler(
     State(state): State<AppState>,
     Path(thread_id): Path<String>,
 ) -> impl IntoResponse {
@@ -208,7 +164,7 @@ pub async fn kill_agent_handler(
     {
         return (
             StatusCode::NOT_FOUND,
-            format!("Agent runtime not found: {}", thread_id),
+            format!("No live host for thread {}", thread_id),
         );
     }
 
@@ -216,10 +172,13 @@ pub async fn kill_agent_handler(
         .shutdown_thread_host(&resolved_thread_id)
         .await
     {
-        Ok(()) => (StatusCode::OK, format!("Stopped agent {}", thread_id)),
+        Ok(()) => (
+            StatusCode::OK,
+            format!("Host stopped for thread {}", thread_id),
+        ),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to stop agent {}: {}", thread_id, error),
+            format!("Failed to stop host for thread {}: {}", thread_id, error),
         ),
     }
 }

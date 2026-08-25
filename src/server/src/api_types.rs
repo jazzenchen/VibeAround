@@ -472,6 +472,69 @@ pub enum ChatEvent {
     },
 }
 
+impl From<common::workspace::manager::WorkspaceThreadRuntimeEntry> for AgentRuntime {
+    fn from(entry: common::workspace::manager::WorkspaceThreadRuntimeEntry) -> Self {
+        let st = entry.state;
+        let (agent_name, agent_title, agent_version) = st
+            .initialize
+            .as_ref()
+            .and_then(|i| i.agent_info.as_ref())
+            .map(|info| {
+                (
+                    Some(info.name.clone()),
+                    info.title.clone(),
+                    Some(info.version.clone()),
+                )
+            })
+            .unwrap_or((None, None, None));
+        let (channel_kind, chat_id) = match entry.route {
+            Some(route) => (route.channel_kind.clone(), route.chat_id.clone()),
+            None => ("workspace".to_string(), st.thread_id.to_string()),
+        };
+        let profile = st.host_binding.profile_id.clone();
+        let profile_label = agent_profile_label(profile.as_deref());
+        Self {
+            thread_id: st.thread_id.to_string(),
+            channel_kind,
+            chat_id,
+            attached_routes: entry.attached_routes.iter().map(Into::into).collect(),
+            cli_kind: Some(st.host_binding.agent_id.clone()),
+            profile,
+            profile_label,
+            session_id: st.session_id,
+            workspace: Some(st.workspace.to_string_lossy().to_string()),
+            busy: st.busy,
+            failed: st.failed,
+            started_at: 0,
+            agent_name,
+            agent_title,
+            agent_version,
+            multi_agent_turns: st.multi_agent_turns,
+            subagents: st.agents,
+        }
+    }
+}
+
+/// One route subscribed to a thread, as listed under `attached_routes`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentAttachedRoute {
+    pub channel_kind: String,
+    pub chat_id: String,
+}
+
+impl From<&RouteKey> for AgentAttachedRoute {
+    fn from(route: &RouteKey) -> Self {
+        Self {
+            channel_kind: route.channel_kind.clone(),
+            chat_id: route.chat_id.clone(),
+        }
+    }
+}
+
+pub fn agent_profile_label(profile_id: Option<&str>) -> Option<String> {
+    common::profiles::load_profile(profile_id?).map(|profile| profile.label)
+}
+
 /// One agent runtime, as returned by `GET /api/agents/runtime`.
 ///
 /// Sources: live `ThreadRuntimeState` entries from `WorkspaceThreadManager`.
@@ -479,7 +542,7 @@ pub enum ChatEvent {
 /// # Wire format (JSON)
 /// ```json
 /// {
-///   "route_key": "wt_0123456789abcdef",
+///   "thread_id": "wt_0123456789abcdef",
 ///   "channel_kind": "telegram",
 ///   "chat_id": "chat_42",
 ///   "cli_kind": "claude",
@@ -495,29 +558,8 @@ pub enum ChatEvent {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize)]
-pub struct AgentAttachedRoute {
-    pub route_key: String,
-    pub channel_kind: String,
-    pub chat_id: String,
-}
-
-impl From<&RouteKey> for AgentAttachedRoute {
-    fn from(route: &RouteKey) -> Self {
-        Self {
-            route_key: route.display_key(),
-            channel_kind: route.channel_kind.clone(),
-            chat_id: route.chat_id.clone(),
-        }
-    }
-}
-
-pub fn agent_profile_label(profile_id: Option<&str>) -> Option<String> {
-    common::profiles::load_profile(profile_id?).map(|profile| profile.label)
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct AgentRuntime {
-    pub route_key: String,
+    pub thread_id: String,
     pub channel_kind: String,
     pub chat_id: String,
     pub attached_routes: Vec<AgentAttachedRoute>,

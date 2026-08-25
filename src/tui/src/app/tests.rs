@@ -48,11 +48,11 @@ fn agent(id: &str) -> AgentInfo {
     }
 }
 
-fn runtime_agent(route_key: &str) -> AgentRuntime {
+fn runtime_agent(thread_id: &str) -> AgentRuntime {
     AgentRuntime {
-        route_key: route_key.into(),
+        thread_id: thread_id.into(),
         channel_kind: "tui".into(),
-        chat_id: route_key.into(),
+        chat_id: "chat-2".into(),
         attached_routes: Vec::new(),
         cli_kind: Some("codex".into()),
         profile: None,
@@ -207,10 +207,8 @@ fn runtime_socket_events_update_snapshot_and_clamp_popup() {
     app.apply_runtime_socket_event(RuntimeSocketEvent::Tunnels(vec![tunnel("ngrok")]));
     assert_eq!(app.snapshot.tunnels[0].provider, "ngrok");
 
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Agents(vec![runtime_agent(
-        "tui:chat-2",
-    )]));
-    assert_eq!(app.snapshot.agents[0].route_key, "tui:chat-2");
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Agents(vec![runtime_agent("wt_chat-2")]));
+    assert_eq!(app.snapshot.agents[0].thread_id, "wt_chat-2");
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Sessions(vec![session(
         "session-1",

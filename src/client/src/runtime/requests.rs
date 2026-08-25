@@ -95,10 +95,13 @@ pub fn kill_tunnel(provider: &str) -> RequestSpec {
     )
 }
 
-pub fn kill_agent(thread_id: &str) -> RequestSpec {
+pub fn shutdown_thread_host(thread_id: &str) -> RequestSpec {
     RequestSpec::new(
-        HttpMethod::Delete,
-        join_path("/api/agents", thread_id),
+        HttpMethod::Post,
+        format!(
+            "{}/shutdown-host",
+            join_path("/api/workspace-threads", thread_id)
+        ),
         AuthRequirement::BearerToken,
     )
 }
@@ -119,10 +122,13 @@ mod tests {
     use crate::runtime::TunnelStatus;
 
     #[test]
-    fn kill_agent_encodes_thread_id() {
-        let request = kill_agent("wt/thread-1");
-        assert_eq!(request.method, HttpMethod::Delete);
-        assert_eq!(request.path, "/api/agents/wt%2Fthread-1");
+    fn shutdown_thread_host_encodes_thread_id() {
+        let request = shutdown_thread_host("wt/thread-1");
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(
+            request.path,
+            "/api/workspace-threads/wt%2Fthread-1/shutdown-host"
+        );
     }
 
     #[test]

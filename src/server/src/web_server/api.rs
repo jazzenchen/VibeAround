@@ -29,9 +29,9 @@ pub use profiles::{
     update_model_profile_handler,
 };
 pub use runtime::{
-    kill_agent_handler, kill_pty_handler, kill_tunnel_handler, list_agents_handler,
-    list_agents_runtime_handler, list_channels_handler, list_tunnels_handler,
-    reload_settings_handler, restart_channel_handler, start_channel_handler, stop_channel_handler,
+    kill_pty_handler, kill_tunnel_handler, list_agents_handler, list_agents_runtime_handler,
+    list_channels_handler, list_tunnels_handler, reload_settings_handler, restart_channel_handler,
+    shutdown_thread_host_handler, start_channel_handler, stop_channel_handler,
     sync_channels_handler,
 };
 pub use service::{health_handler, info_handler};
