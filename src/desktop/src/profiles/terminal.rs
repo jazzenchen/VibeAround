@@ -200,7 +200,7 @@ fn is_installed(choice: TerminalChoice) -> bool {
     match choice {
         // Terminal.app ships with macOS; assume present.
         TerminalChoice::Terminal => cfg!(target_os = "macos"),
-        TerminalChoice::Iterm2 => std::path::Path::new("/Applications/iTerm.app").exists(),
+        TerminalChoice::Iterm2 => va_launcher::iterm2_installed(),
         TerminalChoice::PowerShell => {
             cfg!(target_os = "windows") && command_in_path("powershell.exe")
         }
