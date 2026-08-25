@@ -464,7 +464,52 @@ async fn handle_chat_socket(
             .detach_route(&active_route)
             .await;
         state.web_channel.forget_route(&active_route).await;
+        return;
     }
+    shutdown_host_for_departed_client(&state, &active_route).await;
+}
+
+/// Closing the window is a departure, so the ACP host it was talking to should
+/// not be left running for nobody. The thread, its session and its routes all
+/// survive; the next message starts the host again and resumes.
+async fn shutdown_host_for_departed_client(state: &AppState, route: &RouteKey) {
+    if state.web_channel.route_has_connections(route).await {
+        return;
+    }
+    let manager = state.channel_hub.workspace_thread_manager();
+    let Ok(Some(runtime)) = manager.active_route_runtime(route).await else {
+        return;
+    };
+    let runtime_state = runtime.state().await;
+    // A turn in flight may still be feeding other subscribers. Let it finish and
+    // leave the host to the warm pool.
+    if runtime_state.busy {
+        return;
+    }
+    let thread_id = runtime_state.thread_id.clone();
+    drop(runtime_state);
+
+    let Ok(attached) = manager.attached_routes_for_thread(&thread_id).await else {
+        return;
+    };
+    for other in attached.iter().filter(|other| *other != route) {
+        if is_listening(state, other).await {
+            return;
+        }
+    }
+    let _ = manager.shutdown_thread_host(&thread_id).await;
+}
+
+async fn is_listening(state: &AppState, route: &RouteKey) -> bool {
+    let has_connections = state.web_channel.route_has_connections(route).await;
+    route_still_listening(route, has_connections)
+}
+
+/// A surface whose presence is a connection stops listening the moment its last
+/// one closes. An IM plugin listens whether or not anyone has a window open.
+fn route_still_listening(route: &RouteKey, has_connections: bool) -> bool {
+    !common::routing::channel_traits(&route.channel_kind).presence_is_a_connection
+        || has_connections
 }
 
 fn enqueue_channel_input(channel_hub: &common::channels::ChannelManager, input: ChannelInput) {
@@ -1129,6 +1174,20 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(first.channel_kind, "web");
         assert_eq!(second.channel_kind, "web");
+    }
+
+    #[test]
+    fn only_connection_backed_surfaces_stop_listening_when_they_close() {
+        let web = RouteKey::new("web", "ws_wt_1");
+        let tui = RouteKey::new("tui", "ws_wt_1");
+        let feishu = RouteKey::new("feishu", "oc_abc");
+
+        assert!(super::route_still_listening(&web, true));
+        assert!(!super::route_still_listening(&web, false));
+        assert!(super::route_still_listening(&tui, true));
+        assert!(!super::route_still_listening(&tui, false));
+        // Nobody has a Feishu window open; the plugin is listening regardless.
+        assert!(super::route_still_listening(&feishu, false));
     }
 
     #[test]
