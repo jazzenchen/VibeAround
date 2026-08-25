@@ -126,6 +126,13 @@ impl WebChannelManager {
             .await
     }
 
+    /// Whether any browser or TUI is still listening on this route.
+    pub async fn route_has_connections(&self, route: &RouteKey) -> bool {
+        let route = route.clone();
+        self.request(move |state| state.route_has_connections(&route))
+            .await
+    }
+
     pub async fn session_is_active(&self, agent_id: &str, session_id: &str) -> bool {
         let agent_id = agent_id.to_string();
         let session_id = session_id.to_string();
@@ -246,6 +253,12 @@ impl WebChannelState {
 
     pub fn route_is_active(&self, route: &RouteKey) -> bool {
         self.route_activity.get(route).copied().unwrap_or(false)
+    }
+
+    pub fn route_has_connections(&self, route: &RouteKey) -> bool {
+        self.connections
+            .get(route)
+            .is_some_and(|connections| !connections.is_empty())
     }
 
     pub fn session_is_active(&self, agent_id: &str, session_id: &str) -> bool {
@@ -448,6 +461,30 @@ mod tests {
                 active: true,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn a_route_has_connections_only_while_one_is_registered() {
+        let manager = WebChannelManager::new();
+        let route = RouteKey::new("web", "chat-1");
+        assert!(!manager.route_has_connections(&route).await);
+
+        let (first, _first_rx) = manager.sender();
+        manager
+            .register_connection(&route, "conn-1".to_string(), first, false)
+            .await;
+        let (second, _second_rx) = manager.sender();
+        manager
+            .register_connection(&route, "conn-2".to_string(), second, false)
+            .await;
+        assert!(manager.route_has_connections(&route).await);
+
+        // One tab closing leaves the other one listening.
+        manager.unregister_connection(&route, "conn-1").await;
+        assert!(manager.route_has_connections(&route).await);
+
+        manager.unregister_connection(&route, "conn-2").await;
+        assert!(!manager.route_has_connections(&route).await);
     }
 
     #[tokio::test]
