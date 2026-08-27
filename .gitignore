@@ -59,9 +59,14 @@ demo*/
 # Tooling
 *.tsbuildinfo
 
-# Local agent/tooling state
+# Local agent/tooling state (incl. wiring VibeAround writes into agent cwds)
 .claude/
+.claude.json
+.mcp.json
 .codex/
+.cursor/
+.kiro/
+.qwen/
 .agent/
 .agents/
 .gemini/
