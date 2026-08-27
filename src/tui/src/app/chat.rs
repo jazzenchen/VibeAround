@@ -787,7 +787,9 @@ impl TuiApp {
                     self.end_turn();
                 }
             }
-            ChatEvent::SessionMode { .. }
+            ChatEvent::SessionInfo { .. }
+            | ChatEvent::PreviewRefresh
+            | ChatEvent::SessionMode { .. }
             | ChatEvent::CommandMenu { .. }
             | ChatEvent::MultiAgentTurn { .. }
             | ChatEvent::SubagentStatus { .. }

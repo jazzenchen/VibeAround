@@ -513,6 +513,8 @@ fn render_event(
             eprintln!("error: {error}");
         }
         ChatEvent::Config { .. }
+        | ChatEvent::SessionInfo { .. }
+        | ChatEvent::PreviewRefresh
         | ChatEvent::SessionMode { .. }
         | ChatEvent::CommandMenu { .. }
         | ChatEvent::MultiAgentTurn { .. }
