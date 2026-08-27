@@ -490,12 +490,12 @@ mod tests {
 
         let cached = parse_web_chat_input(
             "chat-1",
-            r#"{"type":"resume_session","sessionId":"sid-1","cacheUpdatedAt":1756280000000}"#,
+            r#"{"type":"resume_session","sessionId":"sid-1","cacheUpdatedAt":1756280000}"#,
         )
         .expect("resume session input");
         let WebChatInput::ResumeSession {
             replay: None,
-            cache_updated_at: Some(1756280000000),
+            cache_updated_at: Some(1756280000),
             ..
         } = cached
         else {

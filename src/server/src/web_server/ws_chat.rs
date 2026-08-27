@@ -1122,9 +1122,13 @@ async fn session_cache_is_stale(
     )
 }
 
+/// The cache is stale when the native store moved past what the client
+/// synced. The client stamps its cache with the newest server stamp it saw,
+/// topped up with its own clock at turn end (same host in the local-first
+/// setup), so an equal-or-newer cache stamp means nothing was missed.
 fn stamp_is_stale(native: Option<u64>, cache_updated_at: u64) -> bool {
     match native {
-        Some(stamp) => stamp != cache_updated_at,
+        Some(stamp) => stamp > cache_updated_at,
         None => true,
     }
 }
