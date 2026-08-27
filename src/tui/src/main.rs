@@ -85,7 +85,11 @@ async fn run_dashboard(
         app.reconnect_signal(),
     ));
     let (runtime_event_tx, mut runtime_event_rx) = mpsc::unbounded_channel::<RuntimeSocketEvent>();
-    let runtime_task = tokio::spawn(run_runtime_sockets(endpoint, runtime_event_tx));
+    let runtime_task = tokio::spawn(run_runtime_sockets(
+        endpoint,
+        runtime_event_tx,
+        app.reconnect_signal(),
+    ));
 
     loop {
         while let Ok(event) = socket_event_rx.try_recv() {

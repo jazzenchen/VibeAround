@@ -1,9 +1,8 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use va_client::events::{
@@ -13,9 +12,10 @@ use va_client::events::{
 use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
 use va_client::sessions::SessionListItem;
 
+use crate::socket_retry::{
+    socket_retry_after_failure, SocketRetry, SOCKET_RETRY_INTERVAL, SOCKET_RETRY_LIMIT,
+};
 use crate::transport::SharedEndpoint;
-
-const RUNTIME_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeStream {
@@ -40,12 +40,25 @@ pub(crate) enum RuntimeSocketEvent {
 pub(crate) async fn run_runtime_sockets(
     endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
+    reconnect: watch::Receiver<()>,
 ) {
     let tasks = [
-        tokio::spawn(run_channels_socket(endpoint.clone(), incoming.clone())),
-        tokio::spawn(run_tunnels_socket(endpoint.clone(), incoming.clone())),
-        tokio::spawn(run_agents_socket(endpoint.clone(), incoming.clone())),
-        tokio::spawn(run_sessions_socket(endpoint, incoming)),
+        tokio::spawn(run_channels_socket(
+            endpoint.clone(),
+            incoming.clone(),
+            reconnect.clone(),
+        )),
+        tokio::spawn(run_tunnels_socket(
+            endpoint.clone(),
+            incoming.clone(),
+            reconnect.clone(),
+        )),
+        tokio::spawn(run_agents_socket(
+            endpoint.clone(),
+            incoming.clone(),
+            reconnect.clone(),
+        )),
+        tokio::spawn(run_sessions_socket(endpoint, incoming, reconnect)),
     ];
     for task in tasks {
         let _ = task.await;
@@ -55,6 +68,7 @@ pub(crate) async fn run_runtime_sockets(
 async fn run_channels_socket(
     endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
+    reconnect: watch::Receiver<()>,
 ) {
     run_snapshot_socket(
         endpoint,
@@ -62,6 +76,7 @@ async fn run_channels_socket(
         channels_ws(),
         incoming,
         |value| decode_channels_event(value).map(RuntimeSocketEvent::Channels),
+        reconnect,
     )
     .await;
 }
@@ -69,6 +84,7 @@ async fn run_channels_socket(
 async fn run_tunnels_socket(
     endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
+    reconnect: watch::Receiver<()>,
 ) {
     run_snapshot_socket(
         endpoint,
@@ -76,6 +92,7 @@ async fn run_tunnels_socket(
         tunnels_ws(),
         incoming,
         |value| decode_tunnels_event(value).map(RuntimeSocketEvent::Tunnels),
+        reconnect,
     )
     .await;
 }
@@ -83,6 +100,7 @@ async fn run_tunnels_socket(
 async fn run_agents_socket(
     endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
+    reconnect: watch::Receiver<()>,
 ) {
     run_snapshot_socket(
         endpoint,
@@ -90,6 +108,7 @@ async fn run_agents_socket(
         agents_runtime_ws(),
         incoming,
         |value| decode_agents_runtime_event(value).map(RuntimeSocketEvent::Agents),
+        reconnect,
     )
     .await;
 }
@@ -97,6 +116,7 @@ async fn run_agents_socket(
 async fn run_sessions_socket(
     endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
+    reconnect: watch::Receiver<()>,
 ) {
     run_snapshot_socket(
         endpoint,
@@ -104,6 +124,7 @@ async fn run_sessions_socket(
         sessions_ws(),
         incoming,
         |value| decode_sessions_event(value).map(RuntimeSocketEvent::Sessions),
+        reconnect,
     )
     .await;
 }
@@ -114,12 +135,16 @@ async fn run_snapshot_socket(
     socket: WebSocketSpec,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
     decode: fn(Value) -> va_client::Result<RuntimeSocketEvent>,
+    mut reconnect: watch::Receiver<()>,
 ) {
     let label = socket.path.clone();
-    let url = endpoint.websocket_url(&socket);
     let mut failed_attempts = 0;
 
     loop {
+        // A daemon restart rotates the token, so re-read the auth file and
+        // recompute the URL before every attempt.
+        endpoint.refresh_token();
+        let url = endpoint.websocket_url(&socket);
         let (mut ws, _) = match connect_async(&url).await {
             Ok(connection) => {
                 failed_attempts = 0;
@@ -136,7 +161,29 @@ async fn run_snapshot_socket(
                 {
                     return;
                 }
-                tokio::time::sleep(runtime_reconnect_delay(failed_attempts)).await;
+                match socket_retry_after_failure(failed_attempts) {
+                    SocketRetry::RetryAfter(delay) => tokio::time::sleep(delay).await,
+                    SocketRetry::GiveUp => {
+                        // Only wake for a reconnect requested after this
+                        // stream reported giving up.
+                        reconnect.mark_unchanged();
+                        if incoming
+                            .send(RuntimeSocketEvent::Error {
+                                stream,
+                                message: format!(
+                                    "{label} unreachable; gave up after {SOCKET_RETRY_LIMIT} attempts"
+                                ),
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                        if reconnect.changed().await.is_err() {
+                            return;
+                        }
+                        failed_attempts = 0;
+                    }
+                }
                 continue;
             }
         };
@@ -191,27 +238,8 @@ async fn run_snapshot_socket(
             }
         }
 
-        failed_attempts += 1;
-        tokio::time::sleep(runtime_reconnect_delay(failed_attempts)).await;
-    }
-}
-
-fn runtime_reconnect_delay(failed_attempts: u32) -> Duration {
-    let multiplier = 1_u64 << failed_attempts.saturating_sub(1).min(3);
-    Duration::from_secs(multiplier).min(RUNTIME_RECONNECT_MAX_DELAY)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runtime_reconnect_delay_backs_off_and_caps() {
-        assert_eq!(runtime_reconnect_delay(0), Duration::from_secs(1));
-        assert_eq!(runtime_reconnect_delay(1), Duration::from_secs(1));
-        assert_eq!(runtime_reconnect_delay(2), Duration::from_secs(2));
-        assert_eq!(runtime_reconnect_delay(3), Duration::from_secs(4));
-        assert_eq!(runtime_reconnect_delay(4), RUNTIME_RECONNECT_MAX_DELAY);
-        assert_eq!(runtime_reconnect_delay(20), RUNTIME_RECONNECT_MAX_DELAY);
+        // The connection itself succeeded, so a drop starts a fresh retry
+        // cycle rather than counting toward the failure limit.
+        tokio::time::sleep(SOCKET_RETRY_INTERVAL).await;
     }
 }
