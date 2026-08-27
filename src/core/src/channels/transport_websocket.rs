@@ -470,6 +470,7 @@ mod tests {
             .register_connection(&route, "conn-1".to_string(), tx)
             .await;
         let info = crate::channels::types::ChannelSessionInfo {
+            updated_at: None,
             workspace_id: "ws_general".to_string(),
             workspace_path: "/tmp/project".to_string(),
             thread_id: "wt_1".to_string(),

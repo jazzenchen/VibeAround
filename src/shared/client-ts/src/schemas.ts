@@ -352,6 +352,9 @@ export const SessionInfoSchema = z.object({
   }),
   sessionId: z.string(),
   start: z.enum(["new", "resumed"]),
+  // Last-modified stamp of the session in the agent's native store, for
+  // judging local transcript-cache freshness.
+  updatedAt: z.number().optional(),
 });
 export type SessionInfo = z.infer<typeof SessionInfoSchema>;
 

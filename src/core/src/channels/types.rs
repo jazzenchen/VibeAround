@@ -237,6 +237,10 @@ pub struct ChannelSessionInfo {
     pub agent: ChannelSessionAgent,
     pub session_id: String,
     pub start: ChannelSessionStart,
+    /// Last-modified stamp of the session in the agent's native store, so a
+    /// client can tell whether its local transcript cache is still current.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

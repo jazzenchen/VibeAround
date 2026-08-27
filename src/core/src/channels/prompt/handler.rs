@@ -719,6 +719,7 @@ async fn start_runtime_and_notify_with_cancellation(
             reply_to: target.reply_to.clone(),
             session_id: session_id.clone(),
         });
+        let updated_at = native_session_updated_at(&after, &session_id).await;
         plugin_host.send_output(ChannelOutput::SessionInfo {
             route: route.clone(),
             reply_to: target.reply_to.clone(),
@@ -738,6 +739,7 @@ async fn start_runtime_and_notify_with_cancellation(
                 } else {
                     ChannelSessionStart::New
                 },
+                updated_at,
             },
         });
     }
@@ -754,6 +756,21 @@ async fn start_runtime_and_notify_with_cancellation(
             .await;
     }
     Ok(Some(true))
+}
+
+/// The session's last-modified stamp in the agent's native store, so clients
+/// can judge transcript-cache freshness.
+async fn native_session_updated_at(state: &ThreadRuntimeState, session_id: &str) -> Option<u64> {
+    crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
+        &state.host_binding.agent_id,
+        &state.workspace,
+        usize::MAX,
+        true,
+    )
+    .await
+    .into_iter()
+    .find(|session| session.session_id == session_id)
+    .map(|session| session.updated_at)
 }
 
 pub async fn send_runtime_multi_agent_state_and_replay(
