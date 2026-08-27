@@ -93,7 +93,7 @@ async fn run_dashboard(
 
     loop {
         while let Ok(event) = socket_event_rx.try_recv() {
-            app.apply_chat_socket_event(event);
+            app.apply_chat_socket_event(event, &chat_tx);
         }
         while let Ok(event) = runtime_event_rx.try_recv() {
             app.apply_runtime_socket_event(event);

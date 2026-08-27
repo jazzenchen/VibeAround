@@ -373,6 +373,9 @@ impl TuiApp {
         if self.is_immediate_duplicate(command) {
             return;
         }
+        if self.intercept_reconnect_command(command) {
+            return;
+        }
         if command.starts_with('/') && self.run_slash_command(command, transport, chat_tx).await {
             return;
         }
@@ -685,6 +688,29 @@ impl TuiApp {
         }
     }
 
+    /// In the terminal disconnected state `reconnect` restarts the socket
+    /// loops instead of going out as a chat message; anywhere else it is
+    /// ordinary input.
+    fn intercept_reconnect_command(&mut self, command: &str) -> bool {
+        if !self.chat_disconnected || !is_reconnect_command(command) {
+            return false;
+        }
+        self.request_reconnect();
+        true
+    }
+
+    /// Leave the terminal disconnected state: wake the parked socket loops
+    /// for a fresh retry cycle and, once the chat socket is back, re-attach
+    /// the session we were on so the server rebinds the route.
+    fn request_reconnect(&mut self) {
+        self.chat_disconnected = false;
+        self.resume_after_reconnect = self.effective_session().map(str::to_string);
+        let _ = self.reconnect.send(());
+        self.clear_error(ErrorScope::Chat);
+        self.last_action = Some("reconnecting".into());
+        self.push_local_notice("Reconnecting to the daemon...");
+    }
+
     fn clear_chat_session_view(&mut self) {
         self.chat_messages.clear();
         self.chat_input.clear();
@@ -708,11 +734,20 @@ impl TuiApp {
         self.clear_error(ErrorScope::Chat);
     }
 
-    pub(crate) fn apply_chat_socket_event(&mut self, event: ChatSocketEvent) {
+    pub(crate) fn apply_chat_socket_event(
+        &mut self,
+        event: ChatSocketEvent,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
         match event {
             ChatSocketEvent::Connected => {
                 self.chat_connected = true;
                 self.clear_error(ErrorScope::Chat);
+                if let Some(session_id) = self.resume_after_reconnect.take() {
+                    // The daemon lost this socket's route; re-issue the resume
+                    // for the session we were attached to before `reconnect`.
+                    self.resume_chat_session(&session_id, chat_tx);
+                }
             }
             ChatSocketEvent::Closed => {
                 let duplicate_closed = self.last_notice_is("Chat websocket closed.");
@@ -902,6 +937,12 @@ impl TuiApp {
 
 fn short_id(value: &str) -> String {
     value.chars().take(12).collect()
+}
+
+/// The exact word that asks for a socket restart, however it was cased or
+/// padded with whitespace.
+pub(super) fn is_reconnect_command(input: &str) -> bool {
+    input.trim().eq_ignore_ascii_case("reconnect")
 }
 
 fn canonical_chat_mode(mode_id: &str) -> Option<&'static str> {
