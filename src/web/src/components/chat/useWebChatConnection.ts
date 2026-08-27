@@ -424,13 +424,17 @@ export function useWebChatConnection({
         case "replay_done": {
           if (replayingSessionRef.current !== parsed.session_id) break;
           replayingSessionRef.current = null;
-          const settled = settleStreamActivitiesMessage(messagesRef.current);
-          messagesRef.current = settled;
-          setMessages(settled);
+          // The replay frames may still be batched in React state updates,
+          // so settle through a functional update and let the debounced
+          // cache write read the synced snapshot afterwards.
+          setMessages((prev) => {
+            const settled = settleStreamActivitiesMessage(prev);
+            messagesRef.current = settled;
+            return settled;
+          });
           const replayContext = replayCacheContextRef.current;
           if (replayContext?.sessionId === parsed.session_id) {
-            cacheResumeReplay(replayContext, settled);
-            clearReplayCacheContext();
+            scheduleReplayCacheWrite(replayContext);
           }
           updateResumeReplay(null);
           break;
@@ -640,13 +644,12 @@ export function useWebChatConnection({
   }, [
     abortResumeState,
     applyMessageUpdate,
-    cacheResumeReplay,
     cacheTranscript,
     chatId,
     clearActiveTranscriptCacheWriteTimer,
-    clearReplayCacheContext,
     clearReplayCacheWriteTimer,
     onAgentSelected,
+    scheduleReplayCacheWrite,
     t,
     updateResumeReplay,
   ]);
