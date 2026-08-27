@@ -27,6 +27,7 @@ pub(super) struct StartCommand {
     pub(super) route: RouteKey,
     pub(super) handler: Arc<dyn AgentClientHandler>,
     pub(super) cancellation: Option<watch::Receiver<bool>>,
+    pub(super) replay: StartupReplay,
     pub(super) reply: oneshot::Sender<acp::Result<Option<ThreadRuntimeStart>>>,
 }
 
@@ -140,9 +141,12 @@ impl ThreadOwner {
                         route,
                         handler,
                         cancellation,
+                        replay,
                         reply,
                     } = *command;
-                    let result = self.start(&runtime, &route, handler, cancellation).await;
+                    let result = self
+                        .start(&runtime, &route, handler, cancellation, replay)
+                        .await;
                     let _ = reply.send(result);
                 }
                 ThreadOwnerCommand::Cancel(command) => {
@@ -268,12 +272,15 @@ impl ThreadOwner {
         let setup = async {
             self.maybe_record_first_prompt(&runtime, &content_blocks)
                 .await?;
+            // A message reviving a parked host continues the session the
+            // surface already rendered — never a replay.
             let Some(agent) = self
                 .ensure_agent(
                     &runtime,
                     &target.route,
                     Arc::clone(&handler),
                     cancellation.as_mut(),
+                    StartupReplay::Silent,
                 )
                 .await?
             else {
@@ -391,6 +398,7 @@ impl ThreadOwner {
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
         mut cancellation: Option<watch::Receiver<bool>>,
+        replay: StartupReplay,
     ) -> acp::Result<Option<ThreadRuntimeStart>> {
         if cancellation
             .as_ref()
@@ -400,7 +408,7 @@ impl ThreadOwner {
         }
         let host_started = self.host.as_ref().is_none_or(|host| !host.is_live());
         let Some(agent) = self
-            .ensure_agent(runtime, route, handler, cancellation.as_mut())
+            .ensure_agent(runtime, route, handler, cancellation.as_mut(), replay)
             .await?
         else {
             return Ok(None);
@@ -538,6 +546,7 @@ impl ThreadOwner {
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
         cancellation: Option<&mut watch::Receiver<bool>>,
+        replay: StartupReplay,
     ) -> acp::Result<Option<Arc<Agent>>> {
         if cancellation
             .as_ref()
@@ -575,7 +584,7 @@ impl ThreadOwner {
             .profile_id
             .clone()
             .unwrap_or_else(|| "default".to_string());
-        let startup_session = host_startup_session(route, self.session_id.clone(), &thread);
+        let startup_session = host_startup_session(route, self.session_id.clone(), &thread, replay);
 
         std::fs::create_dir_all(&runtime.workspace).map_err(|error| {
             acp::Error::new(

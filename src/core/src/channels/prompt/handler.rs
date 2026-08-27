@@ -18,7 +18,8 @@ use crate::profiles::{self, connections};
 use crate::routing::{channel_traits, ChannelTarget, RouteKey};
 use crate::workspace::manager::{default_profile_for_agent, ExternalSessionAttachMode};
 use crate::workspace::threads::runtime::{
-    cancelled_prompt_response, route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
+    cancelled_prompt_response, route_allows_startup_replay, StartupReplay, ThreadRuntime,
+    ThreadRuntimeState,
 };
 use crate::workspace::threads::store::HostBinding;
 use crate::workspace::WorkspaceThreadManager;
@@ -55,6 +56,7 @@ pub(crate) async fn handle_prompt(
         plugin_host,
         &target,
         false,
+        StartupReplay::Silent,
         Some(cancellation.clone()),
     )
     .await?;
@@ -107,8 +109,15 @@ async fn handle_command(
                 .close_route_and_create_thread(route, Some("user started a new thread".to_string()))
                 .await
                 .map_err(internal_error)?;
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true)
-                .await?
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                target,
+                true,
+                StartupReplay::Silent,
+            )
+            .await?
             {
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
@@ -173,8 +182,15 @@ async fn handle_command(
                     return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
                 }
             };
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true)
-                .await?
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                target,
+                true,
+                StartupReplay::Replay,
+            )
+            .await?
             {
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
@@ -313,7 +329,16 @@ async fn switch_workspace(
     }
     .map_err(internal_error)?;
 
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &runtime,
+        plugin_host,
+        target,
+        true,
+        StartupReplay::Replay,
+    )
+    .await?
+    {
         return Ok(());
     }
     send_system_text_to_target(
@@ -362,6 +387,7 @@ async fn switch_host(
                 plugin_host,
                 channel_target,
                 true,
+                StartupReplay::Silent,
             )
             .await?
             {
@@ -391,6 +417,7 @@ async fn switch_host(
                 plugin_host,
                 channel_target,
                 true,
+                StartupReplay::Silent,
             )
             .await?
             {
@@ -419,6 +446,7 @@ async fn switch_host(
         plugin_host,
         channel_target,
         true,
+        StartupReplay::Silent,
     )
     .await?
     {
@@ -447,7 +475,16 @@ async fn send_agent_command(
         .resolve_route_runtime(route)
         .await
         .map_err(internal_error)?;
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, false).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &runtime,
+        plugin_host,
+        target,
+        false,
+        StartupReplay::Silent,
+    )
+    .await?
+    {
         return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
     }
     let state = runtime.state().await;
@@ -525,7 +562,16 @@ async fn switch_session(
             return Ok(());
         }
     };
-    if !start_runtime_and_notify(workspace_threads, &resumed, plugin_host, target, true).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &resumed,
+        plugin_host,
+        target,
+        true,
+        StartupReplay::Replay,
+    )
+    .await?
+    {
         return Ok(());
     }
     send_system_text_to_target(
@@ -546,6 +592,7 @@ pub async fn start_runtime_and_notify(
     plugin_host: &Arc<PluginHost>,
     target: &ChannelTarget,
     force_session_ready: bool,
+    replay: StartupReplay,
 ) -> acp::Result<bool> {
     start_runtime_and_notify_with_cancellation(
         workspace_threads,
@@ -553,6 +600,7 @@ pub async fn start_runtime_and_notify(
         plugin_host,
         target,
         force_session_ready,
+        replay,
         None,
     )
     .await
@@ -565,6 +613,7 @@ async fn start_runtime_and_notify_with_cancellation(
     plugin_host: &Arc<PluginHost>,
     target: &ChannelTarget,
     force_session_ready: bool,
+    replay: StartupReplay,
     cancellation: Option<watch::Receiver<bool>>,
 ) -> acp::Result<Option<bool>> {
     let route = &target.route;
@@ -587,7 +636,7 @@ async fn start_runtime_and_notify_with_cancellation(
             .map_err(internal_error)?;
     }
     let handler = bridge_handler(workspace_threads, plugin_host, runtime, &before);
-    let started = runtime.start(route, handler, cancellation).await?;
+    let started = runtime.start(route, handler, cancellation, replay).await?;
     let Some(started) = started else {
         return Ok(None);
     };
@@ -645,7 +694,10 @@ async fn start_runtime_and_notify_with_cancellation(
             },
         });
     }
-    if should_send_session_ready && route_allows_startup_replay(route) {
+    if should_send_session_ready
+        && replay == StartupReplay::Replay
+        && route_allows_startup_replay(route)
+    {
         send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
             .await;
     }

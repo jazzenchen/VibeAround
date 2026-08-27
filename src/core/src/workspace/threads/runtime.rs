@@ -20,6 +20,22 @@ use super::store::{
     ThreadEventStore, ThreadStatus, WorkspaceThread, WorkspaceThreadId,
 };
 
+/// Whether a host start should replay the session transcript to the caller.
+///
+/// Replay is a request-response affair: the one surface that attaches to a
+/// session it has not rendered asks for `Replay`; every other start — a user
+/// message reviving a parked host, an agent command, a profile switch under an
+/// already-rendered view — continues silently. Which wire call that becomes
+/// (`session/load` vs `session/resume`) is decided per agent and channel in
+/// [`host_startup_session`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupReplay {
+    /// The requesting surface needs the transcript replayed.
+    Replay,
+    /// Continue the session without re-emitting history.
+    Silent,
+}
+
 #[derive(Debug, Clone)]
 pub struct ThreadRuntimeState {
     pub thread_id: WorkspaceThreadId,
@@ -246,6 +262,7 @@ impl ThreadRuntime {
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
         cancellation: Option<watch::Receiver<bool>>,
+        replay: StartupReplay,
     ) -> acp::Result<Option<ThreadRuntimeStart>> {
         self.mark_activity();
         let (reply, done) = oneshot::channel();
@@ -255,6 +272,7 @@ impl ThreadRuntime {
                 route: route.clone(),
                 handler,
                 cancellation,
+                replay,
                 reply,
             })))
             .map_err(|_| runtime_stopped_error())?;
@@ -444,14 +462,18 @@ fn host_startup_session(
     route: &RouteKey,
     runtime_session_id: Option<String>,
     thread: &WorkspaceThread,
+    replay: StartupReplay,
 ) -> StartupSession {
     let Some(session_id) = runtime_session_id.or_else(|| latest_session_for_host(thread)) else {
         return StartupSession::Fresh;
     };
-    if route_allows_startup_replay(route) {
-        if thread.host_binding.agent_id == "gemini" {
-            return StartupSession::ResumeOnly(session_id);
-        }
+    // `session/load` makes gemini write a brand-new session record, so it
+    // attaches without replay no matter who is asking — and its silent path
+    // must not fall back to a suppressed load either.
+    if thread.host_binding.agent_id == "gemini" {
+        return StartupSession::ResumeOnly(session_id);
+    }
+    if replay == StartupReplay::Replay && route_allows_startup_replay(route) {
         StartupSession::Load(session_id)
     } else {
         StartupSession::Resume(session_id)

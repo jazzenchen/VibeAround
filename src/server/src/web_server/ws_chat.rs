@@ -882,6 +882,7 @@ async fn apply_web_session_resume_now(
         &state.channel_hub.plugin_host(),
         &target,
         true,
+        common::workspace::threads::runtime::StartupReplay::Replay,
     )
     .await
     {
@@ -939,6 +940,7 @@ async fn replay_current_route_session_if_matching(
         &state.channel_hub.plugin_host(),
         &target,
         true,
+        common::workspace::threads::runtime::StartupReplay::Replay,
     )
     .await
     {
