@@ -363,6 +363,7 @@ async fn handle_chat_socket(
                             session_id,
                             cwd,
                             replay,
+                            cache_updated_at,
                         } => {
                             abort_direct_resume_task(
                                 &mut direct_resume_task,
@@ -392,7 +393,19 @@ async fn handle_chat_socket(
                                             tx.clone(),
                                         )
                                         .await;
-                                    if replay {
+                                    let needs_replay = match replay {
+                                        Some(explicit) => explicit,
+                                        None => {
+                                            route_session_cache_is_stale(
+                                                &state,
+                                                &active_route,
+                                                &session_id,
+                                                cache_updated_at,
+                                            )
+                                            .await
+                                        }
+                                    };
+                                    if needs_replay {
                                         // The transcript comes from the agent
                                         // itself, bracketed and addressed to
                                         // this connection only.
@@ -424,6 +437,7 @@ async fn handle_chat_socket(
                                     session_id,
                                     cwd,
                                     replay,
+                                    cache_updated_at,
                                     task_sink,
                                 )
                                 .await;
@@ -813,7 +827,8 @@ async fn apply_web_session_resume_now(
     profile: Option<String>,
     session_id: String,
     cwd: Option<String>,
-    replay: bool,
+    replay: Option<bool>,
+    cache_updated_at: Option<u64>,
     replay_sink: tokio::sync::mpsc::UnboundedSender<ChannelOutput>,
 ) {
     let requested_agent = agent
@@ -826,18 +841,42 @@ async fn apply_web_session_resume_now(
         resolve_web_session_resume(state, route, agent, profile, session_id, cwd).await
     else {
         if !requested_agent_invalid {
+            let needs_replay = match replay {
+                Some(explicit) => explicit,
+                None => {
+                    route_session_cache_is_stale(
+                        state,
+                        route,
+                        &requested_session_id,
+                        cache_updated_at,
+                    )
+                    .await
+                }
+            };
             replay_current_route_session_if_matching(
                 state,
                 route,
                 requested_agent.as_deref(),
                 requested_profile.as_deref(),
                 &requested_session_id,
-                replay,
+                needs_replay,
                 replay_sink,
             )
             .await;
         }
         return;
+    };
+    let needs_replay = match replay {
+        Some(explicit) => explicit,
+        None => {
+            session_cache_is_stale(
+                &resume.agent,
+                std::path::Path::new(&resume.cwd),
+                &resume.session_id,
+                cache_updated_at,
+            )
+            .await
+        }
     };
 
     state
@@ -871,7 +910,7 @@ async fn apply_web_session_resume_now(
         .unwrap_or_else(|| requested_session_id.clone());
     let workspace_threads = state.channel_hub.workspace_thread_manager();
     let target = common::routing::ChannelTarget::for_route(route.clone());
-    let (replay_mode, replay_sink) = web_replay_request(replay, replay_sink);
+    let (replay_mode, replay_sink) = web_replay_request(needs_replay, replay_sink);
     let started = match common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
         &runtime,
@@ -1035,6 +1074,60 @@ async fn resolve_web_session_resume(
 }
 
 type WebReplaySink = tokio::sync::mpsc::UnboundedSender<ChannelOutput>;
+
+/// Whether the client's transcript cache is out of date for the session the
+/// given route is bound to. Unknown stamps count as stale — a replay is
+/// heavier but never wrong.
+async fn route_session_cache_is_stale(
+    state: &AppState,
+    route: &RouteKey,
+    session_id: &str,
+    cache_updated_at: Option<u64>,
+) -> bool {
+    let Some(cache_updated_at) = cache_updated_at else {
+        return true;
+    };
+    let Ok(runtime) = state
+        .channel_hub
+        .workspace_thread_manager()
+        .resolve_route_runtime(route)
+        .await
+    else {
+        return true;
+    };
+    let runtime_state = runtime.state().await;
+    stamp_is_stale(
+        common::launch_sessions::native_session_updated_at(
+            &runtime_state.host_binding.agent_id,
+            &runtime_state.workspace,
+            session_id,
+        )
+        .await,
+        cache_updated_at,
+    )
+}
+
+async fn session_cache_is_stale(
+    agent_id: &str,
+    workspace: &std::path::Path,
+    session_id: &str,
+    cache_updated_at: Option<u64>,
+) -> bool {
+    let Some(cache_updated_at) = cache_updated_at else {
+        return true;
+    };
+    stamp_is_stale(
+        common::launch_sessions::native_session_updated_at(agent_id, workspace, session_id).await,
+        cache_updated_at,
+    )
+}
+
+fn stamp_is_stale(native: Option<u64>, cache_updated_at: u64) -> bool {
+    match native {
+        Some(stamp) => stamp != cache_updated_at,
+        None => true,
+    }
+}
 
 /// Translate the client's replay wish into the start-notify arguments: a
 /// silent resume carries no sink, a replay is addressed to the requester.

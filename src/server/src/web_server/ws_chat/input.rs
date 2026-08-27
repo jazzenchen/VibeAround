@@ -29,10 +29,14 @@ pub(super) enum WebChatInput {
         profile: Option<String>,
         session_id: String,
         cwd: Option<String>,
-        /// Whether the client wants the transcript replayed. A client with a
-        /// fresh local cache resumes silently; one without asks for replay.
-        /// Missing means replay, so older clients keep getting history.
-        replay: bool,
+        /// Explicit replay override: `Some(true)` forces a replay (/reload),
+        /// `Some(false)` forces a silent rebind. Missing lets the server
+        /// decide from `cache_updated_at` — and with neither present the
+        /// answer is replay, so older clients keep getting history.
+        replay: Option<bool>,
+        /// The native-store stamp the client's transcript cache last synced
+        /// to; the server replays when it no longer matches.
+        cache_updated_at: Option<u64>,
     },
 }
 
@@ -116,7 +120,11 @@ pub(super) fn parse_web_chat_input(
                         .filter(|x| !x.is_empty())
                         .map(ToOwned::to_owned);
 
-                    let replay = v.get("replay").and_then(|x| x.as_bool()).unwrap_or(true);
+                    let replay = v.get("replay").and_then(|x| x.as_bool());
+                    let cache_updated_at = v
+                        .get("cacheUpdatedAt")
+                        .and_then(|x| x.as_u64())
+                        .filter(|stamp| *stamp > 0);
 
                     Some(WebChatInput::ResumeSession {
                         agent,
@@ -124,6 +132,7 @@ pub(super) fn parse_web_chat_input(
                         session_id,
                         cwd,
                         replay,
+                        cache_updated_at,
                     })
                 }
                 "cancel" => Some(WebChatInput::Cancel(ChannelInput::Cancel {
@@ -451,6 +460,7 @@ mod tests {
             session_id,
             cwd: Some(cwd),
             replay,
+            cache_updated_at,
         } = input
         else {
             panic!("expected direct resume input");
@@ -460,19 +470,36 @@ mod tests {
         assert_eq!(profile, "deepseek");
         assert_eq!(session_id, "sid-1");
         assert_eq!(cwd, "/tmp/project");
-        assert!(replay, "replay defaults to true for older clients");
+        assert_eq!(replay, None, "older clients leave the decision open");
+        assert_eq!(cache_updated_at, None);
     }
 
     #[test]
-    fn parses_silent_resume_session() {
-        let input = parse_web_chat_input(
+    fn parses_resume_session_replay_controls() {
+        let forced = parse_web_chat_input(
             "chat-1",
-            r#"{"type":"resume_session","sessionId":"sid-1","replay":false}"#,
+            r#"{"type":"resume_session","sessionId":"sid-1","replay":true}"#,
         )
         .expect("resume session input");
+        let WebChatInput::ResumeSession {
+            replay: Some(true), ..
+        } = forced
+        else {
+            panic!("expected forced replay input");
+        };
 
-        let WebChatInput::ResumeSession { replay: false, .. } = input else {
-            panic!("expected silent resume input");
+        let cached = parse_web_chat_input(
+            "chat-1",
+            r#"{"type":"resume_session","sessionId":"sid-1","cacheUpdatedAt":1756280000000}"#,
+        )
+        .expect("resume session input");
+        let WebChatInput::ResumeSession {
+            replay: None,
+            cache_updated_at: Some(1756280000000),
+            ..
+        } = cached
+        else {
+            panic!("expected cache-stamped resume input");
         };
     }
 

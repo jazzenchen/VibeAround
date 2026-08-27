@@ -758,19 +758,13 @@ async fn start_runtime_and_notify_with_cancellation(
     Ok(Some(true))
 }
 
-/// The session's last-modified stamp in the agent's native store, so clients
-/// can judge transcript-cache freshness.
 async fn native_session_updated_at(state: &ThreadRuntimeState, session_id: &str) -> Option<u64> {
-    crate::launch_sessions::list_native_for_agent_workspace_with_archived_async(
+    crate::launch_sessions::native_session_updated_at(
         &state.host_binding.agent_id,
         &state.workspace,
-        usize::MAX,
-        true,
+        session_id,
     )
     .await
-    .into_iter()
-    .find(|session| session.session_id == session_id)
-    .map(|session| session.updated_at)
 }
 
 pub async fn send_runtime_multi_agent_state_and_replay(
