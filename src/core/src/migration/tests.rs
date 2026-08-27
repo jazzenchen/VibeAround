@@ -291,6 +291,148 @@ fn backs_up_then_rewrites_legacy_provider_profiles_once() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+fn local_agent_profile(api_key: &str, base_url: &str) -> String {
+    format!(
+        r#"{{
+  "id": "my-claude",
+  "label": "My Claude Code",
+  "provider": "custom",
+  "auth_mode": "api_key",
+  "credentials": {{ "api_key": "{api_key}" }},
+  "api_configs": {{
+    "anthropic": {{
+      "enabled": true,
+      "endpoint_id": "anthropic",
+      "base_url": "{base_url}"
+    }}
+  }}
+}}"#
+    )
+}
+
+const LOCAL_AGENT_BASE_URL: &str = "http://127.0.0.1:12358/va/local-agent/claude/direct";
+
+fn profile_api_key(path: &Path) -> String {
+    let profile: crate::profiles::ProfileDef =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    profile.credentials["api_key"].clone()
+}
+
+#[test]
+fn backs_up_then_syncs_stale_local_agent_profile_keys() {
+    let dir = test_dir();
+    std::fs::create_dir_all(dir.join("profiles")).unwrap();
+    let token = "a".repeat(64);
+    std::fs::write(
+        dir.join("auth.json"),
+        format!(r#"{{"port":12358,"token":"dash","agent_token":"{token}"}}"#),
+    )
+    .unwrap();
+    let path = dir.join("profiles/my-claude.json");
+    std::fs::write(&path, local_agent_profile("stale", LOCAL_AGENT_BASE_URL)).unwrap();
+
+    run_at(&dir).unwrap();
+
+    assert_eq!(profile_api_key(&path), token);
+    let backups = backup_dirs(&dir);
+    assert_eq!(backups.len(), 1);
+    let original = std::fs::read_to_string(backups[0].join("profiles/my-claude.json")).unwrap();
+    assert!(original.contains("\"api_key\": \"stale\""));
+
+    run_at(&dir).unwrap();
+    assert_eq!(backup_dirs(&dir).len(), 1);
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn leaves_local_agent_profiles_alone_when_the_key_already_matches() {
+    let dir = test_dir();
+    std::fs::create_dir_all(dir.join("profiles")).unwrap();
+    let token = "b".repeat(64);
+    std::fs::write(
+        dir.join("auth.json"),
+        format!(r#"{{"port":12358,"token":"dash","agent_token":"{token}"}}"#),
+    )
+    .unwrap();
+    let path = dir.join("profiles/my-claude.json");
+    std::fs::write(&path, local_agent_profile(&token, LOCAL_AGENT_BASE_URL)).unwrap();
+
+    run_at(&dir).unwrap();
+
+    assert_eq!(profile_api_key(&path), token);
+    assert!(!dir.join("migration-backups").exists());
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn leaves_profiles_pointing_at_external_hosts_alone() {
+    let dir = test_dir();
+    std::fs::create_dir_all(dir.join("profiles")).unwrap();
+    std::fs::write(
+        dir.join("auth.json"),
+        format!(
+            r#"{{"port":12358,"token":"dash","agent_token":"{}"}}"#,
+            "c".repeat(64)
+        ),
+    )
+    .unwrap();
+    let path = dir.join("profiles/my-claude.json");
+    std::fs::write(
+        &path,
+        local_agent_profile("external-key", "https://api.example.com/anthropic"),
+    )
+    .unwrap();
+
+    run_at(&dir).unwrap();
+
+    assert_eq!(profile_api_key(&path), "external-key");
+    assert!(!dir.join("migration-backups").exists());
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn syncs_the_local_agent_key_from_the_legacy_token_file() {
+    let dir = test_dir();
+    std::fs::create_dir_all(dir.join("profiles")).unwrap();
+    let token = "d".repeat(64);
+    std::fs::write(
+        dir.join("local-agent-api-auth.json"),
+        format!(r#"{{"port":12358,"token":"{token}"}}"#),
+    )
+    .unwrap();
+    let path = dir.join("profiles/my-claude.json");
+    std::fs::write(&path, local_agent_profile("stale", LOCAL_AGENT_BASE_URL)).unwrap();
+
+    run_at(&dir).unwrap();
+
+    assert_eq!(profile_api_key(&path), token);
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn skips_the_local_agent_key_sync_without_a_persisted_token() {
+    let dir = test_dir();
+    std::fs::create_dir_all(dir.join("profiles")).unwrap();
+    std::fs::write(
+        dir.join("auth.json"),
+        r#"{"port":12358,"token":"dash","agent_token":"not-a-token"}"#,
+    )
+    .unwrap();
+    let path = dir.join("profiles/my-claude.json");
+    std::fs::write(&path, local_agent_profile("stale", LOCAL_AGENT_BASE_URL)).unwrap();
+
+    run_at(&dir).unwrap();
+
+    assert_eq!(profile_api_key(&path), "stale");
+    assert!(!dir.join("migration-backups").exists());
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn unreadable_profile_does_not_block_other_profile_migrations() {
     let dir = test_dir();
