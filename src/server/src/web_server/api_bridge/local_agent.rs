@@ -106,6 +106,9 @@ async fn handle_local_agent_request(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if let Some(response) = direct_profile_response(&profile_id) {
+        return response;
+    }
     let raw = match serde_json::from_slice::<Value>(&body) {
         Ok(value) => value,
         Err(error) => {
