@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
@@ -5,13 +6,14 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use va_client::endpoint::ServerEndpoint;
 use va_client::events::{
     agents_runtime_ws, channels_ws, decode_agents_runtime_event, decode_channels_event,
     decode_sessions_event, decode_tunnels_event, sessions_ws, tunnels_ws, WebSocketSpec,
 };
 use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
 use va_client::sessions::SessionListItem;
+
+use crate::transport::SharedEndpoint;
 
 const RUNTIME_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
 
@@ -36,7 +38,7 @@ pub(crate) enum RuntimeSocketEvent {
 }
 
 pub(crate) async fn run_runtime_sockets(
-    endpoint: ServerEndpoint,
+    endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
     let tasks = [
@@ -51,7 +53,7 @@ pub(crate) async fn run_runtime_sockets(
 }
 
 async fn run_channels_socket(
-    endpoint: ServerEndpoint,
+    endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
     run_snapshot_socket(
@@ -65,7 +67,7 @@ async fn run_channels_socket(
 }
 
 async fn run_tunnels_socket(
-    endpoint: ServerEndpoint,
+    endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
     run_snapshot_socket(
@@ -79,7 +81,7 @@ async fn run_tunnels_socket(
 }
 
 async fn run_agents_socket(
-    endpoint: ServerEndpoint,
+    endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
     run_snapshot_socket(
@@ -93,7 +95,7 @@ async fn run_agents_socket(
 }
 
 async fn run_sessions_socket(
-    endpoint: ServerEndpoint,
+    endpoint: Arc<SharedEndpoint>,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
 ) {
     run_snapshot_socket(
@@ -107,7 +109,7 @@ async fn run_sessions_socket(
 }
 
 async fn run_snapshot_socket(
-    endpoint: ServerEndpoint,
+    endpoint: Arc<SharedEndpoint>,
     stream: RuntimeStream,
     socket: WebSocketSpec,
     incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,

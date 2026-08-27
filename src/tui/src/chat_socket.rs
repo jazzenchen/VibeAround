@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -5,11 +6,12 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use va_client::endpoint::ServerEndpoint;
 use va_client::events::{
     chat_ws_for_channel, decode_chat_event, encode_chat_client_message, ChatClientMessage,
     ChatEvent,
 };
+
+use crate::transport::SharedEndpoint;
 
 const CHAT_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
 
@@ -30,7 +32,7 @@ enum ChatSocketAction {
 }
 
 pub(crate) async fn run_chat_socket(
-    endpoint: ServerEndpoint,
+    endpoint: Arc<SharedEndpoint>,
     mut outgoing: mpsc::UnboundedReceiver<ChatClientMessage>,
     incoming: mpsc::UnboundedSender<ChatSocketEvent>,
 ) {
