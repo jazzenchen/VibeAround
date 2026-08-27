@@ -21,6 +21,9 @@ pub enum ChatEvent {
     SessionReady {
         session_id: String,
     },
+    SessionInfo {
+        info: Value,
+    },
     SessionMode {
         session_mode: Value,
     },
@@ -46,6 +49,7 @@ pub enum ChatEvent {
     TurnStatus {
         active: bool,
     },
+    PreviewRefresh,
     SystemText {
         text: String,
     },
@@ -323,6 +327,24 @@ mod tests {
             panic!("expected acp notification");
         };
         assert_eq!(payload["update"]["sessionUpdate"], "anything");
+    }
+
+    #[test]
+    fn decodes_route_metadata_events() {
+        let event = decode_chat_event(json!({
+            "kind": "session_info",
+            "info": { "threadId": "wt_1", "agent": { "id": "claude" } }
+        }))
+        .expect("event");
+        let ChatEvent::SessionInfo { info } = event else {
+            panic!("expected session info");
+        };
+        assert_eq!(info["threadId"], "wt_1");
+
+        assert_eq!(
+            decode_chat_event(json!({ "kind": "preview_refresh" })).expect("event"),
+            ChatEvent::PreviewRefresh
+        );
     }
 
     #[test]

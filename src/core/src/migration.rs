@@ -33,7 +33,7 @@ fn run_at(data_dir: &Path) -> Result<()> {
 
     let mut changes = legacy_state_changes(data_dir);
     changes.extend(legacy_settings_changes(data_dir));
-    changes.extend(legacy_profile_changes(data_dir));
+    changes.extend(profile_changes(data_dir));
     if changes.is_empty() {
         return Ok(());
     }
@@ -342,7 +342,8 @@ fn move_alias(
     changed
 }
 
-fn legacy_profile_changes(data_dir: &Path) -> Vec<Change> {
+fn profile_changes(data_dir: &Path) -> Vec<Change> {
+    let local_agent_token = persisted_local_agent_token(data_dir);
     let profiles_dir = data_dir.join("profiles");
     let entries = match std::fs::read_dir(&profiles_dir) {
         Ok(entries) => entries,
@@ -395,7 +396,11 @@ fn legacy_profile_changes(data_dir: &Path) -> Vec<Change> {
             continue;
         }
         migrate_legacy_bridge_models(&mut profile);
-        if !has_legacy_fields && !provider_changed && profile.api_configs.len() == api_config_count
+        let key_synced = sync_local_agent_key(&mut profile, local_agent_token.as_deref());
+        if !has_legacy_fields
+            && !provider_changed
+            && profile.api_configs.len() == api_config_count
+            && !key_synced
         {
             continue;
         }
@@ -414,6 +419,68 @@ fn legacy_profile_changes(data_dir: &Path) -> Vec<Change> {
         changes.push(Change::Rewrite { path, contents });
     }
     changes
+}
+
+/// Repair, not a legacy-shape migration: profiles created while the
+/// agent-as-API key still rotated on every daemon start hold a key that can
+/// only ever 401 against the loopback local-agent routes, so sync them to the
+/// persisted credential.
+fn sync_local_agent_key(profile: &mut MigrationProfile, token: Option<&str>) -> bool {
+    let Some(token) = token else {
+        return false;
+    };
+    if profile.auth_mode != crate::profiles::AuthMode::ApiKey {
+        return false;
+    }
+    let targets_local_agent = profile
+        .api_configs
+        .values()
+        .filter_map(|config| config.base_url.as_deref())
+        .any(is_loopback_local_agent_url);
+    if !targets_local_agent {
+        return false;
+    }
+    if profile.credentials.get("api_key").map(String::as_str) == Some(token) {
+        return false;
+    }
+    profile
+        .credentials
+        .insert("api_key".to_string(), token.to_string());
+    true
+}
+
+/// Read-only on purpose: minting a token here would desync from the one the
+/// daemon loads and persists later in startup.
+fn persisted_local_agent_token(data_dir: &Path) -> Option<String> {
+    let token = read_auth_file_at(&data_dir.join("auth.json"))
+        .and_then(|file| file.agent_token)
+        .or_else(|| {
+            read_auth_file_at(&data_dir.join("local-agent-api-auth.json")).map(|file| file.token)
+        })?;
+    Some(
+        crate::auth::AuthToken::from_hex(&token)?
+            .as_str()
+            .to_string(),
+    )
+}
+
+fn read_auth_file_at(path: &Path) -> Option<crate::auth::AuthFile> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+fn is_loopback_local_agent_url(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = authority
+        .rsplit_once(':')
+        .map_or(authority, |(host, _)| host);
+    (host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost"))
+        && (path.starts_with("va/local-agent/") || path.starts_with("local-agent/"))
 }
 
 fn migrate_legacy_connection_proxy(connections: Option<&mut serde_json::Value>) -> bool {
