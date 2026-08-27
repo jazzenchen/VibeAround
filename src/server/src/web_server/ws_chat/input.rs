@@ -29,6 +29,10 @@ pub(super) enum WebChatInput {
         profile: Option<String>,
         session_id: String,
         cwd: Option<String>,
+        /// Whether the client wants the transcript replayed. A client with a
+        /// fresh local cache resumes silently; one without asks for replay.
+        /// Missing means replay, so older clients keep getting history.
+        replay: bool,
     },
 }
 
@@ -112,11 +116,14 @@ pub(super) fn parse_web_chat_input(
                         .filter(|x| !x.is_empty())
                         .map(ToOwned::to_owned);
 
+                    let replay = v.get("replay").and_then(|x| x.as_bool()).unwrap_or(true);
+
                     Some(WebChatInput::ResumeSession {
                         agent,
                         profile,
                         session_id,
                         cwd,
+                        replay,
                     })
                 }
                 "cancel" => Some(WebChatInput::Cancel(ChannelInput::Cancel {
@@ -443,6 +450,7 @@ mod tests {
             profile: Some(profile),
             session_id,
             cwd: Some(cwd),
+            replay,
         } = input
         else {
             panic!("expected direct resume input");
@@ -452,6 +460,20 @@ mod tests {
         assert_eq!(profile, "deepseek");
         assert_eq!(session_id, "sid-1");
         assert_eq!(cwd, "/tmp/project");
+        assert!(replay, "replay defaults to true for older clients");
+    }
+
+    #[test]
+    fn parses_silent_resume_session() {
+        let input = parse_web_chat_input(
+            "chat-1",
+            r#"{"type":"resume_session","sessionId":"sid-1","replay":false}"#,
+        )
+        .expect("resume session input");
+
+        let WebChatInput::ResumeSession { replay: false, .. } = input else {
+            panic!("expected silent resume input");
+        };
     }
 
     #[test]

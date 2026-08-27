@@ -11,8 +11,6 @@ use super::ChannelOutput;
 /// Outbound sink to a single web chat connection.
 pub type WebChatSink = mpsc::UnboundedSender<ChannelOutput>;
 
-const MAX_ROUTE_HISTORY: usize = 4000;
-
 #[derive(Debug, Clone)]
 struct PendingUserMessage {
     message_id: String,
@@ -36,7 +34,6 @@ struct WebChannelState {
     connections: HashMap<RouteKey, HashMap<String, WebChatSink>>,
     route_agents: HashMap<RouteKey, String>,
     route_sessions: HashMap<RouteKey, RouteSession>,
-    route_history: HashMap<RouteKey, Vec<ChannelOutput>>,
     route_pending_permissions: HashMap<RouteKey, HashMap<String, ChannelOutput>>,
     route_pending_user_messages: HashMap<RouteKey, Vec<PendingUserMessage>>,
     route_activity: HashMap<RouteKey, bool>,
@@ -74,13 +71,10 @@ impl WebChannelManager {
         route: &RouteKey,
         connection_id: String,
         sink: WebChatSink,
-        replay_history: bool,
     ) {
         let route = route.clone();
-        self.request(move |state| {
-            state.register_connection(&route, connection_id, sink, replay_history)
-        })
-        .await;
+        self.request(move |state| state.register_connection(&route, connection_id, sink))
+            .await;
     }
 
     pub async fn unregister_connection(&self, route: &RouteKey, connection_id: &str) {
@@ -177,31 +171,29 @@ impl WebChannelManager {
 }
 
 impl WebChannelState {
+    /// Register a sink for live output. History is not the manager's to give
+    /// any more — a connection that needs the transcript asks for a replay
+    /// (delivered straight to its sink, bracketed) or renders its own cache.
+    /// Pending permissions and the current turn status are connection-scoped
+    /// UI state, so they are re-sent to every newcomer.
     pub fn register_connection(
         &mut self,
         route: &RouteKey,
         connection_id: String,
         sink: WebChatSink,
-        replay_history: bool,
     ) {
         self.connections
             .entry(route.clone())
             .or_default()
             .insert(connection_id, sink.clone());
 
-        if replay_history {
-            let history = self.route_history.get(route).cloned().unwrap_or_default();
-            for output in history {
-                let _ = sink.send(output);
-            }
-            let pending_permissions = self
-                .route_pending_permissions
-                .get(route)
-                .map(|items| items.values().cloned().collect::<Vec<_>>())
-                .unwrap_or_default();
-            for output in pending_permissions {
-                let _ = sink.send(output);
-            }
+        let pending_permissions = self
+            .route_pending_permissions
+            .get(route)
+            .map(|items| items.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for output in pending_permissions {
+            let _ = sink.send(output);
         }
         if let Some(active) = self.route_activity.get(route).copied() {
             let _ = sink.send(ChannelOutput::TurnStatus {
@@ -222,7 +214,6 @@ impl WebChannelState {
     }
 
     pub fn forget_route(&mut self, route: &RouteKey) {
-        self.route_history.remove(route);
         self.route_agents.remove(route);
         self.route_sessions.remove(route);
         self.clear_route_pending_permissions(route);
@@ -343,8 +334,6 @@ impl WebChannelState {
     }
 
     fn broadcast_output(&mut self, route: &RouteKey, output: ChannelOutput) {
-        self.push_route_history(route, output.clone());
-
         let sinks = self
             .connections
             .get(route)
@@ -357,21 +346,6 @@ impl WebChannelState {
         );
         for sink in sinks {
             let _ = sink.send(output.clone());
-        }
-    }
-
-    fn push_route_history(&mut self, route: &RouteKey, output: ChannelOutput) {
-        if matches!(
-            output,
-            ChannelOutput::PermissionRequest { .. } | ChannelOutput::TurnStatus { .. }
-        ) {
-            return;
-        }
-        let items = self.route_history.entry(route.clone()).or_default();
-        items.push(output);
-        if items.len() > MAX_ROUTE_HISTORY {
-            let overflow = items.len() - MAX_ROUTE_HISTORY;
-            items.drain(0..overflow);
         }
     }
 
@@ -451,7 +425,7 @@ mod tests {
 
         let (tx, mut rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .register_connection(&route, "conn-1".to_string(), tx)
             .await;
 
         assert_eq!(
@@ -471,11 +445,11 @@ mod tests {
 
         let (first, _first_rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-1".to_string(), first, false)
+            .register_connection(&route, "conn-1".to_string(), first)
             .await;
         let (second, _second_rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-2".to_string(), second, false)
+            .register_connection(&route, "conn-2".to_string(), second)
             .await;
         assert!(manager.route_has_connections(&route).await);
 
@@ -493,7 +467,7 @@ mod tests {
         let route = RouteKey::new("web", "chat-1");
         let (tx, mut rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .register_connection(&route, "conn-1".to_string(), tx)
             .await;
         let info = crate::channels::types::ChannelSessionInfo {
             workspace_id: "ws_general".to_string(),
@@ -533,7 +507,7 @@ mod tests {
         let route = RouteKey::new("web", "chat-1");
         let (tx, mut rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .register_connection(&route, "conn-1".to_string(), tx)
             .await;
         manager
             .dispatch_output(ChannelOutput::TurnStatus {
@@ -575,7 +549,7 @@ mod tests {
 
         let (tx, mut rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .register_connection(&route, "conn-1".to_string(), tx)
             .await;
         manager
             .record_user_message(
@@ -615,19 +589,13 @@ mod tests {
         assert_eq!(payload["update"]["messageId"].as_str(), Some("msg-1"));
         assert_eq!(payload["update"]["content"]["text"].as_str(), Some("hello"));
 
-        let (tx, mut replay_rx) = manager.sender();
+        // A later connection gets no automatic history dump — transcripts come
+        // from the client's cache or an explicit replay request.
+        let (tx, mut second_rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-2".to_string(), tx, true)
+            .register_connection(&route, "conn-2".to_string(), tx)
             .await;
-        assert!(matches!(
-            replay_rx.try_recv().expect("replayed session ready"),
-            ChannelOutput::SessionReady { .. }
-        ));
-        assert!(matches!(
-            replay_rx.try_recv().expect("replayed user message"),
-            ChannelOutput::RawAcp { .. }
-        ));
-        assert!(replay_rx.try_recv().is_err());
+        assert!(second_rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -665,7 +633,7 @@ mod tests {
 
         let (tx, mut rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .register_connection(&route, "conn-1".to_string(), tx)
             .await;
         manager
             .record_user_message(
@@ -693,7 +661,7 @@ mod tests {
 
         let (tx, mut replay_rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-2".to_string(), tx, true)
+            .register_connection(&route, "conn-2".to_string(), tx)
             .await;
         assert!(matches!(
             replay_rx.try_recv().expect("stored idle status"),
@@ -724,10 +692,10 @@ mod tests {
         let (web_tx, mut web_rx) = manager.sender();
         let (tui_tx, mut tui_rx) = manager.sender();
         manager
-            .register_connection(&web_route, "web-conn".to_string(), web_tx, true)
+            .register_connection(&web_route, "web-conn".to_string(), web_tx)
             .await;
         manager
-            .register_connection(&tui_route, "tui-conn".to_string(), tui_tx, true)
+            .register_connection(&tui_route, "tui-conn".to_string(), tui_tx)
             .await;
 
         manager
@@ -769,7 +737,7 @@ mod tests {
 
         let (tx, mut replay_rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .register_connection(&route, "conn-1".to_string(), tx)
             .await;
 
         while let Ok(output) = replay_rx.try_recv() {
@@ -821,26 +789,17 @@ mod tests {
                 session_id: "sid-1".to_string(),
             })
             .await;
-        manager
-            .dispatch_output(ChannelOutput::SystemText {
-                route: route.clone(),
-                text: "hello".to_string(),
-                reply_to: None,
-            })
-            .await;
 
-        let (tx, mut replay_rx) = manager.sender();
+        // A new connection sees route-scoped UI state only.
+        let (tx, mut fresh_rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-1".to_string(), tx, true)
+            .register_connection(&route, "conn-1".to_string(), tx)
             .await;
         assert!(matches!(
-            replay_rx.try_recv().expect("replayed session ready"),
-            ChannelOutput::SessionReady { .. }
+            fresh_rx.try_recv().expect("stored turn status"),
+            ChannelOutput::TurnStatus { active: true, .. }
         ));
-        assert!(matches!(
-            replay_rx.try_recv().expect("replayed system text"),
-            ChannelOutput::SystemText { .. }
-        ));
+        assert!(fresh_rx.try_recv().is_err());
 
         manager.forget_route(&route).await;
         assert!(!manager.route_has_session(&route).await);
@@ -849,7 +808,7 @@ mod tests {
 
         let (tx, mut replay_rx) = manager.sender();
         manager
-            .register_connection(&route, "conn-2".to_string(), tx, true)
+            .register_connection(&route, "conn-2".to_string(), tx)
             .await;
         assert!(replay_rx.try_recv().is_err());
     }

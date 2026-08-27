@@ -23,6 +23,7 @@ use common::routing::{
     is_external_attachment_uri, is_safe_attachment_file_key, Attachment, RouteKey,
 };
 use common::workspace::manager::ExternalSessionAttachMode;
+use common::workspace::threads::runtime::StartupReplay;
 use common::workspace::threads::HostBinding;
 use common::{agent_state, config};
 
@@ -101,10 +102,6 @@ fn sanitize_chat_id(value: Option<&str>) -> Option<String> {
     }
 }
 
-fn should_replay_initial_route_history(chat_id: &Option<String>) -> bool {
-    chat_id.is_some()
-}
-
 fn initial_route(client: ChatSocketClient, chat_id: Option<String>) -> RouteKey {
     RouteKey::new(
         client.channel_kind,
@@ -146,22 +143,16 @@ async fn handle_chat_socket(
     chat_id: Option<String>,
 ) {
     let connection_id = Uuid::new_v4().to_string();
-    let replay_history = should_replay_initial_route_history(&chat_id);
     let mut active_route = initial_route(client, chat_id);
     let chat_id = active_route.chat_id.clone();
     let channel_id = format!("{}:{}", client.channel_kind, chat_id);
 
-    // Explicit chat_id attachments are reconnects or existing thread views, so
-    // replay the bounded route history independent of runtime lifetime.
+    // Connections receive live output only. History is the client's own
+    // cache or an explicit replay request — never an automatic dump.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChannelOutput>();
     state
         .web_channel
-        .register_connection(
-            &active_route,
-            connection_id.clone(),
-            tx.clone(),
-            replay_history,
-        )
+        .register_connection(&active_route, connection_id.clone(), tx.clone())
         .await;
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
 
@@ -371,6 +362,7 @@ async fn handle_chat_socket(
                             profile,
                             session_id,
                             cwd,
+                            replay,
                         } => {
                             abort_direct_resume_task(
                                 &mut direct_resume_task,
@@ -398,29 +390,24 @@ async fn handle_chat_socket(
                                             &active_route,
                                             connection_id.clone(),
                                             tx.clone(),
-                                            true,
                                         )
                                         .await;
-                                    let _ = tx.send(ChannelOutput::SessionReady {
-                                        route: active_route.clone(),
-                                        reply_to: None,
-                                        session_id,
-                                    });
-                                    if let Ok(runtime) = state
-                                        .channel_hub
-                                        .workspace_thread_manager()
-                                        .resolve_route_runtime(&active_route)
-                                        .await
-                                    {
-                                        let workspace_threads =
-                                            state.channel_hub.workspace_thread_manager();
-                                        common::channels::prompt::send_runtime_multi_agent_state_and_replay(
-                                            &workspace_threads,
-                                            &runtime,
-                                            &state.channel_hub.plugin_host(),
+                                    if replay {
+                                        // The transcript comes from the agent
+                                        // itself, bracketed and addressed to
+                                        // this connection only.
+                                        replay_route_session_to_sink(
+                                            &state,
                                             &active_route,
+                                            tx.clone(),
                                         )
                                         .await;
+                                    } else {
+                                        let _ = tx.send(ChannelOutput::SessionReady {
+                                            route: active_route.clone(),
+                                            reply_to: None,
+                                            session_id,
+                                        });
                                     }
                                     continue;
                                 }
@@ -436,6 +423,7 @@ async fn handle_chat_socket(
                                     profile,
                                     session_id,
                                     cwd,
+                                    replay,
                                     task_sink,
                                 )
                                 .await;
@@ -817,6 +805,7 @@ async fn apply_web_session_resume(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn apply_web_session_resume_now(
     state: &AppState,
     route: &RouteKey,
@@ -824,6 +813,7 @@ async fn apply_web_session_resume_now(
     profile: Option<String>,
     session_id: String,
     cwd: Option<String>,
+    replay: bool,
     replay_sink: tokio::sync::mpsc::UnboundedSender<ChannelOutput>,
 ) {
     let requested_agent = agent
@@ -842,6 +832,7 @@ async fn apply_web_session_resume_now(
                 requested_agent.as_deref(),
                 requested_profile.as_deref(),
                 &requested_session_id,
+                replay,
                 replay_sink,
             )
             .await;
@@ -880,14 +871,15 @@ async fn apply_web_session_resume_now(
         .unwrap_or_else(|| requested_session_id.clone());
     let workspace_threads = state.channel_hub.workspace_thread_manager();
     let target = common::routing::ChannelTarget::for_route(route.clone());
+    let (replay_mode, replay_sink) = web_replay_request(replay, replay_sink);
     let started = match common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
         &runtime,
         &state.channel_hub.plugin_host(),
         &target,
         true,
-        common::workspace::threads::runtime::StartupReplay::Replay,
-        Some(replay_sink),
+        replay_mode,
+        replay_sink,
     )
     .await
     {
@@ -919,6 +911,7 @@ async fn replay_current_route_session_if_matching(
     agent: Option<&str>,
     profile: Option<&str>,
     session_id: &str,
+    replay: bool,
     replay_sink: tokio::sync::mpsc::UnboundedSender<ChannelOutput>,
 ) -> bool {
     let manager = state.channel_hub.workspace_thread_manager();
@@ -940,14 +933,15 @@ async fn replay_current_route_session_if_matching(
 
     let workspace_threads = state.channel_hub.workspace_thread_manager();
     let target = common::routing::ChannelTarget::for_route(route.clone());
+    let (replay_mode, replay_sink) = web_replay_request(replay, replay_sink);
     match common::channels::prompt::start_runtime_and_notify(
         &workspace_threads,
         &runtime,
         &state.channel_hub.plugin_host(),
         &target,
         true,
-        common::workspace::threads::runtime::StartupReplay::Replay,
-        Some(replay_sink),
+        replay_mode,
+        replay_sink,
     )
     .await
     {
@@ -1038,6 +1032,41 @@ async fn resolve_web_session_resume(
         session_id,
         cwd,
     })
+}
+
+type WebReplaySink = tokio::sync::mpsc::UnboundedSender<ChannelOutput>;
+
+/// Translate the client's replay wish into the start-notify arguments: a
+/// silent resume carries no sink, a replay is addressed to the requester.
+fn web_replay_request(replay: bool, sink: WebReplaySink) -> (StartupReplay, Option<WebReplaySink>) {
+    if replay {
+        (StartupReplay::Replay, Some(sink))
+    } else {
+        (StartupReplay::Silent, None)
+    }
+}
+
+/// Start (or restart) the route's bound session and stream its transcript,
+/// bracketed, to one connection.
+async fn replay_route_session_to_sink(state: &AppState, route: &RouteKey, sink: WebReplaySink) {
+    let workspace_threads = state.channel_hub.workspace_thread_manager();
+    let Ok(runtime) = workspace_threads.resolve_route_runtime(route).await else {
+        return;
+    };
+    let target = common::routing::ChannelTarget::for_route(route.clone());
+    if let Err(error) = common::channels::prompt::start_runtime_and_notify(
+        &workspace_threads,
+        &runtime,
+        &state.channel_hub.plugin_host(),
+        &target,
+        true,
+        StartupReplay::Replay,
+        Some(sink),
+    )
+    .await
+    {
+        send_web_system_text(state, route, &format!("❌ {}", error));
+    }
 }
 
 fn send_web_system_text(state: &AppState, route: &RouteKey, text: &str) {
@@ -1151,14 +1180,6 @@ mod tests {
         assert!(super::sanitize_chat_id(Some("web:abc")).is_none());
         assert!(super::sanitize_chat_id(Some("../secret")).is_none());
         assert!(super::sanitize_chat_id(Some(&"a".repeat(129))).is_none());
-    }
-
-    #[test]
-    fn explicit_chat_id_replays_initial_route_history() {
-        assert!(!super::should_replay_initial_route_history(&None));
-        assert!(super::should_replay_initial_route_history(&Some(
-            "ws_thread".to_string()
-        )));
     }
 
     #[test]

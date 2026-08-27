@@ -85,7 +85,7 @@ async fn handle_owner_chat_socket(
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     state
         .web_channel
-        .register_connection(&route, connection_id.clone(), tx, true)
+        .register_connection(&route, connection_id.clone(), tx)
         .await;
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<ChatEvent>();
     let mut refresh_rx = state.preview_refresh_tx.subscribe();

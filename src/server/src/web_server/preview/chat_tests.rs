@@ -131,17 +131,17 @@ fn owner_chat_accepts_a_paired_remote_server_preview() {
 }
 
 #[tokio::test]
-async fn unregistering_preview_connection_preserves_route_replay() {
+async fn unregistering_preview_connection_keeps_route_state_without_history() {
     let manager = WebChannelManager::new();
     let route = RouteKey::new("web", "ws_preview_lifecycle");
     let (first_tx, mut first_rx) = manager.sender();
     manager
-        .register_connection(&route, "first".to_string(), first_tx, true)
+        .register_connection(&route, "first".to_string(), first_tx)
         .await;
     manager
         .dispatch_output(ChannelOutput::SystemText {
             route: route.clone(),
-            text: "kept after disconnect".to_string(),
+            text: "live delivery".to_string(),
             reply_to: None,
         })
         .await;
@@ -152,18 +152,23 @@ async fn unregistering_preview_connection_preserves_route_replay() {
 
     manager.unregister_connection(&route, "first").await;
 
+    // Reconnects get live output only; there is no automatic history dump.
     let (second_tx, mut second_rx) = manager.sender();
     manager
-        .register_connection(&route, "second".to_string(), second_tx, true)
+        .register_connection(&route, "second".to_string(), second_tx)
         .await;
-    assert_eq!(
-        second_rx.try_recv().expect("replayed delivery"),
-        ChannelOutput::SystemText {
-            route,
-            text: "kept after disconnect".to_string(),
+    assert!(second_rx.try_recv().is_err());
+    manager
+        .dispatch_output(ChannelOutput::SystemText {
+            route: route.clone(),
+            text: "next delivery".to_string(),
             reply_to: None,
-        }
-    );
+        })
+        .await;
+    assert!(matches!(
+        second_rx.try_recv().expect("second delivery"),
+        ChannelOutput::SystemText { .. }
+    ));
 }
 
 #[tokio::test]
@@ -173,7 +178,7 @@ async fn stale_preview_session_defers_user_message_until_successor_is_ready() {
     manager.set_route_agent(&route, "codex".to_string()).await;
     let (tx, mut rx) = manager.sender();
     manager
-        .register_connection(&route, "owner".to_string(), tx, false)
+        .register_connection(&route, "owner".to_string(), tx)
         .await;
     manager
         .dispatch_output(ChannelOutput::SessionReady {
