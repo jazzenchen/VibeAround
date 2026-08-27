@@ -427,6 +427,7 @@ async fn handle_chat_socket(
                             }
                             let task_state = state.clone();
                             let task_route = active_route.clone();
+                            let task_sink = tx.clone();
                             direct_resume_task = Some(tokio::spawn(async move {
                                 apply_web_session_resume_now(
                                     &task_state,
@@ -435,6 +436,7 @@ async fn handle_chat_socket(
                                     profile,
                                     session_id,
                                     cwd,
+                                    task_sink,
                                 )
                                 .await;
                             }));
@@ -822,6 +824,7 @@ async fn apply_web_session_resume_now(
     profile: Option<String>,
     session_id: String,
     cwd: Option<String>,
+    replay_sink: tokio::sync::mpsc::UnboundedSender<ChannelOutput>,
 ) {
     let requested_agent = agent
         .as_deref()
@@ -839,6 +842,7 @@ async fn apply_web_session_resume_now(
                 requested_agent.as_deref(),
                 requested_profile.as_deref(),
                 &requested_session_id,
+                replay_sink,
             )
             .await;
         }
@@ -883,6 +887,7 @@ async fn apply_web_session_resume_now(
         &target,
         true,
         common::workspace::threads::runtime::StartupReplay::Replay,
+        Some(replay_sink),
     )
     .await
     {
@@ -914,6 +919,7 @@ async fn replay_current_route_session_if_matching(
     agent: Option<&str>,
     profile: Option<&str>,
     session_id: &str,
+    replay_sink: tokio::sync::mpsc::UnboundedSender<ChannelOutput>,
 ) -> bool {
     let manager = state.channel_hub.workspace_thread_manager();
     let Ok(Some(runtime)) = manager.active_route_runtime(route).await else {
@@ -941,6 +947,7 @@ async fn replay_current_route_session_if_matching(
         &target,
         true,
         common::workspace::threads::runtime::StartupReplay::Replay,
+        Some(replay_sink),
     )
     .await
     {

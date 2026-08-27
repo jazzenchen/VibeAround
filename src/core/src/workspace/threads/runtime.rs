@@ -92,6 +92,8 @@ pub(crate) struct ThreadActivitySnapshot {
 pub(crate) struct ThreadRuntimeStart {
     pub(crate) session_id: String,
     pub(crate) host_started: bool,
+    /// Whether this start actually replayed the transcript via `session/load`.
+    pub(crate) replayed: bool,
 }
 
 impl AcpSessionRunner {

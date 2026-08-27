@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::agent::launch::{normalize_launch_profile_id, DIRECT_PROFILE_ID};
 use crate::agent::AgentClientHandler;
-use crate::channels::bridge_handler::ChannelBridgeHandler;
+use crate::channels::bridge_handler::{ChannelBridgeHandler, StartupReplayCapture};
 use crate::channels::plugin_host::PluginHost;
 use crate::channels::subagent_handler::{SubagentBridgeHandler, SubagentReportTracker};
 use crate::channels::types::{
@@ -57,6 +57,7 @@ pub(crate) async fn handle_prompt(
         &target,
         false,
         StartupReplay::Silent,
+        None,
         Some(cancellation.clone()),
     )
     .await?;
@@ -116,6 +117,7 @@ async fn handle_command(
                 target,
                 true,
                 StartupReplay::Silent,
+                None,
             )
             .await?
             {
@@ -189,6 +191,7 @@ async fn handle_command(
                 target,
                 true,
                 StartupReplay::Replay,
+                None,
             )
             .await?
             {
@@ -336,6 +339,7 @@ async fn switch_workspace(
         target,
         true,
         StartupReplay::Replay,
+        None,
     )
     .await?
     {
@@ -388,6 +392,7 @@ async fn switch_host(
                 channel_target,
                 true,
                 StartupReplay::Silent,
+                None,
             )
             .await?
             {
@@ -418,6 +423,7 @@ async fn switch_host(
                 channel_target,
                 true,
                 StartupReplay::Silent,
+                None,
             )
             .await?
             {
@@ -447,6 +453,7 @@ async fn switch_host(
         channel_target,
         true,
         StartupReplay::Silent,
+        None,
     )
     .await?
     {
@@ -482,6 +489,7 @@ async fn send_agent_command(
         target,
         false,
         StartupReplay::Silent,
+        None,
     )
     .await?
     {
@@ -569,6 +577,7 @@ async fn switch_session(
         target,
         true,
         StartupReplay::Replay,
+        None,
     )
     .await?
     {
@@ -593,6 +602,7 @@ pub async fn start_runtime_and_notify(
     target: &ChannelTarget,
     force_session_ready: bool,
     replay: StartupReplay,
+    replay_sink: Option<mpsc::UnboundedSender<ChannelOutput>>,
 ) -> acp::Result<bool> {
     start_runtime_and_notify_with_cancellation(
         workspace_threads,
@@ -601,12 +611,14 @@ pub async fn start_runtime_and_notify(
         target,
         force_session_ready,
         replay,
+        replay_sink,
         None,
     )
     .await
     .map(|started| started.expect("uncancellable runtime start cannot be cancelled"))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn start_runtime_and_notify_with_cancellation(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     runtime: &Arc<ThreadRuntime>,
@@ -614,6 +626,7 @@ async fn start_runtime_and_notify_with_cancellation(
     target: &ChannelTarget,
     force_session_ready: bool,
     replay: StartupReplay,
+    replay_sink: Option<mpsc::UnboundedSender<ChannelOutput>>,
     cancellation: Option<watch::Receiver<bool>>,
 ) -> acp::Result<Option<bool>> {
     let route = &target.route;
@@ -635,7 +648,16 @@ async fn start_runtime_and_notify_with_cancellation(
             .await
             .map_err(internal_error)?;
     }
-    let handler = bridge_handler(workspace_threads, plugin_host, runtime, &before);
+    let replay_capture = replay_sink
+        .as_ref()
+        .map(|_| Arc::new(StartupReplayCapture::new()));
+    let handler = bridge_handler_with_capture(
+        workspace_threads,
+        plugin_host,
+        runtime,
+        &before,
+        replay_capture.clone(),
+    );
     let started = runtime.start(route, handler, cancellation, replay).await?;
     let Some(started) = started else {
         return Ok(None);
@@ -643,6 +665,31 @@ async fn start_runtime_and_notify_with_cancellation(
     let session_id = started.session_id;
     let after = runtime.state().await;
     let session_was_resumed = before.session_id.as_deref() == Some(session_id.as_str());
+
+    // Hand the captured transcript to the one connection that asked for it,
+    // bracketed so the client can reset and rebuild in place. When the start
+    // could not replay (gemini, IM routes, fresh sessions) no brackets are
+    // sent and the requester falls back to whatever it already renders.
+    if let (Some(sink), Some(capture)) = (&replay_sink, &replay_capture) {
+        let frames = capture.finish();
+        if started.replayed {
+            let _ = sink.send(ChannelOutput::ReplayStart {
+                route: route.clone(),
+                session_id: session_id.clone(),
+            });
+            for reply in frames {
+                let _ = sink.send(ChannelOutput::ThreadReply {
+                    route: route.clone(),
+                    reply_to: None,
+                    reply,
+                });
+            }
+            let _ = sink.send(ChannelOutput::ReplayDone {
+                route: route.clone(),
+                session_id: session_id.clone(),
+            });
+        }
+    }
 
     let agent_info = after
         .initialize
@@ -795,13 +842,24 @@ fn bridge_handler(
     runtime: &Arc<ThreadRuntime>,
     state: &ThreadRuntimeState,
 ) -> Arc<dyn AgentClientHandler> {
-    Arc::new(ChannelBridgeHandler::for_thread(
+    bridge_handler_with_capture(workspace_threads, plugin_host, runtime, state, None)
+}
+
+fn bridge_handler_with_capture(
+    workspace_threads: &Arc<WorkspaceThreadManager>,
+    plugin_host: &Arc<PluginHost>,
+    runtime: &Arc<ThreadRuntime>,
+    state: &ThreadRuntimeState,
+    startup_capture: Option<Arc<StartupReplayCapture>>,
+) -> Arc<dyn AgentClientHandler> {
+    Arc::new(ChannelBridgeHandler::for_thread_with_capture(
         Arc::clone(plugin_host),
         workspace_threads,
         state.workspace_id.clone(),
         state.thread_id.clone(),
         state.host_binding.clone(),
         runtime.active_turn_target(),
+        startup_capture,
     ))
 }
 

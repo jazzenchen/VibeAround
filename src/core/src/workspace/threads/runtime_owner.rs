@@ -274,7 +274,7 @@ impl ThreadOwner {
                 .await?;
             // A message reviving a parked host continues the session the
             // surface already rendered — never a replay.
-            let Some(agent) = self
+            let Some((agent, _)) = self
                 .ensure_agent(
                     &runtime,
                     &target.route,
@@ -407,7 +407,7 @@ impl ThreadOwner {
             return Ok(None);
         }
         let host_started = self.host.as_ref().is_none_or(|host| !host.is_live());
-        let Some(agent) = self
+        let Some((agent, replayed)) = self
             .ensure_agent(runtime, route, handler, cancellation.as_mut(), replay)
             .await?
         else {
@@ -424,6 +424,7 @@ impl ThreadOwner {
         Ok(Some(ThreadRuntimeStart {
             session_id,
             host_started,
+            replayed,
         }))
     }
 
@@ -547,7 +548,7 @@ impl ThreadOwner {
         handler: Arc<dyn AgentClientHandler>,
         cancellation: Option<&mut watch::Receiver<bool>>,
         replay: StartupReplay,
-    ) -> acp::Result<Option<Arc<Agent>>> {
+    ) -> acp::Result<Option<(Arc<Agent>, bool)>> {
         if cancellation
             .as_ref()
             .is_some_and(|cancellation| *cancellation.borrow())
@@ -555,7 +556,21 @@ impl ThreadOwner {
             return Ok(None);
         }
         if let Some(host) = self.host.as_ref().filter(|host| host.is_live()) {
-            return Ok(Some(Arc::clone(&host.agent)));
+            let prospective =
+                host_startup_session(route, self.session_id.clone(), &self.thread, replay);
+            if !matches!(prospective, StartupSession::Load(_)) {
+                return Ok(Some((Arc::clone(&host.agent), false)));
+            }
+            // A replay was requested and this start would deliver one via
+            // session/load — a live host cannot re-load its own session, so
+            // replace the generation. Starts queue behind an active prompt,
+            // so this never interrupts a running turn.
+            tracing::info!(
+                thread_id = %self.thread.id,
+                agent_id = %host.agent.id(),
+                "restarting live ACP host to replay the session transcript"
+            );
+            self.shutdown_host_generation(runtime).await;
         }
         if let Some(stale) = self.host.as_ref() {
             let thread_id = self.thread.id.clone();
@@ -653,6 +668,8 @@ impl ThreadOwner {
         });
         self.publish_runtime_state();
 
+        let replayed = matches!(startup_session, StartupSession::Load(_))
+            && ready.startup_session_id.is_some();
         if let Some(session_id) = ready.startup_session_id {
             self.observe_session(
                 runtime,
@@ -665,7 +682,7 @@ impl ThreadOwner {
             self.session_id = None;
             self.publish_runtime_state();
         }
-        Ok(Some(ready.agent))
+        Ok(Some((ready.agent, replayed)))
     }
 
     async fn ensure_session(
