@@ -793,7 +793,9 @@ impl TuiApp {
             | ChatEvent::CommandMenu { .. }
             | ChatEvent::MultiAgentTurn { .. }
             | ChatEvent::SubagentStatus { .. }
-            | ChatEvent::SubagentAcpNotification { .. } => {}
+            | ChatEvent::SubagentAcpNotification { .. }
+            | ChatEvent::ReplayStart { .. }
+            | ChatEvent::ReplayDone { .. } => {}
         }
         self.chat_state.apply_event(event);
     }

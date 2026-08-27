@@ -409,6 +409,8 @@ pub struct PreviewsResponse {
 /// { "kind": "command_menu", "system_commands": [...], "agent_commands": [...] }
 /// { "kind": "session_info", "info": { "threadId": "wt_...", "agent": { ... } } }
 /// { "kind": "turn_status", "active": false }
+/// { "kind": "replay_start", "session_id": "01HX..." }
+/// { "kind": "replay_done", "session_id": "01HX..." }
 /// { "kind": "preview_refresh" }
 /// { "kind": "error", "error": "spawn failed: ..." }
 /// ```
@@ -456,6 +458,16 @@ pub enum ChatEvent {
     },
     TurnStatus {
         active: bool,
+    },
+    /// Brackets around a session-transcript replay. Everything between the
+    /// two markers re-renders history for `session_id`: the client resets its
+    /// view of that session on `replay_start` and treats frames until
+    /// `replay_done` as the authoritative transcript.
+    ReplayStart {
+        session_id: String,
+    },
+    ReplayDone {
+        session_id: String,
     },
     PreviewRefresh,
     SystemText {

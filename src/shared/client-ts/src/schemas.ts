@@ -418,6 +418,17 @@ export const ChatEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("turn_status"),
     active: z.boolean(),
   }),
+  // Brackets around a session-transcript replay: the client resets its view
+  // of `session_id` on replay_start and treats frames until replay_done as
+  // the authoritative transcript.
+  z.object({
+    kind: z.literal("replay_start"),
+    session_id: z.string(),
+  }),
+  z.object({
+    kind: z.literal("replay_done"),
+    session_id: z.string(),
+  }),
   z.object({
     kind: z.literal("preview_refresh"),
   }),

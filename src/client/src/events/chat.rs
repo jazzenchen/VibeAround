@@ -49,6 +49,12 @@ pub enum ChatEvent {
     TurnStatus {
         active: bool,
     },
+    ReplayStart {
+        session_id: String,
+    },
+    ReplayDone {
+        session_id: String,
+    },
     PreviewRefresh,
     SystemText {
         text: String,

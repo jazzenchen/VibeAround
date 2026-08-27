@@ -179,6 +179,17 @@ pub enum ChannelOutput {
         request_id: String,
         payload: serde_json::Value,
     },
+    /// Brackets around a session-transcript replay delivered to a single
+    /// requesting connection. Replay frames ride between the two markers on
+    /// that connection's sink only — they are never broadcast or recorded.
+    ReplayStart {
+        route: RouteKey,
+        session_id: String,
+    },
+    ReplayDone {
+        route: RouteKey,
+        session_id: String,
+    },
     MultiAgentTurn {
         route: RouteKey,
         turn: crate::workspace::threads::MultiAgentTurn,
@@ -208,6 +219,8 @@ impl ChannelOutput {
             | Self::CommandMenu { route, .. }
             | Self::TurnStatus { route, .. }
             | Self::PermissionRequest { route, .. }
+            | Self::ReplayStart { route, .. }
+            | Self::ReplayDone { route, .. }
             | Self::MultiAgentTurn { route, .. }
             | Self::SubagentStatus { route, .. }
             | Self::SubagentAcp { route, .. } => route,

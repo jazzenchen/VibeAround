@@ -43,6 +43,8 @@ pub(in crate::web_server) fn output_to_chat_event(output: ChannelOutput) -> Chat
             ChatEvent::SubagentAcpNotification { agent, payload }
         }
         ChannelOutput::TurnStatus { active, .. } => ChatEvent::TurnStatus { active },
+        ChannelOutput::ReplayStart { session_id, .. } => ChatEvent::ReplayStart { session_id },
+        ChannelOutput::ReplayDone { session_id, .. } => ChatEvent::ReplayDone { session_id },
     }
 }
 
