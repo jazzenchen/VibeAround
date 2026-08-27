@@ -78,6 +78,20 @@ pub(super) fn local_agent_api_enabled() -> bool {
     common::config::ensure_loaded().local_agent_api.enabled
 }
 
+/// The direct profile runs an agent on its own native credentials, and that
+/// path is closed over the API: only managed profiles are served. Answered as
+/// 429 so callers treat it as a hard limit rather than a retryable fault.
+pub(super) fn direct_profile_response(profile_id: &str) -> Option<Response> {
+    let profile = common::agent::launch::normalize_launch_profile_id(Some(profile_id));
+    if common::agent::launch::profile_uses_vibearound_credentials(&profile) {
+        return None;
+    }
+    Some(json_error(
+        StatusCode::TOO_MANY_REQUESTS,
+        "local agent API access with the direct profile is limited; use a managed profile",
+    ))
+}
+
 pub(super) fn local_agent_api_disabled_response() -> Response {
     json_error(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -225,6 +239,20 @@ mod tests {
         ContentBlock as UniversalContentBlock, Extensions, Role, UniversalItem, UniversalRequest,
         Usage,
     };
+
+    #[test]
+    fn direct_profile_aliases_are_rejected_with_429() {
+        for profile in ["direct", "Default", "none", "OFF", "", "  "] {
+            let response =
+                direct_profile_response(profile).expect("direct profile alias is rejected");
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+    }
+
+    #[test]
+    fn managed_profiles_pass_the_direct_profile_gate() {
+        assert!(direct_profile_response("deepseek-8uaepyrmp4b6").is_none());
+    }
 
     #[test]
     fn extracts_model_ids_from_acp_model_config_options() {
