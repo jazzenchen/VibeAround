@@ -514,6 +514,30 @@ fn repeated_chat_socket_closed_events_do_not_duplicate_notices() {
 }
 
 #[test]
+fn chat_socket_disconnect_enters_terminal_state_without_duplicate_notices() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_connected = true;
+    let initial_messages = app.chat_messages.len();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected);
+
+    assert!(!app.chat_connected);
+    assert!(app.chat_disconnected);
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+    let notice = &app.chat_messages[initial_messages];
+    assert_eq!(notice.role, ChatRole::Notice);
+    assert!(notice.text.contains("reconnect"), "notice: {}", notice.text);
+    assert!(app
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.contains("reconnect")));
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected);
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+}
+
+#[test]
 fn chat_input_editing_supports_paste_multiline_and_word_delete() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);

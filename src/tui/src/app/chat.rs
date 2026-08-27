@@ -722,6 +722,17 @@ impl TuiApp {
                     self.push_notice("Chat websocket closed.");
                 }
             }
+            ChatSocketEvent::Disconnected => {
+                const DISCONNECTED_NOTICE: &str = "Daemon unreachable. Type `reconnect` to retry.";
+                let duplicate_notice = self.last_notice_is(DISCONNECTED_NOTICE);
+                self.chat_connected = false;
+                self.chat_disconnected = true;
+                self.end_turn();
+                self.set_error(ErrorScope::Chat, DISCONNECTED_NOTICE);
+                if !duplicate_notice {
+                    self.push_notice(DISCONNECTED_NOTICE);
+                }
+            }
             ChatSocketEvent::Error(error) => {
                 let duplicate_error = self.error_is(ErrorScope::Chat, &error);
                 self.chat_connected = false;

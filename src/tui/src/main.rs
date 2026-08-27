@@ -27,6 +27,7 @@ mod detail;
 mod popup;
 mod render;
 mod runtime_socket;
+mod socket_retry;
 mod theme;
 mod transport;
 
@@ -81,6 +82,7 @@ async fn run_dashboard(
         Arc::clone(&endpoint),
         chat_rx,
         socket_event_tx,
+        app.reconnect_signal(),
     ));
     let (runtime_event_tx, mut runtime_event_rx) = mpsc::unbounded_channel::<RuntimeSocketEvent>();
     let runtime_task = tokio::spawn(run_runtime_sockets(endpoint, runtime_event_tx));
