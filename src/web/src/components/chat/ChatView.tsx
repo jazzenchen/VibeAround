@@ -1467,6 +1467,31 @@ export function ChatView({
   const handleSubmit = useCallback(() => {
     const text = input.trim();
     if (!text && attachments.length === 0) return;
+    // Web-only rescue command: drop the local transcript cache and rebuild
+    // this session's view from the agent's own record. Intercepted even
+    // while a replay is pending — a stuck replay is exactly when it helps.
+    if (text === "/reload") {
+      const reloadAgentId = activeSpec?.agentId ?? selectedAgent;
+      const reloadProfileId = activeSpec?.profileId ?? selectedProfileId;
+      const reloadLaunchSession = activeLaunchSession ?? selectedLaunchSession;
+      if (reloadLaunchSession && activeRuntimeActions?.resumeSession) {
+        void deleteCachedChatSession({
+          agentId: reloadAgentId,
+          workspace: reloadLaunchSession.workspace,
+          sessionId: reloadLaunchSession.session_id,
+        });
+        activeRuntimeActions.resumeSession(
+          {
+            agentId: reloadAgentId,
+            profileId: reloadProfileId,
+            launchSession: reloadLaunchSession,
+          },
+          { forceReplay: true },
+        );
+      }
+      setInput("");
+      return;
+    }
     if (attachmentsUploading) return;
     if (replayBlocksInput) return;
     if (!sendMessage) return;
@@ -1515,6 +1540,7 @@ export function ChatView({
       setSessionSelections((prev) => ({ ...prev, [messageAgentId]: { kind: "current" } }));
     }
   }, [
+    activeRuntimeActions,
     activeRuntimeKey,
     activeLaunchSession,
     activeSessionSelection,
