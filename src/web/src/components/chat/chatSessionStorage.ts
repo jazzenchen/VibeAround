@@ -16,13 +16,14 @@ export interface StoredLaunchSelection {
   profileId?: string;
 }
 
+// Labels are deliberately not stored: they are derived state, resolved live
+// from the profiles list at render time. Persisting one computed before that
+// list loaded is how a raw profile id used to get frozen into storage.
 export interface StoredActiveLaunchSession {
   agentId: string;
   hostAgentId?: string;
   hostProfileId?: string;
-  hostProfileLabel?: string;
   hostProvider?: string;
-  hostProviderLabel?: string;
   sessionId: string;
   workspace: string;
   title?: string;
@@ -87,11 +88,7 @@ export function readStoredActiveLaunchSession():
       agentId: parsed.agentId,
       hostAgentId: typeof parsed.hostAgentId === "string" ? parsed.hostAgentId : undefined,
       hostProfileId: typeof parsed.hostProfileId === "string" ? parsed.hostProfileId : undefined,
-      hostProfileLabel:
-        typeof parsed.hostProfileLabel === "string" ? parsed.hostProfileLabel : undefined,
       hostProvider: typeof parsed.hostProvider === "string" ? parsed.hostProvider : undefined,
-      hostProviderLabel:
-        typeof parsed.hostProviderLabel === "string" ? parsed.hostProviderLabel : undefined,
       sessionId: parsed.sessionId,
       workspace: parsed.workspace,
       title: typeof parsed.title === "string" ? parsed.title : undefined,
@@ -113,9 +110,7 @@ export function storedActiveLaunchSessionFromInfo(
     agentId: session.agent_id,
     hostAgentId: session.host_agent_id ?? undefined,
     hostProfileId: session.host_profile_id ?? undefined,
-    hostProfileLabel: session.host_profile_label ?? undefined,
     hostProvider: session.host_provider ?? undefined,
-    hostProviderLabel: session.host_provider_label ?? undefined,
     sessionId: session.session_id,
     workspace: session.workspace,
     title: session.title,
@@ -134,9 +129,7 @@ export function storedActiveLaunchSessionToInfo(
     agent_id: session.agentId,
     host_agent_id: session.hostAgentId,
     host_profile_id: session.hostProfileId,
-    host_profile_label: session.hostProfileLabel,
     host_provider: session.hostProvider,
-    host_provider_label: session.hostProviderLabel,
     session_id: session.sessionId,
     workspace: session.workspace,
     title: session.title ?? session.sessionId,

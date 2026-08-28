@@ -389,10 +389,12 @@ export function ChatView({
   );
   const profileLabelForId = useCallback(
     (profileId?: string | null, fallback?: string | null) => {
-      if (fallback) return fallback;
-      if (!profileId) return undefined;
+      if (!profileId) return fallback ?? undefined;
       if (profileId === DIRECT_PROFILE_ID) return t("Native");
-      return profilesById.get(profileId)?.label ?? profileId;
+      // The live profiles list is the source of truth; a caller-supplied
+      // fallback (often a persisted value that may have degraded to the raw
+      // id) only covers the gap until the list has loaded.
+      return profilesById.get(profileId)?.label ?? fallback ?? profileId;
     },
     [profilesById, t],
   );
@@ -786,7 +788,9 @@ export function ChatView({
               responseProfileId && responseProfileId !== DIRECT_PROFILE_ID
                 ? profilesById.get(responseProfileId)
                 : undefined;
-            const responseProfileLabel = profileLabelForId(responseProfileId);
+            // Only a label the profiles list actually knows is worth keeping;
+            // deriving one before the list loads would freeze the raw id.
+            const responseProfileLabel = responseProfile?.label;
             const launchSession = current.launchSession
               ? {
                   ...current.launchSession,
@@ -832,7 +836,9 @@ export function ChatView({
               responseProfileId && responseProfileId !== DIRECT_PROFILE_ID
                 ? profilesById.get(responseProfileId)
                 : undefined;
-            const responseProfileLabel = profileLabelForId(responseProfileId);
+            // Only a label the profiles list actually knows is worth keeping;
+            // deriving one before the list loads would freeze the raw id.
+            const responseProfileLabel = responseProfile?.label;
             const launchSessionUpdate = {
               thread_id: threadId,
               host_agent_id: response.agent_id || launchSession.host_agent_id,
@@ -1191,22 +1197,20 @@ export function ChatView({
       defaultWorkspacePath;
     if (!sessionId || !workspace) return;
     const storedProfileId = spec.launchSession?.host_profile_id ?? spec.profileId;
-    const storedProfileLabel = profileLabelForId(
-      storedProfileId,
-      spec.launchSession?.host_profile_label,
-    );
+    // Persist the id only. Labels are derived state resolved live from the
+    // profiles list; persisting one computed before that list loads is how
+    // the raw id used to get frozen into storage.
     const activeSessionInfo = {
       agent_id: spec.launchSession?.agent_id ?? spec.agentId,
       host_agent_id: spec.launchSession?.host_agent_id ?? spec.agentId,
       host_profile_id: storedProfileId,
-      host_profile_label: storedProfileLabel,
+      host_profile_label: spec.launchSession?.host_profile_label,
       host_provider:
         spec.launchSession?.host_provider ??
         (storedProfileId && storedProfileId !== DIRECT_PROFILE_ID
           ? profilesById.get(storedProfileId)?.provider
           : undefined),
-      host_provider_label:
-        spec.launchSession?.host_provider_label ?? storedProfileLabel,
+      host_provider_label: spec.launchSession?.host_provider_label,
       session_id: sessionId,
       workspace,
       title:
