@@ -18,7 +18,6 @@ use va_ai_api_bridge::{
 };
 
 mod completion;
-mod content_policy;
 mod google_code_assist;
 mod image_resolver;
 mod local_agent;
@@ -35,7 +34,6 @@ use completion::{
     decode_completion_response, translated_completion_events_response,
     translated_completion_response, UpstreamResponseTransform,
 };
-use content_policy::{sanitize_request_content_with_capabilities, ContentSanitization};
 pub use local_agent::{
     local_agent_chat_completions_handler, local_agent_messages_handler, local_agent_models_handler,
     local_agent_responses_handler,
@@ -177,20 +175,7 @@ pub(super) async fn bridge_handler(
                     return record_json_error(record.as_ref(), status, &message);
                 }
             };
-            let sanitization = sanitize_request_content_with_capabilities(
-                &upstream.profile,
-                &target_api_type,
-                &mut content_request,
-                model_mapping.as_ref().map(|mapping| &mapping.capabilities),
-            );
-            log_content_sanitization(
-                &profile_id,
-                &target_api_type,
-                client_protocol,
-                upstream.protocol,
-                sanitization,
-            );
-            if image_resolution.is_some() || sanitization.changed() {
+            if image_resolution.is_some() {
                 agent_request = match upstream.protocol.encode_upstream_request(&content_request) {
                     Ok(request) => request,
                     Err(error) => {
@@ -325,19 +310,6 @@ pub(super) async fn bridge_handler(
             return record_json_error(record.as_ref(), status, &message);
         }
     };
-    let sanitization = sanitize_request_content_with_capabilities(
-        &upstream.profile,
-        &target_api_type,
-        &mut universal_request,
-        model_mapping.as_ref().map(|mapping| &mapping.capabilities),
-    );
-    log_content_sanitization(
-        &profile_id,
-        &target_api_type,
-        client_protocol,
-        upstream.protocol,
-        sanitization,
-    );
     let request_needs_web_search =
         server_tools::request_needs_web_search_fallback(&universal_request);
     let can_use_native_web_search = target_model_capabilities.web_search
@@ -1385,28 +1357,6 @@ fn reasoning_effort_enabled(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "off" | "none" | "disabled" | "disable" | "false"
     )
-}
-
-fn log_content_sanitization(
-    profile_id: &str,
-    target_api_type: &str,
-    client_protocol: BridgeProtocol,
-    upstream_protocol: BridgeProtocol,
-    sanitization: ContentSanitization,
-) {
-    if !sanitization.changed() {
-        return;
-    }
-    tracing::warn!(
-        target: "server::web_server::api_bridge",
-        profile_id = %profile_id,
-        target_api_type = %target_api_type,
-        client_protocol = ?client_protocol,
-        upstream_protocol = ?upstream_protocol,
-        image_omitted = sanitization.image_omitted,
-        file_omitted = sanitization.file_omitted,
-        "API bridge omitted unsupported request content before upstream forwarding"
-    );
 }
 
 fn client_api_type_from_scope(scope: &str) -> Option<&str> {
