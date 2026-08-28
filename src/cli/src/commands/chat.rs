@@ -520,7 +520,9 @@ fn render_event(
         | ChatEvent::MultiAgentTurn { .. }
         | ChatEvent::SubagentStatus { .. }
         | ChatEvent::SubagentAcpNotification { .. }
-        | ChatEvent::TurnStatus { .. } => {}
+        | ChatEvent::TurnStatus { .. }
+        | ChatEvent::ReplayStart { .. }
+        | ChatEvent::ReplayDone { .. } => {}
     }
     Ok(())
 }
