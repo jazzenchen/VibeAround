@@ -163,15 +163,6 @@ async fn handle_local_agent_request(
         Ok(request) => request,
         Err(error) => return json_error(StatusCode::BAD_REQUEST, &error.to_string()),
     };
-    if let Some(file_id) = prompt::unresolvable_file_reference(&request) {
-        return json_error(
-            StatusCode::BAD_REQUEST,
-            &format!(
-                "file reference `{file_id}` cannot be resolved: the local agent API has no \
-                 files store; embed the content as base64 (or a fetchable URL) instead"
-            ),
-        );
-    }
     let model_id = request
         .model
         .clone()
@@ -573,70 +564,6 @@ mod tests {
         let blocks = prompt::tail_segment_to_acp_prompt(&segment).expect("prompt builds");
         assert!(block_text(&blocks[0]).starts_with("[tool_result:call-1]"));
         assert!(blocks.iter().any(|block| block_text(block) == "[user]"));
-    }
-
-    #[test]
-    fn file_id_without_content_is_flagged_as_unresolvable() {
-        let mut extensions = Extensions::new();
-        extensions.insert("file_id".to_string(), serde_json::json!("file-abc123"));
-        let request = UniversalRequest {
-            input: vec![UniversalItem::Message {
-                role: Role::User,
-                id: None,
-                content: vec![UniversalContentBlock::File {
-                    media_type: Some("application/pdf".to_string()),
-                    filename: Some("report.pdf".to_string()),
-                    url: None,
-                    data: None,
-                    extensions,
-                }],
-                extensions: Extensions::new(),
-            }],
-            ..UniversalRequest::default()
-        };
-
-        assert_eq!(
-            prompt::unresolvable_file_reference(&request).as_deref(),
-            Some("file-abc123")
-        );
-    }
-
-    #[test]
-    fn embedded_and_linked_files_are_resolvable() {
-        let mut extensions = Extensions::new();
-        extensions.insert("file_id".to_string(), serde_json::json!("file-abc123"));
-        let embedded = UniversalRequest {
-            input: vec![UniversalItem::Message {
-                role: Role::User,
-                id: None,
-                content: vec![UniversalContentBlock::File {
-                    media_type: Some("application/pdf".to_string()),
-                    filename: None,
-                    url: None,
-                    data: Some("AAAA".to_string()),
-                    extensions: extensions.clone(),
-                }],
-                extensions: Extensions::new(),
-            }],
-            ..UniversalRequest::default()
-        };
-        assert_eq!(prompt::unresolvable_file_reference(&embedded), None);
-
-        let linked = UniversalRequest {
-            input: vec![UniversalItem::Message {
-                role: Role::User,
-                id: None,
-                content: vec![UniversalContentBlock::Image {
-                    media_type: Some("image/png".to_string()),
-                    url: Some("https://example.test/logo.png".to_string()),
-                    data: None,
-                    extensions,
-                }],
-                extensions: Extensions::new(),
-            }],
-            ..UniversalRequest::default()
-        };
-        assert_eq!(prompt::unresolvable_file_reference(&linked), None);
     }
 
     #[test]

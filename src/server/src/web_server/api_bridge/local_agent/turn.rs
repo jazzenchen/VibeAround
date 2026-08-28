@@ -671,29 +671,21 @@ async fn apply_local_agent_permission_mode(
     let Some(modes) = modes else {
         return Ok(());
     };
+    // Aliases translate to the agent's advertised id when one matches;
+    // anything else goes through as-is and the agent judges it — its own
+    // invalid-params error flows back, no pre-check on our side.
     let canonical = canonical_permission_mode(requested);
-    let Some(mode) = modes.available_modes.iter().find(|mode| {
-        let id = mode.id.to_string();
-        id == requested || Some(id.as_str()) == canonical
-    }) else {
-        return Err(acp::Error::new(
-            -32602,
-            format!(
-                "unknown permission mode `{requested}`; available modes: {}",
-                modes
-                    .available_modes
-                    .iter()
-                    .map(|mode| mode.id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        ));
-    };
+    let mode_id = modes
+        .available_modes
+        .iter()
+        .find(|mode| {
+            let id = mode.id.to_string();
+            id == requested || Some(id.as_str()) == canonical
+        })
+        .map(|mode| mode.id.clone())
+        .unwrap_or_else(|| acp::SessionModeId::new(requested.to_string()));
     agent
-        .set_session_mode(acp::SetSessionModeRequest::new(
-            session_id.clone(),
-            mode.id.clone(),
-        ))
+        .set_session_mode(acp::SetSessionModeRequest::new(session_id.clone(), mode_id))
         .await?;
     Ok(())
 }
@@ -723,22 +715,8 @@ async fn apply_local_agent_model(
     let Some(config_id) = model_config_option_id(config_options) else {
         return Ok(());
     };
-    // When the agent enumerates its models, reject an unknown one here with
-    // the valid ids instead of relaying an opaque agent error.
-    let known = super::models::models_from_acp_config_options(config_options.unwrap_or_default());
-    if !known.is_empty() && !known.iter().any(|model| model.id == model_id) {
-        return Err(acp::Error::new(
-            -32602,
-            format!(
-                "unknown model `{model_id}`; available models: {}",
-                known
-                    .iter()
-                    .map(|model| model.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        ));
-    }
+    // No membership pre-check: the agent owns its model list and its own
+    // invalid-params error flows back to the client.
     agent
         .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
             session_id.clone(),

@@ -1,7 +1,6 @@
 use agent_client_protocol::schema::v1 as acp;
-use serde_json::Value;
 use va_ai_api_bridge::{
-    ContentBlock as UniversalContentBlock, Extensions, Role, UniversalItem, UniversalRequest,
+    ContentBlock as UniversalContentBlock, Role, UniversalItem, UniversalRequest,
 };
 
 const SEED_ENVELOPE_PREAMBLE: &str =
@@ -274,51 +273,6 @@ fn universal_file_to_acp_block(
     )))
 }
 
-/// A file referenced by provider id that nothing on this side can resolve:
-/// the block carries neither embedded data nor a fetchable URL, only a
-/// `file_id` pointing at a files store the local agent API does not offer.
-/// Such requests are refused up front instead of prompting the agent with a
-/// dead reference.
-pub(super) fn unresolvable_file_reference(request: &UniversalRequest) -> Option<String> {
-    let item_blocks = request.input.iter().flat_map(|item| match item {
-        UniversalItem::Message { content, .. } | UniversalItem::ToolResult { content, .. } => {
-            content.as_slice()
-        }
-        _ => &[] as &[UniversalContentBlock],
-    });
-    request
-        .instructions
-        .iter()
-        .chain(item_blocks)
-        .find_map(block_unresolvable_file_id)
-        .map(ToOwned::to_owned)
-}
-
-fn block_unresolvable_file_id(block: &UniversalContentBlock) -> Option<&str> {
-    let (url, data, extensions) = match block {
-        UniversalContentBlock::Image {
-            url,
-            data,
-            extensions,
-            ..
-        }
-        | UniversalContentBlock::File {
-            url,
-            data,
-            extensions,
-            ..
-        } => (url.as_deref(), data.as_deref(), extensions),
-        _ => return None,
-    };
-    if media_payload(first_non_empty(data, data_url_source(url))).is_some() {
-        return None;
-    }
-    if non_data_uri(url).is_some() {
-        return None;
-    }
-    extension_string(extensions, "file_id")
-}
-
 struct MediaPayload {
     media_type: Option<String>,
     data: String,
@@ -392,10 +346,6 @@ fn embedded_resource_uri(kind: &str, name: &str) -> String {
         "urn:vibearound:local-agent:{kind}:{}",
         local_agent_id_part(name)
     )
-}
-
-fn extension_string<'a>(extensions: &'a Extensions, key: &str) -> Option<&'a str> {
-    first_non_empty(extensions.get(key).and_then(Value::as_str), None)
 }
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
