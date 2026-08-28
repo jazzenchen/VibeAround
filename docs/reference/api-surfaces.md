@@ -52,13 +52,20 @@ curl http://127.0.0.1:12358/va/local-api/moonshot/curl-test/openai-chat/v1/chat/
 Agent-as-API — the same request shape, but executed by a hosted coding agent (tools, workspace and all) instead of a bare model:
 
 ```bash
-curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
+curl http://127.0.0.1:12358/va/local-agent/claude/{managed-profile-id}/v1/chat/completions \
   -H "Authorization: Bearer $LOCAL_AGENT_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"model": "claude", "messages": [{"role": "user", "content": "what does this repo do?"}]}'
 ```
 
 Add `"stream": true` to either body for SSE streaming. The `{scope}` path segment (`curl-test` above) is free-form launch metadata — anything URL-safe works for manual calls.
+
+### Agent-as-API contract
+
+- **Opt-in per agent.** `local_agent_api.enabled` gates the route family; each agent must also be listed in `local_agent_api.agents` (Desktop → Local API → the per-agent switch). A not-opted-in agent answers **403**; the **direct profile is always refused (429)** — use a managed profile.
+- **Stateful conversations.** Responses-protocol requests chain `previous_response_id` (bridge-minted; only the latest id is continuable — older ids answer 409, unknown ids 404 after a daemon restart). Chat/messages requests may carry `x-vibearound-conversation: <your-key>` (echoed back) to share one persistent backend session per key: known conversations receive only the new tail of the transcript, new or lost ones are seeded from the full history you send anyway. Keyless chat/messages requests stay sessionless one-shots. A new request on a busy conversation cancels and displaces the in-flight turn. Client-side edits to already-answered history do not take effect — change the key to start over; changed system instructions reseed automatically.
+- **Headers.** `x-vibearound-cwd` selects the workspace; `x-vibearound-permission-mode` (`default` / `plan` / `acceptEdits` / `bypassPermissions` / `dontAsk`) applies when a fresh backend session is created. Tool permission prompts over the API are auto-refused, so autonomous use pairs with `acceptEdits` or `bypassPermissions`.
+- **Progress.** Tool activity and plan updates stream on the reasoning channel (`reasoning_content` / thinking blocks), so tool-heavy turns show progress instead of a silent stream. The spawn→session startup chain has a 180 s server-side deadline; the turn itself is unbounded — disconnect or send a displacing request to stop it.
 
 ## WebSocket endpoints
 
