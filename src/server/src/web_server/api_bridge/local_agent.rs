@@ -244,7 +244,7 @@ async fn handle_local_agent_request(
             prompt,
         };
         return if request.stream {
-            turn::local_agent_stream_response(turn, protocol)
+            turn::local_agent_stream_response(turn, protocol).await
         } else {
             turn::local_agent_completion_response(turn, protocol).await
         };
@@ -275,10 +275,10 @@ async fn handle_local_agent_request(
         );
     }
 
-    if protocol == BridgeProtocol::OpenAiResponses {
-        conversations::registry().advance_response_id(&conversation, &response_id);
-    }
-
+    // The Responses chain advances inside the prepare step — only once the
+    // startup chain succeeded — so a refused request leaves the previous
+    // response id continuable.
+    let advance_chain = protocol == BridgeProtocol::OpenAiResponses;
     let turn = turn::ConversationTurn {
         conversation,
         model_id,
@@ -288,9 +288,9 @@ async fn handle_local_agent_request(
         tail_prompt,
     };
     let mut response = if request.stream {
-        turn::conversation_stream_response(turn, protocol)
+        turn::conversation_stream_response(turn, protocol, advance_chain).await
     } else {
-        turn::conversation_completion_response(turn, protocol).await
+        turn::conversation_completion_response(turn, protocol, advance_chain).await
     };
     if let Some(key) = conversation_key {
         if let Ok(value) = axum::http::HeaderValue::from_str(&key) {
