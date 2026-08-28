@@ -1,4 +1,5 @@
 import type { MutableRefObject } from "react";
+import { probeDaemonAuth } from "@/lib/daemonProbe";
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000];
 
@@ -81,6 +82,11 @@ export function startReconnectingWebSocket({
     socket.onclose = () => {
       if (disposed || socketRef.current !== socket) return;
       socketRef.current = null;
+      // The browser hides why the socket closed (a rejected upgrade after a
+      // daemon restart surfaces as a bare 1006), so ask over HTTP: the global
+      // fetch wrapper turns a 401 into re-pairing, and a network error just
+      // means the daemon is down while this loop keeps retrying.
+      probeDaemonAuth();
       onClose?.();
       scheduleReconnect();
     };
