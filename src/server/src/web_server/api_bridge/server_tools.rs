@@ -66,25 +66,6 @@ pub(super) fn request_needs_web_search_fallback(request: &UniversalRequest) -> b
         .any(|tool| is_web_search_kind(tool.kind))
 }
 
-pub(super) fn discard_web_search_server_tools(request: &mut UniversalRequest) -> bool {
-    let before = request.server_tools.len();
-    request
-        .server_tools
-        .retain(|tool| !is_web_search_kind(tool.kind));
-    let removed = request.server_tools.len() != before;
-    if removed
-        && matches!(
-            request.tool_choice,
-            Some(ToolChoice::ServerTool {
-                kind: ServerToolKind::WebSearch | ServerToolKind::XSearch
-            })
-        )
-    {
-        request.tool_choice = Some(ToolChoice::Auto);
-    }
-    removed
-}
-
 pub(super) fn prepare_web_search_fallback(
     request: &mut UniversalRequest,
 ) -> Option<WebSearchFallback> {
@@ -482,29 +463,6 @@ mod tests {
             fallback.default_request.include_domains,
             vec!["example.com".to_string()]
         );
-    }
-
-    #[test]
-    fn discards_web_search_server_tools() {
-        let mut request = UniversalRequest {
-            server_tools: vec![ServerToolDeclaration {
-                kind: ServerToolKind::WebSearch,
-                wire_type: "web_search".to_string(),
-                source_protocol: WireProtocol::OpenAiResponses,
-                name: None,
-                config: json!({}),
-                raw: json!({"type": "web_search"}),
-                extensions: Default::default(),
-            }],
-            tool_choice: Some(ToolChoice::ServerTool {
-                kind: ServerToolKind::WebSearch,
-            }),
-            ..UniversalRequest::default()
-        };
-
-        assert!(discard_web_search_server_tools(&mut request));
-        assert!(request.server_tools.is_empty());
-        assert_eq!(request.tool_choice, Some(ToolChoice::Auto));
     }
 
     #[tokio::test]

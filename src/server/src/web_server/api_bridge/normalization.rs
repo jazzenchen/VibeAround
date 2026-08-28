@@ -2,48 +2,44 @@ use serde_json::{Map, Value};
 
 use super::BridgeProtocol;
 
-pub(super) fn normalize_target_request(
-    request: &mut Value,
-    protocol: BridgeProtocol,
-) -> Result<(), String> {
+pub(super) fn normalize_target_request(request: &mut Value, protocol: BridgeProtocol) {
     match protocol {
         BridgeProtocol::AnthropicMessages => normalize_anthropic_messages_request(request),
         BridgeProtocol::OpenAiChat => normalize_openai_chat_request(request),
-        BridgeProtocol::OpenAiResponses => Ok(()),
+        BridgeProtocol::OpenAiResponses => {}
         BridgeProtocol::GeminiGenerateContent => {
             va_ai_api_bridge::translator::gemini_generate_content::strip_route_metadata(request);
-            Ok(())
         }
     }
 }
 
-fn normalize_anthropic_messages_request(request: &mut Value) -> Result<(), String> {
+fn normalize_anthropic_messages_request(request: &mut Value) {
     if let Some(object) = request.as_object_mut() {
         object
             .entry("max_tokens")
             .or_insert_with(|| Value::Number(4096_u64.into()));
     }
-    Ok(())
 }
 
-fn normalize_openai_chat_request(request: &mut Value) -> Result<(), String> {
+fn normalize_openai_chat_request(request: &mut Value) {
     let Some(messages) = request.get_mut("messages").and_then(Value::as_array_mut) else {
-        return Ok(());
+        return;
     };
     for message in messages {
         let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
             continue;
         };
         for part in content {
-            normalize_openai_chat_part(part)?;
+            normalize_openai_chat_part(part);
         }
     }
-    Ok(())
 }
 
-fn normalize_openai_chat_part(part: &mut Value) -> Result<(), String> {
+// Parts in shapes we recognize are rewritten to the Chat Completions wire form;
+// anything else is forwarded untouched so the upstream judges it itself.
+fn normalize_openai_chat_part(part: &mut Value) {
     let Some(object) = part.as_object_mut() else {
-        return Ok(());
+        return;
     };
     match object.get("type").and_then(Value::as_str) {
         Some("input_text") => {
@@ -58,26 +54,26 @@ fn normalize_openai_chat_part(part: &mut Value) -> Result<(), String> {
             }
         }
         Some("input_image") => {
-            let image_url = chat_image_url_from_input_image(object)?;
-            *object = Map::from_iter([
-                ("type".to_string(), Value::String("image_url".to_string())),
-                ("image_url".to_string(), image_url),
-            ]);
+            if let Some(image_url) = chat_image_url_from_input_image(object) {
+                *object = Map::from_iter([
+                    ("type".to_string(), Value::String("image_url".to_string())),
+                    ("image_url".to_string(), image_url),
+                ]);
+            }
         }
         Some("image_url") => {
-            if let Some(image_url) = object.get("image_url").cloned() {
-                object.insert(
-                    "image_url".to_string(),
-                    normalize_image_url_value(&image_url, None)?,
-                );
+            if let Some(image_url) = object
+                .get("image_url")
+                .and_then(|value| normalize_image_url_value(value, None))
+            {
+                object.insert("image_url".to_string(), image_url);
             }
         }
         _ => {}
     }
-    Ok(())
 }
 
-fn chat_image_url_from_input_image(object: &Map<String, Value>) -> Result<Value, String> {
+fn chat_image_url_from_input_image(object: &Map<String, Value>) -> Option<Value> {
     if let Some(value) = object.get("image_url") {
         return normalize_image_url_value(value, object.get("detail"));
     }
@@ -87,17 +83,17 @@ fn chat_image_url_from_input_image(object: &Map<String, Value>) -> Result<Value,
     normalize_image_source_object(object, object.get("detail"))
 }
 
-fn normalize_image_source_value(value: &Value, detail: Option<&Value>) -> Result<Value, String> {
+fn normalize_image_source_value(value: &Value, detail: Option<&Value>) -> Option<Value> {
     match value {
-        Value::String(url) => Ok(image_url_object(url.clone(), detail.cloned())),
+        Value::String(url) => Some(image_url_object(url.clone(), detail.cloned())),
         Value::Object(object) => normalize_image_source_object(object, detail),
-        _ => Err("OpenAI Chat image input must include an image URL or image data".to_string()),
+        _ => None,
     }
 }
 
-fn normalize_image_url_value(value: &Value, detail: Option<&Value>) -> Result<Value, String> {
+fn normalize_image_url_value(value: &Value, detail: Option<&Value>) -> Option<Value> {
     match value {
-        Value::String(url) => Ok(image_url_object(url.clone(), detail.cloned())),
+        Value::String(url) => Some(image_url_object(url.clone(), detail.cloned())),
         Value::Object(object) => {
             if let Some(url) = object.get("url").and_then(Value::as_str) {
                 let mut out = object.clone();
@@ -107,26 +103,26 @@ fn normalize_image_url_value(value: &Value, detail: Option<&Value>) -> Result<Va
                     }
                 }
                 out.insert("url".to_string(), Value::String(url.to_string()));
-                return Ok(Value::Object(out));
+                return Some(Value::Object(out));
             }
             if let Some(value) = object.get("image_url") {
                 return normalize_image_url_value(value, object.get("detail").or(detail));
             }
             normalize_image_source_object(object, detail)
         }
-        _ => Err("OpenAI Chat image_url must be a string or object".to_string()),
+        _ => None,
     }
 }
 
 fn normalize_image_source_object(
     object: &Map<String, Value>,
     detail: Option<&Value>,
-) -> Result<Value, String> {
+) -> Option<Value> {
     if let Some(value) = object.get("image_url") {
         return normalize_image_url_value(value, object.get("detail").or(detail));
     }
     if let Some(url) = object.get("url").and_then(Value::as_str) {
-        return Ok(image_url_object(
+        return Some(image_url_object(
             url.to_string(),
             object.get("detail").or(detail).cloned(),
         ));
@@ -143,18 +139,12 @@ fn normalize_image_source_object(
                 .unwrap_or("image/png");
             format!("data:{media_type};base64,{data}")
         };
-        return Ok(image_url_object(
+        return Some(image_url_object(
             url,
             object.get("detail").or(detail).cloned(),
         ));
     }
-    if object.contains_key("file_id") {
-        return Err(
-            "OpenAI Chat image input cannot use file_id; provide image_url or image data"
-                .to_string(),
-        );
-    }
-    Err("OpenAI Chat image input must include image_url, url, or data".to_string())
+    None
 }
 
 fn image_url_object(url: String, detail: Option<Value>) -> Value {
@@ -187,7 +177,7 @@ mod tests {
             }]
         });
 
-        normalize_target_request(&mut request, BridgeProtocol::OpenAiChat).unwrap();
+        normalize_target_request(&mut request, BridgeProtocol::OpenAiChat);
 
         let content = request["messages"][0]["content"].as_array().unwrap();
         assert_eq!(content[0], json!({ "type": "text", "text": "describe" }));
@@ -216,7 +206,7 @@ mod tests {
             }]
         });
 
-        normalize_target_request(&mut request, BridgeProtocol::OpenAiChat).unwrap();
+        normalize_target_request(&mut request, BridgeProtocol::OpenAiChat);
 
         assert_eq!(
             request["messages"][0]["content"][0],
@@ -231,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_file_id_only_input_image_for_openai_chat() {
+    fn forwards_unrecognized_input_image_untouched_for_openai_chat() {
         let mut request = json!({
             "messages": [{
                 "role": "user",
@@ -239,8 +229,11 @@ mod tests {
             }]
         });
 
-        let error = normalize_target_request(&mut request, BridgeProtocol::OpenAiChat).unwrap_err();
+        normalize_target_request(&mut request, BridgeProtocol::OpenAiChat);
 
-        assert!(error.contains("file_id"));
+        assert_eq!(
+            request["messages"][0]["content"][0],
+            json!({ "type": "input_image", "file_id": "file-123" })
+        );
     }
 }
