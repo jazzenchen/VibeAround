@@ -25,6 +25,11 @@ const HEADER_WORKSPACE: &str = "x-vibearound-cwd";
 /// carrying it share one persistent backend session per key. The Responses
 /// protocol chains `previous_response_id` instead.
 const HEADER_CONVERSATION: &str = "x-vibearound-conversation";
+/// Session permission mode applied when a fresh backend session is created
+/// (default / plan / acceptEdits / bypassPermissions / dontAsk, aliases
+/// accepted). Tool permissions over the API are auto-refused, so autonomous
+/// use wants acceptEdits or bypassPermissions.
+const HEADER_PERMISSION_MODE: &str = "x-vibearound-permission-mode";
 
 pub async fn local_agent_responses_handler(
     Path((agent_id, profile_id)): Path<(String, String)>,
@@ -165,6 +170,7 @@ async fn handle_local_agent_request(
         .map(|model| model.trim().to_string());
     let workspace = request_workspace(&headers, &agent_id);
     let conversation_key = header_value(&headers, HEADER_CONVERSATION);
+    let permission_mode = header_value(&headers, HEADER_PERMISSION_MODE);
     let previous_response_id = (protocol == BridgeProtocol::OpenAiResponses)
         .then(|| {
             source_raw(&request)
@@ -233,6 +239,7 @@ async fn handle_local_agent_request(
             agent_id,
             profile_id,
             model_id,
+            permission_mode,
             workspace,
             prompt,
         };
@@ -275,6 +282,7 @@ async fn handle_local_agent_request(
     let turn = turn::ConversationTurn {
         conversation,
         model_id,
+        permission_mode,
         response_id,
         seed_prompt,
         tail_prompt,

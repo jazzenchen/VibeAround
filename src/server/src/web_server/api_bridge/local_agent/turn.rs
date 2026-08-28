@@ -46,6 +46,7 @@ pub(super) struct LocalAgentTurn {
     pub(super) agent_id: String,
     pub(super) profile_id: String,
     pub(super) model_id: Option<String>,
+    pub(super) permission_mode: Option<String>,
     pub(super) workspace: PathBuf,
     pub(super) prompt: Vec<acp::ContentBlock>,
 }
@@ -62,6 +63,7 @@ pub(super) enum LocalAgentTurnEvent {
 pub(super) struct ConversationTurn {
     pub(super) conversation: Arc<super::conversations::Conversation>,
     pub(super) model_id: Option<String>,
+    pub(super) permission_mode: Option<String>,
     pub(super) response_id: String,
     /// Full-history seed prompt; `None` when the client sent increments only
     /// (a chained Responses request) and the history cannot be rebuilt.
@@ -150,6 +152,14 @@ async fn run_conversation_turn(
                         &session.session_id,
                         session.config_options.as_deref(),
                         turn.model_id.as_deref(),
+                    )
+                    .await
+                    .map_err(|error| error.message.to_string())?;
+                    apply_local_agent_permission_mode(
+                        &agent,
+                        &session.session_id,
+                        session.modes.as_ref(),
+                        turn.permission_mode.as_deref(),
                     )
                     .await
                     .map_err(|error| error.message.to_string())?;
@@ -498,6 +508,14 @@ async fn run_local_agent_turn(
             )
             .await
             .map_err(|error| error.message.to_string())?;
+            apply_local_agent_permission_mode(
+                &agent,
+                &session.session_id,
+                session.modes.as_ref(),
+                turn.permission_mode.as_deref(),
+            )
+            .await
+            .map_err(|error| error.message.to_string())?;
             Ok(session.session_id)
         })
         .await?;
@@ -523,6 +541,65 @@ async fn run_local_agent_turn(
         ),
     );
     Ok(())
+}
+
+/// Apply the client's requested permission mode to a freshly created
+/// session, when the agent advertises one with that id. Tool permissions
+/// over the API are otherwise auto-refused (there is no human to ask), so
+/// autonomous use wants acceptEdits or bypassPermissions here.
+async fn apply_local_agent_permission_mode(
+    agent: &common::agent::Agent,
+    session_id: &acp::SessionId,
+    modes: Option<&acp::SessionModeState>,
+    requested: Option<&str>,
+) -> acp::Result<()> {
+    let Some(requested) = requested
+        .map(str::trim)
+        .filter(|requested| !requested.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(modes) = modes else {
+        return Ok(());
+    };
+    let canonical = canonical_permission_mode(requested);
+    let Some(mode) = modes.available_modes.iter().find(|mode| {
+        let id = mode.id.to_string();
+        id == requested || Some(id.as_str()) == canonical
+    }) else {
+        return Err(acp::Error::new(
+            -32602,
+            format!(
+                "unknown permission mode `{requested}`; available modes: {}",
+                modes
+                    .available_modes
+                    .iter()
+                    .map(|mode| mode.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ));
+    };
+    agent
+        .set_session_mode(acp::SetSessionModeRequest::new(
+            session_id.clone(),
+            mode.id.clone(),
+        ))
+        .await?;
+    Ok(())
+}
+
+fn canonical_permission_mode(mode: &str) -> Option<&'static str> {
+    match mode {
+        "default" => Some("default"),
+        "plan" => Some("plan"),
+        "acceptEdits" | "accept_edits" | "accept-edits" | "accept" => Some("acceptEdits"),
+        "bypassPermissions" | "bypass_permissions" | "bypass-permissions" | "bypass" => {
+            Some("bypassPermissions")
+        }
+        "dontAsk" | "dont_ask" | "dont-ask" | "dontask" => Some("dontAsk"),
+        _ => None,
+    }
 }
 
 async fn apply_local_agent_model(
