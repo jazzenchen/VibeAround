@@ -1104,14 +1104,14 @@ async fn build_upstream_request(
         return Ok(request.bearer_auth(token));
     }
 
-    apply_upstream_auth(
+    Ok(apply_upstream_auth(
         request,
         upstream.protocol,
         upstream.auth_header,
         upstream.managed_auth || bridge_managed_auth,
         headers,
         manual_profile_api_key,
-    )
+    ))
 }
 
 fn render_bridge_headers(

@@ -491,13 +491,7 @@ impl ProfileImageResolver {
             self.managed_auth,
             &axum::http::HeaderMap::new(),
             Some(&self.api_key),
-        )
-        .map_err(|response| {
-            (
-                response.status(),
-                "failed to apply image resolver authentication".to_string(),
-            )
-        })?;
+        );
         let response = match request.send().await {
             Ok(response) => response,
             Err(error) => {
