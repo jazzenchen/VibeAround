@@ -837,7 +837,7 @@ fn image_description_request_body(
     let mut body = protocol
         .encode_upstream_request(&request)
         .map_err(|error| error.to_string())?;
-    super::normalization::normalize_target_request(&mut body, protocol)?;
+    super::normalization::normalize_target_request(&mut body, protocol);
     if config.provider == "dashscope" && protocol == BridgeProtocol::OpenAiChat {
         body["response_format"] = json!({ "type": "json_object" });
         body["enable_thinking"] = Value::Bool(false);

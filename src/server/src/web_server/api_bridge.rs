@@ -213,9 +213,7 @@ pub(super) async fn bridge_handler(
         } else {
             None
         };
-        if let Err(message) = normalize_target_request(&mut agent_request, upstream.protocol) {
-            return record_json_error(record.as_ref(), StatusCode::UNPROCESSABLE_ENTITY, &message);
-        }
+        normalize_target_request(&mut agent_request, upstream.protocol);
         if upstream.protocol == BridgeProtocol::OpenAiResponses {
             provider_adapter.prepare_responses_request(&mut agent_request);
         } else if upstream.protocol == BridgeProtocol::OpenAiChat {
@@ -427,9 +425,7 @@ pub(super) async fn bridge_handler(
     } else {
         None
     };
-    if let Err(message) = normalize_target_request(&mut upstream_request, upstream.protocol) {
-        return record_json_error(record.as_ref(), StatusCode::UNPROCESSABLE_ENTITY, &message);
-    }
+    normalize_target_request(&mut upstream_request, upstream.protocol);
     if upstream.protocol == BridgeProtocol::OpenAiResponses {
         provider_adapter.prepare_responses_request(&mut upstream_request);
     } else if upstream.protocol == BridgeProtocol::OpenAiChat {
@@ -934,13 +930,7 @@ fn encode_fallback_upstream_request(
     } else {
         None
     };
-    if let Err(message) = normalize_target_request(&mut upstream_request, upstream.protocol) {
-        return Err(record_json_error(
-            record,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            &message,
-        ));
-    }
+    normalize_target_request(&mut upstream_request, upstream.protocol);
     if upstream.protocol == BridgeProtocol::OpenAiResponses {
         provider_adapter.prepare_responses_request(&mut upstream_request);
     } else if upstream.protocol == BridgeProtocol::OpenAiChat {
