@@ -339,6 +339,10 @@ pub async fn run_web_server(
             put(api::set_local_agent_api_handler),
         )
         .route(
+            "/api/launcher/local-agent-api/agent",
+            put(api::set_local_agent_api_agent_handler),
+        )
+        .route(
             "/api/launcher/profile-connection",
             put(api::set_profile_connection_handler),
         )

@@ -176,6 +176,60 @@ pub async fn set_local_agent_api_handler(
     .await
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct LocalAgentApiAgentBody {
+    agent_id: String,
+    enabled: bool,
+}
+
+/// PUT /api/launcher/local-agent-api/agent -- opt one agent in or out of the
+/// agent-as-API routes. The service switch stays separate; both must be on.
+pub async fn set_local_agent_api_agent_handler(
+    Json(body): Json<LocalAgentApiAgentBody>,
+) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
+    super::run_blocking_io(move || {
+        let agent_id = canonical_agent_id(&body.agent_id)?;
+        config::mutate_settings_json(|root| {
+            let root_obj = root
+                .as_object_mut()
+                .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+            let entry = root_obj
+                .entry("local_agent_api".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if !entry.is_object() {
+                *entry = serde_json::json!({});
+            }
+            let settings = entry
+                .as_object_mut()
+                .ok_or_else(|| "settings.json local_agent_api must be an object".to_string())?;
+            let mut agents: Vec<String> = settings
+                .get("agents")
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|agent| !agent.is_empty())
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            agents.retain(|agent| agent != &agent_id);
+            if body.enabled {
+                agents.push(agent_id.clone());
+            }
+            agents.sort();
+            agents.dedup();
+            settings.insert("agents".to_string(), serde_json::json!(agents));
+            Ok(())
+        })
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        Ok(Json(launcher_preferences()))
+    })
+    .await
+}
+
 /// PUT /api/launcher/profile-connection -- set profile-to-agent bridge routing.
 pub async fn set_profile_connection_handler(
     Json(body): Json<ProfileConnectionBody>,
@@ -225,6 +279,7 @@ fn launcher_preferences() -> crate::api_types::LauncherPreferencesResponse {
         enabled_agents: cfg.enabled_agents.clone(),
         agent_preferences,
         local_agent_api_enabled: cfg.local_agent_api.enabled,
+        local_agent_api_agents: cfg.local_agent_api.agents.iter().cloned().collect(),
         profile_connections: connections::merged_profile_connections(),
     }
 }

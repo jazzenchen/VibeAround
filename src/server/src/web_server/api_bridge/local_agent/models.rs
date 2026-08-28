@@ -10,19 +10,17 @@ use axum::Json;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{
-    json_error, launch_args_and_env, local_agent_api_disabled_response, local_agent_api_enabled,
-    request_workspace, LOCAL_AGENT_CHANNEL_KIND,
-};
+use super::{json_error, launch_args_and_env, request_workspace, LOCAL_AGENT_CHANNEL_KIND};
 use common::agent::AgentClientHandler;
 
 pub async fn local_agent_models_handler(
     AxumPath((agent_id, profile_id)): AxumPath<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if !local_agent_api_enabled() {
-        return local_agent_api_disabled_response();
-    }
+    let agent_id = match super::local_agent_gate(&agent_id) {
+        Ok(agent_id) => agent_id,
+        Err(response) => return response,
+    };
     if let Some(response) = super::direct_profile_response(&profile_id) {
         return response;
     }

@@ -25,9 +25,10 @@ pub async fn local_agent_responses_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !local_agent_api_enabled() {
-        return local_agent_api_disabled_response();
-    }
+    let agent_id = match local_agent_gate(&agent_id) {
+        Ok(agent_id) => agent_id,
+        Err(response) => return response,
+    };
     handle_local_agent_request(
         agent_id,
         profile_id,
@@ -43,9 +44,10 @@ pub async fn local_agent_chat_completions_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !local_agent_api_enabled() {
-        return local_agent_api_disabled_response();
-    }
+    let agent_id = match local_agent_gate(&agent_id) {
+        Ok(agent_id) => agent_id,
+        Err(response) => return response,
+    };
     handle_local_agent_request(
         agent_id,
         profile_id,
@@ -61,9 +63,10 @@ pub async fn local_agent_messages_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !local_agent_api_enabled() {
-        return local_agent_api_disabled_response();
-    }
+    let agent_id = match local_agent_gate(&agent_id) {
+        Ok(agent_id) => agent_id,
+        Err(response) => return response,
+    };
     handle_local_agent_request(
         agent_id,
         profile_id,
@@ -76,6 +79,33 @@ pub async fn local_agent_messages_handler(
 
 pub(super) fn local_agent_api_enabled() -> bool {
     common::config::ensure_loaded().local_agent_api.enabled
+}
+
+/// Service switch + per-agent opt-in, resolving the path segment to the
+/// canonical agent id on the way. The service switch gates the route family
+/// (503 when off, as before); each agent must additionally be opted in under
+/// `local_agent_api.agents`, and one that is not answers 403 — an explicit
+/// policy refusal, unlike the direct-profile 429 below.
+pub(super) fn local_agent_gate(agent_id: &str) -> Result<String, Response> {
+    if !local_agent_api_enabled() {
+        return Err(local_agent_api_disabled_response());
+    }
+    let canonical = match common::resources::resolve_agent_id(agent_id) {
+        Ok(canonical) => canonical,
+        Err(error) => return Err(json_error(StatusCode::BAD_REQUEST, &error.to_string())),
+    };
+    if !common::config::ensure_loaded()
+        .local_agent_api
+        .agent_enabled(&canonical)
+    {
+        return Err(json_error(
+            StatusCode::FORBIDDEN,
+            &format!(
+                "local agent API is not enabled for agent `{canonical}`; opt the agent in under VibeAround settings"
+            ),
+        ));
+    }
+    Ok(canonical)
 }
 
 /// The direct profile runs an agent on its own native credentials, and that
