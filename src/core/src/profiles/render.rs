@@ -1202,9 +1202,10 @@ mod tests {
         assert!(rendered.settings_files.is_empty());
         assert!(rendered.command_args.is_empty());
         assert!(rendered.config_env.is_none());
-        assert!(rendered
-            .env
-            .contains(&("VIBEAROUND_MODEL_API_KEY".to_string(), "test-key".to_string())));
+        assert!(rendered.env.contains(&(
+            "VIBEAROUND_MODEL_API_KEY".to_string(),
+            "test-key".to_string()
+        )));
         let (_, config) = rendered
             .env
             .iter()

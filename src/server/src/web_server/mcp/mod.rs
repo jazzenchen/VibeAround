@@ -203,8 +203,12 @@ async fn mcp_tools_call(
         "va_mcp_send_file" => tools::mcp_send_file(id, arguments, state).await,
         "va_mcp_prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
         "va_mcp_register_workspace" => tools::mcp_register_workspace(id, arguments).await,
-        "va_mcp_initialize_subagents" => subagents::mcp_initialize_subagents(id, arguments, state).await,
-        "va_mcp_wait_for_subagents" => subagents::mcp_wait_for_subagents(id, arguments, state).await,
+        "va_mcp_initialize_subagents" => {
+            subagents::mcp_initialize_subagents(id, arguments, state).await
+        }
+        "va_mcp_wait_for_subagents" => {
+            subagents::mcp_wait_for_subagents(id, arguments, state).await
+        }
         "va_mcp_preview" => preview::mcp_preview(id, arguments, params.get("_meta"), state).await,
         _ => jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name)),
     }

@@ -129,7 +129,10 @@ mod tests {
 
     #[test]
     fn unbundled_binaries_fall_back_to_a_path_lookup() {
-        assert_eq!(command("va-nothing", "VIBEAROUND_SIDECAR_TEST_UNSET"), "va-nothing");
+        assert_eq!(
+            command("va-nothing", "VIBEAROUND_SIDECAR_TEST_UNSET"),
+            "va-nothing"
+        );
     }
 
     #[test]
@@ -139,6 +142,9 @@ mod tests {
         };
         let names = binary_names("va-tui");
         assert_eq!(names[0], format!("va-tui{}", executable_extension()));
-        assert_eq!(names[1], format!("va-tui-{triple}{}", executable_extension()));
+        assert_eq!(
+            names[1],
+            format!("va-tui-{triple}{}", executable_extension())
+        );
     }
 }

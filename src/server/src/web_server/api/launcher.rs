@@ -352,7 +352,10 @@ fn build_tui_launch_plan(
 ) -> crate::api_types::LaunchPlanResponse {
     let mut env = vec![
         (VIBEAROUND_LAUNCH_ID_ENV.to_string(), launch_id.to_string()),
-        (VIBEAROUND_LAUNCH_TARGET_ENV.to_string(), launch_target.clone()),
+        (
+            VIBEAROUND_LAUNCH_TARGET_ENV.to_string(),
+            launch_target.clone(),
+        ),
     ];
     if let Some(profile) = profile {
         env.push((
@@ -630,22 +633,42 @@ mod tests {
         let workspace = std::path::Path::new("/tmp/project");
 
         let direct = build_tui_launch_plan(
-            "launch-1", "va-agent", agent, None, "va-agent".into(), None, None, workspace,
+            "launch-1",
+            "va-agent",
+            agent,
+            None,
+            "va-agent".into(),
+            None,
+            None,
+            workspace,
         );
         assert!(direct.args.is_empty());
         assert!(!direct.native_execution);
         let keys: Vec<&str> = direct.env.iter().map(|var| var.key.as_str()).collect();
-        assert_eq!(keys, vec!["VIBEAROUND_LAUNCH_ID", "VIBEAROUND_LAUNCH_TARGET"]);
+        assert_eq!(
+            keys,
+            vec!["VIBEAROUND_LAUNCH_ID", "VIBEAROUND_LAUNCH_TARGET"]
+        );
 
         let resume = build_tui_launch_plan(
-            "launch-2", "va-agent", agent, None, "va-agent".into(),
-            Some("session-9".into()), None, workspace,
+            "launch-2",
+            "va-agent",
+            agent,
+            None,
+            "va-agent".into(),
+            Some("session-9".into()),
+            None,
+            workspace,
         );
-        assert!(resume.env.iter().any(|var| {
-            var.key == "VIBEAROUND_SESSION_ID" && var.value == "session-9"
-        }));
+        assert!(resume
+            .env
+            .iter()
+            .any(|var| { var.key == "VIBEAROUND_SESSION_ID" && var.value == "session-9" }));
         assert_eq!(resume.resume_session_id.as_deref(), Some("session-9"));
-        assert!(resume.env.iter().all(|var| !var.key.starts_with("VIBEAROUND_MODEL_")));
+        assert!(resume
+            .env
+            .iter()
+            .all(|var| !var.key.starts_with("VIBEAROUND_MODEL_")));
     }
 
     #[test]

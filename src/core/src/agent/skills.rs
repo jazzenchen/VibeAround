@@ -362,7 +362,15 @@ mod tests {
 
     #[test]
     fn skill_frontmatter_descriptions_quote_mapping_colons() {
-        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro", "va-agent"] {
+        for agent in [
+            "claude",
+            "codex",
+            "gemini",
+            "qwen-code",
+            "cursor",
+            "kiro",
+            "va-agent",
+        ] {
             for (skill_name, content) in agent_skills(agent) {
                 let Some(description) = frontmatter_field(content, "description") else {
                     continue;
@@ -379,7 +387,15 @@ mod tests {
 
     #[test]
     fn active_preview_skill_covers_both_sources_without_the_retired_tool() {
-        for agent in ["claude", "codex", "gemini", "qwen-code", "cursor", "kiro", "va-agent"] {
+        for agent in [
+            "claude",
+            "codex",
+            "gemini",
+            "qwen-code",
+            "cursor",
+            "kiro",
+            "va-agent",
+        ] {
             let skills = agent_skills(agent);
             assert!(skills.iter().all(|(name, _)| *name != "va-md-preview"));
             let preview = skills
