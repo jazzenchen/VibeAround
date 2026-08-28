@@ -47,7 +47,6 @@ interface UseWebChatConnectionOptions {
 }
 
 const CACHE_WRITE_DEBOUNCE_MS = 350;
-const RESUME_REPLAY_SETTLE_MS = 700;
 const USER_CONTENT_PART_ID_PREFIX = "user-content";
 const COMPACTION_NOTICE_DROP_RATIO = 0.55;
 const COMPACTION_NOTICE_MIN_WINDOW_RATIO = 0.25;
@@ -180,18 +179,13 @@ export function useWebChatConnection({
   const turnActiveRef = useRef(false);
   const resumeReplayRef = useRef<ResumeReplayState | null>(null);
   const resumeRequestIdRef = useRef(0);
-  const cancelReplayOnNextTurnRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
-  const replayMessageBufferRef = useRef<{
-    sessionId: string;
-    messages: ChatMessage[];
-  } | null>(null);
+  /// Session whose transcript the server is currently replaying to this
+  /// connection, between replay_start and replay_done.
+  const replayingSessionRef = useRef<string | null>(null);
   const ignoredReplaySessionsRef = useRef<Set<string>>(new Set());
   const usageBySessionRef = useRef<Map<string, UsageSnapshot>>(new Map());
   const compactionNoticeKeysRef = useRef<Set<string>>(new Set());
-  const resumeReplayDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
   const replayCacheContextRef = useRef<ResumeReplayState | null>(null);
   const replayCacheWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -204,12 +198,6 @@ export function useWebChatConnection({
   const updateResumeReplay = useCallback((next: ResumeReplayState | null) => {
     resumeReplayRef.current = next;
     setResumeReplay(next);
-  }, []);
-
-  const clearResumeReplayDoneTimer = useCallback(() => {
-    if (!resumeReplayDoneTimerRef.current) return;
-    clearTimeout(resumeReplayDoneTimerRef.current);
-    resumeReplayDoneTimerRef.current = null;
   }, []);
 
   const clearReplayCacheWriteTimer = useCallback(() => {
@@ -293,15 +281,7 @@ export function useWebChatConnection({
     [cacheTranscript, clearActiveTranscriptCacheWriteTimer],
   );
 
-  const applyMessageUpdate = useCallback((
-    updater: MessageUpdate,
-    replaySessionId?: string,
-  ) => {
-    const replayBuffer = replaySessionId ? replayMessageBufferRef.current : null;
-    if (replayBuffer && replayBuffer.sessionId === replaySessionId) {
-      replayBuffer.messages = updater(replayBuffer.messages);
-      return;
-    }
+  const applyMessageUpdate = useCallback((updater: MessageUpdate) => {
     setMessages(updater);
   }, []);
 
@@ -311,57 +291,12 @@ export function useWebChatConnection({
     scheduleActiveTranscriptCacheWrite();
   }, [messages, scheduleActiveTranscriptCacheWrite, scheduleReplayCacheWrite]);
 
-  const finishResumeReplay = useCallback(
-    (sessionId?: string, options?: { cache?: boolean }) => {
-      const current = resumeReplayRef.current;
-      if (sessionId && current?.sessionId !== sessionId) return;
-      if (current && options?.cache) {
-        const replayBuffer = replayMessageBufferRef.current;
-        if (replayBuffer?.sessionId === current.sessionId) {
-          const replayedMessages = settleStreamActivitiesMessage(
-            replayBuffer.messages,
-          );
-          replayMessageBufferRef.current = null;
-          if (replayedMessages.length > 0) {
-            const mergedMessages = mergeChatMessageSnapshots(
-              messagesRef.current,
-              replayedMessages,
-            );
-            messagesRef.current = mergedMessages;
-            setMessages(mergedMessages);
-            cacheResumeReplay(current, mergedMessages);
-          }
-          clearReplayCacheContext();
-        } else {
-          scheduleReplayCacheWrite(current);
-        }
-      } else if (!options?.cache) {
-        replayMessageBufferRef.current = null;
-        clearReplayCacheContext();
-      }
-      clearResumeReplayDoneTimer();
-      updateResumeReplay(null);
-    },
-    [
-      cacheResumeReplay,
-      clearReplayCacheContext,
-      clearResumeReplayDoneTimer,
-      scheduleReplayCacheWrite,
-      updateResumeReplay,
-    ],
-  );
-
-  const scheduleResumeReplayDone = useCallback(
-    (sessionId: string) => {
-      const currentReplay = resumeReplayRef.current;
-      if (currentReplay && currentReplay.sessionId !== sessionId) return;
-      if (resumeReplayDoneTimerRef.current) return;
-      resumeReplayDoneTimerRef.current = setTimeout(() => {
-        finishResumeReplay(sessionId, { cache: true });
-      }, RESUME_REPLAY_SETTLE_MS);
-    },
-    [finishResumeReplay],
-  );
+  /// Drop any pending resume/replay bookkeeping without touching messages.
+  const abortResumeState = useCallback(() => {
+    replayingSessionRef.current = null;
+    clearReplayCacheContext();
+    updateResumeReplay(null);
+  }, [clearReplayCacheContext, updateResumeReplay]);
 
   useEffect(() => {
     function markDisconnected(clearPermissions: boolean) {
@@ -371,7 +306,7 @@ export function useWebChatConnection({
       promptInFlightRef.current = false;
       turnActiveRef.current = false;
       if (clearPermissions) setPendingPermissions([]);
-      finishResumeReplay();
+      abortResumeState();
     }
 
     if (!chatId) {
@@ -437,7 +372,9 @@ export function useWebChatConnection({
             cacheTranscript(activeTranscriptCacheRef.current);
           }
           if (pendingResume?.sessionId === parsed.session_id) {
-            scheduleResumeReplayDone(parsed.session_id);
+            // Resume acknowledged. Either the cache was fresh (nothing else
+            // arrives) or a replay_start follows and rebuilds the view.
+            updateResumeReplay(null);
           }
           break;
         }
@@ -453,6 +390,53 @@ export function useWebChatConnection({
             agentVersion: info.agent.version,
             profileId: info.agent.profileId,
           }));
+          if (info.updatedAt !== undefined) {
+            // Rebase cache stamps onto the server-issued value.
+            if (activeTranscriptCacheRef.current?.sessionId === info.sessionId) {
+              activeTranscriptCacheRef.current = {
+                ...activeTranscriptCacheRef.current,
+                updatedAt: Math.max(
+                  activeTranscriptCacheRef.current.updatedAt ?? 0,
+                  info.updatedAt,
+                ),
+              };
+            }
+            const replayContext = replayCacheContextRef.current;
+            if (replayContext?.sessionId === info.sessionId) {
+              replayCacheContextRef.current = {
+                ...replayContext,
+                updatedAt: Math.max(replayContext.updatedAt ?? 0, info.updatedAt),
+              };
+            }
+          }
+          break;
+        }
+        case "replay_start": {
+          // The server re-renders this session's transcript from the agent's
+          // own record; drop the local view and rebuild from the frames.
+          replayingSessionRef.current = parsed.session_id;
+          ignoredReplaySessionsRef.current.delete(parsed.session_id);
+          messagesRef.current = [];
+          setMessages([]);
+          setMeta((prev) => ({ ...prev, sessionId: parsed.session_id }));
+          break;
+        }
+        case "replay_done": {
+          if (replayingSessionRef.current !== parsed.session_id) break;
+          replayingSessionRef.current = null;
+          // The replay frames may still be batched in React state updates,
+          // so settle through a functional update and let the debounced
+          // cache write read the synced snapshot afterwards.
+          setMessages((prev) => {
+            const settled = settleStreamActivitiesMessage(prev);
+            messagesRef.current = settled;
+            return settled;
+          });
+          const replayContext = replayCacheContextRef.current;
+          if (replayContext?.sessionId === parsed.session_id) {
+            scheduleReplayCacheWrite(replayContext);
+          }
+          updateResumeReplay(null);
           break;
         }
         case "session_mode": {
@@ -461,7 +445,7 @@ export function useWebChatConnection({
         }
         case "system_text": {
           appendStandaloneAssistant(parsed.text);
-          finishResumeReplay();
+          abortResumeState();
           const agentId = switchedAgentId(parsed.text);
           if (agentId) {
             onAgentSelected?.(agentId, "system");
@@ -479,16 +463,12 @@ export function useWebChatConnection({
           appendErrorToStream(formatErrorMessage(parsed.error));
           setStreaming(false);
           promptInFlightRef.current = false;
-          finishResumeReplay();
+          abortResumeState();
           break;
         }
         case "turn_status": {
           const wasActive = turnActiveRef.current;
           turnActiveRef.current = parsed.active;
-          if (parsed.active && cancelReplayOnNextTurnRef.current) {
-            cancelReplayOnNextTurnRef.current = false;
-            finishResumeReplay(undefined, { cache: false });
-          }
           if (wasActive && !parsed.active) {
             settleStreamActivities();
             setPendingPermissions([]);
@@ -552,16 +532,12 @@ export function useWebChatConnection({
       if (pendingResume && notif.sessionId !== pendingResume.sessionId) {
         return;
       }
-      const replaying = pendingResume?.sessionId === notif.sessionId;
-      const replaySessionId = replaying ? notif.sessionId : undefined;
+      const replaying = replayingSessionRef.current === notif.sessionId;
       const update = notif.update;
       const applyTranscriptUpdate = (
         options?: Parameters<typeof applyChatTranscriptUpdate>[2],
       ) => {
-        applyMessageUpdate(
-          (prev) => applyChatTranscriptUpdate(prev, update, options),
-          replaySessionId,
-        );
+        applyMessageUpdate((prev) => applyChatTranscriptUpdate(prev, update, options));
       };
 
       const usage = usageSnapshot(update);
@@ -572,7 +548,6 @@ export function useWebChatConnection({
           appendCompactionNotice(
             notif.sessionId,
             `usage:${previous?.used}->${usage.used}/${usage.size}`,
-            replaySessionId,
           );
         }
       }
@@ -580,7 +555,6 @@ export function useWebChatConnection({
         appendCompactionNotice(
           notif.sessionId,
           `update:${sessionUpdateName(update) ?? "meta"}:${usage?.used ?? ""}/${usage?.size ?? ""}`,
-          replaySessionId,
         );
       }
 
@@ -592,17 +566,14 @@ export function useWebChatConnection({
               dedupeExistingText: !replaying,
             },
           });
-          if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "agent_message_chunk": {
           applyTranscriptUpdate();
-          if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "agent_thought_chunk": {
           applyTranscriptUpdate({ thinkingLabel: t("Thinking") });
-          if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "tool_call":
@@ -611,12 +582,10 @@ export function useWebChatConnection({
             toolProgressLabel: (tool) =>
               t("Using tool: {{tool}}…", { tool }),
           });
-          if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "plan": {
           applyTranscriptUpdate();
-          if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "config_option_update": {
@@ -625,7 +594,6 @@ export function useWebChatConnection({
               (update as { configOptions?: unknown }).configOptions,
             ),
           );
-          if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         case "current_mode_update": {
@@ -637,39 +605,29 @@ export function useWebChatConnection({
                 : prev,
             );
           }
-          if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
         }
         // Non-transcript ACP updates are handled by surrounding UI state.
         default:
-          if (replaying) scheduleResumeReplayDone(notif.sessionId);
           break;
       }
     }
 
-    function appendCompactionNotice(
-      sessionId: string,
-      noticeKey: string,
-      replaySessionId?: string,
-    ) {
+    function appendCompactionNotice(sessionId: string, noticeKey: string) {
       const key = `${sessionId}:${noticeKey}`;
       if (compactionNoticeKeysRef.current.has(key)) return;
       compactionNoticeKeysRef.current.add(key);
       appendStandaloneAssistant(
         t("Context compacted. Continuing from a compressed summary."),
-        replaySessionId,
       );
     }
 
-    function appendStandaloneAssistant(text: string, replaySessionId?: string) {
-      applyMessageUpdate(
-        (prev) => appendStandaloneAssistantMessage(prev, text),
-        replaySessionId,
-      );
+    function appendStandaloneAssistant(text: string) {
+      applyMessageUpdate((prev) => appendStandaloneAssistantMessage(prev, text));
     }
 
-    function settleStreamActivities(replaySessionId?: string) {
-      applyMessageUpdate((prev) => settleStreamActivitiesMessage(prev), replaySessionId);
+    function settleStreamActivities() {
+      applyMessageUpdate((prev) => settleStreamActivitiesMessage(prev));
     }
 
     function appendErrorToStream(error: string) {
@@ -680,21 +638,20 @@ export function useWebChatConnection({
 
     return () => {
       closeSocket();
-      clearResumeReplayDoneTimer();
       clearReplayCacheWriteTimer();
       clearActiveTranscriptCacheWriteTimer();
     };
   }, [
+    abortResumeState,
     applyMessageUpdate,
     cacheTranscript,
     chatId,
     clearActiveTranscriptCacheWriteTimer,
     clearReplayCacheWriteTimer,
-    clearResumeReplayDoneTimer,
-    finishResumeReplay,
     onAgentSelected,
-    scheduleResumeReplayDone,
+    scheduleReplayCacheWrite,
     t,
+    updateResumeReplay,
   ]);
 
   const sendMessage = useCallback(
@@ -774,14 +731,10 @@ export function useWebChatConnection({
         };
         activeTranscriptCacheRef.current = cacheContext;
         cacheTranscript(cacheContext);
-        if (resumeReplayRef.current) {
-          cancelReplayOnNextTurnRef.current = true;
-        }
         clearReplayCacheContext();
         return true;
       } catch (error) {
         console.warn("[ChatView] failed to send chat message:", error);
-        cancelReplayOnNextTurnRef.current = false;
         activeTranscriptCacheRef.current = null;
         clearActiveTranscriptCacheWriteTimer();
         promptInFlightRef.current = false;
@@ -848,12 +801,10 @@ export function useWebChatConnection({
     if (options?.abortReplay && abortedSessionId) {
       ignoredReplaySessionsRef.current.add(abortedSessionId);
     }
-    clearResumeReplayDoneTimer();
     clearReplayCacheContext();
     activeTranscriptCacheRef.current = null;
     clearActiveTranscriptCacheWriteTimer();
-    replayMessageBufferRef.current = null;
-    cancelReplayOnNextTurnRef.current = false;
+    replayingSessionRef.current = null;
     promptInFlightRef.current = false;
     turnActiveRef.current = false;
     setStreaming(false);
@@ -873,12 +824,14 @@ export function useWebChatConnection({
   }, [
     clearActiveTranscriptCacheWriteTimer,
     clearReplayCacheContext,
-    clearResumeReplayDoneTimer,
     updateResumeReplay,
   ]);
 
   const resumeSession = useCallback(
-    ({ agentId, profileId, launchSession }: ResumeChatSessionRequest) => {
+    (
+      { agentId, profileId, launchSession }: ResumeChatSessionRequest,
+      options?: { forceReplay?: boolean },
+    ) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return false;
 
       clearConversationView({
@@ -897,47 +850,55 @@ export function useWebChatConnection({
         updatedAt: launchSession.updated_at,
         blocking: true,
       };
-      replayMessageBufferRef.current = {
-        sessionId: launchSession.session_id,
-        messages: [],
-      };
       replayCacheContextRef.current = replay;
       updateResumeReplay(replay);
       setMeta((prev) => ({ ...prev, sessionId: launchSession.session_id }));
 
       void (async () => {
-        try {
-          const cachedMessages = await readCachedChatSession({
-            agentId,
-            workspace: launchSession.workspace,
-            sessionId: launchSession.session_id,
-            updatedAt: launchSession.updated_at,
-          });
-          if (resumeRequestIdRef.current !== requestId) return;
-          if (cachedMessages) {
-            const backgroundReplay = { ...replay, blocking: false };
-            replayCacheContextRef.current = backgroundReplay;
-            updateResumeReplay(backgroundReplay);
-            const settledCachedMessages = settleStreamActivitiesMessage(cachedMessages);
-            setMessages((prev) => {
-              const mergedMessages = mergeChatMessageSnapshots(
-                prev,
-                settledCachedMessages,
-              );
-              messagesRef.current = mergedMessages;
-              return mergedMessages;
+        // Hydrate from the local cache first; its stamp then tells the server
+        // whether a replay is needed at all.
+        let cacheUpdatedAt: number | undefined;
+        if (!options?.forceReplay) {
+          try {
+            const cached = await readCachedChatSession({
+              agentId,
+              workspace: launchSession.workspace,
+              sessionId: launchSession.session_id,
+              updatedAt: launchSession.updated_at,
             });
+            if (resumeRequestIdRef.current !== requestId) return;
+            if (cached) {
+              cacheUpdatedAt = cached.updatedAt;
+              const backgroundReplay = { ...replay, blocking: false };
+              replayCacheContextRef.current = backgroundReplay;
+              updateResumeReplay(backgroundReplay);
+              const settledCachedMessages = settleStreamActivitiesMessage(
+                cached.messages,
+              );
+              setMessages((prev) => {
+                const mergedMessages = mergeChatMessageSnapshots(
+                  prev,
+                  settledCachedMessages,
+                );
+                messagesRef.current = mergedMessages;
+                return mergedMessages;
+              });
+              activeTranscriptCacheRef.current = {
+                sessionId: launchSession.session_id,
+                agentId,
+                workspace: launchSession.workspace,
+                updatedAt: cached.updatedAt,
+              };
+            }
+          } catch (error) {
+            console.warn("[ChatView] failed to read cached session:", error);
           }
-        } catch (error) {
-          console.warn("[ChatView] failed to read cached session:", error);
         }
 
         if (resumeRequestIdRef.current !== requestId) return;
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) {
-          replayMessageBufferRef.current = null;
-          clearReplayCacheContext();
-          updateResumeReplay(null);
+          abortResumeState();
           return;
         }
 
@@ -951,18 +912,23 @@ export function useWebChatConnection({
           if (profileId !== undefined) {
             payload.profileId = profileId;
           }
+          if (options?.forceReplay) {
+            payload.replay = true;
+          } else if (cacheUpdatedAt !== undefined) {
+            // No explicit wish: the server compares this against the native
+            // store and replays only when the cache missed something.
+            payload.cacheUpdatedAt = cacheUpdatedAt;
+          }
           ws.send(JSON.stringify(payload));
         } catch (error) {
           console.warn("[ChatView] failed to resume chat session:", error);
-          replayMessageBufferRef.current = null;
-          clearReplayCacheContext();
-          updateResumeReplay(null);
+          abortResumeState();
         }
       })();
 
       return true;
     },
-    [clearConversationView, clearReplayCacheContext, updateResumeReplay],
+    [abortResumeState, clearConversationView, updateResumeReplay],
   );
 
   const stopStreaming = useCallback(() => {
@@ -982,8 +948,7 @@ export function useWebChatConnection({
     if (abortedSessionId) {
       ignoredReplaySessionsRef.current.add(abortedSessionId);
     }
-    replayMessageBufferRef.current = null;
-    cancelReplayOnNextTurnRef.current = false;
+    replayingSessionRef.current = null;
     clearReplayCacheContext();
     updateResumeReplay(null);
   }, [clearReplayCacheContext, t, updateResumeReplay]);

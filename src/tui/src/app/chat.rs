@@ -833,13 +833,19 @@ impl TuiApp {
                     self.end_turn();
                 }
             }
+            ChatEvent::ReplayStart { .. } => {
+                // The frames that follow re-render the whole transcript, so
+                // drop what this view accumulated to keep replays idempotent.
+                self.chat_messages.clear();
+            }
             ChatEvent::SessionInfo { .. }
             | ChatEvent::PreviewRefresh
             | ChatEvent::SessionMode { .. }
             | ChatEvent::CommandMenu { .. }
             | ChatEvent::MultiAgentTurn { .. }
             | ChatEvent::SubagentStatus { .. }
-            | ChatEvent::SubagentAcpNotification { .. } => {}
+            | ChatEvent::SubagentAcpNotification { .. }
+            | ChatEvent::ReplayDone { .. } => {}
         }
         self.chat_state.apply_event(event);
     }

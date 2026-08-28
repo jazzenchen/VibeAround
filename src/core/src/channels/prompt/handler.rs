@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::agent::launch::{normalize_launch_profile_id, DIRECT_PROFILE_ID};
 use crate::agent::AgentClientHandler;
-use crate::channels::bridge_handler::ChannelBridgeHandler;
+use crate::channels::bridge_handler::{ChannelBridgeHandler, StartupReplayCapture};
 use crate::channels::plugin_host::PluginHost;
 use crate::channels::subagent_handler::{SubagentBridgeHandler, SubagentReportTracker};
 use crate::channels::types::{
@@ -18,7 +18,8 @@ use crate::profiles::{self, connections};
 use crate::routing::{channel_traits, ChannelTarget, RouteKey};
 use crate::workspace::manager::{default_profile_for_agent, ExternalSessionAttachMode};
 use crate::workspace::threads::runtime::{
-    cancelled_prompt_response, route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
+    cancelled_prompt_response, route_allows_startup_replay, StartupReplay, ThreadRuntime,
+    ThreadRuntimeState,
 };
 use crate::workspace::threads::store::HostBinding;
 use crate::workspace::WorkspaceThreadManager;
@@ -55,6 +56,8 @@ pub(crate) async fn handle_prompt(
         plugin_host,
         &target,
         false,
+        StartupReplay::Silent,
+        None,
         Some(cancellation.clone()),
     )
     .await?;
@@ -107,8 +110,16 @@ async fn handle_command(
                 .close_route_and_create_thread(route, Some("user started a new thread".to_string()))
                 .await
                 .map_err(internal_error)?;
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true)
-                .await?
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                target,
+                true,
+                StartupReplay::Silent,
+                None,
+            )
+            .await?
             {
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
@@ -173,8 +184,16 @@ async fn handle_command(
                     return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
                 }
             };
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true)
-                .await?
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                target,
+                true,
+                StartupReplay::Replay,
+                None,
+            )
+            .await?
             {
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
@@ -313,7 +332,17 @@ async fn switch_workspace(
     }
     .map_err(internal_error)?;
 
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &runtime,
+        plugin_host,
+        target,
+        true,
+        StartupReplay::Replay,
+        None,
+    )
+    .await?
+    {
         return Ok(());
     }
     send_system_text_to_target(
@@ -362,6 +391,8 @@ async fn switch_host(
                 plugin_host,
                 channel_target,
                 true,
+                StartupReplay::Silent,
+                None,
             )
             .await?
             {
@@ -391,6 +422,8 @@ async fn switch_host(
                 plugin_host,
                 channel_target,
                 true,
+                StartupReplay::Silent,
+                None,
             )
             .await?
             {
@@ -419,6 +452,8 @@ async fn switch_host(
         plugin_host,
         channel_target,
         true,
+        StartupReplay::Silent,
+        None,
     )
     .await?
     {
@@ -447,7 +482,17 @@ async fn send_agent_command(
         .resolve_route_runtime(route)
         .await
         .map_err(internal_error)?;
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, false).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &runtime,
+        plugin_host,
+        target,
+        false,
+        StartupReplay::Silent,
+        None,
+    )
+    .await?
+    {
         return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
     }
     let state = runtime.state().await;
@@ -525,7 +570,17 @@ async fn switch_session(
             return Ok(());
         }
     };
-    if !start_runtime_and_notify(workspace_threads, &resumed, plugin_host, target, true).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &resumed,
+        plugin_host,
+        target,
+        true,
+        StartupReplay::Replay,
+        None,
+    )
+    .await?
+    {
         return Ok(());
     }
     send_system_text_to_target(
@@ -546,6 +601,8 @@ pub async fn start_runtime_and_notify(
     plugin_host: &Arc<PluginHost>,
     target: &ChannelTarget,
     force_session_ready: bool,
+    replay: StartupReplay,
+    replay_sink: Option<mpsc::UnboundedSender<ChannelOutput>>,
 ) -> acp::Result<bool> {
     start_runtime_and_notify_with_cancellation(
         workspace_threads,
@@ -553,18 +610,23 @@ pub async fn start_runtime_and_notify(
         plugin_host,
         target,
         force_session_ready,
+        replay,
+        replay_sink,
         None,
     )
     .await
     .map(|started| started.expect("uncancellable runtime start cannot be cancelled"))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn start_runtime_and_notify_with_cancellation(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     runtime: &Arc<ThreadRuntime>,
     plugin_host: &Arc<PluginHost>,
     target: &ChannelTarget,
     force_session_ready: bool,
+    replay: StartupReplay,
+    replay_sink: Option<mpsc::UnboundedSender<ChannelOutput>>,
     cancellation: Option<watch::Receiver<bool>>,
 ) -> acp::Result<Option<bool>> {
     let route = &target.route;
@@ -586,14 +648,48 @@ async fn start_runtime_and_notify_with_cancellation(
             .await
             .map_err(internal_error)?;
     }
-    let handler = bridge_handler(workspace_threads, plugin_host, runtime, &before);
-    let started = runtime.start(route, handler, cancellation).await?;
+    let replay_capture = replay_sink
+        .as_ref()
+        .map(|_| Arc::new(StartupReplayCapture::new()));
+    let handler = bridge_handler_with_capture(
+        workspace_threads,
+        plugin_host,
+        runtime,
+        &before,
+        replay_capture.clone(),
+    );
+    let started = runtime.start(route, handler, cancellation, replay).await?;
     let Some(started) = started else {
         return Ok(None);
     };
     let session_id = started.session_id;
     let after = runtime.state().await;
     let session_was_resumed = before.session_id.as_deref() == Some(session_id.as_str());
+
+    // Hand the captured transcript to the one connection that asked for it,
+    // bracketed so the client can reset and rebuild in place. When the start
+    // could not replay (gemini, IM routes, fresh sessions) no brackets are
+    // sent and the requester falls back to whatever it already renders.
+    if let (Some(sink), Some(capture)) = (&replay_sink, &replay_capture) {
+        let frames = capture.finish();
+        if started.replayed {
+            let _ = sink.send(ChannelOutput::ReplayStart {
+                route: route.clone(),
+                session_id: session_id.clone(),
+            });
+            for reply in frames {
+                let _ = sink.send(ChannelOutput::ThreadReply {
+                    route: route.clone(),
+                    reply_to: None,
+                    reply,
+                });
+            }
+            let _ = sink.send(ChannelOutput::ReplayDone {
+                route: route.clone(),
+                session_id: session_id.clone(),
+            });
+        }
+    }
 
     let agent_info = after
         .initialize
@@ -623,6 +719,7 @@ async fn start_runtime_and_notify_with_cancellation(
             reply_to: target.reply_to.clone(),
             session_id: session_id.clone(),
         });
+        let updated_at = native_session_updated_at(&after, &session_id).await;
         plugin_host.send_output(ChannelOutput::SessionInfo {
             route: route.clone(),
             reply_to: target.reply_to.clone(),
@@ -642,10 +739,14 @@ async fn start_runtime_and_notify_with_cancellation(
                 } else {
                     ChannelSessionStart::New
                 },
+                updated_at,
             },
         });
     }
-    if should_send_session_ready && route_allows_startup_replay(route) {
+    if should_send_session_ready
+        && replay == StartupReplay::Replay
+        && route_allows_startup_replay(route)
+    {
         send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
             .await;
     }
@@ -655,6 +756,15 @@ async fn start_runtime_and_notify_with_cancellation(
             .await;
     }
     Ok(Some(true))
+}
+
+async fn native_session_updated_at(state: &ThreadRuntimeState, session_id: &str) -> Option<u64> {
+    crate::launch_sessions::native_session_updated_at(
+        &state.host_binding.agent_id,
+        &state.workspace,
+        session_id,
+    )
+    .await
 }
 
 pub async fn send_runtime_multi_agent_state_and_replay(
@@ -743,13 +853,24 @@ fn bridge_handler(
     runtime: &Arc<ThreadRuntime>,
     state: &ThreadRuntimeState,
 ) -> Arc<dyn AgentClientHandler> {
-    Arc::new(ChannelBridgeHandler::for_thread(
+    bridge_handler_with_capture(workspace_threads, plugin_host, runtime, state, None)
+}
+
+fn bridge_handler_with_capture(
+    workspace_threads: &Arc<WorkspaceThreadManager>,
+    plugin_host: &Arc<PluginHost>,
+    runtime: &Arc<ThreadRuntime>,
+    state: &ThreadRuntimeState,
+    startup_capture: Option<Arc<StartupReplayCapture>>,
+) -> Arc<dyn AgentClientHandler> {
+    Arc::new(ChannelBridgeHandler::for_thread_with_capture(
         Arc::clone(plugin_host),
         workspace_threads,
         state.workspace_id.clone(),
         state.thread_id.clone(),
         state.host_binding.clone(),
         runtime.active_turn_target(),
+        startup_capture,
     ))
 }
 

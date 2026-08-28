@@ -106,6 +106,8 @@ impl ChatState {
             }
             ChatEvent::SessionInfo { .. }
             | ChatEvent::PreviewRefresh
+            | ChatEvent::ReplayStart { .. }
+            | ChatEvent::ReplayDone { .. }
             | ChatEvent::SubagentStatus { .. }
             | ChatEvent::SubagentAcpNotification { .. }
             | ChatEvent::AcpNotification { .. } => {}

@@ -240,6 +240,7 @@ async fn queued_start_honors_cancellation_before_agent_launch() {
             route: RouteKey::new("web", "chat-1"),
             handler: Arc::new(NoopClientHandler),
             cancellation: Some(cancellation),
+            replay: StartupReplay::Replay,
             reply: reply_tx,
         })))
         .unwrap();
@@ -384,10 +385,11 @@ async fn cancel_signals_active_turn_without_agent_lookup() {
 }
 
 #[test]
-fn web_routes_load_previous_host_session_for_playback() {
+fn web_routes_load_previous_host_session_when_replay_is_requested() {
     let route = RouteKey::new("web", "chat-1");
 
-    let startup_session = host_startup_session(&route, None, &thread_with_sessions());
+    let startup_session =
+        host_startup_session(&route, None, &thread_with_sessions(), StartupReplay::Replay);
 
     assert_eq!(
         startup_session,
@@ -396,14 +398,32 @@ fn web_routes_load_previous_host_session_for_playback() {
 }
 
 #[test]
-fn tui_routes_load_previous_host_session_for_playback() {
+fn tui_routes_load_previous_host_session_when_replay_is_requested() {
     let route = RouteKey::new("tui", "chat-1");
 
-    let startup_session = host_startup_session(&route, None, &thread_with_sessions());
+    let startup_session =
+        host_startup_session(&route, None, &thread_with_sessions(), StartupReplay::Replay);
 
     assert_eq!(
         startup_session,
         StartupSession::Load("session-old".to_string())
+    );
+}
+
+#[test]
+fn silent_web_restarts_resume_without_replaying_the_session() {
+    let route = RouteKey::new("web", "chat-1");
+
+    let startup_session = host_startup_session(
+        &route,
+        Some("runtime-session".to_string()),
+        &thread_with_sessions(),
+        StartupReplay::Silent,
+    );
+
+    assert_eq!(
+        startup_session,
+        StartupSession::Resume("runtime-session".to_string())
     );
 }
 
@@ -412,7 +432,7 @@ fn web_gemini_routes_resume_without_load_fallback() {
     let route = RouteKey::new("web", "chat-1");
     let thread = thread_with_host_session("gemini", None, "gemini-session");
 
-    let startup_session = host_startup_session(&route, None, &thread);
+    let startup_session = host_startup_session(&route, None, &thread, StartupReplay::Replay);
 
     assert_eq!(
         startup_session,
@@ -421,13 +441,27 @@ fn web_gemini_routes_resume_without_load_fallback() {
 }
 
 #[test]
-fn im_routes_resume_previous_host_session_without_playback() {
+fn gemini_never_falls_back_to_load_even_on_silent_im_restarts() {
+    let route = RouteKey::new("slack", "dm-1");
+    let thread = thread_with_host_session("gemini", None, "gemini-session");
+
+    let startup_session = host_startup_session(&route, None, &thread, StartupReplay::Silent);
+
+    assert_eq!(
+        startup_session,
+        StartupSession::ResumeOnly("gemini-session".to_string())
+    );
+}
+
+#[test]
+fn im_routes_resume_previous_host_session_even_when_replay_is_requested() {
     let route = RouteKey::new("slack", "dm-1");
 
     let startup_session = host_startup_session(
         &route,
         Some("runtime-session".to_string()),
         &thread_with_sessions(),
+        StartupReplay::Replay,
     );
 
     assert_eq!(
@@ -454,7 +488,7 @@ fn routes_without_known_session_start_fresh() {
         updated_at: "2026-01-01T00:00:00.000Z".to_string(),
     };
 
-    let startup_session = host_startup_session(&route, None, &thread);
+    let startup_session = host_startup_session(&route, None, &thread, StartupReplay::Replay);
 
     assert_eq!(startup_session, StartupSession::Fresh);
 }

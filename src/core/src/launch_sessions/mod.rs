@@ -74,6 +74,20 @@ pub async fn list_native_for_agent_workspace_with_archived_async(
     .await
 }
 
+/// Last-modified stamp of one session in the agent's native store, or `None`
+/// when the session cannot be found there.
+pub async fn native_session_updated_at(
+    agent_id: &str,
+    workspace: &Path,
+    session_id: &str,
+) -> Option<u64> {
+    list_native_for_agent_workspace_with_archived_async(agent_id, workspace, usize::MAX, true)
+        .await
+        .into_iter()
+        .find(|session| session.session_id == session_id)
+        .map(|session| session.updated_at)
+}
+
 pub async fn list_native_for_agent_workspaces_with_archived_async(
     agent_id: &str,
     workspaces: &[std::path::PathBuf],

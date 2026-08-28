@@ -166,6 +166,8 @@ pub(super) async fn forward_output_to_plugin(
             .await?;
         }
         ChannelOutput::TurnStatus { .. }
+        | ChannelOutput::ReplayStart { .. }
+        | ChannelOutput::ReplayDone { .. }
         | ChannelOutput::MultiAgentTurn { .. }
         | ChannelOutput::SubagentStatus { .. }
         | ChannelOutput::SubagentAcp { .. } => {}
