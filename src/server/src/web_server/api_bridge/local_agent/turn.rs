@@ -201,14 +201,9 @@ pub(super) async fn prepare_conversation_turn(
                 )
                 .await
                 .map_err(TurnStartError::from_acp)?;
-                apply_local_agent_permission_mode(
-                    agent_ref,
-                    &session.session_id,
-                    session.modes.as_ref(),
-                    permission_mode,
-                )
-                .await
-                .map_err(TurnStartError::from_acp)?;
+                apply_local_agent_permission_mode(agent_ref, &session.session_id, permission_mode)
+                    .await
+                    .map_err(TurnStartError::from_acp)?;
                 Ok(session.session_id)
             })
             .await?;
@@ -441,13 +436,13 @@ pub(super) async fn prepare_local_agent_turn(
         LOCAL_AGENT_CHANNEL_KIND,
         format!("api_{}", Uuid::new_v4().simple()),
     );
-    let agent_id = common::resources::resolve_agent_id(&turn.agent_id)
-        .map_err(|error| TurnStartError::BadRequest(error.to_string()))?;
+    // The gate already canonicalized the agent id; trust it.
     let (extra_args, env_vars) =
-        launch_args_and_env(&agent_id, &turn.profile_id, &turn.workspace, &route)
+        launch_args_and_env(&turn.agent_id, &turn.profile_id, &turn.workspace, &route)
             .map_err(TurnStartError::Upstream)?;
     let forwarder = TurnEventForwarder::new();
     let handler: Arc<dyn AgentClientHandler> = Arc::clone(&forwarder) as _;
+    let agent_id = turn.agent_id.clone();
     let ready = with_startup_deadline("agent startup", async {
         common::agent::Agent::spawn(
             agent_id,
@@ -481,14 +476,9 @@ pub(super) async fn prepare_local_agent_turn(
             )
             .await
             .map_err(TurnStartError::from_acp)?;
-            apply_local_agent_permission_mode(
-                agent,
-                &session.session_id,
-                session.modes.as_ref(),
-                permission_mode,
-            )
-            .await
-            .map_err(TurnStartError::from_acp)?;
+            apply_local_agent_permission_mode(agent, &session.session_id, permission_mode)
+                .await
+                .map_err(TurnStartError::from_acp)?;
             Ok(session.session_id)
         })
         .await
@@ -652,14 +642,14 @@ async fn displacement_signal(displaced: &mut Option<tokio::sync::watch::Receiver
     }
 }
 
-/// Apply the client's requested permission mode to a freshly created
-/// session, when the agent advertises one with that id. Tool permissions
-/// over the API are otherwise auto-refused (there is no human to ask), so
-/// autonomous use wants acceptEdits or bypassPermissions here.
+/// Forward the client's requested permission mode to a freshly created
+/// session, verbatim: the agent owns its mode ids and judges unknown ones
+/// with its own error. Tool permissions over the API are otherwise
+/// auto-refused (there is no human to ask), so autonomous use wants
+/// acceptEdits or bypassPermissions here.
 async fn apply_local_agent_permission_mode(
     agent: &common::agent::Agent,
     session_id: &acp::SessionId,
-    modes: Option<&acp::SessionModeState>,
     requested: Option<&str>,
 ) -> acp::Result<()> {
     let Some(requested) = requested
@@ -668,39 +658,13 @@ async fn apply_local_agent_permission_mode(
     else {
         return Ok(());
     };
-    let Some(modes) = modes else {
-        return Ok(());
-    };
-    // Aliases translate to the agent's advertised id when one matches;
-    // anything else goes through as-is and the agent judges it — its own
-    // invalid-params error flows back, no pre-check on our side.
-    let canonical = canonical_permission_mode(requested);
-    let mode_id = modes
-        .available_modes
-        .iter()
-        .find(|mode| {
-            let id = mode.id.to_string();
-            id == requested || Some(id.as_str()) == canonical
-        })
-        .map(|mode| mode.id.clone())
-        .unwrap_or_else(|| acp::SessionModeId::new(requested.to_string()));
     agent
-        .set_session_mode(acp::SetSessionModeRequest::new(session_id.clone(), mode_id))
+        .set_session_mode(acp::SetSessionModeRequest::new(
+            session_id.clone(),
+            acp::SessionModeId::new(requested.to_string()),
+        ))
         .await?;
     Ok(())
-}
-
-fn canonical_permission_mode(mode: &str) -> Option<&'static str> {
-    match mode {
-        "default" => Some("default"),
-        "plan" => Some("plan"),
-        "acceptEdits" | "accept_edits" | "accept-edits" | "accept" => Some("acceptEdits"),
-        "bypassPermissions" | "bypass_permissions" | "bypass-permissions" | "bypass" => {
-            Some("bypassPermissions")
-        }
-        "dontAsk" | "dont_ask" | "dont-ask" | "dontask" => Some("dontAsk"),
-        _ => None,
-    }
 }
 
 async fn apply_local_agent_model(
