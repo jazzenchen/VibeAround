@@ -125,7 +125,7 @@ pub(super) async fn bridge_handler(
         && client_protocol
             .decode_agent_request(agent_request.clone())
             .map(|request| image_resolver::request_needs_resolution(&state, &request))
-            .unwrap_or(true);
+            .unwrap_or(false);
 
     if client_protocol == upstream.protocol
         && !upstream.is_google_code_assist()
@@ -139,15 +139,6 @@ pub(super) async fn bridge_handler(
         let decoded_content_request = upstream
             .protocol
             .decode_agent_request(agent_request.clone());
-        if let Err(error) = &decoded_content_request {
-            if image_resolver::is_enabled(&state) {
-                return record_json_error(
-                    record.as_ref(),
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    &format!("image resolver could not inspect the client request: {error}"),
-                );
-            }
-        }
         if let Ok(mut content_request) = decoded_content_request {
             let image_resolution = match image_resolver::resolve_request_images(
                 &state,
