@@ -86,25 +86,6 @@ pub(crate) struct ChannelBridgeHandler {
 }
 
 impl ChannelBridgeHandler {
-    pub(crate) fn for_thread(
-        plugin_host: Arc<PluginHost>,
-        workspace_threads: &Arc<WorkspaceThreadManager>,
-        workspace_id: WorkspaceId,
-        thread_id: WorkspaceThreadId,
-        host_binding: HostBinding,
-        active_turn_target: ActiveTurnTarget,
-    ) -> Self {
-        Self::for_thread_with_capture(
-            plugin_host,
-            workspace_threads,
-            workspace_id,
-            thread_id,
-            host_binding,
-            active_turn_target,
-            None,
-        )
-    }
-
     pub(crate) fn for_thread_with_capture(
         plugin_host: Arc<PluginHost>,
         workspace_threads: &Arc<WorkspaceThreadManager>,

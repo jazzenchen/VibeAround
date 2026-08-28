@@ -167,25 +167,23 @@ fn append_content_block_to_acp_prompt(
             media_type,
             url,
             data,
-            extensions,
+            ..
         } => blocks.push(universal_image_to_acp_block(
             media_type.as_deref(),
             url.as_deref(),
             data.as_deref(),
-            extensions,
         )),
         UniversalContentBlock::File {
             media_type,
             filename,
             url,
             data,
-            extensions,
+            ..
         } => blocks.push(universal_file_to_acp_block(
             filename.as_deref(),
             media_type.as_deref(),
             url.as_deref(),
             data.as_deref(),
-            extensions,
         )),
         UniversalContentBlock::ToolCall {
             id,
@@ -228,7 +226,6 @@ fn universal_image_to_acp_block(
     media_type: Option<&str>,
     url: Option<&str>,
     data: Option<&str>,
-    extensions: &Extensions,
 ) -> acp::ContentBlock {
     if let Some(payload) = media_payload(first_non_empty(data, data_url_source(url))) {
         let mime_type = media_type
@@ -253,7 +250,6 @@ fn universal_file_to_acp_block(
     media_type: Option<&str>,
     url: Option<&str>,
     data: Option<&str>,
-    extensions: &Extensions,
 ) -> acp::ContentBlock {
     let name = first_non_empty(filename, None).unwrap_or("attachment");
     if let Some(payload) = media_payload(first_non_empty(data, data_url_source(url))) {
