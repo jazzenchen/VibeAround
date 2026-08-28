@@ -120,9 +120,6 @@ pub(super) async fn bridge_handler(
     let same_protocol_needs_web_search_fallback = requested_web_search_same_protocol
         && state.host_search_available
         && (state.replace_provider_web_search || !target_model_capabilities.web_search);
-    let same_protocol_needs_web_search_discard = requested_web_search_same_protocol
-        && !state.host_search_available
-        && !target_model_capabilities.web_search;
     let same_protocol_needs_service_side_image = client_protocol == upstream.protocol
         && image_resolver::is_enabled(&state)
         && client_protocol
@@ -130,20 +127,9 @@ pub(super) async fn bridge_handler(
             .map(|request| image_resolver::request_needs_resolution(&state, &request))
             .unwrap_or(true);
 
-    if same_protocol_needs_web_search_discard {
-        tracing::info!(
-            target: "server::web_server::api_bridge",
-            request_id = %request_id,
-            profile_id = %profile_id,
-            target_api_type = %target_api_type,
-            "API bridge will translate request to discard unsupported provider web search"
-        );
-    }
-
     if client_protocol == upstream.protocol
         && !upstream.is_google_code_assist()
         && !same_protocol_needs_web_search_fallback
-        && !same_protocol_needs_web_search_discard
         && !same_protocol_needs_service_side_image
     {
         let original_agent_request = agent_request.clone();
@@ -320,30 +306,6 @@ pub(super) async fn bridge_handler(
     let web_search_fallback = if should_use_host_web_search {
         server_tools::prepare_web_search_fallback(&mut universal_request)
     } else {
-        if request_needs_web_search
-            && !can_use_native_web_search
-            && server_tools::discard_web_search_server_tools(&mut universal_request)
-        {
-            tracing::info!(
-                target: "server::web_server::api_bridge",
-                request_id = %request_id,
-                profile_id = %profile_id,
-                target_api_type = %target_api_type,
-                host_search_available = state.host_search_available,
-                native_web_search = target_model_capabilities.web_search,
-                "API bridge discarded provider web search server tool"
-            );
-        }
-        if request_needs_web_search && can_use_native_web_search {
-            tracing::info!(
-                target: "server::web_server::api_bridge",
-                request_id = %request_id,
-                profile_id = %profile_id,
-                target_api_type = %target_api_type,
-                upstream_protocol = ?upstream.protocol,
-                "API bridge preserved native provider web search server tool"
-            );
-        }
         None
     };
     if let Some(fallback) = &web_search_fallback {
