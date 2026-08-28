@@ -7,7 +7,7 @@ use axum::body::Body;
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use bytes::Bytes as ResponseBytes;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 use va_ai_api_bridge::{
     ContentBlock as UniversalContentBlock, EncodeState, Extensions, Role, UniversalEvent,
@@ -36,11 +36,240 @@ pub(super) enum LocalAgentTurnEvent {
     Done,
 }
 
+/// One turn on a registered conversation (the stateful mode). The caller
+/// builds both prompt renderings up front because whether the backend session
+/// needs seeding is only known once the turn holds the conversation.
+pub(super) struct ConversationTurn {
+    pub(super) conversation: Arc<super::conversations::Conversation>,
+    pub(super) model_id: Option<String>,
+    pub(super) response_id: String,
+    /// Full-history seed prompt; `None` when the client sent increments only
+    /// (a chained Responses request) and the history cannot be rebuilt.
+    pub(super) seed_prompt: Option<Vec<acp::ContentBlock>>,
+    /// The new tail segment; `None` when the transcript ends with an
+    /// assistant turn and there is nothing new to answer.
+    pub(super) tail_prompt: Option<Vec<acp::ContentBlock>>,
+}
+
+async fn run_conversation_turn(
+    turn: ConversationTurn,
+    tx: mpsc::UnboundedSender<LocalAgentTurnEvent>,
+    mut client_cancel: oneshot::Receiver<()>,
+) -> Result<(), String> {
+    let conversation = Arc::clone(&turn.conversation);
+    let (guard, mut displaced) = conversation.begin_turn().await;
+    let _guard = guard;
+
+    let message_id = format!("msg_{}", Uuid::new_v4().simple());
+    send_events(
+        &tx,
+        vec![
+            UniversalEvent::ResponseStart {
+                id: Some(turn.response_id.clone()),
+                model: turn.model_id.clone(),
+                extensions: Extensions::new(),
+            },
+            UniversalEvent::MessageStart {
+                id: message_id,
+                role: Role::Assistant,
+                extensions: Extensions::new(),
+            },
+            UniversalEvent::ContentStart {
+                index: 0,
+                block: UniversalContentBlock::Text {
+                    text: String::new(),
+                },
+            },
+        ],
+    );
+
+    let (generation, attach_options) = ensure_conversation_agent(&conversation).await?;
+    let agent = Arc::clone(&generation.agent);
+    let forwarder = Arc::clone(&generation.forwarder);
+
+    let result: Result<acp::PromptResponse, String> = async {
+        let (session_id, prompt) = match conversation.session_id() {
+            Some(session_id) => {
+                let prompt = turn
+                    .tail_prompt
+                    .clone()
+                    .ok_or_else(|| "request adds no new input to answer".to_string())?;
+                let session_id = acp::SessionId::from(session_id);
+                if let Some(options) = attach_options.as_deref() {
+                    // A respawn handed us the config options, so a model
+                    // choice can still be applied to the resumed session.
+                    apply_local_agent_model(
+                        &agent,
+                        &session_id,
+                        Some(options),
+                        turn.model_id.as_deref(),
+                    )
+                    .await
+                    .map_err(|error| error.message.to_string())?;
+                }
+                (session_id, prompt)
+            }
+            None => {
+                // Fresh or lost session: seed it with the full history.
+                let seed = turn.seed_prompt.clone().ok_or_else(|| {
+                    "conversation state was lost; start a new chain without previous_response_id"
+                        .to_string()
+                })?;
+                let session = agent
+                    .new_session(acp::NewSessionRequest::new(conversation.workspace.clone()))
+                    .await
+                    .map_err(|error| error.message.to_string())?;
+                conversation.set_session_id(Some(session.session_id.to_string()));
+                apply_local_agent_model(
+                    &agent,
+                    &session.session_id,
+                    session.config_options.as_deref(),
+                    turn.model_id.as_deref(),
+                )
+                .await
+                .map_err(|error| error.message.to_string())?;
+                (session.session_id, seed)
+            }
+        };
+
+        forwarder.install(tx.clone());
+        let prompt_call = agent.prompt(acp::PromptRequest::new(session_id.clone(), prompt));
+        tokio::pin!(prompt_call);
+        let mut cancelled: Option<String> = None;
+        loop {
+            tokio::select! {
+                response = &mut prompt_call => {
+                    break match cancelled {
+                        Some(reason) => Err(reason),
+                        None => response.map_err(|error| error.message.to_string()),
+                    };
+                }
+                _ = &mut client_cancel, if cancelled.is_none() => {
+                    cancelled = Some("local agent request cancelled".to_string());
+                    let _ = agent
+                        .cancel(acp::CancelNotification::new(session_id.clone()))
+                        .await;
+                }
+                changed = displaced.changed(), if cancelled.is_none() => {
+                    if changed.is_err() || *displaced.borrow() {
+                        cancelled = Some(
+                            "superseded by a newer request in this conversation".to_string(),
+                        );
+                        let _ = agent
+                            .cancel(acp::CancelNotification::new(session_id.clone()))
+                            .await;
+                    }
+                }
+            }
+        }
+    }
+    .await;
+    forwarder.clear();
+    conversation.clear_dead_agent();
+    let response = result?;
+    send_events(
+        &tx,
+        final_events(
+            response.stop_reason,
+            response.usage.as_ref().map(acp_usage_to_universal),
+        ),
+    );
+    Ok(())
+}
+
+/// The conversation's live agent generation, spawning a fresh one when the
+/// previous process is gone. A respawn resumes the recorded session when the
+/// agent still has it; a session the agent lost is cleared so the caller
+/// reseeds.
+async fn ensure_conversation_agent(
+    conversation: &Arc<super::conversations::Conversation>,
+) -> Result<
+    (
+        super::conversations::AgentGeneration,
+        Option<Vec<acp::SessionConfigOption>>,
+    ),
+    String,
+> {
+    if let Some(generation) = conversation.live_agent() {
+        return Ok((generation, None));
+    }
+    let recorded_session = conversation.session_id();
+    let startup = match recorded_session.clone() {
+        Some(session_id) => common::agent::StartupSession::Resume(session_id),
+        None => common::agent::StartupSession::Fresh,
+    };
+    let (extra_args, env_vars) = launch_args_and_env(
+        &conversation.agent_id,
+        &conversation.profile_id,
+        &conversation.workspace,
+        &conversation.route,
+    )?;
+    let forwarder = TurnEventForwarder::new();
+    let handler: Arc<dyn AgentClientHandler> = Arc::clone(&forwarder) as _;
+    let ready = common::agent::Agent::spawn(
+        conversation.agent_id.clone(),
+        &conversation.route,
+        &conversation.workspace,
+        startup,
+        handler,
+        extra_args,
+        env_vars,
+    )
+    .await
+    .map_err(|error| format!("{error:#}"))?;
+    if recorded_session.is_some() && ready.startup_session_id.is_none() {
+        // The agent no longer has the session; the next prompt must reseed.
+        conversation.set_session_id(None);
+    }
+    let attach_options = ready
+        .startup_session_id
+        .is_some()
+        .then_some(ready.startup_config_options)
+        .flatten();
+    let generation = super::conversations::AgentGeneration {
+        agent: ready.agent,
+        forwarder,
+    };
+    conversation.set_agent(generation.clone());
+    Ok((generation, attach_options))
+}
+
+type TurnParts = (
+    oneshot::Sender<()>,
+    mpsc::UnboundedReceiver<LocalAgentTurnEvent>,
+    std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>,
+);
+
 pub(super) async fn local_agent_completion_response(
     turn: LocalAgentTurn,
     protocol: BridgeProtocol,
 ) -> Response {
-    let (_cancel_tx, mut rx, run) = start_local_agent_turn(turn);
+    completion_response_from(start_local_agent_turn(turn), protocol).await
+}
+
+pub(super) fn local_agent_stream_response(
+    turn: LocalAgentTurn,
+    protocol: BridgeProtocol,
+) -> Response {
+    stream_response_from(start_local_agent_turn(turn), protocol)
+}
+
+pub(super) async fn conversation_completion_response(
+    turn: ConversationTurn,
+    protocol: BridgeProtocol,
+) -> Response {
+    completion_response_from(start_conversation_turn(turn), protocol).await
+}
+
+pub(super) fn conversation_stream_response(
+    turn: ConversationTurn,
+    protocol: BridgeProtocol,
+) -> Response {
+    stream_response_from(start_conversation_turn(turn), protocol)
+}
+
+async fn completion_response_from(parts: TurnParts, protocol: BridgeProtocol) -> Response {
+    let (_cancel_tx, mut rx, run) = parts;
     tokio::spawn(run);
     let mut events = Vec::new();
     let mut failed = None;
@@ -57,11 +286,8 @@ pub(super) async fn local_agent_completion_response(
     translated_completion_events_response(events, protocol, None, None)
 }
 
-pub(super) fn local_agent_stream_response(
-    turn: LocalAgentTurn,
-    protocol: BridgeProtocol,
-) -> Response {
-    let (cancel_tx, rx, run) = start_local_agent_turn(turn);
+fn stream_response_from(parts: TurnParts, protocol: BridgeProtocol) -> Response {
+    let (cancel_tx, rx, run) = parts;
     tokio::spawn(run);
     let stream = futures_util::stream::unfold(
         (rx, EncodeState::default(), protocol, cancel_tx),
@@ -137,11 +363,12 @@ fn start_local_agent_turn(
 ) -> (
     oneshot::Sender<()>,
     mpsc::UnboundedReceiver<LocalAgentTurnEvent>,
-    impl std::future::Future<Output = ()> + Send + 'static,
+    std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>,
 ) {
     let (tx, rx) = mpsc::unbounded_channel();
     let (cancel_tx, cancel_rx) = oneshot::channel();
-    let handler = Arc::new(ApiAgentClientHandler::new(tx.clone()));
+    let handler = TurnEventForwarder::new();
+    handler.install(tx.clone());
     let run_tx = tx.clone();
     let run = async move {
         let result =
@@ -151,12 +378,34 @@ fn start_local_agent_turn(
         }
         let _ = run_tx.send(LocalAgentTurnEvent::Done);
     };
-    (cancel_tx, rx, run)
+    (cancel_tx, rx, Box::pin(run))
+}
+
+/// Kick off one turn on a registered conversation. Shape-compatible with
+/// [`start_local_agent_turn`] so both feed the same response builders.
+pub(super) fn start_conversation_turn(
+    turn: ConversationTurn,
+) -> (
+    oneshot::Sender<()>,
+    mpsc::UnboundedReceiver<LocalAgentTurnEvent>,
+    std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>,
+) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let run_tx = tx.clone();
+    let run = async move {
+        let result = run_conversation_turn(turn, run_tx.clone(), cancel_rx).await;
+        if let Err(message) = result {
+            let _ = run_tx.send(LocalAgentTurnEvent::Failed(message));
+        }
+        let _ = run_tx.send(LocalAgentTurnEvent::Done);
+    };
+    (cancel_tx, rx, Box::pin(run))
 }
 
 async fn run_local_agent_turn(
     turn: LocalAgentTurn,
-    handler: Arc<ApiAgentClientHandler>,
+    handler: Arc<TurnEventForwarder>,
     tx: mpsc::UnboundedSender<LocalAgentTurnEvent>,
     mut cancel_rx: oneshot::Receiver<()>,
 ) -> Result<(), String> {
@@ -209,9 +458,14 @@ async fn run_local_agent_turn(
             .new_session(acp::NewSessionRequest::new(turn.workspace.clone()))
             .await
             .map_err(|error| error.message.to_string())?;
-        apply_local_agent_model(&agent, &session, turn.model_id.as_deref())
-            .await
-            .map_err(|error| error.message.to_string())?;
+        apply_local_agent_model(
+            &agent,
+            &session.session_id,
+            session.config_options.as_deref(),
+            turn.model_id.as_deref(),
+        )
+        .await
+        .map_err(|error| error.message.to_string())?;
         let session_id = session.session_id.clone();
         tokio::select! {
             response = agent.prompt(acp::PromptRequest::new(session.session_id, turn.prompt)) => {
@@ -239,18 +493,19 @@ async fn run_local_agent_turn(
 
 async fn apply_local_agent_model(
     agent: &common::agent::Agent,
-    session: &acp::NewSessionResponse,
+    session_id: &acp::SessionId,
+    config_options: Option<&[acp::SessionConfigOption]>,
     model_id: Option<&str>,
 ) -> acp::Result<()> {
     let Some(model_id) = model_id.map(str::trim).filter(|model| !model.is_empty()) else {
         return Ok(());
     };
-    let Some(config_id) = model_config_option_id(session.config_options.as_deref()) else {
+    let Some(config_id) = model_config_option_id(config_options) else {
         return Ok(());
     };
     agent
         .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
-            session.session_id.clone(),
+            session_id.clone(),
             config_id,
             model_id,
         ))
@@ -274,40 +529,73 @@ fn is_model_config_option(option: &acp::SessionConfigOption) -> bool {
     ) || option.id.to_string().eq_ignore_ascii_case("model")
 }
 
-struct ApiAgentClientHandler {
-    tx: mpsc::UnboundedSender<LocalAgentTurnEvent>,
-    state: Mutex<ApiHandlerState>,
+/// Forwards agent notifications to whichever turn is currently listening.
+///
+/// Installed once at agent spawn and kept for the whole generation: a
+/// sessionless turn installs its sender immediately and the process dies with
+/// the turn, while a conversation installs a fresh sender per request and
+/// clears it afterwards — notifications between turns are dropped.
+pub(super) struct TurnEventForwarder {
+    slot: std::sync::Mutex<ForwarderSlot>,
 }
 
 #[derive(Default)]
-struct ApiHandlerState {
+struct ForwarderSlot {
+    tx: Option<mpsc::UnboundedSender<LocalAgentTurnEvent>>,
     reasoning_started: bool,
 }
 
-impl ApiAgentClientHandler {
-    fn new(tx: mpsc::UnboundedSender<LocalAgentTurnEvent>) -> Self {
-        Self {
-            tx,
-            state: Mutex::new(ApiHandlerState::default()),
+impl TurnEventForwarder {
+    pub(super) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            slot: std::sync::Mutex::new(ForwarderSlot::default()),
+        })
+    }
+
+    /// Route notifications to this turn from now on.
+    pub(super) fn install(&self, tx: mpsc::UnboundedSender<LocalAgentTurnEvent>) {
+        *self.lock() = ForwarderSlot {
+            tx: Some(tx),
+            reasoning_started: false,
+        };
+    }
+
+    pub(super) fn clear(&self) {
+        *self.lock() = ForwarderSlot::default();
+    }
+
+    fn forward(&self, mut events: Vec<UniversalEvent>) {
+        let mut slot = self.lock();
+        if slot.tx.is_none() {
+            return;
         }
+        if events
+            .iter()
+            .any(|event| matches!(event, UniversalEvent::ReasoningDelta { .. }))
+            && !slot.reasoning_started
+        {
+            slot.reasoning_started = true;
+            events.insert(0, super::events::reasoning_content_start());
+        }
+        if events.is_empty() {
+            return;
+        }
+        if let Some(tx) = slot.tx.as_ref() {
+            let _ = tx.send(LocalAgentTurnEvent::Events(events));
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, ForwarderSlot> {
+        self.slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
 #[async_trait::async_trait]
-impl common::agent::AgentClientHandler for ApiAgentClientHandler {
+impl common::agent::AgentClientHandler for TurnEventForwarder {
     async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
-        let mut events = acp_notification_to_events(&args);
-        if events
-            .iter()
-            .any(|event| matches!(event, UniversalEvent::ReasoningDelta { .. }))
-        {
-            let mut state = self.state.lock().await;
-            if !state.reasoning_started {
-                state.reasoning_started = true;
-                events.insert(0, super::events::reasoning_content_start());
-            }
-        }
-        send_events(&self.tx, events);
+        self.forward(acp_notification_to_events(&args));
         Ok(())
     }
 
