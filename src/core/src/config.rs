@@ -499,7 +499,10 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
                 .collect()
         });
     // Built-in agents are always on; the user's list is never rewritten.
-    for agent in crate::resources::AGENTS.iter().filter(|agent| agent.built_in) {
+    for agent in crate::resources::AGENTS
+        .iter()
+        .filter(|agent| agent.built_in)
+    {
         if !enabled_agents.contains(&agent.id) {
             enabled_agents.push(agent.id.clone());
         }
@@ -1536,7 +1539,11 @@ mod tests {
         let config = load_settings_from(&path);
         assert_eq!(
             config.enabled_agents,
-            vec!["claude".to_string(), "codex".to_string(), "va-agent".to_string()]
+            vec![
+                "claude".to_string(),
+                "codex".to_string(),
+                "va-agent".to_string()
+            ]
         );
         fs::remove_dir_all(&dir).unwrap();
     }
