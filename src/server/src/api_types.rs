@@ -134,6 +134,8 @@ pub struct LauncherPreferencesResponse {
     pub enabled_agents: Vec<String>,
     pub agent_preferences: BTreeMap<String, LauncherAgentPreferenceSummary>,
     pub local_agent_api_enabled: bool,
+    /// Canonical agent ids opted in to the agent-as-API routes.
+    pub local_agent_api_agents: Vec<String>,
     pub profile_connections: common::agent_state::ProfileConnectionPreferences,
 }
 

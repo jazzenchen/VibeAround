@@ -353,6 +353,7 @@ fn main() {
             profiles::launcher_reorder_workspaces,
             profiles::launcher_set_compatibility_bridge,
             profiles::launcher_set_local_agent_api_enabled,
+            profiles::launcher_set_local_agent_api_agent,
             profiles::launcher_set_profile_connection,
         ])
         .setup({

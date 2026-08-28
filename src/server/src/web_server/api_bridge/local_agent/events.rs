@@ -48,9 +48,61 @@ pub(super) fn acp_notification_to_events(args: &acp::SessionNotification) -> Vec
             .map(|text| vec![UniversalEvent::TextDelta { index: 0, text }])
             .unwrap_or_default(),
         acp::SessionUpdate::AgentThoughtChunk(chunk) => acp_content_to_text(&chunk.content)
-            .map(|text| vec![UniversalEvent::ReasoningDelta { index: 1, text }])
+            .map(|text| reasoning_progress(text))
             .unwrap_or_default(),
+        // Tool activity and plans ride the reasoning channel: they keep the
+        // answer text clean while showing API clients that a long turn is
+        // working, not hung. Only lifecycle edges are emitted — the start of
+        // a call and its terminal status — never per-chunk output.
+        acp::SessionUpdate::ToolCall(tool_call) => reasoning_progress(format!(
+            "[tool] {} …\n",
+            tool_call_title(&tool_call.title, &tool_call.tool_call_id)
+        )),
+        acp::SessionUpdate::ToolCallUpdate(update) => match update.fields.status {
+            Some(acp::ToolCallStatus::Completed) => reasoning_progress(format!(
+                "[tool] {} ✓\n",
+                tool_call_title(
+                    update.fields.title.as_deref().unwrap_or_default(),
+                    &update.tool_call_id,
+                )
+            )),
+            Some(acp::ToolCallStatus::Failed) => reasoning_progress(format!(
+                "[tool] {} ✗ failed\n",
+                tool_call_title(
+                    update.fields.title.as_deref().unwrap_or_default(),
+                    &update.tool_call_id,
+                )
+            )),
+            _ => Vec::new(),
+        },
+        acp::SessionUpdate::Plan(plan) => {
+            if plan.entries.is_empty() {
+                return Vec::new();
+            }
+            let mut text = String::from("[plan]\n");
+            for entry in &plan.entries {
+                let marker = match entry.status {
+                    acp::PlanEntryStatus::Completed => "x",
+                    _ => " ",
+                };
+                text.push_str(&format!("- [{marker}] {}\n", entry.content));
+            }
+            reasoning_progress(text)
+        }
         _ => Vec::new(),
+    }
+}
+
+fn reasoning_progress(text: String) -> Vec<UniversalEvent> {
+    vec![UniversalEvent::ReasoningDelta { index: 1, text }]
+}
+
+fn tool_call_title(title: &str, tool_call_id: &acp::ToolCallId) -> String {
+    let title = title.trim();
+    if title.is_empty() {
+        tool_call_id.to_string()
+    } else {
+        title.to_string()
     }
 }
 

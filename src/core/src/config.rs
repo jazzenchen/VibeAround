@@ -2,7 +2,7 @@
 //! All config comes from ~/.vibearound/settings.json.
 //! Callers load a fresh Config when they need one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 
@@ -200,6 +200,16 @@ pub struct ApiBridgeConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalAgentApiConfig {
     pub enabled: bool,
+    /// Canonical agent ids allowed to serve the agent-as-API routes. The
+    /// service switch gates the whole route family; on top of that every
+    /// agent must be opted in individually — default is nobody.
+    pub agents: BTreeSet<String>,
+}
+
+impl LocalAgentApiConfig {
+    pub fn agent_enabled(&self, canonical_agent_id: &str) -> bool {
+        self.enabled && self.agents.contains(canonical_agent_id)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -613,6 +623,21 @@ fn load_local_agent_api_config(root: &serde_json::Value) -> LocalAgentApiConfig 
                 .get("enabled")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false),
+            // Entries are written canonical by the settings API; hand-edited
+            // values must already be canonical agent ids.
+            agents: settings
+                .get("agents")
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|agent| !agent.is_empty())
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
         .unwrap_or_default()
 }
@@ -1692,6 +1717,44 @@ mod tests {
         let config = load_settings_from(&path);
 
         assert!(config.local_agent_api.enabled);
+        // The service switch alone allows nobody: every agent must opt in.
+        assert!(!config.local_agent_api.agent_enabled("claude"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn local_agent_api_agents_opt_in_individually() {
+        let dir = unique_test_dir("local-agent-api-agents");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "local_agent_api": { "enabled": true, "agents": ["claude", " codex ", ""] } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(config.local_agent_api.agent_enabled("claude"));
+        assert!(config.local_agent_api.agent_enabled("codex"));
+        assert!(!config.local_agent_api.agent_enabled("gemini"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn local_agent_api_agents_require_the_service_switch() {
+        let dir = unique_test_dir("local-agent-api-agents-gated");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "local_agent_api": { "enabled": false, "agents": ["claude"] } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(!config.local_agent_api.agent_enabled("claude"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -6,7 +6,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde_json::Value;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
+mod conversations;
 mod events;
 mod models;
 mod prompt;
@@ -15,19 +17,29 @@ mod turn;
 pub use models::local_agent_models_handler;
 
 use super::{json_error, record_json_error, BridgeProtocol};
-use prompt::universal_request_to_acp_prompt;
+use prompt::seed_request_to_acp_prompt;
 
 pub(super) const LOCAL_AGENT_CHANNEL_KIND: &str = "api";
 const HEADER_WORKSPACE: &str = "x-vibearound-cwd";
+/// Explicit conversation key for the chat/messages protocols; requests
+/// carrying it share one persistent backend session per key. The Responses
+/// protocol chains `previous_response_id` instead.
+const HEADER_CONVERSATION: &str = "x-vibearound-conversation";
+/// Session permission mode applied when a fresh backend session is created
+/// (default / plan / acceptEdits / bypassPermissions / dontAsk, aliases
+/// accepted). Tool permissions over the API are auto-refused, so autonomous
+/// use wants acceptEdits or bypassPermissions.
+const HEADER_PERMISSION_MODE: &str = "x-vibearound-permission-mode";
 
 pub async fn local_agent_responses_handler(
     Path((agent_id, profile_id)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !local_agent_api_enabled() {
-        return local_agent_api_disabled_response();
-    }
+    let agent_id = match local_agent_gate(&agent_id) {
+        Ok(agent_id) => agent_id,
+        Err(response) => return response,
+    };
     handle_local_agent_request(
         agent_id,
         profile_id,
@@ -43,9 +55,10 @@ pub async fn local_agent_chat_completions_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !local_agent_api_enabled() {
-        return local_agent_api_disabled_response();
-    }
+    let agent_id = match local_agent_gate(&agent_id) {
+        Ok(agent_id) => agent_id,
+        Err(response) => return response,
+    };
     handle_local_agent_request(
         agent_id,
         profile_id,
@@ -61,9 +74,10 @@ pub async fn local_agent_messages_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !local_agent_api_enabled() {
-        return local_agent_api_disabled_response();
-    }
+    let agent_id = match local_agent_gate(&agent_id) {
+        Ok(agent_id) => agent_id,
+        Err(response) => return response,
+    };
     handle_local_agent_request(
         agent_id,
         profile_id,
@@ -76,6 +90,33 @@ pub async fn local_agent_messages_handler(
 
 pub(super) fn local_agent_api_enabled() -> bool {
     common::config::ensure_loaded().local_agent_api.enabled
+}
+
+/// Service switch + per-agent opt-in, resolving the path segment to the
+/// canonical agent id on the way. The service switch gates the route family
+/// (503 when off, as before); each agent must additionally be opted in under
+/// `local_agent_api.agents`, and one that is not answers 403 — an explicit
+/// policy refusal, unlike the direct-profile 429 below.
+pub(super) fn local_agent_gate(agent_id: &str) -> Result<String, Response> {
+    if !local_agent_api_enabled() {
+        return Err(local_agent_api_disabled_response());
+    }
+    let canonical = match common::resources::resolve_agent_id(agent_id) {
+        Ok(canonical) => canonical,
+        Err(error) => return Err(json_error(StatusCode::BAD_REQUEST, &error.to_string())),
+    };
+    if !common::config::ensure_loaded()
+        .local_agent_api
+        .agent_enabled(&canonical)
+    {
+        return Err(json_error(
+            StatusCode::FORBIDDEN,
+            &format!(
+                "local agent API is not enabled for agent `{canonical}`; opt the agent in under VibeAround settings"
+            ),
+        ));
+    }
+    Ok(canonical)
 }
 
 /// The direct profile runs an agent on its own native credentials, and that
@@ -122,32 +163,150 @@ async fn handle_local_agent_request(
         Ok(request) => request,
         Err(error) => return json_error(StatusCode::BAD_REQUEST, &error.to_string()),
     };
-    if let Err(message) = validate_sessionless_request(&request, protocol) {
-        return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message);
-    }
-    let prompt = match universal_request_to_acp_prompt(&request) {
-        Ok(prompt) => prompt,
-        Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message),
-    };
     let model_id = request
         .model
         .clone()
         .filter(|model| !model.trim().is_empty())
         .map(|model| model.trim().to_string());
     let workspace = request_workspace(&headers, &agent_id);
-    let turn = turn::LocalAgentTurn {
-        agent_id,
-        profile_id,
-        model_id,
-        workspace,
-        prompt,
+    let conversation_key = header_value(&headers, HEADER_CONVERSATION);
+    let permission_mode = header_value(&headers, HEADER_PERMISSION_MODE);
+    let previous_response_id = (protocol == BridgeProtocol::OpenAiResponses)
+        .then(|| {
+            source_raw(&request)
+                .and_then(|raw| raw.get("previous_response_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .flatten();
+    let response_id = format!("resp_{}", Uuid::new_v4().simple());
+
+    // Resolve the conversation this request belongs to, if any. A chained
+    // Responses request carries increments only, so its history cannot seed
+    // a lost session; everything else can.
+    let conversation = if let Some(previous) = previous_response_id {
+        match conversations::registry().lookup_response(&previous) {
+            conversations::ResponseLookup::Found(conversation) => Some((conversation, true)),
+            conversations::ResponseLookup::NotFound => {
+                return json_error(
+                    StatusCode::NOT_FOUND,
+                    &format!(
+                        "previous response `{previous}` was not found (the daemon may have \
+                         restarted); retry without previous_response_id to start a new chain"
+                    ),
+                );
+            }
+            conversations::ResponseLookup::Superseded => {
+                return json_error(
+                    StatusCode::CONFLICT,
+                    &format!(
+                        "response `{previous}` was superseded; only the latest response in a \
+                         conversation can be continued"
+                    ),
+                );
+            }
+        }
+    } else if let Some(key) = conversation_key.as_deref() {
+        Some((
+            conversations::registry().resolve_keyed(key, &agent_id, &profile_id, &workspace),
+            false,
+        ))
+    } else if protocol == BridgeProtocol::OpenAiResponses {
+        // Every Responses turn is continuable through its response id, so a
+        // keyless request starts a conversation of its own.
+        Some((
+            conversations::registry().create_for_response(
+                &agent_id,
+                &profile_id,
+                &workspace,
+                &response_id,
+            ),
+            false,
+        ))
+    } else {
+        None
     };
 
-    if request.stream {
-        turn::local_agent_stream_response(turn, protocol)
-    } else {
-        turn::local_agent_completion_response(turn, protocol).await
+    let Some((conversation, chained)) = conversation else {
+        // Sessionless one-shot: seed a throwaway session and answer.
+        let prompt = match seed_request_to_acp_prompt(&request) {
+            Ok(prompt) => prompt,
+            Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+        };
+        let turn = turn::LocalAgentTurn {
+            agent_id,
+            profile_id,
+            model_id,
+            permission_mode,
+            workspace,
+            prompt,
+        };
+        return if request.stream {
+            turn::local_agent_stream_response(turn, protocol).await
+        } else {
+            turn::local_agent_completion_response(turn, protocol).await
+        };
+    };
+
+    // Changed client instructions mean the old session no longer matches
+    // what the client believes it is talking to: reseed under the same key.
+    let fingerprint = conversations::instructions_fingerprint(&request.instructions);
+    if conversation.instructions_changed(fingerprint) {
+        conversation.reset_session().await;
     }
+    conversation.set_instructions_fingerprint(fingerprint);
+
+    let seed_prompt = if chained {
+        None
+    } else {
+        match seed_request_to_acp_prompt(&request) {
+            Ok(prompt) => Some(prompt),
+            Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+        }
+    };
+    let tail_items = prompt::tail_input_segment(&request.input);
+    let tail_prompt = prompt::tail_segment_to_acp_prompt(tail_items).ok();
+    if seed_prompt.is_none() && tail_prompt.is_none() {
+        return json_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "request adds no new input to answer",
+        );
+    }
+
+    // The Responses chain advances inside the prepare step — only once the
+    // startup chain succeeded — so a refused request leaves the previous
+    // response id continuable.
+    let advance_chain = protocol == BridgeProtocol::OpenAiResponses;
+    let turn = turn::ConversationTurn {
+        conversation,
+        model_id,
+        permission_mode,
+        response_id,
+        seed_prompt,
+        tail_prompt,
+    };
+    let mut response = if request.stream {
+        turn::conversation_stream_response(turn, protocol, advance_chain).await
+    } else {
+        turn::conversation_completion_response(turn, protocol, advance_chain).await
+    };
+    if let Some(key) = conversation_key {
+        if let Ok(value) = axum::http::HeaderValue::from_str(&key) {
+            response.headers_mut().insert(HEADER_CONVERSATION, value);
+        }
+    }
+    response
+}
+
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 pub(super) type LaunchArgsAndEnv = (Vec<String>, Vec<(String, String)>);
@@ -208,23 +367,6 @@ pub(super) fn request_workspace(headers: &HeaderMap, agent_id: &str) -> PathBuf 
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(agent_id))
-}
-
-fn validate_sessionless_request(
-    request: &va_ai_api_bridge::UniversalRequest,
-    protocol: BridgeProtocol,
-) -> Result<(), String> {
-    if protocol == BridgeProtocol::OpenAiResponses
-        && source_raw(request)
-            .and_then(|raw| raw.get("previous_response_id"))
-            .is_some_and(|value| !value.is_null())
-    {
-        return Err(
-            "previous_response_id is not supported by VibeAround local-agent API v1; send the full context in input instead"
-                .to_string(),
-        );
-    }
-    Ok(())
 }
 
 fn source_raw(request: &va_ai_api_bridge::UniversalRequest) -> Option<&Value> {
@@ -316,6 +458,155 @@ mod tests {
         assert_eq!(turn::model_config_option_id(None), None);
     }
 
+    fn user_item(text: &str) -> UniversalItem {
+        UniversalItem::Message {
+            role: Role::User,
+            id: None,
+            content: vec![UniversalContentBlock::Text {
+                text: text.to_string(),
+            }],
+            extensions: Extensions::new(),
+        }
+    }
+
+    fn assistant_item(text: &str) -> UniversalItem {
+        UniversalItem::Message {
+            role: Role::Assistant,
+            id: None,
+            content: vec![UniversalContentBlock::Text {
+                text: text.to_string(),
+            }],
+            extensions: Extensions::new(),
+        }
+    }
+
+    fn tool_call_item(id: &str) -> UniversalItem {
+        UniversalItem::ToolCall {
+            id: id.to_string(),
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({"path": "foo.rs"}),
+            extensions: Extensions::new(),
+        }
+    }
+
+    fn tool_result_item(id: &str, text: &str) -> UniversalItem {
+        UniversalItem::ToolResult {
+            tool_call_id: id.to_string(),
+            content: vec![UniversalContentBlock::Text {
+                text: text.to_string(),
+            }],
+            is_error: false,
+            extensions: Extensions::new(),
+        }
+    }
+
+    fn block_text(block: &acp::ContentBlock) -> &str {
+        match block {
+            acp::ContentBlock::Text(text) => &text.text,
+            _ => "",
+        }
+    }
+
+    #[test]
+    fn tail_segment_is_the_contiguous_non_assistant_run() {
+        let input = vec![
+            user_item("first"),
+            assistant_item("reply"),
+            user_item("second"),
+        ];
+        let segment = prompt::tail_input_segment(&input);
+        assert_eq!(segment.len(), 1);
+        assert!(matches!(
+            &segment[0],
+            UniversalItem::Message {
+                role: Role::User,
+                ..
+            }
+        ));
+
+        let input = vec![
+            user_item("first"),
+            assistant_item("reply"),
+            tool_call_item("call-1"),
+            tool_result_item("call-1", "file contents"),
+            user_item("and now this"),
+        ];
+        let segment = prompt::tail_input_segment(&input);
+        assert_eq!(
+            segment.len(),
+            2,
+            "tool result and user message are both new input"
+        );
+
+        // Everything already answered: nothing new to prompt.
+        let input = vec![user_item("first"), assistant_item("reply")];
+        assert!(prompt::tail_input_segment(&input).is_empty());
+
+        // No history at all: the whole input is the segment.
+        let input = vec![user_item("only")];
+        assert_eq!(prompt::tail_input_segment(&input).len(), 1);
+    }
+
+    #[test]
+    fn lone_user_segment_prompts_as_plain_content() {
+        let segment = [user_item("just this")];
+        let blocks = prompt::tail_segment_to_acp_prompt(&segment).expect("prompt builds");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(block_text(&blocks[0]), "just this");
+    }
+
+    #[test]
+    fn mixed_segment_keeps_role_labels() {
+        let segment = [
+            tool_result_item("call-1", "file contents"),
+            user_item("continue"),
+        ];
+        let blocks = prompt::tail_segment_to_acp_prompt(&segment).expect("prompt builds");
+        assert!(block_text(&blocks[0]).starts_with("[tool_result:call-1]"));
+        assert!(blocks.iter().any(|block| block_text(block) == "[user]"));
+    }
+
+    #[test]
+    fn seeding_wraps_history_in_the_bridge_envelope() {
+        let request = UniversalRequest {
+            instructions: vec![UniversalContentBlock::Text {
+                text: "Be concise.".to_string(),
+            }],
+            input: vec![
+                user_item("Hello"),
+                assistant_item("Hi"),
+                user_item("Continue"),
+            ],
+            ..UniversalRequest::default()
+        };
+
+        let blocks = seed_request_to_acp_prompt(&request).expect("prompt builds");
+        let texts: Vec<&str> = blocks.iter().map(block_text).collect();
+        assert!(texts[0].starts_with("[VibeAround local-agent bridge]"));
+        assert!(texts.contains(&"Client-provided instructions:"));
+        assert!(texts.contains(&"<conversation_replay>"));
+        assert!(texts.contains(&"</conversation_replay>"));
+        assert!(texts.last().unwrap().starts_with("End of replay."));
+    }
+
+    #[test]
+    fn bare_single_user_request_skips_the_envelope() {
+        let request = UniversalRequest {
+            input: vec![user_item("Find recent news.")],
+            ..UniversalRequest::default()
+        };
+
+        let blocks = seed_request_to_acp_prompt(&request).expect("prompt builds");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(block_text(&blocks[0]), "Find recent news.");
+    }
+
+    #[test]
+    fn empty_seed_request_is_rejected() {
+        let request = UniversalRequest::default();
+        assert!(seed_request_to_acp_prompt(&request).is_err());
+    }
+
     #[test]
     fn builds_sessionless_chat_transcript() {
         let request = UniversalRequest {
@@ -378,7 +669,7 @@ mod tests {
             }))
             .expect("responses request decodes");
 
-        let prompt = universal_request_to_acp_prompt(&request).expect("prompt builds");
+        let prompt = seed_request_to_acp_prompt(&request).expect("prompt builds");
 
         assert!(prompt.iter().any(|block| {
             matches!(
@@ -420,7 +711,7 @@ mod tests {
             }))
             .expect("chat request decodes");
 
-        let prompt = universal_request_to_acp_prompt(&request).expect("prompt builds");
+        let prompt = seed_request_to_acp_prompt(&request).expect("prompt builds");
 
         assert!(prompt.iter().any(|block| {
             matches!(
@@ -455,7 +746,7 @@ mod tests {
             }))
             .expect("anthropic request decodes");
 
-        let prompt = universal_request_to_acp_prompt(&request).expect("prompt builds");
+        let prompt = seed_request_to_acp_prompt(&request).expect("prompt builds");
 
         assert!(prompt.iter().any(|block| {
             matches!(
@@ -473,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_previous_response_id_for_sessionless_responses() {
+    fn extracts_previous_response_id_from_responses_source() {
         let request = UniversalRequest {
             source: Some(va_ai_api_bridge::SourcePayload {
                 protocol: va_ai_api_bridge::WireProtocol::OpenAiResponses,
@@ -486,9 +777,10 @@ mod tests {
             ..UniversalRequest::default()
         };
 
-        let error =
-            validate_sessionless_request(&request, BridgeProtocol::OpenAiResponses).unwrap_err();
-        assert!(error.contains("previous_response_id"));
+        let previous = source_raw(&request)
+            .and_then(|raw| raw.get("previous_response_id"))
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(previous, Some("resp_old"));
     }
 
     #[test]
@@ -506,6 +798,68 @@ mod tests {
             vec![va_ai_api_bridge::UniversalEvent::TextDelta {
                 index: 0,
                 text: "hello".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn tool_activity_rides_the_reasoning_channel() {
+        let started = acp::SessionNotification::new(
+            "session-1".to_string(),
+            acp::SessionUpdate::ToolCall(acp::ToolCall::new("call-1", "Read foo.rs")),
+        );
+        assert_eq!(
+            events::acp_notification_to_events(&started),
+            vec![va_ai_api_bridge::UniversalEvent::ReasoningDelta {
+                index: 1,
+                text: "[tool] Read foo.rs …\n".to_string(),
+            }]
+        );
+
+        let mut fields = acp::ToolCallUpdateFields::default();
+        fields.status = Some(acp::ToolCallStatus::Completed);
+        let completed = acp::SessionNotification::new(
+            "session-1".to_string(),
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new("call-1", fields)),
+        );
+        assert_eq!(
+            events::acp_notification_to_events(&completed),
+            vec![va_ai_api_bridge::UniversalEvent::ReasoningDelta {
+                index: 1,
+                text: "[tool] call-1 ✓\n".to_string(),
+            }]
+        );
+
+        let mut fields = acp::ToolCallUpdateFields::default();
+        fields.status = Some(acp::ToolCallStatus::InProgress);
+        let progressing = acp::SessionNotification::new(
+            "session-1".to_string(),
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new("call-1", fields)),
+        );
+        assert!(events::acp_notification_to_events(&progressing).is_empty());
+    }
+
+    #[test]
+    fn plans_render_as_a_reasoning_checklist() {
+        let plan = acp::Plan::new(vec![
+            acp::PlanEntry::new(
+                "map the code",
+                acp::PlanEntryPriority::High,
+                acp::PlanEntryStatus::Completed,
+            ),
+            acp::PlanEntry::new(
+                "write the fix",
+                acp::PlanEntryPriority::High,
+                acp::PlanEntryStatus::Pending,
+            ),
+        ]);
+        let notification =
+            acp::SessionNotification::new("session-1".to_string(), acp::SessionUpdate::Plan(plan));
+        assert_eq!(
+            events::acp_notification_to_events(&notification),
+            vec![va_ai_api_bridge::UniversalEvent::ReasoningDelta {
+                index: 1,
+                text: "[plan]\n- [x] map the code\n- [ ] write the fix\n".to_string(),
             }]
         );
     }

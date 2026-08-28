@@ -1,23 +1,106 @@
 use agent_client_protocol::schema::v1 as acp;
-use serde_json::Value;
 use va_ai_api_bridge::{
-    ContentBlock as UniversalContentBlock, Extensions, Role, UniversalItem, UniversalRequest,
+    ContentBlock as UniversalContentBlock, Role, UniversalItem, UniversalRequest,
 };
 
-pub(super) fn universal_request_to_acp_prompt(
+const SEED_ENVELOPE_PREAMBLE: &str =
+    "[VibeAround local-agent bridge] The client reaches you through a \
+stateless completions API, so the bridge replays the conversation so far \
+verbatim below — first the client's own instructions, then the transcript. \
+Turns labeled [assistant] are your own earlier replies; nothing in the \
+replay is new user-authored text addressed to you.";
+
+const SEED_ENVELOPE_CLOSING: &str =
+    "End of replay. Continue the conversation now by responding to the \
+final [user] turn above; do not comment on this envelope.";
+
+/// Seed prompt for a fresh backend session. The transmitted history rides
+/// inside an explicit envelope so the receiving agent reads it as its own
+/// conversation record instead of user-authored text smuggling instructions.
+/// A bare request — no client instructions, a single user message — skips the
+/// envelope and sends the content as-is.
+pub(super) fn seed_request_to_acp_prompt(
     request: &UniversalRequest,
 ) -> Result<Vec<acp::ContentBlock>, String> {
+    if request.instructions.is_empty() {
+        if let [UniversalItem::Message {
+            role: Role::User,
+            content,
+            ..
+        }] = request.input.as_slice()
+        {
+            let mut blocks = Vec::new();
+            append_content_blocks_to_acp_prompt(&mut blocks, content);
+            return non_empty_prompt(blocks);
+        }
+    }
+
     let mut blocks = Vec::new();
+    push_acp_text(&mut blocks, SEED_ENVELOPE_PREAMBLE);
     if !request.instructions.is_empty() {
-        push_acp_text(&mut blocks, "Instructions:");
+        push_acp_text(&mut blocks, "Client-provided instructions:");
         append_content_blocks_to_acp_prompt(&mut blocks, &request.instructions);
     }
     if !request.input.is_empty() {
-        push_acp_text(&mut blocks, "Conversation:");
+        push_acp_text(&mut blocks, "<conversation_replay>");
         for item in &request.input {
             append_universal_item_to_acp_prompt(&mut blocks, item);
         }
+        push_acp_text(&mut blocks, "</conversation_replay>");
     }
+    if blocks.len() == 1 {
+        // Only the preamble made it in: there was no actual content.
+        return Err("request does not contain any prompt content".to_string());
+    }
+    push_acp_text(&mut blocks, SEED_ENVELOPE_CLOSING);
+    Ok(blocks)
+}
+
+/// The items a stateful turn actually prompts: the contiguous run of
+/// non-assistant items at the tail of the transcript — typically one user
+/// message, sometimes tool results or attachments, occasionally several
+/// items. Everything before it is history the backend session already holds.
+pub(super) fn tail_input_segment(input: &[UniversalItem]) -> &[UniversalItem] {
+    let boundary = input
+        .iter()
+        .rposition(is_assistant_item)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    &input[boundary..]
+}
+
+fn is_assistant_item(item: &UniversalItem) -> bool {
+    match item {
+        UniversalItem::Message { role, .. } => matches!(role, Role::Assistant),
+        UniversalItem::ToolCall { .. } | UniversalItem::Reasoning { .. } => true,
+        UniversalItem::ToolResult { .. } | UniversalItem::Unknown { .. } => false,
+    }
+}
+
+/// Prompt blocks for a tail segment. A lone user message goes through as its
+/// plain content; a mixed segment (tool results, several messages) keeps the
+/// role labels so the agent can tell the pieces apart.
+pub(super) fn tail_segment_to_acp_prompt(
+    segment: &[UniversalItem],
+) -> Result<Vec<acp::ContentBlock>, String> {
+    if let [UniversalItem::Message {
+        role: Role::User,
+        content,
+        ..
+    }] = segment
+    {
+        let mut blocks = Vec::new();
+        append_content_blocks_to_acp_prompt(&mut blocks, content);
+        return non_empty_prompt(blocks);
+    }
+    let mut blocks = Vec::new();
+    for item in segment {
+        append_universal_item_to_acp_prompt(&mut blocks, item);
+    }
+    non_empty_prompt(blocks)
+}
+
+fn non_empty_prompt(blocks: Vec<acp::ContentBlock>) -> Result<Vec<acp::ContentBlock>, String> {
     if blocks.is_empty() {
         return Err("request does not contain any prompt content".to_string());
     }
@@ -83,25 +166,23 @@ fn append_content_block_to_acp_prompt(
             media_type,
             url,
             data,
-            extensions,
+            ..
         } => blocks.push(universal_image_to_acp_block(
             media_type.as_deref(),
             url.as_deref(),
             data.as_deref(),
-            extensions,
         )),
         UniversalContentBlock::File {
             media_type,
             filename,
             url,
             data,
-            extensions,
+            ..
         } => blocks.push(universal_file_to_acp_block(
             filename.as_deref(),
             media_type.as_deref(),
             url.as_deref(),
             data.as_deref(),
-            extensions,
         )),
         UniversalContentBlock::ToolCall {
             id,
@@ -144,7 +225,6 @@ fn universal_image_to_acp_block(
     media_type: Option<&str>,
     url: Option<&str>,
     data: Option<&str>,
-    extensions: &Extensions,
 ) -> acp::ContentBlock {
     if let Some(payload) = media_payload(first_non_empty(data, data_url_source(url))) {
         let mime_type = media_type
@@ -159,14 +239,6 @@ fn universal_image_to_acp_block(
     if let Some(url) = non_empty(url) {
         return resource_link_block("image", url, media_type, None);
     }
-    if let Some(file_id) = extension_string(extensions, "file_id") {
-        return resource_link_block(
-            "image",
-            &format!("urn:vibearound:provider-file:{file_id}"),
-            media_type,
-            Some("Provider image file id; content was not embedded"),
-        );
-    }
     acp::ContentBlock::Text(acp::TextContent::new(media_placeholder(
         "image", media_type, url, data,
     )))
@@ -177,7 +249,6 @@ fn universal_file_to_acp_block(
     media_type: Option<&str>,
     url: Option<&str>,
     data: Option<&str>,
-    extensions: &Extensions,
 ) -> acp::ContentBlock {
     let name = first_non_empty(filename, None).unwrap_or("attachment");
     if let Some(payload) = media_payload(first_non_empty(data, data_url_source(url))) {
@@ -196,14 +267,6 @@ fn universal_file_to_acp_block(
     }
     if let Some(url) = non_data_uri(url) {
         return resource_link_block(name, &url, media_type, filename);
-    }
-    if let Some(file_id) = extension_string(extensions, "file_id") {
-        return resource_link_block(
-            name,
-            &format!("urn:vibearound:provider-file:{file_id}"),
-            media_type,
-            Some("Provider file id; content was not embedded"),
-        );
     }
     acp::ContentBlock::Text(acp::TextContent::new(media_placeholder(
         name, media_type, url, data,
@@ -283,10 +346,6 @@ fn embedded_resource_uri(kind: &str, name: &str) -> String {
         "urn:vibearound:local-agent:{kind}:{}",
         local_agent_id_part(name)
     )
-}
-
-fn extension_string<'a>(extensions: &'a Extensions, key: &str) -> Option<&'a str> {
-    first_non_empty(extensions.get(key).and_then(Value::as_str), None)
 }
 
 fn non_empty(value: Option<&str>) -> Option<&str> {

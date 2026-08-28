@@ -417,7 +417,9 @@ impl Agent {
     }
 
     /// Whether this handle still belongs to the live ACP bridge generation.
-    pub(crate) fn is_live(&self) -> bool {
+    /// Public so out-of-crate holders of long-lived handles (the agent-as-API
+    /// conversation registry) can tell a dead generation from a live one.
+    pub fn is_live(&self) -> bool {
         self.generation.is_live()
     }
 

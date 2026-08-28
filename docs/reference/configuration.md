@@ -54,7 +54,10 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
   "api_bridge": {
     "replace_provider_web_search": false
   },
-  "local_agent_api": { "enabled": true },
+  // Service switch + per-agent opt-in: both must be on for an agent to
+  // serve /local-agent routes (an agent not listed answers 403). The
+  // direct profile is always refused (429) — use a managed profile.
+  "local_agent_api": { "enabled": true, "agents": ["claude"] },
 
   // --- Host-side web search ---
   "search_tool": {
