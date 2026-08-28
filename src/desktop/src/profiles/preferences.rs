@@ -47,6 +47,9 @@ pub struct LauncherPreferences {
     pub compatibility_bridge: terminal::CompatibilityBridgeMode,
     /// Whether the sessionless local ACP-to-OpenAI/Anthropic API is exposed.
     pub local_agent_api_enabled: bool,
+    /// Canonical agent ids opted in to the agent-as-API routes; the service
+    /// switch alone allows nobody.
+    pub local_agent_api_agents: Vec<String>,
     /// Per-profile connection choices for launch targets that can run via
     /// the local API bridge.
     pub profile_connections: agent_state::ProfileConnectionPreferences,
@@ -122,6 +125,7 @@ pub(super) fn launcher_preferences() -> LauncherPreferences {
         default_profiles,
         compatibility_bridge: terminal::read_compatibility_bridge_preference(),
         local_agent_api_enabled: cfg.local_agent_api.enabled,
+        local_agent_api_agents: cfg.local_agent_api.agents.iter().cloned().collect(),
         profile_connections: merged_profile_connections(),
     }
 }

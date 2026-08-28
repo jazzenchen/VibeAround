@@ -254,6 +254,8 @@ export interface LauncherPreferences {
   defaultProfiles: Record<string, string>;
   compatibilityBridge: CompatibilityBridgeMode;
   localAgentApiEnabled: boolean;
+  /** Canonical agent ids opted in to the agent-as-API routes. */
+  localAgentApiAgents: string[];
   profileConnections: ProfileConnections;
 }
 
@@ -337,6 +339,13 @@ export function setLauncherLocalAgentApiEnabled(
   enabled: boolean,
 ): Promise<void> {
   return invoke<void>("launcher_set_local_agent_api_enabled", { enabled });
+}
+
+export function setLauncherLocalAgentApiAgentEnabled(
+  agentId: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke<void>("launcher_set_local_agent_api_agent", { agentId, enabled });
 }
 
 export function setProfileConnection(
