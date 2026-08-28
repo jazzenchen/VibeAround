@@ -17,6 +17,26 @@ use super::events::{acp_notification_to_events, acp_usage_to_universal, final_ev
 use super::{
     json_error, launch_args_and_env, send_events, BridgeProtocol, LOCAL_AGENT_CHANNEL_KIND,
 };
+
+/// Server-side deadline for the whole startup chain — spawn (which may
+/// lazily install the agent binary), session create/attach, and config
+/// application. The prompt itself is deliberately unbounded: long agent
+/// turns are legitimate, and the client's disconnect or a displacing
+/// request are the cancellation paths.
+const STARTUP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(180);
+
+async fn with_startup_deadline<T>(
+    stage: &str,
+    action: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    match tokio::time::timeout(STARTUP_DEADLINE, action).await {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "{stage} did not become ready within {}s",
+            STARTUP_DEADLINE.as_secs()
+        )),
+    }
+}
 use crate::web_server::api_bridge::completion::translated_completion_events_response;
 use crate::web_server::api_bridge::stream::encode_wire_sse_event;
 use common::agent::AgentClientHandler;
@@ -83,7 +103,8 @@ async fn run_conversation_turn(
         ],
     );
 
-    let (generation, attach_options) = ensure_conversation_agent(&conversation).await?;
+    let (generation, attach_options) =
+        with_startup_deadline("agent startup", ensure_conversation_agent(&conversation)).await?;
     let agent = Arc::clone(&generation.agent);
     let forwarder = Arc::clone(&generation.forwarder);
 
@@ -98,14 +119,17 @@ async fn run_conversation_turn(
                 if let Some(options) = attach_options.as_deref() {
                     // A respawn handed us the config options, so a model
                     // choice can still be applied to the resumed session.
-                    apply_local_agent_model(
-                        &agent,
-                        &session_id,
-                        Some(options),
-                        turn.model_id.as_deref(),
-                    )
-                    .await
-                    .map_err(|error| error.message.to_string())?;
+                    with_startup_deadline("session startup", async {
+                        apply_local_agent_model(
+                            &agent,
+                            &session_id,
+                            Some(options),
+                            turn.model_id.as_deref(),
+                        )
+                        .await
+                        .map_err(|error| error.message.to_string())
+                    })
+                    .await?;
                 }
                 (session_id, prompt)
             }
@@ -115,20 +139,24 @@ async fn run_conversation_turn(
                     "conversation state was lost; start a new chain without previous_response_id"
                         .to_string()
                 })?;
-                let session = agent
-                    .new_session(acp::NewSessionRequest::new(conversation.workspace.clone()))
+                let session_id = with_startup_deadline("session startup", async {
+                    let session = agent
+                        .new_session(acp::NewSessionRequest::new(conversation.workspace.clone()))
+                        .await
+                        .map_err(|error| error.message.to_string())?;
+                    conversation.set_session_id(Some(session.session_id.to_string()));
+                    apply_local_agent_model(
+                        &agent,
+                        &session.session_id,
+                        session.config_options.as_deref(),
+                        turn.model_id.as_deref(),
+                    )
                     .await
                     .map_err(|error| error.message.to_string())?;
-                conversation.set_session_id(Some(session.session_id.to_string()));
-                apply_local_agent_model(
-                    &agent,
-                    &session.session_id,
-                    session.config_options.as_deref(),
-                    turn.model_id.as_deref(),
-                )
-                .await
-                .map_err(|error| error.message.to_string())?;
-                (session.session_id, seed)
+                    Ok(session.session_id)
+                })
+                .await?;
+                (session_id, seed)
             }
         };
 
@@ -441,34 +469,40 @@ async fn run_local_agent_turn(
         common::resources::resolve_agent_id(&turn.agent_id).map_err(|error| error.to_string())?;
     let (extra_args, env_vars) =
         launch_args_and_env(&agent_id, &turn.profile_id, &turn.workspace, &route)?;
-    let ready = common::agent::Agent::spawn(
-        agent_id,
-        &route,
-        &turn.workspace,
-        common::agent::StartupSession::Fresh,
-        handler.clone(),
-        extra_args,
-        env_vars,
-    )
-    .await
-    .map_err(|error| format!("{error:#}"))?;
-    let agent = ready.agent;
-    let result: Result<acp::PromptResponse, String> = async {
-        let session = agent
-            .new_session(acp::NewSessionRequest::new(turn.workspace.clone()))
-            .await
-            .map_err(|error| error.message.to_string())?;
-        apply_local_agent_model(
-            &agent,
-            &session.session_id,
-            session.config_options.as_deref(),
-            turn.model_id.as_deref(),
+    let ready = with_startup_deadline("agent startup", async {
+        common::agent::Agent::spawn(
+            agent_id,
+            &route,
+            &turn.workspace,
+            common::agent::StartupSession::Fresh,
+            handler.clone(),
+            extra_args,
+            env_vars,
         )
         .await
-        .map_err(|error| error.message.to_string())?;
-        let session_id = session.session_id.clone();
+        .map_err(|error| format!("{error:#}"))
+    })
+    .await?;
+    let agent = ready.agent;
+    let result: Result<acp::PromptResponse, String> = async {
+        let session_id = with_startup_deadline("session startup", async {
+            let session = agent
+                .new_session(acp::NewSessionRequest::new(turn.workspace.clone()))
+                .await
+                .map_err(|error| error.message.to_string())?;
+            apply_local_agent_model(
+                &agent,
+                &session.session_id,
+                session.config_options.as_deref(),
+                turn.model_id.as_deref(),
+            )
+            .await
+            .map_err(|error| error.message.to_string())?;
+            Ok(session.session_id)
+        })
+        .await?;
         tokio::select! {
-            response = agent.prompt(acp::PromptRequest::new(session.session_id, turn.prompt)) => {
+            response = agent.prompt(acp::PromptRequest::new(session_id.clone(), turn.prompt)) => {
                 response.map_err(|error| error.message.to_string())
             }
             _ = &mut cancel_rx => {
@@ -503,6 +537,22 @@ async fn apply_local_agent_model(
     let Some(config_id) = model_config_option_id(config_options) else {
         return Ok(());
     };
+    // When the agent enumerates its models, reject an unknown one here with
+    // the valid ids instead of relaying an opaque agent error.
+    let known = super::models::models_from_acp_config_options(config_options.unwrap_or_default());
+    if !known.is_empty() && !known.iter().any(|model| model.id == model_id) {
+        return Err(acp::Error::new(
+            -32602,
+            format!(
+                "unknown model `{model_id}`; available models: {}",
+                known
+                    .iter()
+                    .map(|model| model.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ));
+    }
     agent
         .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
             session_id.clone(),
