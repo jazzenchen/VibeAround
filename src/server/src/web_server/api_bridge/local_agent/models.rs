@@ -23,6 +23,9 @@ pub async fn local_agent_models_handler(
     if !local_agent_api_enabled() {
         return local_agent_api_disabled_response();
     }
+    if let Some(response) = super::direct_profile_response(&profile_id) {
+        return response;
+    }
     let workspace = request_workspace(&headers, &agent_id);
     match fetch_local_agent_models(&agent_id, &profile_id, &workspace).await {
         Ok(models) if !models.is_empty() => {
