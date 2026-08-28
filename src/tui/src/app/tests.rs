@@ -228,12 +228,13 @@ fn runtime_socket_events_update_snapshot_and_clamp_popup() {
 fn chat_socket_connect_does_not_clear_runtime_error() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    let (tx, _rx) = mpsc::unbounded_channel();
     app.set_error(
         ErrorScope::Runtime(RuntimeStream::Channels),
         "runtime stream failed",
     );
 
-    app.apply_chat_socket_event(ChatSocketEvent::Connected);
+    app.apply_chat_socket_event(ChatSocketEvent::Connected, &tx);
 
     assert!(app.chat_connected);
     assert_eq!(app.last_error.as_deref(), Some("runtime stream failed"));
@@ -478,16 +479,17 @@ fn chat_scroll_offset_tracks_scrollback() {
 fn repeated_chat_socket_errors_do_not_duplicate_notices() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    let (tx, _rx) = mpsc::unbounded_channel();
     let initial_messages = app.chat_messages.len();
 
-    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()));
+    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()), &tx);
     assert_eq!(app.last_error.as_deref(), Some("offline"));
     assert_eq!(app.chat_messages.len(), initial_messages + 1);
 
-    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()));
+    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()), &tx);
     assert_eq!(app.chat_messages.len(), initial_messages + 1);
 
-    app.apply_chat_socket_event(ChatSocketEvent::Error("still offline".into()));
+    app.apply_chat_socket_event(ChatSocketEvent::Error("still offline".into()), &tx);
     assert_eq!(app.last_error.as_deref(), Some("still offline"));
     assert_eq!(app.chat_messages.len(), initial_messages + 2);
 }
@@ -496,21 +498,139 @@ fn repeated_chat_socket_errors_do_not_duplicate_notices() {
 fn repeated_chat_socket_closed_events_do_not_duplicate_notices() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    let (tx, _rx) = mpsc::unbounded_channel();
     app.chat_connected = true;
     let initial_messages = app.chat_messages.len();
 
-    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    app.apply_chat_socket_event(ChatSocketEvent::Closed, &tx);
     assert!(!app.chat_connected);
     assert_eq!(app.chat_messages.len(), initial_messages + 1);
 
-    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    app.apply_chat_socket_event(ChatSocketEvent::Closed, &tx);
     assert_eq!(app.chat_messages.len(), initial_messages + 1);
 
     app.apply_chat_event(ChatEvent::SystemText {
         text: "agent replied".into(),
     });
-    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    app.apply_chat_socket_event(ChatSocketEvent::Closed, &tx);
     assert_eq!(app.chat_messages.len(), initial_messages + 3);
+}
+
+#[test]
+fn chat_socket_disconnect_enters_terminal_state_without_duplicate_notices() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    app.chat_connected = true;
+    let initial_messages = app.chat_messages.len();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected, &tx);
+
+    assert!(!app.chat_connected);
+    assert!(app.chat_disconnected);
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+    let notice = &app.chat_messages[initial_messages];
+    assert_eq!(notice.role, ChatRole::Notice);
+    assert!(notice.text.contains("reconnect"), "notice: {}", notice.text);
+    assert!(app
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.contains("reconnect")));
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected, &tx);
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+}
+
+#[test]
+fn reconnect_command_detection_trims_and_ignores_case() {
+    assert!(super::chat::is_reconnect_command("reconnect"));
+    assert!(super::chat::is_reconnect_command("  Reconnect  "));
+    assert!(super::chat::is_reconnect_command("RECONNECT"));
+    assert!(!super::chat::is_reconnect_command("reconnect now"));
+    assert!(!super::chat::is_reconnect_command("/reconnect"));
+    assert!(!super::chat::is_reconnect_command(""));
+}
+
+#[tokio::test]
+async fn reconnect_is_ordinary_input_while_the_socket_is_alive() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_input = "reconnect".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    let message = rx.try_recv().expect("chat message");
+    assert!(matches!(
+        message,
+        ChatClientMessage::Message { ref text, .. } if text == "reconnect"
+    ));
+}
+
+#[tokio::test]
+async fn reconnect_command_restarts_sockets_and_resumes_the_attached_session() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("default-profile".into());
+    app.selected_workspace = Some("/tmp/work".into());
+    app.selected_session = Some("session-1".into());
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let signal = app.reconnect_signal();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected, &tx);
+    assert!(app.chat_disconnected);
+
+    app.chat_input = "  Reconnect  ".into();
+    app.submit_chat_input(&transport, &tx).await;
+
+    // Intercepted: nothing goes out as a chat message, the parked socket
+    // loops are woken, and the terminal state is left.
+    assert!(rx.try_recv().is_err());
+    assert!(!app.chat_disconnected);
+    assert!(signal.has_changed().expect("signal sender alive"));
+    assert_eq!(app.last_error, None);
+    assert!(app
+        .chat_messages
+        .last()
+        .is_some_and(|message| message.text.contains("Reconnecting")));
+
+    // Once the chat socket is back, the resume is re-issued so the server
+    // rebinds the route for the session we were on.
+    app.apply_chat_socket_event(ChatSocketEvent::Connected, &tx);
+    assert_eq!(
+        rx.try_recv().expect("resume message"),
+        ChatClientMessage::resume_session_with_options(
+            "session-1",
+            Some("codex".into()),
+            Some("default-profile".into()),
+            Some("/tmp/work".into()),
+        )
+    );
+    assert_eq!(app.selected_session.as_deref(), Some("session-1"));
+
+    // A later reconnect of the socket does not resume again.
+    app.apply_chat_socket_event(ChatSocketEvent::Connected, &tx);
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn reconnect_command_without_an_attached_session_skips_the_resume() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected, &tx);
+    app.chat_input = "reconnect".into();
+    app.submit_chat_input(&transport, &tx).await;
+    app.apply_chat_socket_event(ChatSocketEvent::Connected, &tx);
+
+    assert!(app.chat_connected);
+    assert!(!app.chat_disconnected);
+    assert!(rx.try_recv().is_err());
 }
 
 #[test]

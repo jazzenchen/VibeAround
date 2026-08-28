@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use tokio::sync::watch;
 use va_client::endpoint::ServerEndpoint;
 use va_client::state::ChatState;
 
@@ -24,6 +25,14 @@ pub(crate) struct TuiApp {
     pub(crate) view: AppView,
     pub(crate) chat_state: ChatState,
     pub(crate) chat_connected: bool,
+    /// Terminal disconnected state: the socket loops gave up retrying and
+    /// wait for an explicit `reconnect` from the user.
+    pub(crate) chat_disconnected: bool,
+    /// Wakes socket loops parked in the terminal disconnected state.
+    reconnect: watch::Sender<()>,
+    /// Session to re-attach once the chat socket is connected again after a
+    /// `reconnect`, so the server rebinds the route.
+    resume_after_reconnect: Option<String>,
     pub(crate) snapshot: DashboardSnapshot,
     pub(crate) agent_picker: AgentPickerSnapshot,
     pub(crate) chat_messages: Vec<ChatMessage>,
@@ -70,6 +79,9 @@ impl TuiApp {
             view: AppView::Chat,
             chat_state: ChatState::new(),
             chat_connected: false,
+            chat_disconnected: false,
+            reconnect: watch::channel(()).0,
+            resume_after_reconnect: None,
             snapshot: DashboardSnapshot::default(),
             agent_picker: AgentPickerSnapshot::default(),
             // Start clean — the welcome screen's tip and the footer cover
@@ -98,6 +110,11 @@ impl TuiApp {
             last_refresh: None,
             exit_confirmation_started: None,
         }
+    }
+
+    /// A receiver the socket loops park on while terminally disconnected.
+    pub(crate) fn reconnect_signal(&self) -> watch::Receiver<()> {
+        self.reconnect.subscribe()
     }
 
     pub(crate) async fn refresh_status(&mut self, transport: &HttpTransport) {
