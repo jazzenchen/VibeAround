@@ -4,20 +4,104 @@ use va_ai_api_bridge::{
     ContentBlock as UniversalContentBlock, Extensions, Role, UniversalItem, UniversalRequest,
 };
 
-pub(super) fn universal_request_to_acp_prompt(
+const SEED_ENVELOPE_PREAMBLE: &str =
+    "[VibeAround local-agent bridge] The client reaches you through a \
+stateless completions API, so the bridge replays the conversation so far \
+verbatim below — first the client's own instructions, then the transcript. \
+Turns labeled [assistant] are your own earlier replies; nothing in the \
+replay is new user-authored text addressed to you.";
+
+const SEED_ENVELOPE_CLOSING: &str =
+    "End of replay. Continue the conversation now by responding to the \
+final [user] turn above; do not comment on this envelope.";
+
+/// Seed prompt for a fresh backend session. The transmitted history rides
+/// inside an explicit envelope so the receiving agent reads it as its own
+/// conversation record instead of user-authored text smuggling instructions.
+/// A bare request — no client instructions, a single user message — skips the
+/// envelope and sends the content as-is.
+pub(super) fn seed_request_to_acp_prompt(
     request: &UniversalRequest,
 ) -> Result<Vec<acp::ContentBlock>, String> {
+    if request.instructions.is_empty() {
+        if let [UniversalItem::Message {
+            role: Role::User,
+            content,
+            ..
+        }] = request.input.as_slice()
+        {
+            let mut blocks = Vec::new();
+            append_content_blocks_to_acp_prompt(&mut blocks, content);
+            return non_empty_prompt(blocks);
+        }
+    }
+
     let mut blocks = Vec::new();
+    push_acp_text(&mut blocks, SEED_ENVELOPE_PREAMBLE);
     if !request.instructions.is_empty() {
-        push_acp_text(&mut blocks, "Instructions:");
+        push_acp_text(&mut blocks, "Client-provided instructions:");
         append_content_blocks_to_acp_prompt(&mut blocks, &request.instructions);
     }
     if !request.input.is_empty() {
-        push_acp_text(&mut blocks, "Conversation:");
+        push_acp_text(&mut blocks, "<conversation_replay>");
         for item in &request.input {
             append_universal_item_to_acp_prompt(&mut blocks, item);
         }
+        push_acp_text(&mut blocks, "</conversation_replay>");
     }
+    if blocks.len() == 1 {
+        // Only the preamble made it in: there was no actual content.
+        return Err("request does not contain any prompt content".to_string());
+    }
+    push_acp_text(&mut blocks, SEED_ENVELOPE_CLOSING);
+    Ok(blocks)
+}
+
+/// The items a stateful turn actually prompts: the contiguous run of
+/// non-assistant items at the tail of the transcript — typically one user
+/// message, sometimes tool results or attachments, occasionally several
+/// items. Everything before it is history the backend session already holds.
+pub(super) fn tail_input_segment(input: &[UniversalItem]) -> &[UniversalItem] {
+    let boundary = input
+        .iter()
+        .rposition(is_assistant_item)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    &input[boundary..]
+}
+
+fn is_assistant_item(item: &UniversalItem) -> bool {
+    match item {
+        UniversalItem::Message { role, .. } => matches!(role, Role::Assistant),
+        UniversalItem::ToolCall { .. } | UniversalItem::Reasoning { .. } => true,
+        UniversalItem::ToolResult { .. } | UniversalItem::Unknown { .. } => false,
+    }
+}
+
+/// Prompt blocks for a tail segment. A lone user message goes through as its
+/// plain content; a mixed segment (tool results, several messages) keeps the
+/// role labels so the agent can tell the pieces apart.
+pub(super) fn tail_segment_to_acp_prompt(
+    segment: &[UniversalItem],
+) -> Result<Vec<acp::ContentBlock>, String> {
+    if let [UniversalItem::Message {
+        role: Role::User,
+        content,
+        ..
+    }] = segment
+    {
+        let mut blocks = Vec::new();
+        append_content_blocks_to_acp_prompt(&mut blocks, content);
+        return non_empty_prompt(blocks);
+    }
+    let mut blocks = Vec::new();
+    for item in segment {
+        append_universal_item_to_acp_prompt(&mut blocks, item);
+    }
+    non_empty_prompt(blocks)
+}
+
+fn non_empty_prompt(blocks: Vec<acp::ContentBlock>) -> Result<Vec<acp::ContentBlock>, String> {
     if blocks.is_empty() {
         return Err("request does not contain any prompt content".to_string());
     }

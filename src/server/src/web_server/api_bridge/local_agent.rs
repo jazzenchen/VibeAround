@@ -15,7 +15,7 @@ mod turn;
 pub use models::local_agent_models_handler;
 
 use super::{json_error, record_json_error, BridgeProtocol};
-use prompt::universal_request_to_acp_prompt;
+use prompt::seed_request_to_acp_prompt;
 
 pub(super) const LOCAL_AGENT_CHANNEL_KIND: &str = "api";
 const HEADER_WORKSPACE: &str = "x-vibearound-cwd";
@@ -155,7 +155,7 @@ async fn handle_local_agent_request(
     if let Err(message) = validate_sessionless_request(&request, protocol) {
         return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message);
     }
-    let prompt = match universal_request_to_acp_prompt(&request) {
+    let prompt = match seed_request_to_acp_prompt(&request) {
         Ok(prompt) => prompt,
         Err(message) => return json_error(StatusCode::UNPROCESSABLE_ENTITY, &message),
     };
@@ -346,6 +346,155 @@ mod tests {
         assert_eq!(turn::model_config_option_id(None), None);
     }
 
+    fn user_item(text: &str) -> UniversalItem {
+        UniversalItem::Message {
+            role: Role::User,
+            id: None,
+            content: vec![UniversalContentBlock::Text {
+                text: text.to_string(),
+            }],
+            extensions: Extensions::new(),
+        }
+    }
+
+    fn assistant_item(text: &str) -> UniversalItem {
+        UniversalItem::Message {
+            role: Role::Assistant,
+            id: None,
+            content: vec![UniversalContentBlock::Text {
+                text: text.to_string(),
+            }],
+            extensions: Extensions::new(),
+        }
+    }
+
+    fn tool_call_item(id: &str) -> UniversalItem {
+        UniversalItem::ToolCall {
+            id: id.to_string(),
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({"path": "foo.rs"}),
+            extensions: Extensions::new(),
+        }
+    }
+
+    fn tool_result_item(id: &str, text: &str) -> UniversalItem {
+        UniversalItem::ToolResult {
+            tool_call_id: id.to_string(),
+            content: vec![UniversalContentBlock::Text {
+                text: text.to_string(),
+            }],
+            is_error: false,
+            extensions: Extensions::new(),
+        }
+    }
+
+    fn block_text(block: &acp::ContentBlock) -> &str {
+        match block {
+            acp::ContentBlock::Text(text) => &text.text,
+            _ => "",
+        }
+    }
+
+    #[test]
+    fn tail_segment_is_the_contiguous_non_assistant_run() {
+        let input = vec![
+            user_item("first"),
+            assistant_item("reply"),
+            user_item("second"),
+        ];
+        let segment = prompt::tail_input_segment(&input);
+        assert_eq!(segment.len(), 1);
+        assert!(matches!(
+            &segment[0],
+            UniversalItem::Message {
+                role: Role::User,
+                ..
+            }
+        ));
+
+        let input = vec![
+            user_item("first"),
+            assistant_item("reply"),
+            tool_call_item("call-1"),
+            tool_result_item("call-1", "file contents"),
+            user_item("and now this"),
+        ];
+        let segment = prompt::tail_input_segment(&input);
+        assert_eq!(
+            segment.len(),
+            2,
+            "tool result and user message are both new input"
+        );
+
+        // Everything already answered: nothing new to prompt.
+        let input = vec![user_item("first"), assistant_item("reply")];
+        assert!(prompt::tail_input_segment(&input).is_empty());
+
+        // No history at all: the whole input is the segment.
+        let input = vec![user_item("only")];
+        assert_eq!(prompt::tail_input_segment(&input).len(), 1);
+    }
+
+    #[test]
+    fn lone_user_segment_prompts_as_plain_content() {
+        let segment = [user_item("just this")];
+        let blocks = prompt::tail_segment_to_acp_prompt(&segment).expect("prompt builds");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(block_text(&blocks[0]), "just this");
+    }
+
+    #[test]
+    fn mixed_segment_keeps_role_labels() {
+        let segment = [
+            tool_result_item("call-1", "file contents"),
+            user_item("continue"),
+        ];
+        let blocks = prompt::tail_segment_to_acp_prompt(&segment).expect("prompt builds");
+        assert!(block_text(&blocks[0]).starts_with("[tool_result:call-1]"));
+        assert!(blocks.iter().any(|block| block_text(block) == "[user]"));
+    }
+
+    #[test]
+    fn seeding_wraps_history_in_the_bridge_envelope() {
+        let request = UniversalRequest {
+            instructions: vec![UniversalContentBlock::Text {
+                text: "Be concise.".to_string(),
+            }],
+            input: vec![
+                user_item("Hello"),
+                assistant_item("Hi"),
+                user_item("Continue"),
+            ],
+            ..UniversalRequest::default()
+        };
+
+        let blocks = seed_request_to_acp_prompt(&request).expect("prompt builds");
+        let texts: Vec<&str> = blocks.iter().map(block_text).collect();
+        assert!(texts[0].starts_with("[VibeAround local-agent bridge]"));
+        assert!(texts.contains(&"Client-provided instructions:"));
+        assert!(texts.contains(&"<conversation_replay>"));
+        assert!(texts.contains(&"</conversation_replay>"));
+        assert!(texts.last().unwrap().starts_with("End of replay."));
+    }
+
+    #[test]
+    fn bare_single_user_request_skips_the_envelope() {
+        let request = UniversalRequest {
+            input: vec![user_item("Find recent news.")],
+            ..UniversalRequest::default()
+        };
+
+        let blocks = seed_request_to_acp_prompt(&request).expect("prompt builds");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(block_text(&blocks[0]), "Find recent news.");
+    }
+
+    #[test]
+    fn empty_seed_request_is_rejected() {
+        let request = UniversalRequest::default();
+        assert!(seed_request_to_acp_prompt(&request).is_err());
+    }
+
     #[test]
     fn builds_sessionless_chat_transcript() {
         let request = UniversalRequest {
@@ -408,7 +557,7 @@ mod tests {
             }))
             .expect("responses request decodes");
 
-        let prompt = universal_request_to_acp_prompt(&request).expect("prompt builds");
+        let prompt = seed_request_to_acp_prompt(&request).expect("prompt builds");
 
         assert!(prompt.iter().any(|block| {
             matches!(
@@ -450,7 +599,7 @@ mod tests {
             }))
             .expect("chat request decodes");
 
-        let prompt = universal_request_to_acp_prompt(&request).expect("prompt builds");
+        let prompt = seed_request_to_acp_prompt(&request).expect("prompt builds");
 
         assert!(prompt.iter().any(|block| {
             matches!(
@@ -485,7 +634,7 @@ mod tests {
             }))
             .expect("anthropic request decodes");
 
-        let prompt = universal_request_to_acp_prompt(&request).expect("prompt builds");
+        let prompt = seed_request_to_acp_prompt(&request).expect("prompt builds");
 
         assert!(prompt.iter().any(|block| {
             matches!(
