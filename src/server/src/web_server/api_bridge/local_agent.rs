@@ -795,6 +795,68 @@ mod tests {
     }
 
     #[test]
+    fn tool_activity_rides_the_reasoning_channel() {
+        let started = acp::SessionNotification::new(
+            "session-1".to_string(),
+            acp::SessionUpdate::ToolCall(acp::ToolCall::new("call-1", "Read foo.rs")),
+        );
+        assert_eq!(
+            events::acp_notification_to_events(&started),
+            vec![va_ai_api_bridge::UniversalEvent::ReasoningDelta {
+                index: 1,
+                text: "[tool] Read foo.rs …\n".to_string(),
+            }]
+        );
+
+        let mut fields = acp::ToolCallUpdateFields::default();
+        fields.status = Some(acp::ToolCallStatus::Completed);
+        let completed = acp::SessionNotification::new(
+            "session-1".to_string(),
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new("call-1", fields)),
+        );
+        assert_eq!(
+            events::acp_notification_to_events(&completed),
+            vec![va_ai_api_bridge::UniversalEvent::ReasoningDelta {
+                index: 1,
+                text: "[tool] call-1 ✓\n".to_string(),
+            }]
+        );
+
+        let mut fields = acp::ToolCallUpdateFields::default();
+        fields.status = Some(acp::ToolCallStatus::InProgress);
+        let progressing = acp::SessionNotification::new(
+            "session-1".to_string(),
+            acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new("call-1", fields)),
+        );
+        assert!(events::acp_notification_to_events(&progressing).is_empty());
+    }
+
+    #[test]
+    fn plans_render_as_a_reasoning_checklist() {
+        let plan = acp::Plan::new(vec![
+            acp::PlanEntry::new(
+                "map the code",
+                acp::PlanEntryPriority::High,
+                acp::PlanEntryStatus::Completed,
+            ),
+            acp::PlanEntry::new(
+                "write the fix",
+                acp::PlanEntryPriority::High,
+                acp::PlanEntryStatus::Pending,
+            ),
+        ]);
+        let notification =
+            acp::SessionNotification::new("session-1".to_string(), acp::SessionUpdate::Plan(plan));
+        assert_eq!(
+            events::acp_notification_to_events(&notification),
+            vec![va_ai_api_bridge::UniversalEvent::ReasoningDelta {
+                index: 1,
+                text: "[plan]\n- [x] map the code\n- [ ] write the fix\n".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn maps_prompt_response_usage_to_final_events() {
         let usage = Usage {
             input_tokens: Some(2),
