@@ -243,14 +243,6 @@ fn universal_image_to_acp_block(
     if let Some(url) = non_empty(url) {
         return resource_link_block("image", url, media_type, None);
     }
-    if let Some(file_id) = extension_string(extensions, "file_id") {
-        return resource_link_block(
-            "image",
-            &format!("urn:vibearound:provider-file:{file_id}"),
-            media_type,
-            Some("Provider image file id; content was not embedded"),
-        );
-    }
     acp::ContentBlock::Text(acp::TextContent::new(media_placeholder(
         "image", media_type, url, data,
     )))
@@ -281,17 +273,54 @@ fn universal_file_to_acp_block(
     if let Some(url) = non_data_uri(url) {
         return resource_link_block(name, &url, media_type, filename);
     }
-    if let Some(file_id) = extension_string(extensions, "file_id") {
-        return resource_link_block(
-            name,
-            &format!("urn:vibearound:provider-file:{file_id}"),
-            media_type,
-            Some("Provider file id; content was not embedded"),
-        );
-    }
     acp::ContentBlock::Text(acp::TextContent::new(media_placeholder(
         name, media_type, url, data,
     )))
+}
+
+/// A file referenced by provider id that nothing on this side can resolve:
+/// the block carries neither embedded data nor a fetchable URL, only a
+/// `file_id` pointing at a files store the local agent API does not offer.
+/// Such requests are refused up front instead of prompting the agent with a
+/// dead reference.
+pub(super) fn unresolvable_file_reference(request: &UniversalRequest) -> Option<String> {
+    let item_blocks = request.input.iter().flat_map(|item| match item {
+        UniversalItem::Message { content, .. } | UniversalItem::ToolResult { content, .. } => {
+            content.as_slice()
+        }
+        _ => &[] as &[UniversalContentBlock],
+    });
+    request
+        .instructions
+        .iter()
+        .chain(item_blocks)
+        .find_map(block_unresolvable_file_id)
+        .map(ToOwned::to_owned)
+}
+
+fn block_unresolvable_file_id(block: &UniversalContentBlock) -> Option<&str> {
+    let (url, data, extensions) = match block {
+        UniversalContentBlock::Image {
+            url,
+            data,
+            extensions,
+            ..
+        }
+        | UniversalContentBlock::File {
+            url,
+            data,
+            extensions,
+            ..
+        } => (url.as_deref(), data.as_deref(), extensions),
+        _ => return None,
+    };
+    if media_payload(first_non_empty(data, data_url_source(url))).is_some() {
+        return None;
+    }
+    if non_data_uri(url).is_some() {
+        return None;
+    }
+    extension_string(extensions, "file_id")
 }
 
 struct MediaPayload {
