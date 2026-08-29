@@ -1323,3 +1323,44 @@ async fn switch_workspace_starts_new_thread_when_workspace_has_threads() {
         third_runtime.state().await.thread_id
     );
 }
+
+#[tokio::test]
+async fn observed_session_agent_ids_span_all_workspace_threads() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    seed_session_thread(
+        &manager,
+        root.clone(),
+        "codex",
+        Some("direct"),
+        "pre-switch-session",
+        false,
+    )
+    .await;
+    seed_session_thread(
+        &manager,
+        root.clone(),
+        "claude",
+        Some("direct"),
+        "current-session",
+        false,
+    )
+    .await;
+
+    let observed = manager
+        .observed_session_agent_ids_for_workspace(&root)
+        .await
+        .unwrap();
+    assert!(observed.contains("codex"), "pre-switch agent must survive");
+    assert!(observed.contains("claude"));
+
+    let other = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&other).unwrap();
+    let unknown = manager
+        .observed_session_agent_ids_for_workspace(&other)
+        .await
+        .unwrap();
+    assert!(unknown.is_empty(), "unregistered workspace lists nothing");
+}

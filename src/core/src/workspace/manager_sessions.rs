@@ -183,6 +183,28 @@ impl WorkspaceThreadManager {
             .collect())
     }
 
+    /// Agent ids that any thread of this workspace has observed a native
+    /// session for. IM session listing expands its query across these so a
+    /// session used before an /agent switch stays discoverable: the switch
+    /// re-points the route to a fresh thread while the old thread keeps the
+    /// `AgentSessionObserved` records.
+    pub async fn observed_session_agent_ids_for_workspace(
+        &self,
+        cwd: &Path,
+    ) -> anyhow::Result<std::collections::BTreeSet<String>> {
+        let cwd = normalize_workspace_cwd(cwd);
+        let workspace_projection = self.workspace_projection().await?;
+        let Some(workspace) = workspace_by_cwd(&workspace_projection, &cwd) else {
+            return Ok(Default::default());
+        };
+        let thread_projection = self.thread_projection().await?;
+        Ok(thread_projection
+            .for_workspace(&workspace.id, true)
+            .flat_map(|thread| thread.agent_sessions.keys())
+            .map(|binding| binding.agent_id.clone())
+            .collect())
+    }
+
     async fn resolve_external_session_id(
         &self,
         projection: &ThreadProjection,
