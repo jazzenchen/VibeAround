@@ -883,7 +883,6 @@ async fn attach_external_session_normalizes_workspace_cwd() {
             Some("direct".to_string()),
             "session-1".to_string(),
             root.join("."),
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -926,7 +925,6 @@ async fn attach_external_session_keeps_missing_profile_unknown() {
             None,
             "external-session".to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -960,7 +958,6 @@ async fn attach_external_session_preserves_known_profile_when_missing() {
             None,
             "external-session".to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -988,7 +985,6 @@ async fn attach_external_session_rejects_unknown_session() {
             Some("direct".to_string()),
             "missing-session".to_string(),
             root,
-            ExternalSessionAttachMode::NewThread,
         )
         .await
     {
@@ -1026,7 +1022,6 @@ async fn attach_external_session_reuses_existing_open_thread() {
             Some("direct".to_string()),
             "session-picked-up".to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -1064,7 +1059,6 @@ async fn attach_external_session_resolves_workspace_thread_id_to_host_session() 
             Some("direct".to_string()),
             thread_id.to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -1136,7 +1130,7 @@ async fn subagent_session_ids_for_agent_workspace_reads_thread_agents() {
 }
 
 #[tokio::test]
-async fn attach_external_session_new_thread_mode_does_not_reuse_open_thread() {
+async fn attach_external_session_never_splits_session_across_threads() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
@@ -1164,12 +1158,11 @@ async fn attach_external_session_new_thread_mode_does_not_reuse_open_thread() {
             Some("direct".to_string()),
             "session-switch".to_string(),
             root,
-            ExternalSessionAttachMode::NewThread,
         )
         .await
         .unwrap();
 
-    assert_ne!(runtime.state().await.thread_id, existing_thread_id);
+    assert_eq!(runtime.state().await.thread_id, existing_thread_id);
     assert_eq!(
         manager
             .current_attachment(&existing_route)
@@ -1186,7 +1179,7 @@ async fn attach_external_session_new_thread_mode_does_not_reuse_open_thread() {
             .unwrap()
             .unwrap()
             .thread_id,
-        runtime.state().await.thread_id
+        existing_thread_id
     );
 }
 
@@ -1214,7 +1207,6 @@ async fn attach_external_session_creates_open_thread_when_matching_thread_is_clo
             Some("direct".to_string()),
             "session-closed".to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();

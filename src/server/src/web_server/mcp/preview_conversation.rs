@@ -74,7 +74,6 @@ pub(super) async fn resolve_preview_parent_thread(
                     None,
                     session_id,
                     cwd.to_path_buf(),
-                    common::workspace::manager::ExternalSessionAttachMode::ReuseOpenThread,
                 )
                 .await?
         }

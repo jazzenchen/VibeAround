@@ -40,12 +40,6 @@ const MAX_WARM_THREADS: usize = 4;
 const WARM_THREAD_MIN_IDLE: Duration = Duration::from_secs(10 * 60);
 const PREVIEW_WEB_CHAT_ID_PREFIX: &str = "ws_preview_";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExternalSessionAttachMode {
-    ReuseOpenThread,
-    NewThread,
-}
-
 struct PreparedExternalSessionThread {
     workspace: WorkspaceRecord,
     host_binding: HostBinding,

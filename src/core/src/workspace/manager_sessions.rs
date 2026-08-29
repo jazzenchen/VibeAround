@@ -8,10 +8,9 @@ impl WorkspaceThreadManager {
         profile_id: Option<String>,
         session_id: String,
         cwd: PathBuf,
-        mode: ExternalSessionAttachMode,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
         let prepared = self
-            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd, mode)
+            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd)
             .await?;
         let thread = self.ensure_external_session_thread(&prepared).await?;
         if self.current_attachment(route).await?.is_some() {
@@ -32,10 +31,9 @@ impl WorkspaceThreadManager {
         profile_id: Option<String>,
         session_id: String,
         cwd: PathBuf,
-        mode: ExternalSessionAttachMode,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
         let prepared = self
-            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd, mode)
+            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd)
             .await?;
         let route = web_route_for_thread(&prepared.thread.id);
         let thread = self.ensure_external_session_thread(&prepared).await?;
@@ -231,7 +229,6 @@ impl WorkspaceThreadManager {
         profile_id: Option<String>,
         session_id: String,
         cwd: PathBuf,
-        mode: ExternalSessionAttachMode,
     ) -> anyhow::Result<PreparedExternalSessionThread> {
         let workspace = self.ensure_workspace_for_cwd(cwd).await?;
         let projection = self.thread_projection().await?;
@@ -274,23 +271,22 @@ impl WorkspaceThreadManager {
                     .flatten()
                     .any(|session| session.agent_id == agent_id && session.session_id == session_id)
             });
-        let thread = if mode == ExternalSessionAttachMode::ReuseOpenThread {
-            // TODO: Revisit persisted thread lifecycle states here. "Closed" can
-            // mean user-ended, while Web idle only unloads the runtime; session
-            // resume should not accidentally split one native session across
-            // multiple workspace thread ids.
-            projection
-                .for_workspace(&workspace.id, false)
-                .find(|thread| {
-                    thread.status != ThreadStatus::Closed
-                        && thread.agent_sessions.values().flatten().any(|session| {
-                            session.agent_id == agent_id && session.session_id == session_id
-                        })
-                })
-                .cloned()
-        } else {
-            None
-        };
+        // A native session belongs to at most one open thread: resuming a
+        // session that an open thread already holds joins that thread
+        // (subscription), it never mints a sibling. Splitting one session
+        // across thread ids is what made per-surface conversations bleed
+        // into each other after a cold restart.
+        // TODO: Revisit persisted thread lifecycle states here. "Closed" can
+        // mean user-ended, while Web idle only unloads the runtime.
+        let thread = projection
+            .for_workspace(&workspace.id, false)
+            .find(|thread| {
+                thread.status != ThreadStatus::Closed
+                    && thread.agent_sessions.values().flatten().any(|session| {
+                        session.agent_id == agent_id && session.session_id == session_id
+                    })
+            })
+            .cloned();
         let thread = if let Some(thread) = thread {
             thread
         } else {
