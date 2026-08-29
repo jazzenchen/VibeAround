@@ -226,6 +226,7 @@ async fn handle_chat_socket(
                             input,
                             profile,
                             session_intent,
+                            session_workspace,
                             session_mode,
                         } => {
                             abort_direct_resume_task(
@@ -289,6 +290,34 @@ async fn handle_chat_socket(
                                         }
                                     }
                                     None => {
+                                        // First contact without a session intent: honor the
+                                        // client's displayed workspace instead of silently
+                                        // dropping it into im/<channel>. Once the route has a
+                                        // thread, the sticky client value must not override a
+                                        // /workspace switch.
+                                        if let Some(cwd) = session_workspace {
+                                            let manager =
+                                                state.channel_hub.workspace_thread_manager();
+                                            let first_contact = matches!(
+                                                manager.current_attachment(&route).await,
+                                                Ok(None)
+                                            );
+                                            if first_contact {
+                                                if let Err(error) = manager
+                                                    .create_thread_for_cwd(
+                                                        &route,
+                                                        std::path::PathBuf::from(cwd),
+                                                    )
+                                                    .await
+                                                {
+                                                    send_web_system_text(
+                                                        &state,
+                                                        &route,
+                                                        &format!("❌ {}", error),
+                                                    );
+                                                }
+                                            }
+                                        }
                                         apply_web_launch_selection(
                                             &state, &route, &input, profile, None,
                                         )
