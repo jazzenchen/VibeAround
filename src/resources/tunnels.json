@@ -15,7 +15,7 @@
     "id": "cloudflare",
     "display_name": "Cloudflare Tunnel",
     "program": "cloudflared",
-    "args": ["tunnel", "run", "--token"],
+    "args": ["tunnel", "run"],
     "dependency_id": "tunnel-cloudflare",
     "spawn_error_hint": "Run VibeAround setup, or install cloudflared on PATH",
     "platform_overrides": {
