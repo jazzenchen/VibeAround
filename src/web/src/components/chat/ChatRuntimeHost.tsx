@@ -98,7 +98,14 @@ export function ChatRuntimeHost({
   ]);
 
   useEffect(() => {
-    if (!initialResume || initialResumeStartedRef.current || !connection.connected) {
+    // Re-arm on every disconnect: a re-paired socket that never re-issues
+    // resume_session gets no replay_start, so a session muted before the
+    // drop would stay muted and the tab would silently stop updating.
+    if (!connection.connected) {
+      initialResumeStartedRef.current = false;
+      return;
+    }
+    if (!initialResume || initialResumeStartedRef.current) {
       return;
     }
     initialResumeStartedRef.current = true;

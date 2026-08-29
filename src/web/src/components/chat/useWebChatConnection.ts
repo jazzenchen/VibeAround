@@ -306,6 +306,11 @@ export function useWebChatConnection({
       promptInFlightRef.current = false;
       turnActiveRef.current = false;
       if (clearPermissions) setPendingPermissions([]);
+      // The replay mute set is scoped to one connection: carrying it across a
+      // reconnect (e.g. a daemon restart) silently drops every live
+      // acp_notification for a muted session while the tab still looks
+      // healthy — connection state and agent_ready are unfiltered.
+      ignoredReplaySessionsRef.current.clear();
       abortResumeState();
     }
 
