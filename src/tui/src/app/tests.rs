@@ -2031,3 +2031,44 @@ fn status_marks_the_runtime_agent_of_the_current_chat() {
     );
     assert!(app.status_agent_is_current(1), "matched by session id");
 }
+
+#[test]
+fn esc_cancels_running_turn_and_clears_draft_when_idle() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let (chat_tx, mut chat_rx) = mpsc::unbounded_channel();
+
+    app.chat_input = "draft".into();
+    app.turn_started_at = Some(Instant::now());
+    app.escape_pressed(&chat_tx);
+    let sent = chat_rx
+        .try_recv()
+        .expect("esc during a turn must send cancel");
+    assert!(matches!(sent, ChatClientMessage::Cancel));
+    assert_eq!(app.chat_input, "draft", "cancelling must not eat the draft");
+
+    app.turn_started_at = None;
+    app.escape_pressed(&chat_tx);
+    assert!(
+        chat_rx.try_recv().is_err(),
+        "idle esc must not send anything"
+    );
+    assert_eq!(app.chat_input, "", "idle esc clears the draft");
+}
+
+#[test]
+fn esc_cancels_turn_started_by_another_surface() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let (chat_tx, mut chat_rx) = mpsc::unbounded_channel();
+
+    // A turn started from another surface: no local submit timestamp, but
+    // the server-reported state says a turn is active on this route.
+    app.turn_started_at = None;
+    app.chat_state.turn_active = true;
+    app.escape_pressed(&chat_tx);
+    let sent = chat_rx
+        .try_recv()
+        .expect("esc during a remote-started turn must send cancel");
+    assert!(matches!(sent, ChatClientMessage::Cancel));
+}
