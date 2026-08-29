@@ -1364,3 +1364,56 @@ async fn observed_session_agent_ids_span_all_workspace_threads() {
         .unwrap();
     assert!(unknown.is_empty(), "unregistered workspace lists nothing");
 }
+
+#[test]
+fn configured_agent_workspace_wins_over_route_defaults() {
+    let default_workspace = std::env::temp_dir().join("vibearound-default-ws");
+    let agent_workspace = std::env::temp_dir().join("vibearound-codex-project");
+    let settings = serde_json::json!({
+        "default_workspace": default_workspace,
+        "enabled_agents": ["claude", "codex"],
+        "launcher": {
+            "default_agent": "codex",
+            "agents": {
+                "codex": { "workspace": agent_workspace }
+            }
+        },
+        "remote": {
+            "channels": {
+                "telegram": { "agent_id": "claude" }
+            }
+        }
+    });
+    let cfg = crate::config::config_from_settings_json(&settings);
+    let prefs = agent_state::prefs_from_settings_json(&settings);
+
+    // The configured per-agent workspace is what the desktop UI promises:
+    // first contact on any surface lands there, not in im/<channel>.
+    let (tui_host, tui_workspace) = default_route_binding_and_workspace_from_settings(
+        &RouteKey::new("tui", "chat-a"),
+        &cfg,
+        &prefs,
+    );
+    assert_eq!(tui_host.agent_id, "codex");
+    assert_eq!(tui_workspace, agent_workspace);
+
+    let (web_host, web_workspace) = default_route_binding_and_workspace_from_settings(
+        &RouteKey::new("web", "chat-a"),
+        &cfg,
+        &prefs,
+    );
+    assert_eq!(web_host.agent_id, "codex");
+    assert_eq!(web_workspace, agent_workspace);
+
+    // An agent without a configured workspace keeps the im/<channel> default.
+    let (telegram_host, telegram_workspace) = default_route_binding_and_workspace_from_settings(
+        &RouteKey::new("telegram", "chat-a"),
+        &cfg,
+        &prefs,
+    );
+    assert_eq!(telegram_host.agent_id, "claude");
+    assert_eq!(
+        telegram_workspace,
+        default_workspace.join("im").join("telegram")
+    );
+}

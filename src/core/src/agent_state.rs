@@ -203,6 +203,15 @@ pub fn resolve_agent_workspace(
     cfg: &config::Config,
     agent_id: &str,
 ) -> PathBuf {
+    configured_agent_workspace(prefs, agent_id)
+        .unwrap_or_else(|| cfg.resolve_workspace(&canonical_agent_id(agent_id)))
+}
+
+/// The workspace the user configured for this agent in the desktop UI, if
+/// any — no fallback. Callers that have their own default (e.g. the
+/// im/<channel> route directory) use this instead of
+/// [`resolve_agent_workspace`].
+pub fn configured_agent_workspace(prefs: &AgentsPrefsFile, agent_id: &str) -> Option<PathBuf> {
     let agent_id = canonical_agent_id(agent_id);
     prefs
         .agents
@@ -210,7 +219,6 @@ pub fn resolve_agent_workspace(
         .and_then(|preference| preference.workspace.as_ref())
         .filter(|workspace| !workspace.as_os_str().is_empty())
         .cloned()
-        .unwrap_or_else(|| cfg.resolve_workspace(&agent_id))
 }
 
 pub fn resolve_agent_executable_path(prefs: &AgentsPrefsFile, agent_id: &str) -> Option<PathBuf> {
