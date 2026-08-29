@@ -67,7 +67,13 @@ impl ProcessOwner {
         if start_immediately {
             let _ = self.spawn_generation();
         }
-        while let Some(command) = self.command_rx.recv().await {
+        // A `Never` process that reached `Stopped` can never run again; the
+        // owner must exit so its bridge factory (and any handshake channels
+        // captured inside) is dropped.
+        while !self.is_terminal() {
+            let Some(command) = self.command_rx.recv().await else {
+                break;
+            };
             match command {
                 ProcessCommand::Touch => {
                     self.last_heartbeat_ts = now_secs();
@@ -78,9 +84,6 @@ impl ProcessOwner {
                 ProcessCommand::Stop { reason, reply } => {
                     self.stop(&reason).await;
                     let _ = reply.send(());
-                    if matches!(self.policy, RestartPolicy::Never) {
-                        break;
-                    }
                 }
                 ProcessCommand::Shutdown { reason, reply } => {
                     self.stop(&reason).await;
@@ -100,15 +103,14 @@ impl ProcessOwner {
                     exit,
                 } => {
                     self.bridge_exited(generation_id, registry_id, exit).await;
-                    if matches!(self.policy, RestartPolicy::Never)
-                        && self.state.status == ProcessStatus::Stopped
-                    {
-                        break;
-                    }
                 }
             }
         }
         self.stop_active().await;
+    }
+
+    fn is_terminal(&self) -> bool {
+        matches!(self.policy, RestartPolicy::Never) && self.state.status == ProcessStatus::Stopped
     }
 
     async fn tick(&mut self, now: u64) {
@@ -237,12 +239,6 @@ impl ProcessOwner {
             }
             Err(error) => {
                 let reason = format!("spawn failed: {error}");
-                self.next_spawn_at = self
-                    .policy
-                    .restart_delay()
-                    .map(|_| now_secs() + self.next_restart_delay().as_secs())
-                    .unwrap_or(0);
-                self.set_state(ProcessStatus::Crashed, reason.clone());
                 proc_log!(
                     error,
                     kind = self.process.kind,
@@ -250,6 +246,17 @@ impl ProcessOwner {
                     event = "spawn_failed",
                     error = %reason
                 );
+                match self.policy {
+                    RestartPolicy::Never => {
+                        self.next_spawn_at = 0;
+                        self.set_state(ProcessStatus::Stopped, reason);
+                        self.remove_if_terminal();
+                    }
+                    RestartPolicy::OnCrash { .. } => {
+                        self.next_spawn_at = now_secs() + self.next_restart_delay().as_secs();
+                        self.set_state(ProcessStatus::Crashed, reason);
+                    }
+                }
                 Err(error)
             }
         }
