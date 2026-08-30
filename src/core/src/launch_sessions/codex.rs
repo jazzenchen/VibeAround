@@ -15,8 +15,12 @@ use crate::config;
 use super::{clean_title, fallback_title, modified_secs, walk_files, LaunchSession};
 
 pub(super) fn sessions(workspace: &Path, include_archived: bool) -> Vec<LaunchSession> {
-    if let Some(sessions) = sessions_from_state_db(&[workspace.to_path_buf()], include_archived) {
-        return sessions;
+    // An openable state_5.sqlite with no matching rows is not proof of "no
+    // sessions" — Codex installs whose history lives in sessions/*.jsonl can
+    // carry an empty or stale db. Only a non-empty answer short-circuits.
+    match sessions_from_state_db(&[workspace.to_path_buf()], include_archived) {
+        Some(sessions) if !sessions.is_empty() => return sessions,
+        _ => {}
     }
 
     let root = config::home_dir().join(".codex").join("sessions");
@@ -49,14 +53,15 @@ pub(super) async fn sessions_for_workspaces_async(
     include_archived: bool,
 ) -> Vec<LaunchSession> {
     let db_workspaces = workspaces.to_vec();
-    if let Some(sessions) = tokio::task::spawn_blocking(move || {
+    match tokio::task::spawn_blocking(move || {
         sessions_from_state_db(&db_workspaces, include_archived)
     })
     .await
     .ok()
     .flatten()
     {
-        return sessions;
+        Some(sessions) if !sessions.is_empty() => return sessions,
+        _ => {}
     }
 
     let workspace_lookup = workspaces

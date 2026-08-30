@@ -1,4 +1,6 @@
-//! Cloudflare Tunnel: expose the web dashboard via `cloudflared tunnel run --token <TOKEN>`.
+//! Cloudflare Tunnel: expose the web dashboard via `cloudflared tunnel run`,
+//! passing the token through the `TUNNEL_TOKEN` environment variable so it
+//! never appears in the process argv (visible to every local process).
 //! The public URL comes from `tunnel.cloudflare.hostname`.
 
 use std::path::PathBuf;
@@ -34,12 +36,12 @@ pub async fn start_web_tunnel(
         .args
         .as_ref()
         .map(|a| a.iter().map(|s| s.as_str()).collect())
-        .unwrap_or_else(|| vec!["tunnel", "run", "--token"]);
+        .unwrap_or_else(|| vec!["tunnel", "run"]);
 
     let resolved_program_string = resolved_program.to_string_lossy().to_string();
     let mut cmd = crate::process::env::command(&resolved_program_string);
     cmd.args(&base_args)
-        .arg(token)
+        .env("TUNNEL_TOKEN", token)
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 

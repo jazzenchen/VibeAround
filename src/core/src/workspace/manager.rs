@@ -40,12 +40,6 @@ const MAX_WARM_THREADS: usize = 4;
 const WARM_THREAD_MIN_IDLE: Duration = Duration::from_secs(10 * 60);
 const PREVIEW_WEB_CHAT_ID_PREFIX: &str = "ws_preview_";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExternalSessionAttachMode {
-    ReuseOpenThread,
-    NewThread,
-}
-
 struct PreparedExternalSessionThread {
     workspace: WorkspaceRecord,
     host_binding: HostBinding,
@@ -685,7 +679,9 @@ fn default_route_binding_and_workspace_from_settings(
     match channel_traits(&route.channel_kind).default_workspace {
         DefaultWorkspaceKind::General => {
             let host_binding = default_host_binding(cfg, prefs);
-            (host_binding, cfg.resolve_workspace(""))
+            let workspace = agent_state::configured_agent_workspace(prefs, &host_binding.agent_id)
+                .unwrap_or_else(|| cfg.resolve_workspace(""));
+            (host_binding, workspace)
         }
         DefaultWorkspaceKind::ChannelDefault => {
             default_channel_binding_and_workspace(&route.channel_kind, cfg, prefs)
@@ -717,7 +713,10 @@ fn default_channel_binding_and_workspace(
         })
         .unwrap_or_else(|| agent_state::resolve_default_agent(prefs, cfg));
     let profile_id = default_profile_for_agent_from_settings(channel_kind, &agent_id, cfg, prefs);
-    let workspace = im_workspace_for_channel(cfg, channel_kind);
+    // The desktop UI's per-agent workspace is the user's stated default;
+    // the im/<channel> directory is only the fallback when none is set.
+    let workspace = agent_state::configured_agent_workspace(prefs, &agent_id)
+        .unwrap_or_else(|| im_workspace_for_channel(cfg, channel_kind));
 
     (HostBinding::new(agent_id, profile_id), workspace)
 }

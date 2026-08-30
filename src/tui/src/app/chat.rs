@@ -596,6 +596,18 @@ impl TuiApp {
         sent
     }
 
+    /// Esc during a running turn cancels it — the working indicator has
+    /// advertised "esc to interrupt" since it was added. `turn_started_at`
+    /// covers the local pre-ack window right after submit; the server-side
+    /// `turn_active` flag covers turns started from another surface.
+    pub(crate) fn escape_pressed(&mut self, chat_tx: &mpsc::UnboundedSender<ChatClientMessage>) {
+        if self.turn_started_at.is_some() || self.chat_state.turn_active {
+            self.send_chat_command(ChatClientMessage::cancel(), chat_tx);
+            return;
+        }
+        self.go_back();
+    }
+
     fn send_chat_command(
         &mut self,
         message: ChatClientMessage,

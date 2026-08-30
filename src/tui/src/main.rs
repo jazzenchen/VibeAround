@@ -181,7 +181,7 @@ async fn handle_terminal_event(
             }
 
             match key.code {
-                KeyCode::Esc => app.go_back(),
+                KeyCode::Esc => app.escape_pressed(chat_tx),
                 KeyCode::Left
                     if app.view == AppView::Chat && key.modifiers.contains(KeyModifiers::ALT) =>
                 {

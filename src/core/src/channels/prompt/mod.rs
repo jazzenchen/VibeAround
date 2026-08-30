@@ -347,7 +347,7 @@ mod tests {
             ("/workspace", "Workspaces:"),
             ("/agent", "Agents:"),
             ("/profile", "Profiles for"),
-            ("/session", "Sessions for"),
+            ("/session", "Sessions in"),
             ("/definitely-unknown", "Unknown command:"),
             ("/close", "Thread closed."),
         ] {

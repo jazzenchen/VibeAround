@@ -16,7 +16,7 @@ use crate::channels::types::{
 };
 use crate::profiles::{self, connections};
 use crate::routing::{channel_traits, ChannelTarget, RouteKey};
-use crate::workspace::manager::{default_profile_for_agent, ExternalSessionAttachMode};
+use crate::workspace::manager::default_profile_for_agent;
 use crate::workspace::threads::runtime::{
     cancelled_prompt_response, route_allows_startup_replay, StartupReplay, ThreadRuntime,
     ThreadRuntimeState,
@@ -170,7 +170,6 @@ async fn handle_command(
                     handover.profile_id,
                     handover.session_id,
                     std::path::PathBuf::from(handover.cwd),
-                    ExternalSessionAttachMode::ReuseOpenThread,
                 )
                 .await
             {
@@ -556,7 +555,6 @@ async fn switch_session(
             state.host_binding.profile_id.clone(),
             session.session_id.clone(),
             PathBuf::from(&session.workspace),
-            ExternalSessionAttachMode::NewThread,
         )
         .await
     {
@@ -1250,23 +1248,47 @@ async fn list_sessions_for_state(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     state: &ThreadRuntimeState,
 ) -> Vec<crate::launch_sessions::LaunchSession> {
-    workspace_threads
-        .list_resumable_agent_sessions(
-            &state.host_binding.agent_id,
-            &state.workspace,
-            SESSION_LIST_LIMIT,
-            false,
-        )
+    // Query the current agent plus every agent this workspace's threads have
+    // observed sessions for — /agent switch re-points the route to a fresh
+    // thread, so filtering by the current agent alone made every pre-switch
+    // session unfindable (E2E 2026-08-29 P1).
+    let mut agent_ids = vec![state.host_binding.agent_id.clone()];
+    match workspace_threads
+        .observed_session_agent_ids_for_workspace(&state.workspace)
         .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(
-                agent_id = %state.host_binding.agent_id,
+    {
+        Ok(observed) => {
+            for agent_id in observed {
+                if !agent_ids.contains(&agent_id) {
+                    agent_ids.push(agent_id);
+                }
+            }
+        }
+        Err(error) => tracing::warn!(
+            workspace = %state.workspace.display(),
+            error = %error,
+            "failed to expand session listing across observed agents"
+        ),
+    }
+
+    let mut sessions = Vec::new();
+    for agent_id in &agent_ids {
+        match workspace_threads
+            .list_resumable_agent_sessions(agent_id, &state.workspace, SESSION_LIST_LIMIT, false)
+            .await
+        {
+            Ok(list) => sessions.extend(list),
+            Err(error) => tracing::warn!(
+                agent_id = %agent_id,
                 workspace = %state.workspace.display(),
                 error = %error,
                 "failed to list resumable sessions"
-            );
-            Vec::new()
-        })
+            ),
+        }
+    }
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.truncate(SESSION_LIST_LIMIT);
+    sessions
 }
 
 fn format_session_list(
@@ -1274,8 +1296,7 @@ fn format_session_list(
     sessions: &[crate::launch_sessions::LaunchSession],
 ) -> String {
     let mut lines = vec![format!(
-        "Sessions for {} in {}:",
-        state.host_binding.agent_id,
+        "Sessions in {}:",
         state.workspace.to_string_lossy()
     )];
     if sessions.is_empty() {
@@ -1283,12 +1304,19 @@ fn format_session_list(
         return lines.join("\n");
     }
     let current = state.session_id.as_deref();
+    let host_agent = state.host_binding.agent_id.as_str();
     for session in sessions {
         let short_id = crate::launch_sessions::short_id(&session.session_id);
+        let agent_note = if session.agent_id == host_agent {
+            String::new()
+        } else {
+            format!(" [{}]", session.agent_id)
+        };
         lines.push(format!(
-            "{} {} · {} · updated {}",
+            "{} {}{} · {} · updated {}",
             current_marker(current == Some(session.session_id.as_str())),
             short_id,
+            agent_note,
             session.title,
             session.updated_at
         ));

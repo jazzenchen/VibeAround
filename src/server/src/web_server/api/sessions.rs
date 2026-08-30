@@ -6,7 +6,6 @@ use axum::{
 };
 
 use common::pty::{list_tmux_sessions, tmux_available, PtyTool, SessionId};
-use common::workspace::manager::ExternalSessionAttachMode;
 
 use crate::web_server::AppState;
 
@@ -271,13 +270,7 @@ pub async fn init_workspace_thread_handler(
 
     if let Some(session_id) = trimmed(body.session_id.as_deref()) {
         let runtime = manager
-            .attach_external_session_to_web_thread(
-                agent_id,
-                body.profile_id,
-                session_id,
-                workspace,
-                ExternalSessionAttachMode::ReuseOpenThread,
-            )
+            .attach_external_session_to_web_thread(agent_id, body.profile_id, session_id, workspace)
             .await
             .map_err(bad_request)?;
         return Ok(Json(web_thread_response(&runtime).await));

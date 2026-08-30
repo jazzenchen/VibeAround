@@ -64,8 +64,9 @@ impl SpawnSpec {
 /// What to do when a supervised process dies.
 #[derive(Debug, Clone, Copy)]
 pub enum RestartPolicy {
-    /// Move to `Stopped` on any exit. The owning manager decides whether
-    /// to re-register. Used by `AcpAgent` and `Pty`.
+    /// Move to `Stopped` on any exit or spawn failure — terminal either
+    /// way, and the owner task ends so the bridge factory is dropped. The
+    /// owning manager decides whether to re-register. Used by `AcpAgent`.
     Never,
     /// On unintended exit, schedule a respawn after `restart_delay`.
     OnCrash {

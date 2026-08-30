@@ -10,6 +10,11 @@ pub(super) enum WebChatInput {
         input: ChannelInput,
         profile: Option<String>,
         session_intent: Option<WebChatSessionIntent>,
+        /// The client's displayed workspace, sent with every message. Only
+        /// consulted when the message carries no session intent AND the
+        /// route has no thread yet (first contact) — later messages must
+        /// not yank a /workspace-switched thread back.
+        session_workspace: Option<String>,
         session_mode: Option<String>,
     },
     SetMode {
@@ -75,6 +80,7 @@ pub(super) fn parse_web_chat_input(
                     }
                     let agent = parse_web_agent(&v);
                     let session_intent = parse_web_session_intent(&v, agent.clone());
+                    let session_workspace = parse_web_session_workspace(&v);
                     let profile = parse_web_profile(&v);
                     let session_mode = parse_web_session_mode(&v);
                     Some(WebChatInput::Message {
@@ -92,6 +98,7 @@ pub(super) fn parse_web_chat_input(
                         },
                         profile,
                         session_intent,
+                        session_workspace,
                         session_mode,
                     })
                 }
@@ -177,6 +184,7 @@ pub(super) fn parse_web_chat_input(
                     },
                     profile: None,
                     session_intent: None,
+                    session_workspace: None,
                     session_mode: None,
                 })
             }
@@ -434,6 +442,7 @@ mod tests {
                     session_id,
                     cwd: Some(cwd),
                 }),
+            session_workspace: Some(top_level_workspace),
             session_mode: None,
         } = input
         else {
@@ -444,6 +453,26 @@ mod tests {
         assert_eq!(intent_agent, "codex");
         assert_eq!(session_id, "sid-1");
         assert_eq!(cwd, "/tmp/project");
+        assert_eq!(top_level_workspace, "/tmp/project");
+    }
+
+    #[test]
+    fn keeps_session_workspace_when_message_has_no_intent() {
+        let input = parse_web_chat_input(
+            "chat-1",
+            r#"{"type":"message","text":"hi","agent":"codex","sessionWorkspace":"/tmp/project"}"#,
+        )
+        .expect("message input");
+
+        let WebChatInput::Message {
+            session_intent: None,
+            session_workspace: Some(workspace),
+            ..
+        } = input
+        else {
+            panic!("expected intent-less message to keep its workspace");
+        };
+        assert_eq!(workspace, "/tmp/project");
     }
 
     #[test]
