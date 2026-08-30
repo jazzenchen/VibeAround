@@ -54,6 +54,14 @@ export async function getLocalAgentApiToken(): Promise<string | null> {
 }
 
 /**
+ * Replace the agent-as-API key. The previous key stops working at once, so
+ * profiles carrying it need the new value.
+ */
+export async function rotateLocalAgentApiToken(): Promise<string> {
+  return invoke<string>("rotate_local_agent_api_token");
+}
+
+/**
  * Authenticated fetch against the daemon. Transparently re-fetches the
  * token on a 401 (daemon restart invalidates the previous token).
  */
@@ -104,9 +112,9 @@ async function authedDashboardUrl(url: string): Promise<string> {
 }
 
 /**
- * Open a daemon URL (loopback dashboard or tunnel) in the user's default
- * external browser, with the auth token automatically appended. Use this
- * instead of a raw `<a href>` anywhere the target is a daemon-backed page.
+ * Open the dashboard SPA in the user's default external browser with the auth
+ * token appended. Preview URLs must use `openExternalUrl`: local Preview has a
+ * loopback bypass, while tunnel owner Preview uses the pairing flow.
  *
  * Goes through the `open_external_url` Tauri command rather than
  * `window.open`, because `window.open` inside a Tauri webview creates a

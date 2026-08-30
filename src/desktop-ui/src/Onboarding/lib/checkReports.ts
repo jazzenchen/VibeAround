@@ -45,6 +45,15 @@ export function markReportsUpdating(
   );
 }
 
+export function hasSkippedReport(
+  reports: StartkitItemReport[],
+  reportId: string,
+): boolean {
+  return reports.some(
+    (report) => report.id === reportId && report.status === "skipped",
+  );
+}
+
 export function agentIdFromReport(report: StartkitItemReport): string | null {
   const match = /^agents\.(.+)\.cli$/.exec(report.id);
   return match?.[1] ?? null;

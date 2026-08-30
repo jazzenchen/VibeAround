@@ -10,7 +10,8 @@
 //!    registered in `PluginHost::pending_permissions`. No timeout — the UX
 //!    is "user takes as long as they need".
 
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use agent_client_protocol::schema::v1 as acp;
 use tokio::sync::{mpsc, oneshot};
@@ -31,6 +32,48 @@ use super::plugin_host::PendingPermissionRegistration;
 use super::plugin_host::PluginHost;
 use super::types::{ChannelOutput, ThreadReply, ThreadReplyAgent, ThreadReplyPayload};
 
+/// Collects the transcript a `session/load` startup replays, so the start
+/// path can hand it to the one connection that asked for it instead of
+/// broadcasting it. Deactivated (and drained) once the start completes;
+/// afterwards notifications flow through the normal fan-out again.
+pub(crate) struct StartupReplayCapture {
+    active: AtomicBool,
+    frames: Mutex<Vec<ThreadReply>>,
+}
+
+impl StartupReplayCapture {
+    pub(crate) fn new() -> Self {
+        Self {
+            active: AtomicBool::new(true),
+            frames: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Store a frame while the capture is live. Returns whether it was taken.
+    fn push(&self, reply: ThreadReply) -> bool {
+        if !self.active.load(Ordering::SeqCst) {
+            return false;
+        }
+        let mut frames = self.frames.lock().unwrap_or_else(|poisoned| {
+            self.active.store(false, Ordering::SeqCst);
+            poisoned.into_inner()
+        });
+        frames.push(reply);
+        true
+    }
+
+    /// Stop capturing and hand back everything collected so far.
+    pub(crate) fn finish(&self) -> Vec<ThreadReply> {
+        self.active.store(false, Ordering::SeqCst);
+        std::mem::take(
+            &mut *self
+                .frames
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+}
+
 pub(crate) struct ChannelBridgeHandler {
     plugin_host: Arc<PluginHost>,
     workspace_threads: Weak<WorkspaceThreadManager>,
@@ -39,16 +82,18 @@ pub(crate) struct ChannelBridgeHandler {
     host_binding: HostBinding,
     active_turn_target: ActiveTurnTarget,
     host_protocol: HostProtocolOwner,
+    startup_capture: Option<Arc<StartupReplayCapture>>,
 }
 
 impl ChannelBridgeHandler {
-    pub(crate) fn for_thread(
+    pub(crate) fn for_thread_with_capture(
         plugin_host: Arc<PluginHost>,
         workspace_threads: &Arc<WorkspaceThreadManager>,
         workspace_id: WorkspaceId,
         thread_id: WorkspaceThreadId,
         host_binding: HostBinding,
         active_turn_target: ActiveTurnTarget,
+        startup_capture: Option<Arc<StartupReplayCapture>>,
     ) -> Self {
         Self {
             plugin_host,
@@ -58,7 +103,15 @@ impl ChannelBridgeHandler {
             host_binding,
             active_turn_target,
             host_protocol: HostProtocolOwner::new(),
+            startup_capture,
         }
+    }
+
+    /// Divert a transcript frame into the startup capture while one is live.
+    fn capture_startup_frame(&self, reply: &ThreadReply) -> bool {
+        self.startup_capture
+            .as_ref()
+            .is_some_and(|capture| capture.push(reply.clone()))
     }
 
     async fn attached_routes(&self) -> Vec<RouteKey> {
@@ -208,6 +261,9 @@ impl ChannelBridgeHandler {
                 notification: payload,
             },
         };
+        if self.capture_startup_frame(&reply) {
+            return;
+        }
 
         for target in self.attached_delivery_targets().await {
             self.plugin_host.send_output(ChannelOutput::ThreadReply {
@@ -329,6 +385,10 @@ fn delivery_targets(
 
 #[async_trait::async_trait]
 impl AgentClientHandler for ChannelBridgeHandler {
+    fn mcp_server(&self) -> Option<Arc<dyn crate::agent::AcpMcpServer>> {
+        self.workspace_threads.upgrade()?.mcp_over_acp()
+    }
+
     async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
         let Some(payload) = self.filter_host_protocol_notification(&args).await? else {
             return Ok(());
@@ -360,6 +420,9 @@ impl AgentClientHandler for ChannelBridgeHandler {
                 notification: payload,
             },
         };
+        if self.capture_startup_frame(&reply) {
+            return Ok(());
+        }
 
         for target in self.attached_delivery_targets().await {
             self.plugin_host.send_output(ChannelOutput::ThreadReply {
@@ -521,7 +584,31 @@ mod tests {
             host_binding: HostBinding::new("codex", None),
             active_turn_target,
             host_protocol: HostProtocolOwner::new(),
+            startup_capture: None,
         }
+    }
+
+    #[test]
+    fn startup_capture_takes_frames_until_finished() {
+        let capture = StartupReplayCapture::new();
+        let reply = ThreadReply {
+            workspace_id: "ws_a".to_string(),
+            thread_id: "wt_a".to_string(),
+            agent: ThreadReplyAgent {
+                id: "codex".to_string(),
+                profile: None,
+                session_id: "sid-1".to_string(),
+            },
+            payload: ThreadReplyPayload::AcpSessionNotification {
+                notification: serde_json::json!({"sessionId": "sid-1"}),
+            },
+        };
+
+        assert!(capture.push(reply.clone()));
+        assert_eq!(capture.finish(), vec![reply.clone()]);
+        // Finished captures let frames flow to the normal fan-out again.
+        assert!(!capture.push(reply));
+        assert!(capture.finish().is_empty());
     }
 
     fn target_for(route: RouteKey, reply_to: &str) -> ChannelTarget {

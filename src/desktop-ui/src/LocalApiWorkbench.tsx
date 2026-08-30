@@ -10,6 +10,7 @@ import {
   getLauncherPreferences,
   listAgents,
   listProfiles,
+  setLauncherLocalAgentApiAgentEnabled,
   setLauncherLocalAgentApiEnabled,
   type AgentSummary,
   type LauncherPreferences,
@@ -53,6 +54,7 @@ export function LocalApiWorkbench({
   const [agentId, setAgentId] = useState("");
   const [routeId, setRouteId] = useState("");
   const [serviceSaving, setServiceSaving] = useState(false);
+  const [agentApiSaving, setAgentApiSaving] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -178,6 +180,30 @@ export function LocalApiWorkbench({
     }
   }
 
+  const agentApiAgents = prefs?.localAgentApiAgents ?? [];
+  const agentApiEnabled =
+    !!selectedAgent && agentApiAgents.includes(selectedAgent.id);
+
+  async function handleAgentApiToggle(nextEnabled: boolean) {
+    if (!prefs || !selectedAgent || agentApiSaving) return;
+    setAgentApiSaving(true);
+    setError(null);
+    const previous = prefs.localAgentApiAgents ?? [];
+    const next = nextEnabled
+      ? [...previous.filter((id) => id !== selectedAgent.id), selectedAgent.id]
+      : previous.filter((id) => id !== selectedAgent.id);
+    setPrefs({ ...prefs, localAgentApiAgents: next });
+    try {
+      await setLauncherLocalAgentApiAgentEnabled(selectedAgent.id, nextEnabled);
+      await refresh();
+    } catch (err) {
+      setPrefs({ ...prefs, localAgentApiAgents: previous });
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAgentApiSaving(false);
+    }
+  }
+
   if (loading) {
     return <p className="p-3 text-xs text-muted-foreground">{t("Loading…")}</p>;
   }
@@ -257,6 +283,24 @@ export function LocalApiWorkbench({
                 </div>
               </div>
             </div>
+            <label className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              <span>
+                {agentApiEnabled
+                  ? t("Agent API enabled")
+                  : t("Agent API disabled")}
+              </span>
+              <span className="flex items-center gap-2">
+                {agentApiSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                <Switch
+                  checked={agentApiEnabled}
+                  disabled={agentApiSaving || !serviceEnabled}
+                  onCheckedChange={(checked) =>
+                    void handleAgentApiToggle(checked)
+                  }
+                  aria-label={t("Toggle API access for this agent")}
+                />
+              </span>
+            </label>
             <div className="mt-3 flex flex-wrap gap-1.5 pb-0.5">
               {visibleAgents.map((agent) => (
                 <button

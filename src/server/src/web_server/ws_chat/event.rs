@@ -1,10 +1,10 @@
-use common::channels::types::{ChannelSessionStart, ThreadReplyPayload};
+use common::channels::types::ThreadReplyPayload;
 use common::channels::ChannelOutput;
 
 use crate::api_types::ChatEvent;
 
 /// Translate a `ChannelOutput` into a wire `ChatEvent`.
-pub(super) fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
+pub(in crate::web_server) fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
     match output {
         ChannelOutput::ThreadReply { reply, .. } => match reply.payload {
             ThreadReplyPayload::AcpSessionNotification { notification } => {
@@ -17,26 +17,7 @@ pub(super) fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
             ChatEvent::AgentReady { agent, version }
         }
         ChannelOutput::SessionReady { session_id, .. } => ChatEvent::SessionReady { session_id },
-        ChannelOutput::SessionInfo { info, .. } => ChatEvent::SystemText {
-            text: format!(
-                "Workspace: {}\nAgent: {}{}\nProfile: {}\n{}: {}",
-                info.workspace_path,
-                info.agent.name,
-                if info.agent.version.is_empty() {
-                    String::new()
-                } else {
-                    format!(" v{}", info.agent.version)
-                },
-                info.agent
-                    .profile_id
-                    .unwrap_or_else(|| "Native".to_string()),
-                match info.start {
-                    ChannelSessionStart::New => "New session started",
-                    ChannelSessionStart::Resumed => "Continuing from session",
-                },
-                info.session_id
-            ),
-        },
+        ChannelOutput::SessionInfo { info, .. } => ChatEvent::SessionInfo { info },
         ChannelOutput::SessionMode { session_mode, .. } => ChatEvent::SessionMode { session_mode },
         ChannelOutput::CommandMenu {
             system_commands,
@@ -62,6 +43,8 @@ pub(super) fn output_to_chat_event(output: ChannelOutput) -> ChatEvent {
             ChatEvent::SubagentAcpNotification { agent, payload }
         }
         ChannelOutput::TurnStatus { active, .. } => ChatEvent::TurnStatus { active },
+        ChannelOutput::ReplayStart { session_id, .. } => ChatEvent::ReplayStart { session_id },
+        ChannelOutput::ReplayDone { session_id, .. } => ChatEvent::ReplayDone { session_id },
     }
 }
 
@@ -70,7 +53,10 @@ fn acp_passthrough(payload: serde_json::Value) -> ChatEvent {
     ChatEvent::AcpNotification { payload }
 }
 
-pub(super) fn permission_response_error_event(request_id: &str, error: &str) -> ChatEvent {
+pub(in crate::web_server) fn permission_response_error_event(
+    request_id: &str,
+    error: &str,
+) -> ChatEvent {
     ChatEvent::Error {
         error: format!("Permission response for request `{request_id}` was ignored: {error}"),
     }

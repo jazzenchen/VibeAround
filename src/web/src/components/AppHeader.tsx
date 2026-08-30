@@ -12,7 +12,7 @@ import { useI18n } from "@va/i18n";
 
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { AppPage, ChatRuntimeStatus } from "@/lib/dashboard-types";
+import type { AppPage } from "@/lib/dashboard-types";
 import type { Theme } from "@/lib/theme";
 import type { ViewMode } from "@/lib/terminal-types";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,6 @@ interface AppHeaderProps {
   onThemeToggle: () => void;
   totalSessions: number;
   runningSessions: number;
-  chatStatus: ChatRuntimeStatus;
   webSettings: WebVerboseSettings;
   onWebSettingsChange: (patch: Partial<WebVerboseSettings>) => void;
 }
@@ -46,26 +45,10 @@ export function AppHeader({
   onThemeToggle,
   totalSessions,
   runningSessions,
-  chatStatus,
   webSettings,
   onWebSettingsChange,
 }: AppHeaderProps) {
   const { t } = useI18n();
-  const chatStatusMeta = {
-    connecting: {
-      label: t("Connecting to local agent"),
-    },
-    ready: {
-      label: t("Local agent ready"),
-    },
-    working: {
-      label: t("Agent working"),
-    },
-    attention: {
-      label: t("Agent needs input"),
-    },
-  } satisfies Record<ChatRuntimeStatus, { label: string }>;
-  const chatMeta = chatStatusMeta[chatStatus];
   const terminalTitle =
     totalSessions > 0
       ? t("{{running}}/{{total}} CLI", {
@@ -93,7 +76,7 @@ export function AppHeader({
               "relative h-9 w-9 text-muted-foreground hover:text-foreground",
               page === "chat" && "bg-primary/15 text-primary hover:text-primary",
             )}
-            title={`${t("Agent")} · ${chatMeta.label}`}
+            title={t("Agent")}
             aria-label={t("Agent")}
           >
             <MessageSquare className="h-4 w-4" />
@@ -206,9 +189,6 @@ export function AppHeader({
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium">{t("Chat")}</span>
-                  <span className="block truncate font-mono text-[11px] text-muted-foreground/70">
-                    {chatMeta.label}
-                  </span>
                 </span>
               </button>
 

@@ -11,7 +11,8 @@ pub struct PreviewSnapshot {
     pub title: String,
     pub kind: PreviewKind,
     pub port: Option<u16>,
-    pub share_key: Option<String>,
+    pub share_id: Option<String>,
+    pub share_code: Option<String>,
     pub share_expires_at_ms: Option<u64>,
     pub created_at_ms: u64,
 }
@@ -74,15 +75,32 @@ mod tests {
                     "title": "App",
                     "kind": "server",
                     "port": 5173,
-                    "share_key": null,
+                    "share_id": null,
+                    "share_code": null,
                     "share_expires_at_ms": null,
                     "created_at_ms": 123
+                }, {
+                    "slug": "readme",
+                    "id": "/tmp/project/README.md",
+                    "workspace": "/tmp/project",
+                    "title": "README",
+                    "kind": "file",
+                    "port": null,
+                    "share_id": "00112233445566778899aabbccddeeff",
+                    "share_code": "123456",
+                    "share_expires_at_ms": 456,
+                    "created_at_ms": 124
                 }],
                 "tunnel_url": "https://example.com"
             }),
         );
         let previews = decode_list(response).expect("decode");
         assert_eq!(previews.previews[0].kind, PreviewKind::Server);
+        assert_eq!(
+            previews.previews[1].share_id.as_deref(),
+            Some("00112233445566778899aabbccddeeff")
+        );
+        assert_eq!(previews.previews[1].share_code.as_deref(), Some("123456"));
         assert_eq!(previews.tunnel_url.as_deref(), Some("https://example.com"));
     }
 }

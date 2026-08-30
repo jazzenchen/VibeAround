@@ -96,7 +96,6 @@ export const zhCNLaunch: Record<string, string> = {
   Truncated: "已截断",
   Empty: "空",
   Clear: "清空",
-  Copy: "复制",
   client: "客户端",
   upstream: "上游",
   "server {{status}}": "服务器 {{status}}",
@@ -155,6 +154,7 @@ export const zhCNLaunch: Record<string, string> = {
   "Model routes": "模型映射",
   Endpoint: "Endpoint",
   "Endpoint URL required": "必须填写 Endpoint URL",
+  Tested: "实际请求",
   "Base URL": "Base URL",
   "Leave blank to use the catalog default.": "留空则使用内置默认值。",
   "Required for custom endpoints.": "自定义 endpoint 必填。",
@@ -390,9 +390,16 @@ export const zhCNLaunch: Record<string, string> = {
   "VibeAround writes this desktop configuration during launch. Copy this only if you are configuring the desktop app by hand.":
     "VibeAround 会在启动时写入这段桌面应用配置。只有手动配置桌面应用时才需要复制。",
   "Click a value to copy.": "点击字段值即可复制。",
+  "Enter it as your provider documents it, usually ending in /v1. Some clients append /v1 themselves — if requests fail on a doubled /v1 path, drop the trailing /v1 here.":
+    "按服务商文档填写，通常以 /v1 结尾。部分客户端会自行追加 /v1——如果请求因为路径里出现两个 /v1 而失败，就去掉这里结尾的 /v1。",
+  "This key stays the same across restarts.": "该 key 在重启后保持不变。",
+  "Could not generate a new API key.": "无法重新生成 API key。",
+  "This URL changes with the selected API.": "该 URL 会随所选 API 变化。",
+  "Generate a new API key": "重新生成 API key",
+  "Generate a new API key? Profiles using the current key stop working until you paste the new one.":
+    "确定重新生成 API key？在把新 key 粘贴过去之前，正在使用当前 key 的配置会失效。",
   "Use any non-empty API key value when the local API bridge is already running with a saved profile key.":
     "本地 API 转接已使用保存的配置 key 运行时，此处填写任意非空值即可。",
-  Copied: "已复制",
   "Manual setting": "手动配置",
   "{{agent}} manual setting": "{{agent}} 手动配置",
   "Copy this snippet into the CLI config file yourself. VibeAround does not edit the file automatically.":
@@ -403,8 +410,6 @@ export const zhCNLaunch: Record<string, string> = {
     "打开 Codex 配置文件，添加这段配置，或更新已有的 VibeAround 配置块。",
   "Open the Codex config file, then add this snippet or update the existing VibeAround top-level model settings.":
     "打开 Codex 配置文件，添加这段配置，或更新已有的 VibeAround 顶层模型设置。",
-  "Codex 0.134.0 and newer reject the old top-level profile selector, so this snippet leaves that line commented as a migration hint.":
-    "Codex 0.134.0 及更新版本会拒绝旧的顶层 profile 选择器，所以这段片段会把那一行保留为注释，作为迁移提示。",
   "Open the OpenCode config file, then add or merge this provider block.":
     "打开 OpenCode 配置文件，然后添加或合并这段 provider 配置。",
   "Copy the matching parts into the Gemini CLI settings and env files yourself. VibeAround does not edit them automatically.":

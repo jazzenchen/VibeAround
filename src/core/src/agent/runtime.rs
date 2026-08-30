@@ -26,8 +26,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use anyhow::{anyhow, Context};
-use tokio::sync::oneshot;
+use anyhow::{anyhow, bail, Context};
+use tokio::sync::{oneshot, watch};
 
 use acp::schema::v1 as schema;
 use agent_client_protocol as acp;
@@ -35,7 +35,7 @@ use agent_client_protocol as acp;
 use crate::process::bridge::{BridgeFactory, ProcessBridge};
 use crate::process::registry::ProcessKind;
 use crate::process::supervisor::{ProcessId, RestartPolicy, SpawnSpec, Supervisor};
-use crate::routing::RouteKey;
+use crate::routing::{wait_for_signal, RouteKey};
 
 use super::bridge::AcpAgentBridge;
 
@@ -59,6 +59,48 @@ pub trait AgentClientHandler: Send + Sync + 'static {
     async fn prompt_finished(&self, _success: bool) -> acp::Result<()> {
         Ok(())
     }
+
+    /// The MCP server VibeAround offers this agent over the ACP connection
+    /// itself (`mcp/connect` / `mcp/message`). `None` means the session has no
+    /// VibeAround tools; the agent's connect request is rejected and it runs
+    /// without them.
+    fn mcp_server(&self) -> Option<Arc<dyn AcpMcpServer>> {
+        None
+    }
+}
+
+/// Serves MCP requests that arrive over ACP. The implementation lives with the
+/// MCP tool set (server crate); core only routes to it.
+#[async_trait::async_trait]
+pub trait AcpMcpServer: Send + Sync + 'static {
+    /// Handle one MCP JSON-RPC request (`initialize`, `tools/list`,
+    /// `tools/call`, ...) and return its `result`, or an MCP error.
+    async fn call(
+        &self,
+        method: &str,
+        params: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<serde_json::Value, AcpMcpError>;
+}
+
+/// JSON-RPC error surfaced from an MCP call served over ACP.
+#[derive(Debug, Clone)]
+pub struct AcpMcpError {
+    pub code: i32,
+    pub message: String,
+}
+
+/// Name and id VibeAround declares for its MCP-over-ACP server.
+pub const VIBEAROUND_ACP_MCP_SERVER: &str = "vibearound";
+
+/// The `mcpServers` entry to declare when the agent advertised MCP over ACP.
+pub fn acp_mcp_servers(initialize: &schema::InitializeResponse) -> Vec<schema::McpServer> {
+    if !initialize.agent_capabilities.mcp_capabilities.acp {
+        return Vec::new();
+    }
+    vec![schema::McpServer::Acp(schema::McpServerAcp::new(
+        VIBEAROUND_ACP_MCP_SERVER,
+        VIBEAROUND_ACP_MCP_SERVER,
+    ))]
 }
 
 /// Handle returned from a successful [`Agent::spawn`].
@@ -166,6 +208,21 @@ impl PendingProcessRegistration {
             .set(process_id)
             .expect("agent process registration already installed");
     }
+
+    async fn unregister(mut self) {
+        let process_id = self
+            .process_id
+            .expect("pending process registration already transferred");
+        if let Err(error) = self.supervisor.unregister(process_id).await {
+            tracing::warn!(
+                process_id = %process_id,
+                error = %error,
+                "failed to clean cancelled agent registration"
+            );
+            return;
+        }
+        self.process_id = None;
+    }
 }
 
 impl Drop for PendingProcessRegistration {
@@ -184,6 +241,31 @@ impl Drop for PendingProcessRegistration {
             }
         });
     }
+}
+
+async fn await_agent_ready(
+    ready_rx: oneshot::Receiver<anyhow::Result<AgentReady>>,
+    registration: PendingProcessRegistration,
+    cancellation: Option<&mut watch::Receiver<bool>>,
+    agent_id: &str,
+) -> anyhow::Result<Option<AgentReady>> {
+    let ready = match cancellation {
+        Some(cancellation) => {
+            tokio::select! {
+                biased;
+                _ = wait_for_signal(cancellation) => {
+                    registration.unregister().await;
+                    return Ok(None);
+                }
+                ready = ready_rx => ready,
+            }
+        }
+        None => ready_rx.await,
+    }
+    .map_err(|_| anyhow!("Agent bridge for {} died during init", agent_id))??;
+
+    registration.transfer_to(&ready.agent);
+    Ok(Some(ready))
 }
 
 impl Agent {
@@ -205,13 +287,41 @@ impl Agent {
         extra_args: Vec<String>,
         extra_env: Vec<(String, String)>,
     ) -> anyhow::Result<AgentReady> {
+        Self::spawn_cancellable(
+            agent_id,
+            route,
+            workspace,
+            startup_session,
+            client_handler,
+            extra_args,
+            extra_env,
+            None,
+        )
+        .await
+        .map(|ready| ready.expect("uncancellable agent spawn cannot be cancelled"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn spawn_cancellable(
+        agent_id: String,
+        route: &RouteKey,
+        workspace: &Path,
+        startup_session: StartupSession,
+        client_handler: Arc<dyn AgentClientHandler>,
+        extra_args: Vec<String>,
+        mut extra_env: Vec<(String, String)>,
+        cancellation: Option<&mut watch::Receiver<bool>>,
+    ) -> anyhow::Result<Option<AgentReady>> {
         crate::resources::validate_acp_runtime_agent(&agent_id).map_err(anyhow::Error::msg)?;
+        super::launch::append_agent_runtime_env(&mut extra_env, &agent_id);
 
         let cwd = workspace.to_path_buf();
         let label = format!("{}:{}", agent_id, route);
 
-        super::auto_install_project_integrations(&agent_id, workspace)
-            .with_context(|| format!("install project integrations for {}", agent_id))?;
+        super::sync_project_skills(&agent_id, workspace)
+            .with_context(|| format!("sync project skills for {}", agent_id))?;
+        super::install_project_mcp(&agent_id, workspace)
+            .with_context(|| format!("install project MCP for {}", agent_id))?;
 
         // Resolve program + args + install if needed.
         let (program, mut resolved_args, selected_candidate) =
@@ -259,6 +369,13 @@ impl Agent {
             Box::new(bridge) as Box<dyn ProcessBridge>
         });
 
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| *cancellation.borrow())
+        {
+            return Ok(None);
+        }
+
         let supervisor = Supervisor::global();
         let id = supervisor
             .register(
@@ -270,16 +387,7 @@ impl Agent {
             )
             .await;
         let registration = PendingProcessRegistration::new(supervisor, id);
-
-        let err_label = agent_id.clone();
-        let ready = ready_rx
-            .await
-            .map_err(|_| anyhow!("Agent bridge for {} died during init", err_label))??;
-
-        // Transfer the only process owner after initialization succeeds.
-        registration.transfer_to(&ready.agent);
-
-        Ok(ready)
+        await_agent_ready(ready_rx, registration, cancellation, &agent_id).await
     }
 
     /// Constructor used by the bridge once the ACP handshake has succeeded.
@@ -309,7 +417,9 @@ impl Agent {
     }
 
     /// Whether this handle still belongs to the live ACP bridge generation.
-    pub(crate) fn is_live(&self) -> bool {
+    /// Public so out-of-crate holders of long-lived handles (the agent-as-API
+    /// conversation registry) can tell a dead generation from a live one.
+    pub fn is_live(&self) -> bool {
         self.generation.is_live()
     }
 
@@ -339,7 +449,7 @@ impl Agent {
 mod lifecycle_tests {
     use std::sync::Arc;
 
-    use super::{AcpSessionGeneration, PendingProcessRegistration};
+    use super::{await_agent_ready, AcpSessionGeneration, PendingProcessRegistration};
     use crate::process::bridge::{BridgeExit, BridgeFuture, ProcessBridge, StdioPipes};
     use crate::process::registry::{ChildRegistry, ProcessKind};
     use crate::process::supervisor::{RestartPolicy, SpawnSpec, Supervisor};
@@ -430,6 +540,52 @@ mod lifecycle_tests {
         .await
         .expect("cancelled initialization leaked its process registration");
     }
+
+    #[cfg(any(unix, windows))]
+    #[tokio::test]
+    async fn cancelled_ready_wait_unregisters_and_reaps_child() {
+        let registry = Arc::new(ChildRegistry::new());
+        let supervisor = Supervisor::new(Arc::clone(&registry));
+        let process_id = supervisor
+            .register(
+                ProcessKind::AcpAgent,
+                "cancelled-agent-init",
+                hanging_child_spec(),
+                RestartPolicy::Never,
+                Box::new(|| Box::new(HangingInitializeBridge)),
+            )
+            .await;
+        let registration = PendingProcessRegistration::new(Arc::clone(&supervisor), process_id);
+        let (_ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (cancel_tx, mut cancellation) = tokio::sync::watch::channel(false);
+
+        let cancel = async {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while registry.len() == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("child was not registered");
+            cancel_tx.send_replace(true);
+        };
+        let (result, ()) = tokio::join!(
+            await_agent_ready(
+                ready_rx,
+                registration,
+                Some(&mut cancellation),
+                "cancelled-agent-init",
+            ),
+            cancel,
+        );
+
+        assert!(result.unwrap().is_none());
+        assert_eq!(registry.len(), 0);
+        assert!(!supervisor
+            .snapshot()
+            .iter()
+            .any(|process| process.id == process_id));
+    }
 }
 
 impl Agent {
@@ -452,6 +608,8 @@ impl Agent {
         args: schema::NewSessionRequest,
     ) -> acp::Result<schema::NewSessionResponse> {
         self.allow_startup_notifications();
+        let mut args = args;
+        args.mcp_servers.extend(acp_mcp_servers(&self.initialize));
         self.conn.send_request(args).block_task().await
     }
 
@@ -459,6 +617,8 @@ impl Agent {
         &self,
         args: schema::LoadSessionRequest,
     ) -> acp::Result<schema::LoadSessionResponse> {
+        let mut args = args;
+        args.mcp_servers.extend(acp_mcp_servers(&self.initialize));
         self.conn.send_request(args).block_task().await
     }
 
@@ -508,6 +668,31 @@ async fn resolve_agent_program(
 )> {
     let agent_def = crate::resources::agent_by_id(agent_id)
         .ok_or_else(|| anyhow!("No resource definition for agent '{}'", agent_id))?;
+    if agent_def.built_in {
+        // Never gated on the toolchain mode or on a detected system CLI: the
+        // built-in agent has to be available unconditionally. A local build
+        // wins when the override points at one, otherwise it comes from npm
+        // like every other ACP adapter.
+        if let Some(path) = std::env::var_os("VIBEAROUND_VA_AGENT_PATH") {
+            let path = std::path::PathBuf::from(path);
+            if !path.is_file() {
+                bail!("VIBEAROUND_VA_AGENT_PATH is not a file: {}", path.display());
+            }
+            return Ok((
+                "node".to_string(),
+                vec![path.to_string_lossy().into_owned()],
+                None,
+            ));
+        }
+        let npm_pkg = agent_def
+            .acp
+            .npm_package
+            .as_deref()
+            .ok_or_else(|| anyhow!("built-in agent '{}' declares no npm package", agent_id))?;
+        let entry =
+            resolve_npm_acp_entry(agent_id, npm_pkg, agent_def.acp.bin_name.as_deref()).await?;
+        return Ok(("node".to_string(), vec![entry], None));
+    }
     let config = crate::config::ensure_loaded();
     let selected_candidate =
         resolve_agent_candidate(agent_id, config.toolchain_mode.as_str()).await;
@@ -522,23 +707,9 @@ async fn resolve_agent_program(
     // 2. binary-download agents → install via install_cmd, run from PATH
     // 3. native agents → program + args from PATH
     if let Some(npm_pkg) = &agent_def.acp.npm_package {
-        let default_bin_name = super::install::npm_package_bin_name(npm_pkg);
-        let bin_name = agent_def
-            .acp
-            .bin_name
-            .as_deref()
-            .unwrap_or(&default_bin_name);
-        if !super::install::npm_package_installed(npm_pkg, bin_name) {
-            tracing::info!("[{}-agent] auto-installing {} ...", agent_id, npm_pkg);
-            super::install::auto_install_npm_agent(npm_pkg).await?;
-        }
-        let entry = crate::process::env::resolve_acp_agent_bin(bin_name)
-            .with_context(|| format!("Resolving ACP agent '{}' (npm: {})", agent_id, npm_pkg))?;
-        Ok((
-            "node".to_string(),
-            vec![entry.to_string_lossy().to_string()],
-            selected_candidate,
-        ))
+        let entry =
+            resolve_npm_acp_entry(agent_id, npm_pkg, agent_def.acp.bin_name.as_deref()).await?;
+        Ok(("node".to_string(), vec![entry], selected_candidate))
     } else if let Some(install_cmd) = &agent_def.acp.install_cmd {
         if let Some(candidate) = selected_candidate.as_ref() {
             return Ok((
@@ -570,6 +741,24 @@ async fn resolve_agent_program(
             selected_candidate,
         ))
     }
+}
+
+/// Install the npm ACP adapter when it is missing, then resolve the JS entry
+/// point VibeAround runs with `node`.
+async fn resolve_npm_acp_entry(
+    agent_id: &str,
+    npm_package: &str,
+    bin_name: Option<&str>,
+) -> anyhow::Result<String> {
+    let default_bin_name = super::install::npm_package_bin_name(npm_package);
+    let bin_name = bin_name.unwrap_or(&default_bin_name);
+    if !super::install::npm_package_installed(npm_package, bin_name) {
+        tracing::info!("[{}-agent] auto-installing {} ...", agent_id, npm_package);
+        super::install::auto_install_npm_agent(npm_package).await?;
+    }
+    let entry = crate::process::env::resolve_acp_agent_bin(bin_name)
+        .with_context(|| format!("Resolving ACP agent '{}' (npm: {})", agent_id, npm_package))?;
+    Ok(entry.to_string_lossy().to_string())
 }
 
 async fn resolve_agent_candidate(
@@ -643,6 +832,23 @@ fn env_key_matches(key: &str, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_over_acp_is_declared_only_when_the_agent_advertises_it() {
+        let mut initialize = schema::InitializeResponse::new(acp::schema::ProtocolVersion::V1);
+        assert!(acp_mcp_servers(&initialize).is_empty());
+
+        initialize.agent_capabilities.mcp_capabilities.acp = true;
+        let servers = acp_mcp_servers(&initialize);
+        assert_eq!(servers.len(), 1);
+        match &servers[0] {
+            schema::McpServer::Acp(server) => {
+                assert_eq!(server.name, VIBEAROUND_ACP_MCP_SERVER);
+                assert_eq!(server.server_id.to_string(), VIBEAROUND_ACP_MCP_SERVER);
+            }
+            other => panic!("expected an ACP MCP server, got {other:?}"),
+        }
+    }
 
     #[test]
     fn codex_acp_receives_selected_cli_path() {

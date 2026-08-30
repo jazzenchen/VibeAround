@@ -29,6 +29,8 @@ zone 3  IM 平台             只有消息，经插件和权限卡片中介
 
 本地主机名（`localhost`、`127.0.0.1`、`::1` 和桌面应用自己的 origin）跳过配对，但永远不跳过 token。
 
+浏览器配对请求只接受本地控制台、桌面开发 origin 或当前启用的隧道 origin。没有 `Origin` header 的原生客户端仍然可用；无关网站不能发起并轮询配对事务来读取 daemon token。
+
 ## Zone 3：IM 平台
 
 IM 消息经渠道插件到达。平台永远拿不到 shell，它拿到的是一段对话：
@@ -38,21 +40,27 @@ IM 消息经渠道插件到达。平台永远拿不到 shell，它拿到的是�
 - **附件卫生。** 来自插件的 file key 在成为文件引用前会做路径穿越校验（`..`、分隔符）；不安全的 key 被丢弃。
 - **Bot 凭据**（平台 token）存在你机器上的 `settings.json` 里，只传给拥有它的那个插件进程。
 
-## 预览：分享而不暴露
+## 预览：配对 owner、限定作用域的分享
 
-dev server 实时预览和 Markdown 渲染有两种 URL 形式：
+Live Server 与 Markdown 渲染预览采用相同的 owner/share 划分，但 Server Share 的传输范围更窄：
 
-| URL | 受众 | 寿命 |
+| 目标与 URL | 受众 | 寿命 |
 |---|---|---|
-| `/preview/u/<slug>` | 所有者（token 认证） | 预览存在期间 |
-| `/preview/s/<slug>` | 任何拿到链接的人 | 600 秒后过期 |
+| Server `/preview/u/<slug>` | 回环浏览器或已配对 owner | 预览存在期间 |
+| Markdown `/preview/u/<slug>` | 回环浏览器或已配对 owner | 预览存在期间 |
+| Server `/preview/s/<share_id>` | 持有 Share URL 和六位访问码的人 | URL、访问码和浏览器授信共用 600 秒期限 |
+| Markdown `/preview/s/<share_id>` | 持有 Share URL 和六位访问码的人 | URL、访问码和浏览器授信共用 600 秒期限 |
 
-分享链接是唯一有意不认证的面，作用域限于单个预览、时间盒 10 分钟。隧道上的其他一切仍需配对 + token。
+创建任何 Server iframe 前，owner shell 会让用户针对每个 Preview、每个浏览器会话确认一次本地服务可能包含未知代码的风险。在 loopback 上，它直接 iframe 准确的 dev-server origin，并且不会转发 owner bearer token。通过隧道访问时，已配对的 owner 获得同源的透明 HTTP 与 WebSocket/HMR 代理；上游固定为 `127.0.0.1:<已登记端口>`，VibeAround routing cookie 与 daemon authorization 不会被转发，`/va/*` 保留给 VibeAround。owner 路径不检查应用内容，也不按请求用途分类。Markdown owner 仍受同样的配对和 owner-token 认证保护。
+
+Share 不使用 owner 配对：不透明 URL 先显示访问码门，验证成功后签发 `Secure`、`HttpOnly` 浏览器授信。URL、可重复使用的六位访问码和授信只对应一个 Preview，并在 10 分钟后同时过期。Server Share 会在每次代理请求时重新验证授信，并原样转发已认证的 GET/HEAD 路径，包括页面的数据读取。写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持；`/va/*`、owner 页面、chat 和审阅控件始终排除在 Share 之外。这是页面预览传输，不是通用 API 兼容层或 API 隔离沙盒；已接受的 GET/HEAD 路径不会按名称分类。隧道上的其他一切仍需配对 + token。
+
+Markdown 解析器和净化器都随守护进程内置，Preview 不执行远程解析脚本。GitHub 风格的原始 HTML 只有通过安全白名单后才会渲染，脚本、样式、iframe、表单、事件处理器和未支持的属性都会被移除。Markdown 图片语法和允许的原始 HTML 图片都必须使用绝对 HTTPS URL。图片主机可以看到访问者的 IP 地址；`Referrer-Policy: no-referrer` 会阻止 Preview URL 随请求发送。
 
 ## 凭据处理
 
 - 供应商 API key 存在 `~/.vibearound/` 下的 Profile 存储里，**由守护进程**注入上游请求。渲染给 Agent 的配置只含本地 Bridge URL —— Agent 配置泄露不会暴露任何供应商 key。
-- Bridge 和 agent-as-API 端点仅监听回环地址，且有本地 bridge 门；隧道无法触达。主路径 `/local-api` 和 `/local-agent` 各有独立、随守护进程轮换的 scoped token，因此模型 Bridge 客户端不能启动 Agent。
+- Bridge 和 agent-as-API 端点仅监听回环地址，且有本地 bridge 门；隧道无法触达。主路径 `/local-api` 和 `/local-agent` 各有独立的 scoped token，因此模型 Bridge 客户端不能启动 Agent。Bridge token 每次守护进程启动都会重新生成；Agent-as-API token 因为要由用户粘贴进 Profile，会跨重启保持不变，只在重新生成时更换。
 - 守护进程自己的 token 文件是家目录里的明文（信任级别等同 `~/.ssh`）；备份时相应对待。
 - 启动弹窗的 Bridge 请求/响应记录只在内存里，从不落盘。
 

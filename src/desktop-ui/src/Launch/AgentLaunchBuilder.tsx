@@ -861,15 +861,64 @@ export function AgentLaunchBuilder({
     }
   }
 
-  if (!viewPrefs || agents.length === 0 || !selectedAgent) {
-    if (prefs?.enabledAgents.length === 0) {
-      return (
-        <p className="p-3 text-xs text-muted-foreground">
-          {t("No launch agents enabled")}
-        </p>
-      );
-    }
+  if (!viewPrefs) {
     return <p className="p-3 text-xs text-muted-foreground">{t("Loading…")}</p>;
+  }
+
+  if (!selectedAgent) {
+    return (
+      <TooltipProvider>
+        <div className="flex min-h-0 flex-1">
+          <aside className="w-[74px] shrink-0 border-r border-border bg-card/50 px-2 py-3">
+            <TooltipButton
+              type="button"
+              variant="outline"
+              size="icon"
+              disabled={desktopAgentsToAdd.length === 0}
+              disabledReason={t(
+                "All supported desktop agents are already added",
+              )}
+              aria-label={t("Add desktop agent")}
+              title={t("Add desktop agent")}
+              onClick={() => setDesktopAgentAddOpen(true)}
+              className="h-14 w-14 rounded-md border-dashed text-muted-foreground hover:border-primary/40 hover:text-primary"
+            >
+              <Plus className="h-5 w-5" />
+            </TooltipButton>
+          </aside>
+          <main className="flex min-w-0 flex-1 items-center justify-center p-3 text-xs text-muted-foreground">
+            {desktopAgentsToAdd.length > 0
+              ? t("Add desktop agent")
+              : t("No launch agents enabled")}
+          </main>
+        </div>
+        <AgentExecutablePathDialog
+          agent={pathAgent}
+          preference={
+            pathAgent ? viewPrefs.agentPreferences[pathAgent.id] : undefined
+          }
+          executableResolution={null}
+          executableLoading={false}
+          fallbackExecutablePath={
+            pathAgent?.direct_only
+              ? desktopAppEntries?.apps[pathAgent.id]?.entry?.path
+              : undefined
+          }
+          busy={busy}
+          onClose={() => setPathAgent(null)}
+          onSaveExecutablePath={saveAgentExecutablePath}
+        />
+        <DesktopAgentAddDialog
+          open={desktopAgentAddOpen}
+          agents={desktopAgentsToAdd}
+          onOpenChange={setDesktopAgentAddOpen}
+          onSelect={(agent) => {
+            setDesktopAgentAddOpen(false);
+            openAgentPathDialog(agent);
+          }}
+        />
+      </TooltipProvider>
+    );
   }
 
   const selectedProfileSummary = selectedProfile
@@ -909,7 +958,6 @@ export function AgentLaunchBuilder({
   };
   const selectedExecutablePath =
     selectedAgentPreference?.executable?.path ??
-    selectedAgentPreference?.executablePath ??
     (selectedAgentIsDirectOnly
       ? desktopAppPathForAgent(agentId)
       : currentAgentExecutable?.selected?.path);

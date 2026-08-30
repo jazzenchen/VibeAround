@@ -4,7 +4,7 @@ use common::config;
 use common::profiles::catalog::{self, EndpointDef, ProviderCatalog};
 use common::profiles::endpoint_url::join_protocol_endpoint;
 use common::profiles::headers::merged_upstream_headers;
-use common::profiles::schema::{AuthMode, ProfileDef};
+use common::profiles::schema::{self, AuthMode, ProfileDef};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -14,7 +14,18 @@ use super::store::ProfileDraft;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileConnectionTestResult {
-    pub tested_api_types: Vec<String>,
+    pub tested_endpoints: Vec<TestedEndpoint>,
+}
+
+/// The URL a test actually requested.
+///
+/// Clients disagree about who appends the version segment, so a passing test
+/// says little unless the caller can see the URL it went to.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestedEndpoint {
+    pub api_type: String,
+    pub url: String,
 }
 
 pub async fn test_connection(draft: ProfileDraft) -> Result<ProfileConnectionTestResult, String> {
@@ -22,23 +33,27 @@ pub async fn test_connection(draft: ProfileDraft) -> Result<ProfileConnectionTes
     if profile.auth_mode != AuthMode::ApiKey {
         return Err("Connection test currently supports API key profiles.".to_string());
     }
-    if profile.api_types.is_empty() {
+    let api_types = schema::enabled_api_types(&profile);
+    if api_types.is_empty() {
         return Err("Pick at least one API type.".to_string());
     }
 
     let provider = catalog::get(&profile.provider)
         .ok_or_else(|| format!("unknown provider '{}'", profile.provider))?;
     let client = test_http_client(&profile)?;
-    let mut tested_api_types = Vec::new();
+    let mut tested_endpoints = Vec::new();
 
-    for api_type in &profile.api_types {
-        test_api_type(&client, &profile, provider, api_type)
+    for api_type in &api_types {
+        let url = test_api_type(&client, &profile, provider, api_type)
             .await
             .map_err(|error| format!("{api_type}: {error}"))?;
-        tested_api_types.push(api_type.clone());
+        tested_endpoints.push(TestedEndpoint {
+            api_type: api_type.clone(),
+            url,
+        });
     }
 
-    Ok(ProfileConnectionTestResult { tested_api_types })
+    Ok(ProfileConnectionTestResult { tested_endpoints })
 }
 
 async fn test_api_type(
@@ -46,12 +61,15 @@ async fn test_api_type(
     profile: &ProfileDef,
     provider: &ProviderCatalog,
     api_type: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let endpoint = selected_endpoint(profile, provider, api_type)?;
-    let base_url = profile
-        .overrides
+    let config = profile
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.base_url.as_deref())
+        .ok_or_else(|| format!("API config '{api_type}' is missing."))?;
+    let base_url = config
+        .base_url
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(endpoint.default_base_url.trim())
@@ -74,7 +92,7 @@ async fn test_api_type(
         merged_upstream_headers(&endpoint.headers, None).map_err(|error| error.to_string())?;
     let request = apply_auth(
         client
-            .post(url)
+            .post(&url)
             .header(CONTENT_TYPE, "application/json")
             .headers(headers)
             .json(&payload),
@@ -87,12 +105,15 @@ async fn test_api_type(
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(format!("HTTP {status}: {}", compact_error_body(&body)));
+        return Err(format!(
+            "HTTP {status} at {url}: {}",
+            compact_error_body(&body)
+        ));
     }
     if body.trim().is_empty() {
-        return Err("Provider returned an empty response.".to_string());
+        return Err(format!("Provider returned an empty response from {url}."));
     }
-    Ok(())
+    Ok(url)
 }
 
 fn selected_endpoint<'a>(
@@ -101,9 +122,9 @@ fn selected_endpoint<'a>(
     api_type: &str,
 ) -> Result<&'a EndpointDef, String> {
     let endpoint_id = profile
-        .overrides
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.endpoint_id.as_deref());
+        .and_then(|config| config.endpoint_id.as_deref());
     catalog::find_endpoint(provider, api_type, endpoint_id).ok_or_else(|| {
         let suffix = endpoint_id
             .map(|id| format!(" endpoint_id '{id}'"))
@@ -121,12 +142,21 @@ fn selected_model(
     api_type: &str,
 ) -> Result<String, String> {
     let requested = profile
-        .overrides
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.model.as_deref())
+        .and_then(|config| config.model.as_deref())
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .map(ToString::to_string)
+        .or_else(|| {
+            profile.api_configs.get(api_type).and_then(|config| {
+                config
+                    .models
+                    .iter()
+                    .find(|model| model.enabled)
+                    .map(|model| model.id.clone())
+            })
+        })
         .or_else(|| endpoint.models.first().map(|model| model.id.clone()))
         .ok_or_else(|| "Model is required.".to_string())?;
     Ok(catalog::canonical_model_id(endpoint, &requested).unwrap_or(requested))

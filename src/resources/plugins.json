@@ -16,7 +16,7 @@
     "name": "Feishu (Lark)",
     "description": "Provide app credentials for your Feishu bot integration.",
     "github": "https://github.com/jazzenchen/va-plugin-channel-feishu",
-    "revision": "0cd57eb260eff8a14528265c7e8709fcdbfc42f6",
+    "revision": "584eccee1b36e787f264b194ba0b378765801916",
     "install_steps": ["git_clone", "npm_install", "npm_build"]
   },
   {

@@ -27,14 +27,8 @@ export function hydrateStartkitPrefs(
   ) {
     setters.setToolchainMode(loadedSettings.startkit.toolchain_mode);
   }
-  const portableToolchain =
-    loadedSettings.startkit?.portable_toolchain ??
-    loadedSettings.startkit?.portableToolchain;
-  if (typeof portableToolchain === "boolean") {
-    setters.setPortableToolchain(portableToolchain);
-  } else if (loadedSettings.startkit?.toolchain_mode === "managed") {
-    setters.setPortableToolchain(true);
-  }
+  const portableToolchain = loadedSettings.startkit?.portable_toolchain;
+  setters.setPortableToolchain(portableToolchain === true);
 }
 
 export function hydrateAgents(

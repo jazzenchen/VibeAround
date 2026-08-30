@@ -260,6 +260,10 @@ impl AgentSessionRef {
 pub struct WorkspaceThread {
     pub id: WorkspaceThreadId,
     pub workspace_id: WorkspaceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_thread_id: Option<WorkspaceThreadId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_slug: Option<String>,
     pub host_binding: HostBinding,
     pub status: ThreadStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -292,6 +296,10 @@ pub enum ThreadEvent {
         occurred_at: String,
         thread_id: WorkspaceThreadId,
         workspace_id: WorkspaceId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_thread_id: Option<WorkspaceThreadId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preview_slug: Option<String>,
         host_binding: HostBinding,
     },
     FirstUserPromptSet {
@@ -354,6 +362,39 @@ impl ThreadEvent {
     pub fn created(
         thread_id: impl Into<WorkspaceThreadId>,
         workspace_id: impl Into<WorkspaceId>,
+        parent_thread_id: Option<WorkspaceThreadId>,
+        host_binding: HostBinding,
+    ) -> Self {
+        Self::created_with_preview(
+            thread_id,
+            workspace_id,
+            parent_thread_id,
+            None,
+            host_binding,
+        )
+    }
+
+    pub fn preview_created(
+        thread_id: impl Into<WorkspaceThreadId>,
+        workspace_id: impl Into<WorkspaceId>,
+        parent_thread_id: Option<WorkspaceThreadId>,
+        preview_slug: impl Into<String>,
+        host_binding: HostBinding,
+    ) -> Self {
+        Self::created_with_preview(
+            thread_id,
+            workspace_id,
+            parent_thread_id,
+            Some(preview_slug.into()),
+            host_binding,
+        )
+    }
+
+    fn created_with_preview(
+        thread_id: impl Into<WorkspaceThreadId>,
+        workspace_id: impl Into<WorkspaceId>,
+        parent_thread_id: Option<WorkspaceThreadId>,
+        preview_slug: Option<String>,
         host_binding: HostBinding,
     ) -> Self {
         Self::Created {
@@ -362,6 +403,8 @@ impl ThreadEvent {
             occurred_at: now(),
             thread_id: thread_id.into(),
             workspace_id: workspace_id.into(),
+            parent_thread_id,
+            preview_slug,
             host_binding,
         }
     }

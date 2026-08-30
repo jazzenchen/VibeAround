@@ -1,9 +1,11 @@
 use std::time::{Duration, Instant};
 
+use tokio::sync::watch;
 use va_client::endpoint::ServerEndpoint;
 use va_client::state::ChatState;
 
 use crate::chat::{ChatMessage, ChatRole};
+use crate::config::LaunchContext;
 use crate::data::{
     fetch_agent_picker, fetch_launcher_preferences, fetch_snapshot, AgentPickerSnapshot,
     DashboardSnapshot,
@@ -23,6 +25,14 @@ pub(crate) struct TuiApp {
     pub(crate) view: AppView,
     pub(crate) chat_state: ChatState,
     pub(crate) chat_connected: bool,
+    /// Terminal disconnected state: the socket loops gave up retrying and
+    /// wait for an explicit `reconnect` from the user.
+    pub(crate) chat_disconnected: bool,
+    /// Wakes socket loops parked in the terminal disconnected state.
+    reconnect: watch::Sender<()>,
+    /// Session to re-attach once the chat socket is connected again after a
+    /// `reconnect`, so the server rebinds the route.
+    resume_after_reconnect: Option<String>,
     pub(crate) snapshot: DashboardSnapshot,
     pub(crate) agent_picker: AgentPickerSnapshot,
     pub(crate) chat_messages: Vec<ChatMessage>,
@@ -69,6 +79,9 @@ impl TuiApp {
             view: AppView::Chat,
             chat_state: ChatState::new(),
             chat_connected: false,
+            chat_disconnected: false,
+            reconnect: watch::channel(()).0,
+            resume_after_reconnect: None,
             snapshot: DashboardSnapshot::default(),
             agent_picker: AgentPickerSnapshot::default(),
             // Start clean — the welcome screen's tip and the footer cover
@@ -99,6 +112,11 @@ impl TuiApp {
         }
     }
 
+    /// A receiver the socket loops park on while terminally disconnected.
+    pub(crate) fn reconnect_signal(&self) -> watch::Receiver<()> {
+        self.reconnect.subscribe()
+    }
+
     pub(crate) async fn refresh_status(&mut self, transport: &HttpTransport) {
         match fetch_snapshot(transport).await {
             Ok(snapshot) => {
@@ -115,6 +133,19 @@ impl TuiApp {
 
     /// Seed the chat context from the launcher's current selection so the
     /// header shows the real agent/profile/workspace at startup, not `global`.
+    /// Open straight into a fresh session for the agent / profile / workspace a
+    /// VibeAround launch handed over, instead of the remembered preferences.
+    pub(crate) fn seed_launch_context(&mut self, context: &LaunchContext) {
+        if context.is_empty() {
+            return;
+        }
+        self.selected_agent = context.agent.clone();
+        self.selected_profile = context.profile.clone();
+        self.selected_workspace = context.workspace.clone();
+        self.selected_session = context.session.clone();
+        self.force_new_session = context.session.is_none();
+    }
+
     pub(crate) async fn sync_launcher_context(&mut self, transport: &HttpTransport) {
         if let Ok(preferences) = fetch_launcher_preferences(transport).await {
             self.agent_picker.preferences = Some(preferences);

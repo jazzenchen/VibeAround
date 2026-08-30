@@ -1,6 +1,6 @@
 [package]
 name = "va-cli"
-version = "0.7.24"
+version = "0.7.25"
 description = "VibeAround command-line client"
 edition = "2021"
 rust-version = "1.82"

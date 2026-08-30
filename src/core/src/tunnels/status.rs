@@ -71,7 +71,6 @@ impl TunnelMeta {
         if let Some(f) = &self.kill_fn {
             f();
         }
-        // Never hold this write guard across an .await — we drop it at end of scope.
         let mut s = self.status.write();
         *s = TunnelStatus::Stopped {
             reason: "killed".into(),

@@ -10,6 +10,11 @@ pub(super) enum WebChatInput {
         input: ChannelInput,
         profile: Option<String>,
         session_intent: Option<WebChatSessionIntent>,
+        /// The client's displayed workspace, sent with every message. Only
+        /// consulted when the message carries no session intent AND the
+        /// route has no thread yet (first contact) — later messages must
+        /// not yank a /workspace-switched thread back.
+        session_workspace: Option<String>,
         session_mode: Option<String>,
     },
     SetMode {
@@ -19,7 +24,7 @@ pub(super) enum WebChatInput {
         config_id: String,
         value: String,
     },
-    Stop(ChannelInput),
+    Cancel(ChannelInput),
     PermissionResponse {
         request_id: String,
         response: acp::RequestPermissionResponse,
@@ -29,6 +34,14 @@ pub(super) enum WebChatInput {
         profile: Option<String>,
         session_id: String,
         cwd: Option<String>,
+        /// Explicit replay override: `Some(true)` forces a replay (/reload),
+        /// `Some(false)` forces a silent rebind. Missing lets the server
+        /// decide from `cache_updated_at` — and with neither present the
+        /// answer is replay, so older clients keep getting history.
+        replay: Option<bool>,
+        /// The native-store stamp the client's transcript cache last synced
+        /// to; the server replays when it no longer matches.
+        cache_updated_at: Option<u64>,
     },
 }
 
@@ -67,6 +80,7 @@ pub(super) fn parse_web_chat_input(
                     }
                     let agent = parse_web_agent(&v);
                     let session_intent = parse_web_session_intent(&v, agent.clone());
+                    let session_workspace = parse_web_session_workspace(&v);
                     let profile = parse_web_profile(&v);
                     let session_mode = parse_web_session_mode(&v);
                     Some(WebChatInput::Message {
@@ -84,6 +98,7 @@ pub(super) fn parse_web_chat_input(
                         },
                         profile,
                         session_intent,
+                        session_workspace,
                         session_mode,
                     })
                 }
@@ -112,14 +127,22 @@ pub(super) fn parse_web_chat_input(
                         .filter(|x| !x.is_empty())
                         .map(ToOwned::to_owned);
 
+                    let replay = v.get("replay").and_then(|x| x.as_bool());
+                    let cache_updated_at = v
+                        .get("cacheUpdatedAt")
+                        .and_then(|x| x.as_u64())
+                        .filter(|stamp| *stamp > 0);
+
                     Some(WebChatInput::ResumeSession {
                         agent,
                         profile,
                         session_id,
                         cwd,
+                        replay,
+                        cache_updated_at,
                     })
                 }
-                "stop" => Some(WebChatInput::Stop(ChannelInput::Stop {
+                "cancel" => Some(WebChatInput::Cancel(ChannelInput::Cancel {
                     route: route.clone(),
                 })),
                 "permission_response" => {
@@ -161,6 +184,7 @@ pub(super) fn parse_web_chat_input(
                     },
                     profile: None,
                     session_intent: None,
+                    session_workspace: None,
                     session_mode: None,
                 })
             }
@@ -384,11 +408,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_stop_message() {
-        let input = parse_web_chat_input("chat-1", r#"{"type":"stop"}"#).expect("stop input");
+    fn parses_cancel_message() {
+        let input = parse_web_chat_input("chat-1", r#"{"type":"cancel"}"#).expect("cancel input");
 
-        let WebChatInput::Stop(ChannelInput::Stop { route }) = input else {
-            panic!("expected stop input");
+        let WebChatInput::Cancel(ChannelInput::Cancel { route }) = input else {
+            panic!("expected cancel input");
         };
 
         assert_eq!(route, RouteKey::new("web", "chat-1"));
@@ -418,6 +442,7 @@ mod tests {
                     session_id,
                     cwd: Some(cwd),
                 }),
+            session_workspace: Some(top_level_workspace),
             session_mode: None,
         } = input
         else {
@@ -428,6 +453,26 @@ mod tests {
         assert_eq!(intent_agent, "codex");
         assert_eq!(session_id, "sid-1");
         assert_eq!(cwd, "/tmp/project");
+        assert_eq!(top_level_workspace, "/tmp/project");
+    }
+
+    #[test]
+    fn keeps_session_workspace_when_message_has_no_intent() {
+        let input = parse_web_chat_input(
+            "chat-1",
+            r#"{"type":"message","text":"hi","agent":"codex","sessionWorkspace":"/tmp/project"}"#,
+        )
+        .expect("message input");
+
+        let WebChatInput::Message {
+            session_intent: None,
+            session_workspace: Some(workspace),
+            ..
+        } = input
+        else {
+            panic!("expected intent-less message to keep its workspace");
+        };
+        assert_eq!(workspace, "/tmp/project");
     }
 
     #[test]
@@ -443,6 +488,8 @@ mod tests {
             profile: Some(profile),
             session_id,
             cwd: Some(cwd),
+            replay,
+            cache_updated_at,
         } = input
         else {
             panic!("expected direct resume input");
@@ -452,6 +499,37 @@ mod tests {
         assert_eq!(profile, "deepseek");
         assert_eq!(session_id, "sid-1");
         assert_eq!(cwd, "/tmp/project");
+        assert_eq!(replay, None, "older clients leave the decision open");
+        assert_eq!(cache_updated_at, None);
+    }
+
+    #[test]
+    fn parses_resume_session_replay_controls() {
+        let forced = parse_web_chat_input(
+            "chat-1",
+            r#"{"type":"resume_session","sessionId":"sid-1","replay":true}"#,
+        )
+        .expect("resume session input");
+        let WebChatInput::ResumeSession {
+            replay: Some(true), ..
+        } = forced
+        else {
+            panic!("expected forced replay input");
+        };
+
+        let cached = parse_web_chat_input(
+            "chat-1",
+            r#"{"type":"resume_session","sessionId":"sid-1","cacheUpdatedAt":1756280000}"#,
+        )
+        .expect("resume session input");
+        let WebChatInput::ResumeSession {
+            replay: None,
+            cache_updated_at: Some(1756280000),
+            ..
+        } = cached
+        else {
+            panic!("expected cache-stamped resume input");
+        };
     }
 
     #[test]

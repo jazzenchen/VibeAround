@@ -22,6 +22,7 @@ import { z } from "zod";
  *  When that file adds an entry, add it here too and the `Record<AgentId, ...>`
  *  consumers (display-name maps) will force you to supply the rest. */
 export const AGENT_IDS = [
+  "va-agent",
   "claude",
   "gemini",
   "opencode",
@@ -37,13 +38,6 @@ export type AgentId = (typeof AGENT_IDS)[number];
 export const AgentIdSchema = z.enum(AGENT_IDS);
 
 // ---------------------------------------------------------------------------
-// Constants mirrored from Rust
-// ---------------------------------------------------------------------------
-
-/** Mirror of `common::previews::SHARE_TTL_SECS`. */
-export const PREVIEW_SHARE_TTL_SECS = 600;
-
-// ---------------------------------------------------------------------------
 // GET /api/agents — enabled agent list + default
 // ---------------------------------------------------------------------------
 
@@ -51,6 +45,7 @@ export const AgentInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  requires_profile: z.boolean().default(false),
 });
 export type AgentInfo = z.infer<typeof AgentInfoSchema>;
 
@@ -203,7 +198,8 @@ export const PreviewSnapshotSchema = z.object({
   title: z.string(),
   kind: z.enum(["server", "file"]),
   port: z.number().nullable(),
-  share_key: z.string().nullable(),
+  share_id: z.string().nullable(),
+  share_code: z.string().nullable(),
   share_expires_at_ms: z.number().nullable(),
   created_at_ms: z.number(),
 });
@@ -316,14 +312,13 @@ export const ThreadAgentSchema = z.object({
 export type ThreadAgent = z.infer<typeof ThreadAgentSchema>;
 
 export const AgentAttachedRouteSchema = z.object({
-  route_key: z.string(),
   channel_kind: z.string(),
   chat_id: z.string(),
 });
 export type AgentAttachedRoute = z.infer<typeof AgentAttachedRouteSchema>;
 
 export const AgentRuntimeSchema = z.object({
-  route_key: z.string(),
+  thread_id: z.string(),
   channel_kind: z.string(),
   chat_id: z.string(),
   attached_routes: z.array(AgentAttachedRouteSchema).optional().default([]),
@@ -345,6 +340,24 @@ export type AgentRuntime = z.infer<typeof AgentRuntimeSchema>;
 export const AgentRuntimeListSchema = z.array(AgentRuntimeSchema);
 
 // ---------------------------------------------------------------------------
+export const SessionInfoSchema = z.object({
+  workspaceId: z.string(),
+  workspacePath: z.string(),
+  threadId: z.string(),
+  agent: z.object({
+    id: z.string(),
+    name: z.string(),
+    version: z.string().default(""),
+    profileId: z.string().optional(),
+  }),
+  sessionId: z.string(),
+  start: z.enum(["new", "resumed"]),
+  // Last-modified stamp of the session in the agent's native store, for
+  // judging local transcript-cache freshness.
+  updatedAt: z.number().optional(),
+});
+export type SessionInfo = z.infer<typeof SessionInfoSchema>;
+
 // /ws/chat — ChatEvent envelope
 //
 // Lifecycle events have hand-curated fields; streaming agent output
@@ -353,10 +366,7 @@ export const AgentRuntimeListSchema = z.array(AgentRuntimeSchema);
 // do a two-level switch: first on the envelope `kind`, then — inside
 // `acp_notification` — on `payload.update.sessionUpdate`.
 //
-// The ACP payload itself isn't re-validated here (we trust the
-// agent-client-protocol crate on the server side). If you need
-// typed access to specific update variants on the TS side, import
-// them from `@agentclientprotocol/sdk` directly.
+// ACP payload variants use types from `@agentclientprotocol/sdk`.
 // ---------------------------------------------------------------------------
 
 export const ChatEventSchema = z.discriminatedUnion("kind", [
@@ -374,6 +384,10 @@ export const ChatEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("session_ready"),
     session_id: z.string(),
+  }),
+  z.object({
+    kind: z.literal("session_info"),
+    info: SessionInfoSchema,
   }),
   z.object({
     kind: z.literal("session_mode"),
@@ -406,6 +420,20 @@ export const ChatEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("turn_status"),
     active: z.boolean(),
+  }),
+  // Brackets around a session-transcript replay: the client resets its view
+  // of `session_id` on replay_start and treats frames until replay_done as
+  // the authoritative transcript.
+  z.object({
+    kind: z.literal("replay_start"),
+    session_id: z.string(),
+  }),
+  z.object({
+    kind: z.literal("replay_done"),
+    session_id: z.string(),
+  }),
+  z.object({
+    kind: z.literal("preview_refresh"),
   }),
   z.object({
     kind: z.literal("system_text"),

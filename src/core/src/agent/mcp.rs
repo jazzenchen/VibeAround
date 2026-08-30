@@ -1,48 +1,13 @@
 //! MCP server entry install/uninstall for an agent's settings.
 //!
-//! Supports both JSON (Claude Code, Gemini, Cursor, Kiro, Qwen) and TOML
-//! (Codex) formats. Global helpers are kept only for cleanup/migration;
-//! runtime installation should prefer project-scoped workspace files.
+//! Supports JSON (Claude Code, Gemini, Cursor, Kiro, Qwen) and TOML
+//! (Codex) project configuration. Global helpers remove legacy entries.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context};
 
 use crate::{config, resources};
-
-/// Merge VibeAround MCP server entry into an agent's global settings.
-/// Supports JSON (default) and TOML formats. Also writes to legacy path
-/// if configured.
-#[allow(dead_code)]
-pub(super) fn install_mcp_config(agent: &str, mcp_url: &str) -> anyhow::Result<()> {
-    let home = home_dir()?;
-
-    let agent_def = match resources::agent_by_id(agent) {
-        Some(def) => def,
-        None => return Ok(()),
-    };
-    let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
-
-    let config_path = home.join(&global_config.settings_path);
-    install_mcp_config_at_path(agent, global_config, &config_path, mcp_url)?;
-
-    // Also write to legacy path for backward compat (e.g. older Claude Code versions)
-    if let Some(legacy) = &global_config.settings_path_legacy {
-        let legacy_path = home.join(legacy);
-        let _ = install_mcp_config_json(
-            &legacy_path,
-            &global_config.mcp_key,
-            &global_config.mcp_entry,
-            mcp_url,
-            agent,
-        );
-    }
-
-    Ok(())
-}
 
 /// Merge VibeAround MCP server entry into an agent's project/workspace settings.
 pub(super) fn install_project_mcp_config(
@@ -55,8 +20,8 @@ pub(super) fn install_project_mcp_config(
         None => return Ok(()),
     };
     let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
+        Some(cfg) if writes_mcp_config(cfg) => cfg,
+        _ => return Ok(()),
     };
 
     let config_path = workspace.join(project_mcp_settings_path(agent, global_config));
@@ -72,8 +37,8 @@ pub(super) fn uninstall_mcp_config(agent: &str) -> anyhow::Result<()> {
         None => return Ok(()),
     };
     let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
+        Some(cfg) if writes_mcp_config(cfg) => cfg,
+        _ => return Ok(()),
     };
 
     let config_path = home.join(&global_config.settings_path);
@@ -85,21 +50,6 @@ pub(super) fn uninstall_mcp_config(agent: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Remove VibeAround MCP server entry from an agent's project/workspace settings.
-pub(super) fn uninstall_project_mcp_config(agent: &str, workspace: &Path) -> anyhow::Result<()> {
-    let agent_def = match resources::agent_by_id(agent) {
-        Some(def) => def,
-        None => return Ok(()),
-    };
-    let global_config = match &agent_def.global_config {
-        Some(cfg) => cfg,
-        None => return Ok(()),
-    };
-
-    let config_path = workspace.join(project_mcp_settings_path(agent, global_config));
-    uninstall_mcp_config_at_path(agent, global_config, &config_path)
 }
 
 fn install_mcp_config_at_path(
@@ -147,6 +97,12 @@ fn project_mcp_settings_path(agent: &str, global_config: &resources::AgentGlobal
     }
 }
 
+/// Agents whose MCP entry lives in a settings file. Rows without `mcp_key`
+/// only carry skill locations.
+fn writes_mcp_config(global_config: &resources::AgentGlobalConfig) -> bool {
+    !global_config.mcp_key.is_empty()
+}
+
 /// Check if the agent uses TOML config format.
 fn is_toml_format(global_config: &resources::AgentGlobalConfig) -> bool {
     global_config.settings_format.as_deref() == Some("toml")
@@ -185,7 +141,6 @@ fn install_mcp_config_json(
         Err(error) => return Err(error).with_context(|| format!("Read {:?}", config_path)),
     };
 
-    // Always replace (full replace on every startup)
     let obj = root
         .as_object_mut()
         .ok_or_else(|| anyhow!("{:?} root is not a JSON object", config_path))?;
@@ -382,7 +337,18 @@ mod tests {
     }
 
     #[test]
-    fn project_mcp_json_install_and_uninstall_preserves_other_servers() {
+    fn skill_only_agents_write_no_project_mcp_config() {
+        let dir = unique_test_dir("va-agent-skip");
+        fs::create_dir_all(&dir).unwrap();
+
+        install_project_mcp_config("va-agent", &dir, "http://127.0.0.1:12358/va/mcp").unwrap();
+
+        assert!(fs::read_dir(&dir).unwrap().next().is_none());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn project_mcp_json_install_preserves_other_servers() {
         let dir = unique_test_dir("json");
         fs::create_dir_all(dir.join(".gemini")).unwrap();
         let path = dir.join(".gemini/settings.json");
@@ -404,12 +370,6 @@ mod tests {
             "http://127.0.0.1:12358/va/mcp"
         );
         assert!(installed["mcpServers"]["other"].is_object());
-
-        uninstall_project_mcp_config("gemini", &dir).unwrap();
-        let removed: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(removed["mcpServers"]["vibearound"].is_null());
-        assert!(removed["mcpServers"]["other"].is_object());
 
         fs::remove_dir_all(&dir).unwrap();
     }

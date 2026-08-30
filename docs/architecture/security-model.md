@@ -29,6 +29,8 @@ Tunnels (ngrok, localtunnel, Cloudflare, Tailscale Funnel) publish the dashboard
 
 Local hostnames (`localhost`, `127.0.0.1`, `::1`, and the desktop app's own origins) skip pairing but never skip the token.
 
+Browser pairing requests are accepted only from the local dashboard, desktop development origin, or an active tunnel origin. Native clients without an `Origin` header remain supported; an unrelated website cannot start and poll a pairing transaction to read the daemon token.
+
 ## Zone 3: IM platforms
 
 IM messages arrive through channel plugins. The platform never gets a shell; it gets a conversation:
@@ -38,21 +40,27 @@ IM messages arrive through channel plugins. The platform never gets a shell; it 
 - **Attachment hygiene.** File keys from plugins are validated against path traversal (`..`, separators) before becoming file references; unsafe keys are dropped.
 - **Bot credentials** (platform tokens) live in `settings.json` on your machine and are passed only to the owning plugin process.
 
-## Previews: sharing without exposing
+## Previews: paired owners, scoped sharing
 
-Live previews of dev servers and rendered Markdown get two URL forms:
+Live Server and rendered Markdown previews use the same owner/share split, with a narrower transport for Server Shares:
 
-| URL | Audience | Lifetime |
+| Target and URL | Audience | Lifetime |
 |---|---|---|
-| `/preview/u/<slug>` | Owner (token-authenticated) | While the preview exists |
-| `/preview/s/<slug>` | Anyone with the link | 600 seconds, then expires |
+| Server `/preview/u/<slug>` | Loopback browser or paired owner | While the preview exists |
+| Markdown `/preview/u/<slug>` | Loopback browser or paired owner | While the preview exists |
+| Server `/preview/s/<share_id>` | Anyone with the Share URL and six-digit access code | One shared 600-second deadline for URL, code, and browser grant |
+| Markdown `/preview/s/<share_id>` | Anyone with the Share URL and six-digit access code | One shared 600-second deadline for URL, code, and browser grant |
 
-Share links are the only intentionally unauthenticated surface, scoped to one preview and time-boxed to 10 minutes. Everything else on the tunnel still requires pairing + token.
+Before creating any Server iframe, the owner shell asks the user once per Preview and browser session to acknowledge that the local server may contain unknown code. On loopback, it frames the exact dev-server origin directly and does not forward an owner bearer token. Through a tunnel, a paired owner gets a same-origin, transparent HTTP and WebSocket/HMR proxy whose upstream is fixed to `127.0.0.1:<registered-port>`; VibeAround routing cookies and daemon authorization are not forwarded, and `/va/*` stays reserved. The owner path does not inspect app content or classify its requests. Markdown owners remain behind the same pairing and owner-token authentication.
+
+A Share does not use owner pairing: its opaque URL opens an access-code gate, and successful verification issues a Secure, HttpOnly browser grant. The URL, reusable six-digit code, and grant belong to one Preview and expire together after 10 minutes. A Server Share revalidates that grant on every proxied request and forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR are unsupported; `/va/*`, owner pages, chat, and review controls remain excluded. This is a page-preview transport, not general API compatibility or an API-isolation sandbox; accepted GET/HEAD paths are not classified by name. Everything else on the tunnel still requires pairing + token.
+
+The Markdown parser and sanitizer are bundled with the daemon; Preview does not execute remote parser scripts. GitHub-style raw HTML is rendered only through an allowlist that removes scripts, styles, frames, forms, event handlers, and unsupported attributes. Images written with Markdown syntax or allowed raw HTML must use an absolute HTTPS URL. An image host can see the viewer's IP address, while `Referrer-Policy: no-referrer` prevents the Preview URL from being sent with the request.
 
 ## Credential handling
 
 - Provider API keys are stored in the profile store under `~/.vibearound/` and injected into upstream requests **by the daemon**. Rendered agent configs contain only local bridge URLs — a leaked agent config exposes no provider key.
-- The bridge and agent-as-API endpoints are loopback-only and sit behind a local-bridge gate; they are not reachable through tunnels. The primary `/local-api` and `/local-agent` families have separate rotating scoped tokens, so a model bridge client cannot launch an agent.
+- The bridge and agent-as-API endpoints are loopback-only and sit behind a local-bridge gate; they are not reachable through tunnels. The primary `/local-api` and `/local-agent` families have separate scoped tokens, so a model bridge client cannot launch an agent. The bridge token is re-minted on every daemon start; the agent-as-API token persists across restarts because users paste it into provider profiles, and changes only when regenerated.
 - The daemon's own auth token file is plaintext in your home directory (same trust level as `~/.ssh`); treat backups accordingly.
 - Bridge request/response recording for the launch popup is held in memory only and never written to disk.
 

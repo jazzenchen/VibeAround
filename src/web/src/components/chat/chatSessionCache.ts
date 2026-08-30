@@ -134,12 +134,19 @@ async function pruneCachedSessions(store: IDBObjectStore, protectedKey?: string)
     });
 }
 
+export interface CachedChatSession {
+  messages: ChatMessage[];
+  /// The stamp this transcript last synced to; reported to the server so it
+  /// can decide between a silent resume and a replay.
+  updatedAt: number;
+}
+
 export async function readCachedChatSession({
   agentId,
   workspace,
   sessionId,
   updatedAt,
-}: CacheReadRequest): Promise<ChatMessage[] | null> {
+}: CacheReadRequest): Promise<CachedChatSession | null> {
   const key = cacheKey({ agentId, workspace, sessionId });
   return withStore("readwrite", async (store) => {
     const entry = await requestResult<CachedSessionTranscript | undefined>(store.get(key));
@@ -151,7 +158,7 @@ export async function readCachedChatSession({
       return null;
     }
     store.put({ ...entry, cachedAt: Date.now() });
-    return entry.messages;
+    return { messages: entry.messages, updatedAt: entry.updatedAt };
   });
 }
 

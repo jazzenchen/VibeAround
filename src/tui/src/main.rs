@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
@@ -26,15 +27,16 @@ mod detail;
 mod popup;
 mod render;
 mod runtime_socket;
+mod socket_retry;
 mod theme;
 mod transport;
 
 use app::{AppView, TuiApp};
 use chat_socket::{run_chat_socket, ChatSocketEvent};
-use config::{resolve_endpoint, Args, RuntimeEnv};
+use config::{resolve_endpoint_with_refresh, Args, LaunchContext, RuntimeEnv};
 use data::{fetch_snapshot, DashboardSnapshot};
 use runtime_socket::{run_runtime_sockets, RuntimeSocketEvent};
-use transport::{HttpTransport, TuiError};
+use transport::{HttpTransport, SharedEndpoint, TuiError};
 
 const ENABLE_SCROLL_MOUSE_CAPTURE: &str = "\x1b[?1000h\x1b[?1006h";
 const DISABLE_SCROLL_MOUSE_CAPTURE: &str = "\x1b[?1006l\x1b[?1000l";
@@ -51,30 +53,47 @@ async fn main() {
 
 async fn run() -> Result<(), TuiError> {
     let args = Args::parse();
-    let endpoint = resolve_endpoint(&args, &RuntimeEnv::current())?;
-    let transport = HttpTransport::new(endpoint.clone());
+    let (endpoint, refreshable_auth_file) =
+        resolve_endpoint_with_refresh(&args, &RuntimeEnv::current())?;
+    let endpoint = Arc::new(SharedEndpoint::new(endpoint, refreshable_auth_file));
+    let transport = HttpTransport::from_shared(Arc::clone(&endpoint));
     if args.once {
         let snapshot = fetch_snapshot(&transport).await?;
-        print_once(&endpoint, &snapshot);
+        print_once(&endpoint.endpoint(), &snapshot);
         return Ok(());
     }
-    run_dashboard(endpoint, transport).await
+    run_dashboard(endpoint, transport, LaunchContext::current()).await
 }
 
-async fn run_dashboard(endpoint: ServerEndpoint, transport: HttpTransport) -> Result<(), TuiError> {
+async fn run_dashboard(
+    endpoint: Arc<SharedEndpoint>,
+    transport: HttpTransport,
+    launch: LaunchContext,
+) -> Result<(), TuiError> {
     let (mut terminal, _guard) = enter_terminal()?;
-    let mut app = TuiApp::new(&endpoint);
-    // Seed the header with the launcher's current agent/profile/workspace.
+    let mut app = TuiApp::new(&endpoint.endpoint());
+    // Seed the header with the launcher's current agent/profile/workspace,
+    // then let an explicit VibeAround launch override it.
     app.sync_launcher_context(&transport).await;
+    app.seed_launch_context(&launch);
     let (chat_tx, chat_rx) = mpsc::unbounded_channel::<ChatClientMessage>();
     let (socket_event_tx, mut socket_event_rx) = mpsc::unbounded_channel::<ChatSocketEvent>();
-    let chat_task = tokio::spawn(run_chat_socket(endpoint.clone(), chat_rx, socket_event_tx));
+    let chat_task = tokio::spawn(run_chat_socket(
+        Arc::clone(&endpoint),
+        chat_rx,
+        socket_event_tx,
+        app.reconnect_signal(),
+    ));
     let (runtime_event_tx, mut runtime_event_rx) = mpsc::unbounded_channel::<RuntimeSocketEvent>();
-    let runtime_task = tokio::spawn(run_runtime_sockets(endpoint.clone(), runtime_event_tx));
+    let runtime_task = tokio::spawn(run_runtime_sockets(
+        endpoint,
+        runtime_event_tx,
+        app.reconnect_signal(),
+    ));
 
     loop {
         while let Ok(event) = socket_event_rx.try_recv() {
-            app.apply_chat_socket_event(event);
+            app.apply_chat_socket_event(event, &chat_tx);
         }
         while let Ok(event) = runtime_event_rx.try_recv() {
             app.apply_runtime_socket_event(event);
@@ -162,7 +181,7 @@ async fn handle_terminal_event(
             }
 
             match key.code {
-                KeyCode::Esc => app.go_back(),
+                KeyCode::Esc => app.escape_pressed(chat_tx),
                 KeyCode::Left
                     if app.view == AppView::Chat && key.modifiers.contains(KeyModifiers::ALT) =>
                 {

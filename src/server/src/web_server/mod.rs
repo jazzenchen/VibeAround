@@ -1,5 +1,5 @@
 //! Axum HTTP + WebSocket server: serves Web SPA (from given dist path), WS at /ws for xterm ↔ PTY,
-//! agent chat WS at /ws/chat, live preview (/preview/:slug with iframe wrapper + reverse proxy),
+//! agent chat WS at /ws/chat, owner/share Preview pages,
 //! and MCP endpoint at /mcp.
 
 mod api;
@@ -18,11 +18,11 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, post, put};
-use axum::Router;
+use axum::{Extension, Router};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, Notify};
 use tower_http::services::{ServeDir, ServeFile};
 
 use common::auth::AuthToken;
@@ -62,11 +62,13 @@ pub(crate) struct AppState {
     tunnels: Arc<TunnelManager>,
     channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
+    /// Explicit refresh requests emitted by successful MCP `preview` calls.
+    preview_refresh_tx: broadcast::Sender<String>,
     /// Port the daemon is bound to. Handlers that need to build
     /// loopback URLs use this instead of reaching into a services
     /// facade.
     port: u16,
-    /// Shared HTTP client for preview proxy and API bridge forwarding.
+    /// Shared HTTP client for API bridge forwarding.
     preview_client: reqwest::Client,
     /// True when settings enable at least one host-side search source.
     host_search_available: bool,
@@ -192,8 +194,9 @@ pub async fn run_web_server(
     channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
     auth_token: Arc<AuthToken>,
+    mcp_token: Arc<AuthToken>,
     local_api_token: Arc<AuthToken>,
-    local_agent_api_token: Arc<AuthToken>,
+    local_agent_api_token: common::auth::SharedAuthToken,
     host_search_available: bool,
     replace_provider_web_search: bool,
     service_side: common::config::ServiceSideConfig,
@@ -216,12 +219,15 @@ pub async fn run_web_server(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("reqwest client");
+    let server_proxy_state = preview::ServerProxyState::new(preview_client.clone());
+    let (preview_refresh_tx, _) = broadcast::channel(32);
     let state = AppState {
         pty_manager: Arc::new(PtySessionManager::from_registry(pty_registry)),
         dist_for_fallback: web_dist.clone(),
         tunnels,
         channel_hub,
         web_channel,
+        preview_refresh_tx,
         port,
         preview_client,
         host_search_available,
@@ -231,8 +237,12 @@ pub async fn run_web_server(
         bridge_recorder: bridge_recording::BridgeRecorder::default(),
         local_api_token,
     };
+    state
+        .channel_hub
+        .workspace_thread_manager()
+        .set_mcp_over_acp(Arc::new(mcp::AcpMcpDispatcher::new(state.clone())));
 
-    let auth_state = AuthState(Arc::clone(&auth_token));
+    let auth_state = AuthState::new(Arc::clone(&auth_token), mcp_token);
 
     // --- Protected routes: require a valid token on every request. ----------
     //
@@ -268,8 +278,7 @@ pub async fn run_web_server(
         )
         .route(
             "/api/agents/{agent_id}/launch-sessions/{session_id}/archive",
-            post(api::archive_launch_session_handler)
-                .delete(api::unarchive_launch_session_delete_handler),
+            post(api::archive_launch_session_handler),
         )
         .route(
             "/api/agents/{agent_id}/launch-sessions/{session_id}/unarchive",
@@ -330,6 +339,10 @@ pub async fn run_web_server(
             put(api::set_local_agent_api_handler),
         )
         .route(
+            "/api/launcher/local-agent-api/agent",
+            put(api::set_local_agent_api_agent_handler),
+        )
+        .route(
             "/api/launcher/profile-connection",
             put(api::set_profile_connection_handler),
         )
@@ -366,10 +379,14 @@ pub async fn run_web_server(
             post(api::start_channel_handler),
         )
         .route("/api/tunnels/{provider}", delete(api::kill_tunnel_handler))
-        .route("/api/agents/{thread_id}", delete(api::kill_agent_handler))
+        .route(
+            "/api/workspace-threads/{thread_id}/shutdown-host",
+            post(api::shutdown_thread_host_handler),
+        )
         .route("/api/pty/{session_id}", delete(api::kill_pty_handler))
         .route("/api/previews", get(api::list_previews_handler))
         .route("/api/previews/{slug}", delete(api::delete_preview_handler))
+        .route("/api/pair/complete", post(pair::complete_handler))
         .route(
             "/api/workspaces",
             get(api::list_workspaces_handler).post(api::add_workspace_handler),
@@ -401,9 +418,8 @@ pub async fn run_web_server(
     // The SPA shell + static assets are intentionally un-authed so the initial
     // page load can boot and read the `?token=` parameter from its own URL.
     //
-    // Preview routes are also un-authed — the 8-char slug itself acts as a
-    // short-lived authentication token (10-min TTL, cryptographically random;
-    // single source of truth: `common::previews::SHARE_TTL_SECS`).
+    // Preview routes perform their own owner/share authorization because the
+    // browser loads them as top-level pages without an Authorization header.
     let local_agent_routes = Router::new()
         .route(
             "/local-agent/{agent_id}/{profile_id}/v1/responses",
@@ -473,7 +489,10 @@ pub async fn run_web_server(
     let local_api_routes = Router::new()
         .merge(local_agent_routes)
         .merge(bridge_routes)
-        .route_layer(axum::middleware::from_fn(require_local_bridge))
+        .route_layer(axum::middleware::from_fn_with_state(
+            auth_state.clone(),
+            require_local_bridge,
+        ))
         .layer(DefaultBodyLimit::max(LOCAL_BRIDGE_BODY_LIMIT_BYTES));
 
     let public = Router::new()
@@ -483,13 +502,50 @@ pub async fn run_web_server(
         .route("/api/pair/start", post(pair::start_handler))
         .route("/api/pair/status", get(pair::status_handler))
         // Preview pages dispatch by session target:
-        //   Server → iframe + `/`-scoped cookie proxy
-        //   File   → rendered markdown page
-        // /u = owner (requires va_owner cookie), /s = share (slug is auth).
+        //   Server → direct local iframe or owner-only remote page proxy
+        //   File   → owner-only iframe content or shared markdown page
+        // /u = owner (loopback or va_owner cookie), /s = temporary share.
+        .route(
+            preview::MARKED_SCRIPT_ROUTE,
+            get(preview::marked_script_handler),
+        )
+        .route(
+            preview::DOMPURIFY_SCRIPT_ROUTE,
+            get(preview::dompurify_script_handler),
+        )
+        .route(
+            preview::THEME_STYLESHEET_ROUTE,
+            get(preview::theme_stylesheet_handler),
+        )
+        .route(
+            preview::REVIEW_BRIDGE_SCRIPT_ROUTE,
+            get(preview::review_bridge_script_handler),
+        )
         .route("/preview/u/{slug}", get(preview::owner_preview_handler))
-        .route("/preview/s/{slug}", get(preview::share_preview_handler))
-        // Legacy markdown route (kept for backward compatibility).
-        .route("/md-preview/{slug}", get(preview::md_preview_handler))
+        .route(
+            "/preview/u/{slug}/bootstrap",
+            get(preview::owner_preview_bootstrap_handler),
+        )
+        .route(
+            "/preview/u/{slug}/chat",
+            get(preview::owner_preview_chat_handler),
+        )
+        .route(
+            "/preview/u/{slug}/chat/uploads",
+            post(api::upload_chat_file_handler)
+                .layer(DefaultBodyLimit::max(LOCAL_BRIDGE_BODY_LIMIT_BYTES))
+                .layer(axum::middleware::from_fn(
+                    preview::require_owner_preview_access,
+                )),
+        )
+        .route(
+            "/preview/u/{slug}/content",
+            get(preview::owner_preview_content_handler),
+        )
+        .route(
+            "/preview/s/{share_id}",
+            get(preview::share_preview_handler).post(preview::verify_share_code_handler),
+        )
         .nest_service("/assets", ServeDir::new(assets_dir))
         .nest_service("/brand", ServeDir::new(brand_dir))
         .route_service("/favicon.ico", ServeFile::new(web_dist.join("favicon.ico")))
@@ -507,15 +563,14 @@ pub async fn run_web_server(
         )
         .fallback(any(spa_fallback_handler));
 
-    // ALL VibeAround routes live under `/va/` — the root `/` namespace is
-    // reserved exclusively for the cookie-based dev-server preview proxy.
+    // ALL VibeAround routes live under `/va/`; other root paths return to the
+    // dashboard instead of acting as a second routing surface.
     let dashboard = Router::new().merge(protected).merge(public);
 
-    let app = Router::new()
-        .nest("/va", dashboard)
-        // Root fallback: cookie → proxy to dev server, else → /va/.
-        .fallback(any(preview::cookie_proxy_fallback))
+    let app = mount_dashboard(dashboard)
         .with_state(state)
+        .layer(Extension(auth_state))
+        .layer(Extension(server_proxy_state))
         .layer(build_cors_layer(port));
 
     println!(
@@ -531,6 +586,20 @@ pub async fn run_web_server(
     })
     .await?;
     Ok(())
+}
+
+fn mount_dashboard<S>(dashboard: Router<S>) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new()
+        .nest("/va/", dashboard)
+        .fallback(any(preview::server_proxy_fallback))
+}
+
+#[cfg(test)]
+async fn redirect_to_dashboard() -> axum::response::Redirect {
+    axum::response::Redirect::temporary("/va/")
 }
 
 /// Build an open CORS layer for the local daemon API.
@@ -552,27 +621,5 @@ fn build_cors_layer(_port: u16) -> tower_http::cors::CorsLayer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::is_dashboard_api_path;
-
-    #[test]
-    fn recognizes_dashboard_api_fallback_paths() {
-        assert!(is_dashboard_api_path(
-            "/va/local-api/deepseek/scope/extra/openai-chat/v1/responses"
-        ));
-        assert!(is_dashboard_api_path(
-            "/va/local-agent/claude/direct/v1/responses"
-        ));
-        assert!(is_dashboard_api_path(
-            "/local-api/deepseek/scope/extra/openai-chat/v1/responses"
-        ));
-        assert!(is_dashboard_api_path(
-            "/local-agent/claude/direct/v1/responses"
-        ));
-        assert!(is_dashboard_api_path(
-            "/va/bridge/profile/openai-chat/v1/responses"
-        ));
-        assert!(!is_dashboard_api_path("/va/"));
-        assert!(!is_dashboard_api_path("/va/assets/index.css"));
-    }
-}
+#[path = "dashboard_tests.rs"]
+mod tests;

@@ -24,6 +24,5 @@ export interface RuntimeStateProps {
     loading: boolean;
     everLoaded: boolean;
     refresh: () => unknown;
-    kill: (routeKey: string) => unknown;
   };
 }

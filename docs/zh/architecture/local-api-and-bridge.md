@@ -37,7 +37,7 @@ Bridge 把两者解耦。它在本地端点上接受**客户端**方言的请求
 
 **Agent-as-API（`local-agent`）。** 把一个托管的编程 Agent 本身变成 OpenAI/Anthropic 兼容端点：请求变成发给真实 Agent（带工具和 Workspace）的提示，响应以所请求的方言流回。任何 OpenAI 兼容工具都能借此驱动一个完整的编程 Agent。
 
-主路径 Profile Bridge 与 Agent-as-API 使用彼此独立、随守护进程轮换的凭证。拿到 `local-api-auth.json` 的客户端只能调用 `/local-api`，不能启动 Agent；Agent-as-API 客户端使用 `local-agent-api-auth.json`。
+主路径 Profile Bridge 与 Agent-as-API 使用彼此独立、随守护进程轮换的凭证。拿到 `~/.vibearound/auth.json` 中 `bridge_token` 的客户端只能调用 `/local-api`，不能启动 Agent；Agent-as-API 客户端使用同一文件里的 `agent_token`。
 
 ## 一个请求经历了什么
 

@@ -11,12 +11,7 @@ const WS_RECONNECT_DELAY_MS = 3000;
  * Common state-subscription primitive for every per-domain hook
  * (`useChannelsState`, `useTunnelsState`, `useAgentsRuntime`, ...).
  *
- * On mount it opens a WebSocket at `wsPath`; the server immediately
- * pushes the current list, then re-pushes on every change. We also do
- * a light HTTP reconciliation while connected so a dropped/missed WS
- * frame cannot leave the UI permanently stale. If the WS drops (server
- * restart, network blip), we fall back to polling `httpPath` every
- * 5 s and attempt reconnection in the background.
+ * Opens `wsPath`, reconciles through `httpPath`, and polls while disconnected.
  *
  * `schema` validates every wire frame — bad payloads get logged and
  * skipped rather than silently putting garbage into React state.
@@ -133,9 +128,7 @@ export function useManagerState<T>(
       setConnected(false);
       wsRef.current = null;
       startPolling();
-      // Store the handle so cleanup can cancel a reconnect scheduled
-      // right before unmount — otherwise we'd open a zombie socket on
-      // a dead hook and double-subscribe after navigation.
+      // Cleanup cancels pending reconnects.
       reconnectTimerRef.current = setTimeout(() => {
         reconnectTimerRef.current = null;
         void connectWs();

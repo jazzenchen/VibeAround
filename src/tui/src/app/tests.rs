@@ -2,7 +2,6 @@ use super::*;
 use std::collections::BTreeMap;
 
 use crate::chat_socket::ChatSocketEvent;
-use crate::config::DEFAULT_BASE_URL;
 use crate::popup::Popup;
 use crate::render;
 use crate::runtime_socket::{RuntimeSocketEvent, RuntimeStream};
@@ -13,6 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use va_client::events::{ChatClientMessage, ChatEvent, ChatSessionAction};
 use va_client::launcher::{LauncherAgentPreferenceSummary, LauncherPreferencesResponse};
+use va_client::local_endpoint::DEFAULT_BASE_URL;
 use va_client::profiles::{AuthMode, ModelProfileSummary};
 use va_client::runtime::{
     AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
@@ -48,11 +48,11 @@ fn agent(id: &str) -> AgentInfo {
     }
 }
 
-fn runtime_agent(route_key: &str) -> AgentRuntime {
+fn runtime_agent(thread_id: &str) -> AgentRuntime {
     AgentRuntime {
-        route_key: route_key.into(),
+        thread_id: thread_id.into(),
         channel_kind: "tui".into(),
-        chat_id: route_key.into(),
+        chat_id: "chat-2".into(),
         attached_routes: Vec::new(),
         cli_kind: Some("codex".into()),
         profile: None,
@@ -80,7 +80,6 @@ fn profile(id: &str) -> ModelProfileSummary {
         auth_mode: AuthMode::ApiKey,
         api_types: vec!["chat".into()],
         launch_targets: Vec::new(),
-        api_type_warnings: BTreeMap::new(),
         api_type_models: BTreeMap::new(),
         api_type_model_options: BTreeMap::new(),
         api_type_headers: BTreeMap::new(),
@@ -208,10 +207,8 @@ fn runtime_socket_events_update_snapshot_and_clamp_popup() {
     app.apply_runtime_socket_event(RuntimeSocketEvent::Tunnels(vec![tunnel("ngrok")]));
     assert_eq!(app.snapshot.tunnels[0].provider, "ngrok");
 
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Agents(vec![runtime_agent(
-        "tui:chat-2",
-    )]));
-    assert_eq!(app.snapshot.agents[0].route_key, "tui:chat-2");
+    app.apply_runtime_socket_event(RuntimeSocketEvent::Agents(vec![runtime_agent("wt_chat-2")]));
+    assert_eq!(app.snapshot.agents[0].thread_id, "wt_chat-2");
 
     app.apply_runtime_socket_event(RuntimeSocketEvent::Sessions(vec![session(
         "session-1",
@@ -231,12 +228,13 @@ fn runtime_socket_events_update_snapshot_and_clamp_popup() {
 fn chat_socket_connect_does_not_clear_runtime_error() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    let (tx, _rx) = mpsc::unbounded_channel();
     app.set_error(
         ErrorScope::Runtime(RuntimeStream::Channels),
         "runtime stream failed",
     );
 
-    app.apply_chat_socket_event(ChatSocketEvent::Connected);
+    app.apply_chat_socket_event(ChatSocketEvent::Connected, &tx);
 
     assert!(app.chat_connected);
     assert_eq!(app.last_error.as_deref(), Some("runtime stream failed"));
@@ -398,6 +396,45 @@ fn chat_render_shows_multiline_input_with_continuation_indent() {
 }
 
 #[test]
+fn launch_context_opens_a_fresh_session_over_launcher_preferences() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    app.agent_picker.preferences = Some(launcher_preferences(
+        "codex",
+        Some("codex-profile"),
+        Some("/tmp/codex"),
+    ));
+    app.selected_session = Some("session-1".into());
+
+    app.seed_launch_context(&LaunchContext::default());
+    assert_eq!(app.effective_agent(), Some("codex"));
+    assert_eq!(app.effective_session(), Some("session-1"));
+    assert!(!app.force_new_session);
+
+    app.seed_launch_context(&LaunchContext::from_parts(
+        Some("va-agent".into()),
+        Some("va-profile".into()),
+        Some("/tmp/project".into()),
+        None,
+    ));
+    assert_eq!(app.effective_agent(), Some("va-agent"));
+    assert_eq!(app.effective_profile(), Some("va-profile"));
+    assert_eq!(app.effective_workspace(), Some("/tmp/project"));
+    assert_eq!(app.effective_session(), None);
+    assert!(app.force_new_session);
+
+    // A resume launch opens on that session instead of a fresh one.
+    app.seed_launch_context(&LaunchContext::from_parts(
+        Some("va-agent".into()),
+        Some("va-profile".into()),
+        Some("/tmp/project".into()),
+        Some("session-9".into()),
+    ));
+    assert_eq!(app.effective_session(), Some("session-9"));
+    assert!(!app.force_new_session);
+}
+
+#[test]
 fn effective_chat_context_prefers_local_selection_over_launcher_preferences() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
@@ -442,16 +479,17 @@ fn chat_scroll_offset_tracks_scrollback() {
 fn repeated_chat_socket_errors_do_not_duplicate_notices() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    let (tx, _rx) = mpsc::unbounded_channel();
     let initial_messages = app.chat_messages.len();
 
-    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()));
+    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()), &tx);
     assert_eq!(app.last_error.as_deref(), Some("offline"));
     assert_eq!(app.chat_messages.len(), initial_messages + 1);
 
-    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()));
+    app.apply_chat_socket_event(ChatSocketEvent::Error("offline".into()), &tx);
     assert_eq!(app.chat_messages.len(), initial_messages + 1);
 
-    app.apply_chat_socket_event(ChatSocketEvent::Error("still offline".into()));
+    app.apply_chat_socket_event(ChatSocketEvent::Error("still offline".into()), &tx);
     assert_eq!(app.last_error.as_deref(), Some("still offline"));
     assert_eq!(app.chat_messages.len(), initial_messages + 2);
 }
@@ -460,21 +498,139 @@ fn repeated_chat_socket_errors_do_not_duplicate_notices() {
 fn repeated_chat_socket_closed_events_do_not_duplicate_notices() {
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
+    let (tx, _rx) = mpsc::unbounded_channel();
     app.chat_connected = true;
     let initial_messages = app.chat_messages.len();
 
-    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    app.apply_chat_socket_event(ChatSocketEvent::Closed, &tx);
     assert!(!app.chat_connected);
     assert_eq!(app.chat_messages.len(), initial_messages + 1);
 
-    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    app.apply_chat_socket_event(ChatSocketEvent::Closed, &tx);
     assert_eq!(app.chat_messages.len(), initial_messages + 1);
 
     app.apply_chat_event(ChatEvent::SystemText {
         text: "agent replied".into(),
     });
-    app.apply_chat_socket_event(ChatSocketEvent::Closed);
+    app.apply_chat_socket_event(ChatSocketEvent::Closed, &tx);
     assert_eq!(app.chat_messages.len(), initial_messages + 3);
+}
+
+#[test]
+fn chat_socket_disconnect_enters_terminal_state_without_duplicate_notices() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    app.chat_connected = true;
+    let initial_messages = app.chat_messages.len();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected, &tx);
+
+    assert!(!app.chat_connected);
+    assert!(app.chat_disconnected);
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+    let notice = &app.chat_messages[initial_messages];
+    assert_eq!(notice.role, ChatRole::Notice);
+    assert!(notice.text.contains("reconnect"), "notice: {}", notice.text);
+    assert!(app
+        .last_error
+        .as_deref()
+        .is_some_and(|error| error.contains("reconnect")));
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected, &tx);
+    assert_eq!(app.chat_messages.len(), initial_messages + 1);
+}
+
+#[test]
+fn reconnect_command_detection_trims_and_ignores_case() {
+    assert!(super::chat::is_reconnect_command("reconnect"));
+    assert!(super::chat::is_reconnect_command("  Reconnect  "));
+    assert!(super::chat::is_reconnect_command("RECONNECT"));
+    assert!(!super::chat::is_reconnect_command("reconnect now"));
+    assert!(!super::chat::is_reconnect_command("/reconnect"));
+    assert!(!super::chat::is_reconnect_command(""));
+}
+
+#[tokio::test]
+async fn reconnect_is_ordinary_input_while_the_socket_is_alive() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.chat_input = "reconnect".into();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.submit_chat_input(&transport, &tx).await;
+
+    let message = rx.try_recv().expect("chat message");
+    assert!(matches!(
+        message,
+        ChatClientMessage::Message { ref text, .. } if text == "reconnect"
+    ));
+}
+
+#[tokio::test]
+async fn reconnect_command_restarts_sockets_and_resumes_the_attached_session() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    app.selected_agent = Some("codex".into());
+    app.selected_profile = Some("default-profile".into());
+    app.selected_workspace = Some("/tmp/work".into());
+    app.selected_session = Some("session-1".into());
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let signal = app.reconnect_signal();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected, &tx);
+    assert!(app.chat_disconnected);
+
+    app.chat_input = "  Reconnect  ".into();
+    app.submit_chat_input(&transport, &tx).await;
+
+    // Intercepted: nothing goes out as a chat message, the parked socket
+    // loops are woken, and the terminal state is left.
+    assert!(rx.try_recv().is_err());
+    assert!(!app.chat_disconnected);
+    assert!(signal.has_changed().expect("signal sender alive"));
+    assert_eq!(app.last_error, None);
+    assert!(app
+        .chat_messages
+        .last()
+        .is_some_and(|message| message.text.contains("Reconnecting")));
+
+    // Once the chat socket is back, the resume is re-issued so the server
+    // rebinds the route for the session we were on.
+    app.apply_chat_socket_event(ChatSocketEvent::Connected, &tx);
+    assert_eq!(
+        rx.try_recv().expect("resume message"),
+        ChatClientMessage::resume_session_with_options(
+            "session-1",
+            Some("codex".into()),
+            Some("default-profile".into()),
+            Some("/tmp/work".into()),
+        )
+    );
+    assert_eq!(app.selected_session.as_deref(), Some("session-1"));
+
+    // A later reconnect of the socket does not resume again.
+    app.apply_chat_socket_event(ChatSocketEvent::Connected, &tx);
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn reconnect_command_without_an_attached_session_skips_the_resume() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let transport = HttpTransport::new(ServerEndpoint::new(DEFAULT_BASE_URL));
+    let mut app = TuiApp::new(&endpoint);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    app.apply_chat_socket_event(ChatSocketEvent::Disconnected, &tx);
+    app.chat_input = "reconnect".into();
+    app.submit_chat_input(&transport, &tx).await;
+    app.apply_chat_socket_event(ChatSocketEvent::Connected, &tx);
+
+    assert!(app.chat_connected);
+    assert!(!app.chat_disconnected);
+    assert!(rx.try_recv().is_err());
 }
 
 #[test]
@@ -1774,10 +1930,10 @@ fn editing_recalled_history_exits_browsing_mode() {
 fn slash_popup_filters_and_navigates() {
     use crate::chat::slash_command_matches;
     assert_eq!(slash_command_matches("/").map(|m| m.len()), Some(12));
-    let st = slash_command_matches("/st").expect("matches");
+    let c = slash_command_matches("/c").expect("matches");
     assert_eq!(
-        st.iter().map(|c| c.name).collect::<Vec<_>>(),
-        vec!["/status", "/stop"]
+        c.iter().map(|c| c.name).collect::<Vec<_>>(),
+        vec!["/clear", "/cancel"]
     );
     assert_eq!(slash_command_matches("/status").map(|m| m.len()), Some(1));
     assert_eq!(slash_command_matches("/settings").map(|m| m.len()), Some(1));
@@ -1796,21 +1952,21 @@ fn slash_popup_filters_and_navigates() {
 
     let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
     let mut app = TuiApp::new(&endpoint);
-    app.set_chat_input_for_test("/st");
+    app.set_chat_input_for_test("/c");
     assert!(app.slash_popup_open());
-    assert_eq!(app.slash_selected().map(|c| c.name), Some("/status"));
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/clear"));
     app.slash_select_next();
-    assert_eq!(app.slash_selected().map(|c| c.name), Some("/stop"));
+    assert_eq!(app.slash_selected().map(|c| c.name), Some("/cancel"));
     app.slash_select_next();
     assert_eq!(
         app.slash_selected().map(|c| c.name),
-        Some("/status"),
+        Some("/clear"),
         "wraps"
     );
     app.slash_select_prev();
     assert_eq!(
         app.slash_selected().map(|c| c.name),
-        Some("/stop"),
+        Some("/cancel"),
         "wraps back"
     );
 }
@@ -1874,4 +2030,45 @@ fn status_marks_the_runtime_agent_of_the_current_chat() {
         "other agent is not current"
     );
     assert!(app.status_agent_is_current(1), "matched by session id");
+}
+
+#[test]
+fn esc_cancels_running_turn_and_clears_draft_when_idle() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let (chat_tx, mut chat_rx) = mpsc::unbounded_channel();
+
+    app.chat_input = "draft".into();
+    app.turn_started_at = Some(Instant::now());
+    app.escape_pressed(&chat_tx);
+    let sent = chat_rx
+        .try_recv()
+        .expect("esc during a turn must send cancel");
+    assert!(matches!(sent, ChatClientMessage::Cancel));
+    assert_eq!(app.chat_input, "draft", "cancelling must not eat the draft");
+
+    app.turn_started_at = None;
+    app.escape_pressed(&chat_tx);
+    assert!(
+        chat_rx.try_recv().is_err(),
+        "idle esc must not send anything"
+    );
+    assert_eq!(app.chat_input, "", "idle esc clears the draft");
+}
+
+#[test]
+fn esc_cancels_turn_started_by_another_surface() {
+    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
+    let mut app = TuiApp::new(&endpoint);
+    let (chat_tx, mut chat_rx) = mpsc::unbounded_channel();
+
+    // A turn started from another surface: no local submit timestamp, but
+    // the server-reported state says a turn is active on this route.
+    app.turn_started_at = None;
+    app.chat_state.turn_active = true;
+    app.escape_pressed(&chat_tx);
+    let sent = chat_rx
+        .try_recv()
+        .expect("esc during a remote-started turn must send cancel");
+    assert!(matches!(sent, ChatClientMessage::Cancel));
 }

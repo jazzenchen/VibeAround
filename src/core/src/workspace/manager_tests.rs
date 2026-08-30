@@ -19,6 +19,24 @@ fn normalize_platform_cwd_strips_windows_verbatim_prefixes() {
     );
 }
 
+/// A web thread that actually exists: drafted, then materialised the way a
+/// first prompt would.
+async fn materialised_web_thread(
+    manager: &WorkspaceThreadManager,
+    agent_id: &str,
+    profile_id: Option<&str>,
+    cwd: PathBuf,
+) -> Arc<ThreadRuntime> {
+    let (thread, _) = manager
+        .draft_web_thread(agent_id.to_string(), profile_id.map(ToOwned::to_owned), cwd)
+        .await
+        .unwrap();
+    manager
+        .resolve_route_runtime(&web_route_for_thread(&thread.id))
+        .await
+        .unwrap()
+}
+
 fn temp_paths() -> (PathBuf, PathBuf, PathBuf) {
     let root = std::env::temp_dir().join(format!("vibearound-wtm-{}", Uuid::new_v4()));
     (
@@ -41,8 +59,8 @@ fn route_defaults_derive_host_and_workspace_from_one_settings_snapshot() {
         "remote": {
             "channels": {
                 "telegram": {
-                    "agentId": "claude",
-                    "profileId": "channel-profile"
+                    "agent_id": "claude",
+                    "profile_id": "channel-profile"
                 }
             }
         }
@@ -72,6 +90,44 @@ fn route_defaults_derive_host_and_workspace_from_one_settings_snapshot() {
     );
 }
 
+#[test]
+fn switch_defaults_take_the_channel_profile_then_the_agent_default() {
+    let settings = serde_json::json!({
+        "default_workspace": std::env::temp_dir().join("vibearound-switch-workspace"),
+        "enabled_agents": ["claude", "codex"],
+        "launcher": {
+            "default_agent": "codex",
+            "default_profile_id": "launch-profile",
+            "agents": {
+                "claude": { "profile_id": "claude-profile" }
+            }
+        },
+        "remote": {
+            "channels": {
+                "telegram": { "profile_id": "channel-profile" }
+            }
+        }
+    });
+    let cfg = crate::config::config_from_settings_json(&settings);
+    let prefs = agent_state::prefs_from_settings_json(&settings);
+
+    // A channel that pins a profile wins for whichever agent is switched to.
+    assert_eq!(
+        default_profile_for_agent_from_settings("telegram", "claude", &cfg, &prefs).as_deref(),
+        Some("channel-profile")
+    );
+    // Otherwise the agent keeps its own launch-screen profile.
+    assert_eq!(
+        default_profile_for_agent_from_settings("feishu", "claude", &cfg, &prefs).as_deref(),
+        Some("claude-profile")
+    );
+    // The launcher default agent inherits the launcher profile.
+    assert_eq!(
+        default_profile_for_agent_from_settings("feishu", "codex", &cfg, &prefs).as_deref(),
+        Some("launch-profile")
+    );
+}
+
 async fn seed_session_thread(
     manager: &WorkspaceThreadManager,
     root: PathBuf,
@@ -83,7 +139,7 @@ async fn seed_session_thread(
     let workspace = manager.ensure_workspace_for_cwd(root).await.unwrap();
     let profile_id = profile_id.map(ToOwned::to_owned);
     let host_binding = HostBinding::new(agent_id.to_string(), profile_id.clone());
-    let thread = manager.new_thread_record_with_host(workspace.id.clone(), host_binding);
+    let thread = manager.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
     manager.ensure_thread_persisted(&thread).await.unwrap();
     manager
         .thread_store
@@ -130,6 +186,84 @@ async fn route_resolves_to_stable_thread_attachment() {
             .workspace_id,
         WorkspaceId::general()
     );
+}
+
+#[tokio::test]
+async fn a_draft_writes_nothing_until_the_first_prompt() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let root = std::env::temp_dir().join(format!("vibearound-draft-{}", Uuid::new_v4()));
+    let (draft, workspace) = manager
+        .draft_web_thread(
+            "codex".to_string(),
+            Some("deepseek".to_string()),
+            root.clone(),
+        )
+        .await
+        .unwrap();
+    let route = web_route_for_thread(&draft.id);
+
+    // The browser has an id and a chat to open, and the stores have nothing.
+    assert_eq!(workspace, normalize_workspace_cwd(root));
+    assert!(manager.thread(&draft.id).await.unwrap().is_none());
+    assert!(manager.current_attachment(&route).await.unwrap().is_none());
+
+    // Resolving the route is what a first prompt does, and it makes the same
+    // thread real -- same id, and the agent and profile the user picked.
+    let runtime = manager.resolve_route_runtime(&route).await.unwrap();
+    let state = runtime.state().await;
+    assert_eq!(state.thread_id, draft.id);
+    assert_eq!(state.host_binding.agent_id, "codex");
+    assert_eq!(state.host_binding.profile_id.as_deref(), Some("deepseek"));
+    assert!(manager.thread(&draft.id).await.unwrap().is_some());
+    assert_eq!(
+        manager
+            .current_attachment(&route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        draft.id
+    );
+}
+
+#[tokio::test]
+async fn adopting_a_thread_adds_a_web_route_without_taking_its_own() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let im_route = RouteKey::new("feishu", "oc_abc");
+    let thread_id = manager
+        .resolve_route_runtime(&im_route)
+        .await
+        .unwrap()
+        .state()
+        .await
+        .thread_id;
+
+    let adopted = manager
+        .attach_web_route_to_thread(&thread_id)
+        .await
+        .unwrap();
+    assert_eq!(adopted.state().await.thread_id, thread_id);
+
+    // The web chat id is the thread id, and now it is true.
+    let web_route = web_route_for_thread(&thread_id);
+    assert_eq!(
+        manager
+            .current_attachment(&web_route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        thread_id
+    );
+    // The channel that created the thread keeps talking to it.
+    let mut routes = manager
+        .attached_routes_for_thread(&thread_id)
+        .await
+        .unwrap();
+    routes.sort_by(|a, b| a.chat_id.cmp(&b.chat_id));
+    assert_eq!(routes, vec![im_route, web_route]);
 }
 
 #[tokio::test]
@@ -182,6 +316,286 @@ async fn explicit_new_preserves_web_selected_host() {
 
     assert_eq!(state.workspace_id, workspace.id);
     assert_eq!(state.host_binding, selected_host);
+}
+
+async fn seed_preview_child(
+    manager: &WorkspaceThreadManager,
+    label: &str,
+) -> (String, WorkspaceThreadId, WorkspaceThreadId, RouteKey) {
+    let root = std::env::temp_dir().join(format!(
+        "vibearound-preview-child-{label}-{}",
+        Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("README.md");
+    std::fs::write(&file, "# Preview").unwrap();
+    let parent = materialised_web_thread(&manager, "codex", Some("direct"), root.clone()).await;
+    let parent_id = parent.state().await.thread_id;
+    let (slug, _) = crate::previews::ensure_file(file, root, label.to_string());
+    let child = manager
+        .ensure_preview_web_thread(Some(&parent_id), &slug)
+        .await
+        .unwrap();
+    let child_id = child.state().await.thread_id;
+    let route = preview_web_route_for_slug(&slug);
+    (slug, parent_id, child_id, route)
+}
+
+async fn seed_standalone_preview(
+    manager: &WorkspaceThreadManager,
+    label: &str,
+) -> (String, WorkspaceThreadId, RouteKey, PathBuf) {
+    let root = std::env::temp_dir().join(format!(
+        "vibearound-preview-standalone-{label}-{}",
+        Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("README.md");
+    std::fs::write(&file, "# Standalone Preview").unwrap();
+    let (slug, _) = crate::previews::ensure_file(file, root.clone(), label.to_string());
+    let runtime = manager
+        .ensure_preview_web_thread(None, &slug)
+        .await
+        .unwrap();
+    let thread_id = runtime.state().await.thread_id;
+    let route = preview_web_route_for_slug(&slug);
+    (slug, thread_id, route, root)
+}
+
+#[tokio::test]
+async fn preview_without_parent_creates_and_reuses_a_standalone_task() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let (slug, thread_id, route, root) = seed_standalone_preview(&manager, "root").await;
+
+    let thread = manager.thread(&thread_id).await.unwrap().unwrap();
+    assert_eq!(thread.parent_thread_id, None);
+    assert_eq!(thread.preview_slug.as_deref(), Some(slug.as_str()));
+    assert_eq!(
+        manager
+            .current_attachment(&route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        thread_id
+    );
+    assert_eq!(
+        manager
+            .runtime_for_thread_id(&thread_id)
+            .await
+            .unwrap()
+            .state()
+            .await
+            .workspace,
+        normalize_workspace_cwd(root)
+    );
+
+    let reused = manager
+        .ensure_preview_web_thread(None, &slug)
+        .await
+        .unwrap();
+    assert_eq!(reused.state().await.thread_id, thread_id);
+}
+
+#[tokio::test]
+async fn standalone_preview_new_close_and_next_message_keep_the_slug() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let (slug, first_id, route, _) = seed_standalone_preview(&manager, "commands").await;
+
+    let second = manager
+        .close_route_and_create_thread(&route, Some("test /new".to_string()))
+        .await
+        .unwrap();
+    let second_id = second.state().await.thread_id;
+    let second_thread = manager.thread(&second_id).await.unwrap().unwrap();
+    assert_ne!(second_id, first_id);
+    assert_eq!(second_thread.parent_thread_id, None);
+    assert_eq!(second_thread.preview_slug.as_deref(), Some(slug.as_str()));
+
+    manager
+        .close_route(&route, Some("test /close".to_string()))
+        .await
+        .unwrap();
+    let third = manager.resolve_route_runtime(&route).await.unwrap();
+    let third_id = third.state().await.thread_id;
+    let third_thread = manager.thread(&third_id).await.unwrap().unwrap();
+    assert_ne!(third_id, second_id);
+    assert_eq!(third_thread.parent_thread_id, None);
+    assert_eq!(third_thread.preview_slug.as_deref(), Some(slug.as_str()));
+}
+
+#[tokio::test]
+async fn preview_child_reuses_global_slug_across_parents_and_reload() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(
+        workspaces.clone(),
+        threads.clone(),
+        attachments.clone(),
+    );
+    let (slug, parent_id, child_id, route) = seed_preview_child(&manager, "reload").await;
+    let child = manager.thread(&child_id).await.unwrap().unwrap();
+    assert_eq!(child.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(child.preview_slug.as_deref(), Some(slug.as_str()));
+    assert_eq!(
+        manager
+            .current_attachment(&route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        child_id
+    );
+
+    let preview = crate::previews::lookup_owner(&slug).unwrap();
+    let other_parent = materialised_web_thread(
+        &manager,
+        "claude",
+        Some("direct"),
+        preview.workspace.clone(),
+    )
+    .await;
+    let other_parent_id = other_parent.state().await.thread_id;
+    let reused = manager
+        .ensure_preview_web_thread(Some(&other_parent_id), &slug)
+        .await
+        .unwrap();
+    assert_eq!(reused.state().await.thread_id, child_id);
+    assert_eq!(
+        manager
+            .thread(&child_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .parent_thread_id,
+        Some(parent_id.clone())
+    );
+
+    assert!(crate::previews::delete_session(&slug));
+    let (recreated_slug, _) =
+        crate::previews::ensure_file(preview.id, preview.workspace, preview.title);
+    assert_eq!(recreated_slug, slug);
+    drop(manager);
+    let reloaded = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let runtime = reloaded
+        .ensure_preview_web_thread(Some(&other_parent_id), &slug)
+        .await
+        .unwrap();
+
+    assert_eq!(runtime.state().await.thread_id, child_id);
+    assert_eq!(
+        reloaded
+            .thread(&child_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .parent_thread_id,
+        Some(parent_id)
+    );
+}
+
+#[tokio::test]
+async fn concurrent_preview_ensure_creates_one_standalone_task_for_the_slug() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let root = std::env::temp_dir().join(format!(
+        "vibearound-preview-child-concurrent-{}",
+        Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("README.md");
+    std::fs::write(&file, "# Preview").unwrap();
+    let (slug, _) = crate::previews::ensure_file(file, root, "concurrent".to_string());
+
+    let (first, second) = tokio::join!(
+        manager.ensure_preview_web_thread(None, &slug),
+        manager.ensure_preview_web_thread(None, &slug),
+    );
+    let first_id = first.unwrap().state().await.thread_id;
+    let second_id = second.unwrap().state().await.thread_id;
+
+    assert_eq!(first_id, second_id);
+    assert_eq!(
+        manager
+            .thread_projection()
+            .await
+            .unwrap()
+            .all()
+            .filter(|thread| thread.preview_slug.as_deref() == Some(slug.as_str()))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn preview_new_close_and_next_message_keep_parent_and_slug() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let (slug, parent_id, first_id, route) = seed_preview_child(&manager, "commands").await;
+
+    let second = manager
+        .close_route_and_create_thread(&route, Some("test /new".to_string()))
+        .await
+        .unwrap();
+    let second_id = second.state().await.thread_id;
+    let second_thread = manager.thread(&second_id).await.unwrap().unwrap();
+    assert_ne!(second_id, first_id);
+    assert_eq!(second_thread.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(second_thread.preview_slug.as_deref(), Some(slug.as_str()));
+    manager
+        .close_route(&route, Some("test /close".to_string()))
+        .await
+        .unwrap();
+    assert!(manager.current_attachment(&route).await.unwrap().is_none());
+
+    let third = manager.resolve_route_runtime(&route).await.unwrap();
+    let third_id = third.state().await.thread_id;
+    let third_thread = manager.thread(&third_id).await.unwrap().unwrap();
+    assert_ne!(third_id, second_id);
+    assert_eq!(third_thread.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(third_thread.preview_slug.as_deref(), Some(slug.as_str()));
+}
+
+#[tokio::test]
+async fn preview_host_switch_keeps_the_same_child_and_route() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(
+        workspaces.clone(),
+        threads.clone(),
+        attachments.clone(),
+    );
+    let (slug, parent_id, child_id, route) = seed_preview_child(&manager, "switch").await;
+    let runtime = manager.resolve_route_runtime(&route).await.unwrap();
+
+    runtime
+        .switch_host_replacing_session(HostBinding::new("claude", Some("direct".to_string())))
+        .await
+        .unwrap();
+
+    let state = runtime.state().await;
+    assert_eq!(state.thread_id, child_id);
+    assert_eq!(state.host_binding.agent_id, "claude");
+    let child = manager.thread(&child_id).await.unwrap().unwrap();
+    assert_eq!(child.parent_thread_id.as_ref(), Some(&parent_id));
+    assert_eq!(child.preview_slug.as_deref(), Some(slug.as_str()));
+    assert_eq!(
+        manager
+            .current_attachment(&route)
+            .await
+            .unwrap()
+            .unwrap()
+            .thread_id,
+        child_id
+    );
+    drop(runtime);
+    drop(manager);
+    let reloaded = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let reloaded_runtime = reloaded.resolve_route_runtime(&route).await.unwrap();
+    let reloaded_state = reloaded_runtime.state().await;
+    assert_eq!(reloaded_state.thread_id, child_id);
+    assert_eq!(reloaded_state.host_binding.agent_id, "claude");
+    assert_eq!(reloaded_state.session_id, None);
 }
 
 #[tokio::test]
@@ -469,7 +883,6 @@ async fn attach_external_session_normalizes_workspace_cwd() {
             Some("direct".to_string()),
             "session-1".to_string(),
             root.join("."),
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -512,7 +925,6 @@ async fn attach_external_session_keeps_missing_profile_unknown() {
             None,
             "external-session".to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -546,7 +958,6 @@ async fn attach_external_session_preserves_known_profile_when_missing() {
             None,
             "external-session".to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -574,7 +985,6 @@ async fn attach_external_session_rejects_unknown_session() {
             Some("direct".to_string()),
             "missing-session".to_string(),
             root,
-            ExternalSessionAttachMode::NewThread,
         )
         .await
     {
@@ -612,7 +1022,6 @@ async fn attach_external_session_reuses_existing_open_thread() {
             Some("direct".to_string()),
             "session-picked-up".to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -650,7 +1059,6 @@ async fn attach_external_session_resolves_workspace_thread_id_to_host_session() 
             Some("direct".to_string()),
             thread_id.to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -671,7 +1079,7 @@ async fn subagent_session_ids_for_agent_workspace_reads_thread_agents() {
         .await
         .unwrap();
     let host_binding = HostBinding::new("codex", Some("direct".to_string()));
-    let thread = manager.new_thread_record_with_host(workspace.id.clone(), host_binding);
+    let thread = manager.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
     manager.ensure_thread_persisted(&thread).await.unwrap();
 
     let turn_id = MultiAgentTurnId::from("mat_a");
@@ -722,7 +1130,7 @@ async fn subagent_session_ids_for_agent_workspace_reads_thread_agents() {
 }
 
 #[tokio::test]
-async fn attach_external_session_new_thread_mode_does_not_reuse_open_thread() {
+async fn attach_external_session_never_splits_session_across_threads() {
     let (workspaces, threads, attachments) = temp_paths();
     let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
     let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
@@ -750,12 +1158,11 @@ async fn attach_external_session_new_thread_mode_does_not_reuse_open_thread() {
             Some("direct".to_string()),
             "session-switch".to_string(),
             root,
-            ExternalSessionAttachMode::NewThread,
         )
         .await
         .unwrap();
 
-    assert_ne!(runtime.state().await.thread_id, existing_thread_id);
+    assert_eq!(runtime.state().await.thread_id, existing_thread_id);
     assert_eq!(
         manager
             .current_attachment(&existing_route)
@@ -772,7 +1179,7 @@ async fn attach_external_session_new_thread_mode_does_not_reuse_open_thread() {
             .unwrap()
             .unwrap()
             .thread_id,
-        runtime.state().await.thread_id
+        existing_thread_id
     );
 }
 
@@ -800,7 +1207,6 @@ async fn attach_external_session_creates_open_thread_when_matching_thread_is_clo
             Some("direct".to_string()),
             "session-closed".to_string(),
             root,
-            ExternalSessionAttachMode::ReuseOpenThread,
         )
         .await
         .unwrap();
@@ -915,5 +1321,99 @@ async fn switch_workspace_starts_new_thread_when_workspace_has_threads() {
             .unwrap()
             .thread_id,
         third_runtime.state().await.thread_id
+    );
+}
+
+#[tokio::test]
+async fn observed_session_agent_ids_span_all_workspace_threads() {
+    let (workspaces, threads, attachments) = temp_paths();
+    let manager = WorkspaceThreadManager::with_paths(workspaces, threads, attachments);
+    let root = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    seed_session_thread(
+        &manager,
+        root.clone(),
+        "codex",
+        Some("direct"),
+        "pre-switch-session",
+        false,
+    )
+    .await;
+    seed_session_thread(
+        &manager,
+        root.clone(),
+        "claude",
+        Some("direct"),
+        "current-session",
+        false,
+    )
+    .await;
+
+    let observed = manager
+        .observed_session_agent_ids_for_workspace(&root)
+        .await
+        .unwrap();
+    assert!(observed.contains("codex"), "pre-switch agent must survive");
+    assert!(observed.contains("claude"));
+
+    let other = std::env::temp_dir().join(format!("vibearound-ws-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&other).unwrap();
+    let unknown = manager
+        .observed_session_agent_ids_for_workspace(&other)
+        .await
+        .unwrap();
+    assert!(unknown.is_empty(), "unregistered workspace lists nothing");
+}
+
+#[test]
+fn configured_agent_workspace_wins_over_route_defaults() {
+    let default_workspace = std::env::temp_dir().join("vibearound-default-ws");
+    let agent_workspace = std::env::temp_dir().join("vibearound-codex-project");
+    let settings = serde_json::json!({
+        "default_workspace": default_workspace,
+        "enabled_agents": ["claude", "codex"],
+        "launcher": {
+            "default_agent": "codex",
+            "agents": {
+                "codex": { "workspace": agent_workspace }
+            }
+        },
+        "remote": {
+            "channels": {
+                "telegram": { "agent_id": "claude" }
+            }
+        }
+    });
+    let cfg = crate::config::config_from_settings_json(&settings);
+    let prefs = agent_state::prefs_from_settings_json(&settings);
+
+    // The configured per-agent workspace is what the desktop UI promises:
+    // first contact on any surface lands there, not in im/<channel>.
+    let (tui_host, tui_workspace) = default_route_binding_and_workspace_from_settings(
+        &RouteKey::new("tui", "chat-a"),
+        &cfg,
+        &prefs,
+    );
+    assert_eq!(tui_host.agent_id, "codex");
+    assert_eq!(tui_workspace, agent_workspace);
+
+    let (web_host, web_workspace) = default_route_binding_and_workspace_from_settings(
+        &RouteKey::new("web", "chat-a"),
+        &cfg,
+        &prefs,
+    );
+    assert_eq!(web_host.agent_id, "codex");
+    assert_eq!(web_workspace, agent_workspace);
+
+    // An agent without a configured workspace keeps the im/<channel> default.
+    let (telegram_host, telegram_workspace) = default_route_binding_and_workspace_from_settings(
+        &RouteKey::new("telegram", "chat-a"),
+        &cfg,
+        &prefs,
+    );
+    assert_eq!(telegram_host.agent_id, "claude");
+    assert_eq!(
+        telegram_workspace,
+        default_workspace.join("im").join("telegram")
     );
 }

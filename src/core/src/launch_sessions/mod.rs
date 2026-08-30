@@ -1,7 +1,7 @@
 //! Local coding-agent session discovery for the desktop Launch surface.
 //!
-//! This is intentionally read-only. Each CLI owns its own session store; we
-//! only surface enough metadata for users to choose what to resume.
+//! Each CLI owns its session store. VibeAround exposes resume metadata without
+//! modifying native session data.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -21,6 +21,7 @@ mod gemini;
 mod opencode;
 mod pi;
 mod qwen;
+mod va_agent;
 
 static OBSERVED_STORE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -57,33 +58,6 @@ pub fn list_for_agent_workspace_with_archived(
     finalize_sessions(agent_id, sessions, limit, include_archived)
 }
 
-pub async fn list_for_agent_workspace_with_archived_async(
-    agent_id: &str,
-    workspace: &Path,
-    limit: usize,
-    include_archived: bool,
-) -> Vec<LaunchSession> {
-    let workspaces = [workspace.to_path_buf()];
-    list_for_agent_workspaces_with_archived_async(agent_id, &workspaces, limit, include_archived)
-        .await
-}
-
-pub async fn list_for_agent_workspaces_with_archived_async(
-    agent_id: &str,
-    workspaces: &[std::path::PathBuf],
-    limit: usize,
-    include_archived: bool,
-) -> Vec<LaunchSession> {
-    let mut sessions =
-        native_sessions_for_agent_workspaces_async(agent_id, workspaces, include_archived).await;
-    sessions.extend(
-        workspaces
-            .iter()
-            .flat_map(|workspace| observed_sessions_for_agent_workspace(agent_id, workspace)),
-    );
-    finalize_workspace_sessions(agent_id, sessions, limit, include_archived)
-}
-
 pub async fn list_native_for_agent_workspace_with_archived_async(
     agent_id: &str,
     workspace: &Path,
@@ -98,6 +72,20 @@ pub async fn list_native_for_agent_workspace_with_archived_async(
         include_archived,
     )
     .await
+}
+
+/// Last-modified stamp of one session in the agent's native store, or `None`
+/// when the session cannot be found there.
+pub async fn native_session_updated_at(
+    agent_id: &str,
+    workspace: &Path,
+    session_id: &str,
+) -> Option<u64> {
+    list_native_for_agent_workspace_with_archived_async(agent_id, workspace, usize::MAX, true)
+        .await
+        .into_iter()
+        .find(|session| session.session_id == session_id)
+        .map(|session| session.updated_at)
 }
 
 pub async fn list_native_for_agent_workspaces_with_archived_async(
@@ -179,6 +167,7 @@ fn raw_sessions_for_agent_workspace(
         "opencode" => opencode::sessions(workspace),
         "pi" => pi::sessions(workspace),
         "qwen-code" => qwen::sessions(workspace),
+        "va-agent" => va_agent::sessions(workspace),
         _ => Vec::new(),
     }
 }

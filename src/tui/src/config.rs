@@ -3,12 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use va_client::auth::auth_file_matches_base_url;
 use va_client::endpoint::ServerEndpoint;
+use va_client::local_endpoint::{self, EndpointOverrides, ResolveError, Sourced};
 
 use crate::transport::TuiError;
-
-pub(crate) const DEFAULT_BASE_URL: &str = "http://127.0.0.1:12358/va";
 
 #[derive(Debug, Parser)]
 #[command(name = "va-tui", version, about = "VibeAround terminal dashboard")]
@@ -46,37 +44,90 @@ impl RuntimeEnv {
     }
 }
 
-pub(crate) fn resolve_endpoint(
+/// Agent / profile / workspace handed over by a VibeAround launch (desktop
+/// Launch card, web launcher). VibeAround sets these for every profile launch;
+/// the TUI uses them to open straight into a new session instead of the picker.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct LaunchContext {
+    pub(crate) agent: Option<String>,
+    pub(crate) profile: Option<String>,
+    pub(crate) workspace: Option<String>,
+    /// Set when the launch resumes an existing session instead of starting one.
+    pub(crate) session: Option<String>,
+}
+
+impl LaunchContext {
+    pub(crate) fn current() -> Self {
+        Self::from_parts(
+            env_value("VIBEAROUND_LAUNCH_TARGET"),
+            env_value("VIBEAROUND_PROFILE_ID"),
+            env::current_dir()
+                .ok()
+                .map(|dir| dir.to_string_lossy().into_owned()),
+            env_value("VIBEAROUND_SESSION_ID"),
+        )
+    }
+
+    pub(crate) fn from_parts(
+        agent: Option<String>,
+        profile: Option<String>,
+        workspace: Option<String>,
+        session: Option<String>,
+    ) -> Self {
+        let Some(agent) = agent else {
+            return Self::default();
+        };
+        Self {
+            agent: Some(agent),
+            // "direct" is VibeAround's name for "no managed profile".
+            profile: profile.filter(|profile| profile != "direct"),
+            workspace,
+            session,
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.agent.is_none()
+    }
+}
+
+/// Resolve the endpoint, and say which file the token came from so a rotated
+/// credential can be picked up without restarting.
+pub(crate) fn resolve_endpoint_with_refresh(
     args: &Args,
     runtime_env: &RuntimeEnv,
-) -> Result<ServerEndpoint, TuiError> {
-    let base_url = args.base_url.as_deref().or(runtime_env.base_url.as_deref());
-    let token = args.token.as_deref().or(runtime_env.token.as_deref());
+) -> Result<(ServerEndpoint, Option<PathBuf>), TuiError> {
+    let overrides = EndpointOverrides {
+        base_url: args
+            .base_url
+            .as_deref()
+            .or(runtime_env.base_url.as_deref())
+            .map(|value| Sourced::new(value, "args")),
+        token: args
+            .token
+            .as_deref()
+            .or(runtime_env.token.as_deref())
+            .map(|value| Sourced::new(value, "args")),
+    };
+
     let auth_path = auth_file_path(args, runtime_env);
+    let auth_file = auth_path
+        .exists()
+        .then(|| read_auth_file(&auth_path))
+        .transpose()?;
 
-    if let Some(base_url) = base_url {
-        let endpoint = ServerEndpoint::new(base_url);
-        if let Some(token) = token {
-            return Ok(endpoint.with_token(token));
-        }
-        if auth_path.exists() {
-            let auth = read_auth_file(&auth_path)?;
-            require_matching_local_auth(base_url, &auth)?;
-            return Ok(endpoint.with_token(auth.token));
-        }
-        return Err(TuiError::MissingAuth(auth_path.display().to_string()));
-    }
+    let resolved =
+        local_endpoint::resolve_endpoint(overrides, auth_file.as_ref(), true).map_err(|error| {
+            match error {
+                ResolveError::MissingAuth => TuiError::MissingAuth(auth_path.display().to_string()),
+                other => TuiError::Usage(other.to_string()),
+            }
+        })?;
 
-    if let Some(token) = token {
-        return Ok(ServerEndpoint::new(DEFAULT_BASE_URL).with_token(token));
-    }
-
-    if auth_path.exists() {
-        let auth = read_auth_file(&auth_path)?;
-        return Ok(ServerEndpoint::from_auth_file(&auth));
-    }
-
-    Err(TuiError::MissingAuth(auth_path.display().to_string()))
+    // Only a token read from disk can be refreshed; an explicit --token is the
+    // caller's choice and must not be swapped out from under them.
+    let refreshable = (resolved.auth_source == "auth-file").then_some(auth_path);
+    Ok((resolved.endpoint, refreshable))
 }
 
 fn read_auth_file(path: &Path) -> Result<va_client::auth::AuthFile, TuiError> {
@@ -87,20 +138,6 @@ fn read_auth_file(path: &Path) -> Result<va_client::auth::AuthFile, TuiError> {
     va_client::auth::parse_auth_file(&body).map_err(TuiError::from)
 }
 
-fn require_matching_local_auth(
-    base_url: &str,
-    auth_file: &va_client::auth::AuthFile,
-) -> Result<(), TuiError> {
-    let matches = auth_file_matches_base_url(base_url, auth_file)
-        .map_err(|_| TuiError::Usage(format!("invalid base url: {base_url}")))?;
-    if matches {
-        return Ok(());
-    }
-    Err(TuiError::Usage(format!(
-        "refusing to reuse local auth for {base_url}; pass --token explicitly"
-    )))
-}
-
 fn auth_file_path(args: &Args, runtime_env: &RuntimeEnv) -> PathBuf {
     args.auth_file
         .clone()
@@ -108,18 +145,11 @@ fn auth_file_path(args: &Args, runtime_env: &RuntimeEnv) -> PathBuf {
 }
 
 fn default_auth_path(runtime_env: &RuntimeEnv) -> PathBuf {
-    if let Some(path) = &runtime_env.auth_file {
-        return PathBuf::from(path);
-    }
-    if let Some(path) = &runtime_env.data_dir {
-        return PathBuf::from(path).join("auth.json");
-    }
-    runtime_env
-        .home_dir
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".vibearound")
-        .join("auth.json")
+    local_endpoint::auth_file_path(
+        runtime_env.auth_file.as_deref().map(Path::new),
+        runtime_env.data_dir.as_deref(),
+        runtime_env.home_dir.as_deref(),
+    )
 }
 
 fn env_value(key: &str) -> Option<String> {
@@ -132,6 +162,23 @@ fn env_value(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_context_requires_a_launch_target() {
+        assert!(
+            LaunchContext::from_parts(None, Some("p".into()), Some("/w".into()), None).is_empty()
+        );
+        let context = LaunchContext::from_parts(
+            Some("va-agent".into()),
+            Some("direct".into()),
+            Some("/w".into()),
+            Some("session-9".into()),
+        );
+        assert_eq!(context.agent.as_deref(), Some("va-agent"));
+        assert_eq!(context.profile, None);
+        assert_eq!(context.workspace.as_deref(), Some("/w"));
+        assert_eq!(context.session.as_deref(), Some("session-9"));
+    }
 
     #[test]
     fn matching_local_base_url_uses_auth_file_token() {
@@ -149,7 +196,8 @@ mod tests {
             once: false,
         };
 
-        let endpoint = resolve_endpoint(&args, &RuntimeEnv::default()).expect("endpoint");
+        let (endpoint, _) =
+            resolve_endpoint_with_refresh(&args, &RuntimeEnv::default()).expect("endpoint");
 
         assert_eq!(endpoint.base_url(), "http://127.0.0.1:12358/va");
         assert_eq!(endpoint.token(), Some("secret"));
@@ -174,7 +222,7 @@ mod tests {
         };
 
         assert!(matches!(
-            resolve_endpoint(&args, &RuntimeEnv::default()),
+            resolve_endpoint_with_refresh(&args, &RuntimeEnv::default()),
             Err(TuiError::Usage(_))
         ));
 
@@ -198,7 +246,7 @@ mod tests {
         };
 
         assert!(matches!(
-            resolve_endpoint(&args, &RuntimeEnv::default()),
+            resolve_endpoint_with_refresh(&args, &RuntimeEnv::default()),
             Err(TuiError::Usage(_))
         ));
 

@@ -12,6 +12,7 @@ export interface AgentDisplayInfo {
  *  means adding an entry to `resources/agents.json` breaks the build here
  *  until the display name is filled in. */
 const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
+  "va-agent": "VibeAround Agent",
   claude: "Claude Code",
   gemini: "Gemini CLI",
   opencode: "Opencode",

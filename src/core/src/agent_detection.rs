@@ -9,7 +9,7 @@ use tokio::process::Command;
 use tokio::task::JoinSet;
 
 const AGENT_SOURCES_TOML: &str = include_str!("../../resources/agent-sources.toml");
-const DETECTION_SCHEMA_VERSION: u32 = 1;
+const DETECTION_SCHEMA_VERSION: u32 = 2;
 const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const LATEST_VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(8);
 const USER_SHELL_RANK_BASE: u32 = 0;
@@ -104,8 +104,6 @@ pub struct AgentDetection {
     pub default_candidate: Option<AgentCandidate>,
     #[serde(default)]
     pub system_selected: Option<AgentCandidate>,
-    #[serde(default, rename = "selected", skip_serializing)]
-    pub legacy_selected: Option<AgentCandidate>,
     #[serde(default)]
     pub candidates: Vec<AgentCandidate>,
 }
@@ -115,11 +113,6 @@ impl AgentDetection {
         self.system_selected
             .clone()
             .filter(is_system_toolchain_candidate)
-            .or_else(|| {
-                self.legacy_selected
-                    .clone()
-                    .filter(is_system_toolchain_candidate)
-            })
     }
 
     pub fn managed_selected_candidate(&self) -> Option<AgentCandidate> {
@@ -161,14 +154,13 @@ pub fn detected_agents_path() -> PathBuf {
 pub fn read_detected_agents() -> Option<AgentDetectionFile> {
     let path = detected_agents_path();
     let contents = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&contents).ok()
+    serde_json::from_str(&contents)
+        .ok()
+        .filter(is_compatible_detection_cache)
 }
 
-pub fn startkit_candidate_for_mode(agent_id: &str, toolchain_mode: &str) -> Option<AgentCandidate> {
-    read_detected_agents()?
-        .agents
-        .get(agent_id)
-        .and_then(|detection| preferred_startkit_candidate(agent_id, detection, toolchain_mode))
+fn is_compatible_detection_cache(detected: &AgentDetectionFile) -> bool {
+    detected.schema_version == DETECTION_SCHEMA_VERSION && detected.platform == current_platform()
 }
 
 pub fn configured_candidate(agent_id: &str) -> Option<AgentCandidate> {
@@ -229,15 +221,6 @@ pub fn selected_candidate(agent_id: &str) -> Option<AgentCandidate> {
     selected_candidate_for_mode(agent_id, mode)
 }
 
-pub fn resolve_agent_command_for_mode(
-    agent_id: &str,
-    fallback_command: &str,
-    toolchain_mode: &str,
-) -> String {
-    resolve_agent_command_for_mode_strict(agent_id, fallback_command, toolchain_mode)
-        .unwrap_or_else(|_| fallback_command.to_string())
-}
-
 pub fn resolve_agent_command_for_mode_strict(
     agent_id: &str,
     fallback_command: &str,
@@ -259,11 +242,6 @@ pub fn resolve_agent_command_for_mode_strict(
     }
 
     Ok(fallback_command.to_string())
-}
-
-pub fn resolve_agent_command(agent_id: &str, fallback_command: &str) -> String {
-    let mode = crate::config::ensure_loaded().toolchain_mode.as_str();
-    resolve_agent_command_for_mode(agent_id, fallback_command, mode)
 }
 
 pub fn resolve_agent_command_strict(
@@ -311,12 +289,6 @@ fn manual_candidate_from_path(path: PathBuf, source_label: String) -> AgentCandi
         is_user_default: true,
         package: None,
     }
-}
-
-pub fn executable_preference_from_candidate(
-    candidate: &AgentCandidate,
-) -> crate::agent_state::AgentExecutablePreference {
-    executable_preference_from_candidate_path(candidate, Path::new(&candidate.path))
 }
 
 pub fn executable_preference_from_candidate_path(
@@ -585,7 +557,6 @@ async fn scan_agent(
     AgentDetection {
         default_candidate,
         system_selected,
-        legacy_selected: None,
         candidates,
     }
 }
@@ -1276,6 +1247,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn detection_cache_requires_current_schema_and_platform() {
+        let mut detected = AgentDetectionFile {
+            schema_version: DETECTION_SCHEMA_VERSION,
+            platform: current_platform().to_string(),
+            scanned_at_unix_ms: 0,
+            agents: BTreeMap::new(),
+        };
+        assert!(is_compatible_detection_cache(&detected));
+
+        detected.schema_version -= 1;
+        assert!(!is_compatible_detection_cache(&detected));
+        detected.schema_version = DETECTION_SCHEMA_VERSION;
+        detected.platform = "other".to_string();
+        assert!(!is_compatible_detection_cache(&detected));
+    }
+
+    #[test]
     fn source_catalog_parses_agent_commands() {
         let catalog = source_catalog().expect("catalog parses");
         let codex = catalog.agents.get("codex").expect("codex source");
@@ -1483,7 +1471,6 @@ mod tests {
         let detection = AgentDetection {
             default_candidate: Some(managed.clone()),
             system_selected: Some(system.clone()),
-            legacy_selected: None,
             candidates: vec![system.clone(), managed.clone()],
         };
 
@@ -1507,7 +1494,6 @@ mod tests {
         let detection = AgentDetection {
             default_candidate: Some(managed.clone()),
             system_selected: Some(managed.clone()),
-            legacy_selected: None,
             candidates: vec![managed.clone()],
         };
 
@@ -1527,7 +1513,6 @@ mod tests {
         let detection = AgentDetection {
             default_candidate: Some(managed.clone()),
             system_selected: Some(system.clone()),
-            legacy_selected: None,
             candidates: vec![managed.clone(), system.clone()],
         };
 
@@ -1542,18 +1527,9 @@ mod tests {
         let managed_only = AgentDetection {
             default_candidate: Some(managed.clone()),
             system_selected: Some(managed.clone()),
-            legacy_selected: None,
             candidates: vec![managed.clone(), system.clone()],
         };
         assert!(managed_only.system_selected_candidate().is_none());
-
-        let legacy_selected = AgentDetection {
-            default_candidate: None,
-            system_selected: None,
-            legacy_selected: Some(system.clone()),
-            candidates: vec![system, managed],
-        };
-        assert!(legacy_selected.system_selected_candidate().is_some());
     }
 
     #[test]
@@ -1567,7 +1543,6 @@ mod tests {
         let detection = AgentDetection {
             default_candidate: Some(npm_global_not_on_path.clone()),
             system_selected: Some(npm_global_not_on_path.clone()),
-            legacy_selected: None,
             candidates: vec![app_bundled, npm_global_not_on_path.clone()],
         };
 
@@ -1645,7 +1620,6 @@ mod tests {
         let detection = AgentDetection {
             default_candidate: Some(candidate.clone()),
             system_selected: Some(candidate.clone()),
-            legacy_selected: None,
             candidates: vec![candidate],
         };
 

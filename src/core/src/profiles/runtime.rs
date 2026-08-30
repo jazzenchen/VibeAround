@@ -33,7 +33,10 @@ pub fn render_for_launch_api_type(
             api_type
         );
     }
-    if !profile.api_types.iter().any(|t| t == api_type)
+    if !profile
+        .api_configs
+        .get(api_type)
+        .is_some_and(|config| config.enabled)
         || !provider.endpoints.iter().any(|e| e.api_type == api_type)
     {
         bail!(
@@ -44,14 +47,6 @@ pub fn render_for_launch_api_type(
         );
     }
     render(profile, api_type, launch_target, provider)
-}
-
-pub fn env_for_launch(
-    profile: &ProfileDef,
-    launch_target: &str,
-) -> anyhow::Result<Vec<(String, String)>> {
-    let rendered = render_for_launch(profile, launch_target)?;
-    materialize_env_for_profile(profile, rendered)
 }
 
 pub fn render_for_agent_route(
@@ -67,8 +62,6 @@ pub fn render_for_agent_route(
             launch_id,
             &route.client_api_type,
             target_api_type,
-            route.bridge_upstream_model.as_deref(),
-            route.bridge_fake_model_id.as_deref(),
             &route.bridge_models,
         ),
         None => render_for_launch_api_type(profile, launch_target, &route.client_api_type),
@@ -183,6 +176,7 @@ pub fn launch_targets_for_api_types(
         out.push(("gemini", "Gemini CLI", "gemini"));
     }
     if let Some(api_type) = pi_api_type_for(api_types) {
+        out.push(("va-agent", "VibeAround Agent", api_type));
         out.push(("pi", "Pi", api_type));
     }
     if has("openai-responses") {
@@ -203,6 +197,7 @@ pub fn agent_id_for(launch_target: &str) -> anyhow::Result<&'static str> {
         "codex-desktop" => Ok("codex-desktop"),
         "gemini" => Ok("gemini"),
         "opencode" => Ok("opencode"),
+        "va-agent" => Ok("va-agent"),
         "pi" => Ok("pi"),
         other => bail!("unsupported launch target: '{}'", other),
     }
@@ -216,7 +211,10 @@ pub fn api_type_for_launch_target<'a>(
     let candidates = api_types_for_launch_target(launch_target);
 
     for candidate in candidates {
-        if profile.api_types.iter().any(|t| t == candidate)
+        if profile
+            .api_configs
+            .get(*candidate)
+            .is_some_and(|config| config.enabled)
             && provider.endpoints.iter().any(|e| e.api_type == *candidate)
         {
             return Ok(candidate);
@@ -237,7 +235,7 @@ fn api_types_for_launch_target(launch_target: &str) -> &'static [&'static str] {
         "codex" | "codex-desktop" => &["openai-responses"],
         "gemini" => &["gemini"],
         "opencode" => &["openai-responses", "openai-chat", "anthropic"],
-        "pi" => &["anthropic", "openai-responses", "openai-chat"],
+        "pi" | "va-agent" => &["anthropic", "openai-responses", "openai-chat"],
         _ => &[],
     }
 }

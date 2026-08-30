@@ -107,20 +107,14 @@ fn route_scope_agent_ids() -> &'static [(&'static str, &'static str)] {
 
 fn canonical_model(profile: &ProfileDef, target_api_type: &str, model: &str) -> Option<String> {
     let provider = catalog::get(&profile.provider)?;
-    if let Some(model_id) = schema::api_config_for(profile, provider, target_api_type)
+    if let Some(model_id) = schema::api_config_for(profile, target_api_type)
         .filter(|config| config.enabled)
         .and_then(|config| canonical_api_config_model_id(&config.models, model))
     {
         return Some(model_id);
     }
-    let endpoint_id = schema::api_config_for(profile, provider, target_api_type)
-        .and_then(|config| config.endpoint_id)
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.endpoint_id.clone())
-        });
+    let endpoint_id =
+        schema::api_config_for(profile, target_api_type).and_then(|config| config.endpoint_id);
     let endpoint = catalog::find_endpoint(provider, target_api_type, endpoint_id.as_deref())?;
     catalog::canonical_model_id(endpoint, model)
 }
@@ -227,7 +221,7 @@ fn clean_model_id(value: Option<&str>) -> Option<String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use common::profiles::schema::{ApiTypeOverrides, AuthMode};
+    use common::profiles::schema::{AuthMode, ProfileApiConfig};
 
     use super::*;
 
@@ -238,21 +232,18 @@ mod tests {
             label: "Gemini Test".to_string(),
             provider: "gemini".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: [(
+            api_configs: [(
                 "openai-chat".to_string(),
-                ApiTypeOverrides {
+                ProfileApiConfig {
+                    enabled: true,
                     endpoint_id: Some("gemini-api".to_string()),
-                    base_url: None,
                     model: Some("gemini-3.1-pro".to_string()),
-                    reasoning_effort: None,
-                    capabilities: None,
+                    ..Default::default()
                 },
             )]
             .into_iter()
             .collect(),
-            api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
             connections: Default::default(),
@@ -260,9 +251,11 @@ mod tests {
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
             target_api_type: Some("openai-chat".to_string()),
-            upstream_model: Some("gemini-3.1-pro".to_string()),
-            fake_model_id: None,
-            models: Vec::new(),
+            models: vec![agent_state::ProfileBridgeModelPreference {
+                upstream_model: Some("gemini-3.1-pro".to_string()),
+                fake_model_id: None,
+                capabilities: Default::default(),
+            }],
             headers: BTreeMap::new(),
         };
 
@@ -280,9 +273,7 @@ mod tests {
             label: "Custom Test".to_string(),
             provider: "custom".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -291,8 +282,6 @@ mod tests {
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
             target_api_type: Some("openai-chat".to_string()),
-            upstream_model: Some("gpt-4o".to_string()),
-            fake_model_id: None,
             models: Vec::new(),
             headers: BTreeMap::new(),
         };
@@ -316,9 +305,7 @@ mod tests {
             label: "DeepSeek Test".to_string(),
             provider: "deepseek".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -327,8 +314,6 @@ mod tests {
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
             target_api_type: Some("openai-chat".to_string()),
-            upstream_model: Some("deepseek-v4-pro".to_string()),
-            fake_model_id: Some("opus-4.7[1m]".to_string()),
             models: vec![agent_state::ProfileBridgeModelPreference {
                 upstream_model: Some("deepseek-v4-pro".to_string()),
                 fake_model_id: Some("opus-4.7[1m]".to_string()),
@@ -377,9 +362,7 @@ mod tests {
             label: "DeepSeek Test".to_string(),
             provider: "deepseek".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -388,8 +371,6 @@ mod tests {
         let bridge = agent_state::ProfileBridgePreference {
             enabled: true,
             target_api_type: Some("openai-chat".to_string()),
-            upstream_model: Some("deepseek-v4-pro".to_string()),
-            fake_model_id: Some("GPT-5.5".to_string()),
             models: vec![agent_state::ProfileBridgeModelPreference {
                 upstream_model: Some("deepseek-v4-pro".to_string()),
                 fake_model_id: Some("GPT-5.5".to_string()),
@@ -423,9 +404,7 @@ mod tests {
             label: "DeepSeek Test".to_string(),
             provider: "deepseek".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai-chat".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),
@@ -437,8 +416,6 @@ mod tests {
         agent_state::ProfileBridgePreference {
             enabled: true,
             target_api_type: Some("openai-chat".to_string()),
-            upstream_model: Some("deepseek-v4-pro".to_string()),
-            fake_model_id: None,
             models: vec![
                 agent_state::ProfileBridgeModelPreference {
                     upstream_model: Some("deepseek-v4-pro".to_string()),

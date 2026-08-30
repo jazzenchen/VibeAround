@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  Eye, ExternalLink, Globe, Trash2, RefreshCw, FileText, Server,
+  Check, Copy, Eye, ExternalLink, Globe, Trash2, RefreshCw, FileText, Server,
 } from "lucide-react";
 import {
-  PREVIEW_SHARE_TTL_SECS,
   PreviewsResponseSchema,
   type PreviewSnapshot,
   type PreviewsResponse,
@@ -13,9 +12,7 @@ import { useI18n } from "@va/i18n";
 import { EmptyBlock, PageHeader, PageShell, StatusBanner } from "@/components/page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { apiFetch, openDashboardUrl, API_BASE } from "./lib/api";
-
-const PREVIEW_SHARE_TTL_MINUTES = Math.round(PREVIEW_SHARE_TTL_SECS / 60);
+import { apiFetch, openExternalUrl, API_BASE } from "./lib/api";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -64,9 +61,6 @@ export function Previews() {
       <PageHeader
         icon={<Eye className="w-4 h-4 text-primary" />}
         title={t("Previews")}
-        description={t("Active dev-server previews and markdown previews. Owner links are permanent; share links rotate every {{minutes}} minutes.", {
-          minutes: PREVIEW_SHARE_TTL_MINUTES,
-        })}
         actions={(
           <Button
             type="button"
@@ -99,7 +93,7 @@ export function Previews() {
         ))}
         {(!data || data.previews.length === 0) && !loading && (
           <EmptyBlock>
-            {t("No active previews. Ask your coding agent to run preview or md_preview.")}
+            {t("No active previews. Ask your coding agent to run preview.")}
           </EmptyBlock>
         )}
       </div>
@@ -115,16 +109,33 @@ interface PreviewRowProps {
   onClose: () => void;
 }
 
+type CopyStatus = "idle" | "copied" | "failed";
+
 function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: PreviewRowProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const ownerPath = `/va/preview/u/${encodeURIComponent(preview.slug)}`;
-  const sharePath = preview.share_key
-    ? `/va/preview/s/${encodeURIComponent(preview.share_key)}`
+  const sharePath = preview.share_id
+    && preview.share_code
+    && preview.share_expires_at_ms
+    && preview.share_expires_at_ms > Date.now()
+    ? `/va/preview/s/${encodeURIComponent(preview.share_id)}`
     : null;
 
   const localOwnerUrl = `${localBase}${ownerPath}`;
   const tunnelOwnerUrl = tunnelUrl ? `${tunnelUrl}${ownerPath}` : null;
   const tunnelShareUrl = tunnelUrl && sharePath ? `${tunnelUrl}${sharePath}` : null;
+  const shareMessage = tunnelShareUrl && preview.share_code && preview.share_expires_at_ms
+    ? t("Access code: {{code}} (reusable by multiple viewers until expiry)\nVibeAround Preview: {{title}}\n{{url}}\nExpires: {{expires}}", {
+        title: preview.title,
+        url: tunnelShareUrl,
+        code: preview.share_code,
+        expires: new Date(preview.share_expires_at_ms).toLocaleString(locale, {
+          timeZoneName: "short",
+        }),
+      })
+    : null;
+  const displayCode = preview.share_code?.replace(/^(\d{3})(\d{3})$/, "$1 $2");
 
   const Icon = preview.kind === "server" ? Server : FileText;
 
@@ -177,25 +188,67 @@ function PreviewRow({ preview, tunnelUrl, localBase, isFirst, onClose }: Preview
           label={t("Local")}
           url={localOwnerUrl}
           icon={<ExternalLink className="w-3 h-3" />}
+          openUrl={openExternalUrl}
         />
         <UrlButton
           label={t("Tunnel · owner")}
           url={tunnelOwnerUrl}
           icon={<Globe className="w-3 h-3" />}
+          openUrl={openExternalUrl}
           disabledReason={tunnelOwnerUrl ? null : t("Tunnel not running")}
         />
         <UrlButton
           label={t("Tunnel · share")}
           url={tunnelShareUrl}
           icon={<Globe className="w-3 h-3" />}
+          openUrl={openExternalUrl}
           disabledReason={
             !tunnelUrl
               ? t("Tunnel not running")
               : !sharePath
-                ? t("Share key expired")
+                ? t("Access code expired")
                 : null
           }
         />
+        {shareMessage && (
+          <>
+            <span className="px-1 text-[11px] text-muted-foreground">
+              {t("Access code")}: <code className="font-mono text-foreground">{displayCode}</code>
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
+              className="h-7 text-[11px] bg-primary/10 text-primary hover:bg-primary/20"
+              title={copyStatus === "copied"
+                ? t("Copied")
+                : copyStatus === "failed"
+                  ? t("Copy failed")
+                  : t("Copy share message")}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await navigator.clipboard.writeText(shareMessage);
+                    setCopyStatus("copied");
+                  } catch {
+                    setCopyStatus("failed");
+                  } finally {
+                    window.setTimeout(() => setCopyStatus("idle"), 1600);
+                  }
+                })();
+              }}
+            >
+              {copyStatus === "copied"
+                ? <Check className="w-3 h-3" />
+                : <Copy className="w-3 h-3" />}
+              {copyStatus === "copied"
+                ? t("Copied")
+                : copyStatus === "failed"
+                  ? t("Copy failed")
+                  : t("Copy share message")}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -205,15 +258,16 @@ interface UrlButtonProps {
   label: string;
   url: string | null;
   icon: React.ReactNode;
+  openUrl: (url: string) => Promise<void>;
   disabledReason?: string | null;
 }
 
-function UrlButton({ label, url, icon, disabledReason }: UrlButtonProps) {
+function UrlButton({ label, url, icon, openUrl, disabledReason }: UrlButtonProps) {
   const { t } = useI18n();
   const disabled = !url || !!disabledReason;
   const onClick = () => {
     if (!url) return;
-    void openDashboardUrl(url);
+    void openUrl(url);
   };
   return (
     <Button

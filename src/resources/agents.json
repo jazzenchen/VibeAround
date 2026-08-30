@@ -1,5 +1,27 @@
 [
   {
+    "id": "va-agent",
+    "display_name": "VibeAround Agent",
+    "description": "Built-in VibeAround coding agent",
+    "aliases": [],
+    "built_in": true,
+    "requires_profile": true,
+    "install": {
+      "type": "npm"
+    },
+    "acp": {
+      "program": "node",
+      "npm_package": "@vibearound/agent@0.1.2",
+      "bin_name": "va-agent"
+    },
+    "pty": {
+      "command": "va tui"
+    },
+    "global_config": {
+      "project_skill_dir": ".agents/skills/vibearound"
+    }
+  },
+  {
     "id": "claude",
     "display_name": "Claude Code",
     "description": "Anthropic Claude Code",
@@ -7,7 +29,7 @@
     "install": { "type": "npm" },
     "acp": {
       "program": "node",
-      "npm_package": "@agentclientprotocol/claude-agent-acp@0.61.0",
+      "npm_package": "@agentclientprotocol/claude-agent-acp@0.66.0",
       "bin_name": "claude-agent-acp"
     },
     "pty": {
@@ -48,7 +70,7 @@
     "install": { "type": "npm" },
     "acp": {
       "program": "node",
-      "npm_package": "@agentclientprotocol/codex-acp@1.1.7",
+      "npm_package": "@agentclientprotocol/codex-acp@1.1.14",
       "bin_name": "codex-acp"
     },
     "pty": {

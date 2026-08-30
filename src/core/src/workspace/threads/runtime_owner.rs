@@ -26,7 +26,9 @@ pub(super) struct StartCommand {
     pub(super) runtime: Arc<ThreadRuntime>,
     pub(super) route: RouteKey,
     pub(super) handler: Arc<dyn AgentClientHandler>,
-    pub(super) reply: oneshot::Sender<acp::Result<ThreadRuntimeStart>>,
+    pub(super) cancellation: Option<watch::Receiver<bool>>,
+    pub(super) replay: StartupReplay,
+    pub(super) reply: oneshot::Sender<acp::Result<Option<ThreadRuntimeStart>>>,
 }
 
 pub(super) struct RuntimeCommand<T> {
@@ -43,6 +45,7 @@ pub(super) struct CloseCommand {
 pub(super) struct SwitchProfileCommand {
     pub(super) runtime: Arc<ThreadRuntime>,
     pub(super) host_binding: HostBinding,
+    pub(super) preserve_session: bool,
     pub(super) reply: oneshot::Sender<acp::Result<()>>,
 }
 
@@ -137,9 +140,13 @@ impl ThreadOwner {
                         runtime,
                         route,
                         handler,
+                        cancellation,
+                        replay,
                         reply,
                     } = *command;
-                    let result = self.start(&runtime, &route, handler).await;
+                    let result = self
+                        .start(&runtime, &route, handler, cancellation, replay)
+                        .await;
                     let _ = reply.send(result);
                 }
                 ThreadOwnerCommand::Cancel(command) => {
@@ -171,9 +178,12 @@ impl ThreadOwner {
                     let SwitchProfileCommand {
                         runtime,
                         host_binding,
+                        preserve_session,
                         reply,
                     } = *command;
-                    let result = self.switch_profile(&runtime, host_binding).await;
+                    let result = self
+                        .switch_host(&runtime, host_binding, preserve_session)
+                        .await;
                     let _ = reply.send(result);
                 }
                 ThreadOwnerCommand::PromptFinished { result, reply } => {
@@ -242,7 +252,7 @@ impl ThreadOwner {
             target,
             content_blocks,
             handler,
-            cancellation,
+            mut cancellation,
             reply,
         } = command;
         if cancellation
@@ -262,14 +272,35 @@ impl ThreadOwner {
         let setup = async {
             self.maybe_record_first_prompt(&runtime, &content_blocks)
                 .await?;
-            let agent = self
-                .ensure_agent(&runtime, &target.route, Arc::clone(&handler))
-                .await?;
-            let session_id = self.ensure_session(&runtime, &agent).await?;
-            Ok::<_, acp::Error>((agent, session_id))
+            // A message reviving a parked host continues the session the
+            // surface already rendered — never a replay.
+            let Some((agent, _)) = self
+                .ensure_agent(
+                    &runtime,
+                    &target.route,
+                    Arc::clone(&handler),
+                    cancellation.as_mut(),
+                    StartupReplay::Silent,
+                )
+                .await?
+            else {
+                return Ok::<_, acp::Error>(None);
+            };
+            let Some(session_id) = self
+                .ensure_session(&runtime, &agent, cancellation.as_mut())
+                .await?
+            else {
+                return Ok(None);
+            };
+            Ok(Some((agent, session_id)))
         };
         let (agent, session_id) = match setup.await {
-            Ok(prepared) => prepared,
+            Ok(Some(prepared)) => prepared,
+            Ok(None) => {
+                self.finish_prompt_inline(handler, cancelled_prompt_response(), reply)
+                    .await;
+                return false;
+            }
             Err(error) => {
                 self.finish_prompt_inline(handler, Err(error), reply).await;
                 return false;
@@ -307,13 +338,21 @@ impl ThreadOwner {
                 _ = wait_for_signal(&mut turn_cancellation) => {
                     let _ = agent.cancel(acp::CancelNotification::new(session_id.clone())).await;
                     let shutdown_agent = Arc::clone(&agent);
-                    await_cancelled_prompt(prompt.as_mut(), ACP_CANCEL_GRACE, move || async move {
-                        shutdown_agent.shutdown().await;
-                    }).await
+                    await_cancelled_prompt(
+                        prompt.as_mut(),
+                        ACP_CANCEL_GRACE,
+                        ACP_SHUTDOWN_RESPONSE_GRACE,
+                        move || async move { shutdown_agent.shutdown().await },
+                    )
+                    .await
+                    .unwrap_or_else(cancelled_prompt_response)
                 }
                 result = &mut prompt => result,
             };
-            if let Err(error) = finish_handler.prompt_finished(result.is_ok()).await {
+            if let Err(error) = finish_handler
+                .prompt_finished(prompt_completed_successfully(&result))
+                .await
+            {
                 tracing::warn!(
                     thread_id = %thread_id,
                     error = %error.message,
@@ -334,7 +373,10 @@ impl ThreadOwner {
         result: acp::Result<acp::PromptResponse>,
         reply: oneshot::Sender<acp::Result<acp::PromptResponse>>,
     ) {
-        if let Err(error) = handler.prompt_finished(result.is_ok()).await {
+        if let Err(error) = handler
+            .prompt_finished(prompt_completed_successfully(&result))
+            .await
+        {
             let thread_id = self.thread.id.clone();
             tracing::warn!(
                 thread_id = %thread_id,
@@ -355,16 +397,35 @@ impl ThreadOwner {
         runtime: &ThreadRuntime,
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
-    ) -> acp::Result<ThreadRuntimeStart> {
+        mut cancellation: Option<watch::Receiver<bool>>,
+        replay: StartupReplay,
+    ) -> acp::Result<Option<ThreadRuntimeStart>> {
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| *cancellation.borrow())
+        {
+            return Ok(None);
+        }
         let host_started = self.host.as_ref().is_none_or(|host| !host.is_live());
-        let agent = self.ensure_agent(runtime, route, handler).await?;
-        let session_id = self.ensure_session(runtime, &agent).await?;
+        let Some((agent, replayed)) = self
+            .ensure_agent(runtime, route, handler, cancellation.as_mut(), replay)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let Some(session_id) = self
+            .ensure_session(runtime, &agent, cancellation.as_mut())
+            .await?
+        else {
+            return Ok(None);
+        };
         self.record_activity();
         self.publish_activity();
-        Ok(ThreadRuntimeStart {
+        Ok(Some(ThreadRuntimeStart {
             session_id,
             host_started,
-        })
+            replayed,
+        }))
     }
 
     fn cancel(&mut self, runtime: &ThreadRuntime, prompt_active: bool) -> acp::Result<()> {
@@ -395,23 +456,23 @@ impl ThreadOwner {
     }
 
     async fn shutdown_host_contents(&mut self, runtime: &ThreadRuntime) {
-        self.shutdown_agent_processes(runtime, true).await;
+        self.shutdown_agent_processes(runtime).await;
     }
 
-    async fn shutdown_agent_processes(&mut self, runtime: &ThreadRuntime, cleanup_previews: bool) {
-        runtime.active_turn_target.cancel_current();
-        if cleanup_previews {
-            if let Some(session_id) = &self.session_id {
-                crate::previews::kill_by_session(session_id);
-            }
+    async fn shutdown_host_generation(&mut self, runtime: &ThreadRuntime) {
+        if let Some(host) = self.host.take() {
+            host.shutdown().await;
+            self.publish_runtime_state();
+            runtime.notify_change();
         }
+    }
+
+    async fn shutdown_agent_processes(&mut self, runtime: &ThreadRuntime) {
+        runtime.active_turn_target.cancel_current();
         if let Some(host) = self.host.take() {
             host.shutdown().await;
         }
         for (_, subagent) in std::mem::take(&mut self.subagents) {
-            if cleanup_previews {
-                crate::previews::kill_by_session(&subagent.session_id);
-            }
             subagent.agent.shutdown().await;
         }
         let mut state = self.state_tx.borrow().clone();
@@ -430,16 +491,17 @@ impl ThreadOwner {
         if self.activity_generation != generation || !has_live_agent || !self.subagents.is_empty() {
             return false;
         }
-        self.shutdown_agent_processes(runtime, false).await;
+        self.shutdown_agent_processes(runtime).await;
         true
     }
 
-    async fn switch_profile(
+    async fn switch_host(
         &mut self,
         runtime: &ThreadRuntime,
         host_binding: HostBinding,
+        preserve_session: bool,
     ) -> acp::Result<()> {
-        if self.thread.host_binding.agent_id != host_binding.agent_id {
+        if preserve_session && self.thread.host_binding.agent_id != host_binding.agent_id {
             return Err(acp::Error::new(
                 -32602,
                 "profile switch cannot change agent",
@@ -449,7 +511,7 @@ impl ThreadOwner {
             return Ok(());
         }
 
-        let preserved_session_id = self.session_id.clone();
+        let preserved_session_id = preserve_session.then(|| self.session_id.clone()).flatten();
         if let Some(host) = self.host.take() {
             host.shutdown().await;
         }
@@ -471,6 +533,8 @@ impl ThreadOwner {
                 self.persist_thread_event(runtime, &event).await?;
             }
             self.session_id = Some(session_id);
+        } else {
+            self.session_id = None;
         }
         self.publish_runtime_state();
         runtime.notify_change();
@@ -482,18 +546,46 @@ impl ThreadOwner {
         runtime: &ThreadRuntime,
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
-    ) -> acp::Result<Arc<Agent>> {
-        if let Some(host) = self.host.as_ref().filter(|host| host.is_live()) {
-            return Ok(Arc::clone(&host.agent));
+        cancellation: Option<&mut watch::Receiver<bool>>,
+        replay: StartupReplay,
+    ) -> acp::Result<Option<(Arc<Agent>, bool)>> {
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| *cancellation.borrow())
+        {
+            return Ok(None);
         }
-        if let Some(stale) = self.host.take() {
+        if let Some(host) = self.host.as_ref().filter(|host| host.is_live()) {
+            let prospective =
+                host_startup_session(route, self.session_id.clone(), &self.thread, replay);
+            if !matches!(prospective, StartupSession::Load(_)) {
+                return Ok(Some((Arc::clone(&host.agent), false)));
+            }
+            // A replay was requested and this start would deliver one via
+            // session/load — a live host cannot re-load its own session, so
+            // replace the generation. Starts queue behind an active prompt,
+            // so this never interrupts a running turn.
+            tracing::info!(
+                thread_id = %self.thread.id,
+                agent_id = %host.agent.id(),
+                "restarting live ACP host to replay the session transcript"
+            );
+            self.shutdown_host_generation(runtime).await;
+        }
+        if let Some(stale) = self.host.as_ref() {
             let thread_id = self.thread.id.clone();
             tracing::info!(
                 thread_id = %thread_id,
                 agent_id = %stale.agent.id(),
                 "replacing stopped ACP host generation"
             );
-            stale.shutdown().await;
+            self.shutdown_host_generation(runtime).await;
+        }
+        if cancellation
+            .as_ref()
+            .is_some_and(|cancellation| *cancellation.borrow())
+        {
+            return Ok(None);
         }
 
         let thread = self.thread.clone();
@@ -507,7 +599,7 @@ impl ThreadOwner {
             .profile_id
             .clone()
             .unwrap_or_else(|| "default".to_string());
-        let startup_session = host_startup_session(route, self.session_id.clone(), &thread);
+        let startup_session = host_startup_session(route, self.session_id.clone(), &thread, replay);
 
         std::fs::create_dir_all(&runtime.workspace).map_err(|error| {
             acp::Error::new(
@@ -554,7 +646,7 @@ impl ThreadOwner {
         ));
 
         let spawned_handler = Arc::clone(&handler);
-        let ready = Agent::spawn(
+        let ready = Agent::spawn_cancellable(
             agent_id.clone(),
             route,
             &runtime.workspace,
@@ -562,9 +654,13 @@ impl ThreadOwner {
             handler,
             extra_args,
             env_vars,
+            cancellation,
         )
         .await
         .map_err(|error| acp::Error::new(-32603, format!("{:#}", error)))?;
+        let Some(ready) = ready else {
+            return Ok(None);
+        };
 
         self.host = Some(AcpSessionRunner {
             agent: Arc::clone(&ready.agent),
@@ -572,6 +668,8 @@ impl ThreadOwner {
         });
         self.publish_runtime_state();
 
+        let replayed = matches!(startup_session, StartupSession::Load(_))
+            && ready.startup_session_id.is_some();
         if let Some(session_id) = ready.startup_session_id {
             self.observe_session(
                 runtime,
@@ -584,25 +682,38 @@ impl ThreadOwner {
             self.session_id = None;
             self.publish_runtime_state();
         }
-        Ok(ready.agent)
+        Ok(Some((ready.agent, replayed)))
     }
 
     async fn ensure_session(
         &mut self,
         runtime: &ThreadRuntime,
         agent: &Arc<Agent>,
-    ) -> acp::Result<String> {
+        cancellation: Option<&mut watch::Receiver<bool>>,
+    ) -> acp::Result<Option<String>> {
         if let Some(session_id) = &self.session_id {
-            return Ok(session_id.clone());
+            return Ok(Some(session_id.clone()));
         }
-        let response = agent
-            .new_session(acp::NewSessionRequest::new(runtime.workspace.clone()))
-            .await?;
+        let request = agent.new_session(acp::NewSessionRequest::new(runtime.workspace.clone()));
+        tokio::pin!(request);
+        let response = match cancellation {
+            Some(cancellation) => {
+                tokio::select! {
+                    biased;
+                    _ = wait_for_signal(cancellation) => {
+                        self.shutdown_host_generation(runtime).await;
+                        return Ok(None);
+                    }
+                    response = &mut request => response?,
+                }
+            }
+            None => request.await?,
+        };
         let session_id = response.session_id.to_string();
         let host = self.thread.host_binding.clone();
         self.observe_session(runtime, &host.agent_id, host.profile_id, &session_id)
             .await?;
-        Ok(session_id)
+        Ok(Some(session_id))
     }
 
     async fn observe_session(

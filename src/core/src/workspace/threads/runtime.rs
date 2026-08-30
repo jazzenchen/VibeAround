@@ -20,6 +20,22 @@ use super::store::{
     ThreadEventStore, ThreadStatus, WorkspaceThread, WorkspaceThreadId,
 };
 
+/// Whether a host start should replay the session transcript to the caller.
+///
+/// Replay is a request-response affair: the one surface that attaches to a
+/// session it has not rendered asks for `Replay`; every other start — a user
+/// message reviving a parked host, an agent command, a profile switch under an
+/// already-rendered view — continues silently. Which wire call that becomes
+/// (`session/load` vs `session/resume`) is decided per agent and channel in
+/// [`host_startup_session`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupReplay {
+    /// The requesting surface needs the transcript replayed.
+    Replay,
+    /// Continue the session without re-emitting history.
+    Silent,
+}
+
 #[derive(Debug, Clone)]
 pub struct ThreadRuntimeState {
     pub thread_id: WorkspaceThreadId,
@@ -76,6 +92,8 @@ pub(crate) struct ThreadActivitySnapshot {
 pub(crate) struct ThreadRuntimeStart {
     pub(crate) session_id: String,
     pub(crate) host_started: bool,
+    /// Whether this start actually replayed the transcript via `session/load`.
+    pub(crate) replayed: bool,
 }
 
 impl AcpSessionRunner {
@@ -108,28 +126,48 @@ const SUBAGENT_RETRY_DELAY: Duration = Duration::from_millis(750);
 /// Grace period for an ACP prompt to return its real response after cancel.
 /// Supervisor process shutdown has its own separate two-second contract.
 const ACP_CANCEL_GRACE: Duration = Duration::from_secs(30);
+/// Final bound for an ACP request to resolve after its process has shut down.
+const ACP_SHUTDOWN_RESPONSE_GRACE: Duration = Duration::from_secs(2);
 
 async fn await_cancelled_prompt<F, S, SF>(
     mut prompt: Pin<&mut F>,
     grace: Duration,
+    shutdown_grace: Duration,
     shutdown: S,
-) -> F::Output
+) -> Option<F::Output>
 where
     F: Future,
     S: FnOnce() -> SF,
     SF: Future<Output = ()>,
 {
     match tokio::time::timeout(grace, prompt.as_mut()).await {
-        Ok(result) => result,
+        Ok(result) => Some(result),
         Err(_) => {
             tracing::warn!(
                 grace_seconds = grace.as_secs(),
                 "ACP prompt did not finish after cancel; forcing agent shutdown"
             );
             shutdown().await;
-            prompt.await
+            match tokio::time::timeout(shutdown_grace, prompt.as_mut()).await {
+                Ok(result) => Some(result),
+                Err(_) => {
+                    tracing::warn!(
+                        grace_seconds = shutdown_grace.as_secs(),
+                        "ACP prompt remained pending after agent shutdown"
+                    );
+                    None
+                }
+            }
         }
     }
+}
+
+pub(crate) fn cancelled_prompt_response() -> acp::Result<acp::PromptResponse> {
+    Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+}
+
+fn prompt_completed_successfully(result: &acp::Result<acp::PromptResponse>) -> bool {
+    matches!(result, Ok(response) if response.stop_reason != acp::StopReason::Cancelled)
 }
 
 pub struct ThreadRuntime {
@@ -225,7 +263,9 @@ impl ThreadRuntime {
         self: &Arc<Self>,
         route: &RouteKey,
         handler: Arc<dyn AgentClientHandler>,
-    ) -> acp::Result<ThreadRuntimeStart> {
+        cancellation: Option<watch::Receiver<bool>>,
+        replay: StartupReplay,
+    ) -> acp::Result<Option<ThreadRuntimeStart>> {
         self.mark_activity();
         let (reply, done) = oneshot::channel();
         self.owner_tx
@@ -233,6 +273,8 @@ impl ThreadRuntime {
                 runtime: Arc::clone(self),
                 route: route.clone(),
                 handler,
+                cancellation,
+                replay,
                 reply,
             })))
             .map_err(|_| runtime_stopped_error())?;
@@ -368,6 +410,26 @@ impl ThreadRuntime {
                 SwitchProfileCommand {
                     runtime: Arc::clone(self),
                     host_binding,
+                    preserve_session: true,
+                    reply,
+                },
+            )))
+            .map_err(|_| runtime_stopped_error())?;
+        done.await.unwrap_or_else(|_| Err(runtime_stopped_error()))
+    }
+
+    pub async fn switch_host_replacing_session(
+        self: &Arc<Self>,
+        host_binding: HostBinding,
+    ) -> acp::Result<()> {
+        self.mark_activity();
+        let (reply, done) = oneshot::channel();
+        self.owner_tx
+            .send(ThreadOwnerCommand::SwitchProfile(Box::new(
+                SwitchProfileCommand {
+                    runtime: Arc::clone(self),
+                    host_binding,
+                    preserve_session: false,
                     reply,
                 },
             )))
@@ -402,14 +464,18 @@ fn host_startup_session(
     route: &RouteKey,
     runtime_session_id: Option<String>,
     thread: &WorkspaceThread,
+    replay: StartupReplay,
 ) -> StartupSession {
     let Some(session_id) = runtime_session_id.or_else(|| latest_session_for_host(thread)) else {
         return StartupSession::Fresh;
     };
-    if route_allows_startup_replay(route) {
-        if thread.host_binding.agent_id == "gemini" {
-            return StartupSession::ResumeOnly(session_id);
-        }
+    // `session/load` makes gemini write a brand-new session record, so it
+    // attaches without replay no matter who is asking — and its silent path
+    // must not fall back to a suppressed load either.
+    if thread.host_binding.agent_id == "gemini" {
+        return StartupSession::ResumeOnly(session_id);
+    }
+    if replay == StartupReplay::Replay && route_allows_startup_replay(route) {
         StartupSession::Load(session_id)
     } else {
         StartupSession::Resume(session_id)

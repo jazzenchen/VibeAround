@@ -93,8 +93,13 @@ pub async fn profiles_get(id: String) -> Result<ProfileDef, String> {
 }
 
 #[tauri::command]
-pub async fn profiles_upsert(app: tauri::AppHandle, profile: ProfileDef) -> Result<(), String> {
+pub async fn profiles_upsert(
+    app: tauri::AppHandle,
+    id: String,
+    draft: ProfileDraft,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let profile = draft.into_profile(id);
         save_profile(&profile)?;
         emit_launch_config_changed(&app);
         Ok(())
@@ -806,6 +811,58 @@ pub async fn launcher_set_local_agent_api_enabled(
             if let Some(settings) = entry.as_object_mut() {
                 settings.insert("enabled".to_string(), serde_json::json!(enabled));
             }
+        })?;
+        emit_launch_config_changed(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn launcher_set_local_agent_api_agent(
+    app: tauri::AppHandle,
+    agent_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let agent_id = common::resources::resolve_agent_id(&agent_id)?;
+        config::update_settings_json(|root| {
+            if !root.is_object() {
+                *root = serde_json::json!({});
+            }
+            let Some(root_obj) = root.as_object_mut() else {
+                return;
+            };
+            let entry = root_obj
+                .entry("local_agent_api".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if !entry.is_object() {
+                *entry = serde_json::json!({});
+            }
+            let Some(settings) = entry.as_object_mut() else {
+                return;
+            };
+            let mut agents: Vec<String> = settings
+                .get("agents")
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|agent| !agent.is_empty())
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            agents.retain(|agent| agent != &agent_id);
+            if enabled {
+                agents.push(agent_id.clone());
+            }
+            agents.sort();
+            agents.dedup();
+            settings.insert("agents".to_string(), serde_json::json!(agents));
         })?;
         emit_launch_config_changed(&app);
         Ok(())

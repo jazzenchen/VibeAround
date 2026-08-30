@@ -636,17 +636,19 @@ function ResultItems({
   );
 }
 
+export interface ChatTurnDisplayProps {
+  message: ChatMessage;
+  isStreaming: boolean;
+  displaySettings: ChatDisplaySettings;
+  workspacePath?: string;
+}
+
 export function ChatTurnDisplay({
   message,
   isStreaming,
   displaySettings,
   workspacePath,
-}: {
-  message: ChatMessage;
-  isStreaming: boolean;
-  displaySettings: ChatDisplaySettings;
-  workspacePath?: string;
-}) {
+}: ChatTurnDisplayProps) {
   if (isStreaming) {
     const model = buildTurnDisplayModel(message);
     if (model.segments.length === 0) {

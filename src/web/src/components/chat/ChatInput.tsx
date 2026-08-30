@@ -7,6 +7,7 @@ import {
   type ChangeEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   ArrowUp,
@@ -36,6 +37,7 @@ export type { ChatSessionSelection } from "./chatTypes";
 
 const TEXTAREA_MAX_HEIGHT_PX = 256;
 const TEXTAREA_MIN_HEIGHT_PX = 72;
+const COMPACT_TEXTAREA_MIN_HEIGHT_PX = 48;
 const HERO_TEXTAREA_MIN_HEIGHT_PX = 128;
 
 const CHAT_COMMANDS = [
@@ -64,6 +66,9 @@ export interface ChatInputProps {
   attachmentsUploadingCount?: number;
   attachmentError?: string;
   sendWithModifierEnter?: boolean;
+  showCommands?: boolean;
+  contextContent?: ReactNode;
+  contextCanSubmit?: boolean;
   sessionMode?: SessionModeState | null;
   onSessionModeChange?: (value: string) => void;
   onFilesSelected?: (files: File[]) => void;
@@ -72,6 +77,7 @@ export interface ChatInputProps {
   /** Shown at bottom-left as the current chat target. */
   targetLabel?: string;
   variant?: "dock" | "hero";
+  compact?: boolean;
   className?: string;
 }
 
@@ -88,6 +94,9 @@ export function ChatInput({
   attachmentsUploadingCount = 0,
   attachmentError,
   sendWithModifierEnter = false,
+  showCommands = true,
+  contextContent,
+  contextCanSubmit = false,
   sessionMode,
   onSessionModeChange,
   onFilesSelected,
@@ -95,6 +104,7 @@ export function ChatInput({
   placeholder = "Message Claude…",
   targetLabel = "Claude Code",
   variant = "dock",
+  compact = false,
   className,
 }: ChatInputProps) {
   const { t } = useI18n();
@@ -106,14 +116,17 @@ export function ChatInput({
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    const minHeight =
-      variant === "hero" ? HERO_TEXTAREA_MIN_HEIGHT_PX : TEXTAREA_MIN_HEIGHT_PX;
+    const minHeight = variant === "hero"
+      ? HERO_TEXTAREA_MIN_HEIGHT_PX
+      : compact
+        ? COMPACT_TEXTAREA_MIN_HEIGHT_PX
+        : TEXTAREA_MIN_HEIGHT_PX;
     el.style.height = "auto";
     el.style.height = `${Math.max(
       minHeight,
       Math.min(el.scrollHeight, TEXTAREA_MAX_HEIGHT_PX),
     )}px`;
-  }, [value, variant]);
+  }, [compact, value, variant]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const isComposing =
@@ -178,7 +191,7 @@ export function ChatInput({
     !disabled &&
     !submitDisabled &&
     !attachmentsUploading &&
-    (!!value.trim() || attachments.length > 0);
+    (!!value.trim() || attachments.length > 0 || contextCanSubmit);
   const showStop = isStreaming && onStop;
   const showDropTarget =
     dragDepth > 0 && Boolean(onFilesSelected) && !disabled && !attachmentsUploading;
@@ -197,7 +210,11 @@ export function ChatInput({
     <div
       data-slot="chat-input"
       className={cn(
-        variant === "hero" ? "bg-transparent p-0" : "bg-background px-4 pb-4 pt-2",
+        variant === "hero"
+          ? "bg-transparent p-0"
+          : compact
+            ? "bg-background px-3 pb-3 pt-1.5"
+            : "bg-background px-4 pb-4 pt-2",
         className,
       )}
     >
@@ -211,7 +228,9 @@ export function ChatInput({
           "relative mx-auto flex max-w-4xl flex-col rounded-lg border border-border transition-[box-shadow,border-color,background-color] focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/30",
           variant === "hero"
             ? "min-h-[11rem] bg-background shadow-lg shadow-foreground/5"
-            : "min-h-[5.5rem] bg-muted/30",
+            : compact
+              ? "min-h-16 bg-muted/30"
+              : "min-h-[5.5rem] bg-muted/30",
           showDropTarget && "border-primary/70 bg-primary/5 ring-2 ring-primary/25",
         )}
       >
@@ -223,6 +242,7 @@ export function ChatInput({
             </div>
           </div>
         )}
+        {contextContent}
         <textarea
           ref={textareaRef}
           value={value}
@@ -241,9 +261,13 @@ export function ChatInput({
             "max-h-64 resize-none overflow-y-auto border-0 bg-transparent text-base sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 transition-[height] duration-200 ease-out",
             variant === "hero"
               ? "min-h-32 px-4 py-3"
-              : "min-h-[4.5rem] px-3 py-3",
+              : compact
+                ? "min-h-12 px-3 py-2"
+                : "min-h-[4.5rem] px-3 py-3",
           )}
-          style={{ height: variant === "hero" ? "8rem" : "4.5rem" }}
+          style={{
+            height: variant === "hero" ? "8rem" : compact ? "3rem" : "4.5rem",
+          }}
         />
         {(attachments.length > 0 || attachmentsUploading || attachmentError) && (
           <div className="space-y-1.5 border-t border-border/60 px-3 py-2">
@@ -323,13 +347,15 @@ export function ChatInput({
                 onChange={onSessionModeChange}
               />
             )}
-            <CommandPicker
-              disabled={disabled}
-              onSelect={(command) => {
-                onChange(command);
-                requestAnimationFrame(() => textareaRef.current?.focus());
-              }}
-            />
+            {showCommands && (
+              <CommandPicker
+                disabled={disabled}
+                onSelect={(command) => {
+                  onChange(command);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              />
+            )}
             <span
               className="min-w-0 truncate px-1 text-xs font-medium text-muted-foreground"
               title={targetLabel}
@@ -342,7 +368,10 @@ export function ChatInput({
             size="icon"
             onClick={showStop ? onStop : onSubmit}
             disabled={!showStop && !canSend}
-            className="h-9 w-9 shrink-0 rounded-full"
+            className={cn(
+              "shrink-0 rounded-full",
+              compact ? "h-8 w-8" : "h-9 w-9",
+            )}
             aria-label={showStop ? t("Stop") : t("Send")}
           >
             {showStop ? (

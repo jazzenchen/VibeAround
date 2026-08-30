@@ -14,7 +14,7 @@ use anyhow::{bail, Context};
 use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
 
-use super::catalog::{self, ContentCapabilities, EndpointDef, ModelDef};
+use super::catalog::ContentCapabilities;
 use crate::{agent_state, config};
 
 // ---------------------------------------------------------------------------
@@ -27,20 +27,6 @@ pub enum AuthMode {
     ApiKey,
     OauthViaCli,
     GoogleOauth,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct ApiTypeOverrides {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub endpoint_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capabilities: Option<ContentCapabilities>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -132,25 +118,13 @@ fn default_true() -> bool {
 pub struct ProfileDef {
     pub id: String,
     pub label: String,
-    /// Catalog provider id (e.g. `"moonshot"`). Reserved value `"custom"` is
-    /// not yet supported in v1; UI gates this.
+    /// Catalog provider id (e.g. `"moonshot"`).
     pub provider: String,
     pub auth_mode: AuthMode,
-    /// Which CLI launch targets this credential is good for. Internally these
-    /// are still keyed by the API/config shape each target needs.
-    pub api_types: Vec<String>,
-    /// Free-form credentials — `api_key` is the only field used by v1
-    /// catalog entries, but we keep the bag generic so future plugins can
-    /// declare custom field names without a schema migration.
+    /// Credential values keyed by catalog field name.
     #[serde(default)]
     pub credentials: BTreeMap<String, String>,
-    /// Optional per-api-type overrides for `base_url` / `model`. Empty ==
-    /// inherit catalog defaults.
-    #[serde(default)]
-    pub overrides: BTreeMap<String, ApiTypeOverrides>,
-    /// Materialized editable API configs cloned from the provider catalog.
-    /// Legacy `api_types` + `overrides` remain the compatibility source for
-    /// older profile files and are projected into this map on load/save.
+    /// Editable API configs cloned from the provider catalog.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub api_configs: BTreeMap<String, ProfileApiConfig>,
     /// When true, provider-bound requests for this profile use the global
@@ -220,16 +194,13 @@ pub fn validate(profile: &ProfileDef) -> anyhow::Result<()> {
     if profile.label.trim().is_empty() {
         bail!("profile label must not be empty");
     }
-    if profile.api_types.is_empty() {
+    if !profile.api_configs.values().any(|config| config.enabled) {
         bail!("profile must declare at least one api kind");
     }
     Ok(())
 }
 
 pub fn enabled_api_types(profile: &ProfileDef) -> Vec<String> {
-    if profile.api_configs.is_empty() {
-        return profile.api_types.clone();
-    }
     profile
         .api_configs
         .iter()
@@ -238,109 +209,8 @@ pub fn enabled_api_types(profile: &ProfileDef) -> Vec<String> {
         .collect()
 }
 
-pub fn api_config_for(
-    profile: &ProfileDef,
-    provider: &catalog::ProviderCatalog,
-    api_type: &str,
-) -> Option<ProfileApiConfig> {
-    profile
-        .api_configs
-        .get(api_type)
-        .cloned()
-        .or_else(|| legacy_api_config(profile, provider, api_type))
-}
-
-pub fn hydrate_api_configs(profile: &mut ProfileDef) {
-    let Some(provider) = catalog::get(&profile.provider) else {
-        return;
-    };
-    let api_types = profile.api_types.clone();
-    for api_type in api_types {
-        if profile.api_configs.contains_key(&api_type) {
-            continue;
-        }
-        if let Some(config) = legacy_api_config(profile, provider, &api_type) {
-            profile.api_configs.insert(api_type, config);
-        }
-    }
-}
-
-fn legacy_api_config(
-    profile: &ProfileDef,
-    provider: &catalog::ProviderCatalog,
-    api_type: &str,
-) -> Option<ProfileApiConfig> {
-    if !profile.api_types.iter().any(|item| item == api_type) {
-        return None;
-    }
-    let overrides = profile.overrides.get(api_type).cloned().unwrap_or_default();
-    let endpoint = catalog::find_endpoint(provider, api_type, overrides.endpoint_id.as_deref())?;
-    Some(ProfileApiConfig {
-        enabled: true,
-        endpoint_id: overrides
-            .endpoint_id
-            .clone()
-            .or_else(|| endpoint.id.clone())
-            .or_else(|| Some(endpoint.api_type.clone())),
-        base_url: overrides.base_url.clone().or_else(|| {
-            (!endpoint.default_base_url.is_empty()).then(|| endpoint.default_base_url.clone())
-        }),
-        append_v1_path: Some(endpoint.append_v1_path),
-        model: overrides
-            .model
-            .clone()
-            .or_else(|| endpoint.models.first().map(|model| model.id.clone())),
-        reasoning_effort: overrides.reasoning_effort.clone(),
-        capabilities: overrides.capabilities.clone(),
-        headers: Vec::new(),
-        models: default_models(
-            endpoint,
-            overrides.model.as_deref(),
-            overrides.capabilities.clone(),
-        ),
-    })
-}
-
-fn default_models(
-    endpoint: &EndpointDef,
-    selected_model: Option<&str>,
-    capability_overrides: Option<ContentCapabilities>,
-) -> Vec<ProfileModelConfig> {
-    let mut models: Vec<_> = endpoint
-        .models
-        .iter()
-        .map(model_config_from_catalog)
-        .collect();
-    if let Some(selected_model) = selected_model
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-    {
-        if catalog::canonical_model_id(endpoint, selected_model).is_none() {
-            models.insert(
-                0,
-                ProfileModelConfig {
-                    id: selected_model.to_string(),
-                    label: None,
-                    enabled: true,
-                    context_window: None,
-                    capabilities: capability_overrides.unwrap_or_default(),
-                    custom: true,
-                },
-            );
-        }
-    }
-    models
-}
-
-fn model_config_from_catalog(model: &ModelDef) -> ProfileModelConfig {
-    ProfileModelConfig {
-        id: model.id.clone(),
-        label: model.label.clone(),
-        enabled: true,
-        context_window: model.context_window,
-        capabilities: model.capabilities.clone(),
-        custom: false,
-    }
+pub fn api_config_for(profile: &ProfileDef, api_type: &str) -> Option<ProfileApiConfig> {
+    profile.api_configs.get(api_type).cloned()
 }
 
 pub fn generate_unique_id(provider_id: &str) -> anyhow::Result<String> {
@@ -427,9 +297,8 @@ pub fn load(id: &str) -> Option<ProfileDef> {
 
 fn load_path(path: &Path) -> anyhow::Result<ProfileDef> {
     let body = std::fs::read_to_string(path).with_context(|| format!("read {:?}", path))?;
-    let mut profile: ProfileDef =
+    let profile: ProfileDef =
         serde_json::from_str(&body).with_context(|| format!("parse {:?}", path))?;
-    hydrate_api_configs(&mut profile);
     Ok(profile)
 }
 
@@ -474,7 +343,6 @@ fn update_at<T>(
     };
     let mut profile: ProfileDef =
         serde_json::from_str(&body).with_context(|| format!("parse {:?}", target))?;
-    hydrate_api_configs(&mut profile);
     if profile.id != id {
         bail!(
             "profile id '{}' does not match filename stem '{}'",
@@ -498,10 +366,8 @@ fn update_at<T>(
 }
 
 fn serialize_profile(profile: &ProfileDef) -> anyhow::Result<String> {
-    let mut profile = profile.clone();
-    hydrate_api_configs(&mut profile);
-    validate(&profile)?;
-    serde_json::to_string_pretty(&profile).context("serialize profile")
+    validate(profile)?;
+    serde_json::to_string_pretty(profile).context("serialize profile")
 }
 
 fn ensure_profiles_dir(dir: &Path) -> anyhow::Result<()> {
@@ -575,9 +441,7 @@ impl LockedProfileFile {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error).with_context(|| format!("remove {:?}", path)),
         }
-        // Best-effort: also drop the per-profile state dir (rendered settings
-        // files, future agent session caches). If the user re-creates a profile
-        // with the same id later, we want a clean slate.
+        // Remove rendered state associated with the deleted profile id.
         let state_dir = config::data_dir().join("profile-state").join(&self.id);
         let _ = std::fs::remove_dir_all(&state_dir);
         Ok(())
@@ -618,7 +482,9 @@ mod tests {
             "label": label,
             "provider": "test",
             "auth_mode": "api_key",
-            "api_types": ["openai-chat"]
+            "api_configs": {
+                "openai-chat": { "enabled": true }
+            }
         }))
         .unwrap()
     }
@@ -660,7 +526,9 @@ mod tests {
                 "label": "DeepSeek",
                 "provider": "deepseek",
                 "auth_mode": "api_key",
-                "api_types": ["openai-chat"]
+                "api_configs": {
+                    "openai-chat": { "enabled": true }
+                }
             }"#,
         )
         .unwrap();
@@ -672,50 +540,6 @@ mod tests {
         let body = serde_json::to_string(&profile).unwrap();
         assert!(!body.contains("provider_settings"));
         assert!(!body.contains("connections"));
-    }
-
-    #[test]
-    fn hydrates_legacy_custom_profile_api_configs() {
-        let mut profile: ProfileDef = serde_json::from_str(
-            r#"{
-                "id": "sensenova",
-                "label": "SenseNova",
-                "provider": "custom",
-                "auth_mode": "api_key",
-                "api_types": ["anthropic", "openai-chat"],
-                "credentials": { "api_key": "sk-test" },
-                "overrides": {
-                    "anthropic": {
-                        "base_url": "https://token.sensenova.cn",
-                        "model": "sensenova-6.7-flash-lite"
-                    },
-                    "openai-chat": {
-                        "base_url": "https://token.sensenova.cn/v1",
-                        "model": "sensenova-6.7-flash-lite"
-                    }
-                }
-            }"#,
-        )
-        .unwrap();
-
-        hydrate_api_configs(&mut profile);
-
-        let anthropic = profile.api_configs.get("anthropic").unwrap();
-        assert!(anthropic.enabled);
-        assert_eq!(
-            anthropic.base_url.as_deref(),
-            Some("https://token.sensenova.cn")
-        );
-        assert_eq!(anthropic.model.as_deref(), Some("sensenova-6.7-flash-lite"));
-        assert!(anthropic.headers.is_empty());
-        assert!(anthropic.models[0].custom);
-
-        let chat = profile.api_configs.get("openai-chat").unwrap();
-        assert_eq!(
-            chat.base_url.as_deref(),
-            Some("https://token.sensenova.cn/v1")
-        );
-        assert!(chat.headers.is_empty());
     }
 
     #[test]

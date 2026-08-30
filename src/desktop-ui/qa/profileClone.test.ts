@@ -11,12 +11,12 @@ const sourceProfile: ProfileDef = {
   label: "bo/deepseek-v4-flash",
   provider: "deepseek",
   auth_mode: "api_key",
-  api_types: ["openai-responses", "openai-chat"],
   credentials: {
     api_key: "secret",
   },
-  overrides: {
+  api_configs: {
     "openai-responses": {
+      enabled: true,
       endpoint_id: "responses",
       model: "deepseek-v4-flash",
       base_url: "https://api.example.test/responses",
@@ -74,27 +74,25 @@ test("buildProfileCopyDraft clones editable profile fields without the id", () =
     label: "bo/deepseek-v4-flash Copy 2",
     provider: sourceProfile.provider,
     auth_mode: sourceProfile.auth_mode,
-    api_types: sourceProfile.api_types,
     credentials: sourceProfile.credentials,
-    overrides: sourceProfile.overrides,
+    api_configs: sourceProfile.api_configs,
     use_settings_proxy: true,
     provider_settings: sourceProfile.provider_settings,
   });
   expect("id" in draft).toBe(false);
   expect(draft).not.toBe(sourceProfile);
-  expect(draft.api_types).not.toBe(sourceProfile.api_types);
   expect(draft.credentials).not.toBe(sourceProfile.credentials);
-  expect(draft.overrides).not.toBe(sourceProfile.overrides);
-  expect(draft.overrides["openai-responses"]).not.toBe(
-    sourceProfile.overrides["openai-responses"],
+  expect(draft.api_configs).not.toBe(sourceProfile.api_configs);
+  expect(draft.api_configs["openai-responses"]).not.toBe(
+    sourceProfile.api_configs["openai-responses"],
   );
   expect(draft.provider_settings).not.toBe(sourceProfile.provider_settings);
   expect(draft.provider_settings?.deepseek).not.toBe(
     sourceProfile.provider_settings?.deepseek,
   );
 
-  draft.overrides["openai-responses"]!.model = "changed";
-  expect(sourceProfile.overrides["openai-responses"]?.model).toBe(
+  draft.api_configs["openai-responses"]!.model = "changed";
+  expect(sourceProfile.api_configs["openai-responses"]?.model).toBe(
     "deepseek-v4-flash",
   );
 });

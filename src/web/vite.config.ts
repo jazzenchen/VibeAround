@@ -23,13 +23,18 @@ const backendProxy = {
     changeOrigin: true,
     ws: true,
   },
-  "/va/preview": {
+  "/va/preview/assets": {
     target: backendTarget,
     changeOrigin: true,
   },
-  "/va/md-preview": {
+  "/va/preview/s": {
     target: backendTarget,
     changeOrigin: true,
+  },
+  "^/va/preview/u/[^/]+/(bootstrap|content|chat)": {
+    target: backendTarget,
+    changeOrigin: true,
+    ws: true,
   },
 };
 

@@ -76,21 +76,6 @@ test("keeps undetected desktop agents hidden without a manual path", () => {
   expect(visible.map(({ id }) => id)).toEqual(["codex", "codex-desktop"]);
 });
 
-test("supports the legacy executable path preference", () => {
-  const visible = visibleLaunchAgents(
-    agents,
-    new Set<string>(),
-    null,
-    {
-      "claude-desktop": {
-        executablePath: "/Applications/Claude.app",
-      },
-    },
-  );
-
-  expect(visible.map(({ id }) => id)).toEqual(["claude-desktop"]);
-});
-
 test("only offers desktop agents that are not already visible", () => {
   const addable = addableDesktopAgents(agents, [
     agent("codex", false),
@@ -98,4 +83,31 @@ test("only offers desktop agents that are not already visible", () => {
   ]);
 
   expect(addable.map(({ id }) => id)).toEqual(["claude-desktop"]);
+});
+
+test("offers desktop recovery when no launch agents are visible", () => {
+  const hiddenDesktopApps: DesktopAppDetectionFile = {
+    apps: {
+      "codex-desktop": {
+        installed: false,
+        launchCommand: "open -b com.openai.codex",
+      },
+      "claude-desktop": {
+        installed: false,
+        launchCommand: "open -a Claude",
+      },
+    },
+  };
+  const visible = visibleLaunchAgents(
+    agents,
+    new Set<string>(),
+    hiddenDesktopApps,
+    {},
+  );
+
+  expect(visible).toEqual([]);
+  expect(addableDesktopAgents(agents, visible).map(({ id }) => id)).toEqual([
+    "codex-desktop",
+    "claude-desktop",
+  ]);
 });

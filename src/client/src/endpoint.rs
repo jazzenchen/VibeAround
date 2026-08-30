@@ -1,4 +1,3 @@
-use crate::auth::AuthFile;
 use crate::events::WebSocketSpec;
 use crate::http::{append_query_param, AuthRequirement, RequestSpec};
 
@@ -13,13 +12,6 @@ impl ServerEndpoint {
         Self {
             base_url: normalize_base_url(base_url.into()),
             token: None,
-        }
-    }
-
-    pub fn from_auth_file(auth: &AuthFile) -> Self {
-        Self {
-            base_url: auth.base_url(),
-            token: Some(auth.token.clone()),
         }
     }
 
@@ -91,24 +83,6 @@ mod tests {
     use crate::service;
 
     use super::*;
-
-    #[test]
-    fn endpoint_from_auth_file_targets_va_base() {
-        let endpoint = ServerEndpoint::from_auth_file(&AuthFile {
-            port: 12358,
-            token: "secret".into(),
-        });
-        let request = service::info();
-
-        assert_eq!(
-            endpoint.http_url(&request),
-            "http://127.0.0.1:12358/va/api/service/info"
-        );
-        assert_eq!(
-            endpoint.authorization_header(&request).as_deref(),
-            Some("Bearer secret")
-        );
-    }
 
     #[test]
     fn public_request_has_no_authorization_header() {

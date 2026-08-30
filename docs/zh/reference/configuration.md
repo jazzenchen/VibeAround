@@ -11,9 +11,7 @@ VibeAround 读写的每一个文件，可手动编辑的都附完整 schema。�
 | `settings.json` | 你、桌面设置 UI、引导 | 主配置 —— [完整 schema 见下](#settingsjson) | **可以**（改后 `va settings reload`） |
 | `agents.json` | 桌面 Launch UI、`va-launch`（可执行文件发现） | 按 Agent 的启动偏好 —— [schema 见下](#agentsjson) | 可以，小心改 |
 | `launch/profiles/<name>.json` | 你、桌面（临时物化副本） | 保存的原生启动配置 —— [schema 见下](#launch-profile-json-schema-v1) | **可以**（本来就是给你编辑的） |
-| `auth.json` | 守护进程，每次启动 | 供进程外客户端使用的 `{port, token}` | 不行 —— 每次启动重写 |
-| `local-api-auth.json` | 守护进程，每次启动 | Profile 模型 Bridge 客户端专用的 `{port, token}` | 不行 —— 每次启动重写 |
-| `local-agent-api-auth.json` | 守护进程，每次启动 | Agent-as-API 客户端专用的 `{port, token}` | 不行 —— 每次启动重写 |
+| `auth.json` | 守护进程，每次启动 | `{port, token, mcp_token, bridge_token, agent_token}` —— 每个路由族一把：`token` 用于控制台/控制接口，`mcp_token` 用于 `/mcp`，`bridge_token` 用于 `/local-api`，`agent_token` 用于 `/local-agent` | 不行 —— 每次启动重写，但 `agent_token` 会被沿用 |
 | `profiles/<profile-id>.json` | 桌面/控制台 Profile UI | 保存的模型 Profile（供应商、端点、key、模型路由） | 优先用 UI；手动改动会在重载时读取 |
 | `profile-state/<profile-id>/` | Profile 渲染 | 渲染出的按 Profile 的 Agent 配置文件（设置覆盖层）；环境指针引用这些（[启动内幕](../internals/launch.md#environment-assembly-layer-by-layer)） | 不行 —— 每次渲染重新生成 |
 | `plugins/<kind>/` | 桌面插件管理器 | 已安装的渠道插件 + 清单 | 仅插件开发期间 |
@@ -21,10 +19,9 @@ VibeAround 读写的每一个文件，可手动编辑的都附完整 schema。�
 | `.cache/` | 渠道插件 | 下载的聊天附件 | 可安全清空 |
 | `logs/runtime/` | 守护进程 | 按日滚动日志（`vibearound.log.<date>`） | 可安全清空 |
 | `*.jsonl`（workspace/thread/attachment 事件日志） | 守护进程 | 对话状态（[workspace 模块](../internals/modules/workspace.md)） | **不行** —— 只追加的事件日志 |
-| `launcher.json` | 桌面 | 桌面专属启动偏好（终端选择、按 Agent 的 workspace 兼容性） | 优先用 UI |
 | `desktop-apps.detected.json` | 桌面检测 | 缓存的 Claude/Codex Desktop 应用位置 | 不行 —— 缓存 |
 
-VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server 条目 + 技能文件，路径由 Agent 注册表声明 —— 例如 `~/.claude.json` 的 `mcpServers` 和 `~/.claude/skills/vibearound/`）。这些写入带 VibeAround 管理标记，守护进程停机时会被启动期清理移除（[启动流程第 5 步](../internals/flows/native-launch.md)）。
+每次启动前，VibeAround 会替换其保留的项目级 skills，并把当前 daemon MCP credential 写入项目中的 Agent 配置。路径来自 Agent registry；无关配置保持不变（[启动流程第 5 步](../internals/flows/native-launch.md)）。
 
 ## settings.json
 
@@ -38,7 +35,6 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
     "ngrok":      { "auth_token": "…", "domain": "…" },
     "cloudflare": { "tunnel_token": "…", "hostname": "…" }
   },
-  "preview_base_url": null,          // 覆盖预览链接的公开 base URL
 
   // --- 工具链 ---
   "toolchain_mode": "system",        // system | managed
@@ -50,10 +46,6 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
   // --- Agent ---
   "default_agent": "claude",
   "enabled_agents": ["claude", "codex"],  // 省略则启用所有已知 Agent
-  "integrations": {
-    "mcp_auto_install": true,        // 把 VibeAround MCP 配置写进 Agent 配置
-    "skill_auto_install": true      // 把 VibeAround 技能写进 Agent 技能目录
-  },
 
   // --- 网络 ---
   "proxy": { "enabled": true, "http_proxy": "http://…", "no_proxy": "…" },
@@ -161,9 +153,7 @@ VibeAround 还会写**每个已启用 Agent 自己的全局配置**（MCP server
 ```text
 ~/.vibearound/
 ├── settings.json           # 配置（本页）
-├── auth.json               # 控制台 token，每次守护进程启动重写
-├── local-api-auth.json     # Profile Bridge token，每次守护进程启动重写
-├── local-agent-api-auth.json # Agent-as-API token，每次守护进程启动重写
+├── auth.json               # port + 控制台、MCP、Bridge、Agent-as-API 四把 token
 ├── agents.json             # 解析出的 Agent 可执行文件（va-launch 缓存）
 ├── plugins/<kind>/         # 已安装的渠道插件
 ├── launch/profiles/        # 保存的启动配置 JSON（schema v1）

@@ -9,7 +9,6 @@
 //! - `bridge_handler`   — `ChannelBridgeHandler` (notification + permission forwarding)
 //! - `monitor`          — Dashboard-facing facade over `process::Supervisor`
 //! - `plugin_runner`    — one stdio plugin generation + concrete factory
-//! - `plugin_bridge`    — compatibility alias for `ChannelPluginRunner`
 //! - `manifest`         — `ChannelPluginManifest`
 //! - `plugin_host`      — runtime registry + pending permissions map
 //! - `plugin_runtime`   — enum wrapper around Stdio / WebSocket runtimes
@@ -21,7 +20,6 @@ pub mod bridge_handler;
 pub mod manifest;
 pub mod monitor;
 mod permission;
-pub mod plugin_bridge;
 pub mod plugin_host;
 pub mod plugin_paths;
 pub mod plugin_runner;
@@ -44,7 +42,6 @@ use crate::workspace::WorkspaceThreadManager;
 use self::manifest::ChannelPluginManifest;
 use self::plugin_host::PluginHost;
 
-// Re-exports so the rest of the crate keeps its existing import paths.
 pub use self::prompt::ConversationIngress;
 pub use self::transport_websocket::WebChannelManager;
 pub use self::types::{ChannelEnvelope, ChannelInput, ChannelOutput};
@@ -178,9 +175,7 @@ impl ChannelManager {
                 continue;
             }
 
-            // Re-register so the new generation captures changed credentials,
-            // plugin paths, versions, and future per-instance config. A plain
-            // supervisor restart would reuse the old factory snapshot.
+            // Re-register to capture the latest plugin factory state.
             if monitor.unregister(&instance_id).await.is_ok()
                 && self.register_plugin(&kind, plugin).await
             {

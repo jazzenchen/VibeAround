@@ -6,20 +6,25 @@
 //! probe the full MCP surface do not treat VibeAround as disconnected.
 //!
 //! Most MCP tools are stateless — they validate inputs and return text.
-//! Collaboration tools are the exception: `initialize_subagents` creates
+//! Collaboration tools are the exception: `va_mcp_initialize_subagents` creates
 //! git worktrees and records the resulting multi-agent turn on a workspace
 //! thread, but still does not drive live agent processes directly.
 //!
 //! ## Module layout
 //!
 //! - [`jsonrpc`] — JSON-RPC 2.0 envelope + MCP content helpers
-//! - [`tools`]   — the `tools/call` implementations
+//! - [`tools`]   — session, file, handover, and workspace tool implementations
+//! - [`subagents`] — multi-agent tool handlers and runtime notifications
+//! - [`subagent_worktrees`] — git worktree setup and cleanup
 //! - [`sessions`] — per-agent on-disk session auto-discovery
-//! - [`ports`]   — deny-list of well-known service ports
 
 mod jsonrpc;
-mod ports;
+mod preview;
+mod preview_conversation;
+mod session_identity;
 mod sessions;
+mod subagent_worktrees;
+mod subagents;
 mod tools;
 
 use axum::{
@@ -37,6 +42,65 @@ use std::{convert::Infallible, time::Duration};
 use super::AppState;
 
 use jsonrpc::{jsonrpc_err, jsonrpc_ok, JsonRpcRequest};
+
+/// Serves the same MCP tool set to agents that reach VibeAround over ACP
+/// (`mcp/message`) instead of HTTP. Installed on the workspace thread manager
+/// at boot; thread ACP bridges route the agent's MCP requests here.
+pub(crate) struct AcpMcpDispatcher {
+    state: AppState,
+}
+
+impl AcpMcpDispatcher {
+    pub(crate) fn new(state: AppState) -> Self {
+        Self { state }
+    }
+}
+
+#[async_trait::async_trait]
+impl common::agent::AcpMcpServer for AcpMcpDispatcher {
+    async fn call(
+        &self,
+        method: &str,
+        params: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<serde_json::Value, common::agent::AcpMcpError> {
+        let id = Some(serde_json::Value::Null);
+        let params = params.map(serde_json::Value::Object);
+        let Json(response) = match method {
+            "initialize" => jsonrpc_ok(id, mcp_initialize_result()),
+            "tools/list" => mcp_tools_list(id),
+            "resources/list" => mcp_resources_list(id),
+            "resources/templates/list" => mcp_resource_templates_list(id),
+            "prompts/list" => mcp_prompts_list(id),
+            "tools/call" => mcp_tools_call(id, params, &self.state).await,
+            _ => jsonrpc_err(id, -32601, &format!("Method not found: {method}")),
+        };
+        unwrap_jsonrpc(response)
+    }
+}
+
+/// Split a JSON-RPC response envelope into the MCP result or error.
+fn unwrap_jsonrpc(
+    mut response: serde_json::Value,
+) -> Result<serde_json::Value, common::agent::AcpMcpError> {
+    if let Some(error) = response.get("error") {
+        return Err(common::agent::AcpMcpError {
+            code: error
+                .get("code")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|code| i32::try_from(code).ok())
+                .unwrap_or(-32603),
+            message: error
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("MCP call failed")
+                .to_string(),
+        });
+    }
+    Ok(response
+        .get_mut("result")
+        .map(serde_json::Value::take)
+        .unwrap_or(serde_json::Value::Null))
+}
 
 const MCP_SESSION_ID_HEADER: HeaderName = HeaderName::from_static("mcp-session-id");
 const MCP_SSE_KEEPALIVE_SECS: u64 = 15;
@@ -82,16 +146,16 @@ pub async fn mcp_sse_handler() -> Sse<impl futures_util::Stream<Item = Result<Ev
     )
 }
 
+fn mcp_initialize_result() -> serde_json::Value {
+    serde_json::json!({
+        "protocolVersion": "2025-03-26",
+        "capabilities": { "tools": {} },
+        "serverInfo": { "name": "vibearound", "version": env!("CARGO_PKG_VERSION") }
+    })
+}
+
 fn mcp_initialize(id: Option<serde_json::Value>) -> axum::response::Response {
-    let mut response = jsonrpc_ok(
-        id,
-        serde_json::json!({
-            "protocolVersion": "2025-03-26",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "vibearound", "version": env!("CARGO_PKG_VERSION") }
-        }),
-    )
-    .into_response();
+    let mut response = jsonrpc_ok(id, mcp_initialize_result()).into_response();
     let session_id = uuid::Uuid::new_v4().to_string();
     response.headers_mut().insert(
         MCP_SESSION_ID_HEADER,
@@ -133,16 +197,19 @@ async fn mcp_tools_call(
     };
 
     match tool_name {
-        "get_session_id" => {
+        "va_mcp_get_session_id" => {
             tools::mcp_get_session_id(id, arguments, params.get("_meta"), state).await
         }
-        "send_file" => tools::mcp_send_file(id, arguments, state).await,
-        "prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
-        "register_workspace" => tools::mcp_register_workspace(id, arguments).await,
-        "initialize_subagents" => tools::mcp_initialize_subagents(id, arguments, state).await,
-        "wait_for_subagents" => tools::mcp_wait_for_subagents(id, arguments, state).await,
-        "preview" => tools::mcp_preview_start(id, arguments, state).await,
-        "md_preview" => tools::mcp_md_preview(id, arguments, state).await,
+        "va_mcp_send_file" => tools::mcp_send_file(id, arguments, state).await,
+        "va_mcp_prepare_handover" => tools::mcp_prepare_handover(id, arguments).await,
+        "va_mcp_register_workspace" => tools::mcp_register_workspace(id, arguments).await,
+        "va_mcp_initialize_subagents" => {
+            subagents::mcp_initialize_subagents(id, arguments, state).await
+        }
+        "va_mcp_wait_for_subagents" => {
+            subagents::mcp_wait_for_subagents(id, arguments, state).await
+        }
+        "va_mcp_preview" => preview::mcp_preview(id, arguments, params.get("_meta"), state).await,
         _ => jsonrpc_err(id, -32602, &format!("Unknown tool: {}", tool_name)),
     }
 }
@@ -153,6 +220,23 @@ mod tests {
     use serde_json::json;
 
     use super::MCP_SESSION_ID_HEADER;
+
+    #[test]
+    fn acp_dispatch_unwraps_jsonrpc_envelopes() {
+        let result = super::unwrap_jsonrpc(json!({
+            "jsonrpc": "2.0", "id": null, "result": { "tools": [] }
+        }))
+        .expect("result envelope");
+        assert_eq!(result, json!({ "tools": [] }));
+
+        let error = super::unwrap_jsonrpc(json!({
+            "jsonrpc": "2.0", "id": null,
+            "error": { "code": -32601, "message": "Method not found: nope" }
+        }))
+        .expect_err("error envelope");
+        assert_eq!(error.code, -32601);
+        assert_eq!(error.message, "Method not found: nope");
+    }
 
     #[test]
     fn initialize_returns_mcp_session_id_header() {
@@ -206,5 +290,21 @@ mod tests {
                 "result": { "prompts": [] }
             })
         );
+    }
+
+    #[test]
+    fn preview_exposes_one_tool_with_exactly_one_runtime_source() {
+        let response = super::mcp_tools_list(Some(json!(4))).0;
+        let tools = response["result"]["tools"].as_array().unwrap();
+        assert!(tools.iter().all(|tool| tool["name"] != "md_preview"));
+
+        let preview = tools
+            .iter()
+            .find(|tool| tool["name"] == "va_mcp_preview")
+            .expect("preview tool");
+        let properties = preview["inputSchema"]["properties"].as_object().unwrap();
+        assert!(properties.contains_key("port"));
+        assert!(properties.contains_key("file"));
+        assert_eq!(preview["inputSchema"]["required"], json!(["cwd"]));
     }
 }

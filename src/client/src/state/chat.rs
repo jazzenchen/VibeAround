@@ -104,7 +104,11 @@ impl ChatState {
                 self.pending_permission_request_id = None;
                 self.pending_permission = None;
             }
-            ChatEvent::SubagentStatus { .. }
+            ChatEvent::SessionInfo { .. }
+            | ChatEvent::PreviewRefresh
+            | ChatEvent::ReplayStart { .. }
+            | ChatEvent::ReplayDone { .. }
+            | ChatEvent::SubagentStatus { .. }
             | ChatEvent::SubagentAcpNotification { .. }
             | ChatEvent::AcpNotification { .. } => {}
         }

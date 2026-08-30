@@ -48,6 +48,11 @@ impl DaemonController {
         }
     }
 
+    /// Mint and persist a replacement agent-as-API credential.
+    pub fn rotate_local_agent_api_token(&self) -> std::io::Result<String> {
+        self.daemon.rotate_local_agent_api_token()
+    }
+
     pub async fn start(&self) -> Result<(), String> {
         let mut running = self.running.lock().await;
         if running.is_some() {
@@ -113,6 +118,19 @@ fn get_auth_token() -> Option<common::auth::AuthFile> {
 #[tauri::command]
 fn get_local_agent_api_token() -> Option<common::auth::AuthFile> {
     common::auth::read_local_agent_api_token_file()
+}
+
+/// Replace the agent-as-API credential and return the new value.
+///
+/// The key is otherwise stable across restarts, so profiles keep working
+/// until the user asks for a new one here.
+#[tauri::command]
+fn rotate_local_agent_api_token(
+    controller: tauri::State<'_, DaemonController>,
+) -> Result<String, String> {
+    controller
+        .rotate_local_agent_api_token()
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -197,19 +215,10 @@ fn selected_desktop_app_cached(agent_id: &str, configured_path: Option<&Path>) -
     Path::new(&entry.path).is_file()
 }
 
-/// Open an HTTP URL in the user's default external browser.
-///
-/// We can't use `window.open` from the desktop-ui because it creates a
-/// Tauri child webview instead of hitting the OS-level handler. This
-/// command shells out via the `open` crate, which is what the tray also
-/// uses for "Open Local Dashboard".
-///
-/// Used for dashboard/tunnel links and trusted app-owned external links such
-/// as GitHub release downloads.
+/// Open an app-owned HTTP(S) URL through the OS handler.
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
-    // Minimal guard: only allow http/https schemes. Prevents a rogue
-    // caller from asking us to execute `file://` or `javascript:` URIs.
+    // Only HTTP(S) URLs may reach the OS handler.
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(format!("refused to open non-http URL: {url}"));
     }
@@ -230,14 +239,19 @@ fn set_ui_locale<R: Runtime>(app: AppHandle<R>, locale: String) -> Result<(), St
 
 fn main() {
     common::logging::init();
+    if let Err(error) = common::migration::run() {
+        tracing::error!(%error, "configuration migration failed");
+        eprintln!("VibeAround configuration migration failed: {error}");
+        return;
+    }
 
     let port = common::config::DEFAULT_PORT;
     let daemon = Arc::new(server::ServerDaemon::new(port));
     let tunnels = daemon.tunnels();
     let graceful_exit_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Persist both daemon-lifetime tokens before the desktop-ui starts
-    // rendering or a bridge-backed agent can be launched.
+    // Persist the auth file before the desktop-ui starts rendering or a
+    // bridge-backed agent can be launched.
     if let Err(e) = daemon.persist_auth_tokens() {
         tracing::info!("[VibeAround] Failed to persist auth tokens: {}", e);
     }
@@ -271,6 +285,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_auth_token,
             get_local_agent_api_token,
+            rotate_local_agent_api_token,
             get_app_info,
             rescan_agent_entries,
             rescan_desktop_app_entries,
@@ -338,6 +353,7 @@ fn main() {
             profiles::launcher_reorder_workspaces,
             profiles::launcher_set_compatibility_bridge,
             profiles::launcher_set_local_agent_api_enabled,
+            profiles::launcher_set_local_agent_api_agent,
             profiles::launcher_set_profile_connection,
         ])
         .setup({
@@ -442,7 +458,7 @@ fn main() {
                 // shutdown was skipped or interrupted.
                 if let tauri::RunEvent::Exit = event {
                     common::process::registry::ChildRegistry::global().kill_all();
-                    common::previews::shutdown_kill_all_ports();
+                    common::previews::cleanup_registered_previews();
                 }
             }
         });

@@ -70,7 +70,7 @@ Where each responsibility lives. Every runtime module also has a deep-dive page 
 | `agent` | ACP agent handle, launch rendering, MCP/skill config injection |
 | `profiles` | profile schema, catalog, rendering, bridge launch URLs, provider connections |
 | `pty` | PTY session registry and runtime — the web terminal's backend |
-| `previews` | live preview registry, owner/share URLs, port cleanup |
+| `previews` | Server/Markdown owner and Share URLs, port cleanup |
 | `tunnels` | ngrok / localtunnel / cloudflare / Tailscale Funnel providers |
 | `auth` | daemon token, pairing codes |
 | `launch_sessions` | native CLI session discovery and archiving |

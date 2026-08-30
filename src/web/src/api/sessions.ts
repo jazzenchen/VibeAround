@@ -127,7 +127,10 @@ export async function getLaunchSessionsBatch(
 }
 
 export interface InitWorkspaceThreadRequest {
-  agent_id: string;
+  /** Adopt this existing thread. The thread already knows its agent, profile
+   *  and workspace, so the other fields are ignored when it is set. */
+  thread_id?: string;
+  agent_id?: string;
   profile_id?: string;
   session_id?: string;
   workspace_path?: string;
@@ -205,21 +208,38 @@ export async function getTmuxSessions(): Promise<TmuxSessionsResponse> {
   return TmuxSessionsResponseSchema.parse(await res.json());
 }
 
-export async function uploadChatFile(file: File): Promise<ChatUploadResponse> {
+async function uploadChatFileTo(
+  path: string,
+  file: File,
+): Promise<ChatUploadResponse> {
   const params = new URLSearchParams();
   const mimeType = uploadMimeType(file);
   params.set("filename", file.name || "attachment");
   if (mimeType) params.set("mime_type", mimeType);
-  const res = await fetch(`${browserBaseUrl()}/api/chat/uploads?${params.toString()}`, {
+  const res = await fetch(`${browserBaseUrl()}${path}?${params.toString()}`, {
     method: "POST",
     headers: mimeType ? { "Content-Type": mimeType } : undefined,
     body: file,
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`POST /api/chat/uploads: ${res.status} ${text}`);
+    throw new Error(`POST ${path}: ${res.status} ${text}`);
   }
   return ChatUploadResponseSchema.parse(await res.json());
+}
+
+export async function uploadChatFile(file: File): Promise<ChatUploadResponse> {
+  return uploadChatFileTo("/api/chat/uploads", file);
+}
+
+export async function uploadPreviewChatFile(
+  previewSlug: string,
+  file: File,
+): Promise<ChatUploadResponse> {
+  return uploadChatFileTo(
+    `/preview/u/${encodeURIComponent(previewSlug)}/chat/uploads`,
+    file,
+  );
 }
 
 function uploadMimeType(file: File): string | undefined {

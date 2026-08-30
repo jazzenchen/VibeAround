@@ -2,10 +2,9 @@
 //! All config comes from ~/.vibearound/settings.json.
 //! Callers load a fresh Config when they need one.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
 use serde::Serialize;
@@ -71,54 +70,6 @@ pub fn state_file(name: &str) -> PathBuf {
     state_dir().join(name)
 }
 
-pub fn legacy_state_file(name: &str) -> PathBuf {
-    data_dir().join(name)
-}
-
-pub fn migrate_legacy_state_file(name: &str) -> PathBuf {
-    let target = state_file(name);
-    let legacy = legacy_state_file(name);
-    if legacy.exists() {
-        if let Some(parent) = target.parent() {
-            if let Err(error) = std::fs::create_dir_all(parent) {
-                tracing::warn!(path = ?parent, error = %error, "failed to create state dir");
-                return target;
-            }
-        }
-        if target.exists() {
-            match archive_state_file(&legacy, "legacy-root") {
-                Ok(archive) => {
-                    tracing::info!(from = ?legacy, to = ?archive, "archived legacy state file")
-                }
-                Err(error) => {
-                    tracing::warn!(from = ?legacy, error = %error, "failed to archive legacy state file")
-                }
-            }
-        } else if let Err(error) = std::fs::rename(&legacy, &target) {
-            tracing::warn!(from = ?legacy, to = ?target, error = %error, "failed to migrate legacy state file");
-        } else {
-            tracing::info!(from = ?legacy, to = ?target, "migrated legacy state file")
-        }
-    }
-    target
-}
-
-pub fn archive_state_file(path: &Path, reason: &str) -> std::io::Result<PathBuf> {
-    let archive_dir = state_dir().join("archive");
-    std::fs::create_dir_all(&archive_dir)?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("state-file");
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let archive = archive_dir.join(format!("{file_name}.{timestamp}.{reason}"));
-    std::fs::rename(path, &archive)?;
-    Ok(archive)
-}
-
 /// Ensure ~/.vibearound/ exists with settings.json and workspaces/.
 fn init_data_dir() {
     let dir = data_dir();
@@ -172,7 +123,6 @@ pub struct Config {
     pub default_workspace: PathBuf,
     /// User-added project folders.
     pub workspaces: Vec<PathBuf>,
-    pub preview_base_url: Option<String>,
     pub tmux_detach_others: bool,
     // --- Agents ---
     pub default_agent: String,
@@ -180,8 +130,6 @@ pub struct Config {
     /// Validated at load time — entries that don't resolve via
     /// `resources::agent_by_alias` are dropped.
     pub enabled_agents: Vec<String>,
-    // --- Agent integrations ---
-    pub integrations: AgentIntegrationsConfig,
     // --- Optional outbound HTTP proxy ---
     pub proxy: HttpProxyConfig,
     // --- API bridge behavior ---
@@ -243,12 +191,6 @@ impl ToolchainMode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AgentIntegrationsConfig {
-    pub mcp_auto_install: bool,
-    pub skill_auto_install: bool,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ApiBridgeConfig {
     pub retry_429: Retry429Config,
@@ -258,6 +200,16 @@ pub struct ApiBridgeConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LocalAgentApiConfig {
     pub enabled: bool,
+    /// Canonical agent ids allowed to serve the agent-as-API routes. The
+    /// service switch gates the whole route family; on top of that every
+    /// agent must be opted in individually — default is nobody.
+    pub agents: BTreeSet<String>,
+}
+
+impl LocalAgentApiConfig {
+    pub fn agent_enabled(&self, canonical_agent_id: &str) -> bool {
+        self.enabled && self.agents.contains(canonical_agent_id)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -329,15 +281,6 @@ pub struct Retry429Config {
     pub enabled: bool,
     pub max_retries: Option<usize>,
     pub delay_seconds: u64,
-}
-
-impl Default for AgentIntegrationsConfig {
-    fn default() -> Self {
-        Self {
-            mcp_auto_install: true,
-            skill_auto_install: true,
-        }
-    }
 }
 
 impl SearchToolConfig {
@@ -524,13 +467,9 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         .map(ToolchainMode::from_config)
         .unwrap_or_default();
     let portable_toolchain = startkit_settings
-        .and_then(|value| {
-            value
-                .get("portable_toolchain")
-                .or_else(|| value.get("portableToolchain"))
-        })
+        .and_then(|value| value.get("portable_toolchain"))
         .and_then(|value| value.as_bool())
-        .unwrap_or_else(|| toolchain_mode.is_managed());
+        .unwrap_or(false);
 
     let raw_channels = root
         .get("channels")
@@ -540,13 +479,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
     let workspace_settings = workspace_settings_from_json(root);
     let default_workspace = workspace_settings.default_workspace;
     let workspaces = workspace_settings.workspaces;
-
-    let preview_base_url = root
-        .get("preview_base_url")
-        .or_else(|| root.get("tunnel").and_then(|t| t.get("preview_base_url")))
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
 
     let tmux_detach_others = root
         .get("tmux")
@@ -561,7 +493,7 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "claude".to_string());
 
-    let enabled_agents = root
+    let mut enabled_agents = root
         .get("enabled_agents")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -576,23 +508,15 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
                 .map(|a| a.id.clone())
                 .collect()
         });
-
-    let integrations = root
-        .get("integrations")
-        .and_then(|value| value.as_object())
-        .map(|integrations| AgentIntegrationsConfig {
-            mcp_auto_install: integrations
-                .get("mcp_auto_install")
-                .or_else(|| integrations.get("auto_install_mcp"))
-                .and_then(|value| value.as_bool())
-                .unwrap_or(true),
-            skill_auto_install: integrations
-                .get("skill_auto_install")
-                .or_else(|| integrations.get("auto_install_skills"))
-                .and_then(|value| value.as_bool())
-                .unwrap_or(true),
-        })
-        .unwrap_or_default();
+    // Built-in agents are always on; the user's list is never rewritten.
+    for agent in crate::resources::AGENTS
+        .iter()
+        .filter(|agent| agent.built_in)
+    {
+        if !enabled_agents.contains(&agent.id) {
+            enabled_agents.push(agent.id.clone());
+        }
+    }
 
     let api_bridge = load_api_bridge_config(root);
     let local_agent_api = load_local_agent_api_config(root);
@@ -606,7 +530,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         .map(|proxy| {
             let http_proxy = proxy
                 .get("http_proxy")
-                .or_else(|| proxy.get("url"))
                 .and_then(|value| value.as_str())
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
@@ -637,11 +560,9 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         portable_toolchain,
         default_workspace,
         workspaces,
-        preview_base_url,
         tmux_detach_others,
         default_agent,
         enabled_agents,
-        integrations,
         proxy,
         api_bridge,
         local_agent_api,
@@ -681,52 +602,54 @@ pub fn workspace_settings_from_json(root: &serde_json::Value) -> WorkspaceSettin
 
 fn load_api_bridge_config(root: &serde_json::Value) -> ApiBridgeConfig {
     root.get("api_bridge")
-        .or_else(|| root.get("bridge"))
         .and_then(|value| value.as_object())
         .map(|settings| ApiBridgeConfig {
             retry_429: settings
                 .get("retry_429")
-                .or_else(|| settings.get("rate_limit_retry"))
                 .and_then(|value| value.as_object())
                 .map(load_retry_429_config)
                 .unwrap_or_default(),
-            replace_provider_web_search: bool_setting(
-                settings,
-                &["replace_provider_web_search", "replaceProviderWebSearch"],
-            )
-            .unwrap_or(false),
+            replace_provider_web_search: bool_setting(settings, "replace_provider_web_search")
+                .unwrap_or(false),
         })
         .unwrap_or_default()
 }
 
 fn load_local_agent_api_config(root: &serde_json::Value) -> LocalAgentApiConfig {
     root.get("local_agent_api")
-        .or_else(|| root.get("localAgentApi"))
-        .or_else(|| root.get("local_api"))
         .and_then(|value| value.as_object())
         .map(|settings| LocalAgentApiConfig {
             enabled: settings
                 .get("enabled")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false),
+            // Entries are written canonical by the settings API; hand-edited
+            // values must already be canonical agent ids.
+            agents: settings
+                .get("agents")
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|agent| !agent.is_empty())
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
         .unwrap_or_default()
 }
 
 fn load_search_tool_config(root: &serde_json::Value) -> SearchToolConfig {
-    let Some(settings) = root
-        .get("search_tool")
-        .or_else(|| root.get("searchTool"))
-        .and_then(|value| value.as_object())
-    else {
+    let Some(settings) = root.get("search_tool").and_then(|value| value.as_object()) else {
         return SearchToolConfig::default();
     };
 
-    let stdio_path = string_setting(settings, &["stdio_path", "stdioPath", "command"])
-        .map(|value| expand_home(&value));
-    let max_results = usize_setting(settings, &["max_results", "maxResults", "num_results"]);
-    let search_context_size =
-        search_context_size_setting(settings, &["search_context_size", "searchContextSize"]);
+    let stdio_path = string_setting(settings, "stdio_path").map(|value| expand_home(&value));
+    let max_results = usize_setting(settings, "max_results");
+    let search_context_size = search_context_size_setting(settings, "search_context_size");
     let sources = settings
         .get("sources")
         .and_then(|value| value.as_object())
@@ -753,14 +676,13 @@ fn load_search_tool_config(root: &serde_json::Value) -> SearchToolConfig {
 fn load_service_side_config(root: &serde_json::Value) -> ServiceSideConfig {
     let image_input = root
         .get("service_side")
-        .or_else(|| root.get("serviceSide"))
-        .and_then(|value| value.get("image_input").or_else(|| value.get("imageInput")))
+        .and_then(|value| value.get("image_input"))
         .and_then(|value| value.as_object())
         .map(|settings| ServiceSideImageInputConfig {
-            enabled: bool_setting(settings, &["enabled"]).unwrap_or(false),
-            profile_id: string_setting(settings, &["profile_id", "profileId"]),
-            api_type: string_setting(settings, &["api_type", "apiType"]),
-            model: string_setting(settings, &["model"]),
+            enabled: bool_setting(settings, "enabled").unwrap_or(false),
+            profile_id: string_setting(settings, "profile_id"),
+            api_type: string_setting(settings, "api_type"),
+            model: string_setting(settings, "model"),
         })
         .unwrap_or_default();
     ServiceSideConfig { image_input }
@@ -769,7 +691,6 @@ fn load_service_side_config(root: &serde_json::Value) -> ServiceSideConfig {
 fn load_remote_config(root: &serde_json::Value) -> RemoteConfig {
     let channels = root
         .get("remote")
-        .or_else(|| root.get("im_remote"))
         .and_then(|value| value.get("channels"))
         .and_then(|value| value.as_object())
         .map(|channels| {
@@ -796,9 +717,9 @@ fn load_remote_config(root: &serde_json::Value) -> RemoteConfig {
 fn load_remote_channel_defaults(
     settings: &serde_json::Map<String, serde_json::Value>,
 ) -> RemoteChannelDefaults {
-    let agent_id = string_setting(settings, &["agent_id", "agentId", "agent"])
+    let agent_id = string_setting(settings, "agent_id")
         .and_then(|agent| crate::resources::agent_by_alias(&agent).map(|def| def.id.clone()));
-    let profile_id = string_setting(settings, &["profile_id", "profileId", "profile"]);
+    let profile_id = string_setting(settings, "profile_id");
 
     RemoteChannelDefaults {
         agent_id,
@@ -809,9 +730,9 @@ fn load_remote_channel_defaults(
 fn load_search_source_config(
     settings: &serde_json::Map<String, serde_json::Value>,
 ) -> SearchSourceConfig {
-    let api_key = string_setting(settings, &["api_key", "apiKey", "key"]);
-    let api_key_env = string_setting(settings, &["api_key_env", "apiKeyEnv", "keyEnv"]);
-    let base_url = string_setting(settings, &["base_url", "baseUrl", "url"]);
+    let api_key = string_setting(settings, "api_key");
+    let api_key_env = string_setting(settings, "api_key_env");
+    let base_url = string_setting(settings, "base_url");
     SearchSourceConfig {
         enabled: settings
             .get("enabled")
@@ -825,40 +746,35 @@ fn load_search_source_config(
 
 fn string_setting(
     settings: &serde_json::Map<String, serde_json::Value>,
-    keys: &[&str],
+    key: &str,
 ) -> Option<String> {
-    keys.iter()
-        .find_map(|key| settings.get(*key))
+    settings
+        .get(key)
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
 }
 
-fn bool_setting(
-    settings: &serde_json::Map<String, serde_json::Value>,
-    keys: &[&str],
-) -> Option<bool> {
-    keys.iter()
-        .find_map(|key| settings.get(*key))
-        .and_then(|value| value.as_bool())
+fn bool_setting(settings: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<bool> {
+    settings.get(key).and_then(|value| value.as_bool())
 }
 
 fn usize_setting(
     settings: &serde_json::Map<String, serde_json::Value>,
-    keys: &[&str],
+    key: &str,
 ) -> Option<usize> {
-    keys.iter()
-        .find_map(|key| settings.get(*key))
+    settings
+        .get(key)
         .and_then(|value| value.as_u64())
         .map(|value| value as usize)
 }
 
 fn search_context_size_setting(
     settings: &serde_json::Map<String, serde_json::Value>,
-    keys: &[&str],
+    key: &str,
 ) -> Option<String> {
-    string_setting(settings, keys)
+    string_setting(settings, key)
         .map(|value| value.to_ascii_lowercase())
         .filter(|value| matches!(value.as_str(), "low" | "medium" | "high"))
 }
@@ -882,7 +798,6 @@ fn load_retry_429_config(settings: &serde_json::Map<String, serde_json::Value>) 
         max_retries: retry_limit_setting(settings, defaults.max_retries),
         delay_seconds: settings
             .get("delay_seconds")
-            .or_else(|| settings.get("delay"))
             .and_then(|value| value.as_u64())
             .unwrap_or(defaults.delay_seconds)
             .max(1),
@@ -893,10 +808,7 @@ fn retry_limit_setting(
     settings: &serde_json::Map<String, serde_json::Value>,
     default: Option<usize>,
 ) -> Option<usize> {
-    let Some(value) = settings
-        .get("max_retries")
-        .or_else(|| settings.get("retries"))
-    else {
+    let Some(value) = settings.get("max_retries") else {
         return default;
     };
     if value.is_null() {
@@ -904,24 +816,6 @@ fn retry_limit_setting(
     } else {
         value.as_u64().map(|value| value as usize).or(default)
     }
-}
-
-/// Base URL for preview links. Reads from the config cache.
-pub fn preview_base_url() -> Option<String> {
-    let cfg = ensure_loaded();
-    cfg.preview_base_url
-        .clone()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            cfg.cloudflare_hostname
-                .as_ref()
-                .map(|h| format!("https://{}", h.trim()))
-        })
-        .or_else(|| {
-            cfg.ngrok_domain
-                .as_ref()
-                .map(|d| format!("https://{}", d.trim()))
-        })
 }
 
 /// Expand ~ to home directory in a path string.
@@ -1324,19 +1218,6 @@ fn remove_workspace_from_settings(root: &mut serde_json::Value, path: &Path) -> 
         removed |= arr.len() != before_len;
     }
 
-    {
-        let key = "working_dir";
-        let should_remove = obj
-            .get(key)
-            .and_then(|value| value.as_str())
-            .map(|candidate| settings_path_matches(candidate, path))
-            .unwrap_or(false);
-        if should_remove {
-            obj.remove(key);
-            removed = true;
-        }
-    }
-
     removed
 }
 
@@ -1365,14 +1246,12 @@ impl Default for Config {
             portable_toolchain: false,
             default_workspace: builtin_workspaces_dir(),
             workspaces: vec![],
-            preview_base_url: None,
             tmux_detach_others: true,
             default_agent: "claude".to_string(),
             enabled_agents: crate::resources::AGENTS
                 .iter()
                 .map(|a| a.id.clone())
                 .collect(),
-            integrations: AgentIntegrationsConfig::default(),
             proxy: HttpProxyConfig::default(),
             api_bridge: ApiBridgeConfig::default(),
             local_agent_api: LocalAgentApiConfig::default(),
@@ -1670,15 +1549,27 @@ mod tests {
     }
 
     #[test]
-    fn empty_enabled_agents_stays_empty() {
+    fn built_in_agents_are_enabled_regardless_of_the_list() {
         let dir = unique_test_dir("enabled-agents");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("settings.json");
+
+        // An empty list still leaves only the built-in agent on.
         fs::write(&path, r#"{ "enabled_agents": [] }"#).unwrap();
-
         let config = load_settings_from(&path);
+        assert_eq!(config.enabled_agents, vec!["va-agent".to_string()]);
 
-        assert!(config.enabled_agents.is_empty());
+        // An explicit list that omits it gains it; the rest is untouched.
+        fs::write(&path, r#"{ "enabled_agents": ["claude", "codex"] }"#).unwrap();
+        let config = load_settings_from(&path);
+        assert_eq!(
+            config.enabled_agents,
+            vec![
+                "claude".to_string(),
+                "codex".to_string(),
+                "va-agent".to_string()
+            ]
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1749,20 +1640,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_managed_toolchain_enables_portable_toolchain() {
-        let dir = unique_test_dir("legacy-portable-toolchain");
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("settings.json");
-        fs::write(&path, r#"{ "startkit": { "toolchain_mode": "managed" } }"#).unwrap();
-
-        let config = load_settings_from(&path);
-
-        assert_eq!(config.toolchain_mode, ToolchainMode::Managed);
-        assert!(config.portable_toolchain);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
     fn remote_channel_defaults_are_loaded() {
         let dir = unique_test_dir("remote-defaults");
         fs::create_dir_all(&dir).unwrap();
@@ -1773,12 +1650,12 @@ mod tests {
                 "remote": {
                     "channels": {
                         "feishu": {
-                            "agentId": "codex",
-                            "profileId": "direct",
+                            "agent_id": "codex",
+                            "profile_id": "direct",
                             "workspace": "/ignored"
                         },
                         "slack": {
-                            "agent": "does-not-exist"
+                            "agent_id": "does-not-exist"
                         }
                     }
                 }
@@ -1798,38 +1675,6 @@ mod tests {
             config.remote_channel_defaults("unknown"),
             RemoteChannelDefaults::default()
         );
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn integration_auto_install_defaults_to_enabled() {
-        let dir = unique_test_dir("integrations-default");
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("settings.json");
-        fs::write(&path, "{}").unwrap();
-
-        let config = load_settings_from(&path);
-
-        assert!(config.integrations.mcp_auto_install);
-        assert!(config.integrations.skill_auto_install);
-        fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn integration_auto_install_can_be_disabled() {
-        let dir = unique_test_dir("integrations-disabled");
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("settings.json");
-        fs::write(
-            &path,
-            r#"{ "integrations": { "mcp_auto_install": false, "skill_auto_install": false } }"#,
-        )
-        .unwrap();
-
-        let config = load_settings_from(&path);
-
-        assert!(!config.integrations.mcp_auto_install);
-        assert!(!config.integrations.skill_auto_install);
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1872,6 +1717,44 @@ mod tests {
         let config = load_settings_from(&path);
 
         assert!(config.local_agent_api.enabled);
+        // The service switch alone allows nobody: every agent must opt in.
+        assert!(!config.local_agent_api.agent_enabled("claude"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn local_agent_api_agents_opt_in_individually() {
+        let dir = unique_test_dir("local-agent-api-agents");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "local_agent_api": { "enabled": true, "agents": ["claude", " codex ", ""] } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(config.local_agent_api.agent_enabled("claude"));
+        assert!(config.local_agent_api.agent_enabled("codex"));
+        assert!(!config.local_agent_api.agent_enabled("gemini"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn local_agent_api_agents_require_the_service_switch() {
+        let dir = unique_test_dir("local-agent-api-agents-gated");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{ "local_agent_api": { "enabled": false, "agents": ["claude"] } }"#,
+        )
+        .unwrap();
+
+        let config = load_settings_from(&path);
+
+        assert!(!config.local_agent_api.agent_enabled("claude"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1882,7 +1765,7 @@ mod tests {
         let path = dir.join("settings.json");
         fs::write(
             &path,
-            r#"{ "api_bridge": { "replaceProviderWebSearch": true, "retry_429": { "enabled": false, "max_retries": 4, "delay_seconds": 12 } } }"#,
+            r#"{ "api_bridge": { "replace_provider_web_search": true, "retry_429": { "enabled": false, "max_retries": 4, "delay_seconds": 12 } } }"#,
         )
         .unwrap();
 
@@ -2061,21 +1944,21 @@ mod tests {
             &path,
             r#"
             {
-              "searchTool": {
-                "stdioPath": "~/bin/va-search-tool",
-                "maxResults": 8,
-                "searchContextSize": " high ",
+              "search_tool": {
+                "stdio_path": "~/bin/va-search-tool",
+                "max_results": 8,
+                "search_context_size": " high ",
                 "sources": {
                   " Exa ": {
-                    "apiKey": " exa-key ",
-                    "baseUrl": " https://api.exa.ai "
+                    "api_key": " exa-key ",
+                    "base_url": " https://api.exa.ai "
                   },
                   "tavily": {
                     "enabled": false,
                     "api_key_env": " TAVILY_API_KEY "
                   },
                   "grok": {
-                    "key": "xai-key"
+                    "api_key": "xai-key"
                   }
                 }
               }
@@ -2137,7 +2020,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_workspace_cleans_workspaces_and_legacy_working_dir() {
+    fn remove_workspace_cleans_registered_workspaces() {
         let dir = unique_test_dir("remove-workspace");
         fs::create_dir_all(&dir).unwrap();
         let workspace = dir.join("project-a");
@@ -2147,8 +2030,7 @@ mod tests {
                 workspace.to_string_lossy().to_string(),
                 other.to_string_lossy().to_string()
             ],
-            "default_workspace": workspace.to_string_lossy().to_string(),
-            "working_dir": workspace.to_string_lossy().to_string()
+            "default_workspace": workspace.to_string_lossy().to_string()
         });
 
         assert!(remove_workspace_from_settings(&mut root, &workspace));
@@ -2167,7 +2049,6 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some(workspace.to_string_lossy().as_ref())
         );
-        assert!(root.get("working_dir").is_none());
         fs::remove_dir_all(&dir).unwrap();
     }
 

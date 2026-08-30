@@ -15,7 +15,7 @@ use anyhow::anyhow;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use common::auth::{self, AuthToken};
+use common::auth::{self, AuthToken, SharedAuthToken};
 use common::channels::{ChannelManager, WebChannelManager};
 use common::config;
 use common::plugins;
@@ -40,10 +40,15 @@ pub struct ServerDaemon {
     /// Per-session auth token, regenerated on every daemon start.
     /// Exposed so Tauri can append `?token=` when opening the dashboard.
     pub auth_token: Arc<AuthToken>,
+    /// Scoped credential accepted only by the MCP endpoint.
+    mcp_token: Arc<AuthToken>,
     /// Scoped credential accepted only by the local API bridge.
     local_api_token: Arc<AuthToken>,
     /// Scoped credential accepted only by the agent-as-API surface.
-    local_agent_api_token: Arc<AuthToken>,
+    ///
+    /// Persisted across restarts and rotated only on request — users paste it
+    /// into provider profiles by hand.
+    local_agent_api_token: SharedAuthToken,
 }
 
 pub struct RunningDaemon {
@@ -56,9 +61,7 @@ pub struct RunningDaemon {
     pub search_runtime: Option<Arc<SearchToolRuntime>>,
     pub tunnels: Arc<TunnelManager>,
     pub pty: Registry,
-    /// Signal to the channel-input task that it should unwind.
-    /// Dropped sender = no wake-up ever, so we hold this for the life of
-    /// `RunningDaemon` and signal on `stop()`.
+    /// Signal used to stop the channel-input task.
     channel_input_shutdown: Arc<Notify>,
     /// Signal to Axum so it can stop accepting new connections before the
     /// web task is force-aborted.
@@ -108,9 +111,8 @@ impl RunningDaemon {
         // the tokio runtime tore down first.
         ChildRegistry::global().kill_all();
 
-        // Kill any user-started dev servers we were previewing so they don't
-        // outlive the daemon. Best-effort; failures are logged.
-        common::previews::shutdown_kill_all_ports();
+        // Stop previewed development servers during daemon shutdown.
+        common::previews::cleanup_registered_previews();
 
         let pty_manager = PtySessionManager::from_registry(Arc::clone(&pty));
         let session_ids: Vec<SessionId> = pty.iter().map(|entry| *entry.key()).collect();
@@ -240,9 +242,25 @@ impl ServerDaemon {
             pty: common::pty::new_registry(),
             port,
             auth_token: Arc::new(AuthToken::generate()),
+            mcp_token: Arc::new(AuthToken::generate()),
             local_api_token: Arc::new(AuthToken::generate()),
-            local_agent_api_token: Arc::new(AuthToken::generate()),
+            local_agent_api_token: SharedAuthToken::new(
+                auth::load_or_create_local_agent_api_token(),
+            ),
         }
+    }
+
+    /// Mint a replacement agent-as-API credential and persist it.
+    ///
+    /// The previous key stops working immediately, so profiles carrying it
+    /// need the new value pasted in.
+    pub fn rotate_local_agent_api_token(&self) -> std::io::Result<String> {
+        // Persist before swapping: a token the disk never received would be
+        // demanded by the running daemon and known to nobody.
+        let next = AuthToken::generate();
+        self.write_auth_file(&next)?;
+        self.local_agent_api_token.replace(next.clone());
+        Ok(next.as_str().to_string())
     }
 
     pub fn tunnels(&self) -> Arc<TunnelManager> {
@@ -255,25 +273,35 @@ impl ServerDaemon {
         Arc::clone(&self.auth_token)
     }
 
-    /// Write daemon-lifetime token files so their respective
-    /// out-of-process clients can authenticate without an IPC round-trip.
+    /// Write the auth file so out-of-process clients can authenticate without
+    /// an IPC round-trip.
     ///
     /// Safe to call before `start_background()` — the file will be
     /// overwritten there too, but the contents are identical, so the early
     /// write avoids a race where the desktop-ui queries the token before
     /// the daemon's start path has finished persisting it.
     pub fn persist_auth_tokens(&self) -> std::io::Result<()> {
-        auth::write_token_file(self.port, &self.auth_token)?;
-        auth::write_local_api_token_file(self.port, &self.local_api_token)?;
-        auth::write_local_agent_api_token_file(self.port, &self.local_agent_api_token)
+        self.write_auth_file(&self.local_agent_api_token.snapshot())
+    }
+
+    /// Serialize the whole credential set from memory, never read-modify-write,
+    /// so a concurrent write cannot drop a token that is not in this snapshot.
+    fn write_auth_file(&self, agent: &AuthToken) -> std::io::Result<()> {
+        auth::write_auth_file(
+            self.port,
+            auth::DaemonTokens {
+                dashboard: &self.auth_token,
+                mcp: &self.mcp_token,
+                bridge: &self.local_api_token,
+                agent,
+            },
+        )
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
-        // Self-heal: kill any leftover plugin/agent-ACP child processes from
-        // a previous crashed run BEFORE we spawn our own. Cheap on the happy
-        // path (no matches) and prevents phantom children from hogging ports
-        // or auth sockets.
+        // Reap plugin and ACP children left by a crashed daemon.
         child_registry::orphan_sweep();
+        common::previews::cleanup_registered_previews();
 
         let web_listener = bind_web_listener(self.port).await?;
 
@@ -284,12 +312,13 @@ impl ServerDaemon {
         let tunnels = Arc::clone(&self.tunnels);
         let pty = Arc::clone(&self.pty);
 
-        // Persist both daemon-lifetime tokens. Overwriting stale files makes
-        // credentials from the previous run invalid immediately.
+        // Rewrite the auth file. Session tokens from the previous run go
+        // invalid immediately; the agent-as-API credential is restored, not
+        // regenerated, so profiles holding it keep working.
         if let Err(e) = self.persist_auth_tokens() {
             tracing::warn!(
                 error = %e,
-                "failed to write auth token files — authenticated local clients may be unavailable"
+                "failed to write the auth file — authenticated local clients may be unavailable"
             );
         }
 
@@ -313,11 +342,7 @@ impl ServerDaemon {
             })
         };
 
-        // Start channel input processing loop. The task can't observe mpsc
-        // channel closure on its own — its own `Arc<PluginHost>` transitively
-        // holds the input_tx — so we give it an explicit shutdown `Notify`
-        // and hand the join handle back to
-        // `RunningDaemon` so `stop()` can unwind cleanly.
+        // ChannelManager owns an input sender, so shutdown uses an explicit signal.
         let conversation_ingress = channel_hub.ingress();
         let channel_input_shutdown = Arc::new(Notify::new());
         let input_shutdown_for_task = Arc::clone(&channel_input_shutdown);
@@ -360,8 +385,9 @@ impl ServerDaemon {
         let web_channel_hub = Arc::clone(&channel_hub);
         let web_channel_manager = Arc::clone(&web_channel);
         let web_auth_token = Arc::clone(&self.auth_token);
+        let web_mcp_token = Arc::clone(&self.mcp_token);
         let web_local_api_token = Arc::clone(&self.local_api_token);
-        let web_local_agent_api_token = Arc::clone(&self.local_agent_api_token);
+        let web_local_agent_api_token = self.local_agent_api_token.clone();
         let web_search_runtime = search_runtime.clone();
         let web_search_available = host_search_available;
         let web_replace_provider_search = replace_provider_web_search;
@@ -376,6 +402,7 @@ impl ServerDaemon {
                 web_channel_hub,
                 web_channel_manager,
                 web_auth_token,
+                web_mcp_token,
                 web_local_api_token,
                 web_local_agent_api_token,
                 web_search_available,

@@ -22,8 +22,8 @@ export function getProfile(id: string): Promise<ProfileDef> {
   return invoke<ProfileDef>("profiles_get", { id });
 }
 
-export function upsertProfile(profile: ProfileDef): Promise<void> {
-  return invoke<void>("profiles_upsert", { profile });
+export function upsertProfile(id: string, draft: ProfileDraft): Promise<void> {
+  return invoke<void>("profiles_upsert", { id, draft });
 }
 
 export function createProfile(draft: ProfileDraft): Promise<ProfileDef> {
@@ -84,8 +84,13 @@ export function googleOAuthLogin(): Promise<GoogleOAuthStatus> {
   return invoke<GoogleOAuthStatus>("profiles_google_oauth_login");
 }
 
+export interface TestedEndpoint {
+  apiType: string;
+  url: string;
+}
+
 export interface ProfileConnectionTestResult {
-  testedApiTypes: string[];
+  testedEndpoints: TestedEndpoint[];
 }
 
 export function testProfileConnection(
@@ -103,6 +108,7 @@ export interface AgentSummary {
   install_type: string | null;
   pty_command: string;
   direct_only: boolean;
+  built_in: boolean;
   acp_program: string;
   acp_args: string[];
   acp_npm_package?: string | null;
@@ -248,6 +254,8 @@ export interface LauncherPreferences {
   defaultProfiles: Record<string, string>;
   compatibilityBridge: CompatibilityBridgeMode;
   localAgentApiEnabled: boolean;
+  /** Canonical agent ids opted in to the agent-as-API routes. */
+  localAgentApiAgents: string[];
   profileConnections: ProfileConnections;
 }
 
@@ -331,6 +339,13 @@ export function setLauncherLocalAgentApiEnabled(
   enabled: boolean,
 ): Promise<void> {
   return invoke<void>("launcher_set_local_agent_api_enabled", { enabled });
+}
+
+export function setLauncherLocalAgentApiAgentEnabled(
+  agentId: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke<void>("launcher_set_local_agent_api_agent", { agentId, enabled });
 }
 
 export function setProfileConnection(

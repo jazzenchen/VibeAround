@@ -6,7 +6,6 @@ use axum::{
 };
 
 use common::pty::{list_tmux_sessions, tmux_available, PtyTool, SessionId};
-use common::workspace::manager::ExternalSessionAttachMode;
 
 use crate::web_server::AppState;
 
@@ -227,9 +226,7 @@ fn profile_provider_label(profile_id: Option<&str>) -> (Option<String>, Option<S
     let Some(profile_id) = profile_id else {
         return (None, None);
     };
-    let Some(profile) =
-        common::profiles::schema::load(profile_id).map(common::profiles::normalize_legacy_profile)
-    else {
+    let Some(profile) = common::profiles::load_profile(profile_id) else {
         return (None, None);
     };
     let provider_id = profile.provider;
@@ -239,61 +236,77 @@ fn profile_provider_label(profile_id: Option<&str>) -> (Option<String>, Option<S
     (Some(provider_id), Some(provider_label))
 }
 
+fn trimmed(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 pub async fn init_workspace_thread_handler(
     State(state): State<AppState>,
     Json(body): Json<crate::api_types::WorkspaceThreadInitRequest>,
 ) -> Result<Json<crate::api_types::WorkspaceThreadInitResponse>, (StatusCode, String)> {
-    let agent_id = common::resources::resolve_agent_id(&body.agent_id)
-        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    let manager = state.channel_hub.workspace_thread_manager();
+    let bad_request = |error: anyhow::Error| (StatusCode::BAD_REQUEST, error.to_string());
+
+    if let Some(thread_id) = trimmed(body.thread_id.as_deref()) {
+        let runtime = manager
+            .attach_web_route_to_thread(&thread_id.into())
+            .await
+            .map_err(bad_request)?;
+        return Ok(Json(web_thread_response(&runtime).await));
+    }
+
+    let agent_id =
+        common::resources::resolve_agent_id(body.agent_id.as_deref().unwrap_or_default())
+            .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
     let workspace = body
         .workspace_path
         .as_deref()
         .map(std::path::PathBuf::from)
         .map(common::workspace::normalize_workspace_cwd)
         .unwrap_or_else(|| common::config::ensure_loaded().resolve_workspace(&agent_id));
-    let manager = state.channel_hub.workspace_thread_manager();
-    let trimmed_session_id = body
-        .session_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|session_id| !session_id.is_empty())
-        .map(ToOwned::to_owned);
-    let runtime = if let Some(session_id) = trimmed_session_id {
-        manager
-            .attach_external_session_to_web_thread(
-                agent_id,
-                body.profile_id,
-                session_id,
-                workspace,
-                ExternalSessionAttachMode::ReuseOpenThread,
-            )
+
+    if let Some(session_id) = trimmed(body.session_id.as_deref()) {
+        let runtime = manager
+            .attach_external_session_to_web_thread(agent_id, body.profile_id, session_id, workspace)
             .await
-    } else {
-        manager
-            .create_web_thread_for_cwd_with_host(agent_id, body.profile_id, workspace)
-            .await
+            .map_err(bad_request)?;
+        return Ok(Json(web_thread_response(&runtime).await));
     }
-    .map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
-    let runtime_state = runtime.state().await;
-    let thread_id = runtime_state.thread_id.to_string();
-    let chat_id = common::workspace::manager::web_chat_id_for_thread(&runtime_state.thread_id);
+
+    // Nothing exists yet, so nothing is created yet.
+    let (thread, workspace) = manager
+        .draft_web_thread(agent_id, body.profile_id, workspace)
+        .await
+        .map_err(bad_request)?;
     Ok(Json(crate::api_types::WorkspaceThreadInitResponse {
-        thread_id,
-        chat_id,
-        agent_id: runtime_state.host_binding.agent_id,
-        profile_id: runtime_state.host_binding.profile_id,
-        session_id: runtime_state.session_id,
-        workspace: runtime_state.workspace.to_string_lossy().to_string(),
+        chat_id: common::workspace::manager::web_chat_id_for_thread(&thread.id),
+        thread_id: thread.id.to_string(),
+        agent_id: thread.host_binding.agent_id,
+        profile_id: thread.host_binding.profile_id,
+        session_id: None,
+        workspace: workspace.to_string_lossy().to_string(),
     }))
+}
+
+async fn web_thread_response(
+    runtime: &common::workspace::threads::runtime::ThreadRuntime,
+) -> crate::api_types::WorkspaceThreadInitResponse {
+    let state = runtime.state().await;
+    crate::api_types::WorkspaceThreadInitResponse {
+        chat_id: common::workspace::manager::web_chat_id_for_thread(&state.thread_id),
+        thread_id: state.thread_id.to_string(),
+        agent_id: state.host_binding.agent_id,
+        profile_id: state.host_binding.profile_id,
+        session_id: state.session_id,
+        workspace: state.workspace.to_string_lossy().to_string(),
+    }
 }
 
 #[derive(serde::Deserialize)]
 pub(crate) struct LaunchSessionArchiveBody {
-    workspace_path: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-pub(crate) struct LaunchSessionArchiveQuery {
     workspace_path: Option<String>,
 }
 
@@ -306,23 +319,12 @@ pub async fn archive_launch_session_handler(
     set_launch_session_archived(agent_id, session_id, body.workspace_path, true).await
 }
 
-/// POST /api/agents/:agent_id/launch-sessions/:session_id/unarchive -- show a
-/// previously hidden session again without relying on a DELETE request body.
+/// POST /api/agents/:agent_id/launch-sessions/:session_id/unarchive.
 pub async fn unarchive_launch_session_handler(
     Path((agent_id, session_id)): Path<(String, String)>,
     Json(body): Json<LaunchSessionArchiveBody>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     set_launch_session_archived(agent_id, session_id, body.workspace_path, false).await
-}
-
-/// DELETE /api/agents/:agent_id/launch-sessions/:session_id/archive -- legacy
-/// unarchive endpoint. Use query parameters so clients do not need a DELETE
-/// request body.
-pub async fn unarchive_launch_session_delete_handler(
-    Path((agent_id, session_id)): Path<(String, String)>,
-    Query(query): Query<LaunchSessionArchiveQuery>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    set_launch_session_archived(agent_id, session_id, query.workspace_path, false).await
 }
 
 async fn set_launch_session_archived(

@@ -2,6 +2,7 @@ import {
   type ChangeEvent,
   type DragEvent,
   type KeyboardEvent,
+  type ReactNode,
   useEffect,
   useRef,
   useState,
@@ -13,6 +14,7 @@ import {
   Loader2,
   MessageSquare,
   Paperclip,
+  RefreshCw,
   Send,
   X,
 } from "lucide-react";
@@ -21,7 +23,12 @@ import { useI18n } from "@va/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { API_BASE, apiFetch, getLocalAgentApiToken } from "@/lib/api";
+import {
+  API_BASE,
+  apiFetch,
+  getLocalAgentApiToken,
+  rotateLocalAgentApiToken,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   LOCAL_API_PROTOCOLS,
@@ -80,6 +87,8 @@ export function LocalAgentApiPanel({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [clientKey, setClientKey] = useState("");
+  const [rotatingKey, setRotatingKey] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
 
   const basePath = localAgentBasePath(target);
   const baseUrl = `${API_BASE}${basePath}`;
@@ -112,6 +121,8 @@ export function LocalAgentApiPanel({
     setDragDepth(0);
     setTestResult(null);
     setClientKey("");
+    setRotatingKey(false);
+    setRotateError(null);
     void getLocalAgentApiToken().then((token) => {
       if (!cancelled && token) setClientKey(token);
     });
@@ -168,6 +179,30 @@ export function LocalAgentApiPanel({
       }, 1400);
     } catch {
       // Clipboard errors are non-fatal; users can still select visible text.
+    }
+  }
+
+  async function regenerateClientKey() {
+    if (rotatingKey) return;
+    if (
+      !window.confirm(
+        t(
+          "Generate a new API key? Profiles using the current key stop working until you paste the new one.",
+        ),
+      )
+    ) {
+      return;
+    }
+    setRotatingKey(true);
+    setRotateError(null);
+    try {
+      setClientKey(await rotateLocalAgentApiToken());
+    } catch (error) {
+      // Rotation is the one destructive action here, so a failure has to be
+      // visible: the row keeps showing the old key either way.
+      setRotateError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRotatingKey(false);
     }
   }
 
@@ -338,28 +373,6 @@ export function LocalAgentApiPanel({
 
   return (
     <section className={cn("grid gap-3", className)}>
-      <div className="flex flex-wrap items-center gap-3">
-        <Tabs
-          value={protocol}
-          onValueChange={(value) => {
-            setProtocol(value as LocalApiProtocol);
-            setTestResult(null);
-          }}
-        >
-          <TabsList className="h-8">
-            {LOCAL_API_PROTOCOLS.map((item) => (
-              <TabsTrigger
-                key={item.id}
-                value={item.id}
-                className="px-3 text-xs"
-              >
-                {item.shortLabel}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </div>
-
       <div className="grid gap-1 rounded-md border border-border/70 p-2">
         <div className="flex min-h-5 flex-wrap items-center gap-2">
           <div className="text-xs font-semibold">
@@ -369,25 +382,96 @@ export function LocalAgentApiPanel({
             {t("Click a value to copy.")}
           </div>
         </div>
+
+        {/* The API selector and the one value it drives. */}
+        <div className="grid grid-cols-[78px_minmax(0,1fr)] items-center gap-2">
+          <div className="min-w-0 text-[11px] leading-5 text-muted-foreground">
+            <span className="truncate">{t("API")}</span>
+          </div>
+          <div className="flex min-w-0 items-center gap-2">
+            <Tabs
+              className="shrink-0"
+              value={protocol}
+              onValueChange={(value) => {
+                setProtocol(value as LocalApiProtocol);
+                setTestResult(null);
+              }}
+            >
+              {/* `!h-6` is required: tabsListVariants sets the height through
+                  group-data-[orientation=horizontal]/tabs:h-9, which a bare
+                  height utility cannot override. */}
+              <TabsList
+                className="!h-6 rounded-md bg-muted/60 p-0.5"
+                aria-label={t("API")}
+              >
+                {LOCAL_API_PROTOCOLS.map((item) => (
+                  <TabsTrigger
+                    key={item.id}
+                    value={item.id}
+                    className="h-5 rounded-[5px] px-2.5 text-[11px] font-medium"
+                  >
+                    {item.shortLabel}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground">
+              {selectedProtocol.label}
+            </span>
+          </div>
+        </div>
         <ManualField
-          label={t("Base URL")}
+          label={t("Endpoint")}
           value={endpointUrl}
+          tone="primary"
           copied={copiedKey === protocol}
           onCopy={() => copyValue(protocol, endpointUrl)}
         />
-        <ManualField
-          label={t("Models API")}
-          value={modelsUrl}
-          copied={copiedKey === "models"}
-          onCopy={() => copyValue("models", modelsUrl)}
-        />
+        <div className="pl-[86px] text-[11px] leading-4 text-muted-foreground">
+          {t("This URL changes with the selected API.")}
+        </div>
+
+        <div aria-hidden className="-mx-2 my-1 h-px bg-border" />
+
+        {/* Same for every API. */}
         {clientKey && (
-          <ManualField
-            label={t("API key")}
-            value={clientKey}
-            copied={copiedKey === "api-key"}
-            onCopy={() => copyValue("api-key", clientKey)}
-          />
+          <>
+            <ManualField
+              label={t("API key")}
+              value={clientKey}
+              copied={copiedKey === "api-key"}
+              onCopy={() => copyValue("api-key", clientKey)}
+              action={
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label={t("Generate a new API key")}
+                  title={t("Generate a new API key")}
+                  disabled={rotatingKey}
+                  onClick={regenerateClientKey}
+                >
+                  {rotatingKey ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3" />
+                  )}
+                </Button>
+              }
+            />
+            <div className="pl-[86px] text-[11px] leading-4 text-muted-foreground">
+              {t("This key stays the same across restarts.")}
+            </div>
+            {rotateError && (
+              <div className="flex min-w-0 items-start gap-1 pl-[86px] text-[11px] leading-4 text-destructive">
+                <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span className="min-w-0">
+                  {t("Could not generate a new API key.")} {rotateError}
+                </span>
+              </div>
+            )}
+          </>
         )}
         <ModelListField
           label={t("Models")}
@@ -404,6 +488,12 @@ export function LocalAgentApiPanel({
           copiedKey={copiedKey}
           onCopy={(modelId) => copyValue(`model:${modelId}`, modelId)}
         />
+        <ManualField
+          label={t("Models API")}
+          value={modelsUrl}
+          copied={copiedKey === "models"}
+          onCopy={() => copyValue("models", modelsUrl)}
+        />
       </div>
 
       <div className="grid gap-2 rounded-md border border-border/70 p-3">
@@ -412,6 +502,11 @@ export function LocalAgentApiPanel({
             <MessageSquare className="h-4 w-4 text-primary" />
             {t("Test message")}
           </div>
+          {/* runTest posts to the selected protocol's endpoint; the switcher
+              now lives in the block above, so name the target here. */}
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+            {selectedProtocol.label}
+          </span>
         </div>
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-2">
           <div className="grid gap-1 text-[11px] text-muted-foreground">
@@ -588,12 +683,14 @@ function ManualField({
   copied,
   onCopy,
   tone = "default",
+  action,
 }: {
   label: string;
   value: string;
   copied: boolean;
   onCopy: () => void;
   tone?: "default" | "primary";
+  action?: ReactNode;
 }) {
   const { t } = useI18n();
   return (
@@ -601,24 +698,27 @@ function ManualField({
       <div className="min-w-0 text-[11px] leading-5 text-muted-foreground">
         <span className="truncate">{label}</span>
       </div>
-      <button
-        type="button"
-        className={`flex h-5 w-full min-w-0 cursor-pointer items-center rounded px-1.5 text-left font-mono text-[11px] leading-5 transition-colors ${
-          tone === "primary"
-            ? "bg-primary/5 text-primary hover:bg-primary/10"
-            : "bg-muted/35 text-foreground hover:bg-muted/60"
-        }`}
-        aria-label={t("Copy")}
-        title={t("Copy")}
-        onClick={onCopy}
-      >
-        <span className="min-w-0 truncate">{value}</span>
-        {copied && (
-          <span className="ml-2 shrink-0 text-[11px] font-sans text-primary">
-            {t("Copied")}
-          </span>
-        )}
-      </button>
+      <div className="flex min-w-0 items-center gap-1">
+        <button
+          type="button"
+          className={`flex h-5 w-full min-w-0 cursor-pointer items-center rounded px-1.5 text-left font-mono text-[11px] leading-5 transition-colors ${
+            tone === "primary"
+              ? "bg-primary/10 text-primary hover:bg-primary/15"
+              : "bg-muted/35 text-foreground hover:bg-muted/60"
+          }`}
+          aria-label={t("Copy")}
+          title={t("Copy")}
+          onClick={onCopy}
+        >
+          <span className="min-w-0 truncate">{value}</span>
+          {copied && (
+            <span className="ml-2 shrink-0 text-[11px] font-sans text-primary">
+              {t("Copied")}
+            </span>
+          )}
+        </button>
+        {action}
+      </div>
     </div>
   );
 }

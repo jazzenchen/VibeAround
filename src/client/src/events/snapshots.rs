@@ -66,9 +66,9 @@ mod tests {
         assert_eq!(tunnels[0].provider, "cloudflare");
 
         let agents = decode_agents_runtime_event(json!([{
-            "route_key": "workspace-thread",
+            "thread_id": "wt_workspace",
             "channel_kind": "workspace",
-            "chat_id": "workspace-thread",
+            "chat_id": "wt_workspace",
             "attached_routes": [],
             "cli_kind": "codex",
             "profile": null,

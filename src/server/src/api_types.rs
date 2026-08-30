@@ -1,23 +1,6 @@
 //! HTTP/WebSocket API response shapes for the dashboard.
 //!
-//! This module owns the **wire contract** between the server and its
-//! frontends (web dashboard, Tauri desktop-ui, plus any future TUI / CLI
-//! / third-party consumer). Types here exist only to be serialized.
-//!
-//! # Where the data comes from
-//!
-//! Structs in this module are populated by reading `common` core state
-//! (via `config::ensure_loaded()` and `resources::...`). The core does
-//! not know about HTTP; it exposes domain data and this module maps it
-//! to wire shapes. Consumers that aren't HTTP (TUI, CLI) should write
-//! their own mapping alongside core, not reuse these types.
-//!
-//! # Consumers
-//!
-//! The canonical TS validator/types live in
-//! `src/shared/client-ts/src/schemas.ts` (zod). Keep the wire shapes
-//! documented on each struct below so Python/Swift/curl consumers can
-//! derive their own schemas without reading the zod file.
+//! Canonical TypeScript validators live in `src/shared/client-ts/src/schemas.ts`.
 
 use std::collections::BTreeMap;
 
@@ -34,8 +17,6 @@ pub struct ServiceHealthResponse {
     pub ok: bool,
     pub service: &'static str,
     pub version: &'static str,
-    /// Deprecated wire-compatibility field. IM delivery is live-only.
-    pub channel_outbox_pending: usize,
 }
 
 /// `GET /api/service/info` response.
@@ -75,6 +56,7 @@ pub struct AgentInfo {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub requires_profile: bool,
 }
 
 /// `GET /api/agents` response envelope.
@@ -129,7 +111,6 @@ pub struct ModelProfileSummary {
     pub auth_mode: AuthMode,
     pub api_types: Vec<String>,
     pub launch_targets: Vec<ModelProfileLaunchTarget>,
-    pub api_type_warnings: BTreeMap<String, String>,
     pub api_type_models: BTreeMap<String, String>,
     pub api_type_model_options: BTreeMap<String, Vec<catalog::ModelDef>>,
     pub api_type_headers: BTreeMap<String, BTreeMap<String, String>>,
@@ -141,8 +122,6 @@ pub struct ModelProfileLaunchTarget {
     pub id: String,
     pub label: String,
     pub api_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub warning: Option<String>,
 }
 
 /// `GET /api/launcher/preferences` response.
@@ -155,6 +134,8 @@ pub struct LauncherPreferencesResponse {
     pub enabled_agents: Vec<String>,
     pub agent_preferences: BTreeMap<String, LauncherAgentPreferenceSummary>,
     pub local_agent_api_enabled: bool,
+    /// Canonical agent ids opted in to the agent-as-API routes.
+    pub local_agent_api_agents: Vec<String>,
     pub profile_connections: common::agent_state::ProfileConnectionPreferences,
 }
 
@@ -212,6 +193,7 @@ impl AgentInfo {
                     id: id.clone(),
                     name: def.display_name.clone(),
                     description: def.description.clone(),
+                    requires_profile: def.requires_profile,
                 })
             })
             .collect()
@@ -326,7 +308,11 @@ pub struct LaunchSessionInfo {
 /// `POST /api/workspace-threads/init` request.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkspaceThreadInitRequest {
-    pub agent_id: String,
+    /// Adopt this existing thread and answer with its web identity. The thread
+    /// already knows its agent, profile and workspace, so the other fields are
+    /// ignored when it is set.
+    pub thread_id: Option<String>,
+    pub agent_id: Option<String>,
     pub profile_id: Option<String>,
     pub session_id: Option<String>,
     pub workspace_path: Option<String>,
@@ -403,7 +389,7 @@ pub struct PreviewsResponse {
 ///
 /// Lifecycle events (config / agent_ready / session_ready /
 /// command_menu / permission_request / turn_status / system_text / error)
-/// are dashboard meta — our own addition on top of ACP. Streaming tokens
+/// are VibeAround dashboard metadata. Streaming tokens
 /// and tool calls arrive as raw ACP `SessionNotification` payloads under
 /// the `acp_notification` kind.
 /// The frontend imports the matching TS types from
@@ -423,7 +409,11 @@ pub struct PreviewsResponse {
 /// { "kind": "subagent_status", "agent": { ... } }
 /// { "kind": "subagent_acp_notification", "agent": { ... }, "payload": { ... } }
 /// { "kind": "command_menu", "system_commands": [...], "agent_commands": [...] }
+/// { "kind": "session_info", "info": { "threadId": "wt_...", "agent": { ... } } }
 /// { "kind": "turn_status", "active": false }
+/// { "kind": "replay_start", "session_id": "01HX..." }
+/// { "kind": "replay_done", "session_id": "01HX..." }
+/// { "kind": "preview_refresh" }
 /// { "kind": "error", "error": "spawn failed: ..." }
 /// ```
 #[derive(Debug, Clone, Serialize)]
@@ -440,6 +430,11 @@ pub enum ChatEvent {
     },
     SessionReady {
         session_id: String,
+    },
+    /// What the route actually runs now: workspace, thread, agent, profile and
+    /// session. The one answer a surface can trust over its own selection.
+    SessionInfo {
+        info: common::channels::types::ChannelSessionInfo,
     },
     SessionMode {
         session_mode: serde_json::Value,
@@ -466,6 +461,17 @@ pub enum ChatEvent {
     TurnStatus {
         active: bool,
     },
+    /// Brackets around a session-transcript replay. Everything between the
+    /// two markers re-renders history for `session_id`: the client resets its
+    /// view of that session on `replay_start` and treats frames until
+    /// `replay_done` as the authoritative transcript.
+    ReplayStart {
+        session_id: String,
+    },
+    ReplayDone {
+        session_id: String,
+    },
+    PreviewRefresh,
     SystemText {
         text: String,
     },
@@ -480,16 +486,77 @@ pub enum ChatEvent {
     },
 }
 
+impl From<common::workspace::manager::WorkspaceThreadRuntimeEntry> for AgentRuntime {
+    fn from(entry: common::workspace::manager::WorkspaceThreadRuntimeEntry) -> Self {
+        let st = entry.state;
+        let (agent_name, agent_title, agent_version) = st
+            .initialize
+            .as_ref()
+            .and_then(|i| i.agent_info.as_ref())
+            .map(|info| {
+                (
+                    Some(info.name.clone()),
+                    info.title.clone(),
+                    Some(info.version.clone()),
+                )
+            })
+            .unwrap_or((None, None, None));
+        let (channel_kind, chat_id) = match entry.route {
+            Some(route) => (route.channel_kind.clone(), route.chat_id.clone()),
+            None => ("workspace".to_string(), st.thread_id.to_string()),
+        };
+        let profile = st.host_binding.profile_id.clone();
+        let profile_label = agent_profile_label(profile.as_deref());
+        Self {
+            thread_id: st.thread_id.to_string(),
+            channel_kind,
+            chat_id,
+            attached_routes: entry.attached_routes.iter().map(Into::into).collect(),
+            cli_kind: Some(st.host_binding.agent_id.clone()),
+            profile,
+            profile_label,
+            session_id: st.session_id,
+            workspace: Some(st.workspace.to_string_lossy().to_string()),
+            busy: st.busy,
+            failed: st.failed,
+            started_at: 0,
+            agent_name,
+            agent_title,
+            agent_version,
+            multi_agent_turns: st.multi_agent_turns,
+            subagents: st.agents,
+        }
+    }
+}
+
+/// One route subscribed to a thread, as listed under `attached_routes`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentAttachedRoute {
+    pub channel_kind: String,
+    pub chat_id: String,
+}
+
+impl From<&RouteKey> for AgentAttachedRoute {
+    fn from(route: &RouteKey) -> Self {
+        Self {
+            channel_kind: route.channel_kind.clone(),
+            chat_id: route.chat_id.clone(),
+        }
+    }
+}
+
+pub fn agent_profile_label(profile_id: Option<&str>) -> Option<String> {
+    common::profiles::load_profile(profile_id?).map(|profile| profile.label)
+}
+
 /// One agent runtime, as returned by `GET /api/agents/runtime`.
 ///
-/// Sources: `WorkspaceThreadManager::list()` → live `ThreadRuntimeState`
-/// entries. Persisted workspace threads that do not currently own a host
-/// process are intentionally omitted.
+/// Sources: live `ThreadRuntimeState` entries from `WorkspaceThreadManager`.
 ///
 /// # Wire format (JSON)
 /// ```json
 /// {
-///   "route_key": "wt_0123456789abcdef",
+///   "thread_id": "wt_0123456789abcdef",
 ///   "channel_kind": "telegram",
 ///   "chat_id": "chat_42",
 ///   "cli_kind": "claude",
@@ -505,30 +572,8 @@ pub enum ChatEvent {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize)]
-pub struct AgentAttachedRoute {
-    pub route_key: String,
-    pub channel_kind: String,
-    pub chat_id: String,
-}
-
-impl From<&RouteKey> for AgentAttachedRoute {
-    fn from(route: &RouteKey) -> Self {
-        Self {
-            route_key: route.display_key(),
-            channel_kind: route.channel_kind.clone(),
-            chat_id: route.chat_id.clone(),
-        }
-    }
-}
-
-pub fn agent_profile_label(profile_id: Option<&str>) -> Option<String> {
-    let profile = common::profiles::schema::load(profile_id?)?;
-    Some(common::profiles::normalize_legacy_profile(profile).label)
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct AgentRuntime {
-    pub route_key: String,
+    pub thread_id: String,
     pub channel_kind: String,
     pub chat_id: String,
     pub attached_routes: Vec<AgentAttachedRoute>,

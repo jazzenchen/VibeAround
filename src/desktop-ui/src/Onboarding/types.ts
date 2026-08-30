@@ -9,6 +9,7 @@ export interface AgentSummary {
   install_type?: "npm" | "script" | "path";
   pty_command?: string;
   direct_only?: boolean;
+  built_in?: boolean;
   acp_program?: string;
   acp_args?: string[];
   acp_npm_package?: string | null;
@@ -36,10 +37,6 @@ export interface Settings {
   default_agent?: string;
   default_profiles?: Record<string, string>;
   enabled_agents?: string[];
-  integrations?: {
-    mcp_auto_install?: boolean;
-    skill_auto_install?: boolean;
-  };
   proxy?: {
     enabled?: boolean;
     http_proxy?: string;
@@ -47,7 +44,6 @@ export interface Settings {
   };
   api_bridge?: {
     replace_provider_web_search?: boolean;
-    replaceProviderWebSearch?: boolean;
     retry_429?: {
       enabled?: boolean;
       max_retries?: number | null;
@@ -69,9 +65,7 @@ export interface Settings {
   search_tool?: {
     stdio_path?: string;
     max_results?: number;
-    maxResults?: number;
     search_context_size?: string;
-    searchContextSize?: string;
     sources?: Record<
       string,
       {
@@ -94,7 +88,6 @@ export interface Settings {
     source?: string;
     toolchain_mode?: ToolchainMode | string;
     portable_toolchain?: boolean;
-    portableToolchain?: boolean;
     shell_path?: boolean;
   };
   tunnel?: {

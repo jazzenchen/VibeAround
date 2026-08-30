@@ -1,72 +1,76 @@
 ---
 name: va-preview
-description: Exposes a local dev server or HTML file as a live preview via a shareable public URL, enabling browser and mobile device testing. Use after starting a dev server or creating HTML/CSS/JS files, or when the user asks to "preview this", "show me on my phone", "share a preview link", "open in browser", or "mobile preview". Only available when the VibeAround MCP server is connected.
+description: Start a VibeAround Preview for either a running local web server or a Markdown file. Use after starting a dev server, after creating or updating Markdown, or when the user asks to preview a browsable artifact. Only available when the VibeAround MCP server is connected.
 ---
 
-# VibeAround Live Preview
+# VibeAround Preview
 
-Exposes a local dev server or static files as a live preview via a shareable URL, so the user can view the result in their browser or on a mobile device.
+Preview exactly one local source through VibeAround: a running web server or a Markdown file.
 
-## When to Use
+## Workflow
 
-- After starting a dev server (`next dev`, `vite`, `python -m http.server`, etc.)
-- After creating HTML/CSS/JS files the user should see
-- The user asks to "show me", "preview", "let me see it on my phone", or "share a preview link"
+### 1. Prepare one source
 
-**Proactive behavior**: After starting a dev server or creating a web artifact, ask the user if they'd like a preview link (e.g. "Want me to generate a preview link so you can see it on your phone?"). Only call `preview` after the user confirms.
+- **Server**: Reuse the intended server when it is still running. Otherwise start it with the framework's automatic port selection and wait until it is reachable at `127.0.0.1:<port>`. VibeAround registers that port in memory; closing that Preview or the daemon kills the process currently listening there.
+- **Markdown**: Verify that the requested file exists. No separate static-file server is needed.
 
-## Prerequisites
+VibeAround never restores a Preview after restart; call `va_mcp_preview` again when needed. Registered Server ports are cleaned at shutdown and again at the next startup if shutdown was interrupted.
 
-The VibeAround MCP server must be connected (server name: `vibearound`). If not available, tell the user to start the VibeAround desktop app.
+### 2. Add optional conversation identity
 
-## Steps
+Pass `$VIBEAROUND_THREAD_ID` when present. If an exact current session ID is readily available, pass it with the current agent ID. Both are optional; do not delay or block Preview when either is unavailable.
+These fields only let Preview chat inherit the current task as context. They never control Preview or server lifetime.
 
-### 1. Ensure the server is listening
+### 3. Call `va_mcp_preview`
 
-- Verify the port is free: `lsof -i :<port>` should return nothing before starting
-- Wait for the server's "Listening on..." message before proceeding
-- Use `--host 0.0.0.0` when available for broader network compatibility
+Pass exactly one of `port` or `file`, plus `cwd`.
 
-### 2. Resolve the session ID
-
-Use the `/va-session` skill to get the current session ID.
-
-### 3. Call preview
+For a server:
 
 ```
-Tool: preview
+Tool: va_mcp_preview
 Server: vibearound
 Arguments:
-  port: <the port your server is running on>
+  port: <local server port>
   cwd: "<current working directory>"
-  session_id: "<session_id from step 2>"  (pass if available)
-  title: "<short description of what you built>"  (optional)
+  thread_id: "<value of $VIBEAROUND_THREAD_ID if present>"
+  agent_kind: "<current VibeAround agent ID>"  (pass with session_id)
+  session_id: "<exact current session ID if available>"
+  title: "<short title>"  (optional)
 ```
 
-If the workspace is not registered, call `register_workspace` with the `cwd` first, then retry.
-
-### 4. Present BOTH links to the user
-
-The tool returns an Owner link and a Share link. Always show **both** in this format:
+For Markdown:
 
 ```
-Preview 已就绪：
-- 你的预览: <owner_url>
-- 分享链接: <share_url>（10 分钟有效）
+Tool: va_mcp_preview
+Server: vibearound
+Arguments:
+  file: "<absolute path, or path relative to cwd>"
+  cwd: "<current working directory>"
+  thread_id: "<value of $VIBEAROUND_THREAD_ID if present>"
+  agent_kind: "<current VibeAround agent ID>"  (pass with session_id)
+  session_id: "<exact current session ID if available>"
+  title: "<document title>"  (optional)
 ```
 
-Or in English:
+If the workspace is not registered, call `va_mcp_register_workspace` with `cwd`, then retry.
 
-```
-Preview ready:
-- Owner: <owner_url>
-- Share: <share_url> (expires in 10 min)
-```
+### 4. Relay returned links
 
-**Never omit either link.** The owner link is permanent (requires browser pairing). The share link is temporary and needs no auth — ideal for sending to others or testing on mobile.
+Present every owner and Share URL returned by the tool. Include the six-digit access code and exact remaining lifetime with a Share. The Share URL and code expire together and the code can be reused by multiple viewers until expiry. Do not construct URLs yourself.
 
-## Error Handling
+## Server consent and transport
 
-- **MCP server not available**: The VibeAround desktop app may not be running.
-- **Workspace not registered**: Call `register_workspace` first, then retry.
-- **Port in use**: Check with `lsof -i :<port>` and choose a different port.
+Do not add an agent-side risk preflight. Before a Server iframe is created, the Preview page itself asks the user once per Preview and browser session to acknowledge that the local server may contain unknown code.
+
+Remote owner traffic is forwarded only to `127.0.0.1:<registered-port>`, including ordinary HTTP methods, request bodies, and WebSocket/HMR traffic. The public Share remains a narrower read-only view.
+
+## Optional server review bridge
+
+Only when the user asks to review or comment on a server preview, add the exact dev-only `<script>` tag returned by the tool. Do not add it proactively or ship it in a production build.
+
+## Errors
+
+- If the MCP server is unavailable, ask the user to start VibeAround.
+- If a server is unavailable, verify that the returned port is listening.
+- If a file cannot be previewed, verify that it exists and is readable.

@@ -1,10 +1,12 @@
 {
   "name": "@vibearound/web",
   "private": true,
-  "version": "0.7.24",
+  "version": "0.7.25",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "bun test qa/ --dots",
+    "test:watch": "bun test qa/ --watch --dots",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },

@@ -11,9 +11,9 @@
 | Type | File | Role |
 |---|---|---|
 | `AuthToken` | `token.rs` | 每次 daemon start 都随机生成的 bearer token |
-| `write_token_file` | `mod.rs` | 把 `{port, token}` 持久化到 `~/.vibearound/auth.json`，供进程外消费者使用（tray、CLI、desktop-ui） |
-| `write_local_api_token_file` | `mod.rs` | 持久化仅由 Profile 模型 Bridge 接受的凭据 |
-| `write_local_agent_api_token_file` | `mod.rs` | 持久化仅由 Agent-as-API 接受的凭据 |
+| `SharedAuthToken` | `token.rs` | 各 handler 共享、可在运行时被用户轮换的 token |
+| `write_auth_file` | `mod.rs` | 一次写入把四把凭据持久化到 `~/.vibearound/auth.json`，供进程外消费者使用（tray、CLI、desktop-ui） |
+| `read_mcp_token_file` / `read_local_api_token_file` / `read_local_agent_api_token_file` | `mod.rs` | 从该文件中取出对应的单把凭据 |
 | `pair` | `pair.rs` | 6 位 codes，60 秒 TTL，通过 trusted surface 验证；`validate(code)` 成功时返回 token |
 
 ## 交互

@@ -30,6 +30,7 @@ fn main() {
 }
 
 fn run() -> anyhow::Result<()> {
+    common::migration::run()?;
     let args = CliArgs::parse();
     let input = read_input(&args)?;
     let output = if args.dry_run {
@@ -106,7 +107,9 @@ mod tests {
   "label": "OpenAI",
   "provider": "xai",
   "auth_mode": "api_key",
-  "api_types": ["openai-responses"],
+  "api_configs": {
+    "openai-responses": { "enabled": true }
+  },
   "credentials": {
     "api_key": "secret"
   }

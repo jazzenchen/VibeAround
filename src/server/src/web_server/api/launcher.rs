@@ -176,6 +176,60 @@ pub async fn set_local_agent_api_handler(
     .await
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct LocalAgentApiAgentBody {
+    agent_id: String,
+    enabled: bool,
+}
+
+/// PUT /api/launcher/local-agent-api/agent -- opt one agent in or out of the
+/// agent-as-API routes. The service switch stays separate; both must be on.
+pub async fn set_local_agent_api_agent_handler(
+    Json(body): Json<LocalAgentApiAgentBody>,
+) -> Result<Json<crate::api_types::LauncherPreferencesResponse>, (StatusCode, String)> {
+    super::run_blocking_io(move || {
+        let agent_id = canonical_agent_id(&body.agent_id)?;
+        config::mutate_settings_json(|root| {
+            let root_obj = root
+                .as_object_mut()
+                .ok_or_else(|| "settings.json root must be a JSON object".to_string())?;
+            let entry = root_obj
+                .entry("local_agent_api".to_string())
+                .or_insert_with(|| serde_json::json!({}));
+            if !entry.is_object() {
+                *entry = serde_json::json!({});
+            }
+            let settings = entry
+                .as_object_mut()
+                .ok_or_else(|| "settings.json local_agent_api must be an object".to_string())?;
+            let mut agents: Vec<String> = settings
+                .get("agents")
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|agent| !agent.is_empty())
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default();
+            agents.retain(|agent| agent != &agent_id);
+            if body.enabled {
+                agents.push(agent_id.clone());
+            }
+            agents.sort();
+            agents.dedup();
+            settings.insert("agents".to_string(), serde_json::json!(agents));
+            Ok(())
+        })
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        Ok(Json(launcher_preferences()))
+    })
+    .await
+}
+
 /// PUT /api/launcher/profile-connection -- set profile-to-agent bridge routing.
 pub async fn set_profile_connection_handler(
     Json(body): Json<ProfileConnectionBody>,
@@ -225,6 +279,7 @@ fn launcher_preferences() -> crate::api_types::LauncherPreferencesResponse {
         enabled_agents: cfg.enabled_agents.clone(),
         agent_preferences,
         local_agent_api_enabled: cfg.local_agent_api.enabled,
+        local_agent_api_agents: cfg.local_agent_api.agents.iter().cloned().collect(),
         profile_connections: connections::merged_profile_connections(),
     }
 }
@@ -336,6 +391,68 @@ pub(crate) fn build_launch_plan(
     }
 }
 
+/// Built-in agents have no CLI of their own: every terminal launch (direct,
+/// profile, resume) opens the TUI, which drives the agent through the daemon.
+/// The terminal only gets the launch context; the daemon renders the model
+/// profile when it spawns the agent.
+fn build_tui_launch_plan(
+    launch_id: &str,
+    agent_id: &str,
+    agent: &resources::AgentDef,
+    profile: Option<&common::profiles::ProfileDef>,
+    launch_target: String,
+    session_id: Option<String>,
+    terminal_id: Option<&str>,
+    workspace: &std::path::Path,
+) -> crate::api_types::LaunchPlanResponse {
+    let mut env = vec![
+        (VIBEAROUND_LAUNCH_ID_ENV.to_string(), launch_id.to_string()),
+        (
+            VIBEAROUND_LAUNCH_TARGET_ENV.to_string(),
+            launch_target.clone(),
+        ),
+    ];
+    if let Some(profile) = profile {
+        env.push((
+            common::agent::launch::VIBEAROUND_PROFILE_ID_ENV.to_string(),
+            profile.id.clone(),
+        ));
+    }
+    if let Some(session_id) = session_id.as_deref() {
+        env.push((
+            common::agent::launch::VIBEAROUND_SESSION_ID_ENV.to_string(),
+            session_id.to_string(),
+        ));
+    }
+    // Bundled next to this daemon (desktop app, npm platform package) or, in
+    // an npm install, the `va` CLI on PATH.
+    let command = common::sidecar::find("va-tui", "VIBEAROUND_VA_TUI_BIN")
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| agent.launch_command_for_terminal(terminal_id).to_string());
+    let title = match (profile, session_id.is_some()) {
+        (Some(profile), true) => format!("{} (resume)", profile.label),
+        (Some(profile), false) => profile.label.clone(),
+        (None, true) => format!("{} (resume)", agent.display_name),
+        (None, false) => format!("{} (direct)", agent.display_name),
+    };
+    crate::api_types::LaunchPlanResponse {
+        launch_id: launch_id.to_string(),
+        agent_id: agent_id.to_string(),
+        profile_id: profile.map(|profile| profile.id.clone()),
+        launch_target,
+        command,
+        args: Vec::new(),
+        env: env
+            .into_iter()
+            .map(|(key, value)| crate::api_types::LaunchPlanEnvVar { key, value })
+            .collect(),
+        cwd: workspace.to_string_lossy().to_string(),
+        resume_session_id: session_id,
+        native_execution: false,
+        display: crate::api_types::LaunchPlanDisplay { title },
+    }
+}
+
 fn build_direct_launch_plan(
     launch_id: &str,
     body: LaunchPlanBody,
@@ -353,6 +470,18 @@ fn build_direct_launch_plan(
         )
     })?;
     let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);
+    if agent.built_in {
+        return Ok(build_tui_launch_plan(
+            launch_id,
+            &agent_id,
+            agent,
+            None,
+            body.launch_target.unwrap_or_else(|| agent_id.clone()),
+            body.session_id,
+            terminal_id,
+            &workspace,
+        ));
+    }
     let launch_args = agent.launch_args_for_terminal(terminal_id);
     let (command, resume_args) = if let Some(session_id) = body.session_id.as_deref() {
         resume_command_for_agent(&agent_id, session_id, terminal_id)?
@@ -420,6 +549,19 @@ fn build_profile_launch_plan(
                 format!("profile '{}' cannot launch '{}'", profile.id, launch_target),
             )
         })?;
+    if agent.built_in {
+        let workspace = agent_state::resolve_agent_workspace(&prefs, &cfg, &agent_id);
+        return Ok(build_tui_launch_plan(
+            launch_id,
+            &agent_id,
+            agent,
+            Some(&profile),
+            launch_target,
+            body.session_id,
+            terminal_id,
+            &workspace,
+        ));
+    }
     let rendered = runtime::render_for_agent_route(&profile, &launch_target, launch_id, &route)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let mut env = runtime::materialize_env(&profile.id, rendered.clone())
@@ -539,6 +681,50 @@ fn resume_command_for_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_agent_terminal_launches_open_the_tui_with_context_only() {
+        let agent = resources::agent_by_id("va-agent").expect("va-agent registered");
+        let workspace = std::path::Path::new("/tmp/project");
+
+        let direct = build_tui_launch_plan(
+            "launch-1",
+            "va-agent",
+            agent,
+            None,
+            "va-agent".into(),
+            None,
+            None,
+            workspace,
+        );
+        assert!(direct.args.is_empty());
+        assert!(!direct.native_execution);
+        let keys: Vec<&str> = direct.env.iter().map(|var| var.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["VIBEAROUND_LAUNCH_ID", "VIBEAROUND_LAUNCH_TARGET"]
+        );
+
+        let resume = build_tui_launch_plan(
+            "launch-2",
+            "va-agent",
+            agent,
+            None,
+            "va-agent".into(),
+            Some("session-9".into()),
+            None,
+            workspace,
+        );
+        assert!(resume
+            .env
+            .iter()
+            .any(|var| { var.key == "VIBEAROUND_SESSION_ID" && var.value == "session-9" }));
+        assert_eq!(resume.resume_session_id.as_deref(), Some("session-9"));
+        assert!(resume
+            .env
+            .iter()
+            .all(|var| !var.key.starts_with("VIBEAROUND_MODEL_")));
+    }
 
     #[test]
     fn validates_agent_workspace_selection() {

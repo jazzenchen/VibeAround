@@ -46,12 +46,12 @@ import {
 import {
   arraysEqual,
   apiConfigForEndpoint,
+  apiConfigsForEndpoints,
   collectFields,
   defaultAuthMode,
   endpointId,
   endpointLabel,
   endpointsForApiType,
-  overridesForEndpoints,
   providerEndpointGroups,
   providerApiKindsEditable,
   providerApiKindEndpoints,
@@ -61,9 +61,9 @@ import {
   selectedAuthModes,
   selectedEndpoint,
   shouldShowBaseUrl,
+  syncApiConfigsForProvider,
 } from "./profileFormHelpers";
 import type {
-  ApiTypeOverrides,
   AuthMode,
   CatalogEntry,
   FieldDef,
@@ -73,11 +73,11 @@ import type {
 import type { ProviderSettings } from "./types";
 import { apiTypeLabel, apiTypeShort } from "./types";
 
-type ModelTestOutcome = { ok: boolean; message: string };
+type ModelTestOutcome = { ok: boolean; message: string; url?: string };
 type ModelTestStatus =
   | { state: "idle" }
   | { state: "testing" }
-  | { state: "success"; message: string }
+  | { state: "success"; message: string; url?: string }
   | { state: "error"; message: string };
 
 interface FormBodyProps {
@@ -90,8 +90,6 @@ interface FormBodyProps {
   setAuthMode: (v: AuthMode) => void;
   credentials: Record<string, string>;
   setCredentials: (v: Record<string, string>) => void;
-  overrides: Record<string, ApiTypeOverrides>;
-  setOverrides: (v: Record<string, ApiTypeOverrides>) => void;
   apiConfigs: Record<string, ProfileApiConfig>;
   setApiConfigs: (v: Record<string, ProfileApiConfig>) => void;
   useSettingsProxy: boolean;
@@ -114,8 +112,6 @@ export function FormBody({
   setAuthMode,
   credentials,
   setCredentials,
-  overrides,
-  setOverrides,
   apiConfigs,
   setApiConfigs,
   useSettingsProxy,
@@ -131,7 +127,7 @@ export function FormBody({
   const endpointGroups = providerEndpointGroups(provider);
   const usesEndpointGroups = providerUsesEndpointGroups(provider);
   const selectedGroup = usesEndpointGroups
-    ? selectedEndpointGroup(provider, selectedApiTypes, overrides)
+    ? selectedEndpointGroup(provider, selectedApiTypes, apiConfigs)
     : undefined;
   const apiKindEndpoints = providerApiKindEndpoints(provider);
   const visibleApiKindEndpoints = selectedGroup?.endpoints ?? apiKindEndpoints;
@@ -144,7 +140,7 @@ export function FormBody({
     provider,
     effectiveSelectedApiTypes,
     authMode,
-    overrides,
+    apiConfigs,
   );
   const [googleStatus, setGoogleStatus] = useState<GoogleOAuthStatus | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -155,18 +151,18 @@ export function FormBody({
   const authModeOptions = selectedAuthModes(
     provider,
     effectiveSelectedApiTypes,
-    overrides,
+    apiConfigs,
   );
   const googleAccountsSelected =
     provider.id === "gemini" &&
     (authMode === "google_oauth" || authMode === "oauth_via_cli") &&
     effectiveSelectedApiTypes.some((apiType) => {
-      const endpoint = selectedEndpoint(provider, apiType, overrides);
+      const endpoint = selectedEndpoint(provider, apiType, apiConfigs);
       return endpoint ? endpointId(endpoint) === "google-accounts" : false;
     });
   const apiKindsEditable = providerApiKindsEditable(provider);
   const configurableApiTypes = effectiveSelectedApiTypes.filter((apiType) => {
-    const ep = selectedEndpoint(provider, apiType, overrides);
+    const ep = selectedEndpoint(provider, apiType, apiConfigs);
     return !!ep;
   });
 
@@ -230,38 +226,28 @@ export function FormBody({
     const group = endpointGroups.find((candidate) => candidate.id === groupId);
     if (!group) return;
     const nextApiTypes = group.endpoints.map((endpoint) => endpoint.api_type);
-    const nextOverrides = overridesForEndpoints(group.endpoints, overrides);
+    const nextApiConfigs = syncApiConfigsForProvider(
+      provider,
+      nextApiTypes,
+      apiConfigsForEndpoints(group.endpoints, apiConfigs),
+    );
     setSelectedApiTypes(nextApiTypes);
-    setOverrides(nextOverrides);
-    setAuthMode(defaultAuthMode(provider, nextApiTypes, nextOverrides, authMode));
+    setApiConfigs(nextApiConfigs);
+    setAuthMode(defaultAuthMode(provider, nextApiTypes, nextApiConfigs, authMode));
   }
 
   function applySelectedApiTypes(apiTypes: string[]) {
-    const nextOverrides = { ...overrides };
-    for (const endpoint of visibleApiKindEndpoints) {
-      if (!apiTypes.includes(endpoint.api_type)) continue;
-      if (nextOverrides[endpoint.api_type]) continue;
-      nextOverrides[endpoint.api_type] = overridesForEndpoints(
-        [endpoint],
-        nextOverrides,
-      )[endpoint.api_type];
-    }
-    setOverrides(nextOverrides);
     const nextApiConfigs = { ...apiConfigs };
     for (const endpoint of visibleApiKindEndpoints) {
       const currentConfig = nextApiConfigs[endpoint.api_type] ?? {};
       nextApiConfigs[endpoint.api_type] = {
-        ...apiConfigForEndpoint(
-          endpoint,
-          currentConfig,
-          nextOverrides[endpoint.api_type],
-        ),
+        ...apiConfigForEndpoint(endpoint, currentConfig),
         enabled: apiTypes.includes(endpoint.api_type),
       };
     }
     setApiConfigs(nextApiConfigs);
     setSelectedApiTypes(apiTypes);
-    setAuthMode(defaultAuthMode(provider, apiTypes, nextOverrides, authMode));
+    setAuthMode(defaultAuthMode(provider, apiTypes, nextApiConfigs, authMode));
   }
 
   function updateApiConfig(
@@ -294,11 +280,7 @@ export function FormBody({
     const key = modelDialogKey(apiType, endpoint);
     setSelectedTestModels((current) => {
       if (current[key]?.length) return current;
-      const config = apiConfigForEndpoint(
-        endpoint,
-        apiConfigs[apiType],
-        overrides[apiType],
-      );
+      const config = apiConfigForEndpoint(endpoint, apiConfigs[apiType]);
       const enabledModels = (config.models ?? [])
         .filter((model) => model.enabled !== false)
         .map((model) => model.id.trim())
@@ -331,30 +313,28 @@ export function FormBody({
       setModelTestStatus((current) => ({
         ...current,
         [statusKey]: result.ok
-          ? { state: "success", message: result.message }
+          ? { state: "success", message: result.message, url: result.url }
           : { state: "error", message: result.message },
       }));
     }
   }
 
   const modelsDialogEndpoint = modelsDialogApiType
-    ? selectedEndpoint(provider, modelsDialogApiType, overrides)
+    ? selectedEndpoint(provider, modelsDialogApiType, apiConfigs)
     : null;
-  const modelsDialogOverride = modelsDialogApiType
-    ? (overrides[modelsDialogApiType] ?? {})
+  const modelsDialogStoredConfig = modelsDialogApiType
+    ? (apiConfigs[modelsDialogApiType] ?? {})
     : {};
   const modelsDialogConfig =
     modelsDialogApiType && modelsDialogEndpoint
       ? apiConfigForEndpoint(
           modelsDialogEndpoint,
           apiConfigs[modelsDialogApiType],
-          modelsDialogOverride,
         )
       : null;
   const modelsDialogSelectedModel =
     modelsDialogApiType && modelsDialogEndpoint
-      ? modelsDialogOverride.model?.trim() ||
-        modelsDialogConfig?.model?.trim() ||
+      ? modelsDialogConfig?.model?.trim() ||
         modelsDialogEndpoint.models[0]?.id ||
         ""
       : "";
@@ -370,27 +350,14 @@ export function FormBody({
       preferred && enabledIds.includes(preferred)
         ? preferred
         : enabledIds[0] || preferred;
-    const nextOverride: ApiTypeOverrides = {
-      ...(overrides[modelsDialogApiType] ?? {}),
-    };
     const catalogDefaultModel = modelsDialogEndpoint.models[0]?.id ?? "";
-    if (!defaultModel) {
-      delete nextOverride.model;
-    } else if (
+    const selectedModel = !defaultModel || (
       !requiresProfileModel(provider, modelsDialogEndpoint) &&
       defaultModel === catalogDefaultModel
-    ) {
-      delete nextOverride.model;
-    } else {
-      nextOverride.model = defaultModel;
-    }
-    setOverrides({
-      ...overrides,
-      [modelsDialogApiType]: nextOverride,
-    });
+    ) ? undefined : defaultModel;
     updateApiConfig(modelsDialogApiType, (config) => ({
-      ...apiConfigForEndpoint(modelsDialogEndpoint, config, nextOverride),
-      model: defaultModel || undefined,
+      ...apiConfigForEndpoint(modelsDialogEndpoint, config),
+      model: selectedModel,
       models: nextModels,
     }));
     setSelectedTestModels((current) => ({
@@ -439,7 +406,6 @@ export function FormBody({
           setSelectedApiTypes={applySelectedApiTypes}
           onOpenModels={(endpoint) => {
             const selectedModel =
-              overrides[endpoint.api_type]?.model?.trim() ||
               apiConfigs[endpoint.api_type]?.model?.trim() ||
               endpoint.models[0]?.id ||
               "";
@@ -456,7 +422,7 @@ export function FormBody({
                   defaultAuthMode(
                     provider,
                     effectiveSelectedApiTypes,
-                    overrides,
+                    apiConfigs,
                     value as AuthMode,
                   ),
                 )
@@ -509,14 +475,9 @@ export function FormBody({
           {configurableApiTypes.length > 0 && (
             <div className="space-y-2">
               {configurableApiTypes.map((apiType) => {
-                const ep = selectedEndpoint(provider, apiType, overrides);
+                const ep = selectedEndpoint(provider, apiType, apiConfigs);
                 if (!ep) return null;
-                const ov = overrides[apiType] ?? {};
-                const apiConfig = apiConfigForEndpoint(
-                  ep,
-                  apiConfigs[apiType],
-                  ov,
-                );
+                const apiConfig = apiConfigForEndpoint(ep, apiConfigs[apiType]);
                 const endpointOptions = endpointsForApiType(provider, apiType);
                 return (
                   <div
@@ -543,22 +504,12 @@ export function FormBody({
                                 (endpoint) => endpointId(endpoint) === value,
                               ) ?? endpointOptions[0];
                             if (!nextEndpoint) return;
-                            const nextOverride: ApiTypeOverrides = {
-                              ...ov,
-                              endpoint_id: endpointId(nextEndpoint),
-                              base_url: nextEndpoint.default_base_url || undefined,
-                            };
-                            if (!requiresProfileModel(provider, nextEndpoint)) {
-                              delete nextOverride.model;
-                            }
-                            delete nextOverride.reasoning_effort;
-                            setOverrides({
-                              ...overrides,
-                              [apiType]: nextOverride,
-                            });
-                            updateApiConfig(apiType, (config) => ({
-                              ...apiConfigForEndpoint(nextEndpoint, config, nextOverride),
-                            }));
+                            setApiConfigs(
+                              apiConfigsForEndpoints(
+                                [nextEndpoint],
+                                apiConfigs,
+                              ),
+                            );
                           }}
                         >
                           <SelectTrigger
@@ -581,7 +532,7 @@ export function FormBody({
                         </Select>
                       </FieldRow>
                     )}
-                    {shouldShowBaseUrl(provider, ep, ov) && (
+                    {shouldShowBaseUrl(provider, ep, apiConfig) && (
                       <FieldRow
                         label={
                           provider.id === "azure" || provider.id === "gemini"
@@ -589,16 +540,15 @@ export function FormBody({
                             : "Base URL"
                         }
                         required={ep.default_base_url === ""}
+                        hint={t(
+                          "Enter it as your provider documents it, usually ending in /v1. Some clients append /v1 themselves — if requests fail on a doubled /v1 path, drop the trailing /v1 here.",
+                        )}
                       >
                         <Input
                           type="text"
-                          value={ov.base_url ?? apiConfig.base_url ?? ""}
+                          value={apiConfig.base_url ?? ""}
                           onChange={(e) => {
                             const value = e.target.value;
-                            setOverrides({
-                              ...overrides,
-                              [apiType]: { ...ov, base_url: value },
-                            });
                             updateApiConfig(apiType, (config) => ({
                               ...config,
                               base_url: value,
@@ -633,7 +583,7 @@ export function FormBody({
               apiType={modelsDialogApiType}
               endpoint={modelsDialogEndpoint}
               baseUrl={
-                modelsDialogOverride.base_url?.trim() ||
+                modelsDialogStoredConfig.base_url?.trim() ||
                 modelsDialogConfig?.base_url?.trim() ||
                 modelsDialogEndpoint.default_base_url
               }
@@ -847,6 +797,12 @@ function ModelCatalogDialog({
   const [customModel, setCustomModel] = useState("");
   const modelRows = models;
   const allModelIds = modelRows.map((model) => model.id);
+  // Every model on this endpoint is tested against the same URL, so any row
+  // that passed answers "where did the request actually go?" for the dialog.
+  const testedUrl = modelRows.reduce<string | undefined>((found, model) => {
+    const status = statuses[statusKeyFor(model.id)];
+    return status?.state === "success" && status.url ? status.url : found;
+  }, undefined);
   const allChecked =
     allModelIds.length > 0 &&
     allModelIds.every((model) => checkedModels.includes(model));
@@ -904,6 +860,19 @@ function ModelCatalogDialog({
           <div className="min-w-0 truncate pt-1 font-mono text-xs text-muted-foreground">
             {baseUrl || t("Endpoint URL required")}
           </div>
+          {testedUrl && (
+            <div className="flex min-w-0 items-baseline gap-1.5 pt-0.5 text-[11px]">
+              <span className="shrink-0 text-muted-foreground">
+                {t("Tested")}
+              </span>
+              <span
+                className="min-w-0 truncate font-mono text-primary"
+                title={testedUrl}
+              >
+                {testedUrl}
+              </span>
+            </div>
+          )}
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-auto px-5 py-3 [scrollbar-gutter:stable]">
@@ -1451,10 +1420,12 @@ function CredentialField({
 function FieldRow({
   label,
   required,
+  hint,
   children,
 }: {
   label: string;
   required?: boolean;
+  hint?: string;
   children: ReactNode;
 }) {
   const { t } = useI18n();
@@ -1466,6 +1437,11 @@ function FieldRow({
         {required && <span className="text-destructive ml-0.5">*</span>}
       </div>
       {children}
+      {hint && (
+        <div className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+          {hint}
+        </div>
+      )}
     </label>
   );
 }

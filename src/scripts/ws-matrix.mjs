@@ -873,10 +873,6 @@ async function writeMatrixHome(home, workspace, upstreamUrl) {
     workspaces: [workspace],
     default_agent: "codex",
     enabled_agents: ["codex", "claude", "pi", "gemini", "opencode"],
-    integrations: {
-      mcp_auto_install: false,
-      skill_auto_install: false,
-    },
     launcher: {
       agents: fakeAgentPreferences(home),
     },
@@ -1001,9 +997,9 @@ async function writeFakeAgents(home) {
   await linkBin(bin, "gemini", fakeAgent);
   await linkBin(bin, "opencode", fakeAgent);
 
-  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.1.7");
+  await writePackage(nodeModules, "@agentclientprotocol/codex-acp", "1.1.14");
   await writePackage(nodeModules, "pi-acp", "0.0.27");
-  await writePackage(nodeModules, "@agentclientprotocol/claude-agent-acp", "0.61.0");
+  await writePackage(nodeModules, "@agentclientprotocol/claude-agent-acp", "0.66.0");
 }
 
 async function linkBin(bin, name, target) {
@@ -1296,8 +1292,8 @@ class BridgeConversation {
   }
 
   bridgeClientKey() {
-    const authPath = path.join(process.env.HOME, ".vibearound", "local-api-auth.json");
-    const key = JSON.parse(readFileSync(authPath, "utf8")).token;
+    const authPath = path.join(process.env.HOME, ".vibearound", "auth.json");
+    const key = JSON.parse(readFileSync(authPath, "utf8")).bridge_token;
     if (!key) throw new Error("missing local bridge client key");
     return key;
   }

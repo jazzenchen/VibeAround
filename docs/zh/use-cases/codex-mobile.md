@@ -25,7 +25,7 @@ VibeAround 是独立软件，与 OpenAI 无关。Codex 和 ChatGPT 是 OpenAI �
    /new           放弃当前方向，开新 Thread
    ```
 
-5. **用 [Live Preview](../guides/web-dashboard.md) 直观审阅输出** —— 结果是 dev server、Markdown 或 HTML 时，预览链接在手机浏览器里打开毫无问题。
+5. **用 [Live Preview](../guides/web-dashboard.md) 直观审阅输出**：已配对的 owner 链接和由访问码保护的 Server/Markdown Share 都可以在手机打开。Server Share 会原样转发已认证的 GET/HEAD 路径，包括页面的数据读取；写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持，`/va/*`、owner 页面、chat 和审阅控件不进入 Share。
 
 ## 手机擅长什么
 

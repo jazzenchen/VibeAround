@@ -31,7 +31,6 @@ import type { SettingsDialogTarget } from "./Settings";
 import {
   checkSelectedLaunchEntry,
   getLauncherPreferences,
-  type LauncherPreferences,
 } from "./Launch/api";
 import { LanguageMenu } from "./components/LanguageMenu";
 import { cn } from "./lib/utils";
@@ -110,8 +109,6 @@ function Dashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTarget, setSettingsTarget] =
     useState<SettingsDialogTarget | null>(null);
-  const [launcherPrefs, setLauncherPrefs] =
-    useState<LauncherPreferences | null>(null);
   const [launcherPrefsLoaded, setLauncherPrefsLoaded] = useState(false);
   const [launchRefreshToken, setLaunchRefreshToken] = useState(0);
 
@@ -125,12 +122,10 @@ function Dashboard() {
 
   const refreshLauncherPrefs = useCallback(() => {
     void getLauncherPreferences()
-      .then((prefs) => {
-        setLauncherPrefs(prefs);
+      .then(() => {
         setLauncherPrefsLoaded(true);
       })
       .catch(() => {
-        setLauncherPrefs(null);
         setLauncherPrefsLoaded(true);
       });
   }, []);
@@ -168,29 +163,17 @@ function Dashboard() {
   const everHadData = useRef(false);
   const [startTime] = useState(() => Date.now());
   const [timedOut, setTimedOut] = useState(false);
-  const launchEnabled = !launcherPrefsLoaded
-    ? false
-    : launcherPrefs
-      ? launcherPrefs.enabledAgents.length > 0
-      : true;
+  const launchEnabled = launcherPrefsLoaded;
   const launchDisabledReason = !launcherPrefsLoaded
     ? t("Loading launch settings")
-    : !launchEnabled
-      ? t("No launch agents enabled")
-      : null;
-  const effectivePage = !launchEnabled && page === "launch" ? "remote" : page;
+    : null;
+  const effectivePage = page;
 
   if (anyEverLoaded) everHadData.current = true;
 
   useEffect(() => {
     refreshLauncherPrefs();
   }, [refreshLauncherPrefs]);
-
-  useEffect(() => {
-    if (launcherPrefsLoaded && !launchEnabled && page === "launch") {
-      setPage("remote");
-    }
-  }, [launchEnabled, launcherPrefsLoaded, page]);
 
   useEffect(() => {
     if (anyEverLoaded || everHadData.current) return;

@@ -21,6 +21,9 @@ pub enum ChatEvent {
     SessionReady {
         session_id: String,
     },
+    SessionInfo {
+        info: Value,
+    },
     SessionMode {
         session_mode: Value,
     },
@@ -46,6 +49,13 @@ pub enum ChatEvent {
     TurnStatus {
         active: bool,
     },
+    ReplayStart {
+        session_id: String,
+    },
+    ReplayDone {
+        session_id: String,
+    },
+    PreviewRefresh,
     SystemText {
         text: String,
     },
@@ -103,7 +113,7 @@ pub enum ChatClientMessage {
         #[serde(rename = "sessionWorkspace", skip_serializing_if = "Option::is_none")]
         session_workspace: Option<String>,
     },
-    Stop,
+    Cancel,
     PermissionResponse {
         #[serde(rename = "requestId")]
         request_id: String,
@@ -182,8 +192,8 @@ impl ChatClientMessage {
         }
     }
 
-    pub fn stop() -> Self {
-        Self::Stop
+    pub fn cancel() -> Self {
+        Self::Cancel
     }
 
     pub fn permission_selected(
@@ -326,6 +336,24 @@ mod tests {
     }
 
     #[test]
+    fn decodes_route_metadata_events() {
+        let event = decode_chat_event(json!({
+            "kind": "session_info",
+            "info": { "threadId": "wt_1", "agent": { "id": "claude" } }
+        }))
+        .expect("event");
+        let ChatEvent::SessionInfo { info } = event else {
+            panic!("expected session info");
+        };
+        assert_eq!(info["threadId"], "wt_1");
+
+        assert_eq!(
+            decode_chat_event(json!({ "kind": "preview_refresh" })).expect("event"),
+            ChatEvent::PreviewRefresh
+        );
+    }
+
+    #[test]
     fn encodes_basic_chat_message() {
         let value = serde_json::to_value(ChatClientMessage::message("hello")).expect("json");
         assert_eq!(
@@ -412,9 +440,9 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::to_value(ChatClientMessage::stop()).expect("json"),
+            serde_json::to_value(ChatClientMessage::cancel()).expect("json"),
             json!({
-                "type": "stop"
+                "type": "cancel"
             })
         );
     }

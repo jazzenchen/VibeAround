@@ -2,7 +2,6 @@
 //! Checks whether settings.json has `"onboarded": true`; exposes Tauri IPC
 //! commands so the desktop-ui frontend can read/write settings and signal completion.
 
-mod agent_integrations;
 pub(crate) mod plugin_install;
 mod plugin_manager;
 mod plugin_session;
@@ -94,12 +93,6 @@ fn read_settings_value() -> Value {
 // Onboarding gate
 // ---------------------------------------------------------------------------
 
-/// Read current settings (exposed for startup integration sync).
-#[allow(dead_code)]
-pub fn get_settings_value() -> serde_json::Value {
-    read_settings_value()
-}
-
 pub fn needs_onboarding() -> bool {
     let val = read_settings_value();
     !val.get("onboarded")
@@ -119,6 +112,7 @@ pub struct AgentSummary {
     pub install_type: Option<String>,
     pub pty_command: String,
     pub direct_only: bool,
+    pub built_in: bool,
     pub acp_program: String,
     pub acp_args: Vec<String>,
     pub acp_npm_package: Option<String>,
@@ -201,6 +195,7 @@ pub fn list_agents() -> Vec<AgentSummary> {
             install_type: a.install.as_ref().map(|i| i.install_type.clone()),
             pty_command: a.pty_command_for_current_platform().to_string(),
             direct_only: a.direct_only,
+            built_in: a.built_in,
             acp_program: a.acp.program.clone(),
             acp_args: a.acp.args.clone(),
             acp_npm_package: a.acp.npm_package.clone(),

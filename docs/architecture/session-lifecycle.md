@@ -41,12 +41,13 @@ same ThreadRuntime + session ◄── host evicted ──► next prompt resume
 | Conversation context inside a session | Yes | Owned by the agent CLI's own storage; restored via resume |
 | In-flight turn | No | A turn interrupted by restart is lost; the session resumes at its last completed state |
 | Web chat scrollback in the browser | Partially | Startup replay re-sends recent output for web routes |
+| Preview state | No | File and Server Previews are never recreated; a cleanup-only journal may survive just long enough for the next startup to kill registered Server ports |
 
 ## Handover: moving a conversation between surfaces
 
 Handover attaches a second route to an existing thread, or re-binds an external CLI session into a thread:
 
-1. **Terminal → IM.** Inside a launched agent CLI, the VibeAround MCP tool `prepare_handover` issues a short-lived code. Typing `/pickup <code>` in any connected IM attaches that chat's route to a thread bound to the same agent, workspace, and CLI session — the agent resumes with full context.
+1. **Terminal → IM.** Inside a launched agent CLI, the VibeAround MCP tool `va_mcp_prepare_handover` issues a short-lived code. Typing `/pickup <code>` in any connected IM attaches that chat's route to a thread bound to the same agent, workspace, and CLI session — the agent resumes with full context.
 2. **Web → phone.** The same mechanism backs the dashboard's handover flow: the web thread's session is picked up by an IM route.
 3. **Multiple listeners.** Because attachment is additive, output fans out to every attached route: you can watch the same turn in the web dashboard and in Telegram simultaneously.
 
@@ -62,7 +63,7 @@ Pickup codes are one-shot, expire quickly, and live **in memory only** — a dae
 
 ## Multi-agent turns and subagents
 
-A thread can run a multi-agent turn: the host agent uses the `initialize_subagents` / `wait_for_subagents` MCP tools to spawn named subagents (parallel, collaboration, or brainstorming mode) inside the same workspace. Each subagent is a full agent process with its own CLI session, tracked on the thread, with completion reports collected back into the host's turn. Interrupted subagents are recovered when the thread's runtime is rebuilt.
+A thread can run a multi-agent turn: the host agent uses the `va_mcp_initialize_subagents` / `va_mcp_wait_for_subagents` MCP tools to spawn named subagents (parallel, collaboration, or brainstorming mode) inside the same workspace. Each subagent is a full agent process with its own CLI session, tracked on the thread, with completion reports collected back into the host's turn. Interrupted subagents are recovered when the thread's runtime is rebuilt.
 
 ## Timing and limit reference
 

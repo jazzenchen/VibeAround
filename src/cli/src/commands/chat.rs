@@ -1,7 +1,9 @@
 use std::io::{IsTerminal, Read, Write};
+use std::sync::{Mutex, OnceLock};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
+use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use va_client::events::{
@@ -126,6 +128,72 @@ pub(super) async fn repl(options: &Options, args: &ChatReplArgs) -> Result<(), C
     Ok(())
 }
 
+/// Global Ctrl+C dispatch. Installing tokio's ctrl_c listener permanently
+/// replaces the default kill-on-SIGINT disposition, so one task owns the
+/// signal for the whole CLI: presses during a turn are forwarded to that
+/// turn's channel, presses outside one restore the conventional exit(130).
+struct TurnInterrupts {
+    turn_tx: Mutex<Option<mpsc::UnboundedSender<()>>>,
+}
+
+static TURN_INTERRUPTS: OnceLock<TurnInterrupts> = OnceLock::new();
+
+fn turn_interrupts() -> &'static TurnInterrupts {
+    TURN_INTERRUPTS.get_or_init(|| {
+        tokio::spawn(async {
+            loop {
+                if tokio::signal::ctrl_c().await.is_err() {
+                    return;
+                }
+                let forwarded = TURN_INTERRUPTS
+                    .get()
+                    .and_then(|state| {
+                        let turn = state.turn_tx.lock().expect("interrupt registry poisoned");
+                        turn.as_ref().map(|tx| tx.send(()).is_ok())
+                    })
+                    .unwrap_or(false);
+                if !forwarded {
+                    std::process::exit(130);
+                }
+            }
+        });
+        TurnInterrupts {
+            turn_tx: Mutex::new(None),
+        }
+    })
+}
+
+/// Registers the running turn as the Ctrl+C recipient; dropping it (turn
+/// over) hands the signal back to the exit(130) path.
+struct TurnInterruptGuard {
+    rx: mpsc::UnboundedReceiver<()>,
+}
+
+impl TurnInterruptGuard {
+    fn begin() -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        *turn_interrupts()
+            .turn_tx
+            .lock()
+            .expect("interrupt registry poisoned") = Some(tx);
+        Self { rx }
+    }
+
+    async fn pressed(&mut self) {
+        if self.rx.recv().await.is_none() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+impl Drop for TurnInterruptGuard {
+    fn drop(&mut self) {
+        if let Ok(mut turn) = turn_interrupts().turn_tx.lock() {
+            *turn = None;
+        }
+    }
+}
+
 pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), CliError> {
     let session = resolve_session(options, args)?;
     let endpoint = endpoint_for(options, AuthRequirement::BearerToken)?;
@@ -147,7 +215,34 @@ pub(super) async fn send(options: &Options, args: &ChatSendArgs) -> Result<(), C
 
     let mut state = ChatState::new();
     let mut wrote_text_chunk = false;
-    while let Some(frame) = ws_rx.next().await {
+    let mut interrupts = TurnInterruptGuard::begin();
+    let mut cancel_requested = false;
+    loop {
+        let frame = tokio::select! {
+            biased;
+            _ = interrupts.pressed() => {
+                if cancel_requested {
+                    let _ = ws_tx.close().await;
+                    return Err(CliError::Chat(
+                        "interrupted; the turn keeps running on the daemon".into(),
+                    ));
+                }
+                cancel_requested = true;
+                finish_text_line(wrote_text_chunk)?;
+                wrote_text_chunk = false;
+                eprintln!("^C cancelling turn (press again to exit)");
+                let body = encode_chat_client_message(&ChatClientMessage::cancel())?;
+                ws_tx
+                    .send(Message::Text(body.into()))
+                    .await
+                    .map_err(|source| ws_error(&url, source))?;
+                continue;
+            }
+            frame = ws_rx.next() => match frame {
+                Some(frame) => frame,
+                None => break,
+            },
+        };
         let frame = frame.map_err(|source| ws_error(&url, source))?;
         match frame {
             Message::Text(text) => {
@@ -513,12 +608,16 @@ fn render_event(
             eprintln!("error: {error}");
         }
         ChatEvent::Config { .. }
+        | ChatEvent::SessionInfo { .. }
+        | ChatEvent::PreviewRefresh
         | ChatEvent::SessionMode { .. }
         | ChatEvent::CommandMenu { .. }
         | ChatEvent::MultiAgentTurn { .. }
         | ChatEvent::SubagentStatus { .. }
         | ChatEvent::SubagentAcpNotification { .. }
-        | ChatEvent::TurnStatus { .. } => {}
+        | ChatEvent::TurnStatus { .. }
+        | ChatEvent::ReplayStart { .. }
+        | ChatEvent::ReplayDone { .. } => {}
     }
     Ok(())
 }

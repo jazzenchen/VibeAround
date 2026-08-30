@@ -7,7 +7,7 @@ From "Launch" click (or `va launch`) to an agent CLI running in your terminal. T
 ```text
 UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3─► va-launch
                                                                │4 validate
-                                                               │5 project integrations
+                                                               │5 workspace preparation
                                                                ▼6
                                                         terminal spawn
                                                                │7
@@ -25,10 +25,8 @@ UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3�
 **4. va-launch validates.** The CLI/desktop **execs the sibling `va-launch` binary** (no in-process launcher). It validates the workspace, resolves the agent executable (explicit path → `agents.json` → PATH scan, cached), and validates the terminal choice. `--dry-run` stops here and prints the plan.
 → `src/launcher/` (resolution order), `~/.vibearound/agents.json`
 
-**5. Project integrations.** va-launch probes the local daemon's health endpoint:
-- **Daemon up** → install project-scoped MCP config and skills for this agent/workspace (honoring the [`integrations.*` settings](../../reference/configuration.md#settingsjson)). Desktop-app targets install their **companion CLI's** integrations: `claude-desktop` → `claude`, `codex-desktop` → `codex`.
-- **Daemon down** → *remove* VibeAround-managed project integrations, so a dead MCP server is never left configured.
-→ `src/launcher/` (health probe), `src/core/src/agent/{mcp,skills}.rs`
+**5. Workspace preparation.** va-launch replaces the agent's VibeAround-reserved project skills. When `auth.json` carries an MCP credential, it also writes it into project config. Desktop-app targets prepare their companion CLI: `claude-desktop` → `claude`, `codex-desktop` → `codex`.
+→ `src/launcher/`, `src/core/src/agent/{mcp,skills}.rs`
 
 **6. Terminal spawn.** The agent opens in the chosen terminal (Terminal.app/iTerm2, PowerShell, or a detected Linux terminal); desktop-app targets go through `open -a` / `Start-Process` instead. va-launch's job ends when the terminal is spawned — the CLI process belongs to you, not the daemon.
 
@@ -40,13 +38,12 @@ UI / CLI ──1─► provider prep ──2─► launch profile JSON ──3�
 |---|---|
 | Executable not found | Validation error before anything spawns; clear the stale `agents.json` entry to force a re-scan |
 | Workspace missing | Validation error |
-| Daemon down at launch | Launch proceeds; integrations are removed; bridged model calls fail until the daemon returns |
+| Daemon down at launch | Skills sync; MCP config is unchanged when no credential is available; bridged model calls fail |
 | Terminal not found (Linux) | Launch error listing what was tried |
 | Wrong JSON shape | Schema rejection (unknown fields) — the producer's bug surfaces immediately |
 
 ---
 
-*Source anchors: `src/launcher/` (va-launch), `src/core/src/agent/launch.rs` + `src/core/src/profiles/bridge_launch.rs` (provider prep), `src/core/src/agent/{mcp,skills}.rs` (integrations), `src/cli/src/args.rs` (va launch), internal boundary notes in `.docs/va-launch-architecture.md`.*
-*Last verified: v0.7.11*
+*Source anchors: `src/launcher/`, `src/core/src/agent/launch.rs`, `src/core/src/profiles/bridge_launch.rs`, `src/core/src/agent/{mcp,skills}.rs`, `src/cli/src/args.rs`.*
 
 <sub>[◀ Flow: bridge request](bridge-request.md) · [Documentation index](../../README.md) · [Flow: handover ▶](handover.md)</sub>

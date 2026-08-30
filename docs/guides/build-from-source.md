@@ -46,7 +46,7 @@ Development mode with hot reload for the UI:
 bun run dev              # tauri dev (desktop-ui served by vite)
 ```
 
-The Tauri build prepares `va-launch` as a sidecar binary automatically (`scripts/prepare-va-launch.mjs`) and bundles per-platform packages (DMG/EXE/MSI/AppImage/deb).
+The Tauri build prepares `va-launch` and `va-tui` as sidecar binaries automatically (`scripts/prepare-va-launch.mjs` copies them into `src/desktop/binaries/`, which is gitignored) and bundles per-platform packages (DMG/EXE/MSI/AppImage/deb). A debug build additionally builds the channel plugin checkouts under `src/plugins/` via `scripts/build-project-plugins.mjs`.
 
 ## Running tests
 
@@ -65,10 +65,23 @@ The web terminal can attach to tmux sessions when tmux is installed — no build
 
 Release packaging beyond a local unsigned build uses maintainer-private configuration that is deliberately not in the repository:
 
-- **macOS signing/notarization** (`apple-sign` config) — local DMGs work unsigned but Gatekeeper will warn.
-- **The release build script** (`build.sh`) and update-channel publishing.
+- **macOS signing/notarization** (`src/apple-sign.config`) — local DMGs work unsigned but Gatekeeper will warn.
+- **Registry publishing** — `@vibearound/cli` is published by a GitHub Actions workflow using a repository secret; Windows and Linux release packages are built by CI on a tag push.
 
-Everything needed for a fully functional local build is public; only distribution signing is private.
+Everything needed for a fully functional local build is public; only distribution signing and registry credentials are private.
+
+## The built-in agent (va-agent)
+
+`va-agent` lives in its own repository ([jazzenchen/va-agent](https://github.com/jazzenchen/va-agent)) and is not part of the Cargo or Bun workspace. You do not need to build it: VibeAround installs the pinned `@vibearound/agent` release from npm on first use, the same way it installs the other ACP adapters.
+
+To run a local build instead:
+
+```bash
+git clone https://github.com/jazzenchen/va-agent
+cd va-agent && npm install && npm run build   # → dist/va-agent.js
+```
+
+Then set `VIBEAROUND_VA_AGENT_PATH` to the absolute path of `dist/va-agent.js`. The override takes precedence over the npm copy; without it there is no `PATH` lookup.
 
 ## Plugins and SDK
 
@@ -77,6 +90,6 @@ Channel plugins and `@vibearound/plugin-channel-sdk` are separate repositories w
 ---
 
 *Source anchors: `src/package.json` (build scripts), `src/Cargo.toml` (workspace members), `src/scripts/prepare-va-launch.mjs` (sidecar), `src/npm/cli/` (npm packaging).*
-*Last verified: v0.7.11*
+*Last verified: v0.7.24*
 
 <sub>[◀ Build a channel plugin](build-a-channel-plugin.md) · [Documentation index](../README.md) · [Troubleshooting and FAQ ▶](troubleshooting-and-faq.md)</sub>

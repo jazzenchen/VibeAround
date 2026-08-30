@@ -11,7 +11,7 @@ type PermissionOptionView = {
   kind?: string;
 };
 
-interface PendingPermissionsProps {
+export interface PendingPermissionsProps {
   permissions: PendingPermission[];
   onRespond: (requestId: string, optionId: string) => void;
   onCancel: (requestId: string) => void;

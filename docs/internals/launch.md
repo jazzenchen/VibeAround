@@ -51,7 +51,7 @@ Env is built upstream of `va-launch` and carried in the plan's `env` map (BTreeM
 
 | OS | Mechanism | Terminal choices |
 |---|---|---|
-| macOS | `open -a <App> <script.command>` | `terminal` (Terminal.app, default), `iterm2`; anything else errors |
+| macOS | `open -b <bundle-id> <script.command>` (bundle id, so the app is found wherever it is installed) | `terminal` (Terminal.app, default), `iterm2` (detected in `/Applications` and `~/Applications`, `iTerm.app` or `iTerm 2.app`); anything else errors |
 | Windows | `open::with(script, "powershell.exe")`; app targets use `Start-Process` with `windowsExecutablePath` normalization; `windows_process_probe` checks running processes | `powershell` (default) |
 | Linux | spawn script via candidate list | `system-terminal` (default = try in order: `xdg-terminal-exec`, `x-terminal-emulator`, `gnome-terminal --`, `konsole -e`, …) or explicit `gnome-terminal`, `konsole`, `xfce4-terminal`, `xterm`, `kitty`, `alacritty`, `wezterm` |
 

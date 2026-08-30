@@ -1,5 +1,4 @@
 import type {
-  ApiTypeOverrides,
   AuthMode,
   AuthModeDef,
   CatalogEntry,
@@ -18,7 +17,7 @@ export interface ProviderEndpointGroup {
 }
 
 /**
- * Walk the selected api_types and union their auth-mode-matching `fields[]`
+ * Walk the selected API configs and union their auth-mode-matching `fields[]`
  * by `name`. Two endpoints of the same provider should declare the same
  * field for a given credential, so this dedupes on the catalog side rather
  * than asking the user to re-enter the same api_key for each protocol.
@@ -27,11 +26,11 @@ export function collectFields(
   provider: CatalogEntry,
   apiTypes: string[],
   mode: string,
-  overrides: Record<string, ApiTypeOverrides> = {},
+  apiConfigs: Record<string, ProfileApiConfig> = {},
 ): FieldDef[] {
   const seen = new Map<string, FieldDef>();
   for (const apiType of apiTypes) {
-    const ep = selectedEndpoint(provider, apiType, overrides);
+    const ep = selectedEndpoint(provider, apiType, apiConfigs);
     if (!ep) continue;
     const auth = ep.auth_modes.find((a: AuthModeDef) => a.mode === mode);
     if (!auth) continue;
@@ -45,11 +44,11 @@ export function collectFields(
 export function selectedAuthModes(
   provider: CatalogEntry,
   apiTypes: string[],
-  overrides: Record<string, ApiTypeOverrides> = {},
+  apiConfigs: Record<string, ProfileApiConfig> = {},
 ): AuthModeDef[] {
   let common: AuthModeDef[] | null = null;
   for (const apiType of apiTypes) {
-    const endpoint = selectedEndpoint(provider, apiType, overrides);
+    const endpoint = selectedEndpoint(provider, apiType, apiConfigs);
     if (!endpoint) continue;
     if (common == null) {
       common = [...endpoint.auth_modes];
@@ -75,10 +74,10 @@ export function normalizeAuthMode(
 export function defaultAuthMode(
   provider: CatalogEntry,
   apiTypes: string[],
-  overrides: Record<string, ApiTypeOverrides> = {},
+  apiConfigs: Record<string, ProfileApiConfig> = {},
   preferred?: AuthMode | null,
 ): AuthMode {
-  const modes = selectedAuthModes(provider, apiTypes, overrides)
+  const modes = selectedAuthModes(provider, apiTypes, apiConfigs)
     .map((auth) => normalizeAuthMode(auth.mode))
     .filter((mode): mode is AuthMode => !!mode);
   if (preferred && modes.includes(preferred)) return preferred;
@@ -190,12 +189,12 @@ export function providerApiKindsEditable(provider: CatalogEntry): boolean {
 export function selectedEndpointGroup(
   provider: CatalogEntry,
   apiTypes: string[],
-  overrides: Record<string, ApiTypeOverrides>,
+  apiConfigs: Record<string, ProfileApiConfig>,
 ): ProviderEndpointGroup | undefined {
   const groups = providerEndpointGroups(provider);
   if (groups.length === 0) return undefined;
   for (const apiType of apiTypes) {
-    const endpoint = selectedEndpoint(provider, apiType, overrides);
+    const endpoint = selectedEndpoint(provider, apiType, apiConfigs);
     if (!endpoint) continue;
     const group = groups.find((candidate) => candidate.id === endpointId(endpoint));
     if (group) return group;
@@ -203,86 +202,74 @@ export function selectedEndpointGroup(
   return groups[0];
 }
 
-export function overrideForEndpoint(
-  endpoint: CatalogEntry["endpoints"][number],
-  current?: ApiTypeOverrides,
-): ApiTypeOverrides {
-  const next: ApiTypeOverrides = {
-    ...current,
-    endpoint_id: endpointId(endpoint),
-    base_url: endpoint.default_base_url || undefined,
-  };
-  if (endpoint.models.length === 0) {
-    next.model = current?.model ?? "";
-  } else {
-    delete next.model;
-  }
-  delete next.reasoning_effort;
-  return next;
-}
-
-export function overridesForEndpoints(
-  endpoints: CatalogEntry["endpoints"],
-  current: Record<string, ApiTypeOverrides> = {},
-): Record<string, ApiTypeOverrides> {
-  const next = { ...current };
-  for (const endpoint of endpoints) {
-    next[endpoint.api_type] = overrideForEndpoint(
-      endpoint,
-      current[endpoint.api_type],
-    );
-  }
-  return next;
-}
-
 export function apiConfigForEndpoint(
   endpoint: CatalogEntry["endpoints"][number],
   current: ProfileApiConfig | undefined,
-  override: ApiTypeOverrides | undefined,
 ): ProfileApiConfig {
-  const currentWithoutHeaders = current ? { ...current, headers: [] } : undefined;
   const selectedModel =
-    cleanString(override?.model) ??
     cleanString(current?.model) ??
     endpoint.models[0]?.id ??
     "";
-  const capabilities = override?.capabilities ?? current?.capabilities ?? undefined;
+  const capabilities = current?.capabilities ?? undefined;
   return {
-    ...currentWithoutHeaders,
+    ...current,
     enabled: current?.enabled ?? true,
     endpoint_id: endpointId(endpoint),
     base_url:
-      override?.base_url ?? current?.base_url ?? endpoint.default_base_url ?? undefined,
+      current?.base_url ?? (endpoint.default_base_url || undefined),
     append_v1_path: current?.append_v1_path ?? endpoint.append_v1_path ?? true,
     model: selectedModel || undefined,
-    reasoning_effort: override?.reasoning_effort ?? current?.reasoning_effort ?? undefined,
+    reasoning_effort: current?.reasoning_effort ?? undefined,
     capabilities,
-    headers: [],
+    headers: current?.headers ?? [],
     models: current?.models?.length
       ? current.models
       : defaultModelConfigs(endpoint, selectedModel, capabilities),
   };
 }
 
+export function apiConfigsForEndpoints(
+  endpoints: CatalogEntry["endpoints"],
+  current: Record<string, ProfileApiConfig> = {},
+): Record<string, ProfileApiConfig> {
+  const next = { ...current };
+  for (const endpoint of endpoints) {
+    const existing = current[endpoint.api_type];
+    const endpointChanged =
+      !!existing && existing.endpoint_id !== endpointId(endpoint);
+    const selected: ProfileApiConfig = {
+      ...existing,
+      endpoint_id: endpointId(endpoint),
+      base_url: endpoint.default_base_url || undefined,
+      append_v1_path: endpoint.append_v1_path ?? true,
+    };
+    if (endpointChanged) {
+      selected.model = endpoint.models[0]?.id ?? existing.model;
+      selected.models = undefined;
+      selected.reasoning_effort = undefined;
+    }
+    next[endpoint.api_type] = apiConfigForEndpoint(
+      endpoint,
+      selected,
+    );
+  }
+  return next;
+}
+
 export function syncApiConfigsForProvider(
   provider: CatalogEntry,
   selectedApiTypes: string[],
-  overrides: Record<string, ApiTypeOverrides>,
   current: Record<string, ProfileApiConfig> = {},
 ): Record<string, ProfileApiConfig> {
   const selected = new Set(selectedApiTypes);
   const out: Record<string, ProfileApiConfig> = {};
   for (const endpoint of providerApiKindEndpoints(provider)) {
     const apiType = endpoint.api_type;
-    const selectedEndpointForType = selectedEndpoint(provider, apiType, overrides) ?? endpoint;
+    const selectedEndpointForType = selectedEndpoint(provider, apiType, current) ?? endpoint;
     const existing = current[apiType];
     if (!selected.has(apiType) && !existing) continue;
     out[apiType] = {
-      ...apiConfigForEndpoint(
-        selectedEndpointForType,
-        existing,
-        overrides[apiType],
-      ),
+      ...apiConfigForEndpoint(selectedEndpointForType, existing),
       enabled: selected.has(apiType),
     };
   }
@@ -342,9 +329,9 @@ export function endpointsForApiType(
 export function selectedEndpoint(
   provider: CatalogEntry,
   apiType: string,
-  overrides: Record<string, ApiTypeOverrides>,
+  apiConfigs: Record<string, ProfileApiConfig>,
 ): CatalogEntry["endpoints"][number] | undefined {
-  const endpointIdOverride = overrides[apiType]?.endpoint_id;
+  const endpointIdOverride = apiConfigs[apiType]?.endpoint_id;
   const candidates = endpointsForApiType(provider, apiType);
   return (
     candidates.find((endpoint) => endpointId(endpoint) === endpointIdOverride) ??
@@ -355,11 +342,11 @@ export function selectedEndpoint(
 export function shouldShowBaseUrl(
   provider: CatalogEntry,
   endpoint: CatalogEntry["endpoints"][number],
-  overrides: ApiTypeOverrides,
+  config: ProfileApiConfig,
 ): boolean {
   if (provider.id === "custom") return true;
   if (!endpoint.default_base_url) return true;
-  return !!overrides.base_url && overrides.base_url !== endpoint.default_base_url;
+  return !!config.base_url && config.base_url !== endpoint.default_base_url;
 }
 
 export function requiresProfileModel(
@@ -367,55 +354,6 @@ export function requiresProfileModel(
   endpoint: CatalogEntry["endpoints"][number] | undefined,
 ): boolean {
   return !!endpoint && (provider.id === "custom" || endpoint.models.length === 0);
-}
-
-/**
- * Strip override values that match the catalog default. This keeps
- * profile.json minimal and lets future catalog updates flow through
- * automatically.
- */
-export function pruneOverrides(
-  overrides: Record<string, ApiTypeOverrides>,
-  apiTypes: string[],
-  provider: CatalogEntry,
-): Record<string, ApiTypeOverrides> {
-  const out: Record<string, ApiTypeOverrides> = {};
-  for (const apiType of apiTypes) {
-    const ov = overrides[apiType];
-    if (!ov) continue;
-    const ep = selectedEndpoint(provider, apiType, overrides);
-    const endpointOptions = endpointsForApiType(provider, apiType);
-    const defaultBaseUrl = ep?.default_base_url ?? "";
-    const trimmed: ApiTypeOverrides = {};
-    if (ov.endpoint_id && endpointOptions.length > 1) {
-      trimmed.endpoint_id = ov.endpoint_id;
-    }
-    if (ov.model && ov.model.length > 0) {
-      if (requiresProfileModel(provider, ep)) {
-        trimmed.model = ov.model;
-      } else if (
-        ep?.models.some((model) => model.id === ov.model) &&
-        ov.model !== ep.models[0]?.id
-      ) {
-        trimmed.model = ov.model;
-      }
-    }
-    if (
-      canOverrideInputSupport(provider, ep) &&
-      (ov.capabilities?.image_input || ov.capabilities?.file_input || ov.capabilities?.web_search)
-    ) {
-      trimmed.capabilities = {
-        ...(ov.capabilities?.image_input ? { image_input: true } : {}),
-        ...(ov.capabilities?.file_input ? { file_input: true } : {}),
-        ...(ov.capabilities?.web_search ? { web_search: true } : {}),
-      };
-    }
-    if (ov.base_url && ov.base_url.length > 0 && ov.base_url !== defaultBaseUrl) {
-      trimmed.base_url = ov.base_url;
-    }
-    if (Object.keys(trimmed).length > 0) out[apiType] = trimmed;
-  }
-  return out;
 }
 
 export function canOverrideInputSupport(

@@ -5,16 +5,7 @@
 //!   - `?token=<token>` query parameter (fallback for initial page load
 //!     and for WebSocket upgrades, which cannot carry custom headers)
 //!
-//! On mismatch returns `401 Unauthorized` with an empty body for regular
-//! routes. For the `/mcp` JSON-RPC endpoint we instead return HTTP 200 with
-//! a JSON-RPC error envelope, because MCP clients (Claude Code, Codex, etc.)
-//! try to parse the response body as JSON-RPC and surface "Failed to parse
-//! JSON" on an empty body — that symptom is invisible to end users and
-//! makes stale-token situations extremely confusing.
-//!
-//! The token is loaded once per daemon start (see `common::auth`) and held
-//! as part of `AppState`, so the middleware is a pure function over the
-//! incoming request.
+//! Unauthorized MCP requests return a JSON-RPC error envelope with HTTP 200.
 
 use std::sync::Arc;
 
@@ -31,14 +22,46 @@ use axum::{
 use common::auth::AuthToken;
 use std::net::SocketAddr;
 
-/// Shared handle to the server's current auth token.
-#[derive(Clone)]
-pub struct AuthState(pub Arc<AuthToken>);
+/// Cookie set by the pairing flow for browser owner access.
+pub(crate) const OWNER_COOKIE: &str = "va_owner";
 
-/// Extract a bearer token from the request — header first, then `?token=`.
-fn extract_token<B>(req: &Request<B>) -> Option<String> {
-    // 1. Authorization: Bearer <token>
-    if let Some(value) = req.headers().get(header::AUTHORIZATION) {
+/// Owner browser cookie headers. Pairing clears the legacy root-scoped cookie
+/// before setting the current `/va/` cookie. Local Preview shells pass `None`
+/// because loopback access does not need an owner credential and a cookie must
+/// not be sent to a dev server on another port of the same host.
+pub(crate) fn owner_cookie_headers(token: Option<&str>) -> [String; 2] {
+    let legacy = format!(
+        "{}=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+        OWNER_COOKIE
+    );
+    let scoped = match token {
+        Some(token) => format!(
+            "{}={}; Path=/va/; Secure; HttpOnly; SameSite=Lax",
+            OWNER_COOKIE, token
+        ),
+        None => format!(
+            "{}=; Path=/va/; Max-Age=0; Secure; HttpOnly; SameSite=Lax",
+            OWNER_COOKIE
+        ),
+    };
+    [legacy, scoped]
+}
+
+/// Shared handles to the server's owner and MCP-only tokens.
+#[derive(Clone)]
+pub struct AuthState {
+    pub owner: Arc<AuthToken>,
+    pub mcp: Arc<AuthToken>,
+}
+
+impl AuthState {
+    pub fn new(owner: Arc<AuthToken>, mcp: Arc<AuthToken>) -> Self {
+        Self { owner, mcp }
+    }
+}
+
+pub(crate) fn extract_bearer_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = headers.get(header::AUTHORIZATION) {
         if let Ok(s) = value.to_str() {
             if let Some(rest) = s.strip_prefix("Bearer ") {
                 return Some(rest.trim().to_string());
@@ -48,13 +71,19 @@ fn extract_token<B>(req: &Request<B>) -> Option<String> {
             }
         }
     }
-    // 2. ?token=<token>  (brittle but good enough — we only look for the
-    //    exact key; real parsing happens via url::form_urlencoded)
+    None
+}
+
+/// Extract an auth token from the request — bearer header first, then `?token=`.
+fn extract_token<B>(req: &Request<B>) -> Option<String> {
+    if let Some(token) = extract_bearer_token(req.headers()) {
+        return Some(token);
+    }
+
+    // Query token fallback for clients that cannot send custom headers.
     if let Some(query) = req.uri().query() {
         for pair in query.split('&') {
             if let Some(rest) = pair.strip_prefix("token=") {
-                // URL-decode the value. `+` is a space in form encoding,
-                // but a hex token never contains one — still, be safe.
                 let decoded = url_decode(rest);
                 return Some(decoded);
             }
@@ -69,13 +98,25 @@ pub(crate) fn is_loopback_host(host: &str) -> bool {
         return true;
     }
 
-    let without_port = host
-        .strip_prefix('[')
-        .and_then(|rest| rest.split_once(']').map(|(addr, _)| addr.to_string()))
-        .or_else(|| host.rsplit_once(':').map(|(addr, _)| addr.to_string()))
-        .unwrap_or(host);
+    if let Some(rest) = host.strip_prefix('[') {
+        let Some((address, suffix)) = rest.split_once(']') else {
+            return false;
+        };
+        return address == "::1" && valid_optional_port(suffix);
+    }
 
-    matches!(without_port.as_str(), "localhost" | "127.0.0.1" | "::1")
+    let Some((name, port)) = host.rsplit_once(':') else {
+        return false;
+    };
+    !name.contains(':') && matches!(name, "localhost" | "127.0.0.1") && valid_port(port)
+}
+
+fn valid_optional_port(suffix: &str) -> bool {
+    suffix.is_empty() || suffix.strip_prefix(':').is_some_and(valid_port)
+}
+
+fn valid_port(port: &str) -> bool {
+    !port.is_empty() && port.parse::<u16>().is_ok()
 }
 
 fn request_host_is_loopback<B>(req: &Request<B>) -> bool {
@@ -92,21 +133,81 @@ fn request_peer_is_loopback<B>(req: &Request<B>) -> bool {
 }
 
 fn request_origin_is_local_dashboard<B>(req: &Request<B>) -> bool {
-    req.headers()
+    let Some(origin) = req
+        .headers()
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
-        .is_none_or(|origin| local_dashboard_origin_allowed(origin, None))
+    else {
+        return true;
+    };
+    request_host_port(req).is_some_and(|port| local_request_origin_allowed(origin, port))
+}
+
+fn request_host_port<B>(req: &Request<B>) -> Option<u16> {
+    let host = req.headers().get(header::HOST)?.to_str().ok()?.trim();
+    let authority = if host == "::1" { "[::1]" } else { host };
+    reqwest::Url::parse(&format!("http://{authority}"))
+        .ok()?
+        .port_or_known_default()
+}
+
+/// Local browser access may bypass Preview authentication only when the
+/// connection and Host are loopback and any browser Origin is also local.
+/// Top-level navigations normally omit Origin and remain allowed.
+pub(crate) fn request_is_local_dashboard<B>(req: &Request<B>) -> bool {
+    request_is_loopback(req) && request_origin_is_local_dashboard(req)
+}
+
+/// Headers a reverse proxy stamps onto every request it forwards.
+///
+/// Tailscale Funnel routes on the TLS SNI and forwards the caller's Host
+/// unchanged, so a public caller can send `Host: localhost:<port>` and satisfy
+/// both loopback checks below — the peer is the local forwarder either way.
+/// The forwarder overwrites these headers with `Set`, so a caller cannot
+/// suppress them, which makes their presence a reliable "not local" signal.
+const PROXY_FORWARDED_HEADERS: [&str; 4] = [
+    "tailscale-funnel-request",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "forwarded",
+];
+
+fn request_was_forwarded<B>(req: &Request<B>) -> bool {
+    PROXY_FORWARDED_HEADERS
+        .iter()
+        .any(|name| req.headers().contains_key(*name))
+}
+
+/// Preview's local bypass requires a loopback peer, a loopback Host, and no
+/// forwarder headers. Tunnel forwarders also connect over loopback, so peer
+/// alone is insufficient, and they can carry a spoofed loopback Host, so the
+/// headers they stamp on the way through are the third check.
+pub(crate) fn request_is_loopback<B>(req: &Request<B>) -> bool {
+    request_peer_is_loopback(req) && request_host_is_loopback(req) && !request_was_forwarded(req)
+}
+
+fn request_is_local_bridge<B>(req: &Request<B>) -> bool {
+    request_is_local_dashboard(req)
+}
+
+fn local_bridge_access_allowed<B>(req: &Request<B>, auth: &AuthToken) -> bool {
+    request_is_local_bridge(req)
+        || (request_is_loopback(req)
+            && extract_token(req).is_some_and(|candidate| auth.matches(&candidate)))
 }
 
 /// Allow local API bridge calls only from clients that actually connected via
 /// loopback and targeted a loopback dashboard URL. Tunnel forwarders also
 /// connect to the daemon over loopback, so the Host/Origin checks are needed
 /// to keep `/local-api` off public tunnel URLs while preserving local CLI use.
-pub async fn require_local_bridge(req: Request<Body>, next: Next) -> Response {
-    if request_peer_is_loopback(&req)
-        && request_host_is_loopback(&req)
-        && request_origin_is_local_dashboard(&req)
-    {
+/// Cross-origin Desktop development requests must additionally carry the
+/// daemon owner token; the fixed Vite port is not itself an authority.
+pub async fn require_local_bridge(
+    State(state): State<AuthState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    if local_bridge_access_allowed(&req, &state.owner) {
         return next.run(req).await;
     }
 
@@ -120,12 +221,7 @@ pub async fn require_auth(
     next: Next,
 ) -> Response {
     let is_mcp = req.uri().path() == "/mcp";
-    let token = extract_token(&req);
-    let authorized = match token.as_deref() {
-        Some(candidate) => state.0.matches(candidate),
-        None => false,
-    };
-    if authorized {
+    if request_is_authorized(&state, &req) {
         return next.run(req).await;
     }
     if is_mcp {
@@ -149,7 +245,16 @@ pub async fn require_auth(
     StatusCode::UNAUTHORIZED.into_response()
 }
 
-pub(crate) fn headers_have_allowed_ws_origin(
+fn request_is_authorized<B>(state: &AuthState, req: &Request<B>) -> bool {
+    let expected = if req.uri().path() == "/mcp" {
+        &state.mcp
+    } else {
+        &state.owner
+    };
+    extract_token(req).is_some_and(|candidate| expected.matches(&candidate))
+}
+
+pub(crate) fn headers_have_allowed_dashboard_origin(
     headers: &HeaderMap,
     port: u16,
     tunnel_urls: &[String],
@@ -161,7 +266,7 @@ pub(crate) fn headers_have_allowed_ws_origin(
 }
 
 pub(crate) fn dashboard_origin_allowed(origin: &str, port: u16, tunnel_urls: &[String]) -> bool {
-    if local_dashboard_origin_allowed(origin, Some(port)) {
+    if local_dashboard_origin_allowed(origin, port) {
         return true;
     }
 
@@ -175,36 +280,31 @@ pub(crate) fn dashboard_origin_allowed(origin: &str, port: u16, tunnel_urls: &[S
     })
 }
 
-fn local_dashboard_origin_allowed(origin: &str, port: Option<u16>) -> bool {
+fn local_request_origin_allowed(origin: &str, port: u16) -> bool {
     let Some(origin) = parse_origin(origin) else {
         return false;
     };
 
     if matches!(
-        (
-            origin.scheme.as_str(),
-            origin.host.as_str(),
-            origin.port,
-            port
-        ),
-        ("tauri", "localhost", None, _)
-            | ("http", "tauri.localhost", Some(80), _)
-            | ("http", "localhost", Some(5181), _)
+        (origin.scheme.as_str(), origin.host.as_str(), origin.port),
+        ("tauri", "localhost", None) | ("http", "tauri.localhost", Some(80))
     ) {
         return true;
     }
 
-    match port {
-        Some(port) => {
-            origin.scheme == "http"
-                && origin.port == Some(port)
-                && matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1")
-        }
-        None => {
-            origin.scheme == "http"
-                && matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1")
-        }
-    }
+    origin.scheme == "http"
+        && origin.port == Some(port)
+        && matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1")
+}
+
+fn local_dashboard_origin_allowed(origin: &str, port: u16) -> bool {
+    local_request_origin_allowed(origin, port)
+        || parse_origin(origin).is_some_and(|origin| {
+            matches!(
+                (origin.scheme.as_str(), origin.host.as_str(), origin.port),
+                ("http", "localhost", Some(5181))
+            )
+        })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -227,8 +327,7 @@ fn parse_origin(value: &str) -> Option<OriginParts> {
     })
 }
 
-/// Minimal percent-decoder for the `?token=` value. We only need to handle
-/// `%HH` sequences; the hex token alphabet is URL-safe.
+/// Percent-decode `%HH` sequences in query-token values.
 fn url_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -257,110 +356,5 @@ fn from_hex(c: u8) -> Option<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::body::Body;
-
-    fn req_with_header(value: &str) -> Request<Body> {
-        Request::builder()
-            .uri("/api/sessions")
-            .header(header::AUTHORIZATION, value)
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    fn req_with_query(query: &str) -> Request<Body> {
-        Request::builder()
-            .uri(format!("/api/sessions?{query}"))
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    #[test]
-    fn extracts_bearer_header() {
-        let r = req_with_header("Bearer abc123");
-        assert_eq!(extract_token(&r), Some("abc123".into()));
-    }
-
-    #[test]
-    fn extracts_lowercase_bearer_header() {
-        let r = req_with_header("bearer xyz");
-        assert_eq!(extract_token(&r), Some("xyz".into()));
-    }
-
-    #[test]
-    fn ignores_non_bearer_auth_header() {
-        let r = req_with_header("Basic dXNlcjpwYXNz");
-        assert_eq!(extract_token(&r), None);
-    }
-
-    #[test]
-    fn extracts_token_query_param() {
-        let r = req_with_query("token=deadbeef");
-        assert_eq!(extract_token(&r), Some("deadbeef".into()));
-    }
-
-    #[test]
-    fn extracts_token_query_param_among_others() {
-        let r = req_with_query("session_id=abc&token=deadbeef&foo=bar");
-        assert_eq!(extract_token(&r), Some("deadbeef".into()));
-    }
-
-    #[test]
-    fn no_token_returns_none() {
-        let r = Request::builder()
-            .uri("/api/sessions")
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(extract_token(&r), None);
-    }
-
-    #[test]
-    fn url_decode_handles_hex() {
-        assert_eq!(url_decode("hello%20world"), "hello world");
-        assert_eq!(url_decode("plain"), "plain");
-        assert_eq!(url_decode("deadbeef"), "deadbeef");
-    }
-
-    #[test]
-    fn recognizes_loopback_hosts() {
-        assert!(is_loopback_host("localhost"));
-        assert!(is_loopback_host("localhost:12358"));
-        assert!(is_loopback_host("127.0.0.1"));
-        assert!(is_loopback_host("127.0.0.1:12358"));
-        assert!(is_loopback_host("::1"));
-        assert!(is_loopback_host("[::1]:12358"));
-        assert!(!is_loopback_host("example.com"));
-        assert!(!is_loopback_host("example.com:12358"));
-    }
-
-    #[test]
-    fn validates_static_dashboard_origins() {
-        assert!(dashboard_origin_allowed(
-            "http://127.0.0.1:12358",
-            12358,
-            &[]
-        ));
-        assert!(dashboard_origin_allowed(
-            "http://localhost:12358",
-            12358,
-            &[]
-        ));
-        assert!(dashboard_origin_allowed("tauri://localhost", 12358, &[]));
-        assert!(!dashboard_origin_allowed("http://evil.example", 12358, &[]));
-    }
-
-    #[test]
-    fn validates_tunnel_origins_by_active_url() {
-        assert!(dashboard_origin_allowed(
-            "https://demo.loca.lt",
-            12358,
-            &["https://demo.loca.lt".to_string()]
-        ));
-        assert!(!dashboard_origin_allowed(
-            "https://other.loca.lt",
-            12358,
-            &["https://demo.loca.lt".to_string()]
-        ));
-    }
-}
+#[path = "auth_tests.rs"]
+mod tests;

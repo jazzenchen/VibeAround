@@ -56,7 +56,7 @@ Subagents must report back with:
 Call the VibeAround MCP tool:
 
 ```
-Tool: initialize_subagents
+Tool: va_mcp_initialize_subagents
 Server: vibearound
 Arguments:
   thread_id: "<value of $VIBEAROUND_THREAD_ID>"
@@ -74,11 +74,11 @@ Arguments:
 Then wait for the turn to finish:
 
 ```
-Tool: wait_for_subagents
+Tool: va_mcp_wait_for_subagents
 Server: vibearound
 Arguments:
   thread_id: "<value of $VIBEAROUND_THREAD_ID>"
-  turn_id: "<turn id returned by initialize_subagents>"
+  turn_id: "<turn id returned by va_mcp_initialize_subagents>"
 ```
 
 Rules:
@@ -93,11 +93,11 @@ Rules:
 - If VibeAround reports a dirty workspace or worktree creation error, tell the user and stop the multi-agent turn.
 - VibeAround injects subagent role/system guidance at session startup. Keep assignments focused on the task and relevant context.
 
-After `initialize_subagents` returns, do not produce a final answer yet. Call `wait_for_subagents`, review the returned reports and any visible subagent messages, then synthesize the host answer.
+After `va_mcp_initialize_subagents` returns, do not produce a final answer yet. Call `va_mcp_wait_for_subagents`, review the returned reports and any visible subagent messages, then synthesize the host answer.
 
 ## Continue Delegating
 
-After `initialize_subagents` returns, the host can continue delegating to an existing subagent by emitting an assignment envelope in the host response. VibeAround intercepts the envelope and sends it to the target subagent:
+After `va_mcp_initialize_subagents` returns, the host can continue delegating to an existing subagent by emitting an assignment envelope in the host response. VibeAround intercepts the envelope and sends it to the target subagent:
 
 ```xml
 <va-agent-protocol>
@@ -114,7 +114,7 @@ After `initialize_subagents` returns, the host can continue delegating to an exi
 
 Rules:
 
-- Use exactly the `turn_id` and `to_agent_id` returned by `initialize_subagents`.
+- Use exactly the `turn_id` and `to_agent_id` returned by `va_mcp_initialize_subagents`.
 - Include a non-empty `task`.
 - Put the envelope at the end of the assistant message. Do not write anything after the closing `</va-agent-protocol>` tag.
 - Do not use MCP for follow-up delegation. The protocol envelope is the control path.

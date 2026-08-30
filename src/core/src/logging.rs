@@ -1,10 +1,7 @@
 //! Global tracing subscriber setup.
 //!
-//! Call [`init`] once from the process entrypoint (desktop Tauri shell
-//! or the standalone server binary). Subsequent calls from other code
-//! paths are safe — we install the subscriber via
-//! `tracing_subscriber::registry().try_init()` which returns an error on
-//! second call rather than panicking.
+//! [`init`] installs the subscriber with `try_init`; repeated calls return an
+//! error without panicking.
 //!
 //! # Runtime controls
 //!

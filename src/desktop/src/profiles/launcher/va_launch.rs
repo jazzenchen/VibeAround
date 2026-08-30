@@ -4,7 +4,7 @@ use std::process::{Child, Command, Stdio};
 
 use super::common::LaunchPlan;
 use crate::profiles::terminal;
-use anyhow::{bail, Context};
+use anyhow::Context;
 use common::profiles::ProfileDef;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,116 +113,12 @@ fn launch_profile_temp_dir() -> anyhow::Result<PathBuf> {
 }
 
 fn resolve_va_launch_binary() -> anyhow::Result<PathBuf> {
-    if let Some(path) = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
-        }
-        bail!("VIBEAROUND_VA_LAUNCH_BIN is not a file: {}", path.display());
-    }
-
-    let candidate_paths = va_launch_candidate_paths();
-    if let Some(path) = first_existing_file(candidate_paths.iter()) {
-        return Ok(path);
-    }
-
-    let searched = candidate_paths
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    bail!("va-launch binary not found; searched: {searched}; build va-launcher or set VIBEAROUND_VA_LAUNCH_BIN")
+    common::sidecar::find("va-launch", "VIBEAROUND_VA_LAUNCH_BIN")
 }
 
-fn va_launch_candidate_paths() -> Vec<PathBuf> {
-    let names = va_launch_binary_names();
-    let mut roots = Vec::new();
-
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(exe_dir) = current_exe.parent() {
-            push_unique_path(&mut roots, exe_dir.to_path_buf());
-            push_unique_path(&mut roots, exe_dir.join("resources"));
-            push_unique_path(&mut roots, exe_dir.join("_up_").join("resources"));
-            push_unique_path(&mut roots, exe_dir.join("..").join("Resources"));
-            push_unique_path(
-                &mut roots,
-                exe_dir
-                    .join("..")
-                    .join("Resources")
-                    .join("_up_")
-                    .join("resources"),
-            );
-        }
-    }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let target_dir = manifest_dir.join("..").join("target");
-    for profile in ["debug", "release"] {
-        push_unique_path(&mut roots, target_dir.join(profile));
-    }
-    push_unique_path(&mut roots, manifest_dir.join("binaries"));
-
-    roots
-        .into_iter()
-        .flat_map(|root| names.iter().map(move |name| root.join(name)))
-        .collect()
-}
-
-fn first_existing_file<'a>(paths: impl IntoIterator<Item = &'a PathBuf>) -> Option<PathBuf> {
-    paths.into_iter().find(|path| path.is_file()).cloned()
-}
-
-fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !paths.iter().any(|existing| existing == &path) {
-        paths.push(path);
-    }
-}
-
-fn va_launch_binary_names() -> Vec<String> {
-    let plain = plain_va_launch_binary_name().to_string();
-    let mut names = vec![plain.clone()];
-    if let Some(sidecar) = va_launch_sidecar_binary_name() {
-        if sidecar != plain {
-            names.push(sidecar);
-        }
-    }
-    names
-}
-
-fn plain_va_launch_binary_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "va-launch.exe"
-    } else {
-        "va-launch"
-    }
-}
-
-fn va_launch_sidecar_binary_name() -> Option<String> {
-    Some(format!(
-        "va-launch-{}{}",
-        current_target_triple()?,
-        executable_extension()
-    ))
-}
-
-fn executable_extension() -> &'static str {
-    if cfg!(target_os = "windows") {
-        ".exe"
-    } else {
-        ""
-    }
-}
-
-fn current_target_triple() -> Option<&'static str> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
-        ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
-        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
-        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
-        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
-        ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
-        _ => None,
-    }
+/// The bundled TUI that VibeAround Agent launches open into.
+pub(super) fn resolve_va_tui_binary() -> anyhow::Result<PathBuf> {
+    common::sidecar::find("va-tui", "VIBEAROUND_VA_TUI_BIN")
 }
 
 fn profile_from_plan(plan: &LaunchPlan, context: &LaunchContext) -> va_launcher::LaunchProfile {
@@ -285,9 +181,7 @@ mod tests {
             label: "Test profile".to_string(),
             provider: "openai".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["openai_responses".to_string()],
             credentials: Default::default(),
-            overrides: Default::default(),
             api_configs: Default::default(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),
@@ -499,20 +393,6 @@ mod tests {
             value["args"]["native"],
             serde_json::json!(["--model", "gpt-5"])
         );
-    }
-
-    #[test]
-    fn sidecar_binary_name_matches_tauri_external_bin_layout() {
-        let Some(sidecar) = va_launch_sidecar_binary_name() else {
-            return;
-        };
-
-        assert!(sidecar.starts_with("va-launch-"));
-        if cfg!(target_os = "windows") {
-            assert!(sidecar.ends_with(".exe"));
-        } else {
-            assert!(!sidecar.ends_with(".exe"));
-        }
     }
 
     #[test]

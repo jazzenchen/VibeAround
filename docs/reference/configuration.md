@@ -11,9 +11,7 @@ Everything lives under `~/.vibearound/` (override with `VIBEAROUND_DATA_DIR`):
 | `settings.json` | you, desktop settings UI, onboarding | Main configuration — [full schema below](#settingsjson) | **Yes** (then `va settings reload`) |
 | `agents.json` | desktop Launch UI, `va-launch` (executable discovery) | Per-agent launch preferences — [schema below](#agentsjson) | Yes, carefully |
 | `launch/profiles/<name>.json` | you, desktop (temp materialized copies) | Saved native-launch profiles — [schema below](#launch-profile-json-schema-v1) | **Yes** (that is the point) |
-| `auth.json` | daemon, every start | `{port, token}` for out-of-process clients | No — rewritten each start |
-| `local-api-auth.json` | daemon, every start | Scoped `{port, token}` for profile-backed model bridge clients | No — rewritten each start |
-| `local-agent-api-auth.json` | daemon, every start | Scoped `{port, token}` for agent-as-API clients | No — rewritten each start |
+| `auth.json` | daemon, every start | `{port, token, mcp_token, bridge_token, agent_token}` — one credential per route family: `token` for dashboard/control, `mcp_token` for `/mcp`, `bridge_token` for `/local-api`, `agent_token` for `/local-agent` | No — rewritten each start, except `agent_token`, which is carried over |
 | `profiles/<profile-id>.json` | desktop/dashboard profile UI | Saved model profiles (provider, endpoint, key, model routes) | Prefer the UI; hand-edits are read on reload |
 | `profile-state/<profile-id>/` | profile rendering | Rendered per-profile agent config files (settings overlays); env pointers reference these ([launch internals](../internals/launch.md#environment-assembly-layer-by-layer)) | No — regenerated per render |
 | `plugins/<kind>/` | desktop plugin manager | Installed channel plugins + manifests | Only during plugin development |
@@ -21,10 +19,9 @@ Everything lives under `~/.vibearound/` (override with `VIBEAROUND_DATA_DIR`):
 | `.cache/` | channel plugins | Downloaded chat attachments | Safe to purge |
 | `logs/runtime/` | daemon | Daily rolling log files (`vibearound.log.<date>`) | Safe to purge |
 | `*.jsonl` (workspace/thread/attachment event logs) | daemon | Conversation state ([workspace module](../internals/modules/workspace.md)) | **No** — append-only event logs |
-| `launcher.json` | desktop | Desktop-only launch preferences (terminal choice, per-agent workspace compat) | Prefer the UI |
 | `desktop-apps.detected.json` | desktop detection | Cached Claude/Codex Desktop app locations | No — cache |
 
-VibeAround also writes **into each enabled agent's own global config** (MCP server entry + skill files, at the paths declared in the agent registry — e.g. `~/.claude.json` `mcpServers` and `~/.claude/skills/vibearound/`). These writes are marked VibeAround-managed and are removed by launch-time cleanup when the daemon is down ([launch flow, step 5](../internals/flows/native-launch.md)).
+Before each launch, VibeAround replaces its reserved project skills and writes the current daemon MCP credential into the project's agent config. Paths come from the agent registry; unrelated configuration is unchanged ([launch flow, step 5](../internals/flows/native-launch.md)).
 
 ## settings.json
 
@@ -38,7 +35,6 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
     "ngrok":      { "auth_token": "…", "domain": "…" },
     "cloudflare": { "tunnel_token": "…", "hostname": "…" }
   },
-  "preview_base_url": null,          // override the public base URL for preview links
 
   // --- Toolchain ---
   "toolchain_mode": "system",        // system | managed
@@ -50,10 +46,6 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
   // --- Agents ---
   "default_agent": "claude",
   "enabled_agents": ["claude", "codex"],  // omit to enable every known agent
-  "integrations": {
-    "mcp_auto_install": true,        // write VibeAround MCP config into agent configs
-    "skill_auto_install": true      // write VibeAround skills into agent skill dirs
-  },
 
   // --- Networking ---
   "proxy": { "enabled": true, "http_proxy": "http://…", "no_proxy": "…" },
@@ -62,7 +54,10 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
   "api_bridge": {
     "replace_provider_web_search": false
   },
-  "local_agent_api": { "enabled": true },
+  // Service switch + per-agent opt-in: both must be on for an agent to
+  // serve /local-agent routes (an agent not listed answers 403). The
+  // direct profile is always refused (429) — use a managed profile.
+  "local_agent_api": { "enabled": true, "agents": ["claude"] },
 
   // --- Host-side web search ---
   "search_tool": {
@@ -161,9 +156,7 @@ Two "profile" concepts meet here and must not be confused: a **provider profile*
 ```text
 ~/.vibearound/
 ├── settings.json           # configuration (this page)
-├── auth.json               # dashboard token, rewritten each daemon start
-├── local-api-auth.json     # profile bridge token, rewritten each daemon start
-├── local-agent-api-auth.json # agent-as-API token, rewritten each daemon start
+├── auth.json               # port + dashboard, MCP, bridge and agent-as-API tokens
 ├── agents.json             # resolved agent executables (va-launch cache)
 ├── plugins/<kind>/         # installed channel plugins
 ├── launch/profiles/        # saved launch profile JSON (schema v1)

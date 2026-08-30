@@ -8,10 +8,9 @@ impl WorkspaceThreadManager {
         profile_id: Option<String>,
         session_id: String,
         cwd: PathBuf,
-        mode: ExternalSessionAttachMode,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
         let prepared = self
-            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd, mode)
+            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd)
             .await?;
         let thread = self.ensure_external_session_thread(&prepared).await?;
         if self.current_attachment(route).await?.is_some() {
@@ -32,10 +31,9 @@ impl WorkspaceThreadManager {
         profile_id: Option<String>,
         session_id: String,
         cwd: PathBuf,
-        mode: ExternalSessionAttachMode,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
         let prepared = self
-            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd, mode)
+            .prepare_external_session_thread(agent_id, profile_id, session_id, cwd)
             .await?;
         let route = web_route_for_thread(&prepared.thread.id);
         let thread = self.ensure_external_session_thread(&prepared).await?;
@@ -44,22 +42,43 @@ impl WorkspaceThreadManager {
         self.runtime_from_thread(thread).await
     }
 
-    pub async fn create_web_thread_for_cwd_with_host(
+    /// Give an existing thread its own web route, whoever created it. The web
+    /// chat id is the thread id, so this is what makes that name true rather
+    /// than letting the browser assume it.
+    pub async fn attach_web_route_to_thread(
+        &self,
+        thread_id: &WorkspaceThreadId,
+    ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        let thread = self
+            .thread(thread_id)
+            .await?
+            .ok_or_else(|| anyhow!("thread {} not found", thread_id))?;
+        let route = web_route_for_thread(&thread.id);
+        self.attach_route(route, thread.workspace_id.clone(), thread.id.clone())
+            .await?;
+        self.runtime_from_thread(thread).await
+    }
+
+    /// Promise the web a thread without creating one. Nothing is written and no
+    /// agent is contacted; the record waits on its own route until a first
+    /// prompt arrives, and a conversation the user never starts leaves no
+    /// trace. Answers with the record and the workspace it would live in.
+    pub async fn draft_web_thread(
         &self,
         agent_id: String,
         profile_id: Option<String>,
         cwd: PathBuf,
-    ) -> anyhow::Result<Arc<ThreadRuntime>> {
+    ) -> anyhow::Result<(WorkspaceThread, PathBuf)> {
         let profile_id = normalize_optional_launch_profile_id(profile_id.as_deref())
             .or_else(|| launch_setting_profile_for_agent(&agent_id));
         let workspace = self.ensure_workspace_for_cwd(cwd).await?;
         let host_binding = HostBinding::new(agent_id, profile_id);
-        let thread = self.new_thread_record_with_host(workspace.id.clone(), host_binding);
-        let route = web_route_for_thread(&thread.id);
-        self.ensure_thread_persisted(&thread).await?;
-        self.attach_route(route, workspace.id, thread.id.clone())
-            .await?;
-        self.runtime_from_thread(thread).await
+        let thread = self.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
+        self.drafts
+            .lock()
+            .await
+            .insert(web_route_for_thread(&thread.id), thread.clone());
+        Ok((thread, workspace.cwd))
     }
 
     pub async fn switch_workspace(
@@ -164,6 +183,28 @@ impl WorkspaceThreadManager {
             .collect())
     }
 
+    /// Agent ids that any thread of this workspace has observed a native
+    /// session for. IM session listing expands its query across these so a
+    /// session used before an /agent switch stays discoverable: the switch
+    /// re-points the route to a fresh thread while the old thread keeps the
+    /// `AgentSessionObserved` records.
+    pub async fn observed_session_agent_ids_for_workspace(
+        &self,
+        cwd: &Path,
+    ) -> anyhow::Result<std::collections::BTreeSet<String>> {
+        let cwd = normalize_workspace_cwd(cwd);
+        let workspace_projection = self.workspace_projection().await?;
+        let Some(workspace) = workspace_by_cwd(&workspace_projection, &cwd) else {
+            return Ok(Default::default());
+        };
+        let thread_projection = self.thread_projection().await?;
+        Ok(thread_projection
+            .for_workspace(&workspace.id, true)
+            .flat_map(|thread| thread.agent_sessions.keys())
+            .map(|binding| binding.agent_id.clone())
+            .collect())
+    }
+
     async fn resolve_external_session_id(
         &self,
         projection: &ThreadProjection,
@@ -210,7 +251,6 @@ impl WorkspaceThreadManager {
         profile_id: Option<String>,
         session_id: String,
         cwd: PathBuf,
-        mode: ExternalSessionAttachMode,
     ) -> anyhow::Result<PreparedExternalSessionThread> {
         let workspace = self.ensure_workspace_for_cwd(cwd).await?;
         let projection = self.thread_projection().await?;
@@ -253,23 +293,22 @@ impl WorkspaceThreadManager {
                     .flatten()
                     .any(|session| session.agent_id == agent_id && session.session_id == session_id)
             });
-        let thread = if mode == ExternalSessionAttachMode::ReuseOpenThread {
-            // TODO: Revisit persisted thread lifecycle states here. "Closed" can
-            // mean user-ended, while Web idle only unloads the runtime; session
-            // resume should not accidentally split one native session across
-            // multiple workspace thread ids.
-            projection
-                .for_workspace(&workspace.id, false)
-                .find(|thread| {
-                    thread.status != ThreadStatus::Closed
-                        && thread.agent_sessions.values().flatten().any(|session| {
-                            session.agent_id == agent_id && session.session_id == session_id
-                        })
-                })
-                .cloned()
-        } else {
-            None
-        };
+        // A native session belongs to at most one open thread: resuming a
+        // session that an open thread already holds joins that thread
+        // (subscription), it never mints a sibling. Splitting one session
+        // across thread ids is what made per-surface conversations bleed
+        // into each other after a cold restart.
+        // TODO: Revisit persisted thread lifecycle states here. "Closed" can
+        // mean user-ended, while Web idle only unloads the runtime.
+        let thread = projection
+            .for_workspace(&workspace.id, false)
+            .find(|thread| {
+                thread.status != ThreadStatus::Closed
+                    && thread.agent_sessions.values().flatten().any(|session| {
+                        session.agent_id == agent_id && session.session_id == session_id
+                    })
+            })
+            .cloned();
         let thread = if let Some(thread) = thread {
             thread
         } else {
@@ -291,7 +330,7 @@ impl WorkspaceThreadManager {
                     workspace.cwd.to_string_lossy()
                 ));
             }
-            self.new_thread_record_with_host(workspace.id.clone(), host_binding.clone())
+            self.new_thread_record_with_host(workspace.id.clone(), None, host_binding.clone())
         };
 
         Ok(PreparedExternalSessionThread {

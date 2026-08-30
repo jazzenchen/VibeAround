@@ -65,7 +65,7 @@ impl TunnelProvider {
     }
 }
 
-/// Unified tunnel backend trait: same interface for all providers so we can manage and dispatch uniformly.
+/// Common tunnel-provider interface.
 #[async_trait]
 pub trait TunnelBackend: Send + Sync {
     /// Provider id (e.g. "localtunnel", "ngrok") for config and logging.

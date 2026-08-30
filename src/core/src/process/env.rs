@@ -374,10 +374,8 @@ foreach ($part in $parts) {
 
 /// Resolve the JS entry point for a pre-installed npm ACP agent binary.
 ///
-/// Looks up `~/.vibearound/plugins/node_modules/.bin/<bin_name>`.
-/// On Unix the `.bin/` entries are symlinks to the actual JS file — we
-/// follow the symlink.  On Windows npm creates `.cmd` wrappers; we parse
-/// them to extract the JS path.
+/// Looks up `~/.vibearound/plugins/node_modules/.bin/<bin_name>` and resolves
+/// Unix symlinks or Windows npm wrappers to a JavaScript entry point.
 pub fn resolve_acp_agent_bin(bin_name: &str) -> anyhow::Result<std::path::PathBuf> {
     resolve_npm_bin_in_dir(&acp_agents_dir(), bin_name)
 }

@@ -200,7 +200,7 @@ fn is_installed(choice: TerminalChoice) -> bool {
     match choice {
         // Terminal.app ships with macOS; assume present.
         TerminalChoice::Terminal => cfg!(target_os = "macos"),
-        TerminalChoice::Iterm2 => std::path::Path::new("/Applications/iTerm.app").exists(),
+        TerminalChoice::Iterm2 => va_launcher::iterm2_installed(),
         TerminalChoice::PowerShell => {
             cfg!(target_os = "windows") && command_in_path("powershell.exe")
         }
@@ -273,15 +273,10 @@ struct LauncherPrefsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     terminal: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    workspace: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     compatibility_bridge: Option<CompatibilityBridgeMode>,
 }
 
-/// Read the user's preferred terminal. Falls back to Terminal.app whenever
-/// the prefs file is missing, malformed, or names a terminal we don't
-/// recognize anymore (forward-compat: an old prefs file from a future
-/// build that knew about more terminals must not crash this version).
+/// Read the preferred terminal, falling back to the platform default.
 pub fn read_preference() -> TerminalChoice {
     read_prefs_file()
         .terminal
@@ -297,10 +292,6 @@ pub fn write_preference(choice: TerminalChoice) -> anyhow::Result<()> {
     })
 }
 
-pub fn read_workspace_preference() -> Option<PathBuf> {
-    read_prefs_file().workspace
-}
-
 pub fn read_compatibility_bridge_preference() -> CompatibilityBridgeMode {
     read_prefs_file()
         .compatibility_bridge
@@ -311,13 +302,6 @@ pub fn write_compatibility_bridge_preference(mode: CompatibilityBridgeMode) -> a
     update_prefs_file(|prefs| {
         prefs.compatibility_bridge = Some(mode);
     })
-}
-
-pub fn resolve_workspace_preference() -> anyhow::Result<PathBuf> {
-    match read_workspace_preference() {
-        Some(path) => canonical_workspace_path(&path),
-        None => launch_home_dir(),
-    }
 }
 
 pub fn canonical_workspace_path(path: &std::path::Path) -> anyhow::Result<PathBuf> {
@@ -347,31 +331,6 @@ fn strip_windows_unc_prefix(p: PathBuf) -> PathBuf {
     #[cfg(not(target_os = "windows"))]
     {
         p
-    }
-}
-
-pub fn launch_home_dir() -> anyhow::Result<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        return std::env::var_os("USERPROFILE")
-            .map(PathBuf::from)
-            .or_else(|| {
-                let drive = std::env::var_os("HOMEDRIVE")?;
-                let path = std::env::var_os("HOMEPATH")?;
-                Some(PathBuf::from(format!(
-                    "{}{}",
-                    drive.to_string_lossy(),
-                    path.to_string_lossy()
-                )))
-            })
-            .ok_or_else(|| anyhow::anyhow!("could not determine Windows home directory"));
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))
     }
 }
 
@@ -426,7 +385,6 @@ fn update_prefs_in_settings(
         .as_object_mut()
         .ok_or_else(|| "settings.json launcher must be a JSON object".to_string())?;
     merge_pref_field(launcher_obj, &prefs_obj, "terminal");
-    merge_pref_field(launcher_obj, &prefs_obj, "workspace");
     merge_pref_field(launcher_obj, &prefs_obj, "compatibility_bridge");
     if launcher_obj.is_empty() {
         root_obj.remove("launcher");

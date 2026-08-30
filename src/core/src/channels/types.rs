@@ -1,8 +1,7 @@
-//! Wire types for the legacy stdio plugin transport.
+//! Wire types for the current stdio plugin transport.
 //!
 //! These structs flow between the host and stdio plugins via JSON. They
-//! pre-date the ACP-native path that `ws_chat` uses today, but they are still
-//! the common currency for every plugin subprocess.
+//! are the common currency for every plugin subprocess.
 
 use serde::{Deserialize, Serialize};
 
@@ -54,7 +53,7 @@ impl ChannelInboundContext {
     }
 }
 
-/// Legacy envelope kept for stdio plugin compatibility.
+/// Envelope used by the stdio plugin wire contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelEnvelope {
@@ -81,7 +80,7 @@ impl ChannelEnvelope {
     }
 }
 
-/// Legacy stdio plugin input.
+/// Stdio plugin input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum ChannelInput {
@@ -95,17 +94,8 @@ pub enum ChannelInput {
         #[serde(default)]
         action_value: Option<String>,
     },
-    Stop {
+    Cancel {
         route: RouteKey,
-    },
-    Close {
-        route: RouteKey,
-        #[serde(default)]
-        reason: Option<String>,
-    },
-    SwitchAgent {
-        route: RouteKey,
-        agent_kind: String,
     },
     Log {
         #[serde(default)]
@@ -118,9 +108,7 @@ impl ChannelInput {
     pub fn route_key(&self) -> Option<&RouteKey> {
         match self {
             Self::Message { envelope } | Self::Callback { envelope, .. } => Some(&envelope.route),
-            Self::Stop { route } | Self::Close { route, .. } | Self::SwitchAgent { route, .. } => {
-                Some(route)
-            }
+            Self::Cancel { route } => Some(route),
             Self::Log { .. } => None,
         }
     }
@@ -191,6 +179,17 @@ pub enum ChannelOutput {
         request_id: String,
         payload: serde_json::Value,
     },
+    /// Brackets around a session-transcript replay delivered to a single
+    /// requesting connection. Replay frames ride between the two markers on
+    /// that connection's sink only — they are never broadcast or recorded.
+    ReplayStart {
+        route: RouteKey,
+        session_id: String,
+    },
+    ReplayDone {
+        route: RouteKey,
+        session_id: String,
+    },
     MultiAgentTurn {
         route: RouteKey,
         turn: crate::workspace::threads::MultiAgentTurn,
@@ -220,6 +219,8 @@ impl ChannelOutput {
             | Self::CommandMenu { route, .. }
             | Self::TurnStatus { route, .. }
             | Self::PermissionRequest { route, .. }
+            | Self::ReplayStart { route, .. }
+            | Self::ReplayDone { route, .. }
             | Self::MultiAgentTurn { route, .. }
             | Self::SubagentStatus { route, .. }
             | Self::SubagentAcp { route, .. } => route,
@@ -236,6 +237,10 @@ pub struct ChannelSessionInfo {
     pub agent: ChannelSessionAgent,
     pub session_id: String,
     pub start: ChannelSessionStart,
+    /// Last-modified stamp of the session in the agent's native store, so a
+    /// client can tell whether its local transcript cache is still current.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

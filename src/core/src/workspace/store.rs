@@ -68,7 +68,7 @@ pub struct WorkspaceEventStore {
 
 impl WorkspaceEventStore {
     pub fn default_path() -> PathBuf {
-        crate::config::migrate_legacy_state_file("workspaces.jsonl")
+        crate::config::state_file("workspaces.jsonl")
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {

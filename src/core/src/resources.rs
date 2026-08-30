@@ -47,6 +47,13 @@ pub struct AgentDef {
     pub platforms: Vec<String>,
     #[serde(default)]
     pub direct_only: bool,
+    /// Ships with VibeAround itself: always enabled, never installed or
+    /// toggled by the user.
+    #[serde(default)]
+    pub built_in: bool,
+    /// Has no login of its own, so it must be pointed at a model profile.
+    #[serde(default)]
+    pub requires_profile: bool,
     #[serde(default)]
     pub install: Option<AgentInstallInfo>,
     pub acp: AgentAcpConfig,
@@ -340,6 +347,10 @@ fn current_platform() -> &'static str {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentGlobalConfig {
+    /// Settings file that receives the VibeAround MCP entry. Empty when the
+    /// agent reaches VibeAround's MCP some other way (va-agent goes over ACP)
+    /// and only uses the skill fields below.
+    #[serde(default)]
     pub settings_path: String,
     /// Legacy config path — also written to for backward compat (e.g. older Claude Code).
     #[serde(default)]
@@ -347,7 +358,9 @@ pub struct AgentGlobalConfig {
     /// Config file format: "json" (default) or "toml".
     #[serde(default)]
     pub settings_format: Option<String>,
+    #[serde(default)]
     pub mcp_key: String,
+    #[serde(default)]
     pub mcp_entry: serde_json::Value,
     #[serde(default)]
     pub skill_dir: Option<String>,
@@ -607,19 +620,6 @@ fn inject_agent_schema_enums(schema: &mut serde_json::Value, agent_ids: &[serde_
     }
 }
 
-/// Format system commands into help text.
-pub fn format_system_commands_help() -> String {
-    let mut lines = Vec::new();
-    for cmd in &COMMANDS.system_commands {
-        let usage = match &cmd.args {
-            Some(args) => format!("  /{} {} — {}", cmd.name, args, cmd.description),
-            None => format!("  /{} — {}", cmd.name, cmd.description),
-        };
-        lines.push(usage);
-    }
-    lines.join("\n")
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -769,7 +769,7 @@ mod tests {
         // Find a tool with agent_kind property
         let handover = tools_arr
             .iter()
-            .find(|t| t["name"] == "prepare_handover")
+            .find(|t| t["name"] == "va_mcp_prepare_handover")
             .unwrap();
         let agent_kind_enum = &handover["inputSchema"]["properties"]["agent_kind"]["enum"];
         assert!(agent_kind_enum.is_array());

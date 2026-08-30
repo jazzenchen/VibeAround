@@ -18,7 +18,6 @@ use va_ai_api_bridge::{
 };
 
 mod completion;
-mod content_policy;
 mod google_code_assist;
 mod image_resolver;
 mod local_agent;
@@ -35,7 +34,6 @@ use completion::{
     decode_completion_response, translated_completion_events_response,
     translated_completion_response, UpstreamResponseTransform,
 };
-use content_policy::{sanitize_request_content_with_capabilities, ContentSanitization};
 pub use local_agent::{
     local_agent_chat_completions_handler, local_agent_messages_handler, local_agent_models_handler,
     local_agent_responses_handler,
@@ -122,30 +120,16 @@ pub(super) async fn bridge_handler(
     let same_protocol_needs_web_search_fallback = requested_web_search_same_protocol
         && state.host_search_available
         && (state.replace_provider_web_search || !target_model_capabilities.web_search);
-    let same_protocol_needs_web_search_discard = requested_web_search_same_protocol
-        && !state.host_search_available
-        && !target_model_capabilities.web_search;
     let same_protocol_needs_service_side_image = client_protocol == upstream.protocol
         && image_resolver::is_enabled(&state)
         && client_protocol
             .decode_agent_request(agent_request.clone())
             .map(|request| image_resolver::request_needs_resolution(&state, &request))
-            .unwrap_or(true);
-
-    if same_protocol_needs_web_search_discard {
-        tracing::info!(
-            target: "server::web_server::api_bridge",
-            request_id = %request_id,
-            profile_id = %profile_id,
-            target_api_type = %target_api_type,
-            "API bridge will translate request to discard unsupported provider web search"
-        );
-    }
+            .unwrap_or(false);
 
     if client_protocol == upstream.protocol
         && !upstream.is_google_code_assist()
         && !same_protocol_needs_web_search_fallback
-        && !same_protocol_needs_web_search_discard
         && !same_protocol_needs_service_side_image
     {
         let original_agent_request = agent_request.clone();
@@ -155,15 +139,6 @@ pub(super) async fn bridge_handler(
         let decoded_content_request = upstream
             .protocol
             .decode_agent_request(agent_request.clone());
-        if let Err(error) = &decoded_content_request {
-            if image_resolver::is_enabled(&state) {
-                return record_json_error(
-                    record.as_ref(),
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    &format!("image resolver could not inspect the client request: {error}"),
-                );
-            }
-        }
         if let Ok(mut content_request) = decoded_content_request {
             let image_resolution = match image_resolver::resolve_request_images(
                 &state,
@@ -177,20 +152,7 @@ pub(super) async fn bridge_handler(
                     return record_json_error(record.as_ref(), status, &message);
                 }
             };
-            let sanitization = sanitize_request_content_with_capabilities(
-                &upstream.profile,
-                &target_api_type,
-                &mut content_request,
-                model_mapping.as_ref().map(|mapping| &mapping.capabilities),
-            );
-            log_content_sanitization(
-                &profile_id,
-                &target_api_type,
-                client_protocol,
-                upstream.protocol,
-                sanitization,
-            );
-            if image_resolution.is_some() || sanitization.changed() {
+            if image_resolution.is_some() {
                 agent_request = match upstream.protocol.encode_upstream_request(&content_request) {
                     Ok(request) => request,
                     Err(error) => {
@@ -213,9 +175,7 @@ pub(super) async fn bridge_handler(
         } else {
             None
         };
-        if let Err(message) = normalize_target_request(&mut agent_request, upstream.protocol) {
-            return record_json_error(record.as_ref(), StatusCode::UNPROCESSABLE_ENTITY, &message);
-        }
+        normalize_target_request(&mut agent_request, upstream.protocol);
         if upstream.protocol == BridgeProtocol::OpenAiResponses {
             provider_adapter.prepare_responses_request(&mut agent_request);
         } else if upstream.protocol == BridgeProtocol::OpenAiChat {
@@ -327,19 +287,6 @@ pub(super) async fn bridge_handler(
             return record_json_error(record.as_ref(), status, &message);
         }
     };
-    let sanitization = sanitize_request_content_with_capabilities(
-        &upstream.profile,
-        &target_api_type,
-        &mut universal_request,
-        model_mapping.as_ref().map(|mapping| &mapping.capabilities),
-    );
-    log_content_sanitization(
-        &profile_id,
-        &target_api_type,
-        client_protocol,
-        upstream.protocol,
-        sanitization,
-    );
     let request_needs_web_search =
         server_tools::request_needs_web_search_fallback(&universal_request);
     let can_use_native_web_search = target_model_capabilities.web_search
@@ -350,30 +297,6 @@ pub(super) async fn bridge_handler(
     let web_search_fallback = if should_use_host_web_search {
         server_tools::prepare_web_search_fallback(&mut universal_request)
     } else {
-        if request_needs_web_search
-            && !can_use_native_web_search
-            && server_tools::discard_web_search_server_tools(&mut universal_request)
-        {
-            tracing::info!(
-                target: "server::web_server::api_bridge",
-                request_id = %request_id,
-                profile_id = %profile_id,
-                target_api_type = %target_api_type,
-                host_search_available = state.host_search_available,
-                native_web_search = target_model_capabilities.web_search,
-                "API bridge discarded provider web search server tool"
-            );
-        }
-        if request_needs_web_search && can_use_native_web_search {
-            tracing::info!(
-                target: "server::web_server::api_bridge",
-                request_id = %request_id,
-                profile_id = %profile_id,
-                target_api_type = %target_api_type,
-                upstream_protocol = ?upstream.protocol,
-                "API bridge preserved native provider web search server tool"
-            );
-        }
         None
     };
     if let Some(fallback) = &web_search_fallback {
@@ -427,9 +350,7 @@ pub(super) async fn bridge_handler(
     } else {
         None
     };
-    if let Err(message) = normalize_target_request(&mut upstream_request, upstream.protocol) {
-        return record_json_error(record.as_ref(), StatusCode::UNPROCESSABLE_ENTITY, &message);
-    }
+    normalize_target_request(&mut upstream_request, upstream.protocol);
     if upstream.protocol == BridgeProtocol::OpenAiResponses {
         provider_adapter.prepare_responses_request(&mut upstream_request);
     } else if upstream.protocol == BridgeProtocol::OpenAiChat {
@@ -934,13 +855,7 @@ fn encode_fallback_upstream_request(
     } else {
         None
     };
-    if let Err(message) = normalize_target_request(&mut upstream_request, upstream.protocol) {
-        return Err(record_json_error(
-            record,
-            StatusCode::UNPROCESSABLE_ENTITY,
-            &message,
-        ));
-    }
+    normalize_target_request(&mut upstream_request, upstream.protocol);
     if upstream.protocol == BridgeProtocol::OpenAiResponses {
         provider_adapter.prepare_responses_request(&mut upstream_request);
     } else if upstream.protocol == BridgeProtocol::OpenAiChat {
@@ -1189,14 +1104,14 @@ async fn build_upstream_request(
         return Ok(request.bearer_auth(token));
     }
 
-    apply_upstream_auth(
+    Ok(apply_upstream_auth(
         request,
         upstream.protocol,
         upstream.auth_header,
         upstream.managed_auth || bridge_managed_auth,
         headers,
         manual_profile_api_key,
-    )
+    ))
 }
 
 fn render_bridge_headers(
@@ -1275,24 +1190,27 @@ fn resolved_bridge_model_capabilities(
     upstream_model: Option<&str>,
     capability_overrides: Option<&ContentCapabilities>,
 ) -> ContentCapabilities {
-    let overrides = profile.overrides.get(target_api_type);
+    let api_config = profile
+        .api_configs
+        .get(target_api_type)
+        .filter(|config| config.enabled);
     let mut capabilities = if let Some(capabilities) =
-        overrides.and_then(|overrides| overrides.capabilities.clone())
+        api_config.and_then(|config| config.capabilities.clone())
     {
         capabilities
     } else {
         let Some(provider) = catalog::get(&profile.provider) else {
             return capability_overrides.cloned().unwrap_or_default();
         };
-        let endpoint_id = overrides.and_then(|overrides| overrides.endpoint_id.as_deref());
+        let endpoint_id = api_config.and_then(|config| config.endpoint_id.as_deref());
         let Some(endpoint) = catalog::find_endpoint(provider, target_api_type, endpoint_id) else {
             return capability_overrides.cloned().unwrap_or_default();
         };
         let mut capabilities = endpoint.capabilities.content.clone();
         let model = upstream_model
             .or_else(|| {
-                overrides
-                    .and_then(|overrides| overrides.model.as_deref())
+                api_config
+                    .and_then(|config| config.model.as_deref())
                     .map(str::trim)
                     .filter(|model| !model.is_empty())
             })
@@ -1316,9 +1234,9 @@ fn bridge_model_metadata(
 ) -> BridgeModelMetadata {
     let endpoint = catalog::get(&profile.provider).and_then(|provider| {
         let endpoint_id = profile
-            .overrides
+            .api_configs
             .get(target_api_type)
-            .and_then(|overrides| overrides.endpoint_id.as_deref());
+            .and_then(|config| config.endpoint_id.as_deref());
         catalog::find_endpoint(provider, target_api_type, endpoint_id)
     });
     let Some(endpoint) = endpoint else {
@@ -1373,17 +1291,17 @@ fn provider_adapter_for_profile(
 fn is_moonshot_kimi_coding(profile: &ProfileDef, target_api_type: &str) -> bool {
     target_api_type == "anthropic"
         && profile
-            .overrides
+            .api_configs
             .get("anthropic")
-            .and_then(|overrides| overrides.endpoint_id.as_deref())
+            .and_then(|config| config.endpoint_id.as_deref())
             == Some("kimi-coding")
 }
 
 fn profile_reasoning_enabled(profile: &ProfileDef, api_type: &str) -> Option<bool> {
     profile
-        .overrides
+        .api_configs
         .get(api_type)
-        .and_then(|overrides| overrides.reasoning_effort.as_deref())
+        .and_then(|config| config.reasoning_effort.as_deref())
         .map(reasoning_effort_enabled)
 }
 
@@ -1392,28 +1310,6 @@ fn reasoning_effort_enabled(value: &str) -> bool {
         value.trim().to_ascii_lowercase().as_str(),
         "off" | "none" | "disabled" | "disable" | "false"
     )
-}
-
-fn log_content_sanitization(
-    profile_id: &str,
-    target_api_type: &str,
-    client_protocol: BridgeProtocol,
-    upstream_protocol: BridgeProtocol,
-    sanitization: ContentSanitization,
-) {
-    if !sanitization.changed() {
-        return;
-    }
-    tracing::warn!(
-        target: "server::web_server::api_bridge",
-        profile_id = %profile_id,
-        target_api_type = %target_api_type,
-        client_protocol = ?client_protocol,
-        upstream_protocol = ?upstream_protocol,
-        image_omitted = sanitization.image_omitted,
-        file_omitted = sanitization.file_omitted,
-        "API bridge omitted unsupported request content before upstream forwarding"
-    );
 }
 
 fn client_api_type_from_scope(scope: &str) -> Option<&str> {
@@ -1448,13 +1344,13 @@ fn validate_manual_scope(scope: &str) -> Result<(), (StatusCode, String)> {
 
 #[derive(Clone)]
 pub(crate) struct LocalAgentCredential {
-    token: Arc<common::auth::AuthToken>,
+    token: common::auth::SharedAuthToken,
     owner_token: Arc<common::auth::AuthToken>,
 }
 
 impl LocalAgentCredential {
     pub(crate) fn new(
-        token: Arc<common::auth::AuthToken>,
+        token: common::auth::SharedAuthToken,
         owner_token: Arc<common::auth::AuthToken>,
     ) -> Self {
         Self { token, owner_token }
@@ -1475,7 +1371,7 @@ pub(crate) async fn require_local_agent_credential(
 }
 
 fn validate_local_agent_client_token(
-    auth_token: &common::auth::AuthToken,
+    auth_token: &common::auth::SharedAuthToken,
     owner_token: &common::auth::AuthToken,
     headers: &HeaderMap,
 ) -> Option<Response> {
@@ -1572,7 +1468,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
-    use common::auth::AuthToken;
+    use common::auth::{AuthToken, SharedAuthToken};
     use common::config::HttpProxyConfig;
     use common::profiles::schema::{AuthMode, ProfileDef};
 
@@ -1653,7 +1549,7 @@ mod tests {
 
     #[test]
     fn local_agent_api_rejects_bridge_token() {
-        let local_agent_api_token = AuthToken::generate();
+        let local_agent_api_token = SharedAuthToken::new(AuthToken::generate());
         let bridge_token = AuthToken::generate();
         let owner_token = AuthToken::generate();
         let mut headers = HeaderMap::new();
@@ -1670,9 +1566,9 @@ mod tests {
 
     #[test]
     fn local_agent_api_accepts_scoped_and_owner_tokens() {
-        let local_agent_api_token = AuthToken::generate();
+        let local_agent_api_token = SharedAuthToken::new(AuthToken::generate());
         let owner_token = AuthToken::generate();
-        for token in [&local_agent_api_token, &owner_token] {
+        for token in [local_agent_api_token.snapshot(), owner_token.clone()] {
             let mut headers = HeaderMap::new();
             headers.insert(
                 header::AUTHORIZATION,
@@ -1725,9 +1621,7 @@ mod tests {
             label: "Custom Test".to_string(),
             provider: "custom".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["anthropic".to_string()],
             credentials,
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: Default::default(),

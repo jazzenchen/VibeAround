@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::agent::launch::normalize_launch_profile_id;
 use crate::agent_state;
@@ -33,14 +33,12 @@ mod sessions;
 #[path = "manager_routes.rs"]
 mod routes;
 
+#[path = "manager_previews.rs"]
+mod previews;
+
 const MAX_WARM_THREADS: usize = 4;
 const WARM_THREAD_MIN_IDLE: Duration = Duration::from_secs(10 * 60);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExternalSessionAttachMode {
-    ReuseOpenThread,
-    NewThread,
-}
+const PREVIEW_WEB_CHAT_ID_PREFIX: &str = "ws_preview_";
 
 struct PreparedExternalSessionThread {
     workspace: WorkspaceRecord,
@@ -59,12 +57,34 @@ pub fn web_route_for_thread(thread_id: &WorkspaceThreadId) -> RouteKey {
     RouteKey::new("web", web_chat_id_for_thread(thread_id))
 }
 
+pub fn preview_web_route_for_slug(slug: &str) -> RouteKey {
+    RouteKey::new("web", format!("{PREVIEW_WEB_CHAT_ID_PREFIX}{slug}"))
+}
+
+pub fn preview_slug_from_web_route(route: &RouteKey) -> Option<&str> {
+    if route.channel_kind != "web" || route.channel_instance_id != "web" {
+        return None;
+    }
+    route
+        .chat_id
+        .strip_prefix(PREVIEW_WEB_CHAT_ID_PREFIX)
+        .filter(|slug| !slug.is_empty())
+}
+
 pub struct WorkspaceThreadManager {
     workspace_store: WorkspaceEventStore,
     thread_store: ThreadEventStore,
     attachment_store: RouteAttachmentEventStore,
     runtimes: RuntimeRegistry,
     change_tx: broadcast::Sender<()>,
+    preview_lifecycle: Mutex<()>,
+    /// Threads the web has been promised but nobody has written to yet. They
+    /// hold an id and a host binding and nothing else; the first prompt on
+    /// their route is what makes them real.
+    drafts: Mutex<HashMap<RouteKey, WorkspaceThread>>,
+    /// VibeAround's MCP tools served over ACP to thread agents. Installed by
+    /// the server at boot; thread handlers hand it to their ACP bridge.
+    mcp_over_acp: std::sync::OnceLock<Arc<dyn crate::agent::AcpMcpServer>>,
 }
 
 impl WorkspaceThreadManager {
@@ -78,7 +98,19 @@ impl WorkspaceThreadManager {
             ),
             runtimes: RuntimeRegistry::new(),
             change_tx,
+            preview_lifecycle: Mutex::new(()),
+            drafts: Mutex::new(HashMap::new()),
+            mcp_over_acp: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Install the MCP-over-ACP server once at boot. Later calls are ignored.
+    pub fn set_mcp_over_acp(&self, server: Arc<dyn crate::agent::AcpMcpServer>) {
+        let _ = self.mcp_over_acp.set(server);
+    }
+
+    pub fn mcp_over_acp(&self) -> Option<Arc<dyn crate::agent::AcpMcpServer>> {
+        self.mcp_over_acp.get().cloned()
     }
 
     pub fn with_paths(
@@ -93,6 +125,9 @@ impl WorkspaceThreadManager {
             attachment_store: RouteAttachmentEventStore::new(attachment_path),
             runtimes: RuntimeRegistry::new(),
             change_tx,
+            preview_lifecycle: Mutex::new(()),
+            drafts: Mutex::new(HashMap::new()),
+            mcp_over_acp: std::sync::OnceLock::new(),
         })
     }
 
@@ -100,15 +135,33 @@ impl WorkspaceThreadManager {
         &self,
         route: &RouteKey,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        if let Some(slug) = preview_slug_from_web_route(route) {
+            let _preview_lifecycle = self.preview_lifecycle.lock().await;
+            if let Some(runtime) = self.active_runtime_for_route(route).await? {
+                return Ok(runtime);
+            }
+            return self.resolve_preview_route_runtime_locked(route, slug).await;
+        }
+
         if let Some(runtime) = self.active_runtime_for_route(route).await? {
             return Ok(runtime);
+        }
+        if let Some(thread) = self.drafts.lock().await.remove(route) {
+            self.ensure_thread_persisted(&thread).await?;
+            self.attach_route(
+                route.clone(),
+                thread.workspace_id.clone(),
+                thread.id.clone(),
+            )
+            .await?;
+            return self.runtime_from_thread(thread).await;
         }
 
         let (host_binding, workspace_path) = default_route_binding_and_workspace(route);
         let workspace = self
             .ensure_default_workspace_for_route(route, workspace_path)
             .await?;
-        let thread = self.new_thread_record_with_host(workspace.id.clone(), host_binding);
+        let thread = self.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
         self.ensure_thread_persisted(&thread).await?;
         self.attach_route(route.clone(), workspace.id, thread.id.clone())
             .await?;
@@ -138,7 +191,7 @@ impl WorkspaceThreadManager {
             .workspace(&workspace_id)
             .await?
             .ok_or_else(|| anyhow!("workspace {} not found", workspace_id))?;
-        let thread = self.new_thread_record_with_host(workspace.id.clone(), host_binding);
+        let thread = self.new_thread_record_with_host(workspace.id.clone(), None, host_binding);
         self.ensure_thread_persisted(&thread).await?;
         self.attach_route(route.clone(), workspace.id, thread.id.clone())
             .await?;
@@ -189,9 +242,19 @@ impl WorkspaceThreadManager {
         route: &RouteKey,
         reason: Option<String>,
     ) -> anyhow::Result<Arc<ThreadRuntime>> {
+        let preview_slug = preview_slug_from_web_route(route).map(str::to_string);
+        let _preview_lifecycle = if preview_slug.is_some() {
+            Some(self.preview_lifecycle.lock().await)
+        } else {
+            None
+        };
         let current = match self.active_runtime_for_route(route).await? {
             Some(runtime) => {
                 let state = runtime.state().await;
+                let thread = self
+                    .thread(&state.thread_id)
+                    .await?
+                    .ok_or_else(|| anyhow!("thread {} not found", state.thread_id))?;
                 let next_host_binding = host_binding_for_explicit_new(route, state.host_binding);
                 runtime
                     .close(reason)
@@ -199,13 +262,27 @@ impl WorkspaceThreadManager {
                     .map_err(|error| anyhow!(error.to_string()))?;
                 self.runtimes.remove(state.thread_id.clone());
                 self.detach_route(route).await?;
-                Some((state.workspace_id, next_host_binding))
+                Some((thread, next_host_binding))
             }
             None => None,
         };
 
-        if let Some((workspace_id, host_binding)) = current {
-            self.create_thread_for_route_with_host(route, workspace_id, host_binding)
+        if let Some((thread, host_binding)) = current {
+            if let Some(preview_slug) = thread.preview_slug {
+                return self
+                    .create_preview_thread_for_route(
+                        route,
+                        thread.workspace_id,
+                        thread.parent_thread_id,
+                        preview_slug,
+                        host_binding,
+                    )
+                    .await;
+            }
+            self.create_thread_for_route_with_host(route, thread.workspace_id, host_binding)
+                .await
+        } else if let Some(preview_slug) = preview_slug.as_deref() {
+            self.resolve_preview_route_runtime_locked(route, preview_slug)
                 .await
         } else {
             self.create_thread_in_current_workspace(route).await
@@ -226,6 +303,11 @@ impl WorkspaceThreadManager {
         route: &RouteKey,
         reason: Option<String>,
     ) -> anyhow::Result<()> {
+        let _preview_lifecycle = if preview_slug_from_web_route(route).is_some() {
+            Some(self.preview_lifecycle.lock().await)
+        } else {
+            None
+        };
         let Some(runtime) = self.active_runtime_for_route(route).await? else {
             return Ok(());
         };
@@ -234,8 +316,9 @@ impl WorkspaceThreadManager {
             .close(reason)
             .await
             .map_err(|error| anyhow!(error.to_string()))?;
-        self.runtimes.remove(thread_id);
-        self.detach_route(route).await
+        self.runtimes.remove(thread_id.clone());
+        self.detach_route(route).await?;
+        Ok(())
     }
 
     pub async fn detach_route(&self, route: &RouteKey) -> anyhow::Result<()> {
@@ -389,12 +472,23 @@ impl WorkspaceThreadManager {
         if self.thread(&thread.id).await?.is_some() {
             return Ok(());
         }
-        self.thread_store
-            .append(&ThreadEvent::created(
+        let event = match &thread.preview_slug {
+            Some(preview_slug) => ThreadEvent::preview_created(
                 thread.id.clone(),
                 thread.workspace_id.clone(),
+                thread.parent_thread_id.clone(),
+                preview_slug.clone(),
                 thread.host_binding.clone(),
-            ))
+            ),
+            None => ThreadEvent::created(
+                thread.id.clone(),
+                thread.workspace_id.clone(),
+                thread.parent_thread_id.clone(),
+                thread.host_binding.clone(),
+            ),
+        };
+        self.thread_store
+            .append(&event)
             .await
             .context("append workspace thread")?;
         self.notify_change();
@@ -404,9 +498,15 @@ impl WorkspaceThreadManager {
     fn new_thread_record_with_host(
         &self,
         workspace_id: WorkspaceId,
+        parent_thread_id: Option<WorkspaceThreadId>,
         host_binding: HostBinding,
     ) -> WorkspaceThread {
-        let event = ThreadEvent::created(WorkspaceThreadId::new(), workspace_id, host_binding);
+        let event = ThreadEvent::created(
+            WorkspaceThreadId::new(),
+            workspace_id,
+            parent_thread_id,
+            host_binding,
+        );
         ThreadProjection::from_events(&[event])
             .expect("single created event should project")
             .all()
@@ -545,6 +645,27 @@ fn launch_setting_profile_for_agent(agent_id: &str) -> Option<String> {
         .map(|profile| normalize_launch_profile_id(Some(&profile)))
 }
 
+/// The profile a binding gets when no profile was named: the channel's own
+/// configured profile, else the agent's default, which itself falls back to
+/// the launch selection.
+pub fn default_profile_for_agent(channel_kind: &str, agent_id: &str) -> Option<String> {
+    let (cfg, prefs) = agent_state::read_config_and_prefs();
+    default_profile_for_agent_from_settings(channel_kind, agent_id, &cfg, &prefs)
+}
+
+fn default_profile_for_agent_from_settings(
+    channel_kind: &str,
+    agent_id: &str,
+    cfg: &crate::config::Config,
+    prefs: &agent_state::AgentsPrefsFile,
+) -> Option<String> {
+    let profile_id = cfg
+        .remote_channel_defaults(channel_kind)
+        .profile_id
+        .or_else(|| agent_state::resolve_default_profile(prefs, cfg, agent_id))?;
+    Some(normalize_launch_profile_id(Some(&profile_id)))
+}
+
 fn default_route_binding_and_workspace(route: &RouteKey) -> (HostBinding, PathBuf) {
     let (cfg, prefs) = agent_state::read_config_and_prefs();
     default_route_binding_and_workspace_from_settings(route, &cfg, &prefs)
@@ -558,7 +679,9 @@ fn default_route_binding_and_workspace_from_settings(
     match channel_traits(&route.channel_kind).default_workspace {
         DefaultWorkspaceKind::General => {
             let host_binding = default_host_binding(cfg, prefs);
-            (host_binding, cfg.resolve_workspace(""))
+            let workspace = agent_state::configured_agent_workspace(prefs, &host_binding.agent_id)
+                .unwrap_or_else(|| cfg.resolve_workspace(""));
+            (host_binding, workspace)
         }
         DefaultWorkspaceKind::ChannelDefault => {
             default_channel_binding_and_workspace(&route.channel_kind, cfg, prefs)
@@ -589,15 +712,11 @@ fn default_channel_binding_and_workspace(
                     .any(|enabled_agent| enabled_agent == agent)
         })
         .unwrap_or_else(|| agent_state::resolve_default_agent(prefs, cfg));
-    let profile_id = defaults
-        .profile_id
-        .as_deref()
-        .map(|profile| normalize_launch_profile_id(Some(profile)))
-        .or_else(|| {
-            agent_state::resolve_default_profile(prefs, cfg, &agent_id)
-                .map(|profile| normalize_launch_profile_id(Some(&profile)))
-        });
-    let workspace = im_workspace_for_channel(cfg, channel_kind);
+    let profile_id = default_profile_for_agent_from_settings(channel_kind, &agent_id, cfg, prefs);
+    // The desktop UI's per-agent workspace is the user's stated default;
+    // the im/<channel> directory is only the fallback when none is set.
+    let workspace = agent_state::configured_agent_workspace(prefs, &agent_id)
+        .unwrap_or_else(|| im_workspace_for_channel(cfg, channel_kind));
 
     (HostBinding::new(agent_id, profile_id), workspace)
 }
@@ -757,15 +876,6 @@ fn runtime_has_started_host(state: &ThreadRuntimeState) -> bool {
 
 fn route_can_rehydrate_runtime(route: &RouteKey) -> bool {
     channel_traits(&route.channel_kind).rehydratable_runtime
-}
-
-#[allow(dead_code)]
-fn workspace_name_from_path(path: &Path) -> String {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or("Workspace")
-        .to_string()
 }
 
 #[cfg(test)]

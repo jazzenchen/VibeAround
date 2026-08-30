@@ -137,7 +137,6 @@ fn empty_detection() -> AgentDetection {
     AgentDetection {
         default_candidate: None,
         system_selected: None,
-        legacy_selected: None,
         candidates: Vec::new(),
     }
 }
@@ -193,7 +192,6 @@ mod tests {
         let detection = AgentDetection {
             default_candidate: Some(managed.clone()),
             system_selected: Some(system.clone()),
-            legacy_selected: None,
             candidates: vec![managed, system.clone()],
         };
 
@@ -216,7 +214,6 @@ mod tests {
         AgentDetection {
             default_candidate: selected.clone(),
             system_selected: selected,
-            legacy_selected: None,
             candidates,
         }
     }

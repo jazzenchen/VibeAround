@@ -4,21 +4,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1 as acp;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::agent::launch::{normalize_launch_profile_id, DIRECT_PROFILE_ID};
 use crate::agent::AgentClientHandler;
-use crate::channels::bridge_handler::ChannelBridgeHandler;
+use crate::channels::bridge_handler::{ChannelBridgeHandler, StartupReplayCapture};
 use crate::channels::plugin_host::PluginHost;
 use crate::channels::subagent_handler::{SubagentBridgeHandler, SubagentReportTracker};
 use crate::channels::types::{
     ChannelOutput, ChannelSessionAgent, ChannelSessionInfo, ChannelSessionStart,
 };
 use crate::profiles::{self, connections};
-use crate::routing::{ChannelTarget, RouteKey};
-use crate::workspace::manager::ExternalSessionAttachMode;
+use crate::routing::{channel_traits, ChannelTarget, RouteKey};
+use crate::workspace::manager::default_profile_for_agent;
 use crate::workspace::threads::runtime::{
-    route_allows_startup_replay, ThreadRuntime, ThreadRuntimeState,
+    cancelled_prompt_response, route_allows_startup_replay, StartupReplay, ThreadRuntime,
+    ThreadRuntimeState,
 };
 use crate::workspace::threads::store::HostBinding;
 use crate::workspace::WorkspaceThreadManager;
@@ -37,10 +38,8 @@ pub(crate) async fn handle_prompt(
     let text = first_text(&content_blocks).unwrap_or_default();
 
     let route = &target.route;
-    if commands_enabled_for_route(route) {
-        if let Some(command) = parse_thread_command(&text) {
-            return handle_command(workspace_threads, plugin_host, &target, command).await;
-        }
+    if let Some(command) = parse_thread_command(&text) {
+        return handle_command(workspace_threads, plugin_host, &target, command).await;
     }
 
     if content_blocks.is_empty() {
@@ -51,7 +50,21 @@ pub(crate) async fn handle_prompt(
         .resolve_route_runtime(route)
         .await
         .map_err(internal_error)?;
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, &target, false).await? {
+    let started = start_runtime_and_notify_with_cancellation(
+        workspace_threads,
+        &runtime,
+        plugin_host,
+        &target,
+        false,
+        StartupReplay::Silent,
+        None,
+        Some(cancellation.clone()),
+    )
+    .await?;
+    let Some(started) = started else {
+        return cancelled_prompt_response();
+    };
+    if !started {
         return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
     }
     let state = runtime.state().await;
@@ -73,14 +86,40 @@ async fn handle_command(
     command: ThreadCommand,
 ) -> acp::Result<acp::PromptResponse> {
     let route = &target.route;
+    if !channel_traits(&route.channel_kind).context_commands && command_manages_context(&command) {
+        send_system_text_to_target(
+            plugin_host,
+            target,
+            "Use the UI to start a new chat or to change workspace, agent, profile, or session.",
+        );
+        return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+    }
+    if crate::workspace::manager::preview_slug_from_web_route(route).is_some()
+        && preview_command_changes_context(&command)
+    {
+        send_system_text_to_target(
+            plugin_host,
+            target,
+            "Preview conversations stay in their workspace and cannot switch sessions.",
+        );
+        return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
+    }
     match command {
         ThreadCommand::New => {
             let runtime = workspace_threads
                 .close_route_and_create_thread(route, Some("user started a new thread".to_string()))
                 .await
                 .map_err(internal_error)?;
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true)
-                .await?
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                target,
+                true,
+                StartupReplay::Silent,
+                None,
+            )
+            .await?
             {
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
@@ -102,7 +141,7 @@ async fn handle_command(
             );
         }
         ThreadCommand::Pair(code) => {
-            if crate::auth::pair::validate(&code).is_some() {
+            if crate::auth::pair::validate(&code) {
                 send_system_text_to_target(plugin_host, target, "Session paired.");
             } else {
                 send_system_text_to_target(
@@ -131,7 +170,6 @@ async fn handle_command(
                     handover.profile_id,
                     handover.session_id,
                     std::path::PathBuf::from(handover.cwd),
-                    ExternalSessionAttachMode::ReuseOpenThread,
                 )
                 .await
             {
@@ -145,8 +183,16 @@ async fn handle_command(
                     return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
                 }
             };
-            if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true)
-                .await?
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                target,
+                true,
+                StartupReplay::Replay,
+                None,
+            )
+            .await?
             {
                 return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
             }
@@ -285,7 +331,17 @@ async fn switch_workspace(
     }
     .map_err(internal_error)?;
 
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, true).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &runtime,
+        plugin_host,
+        target,
+        true,
+        StartupReplay::Replay,
+        None,
+    )
+    .await?
+    {
         return Ok(());
     }
     send_system_text_to_target(
@@ -307,11 +363,22 @@ async fn switch_host(
     profile: Option<String>,
 ) -> acp::Result<()> {
     let route = &channel_target.route;
-    let host_binding = resolve_host_binding(agent, profile.as_deref()).map_err(invalid_params)?;
-    let active_runtime = workspace_threads
-        .active_route_runtime(route)
-        .await
-        .map_err(internal_error)?;
+    let host_binding =
+        resolve_host_binding(route, agent, profile.as_deref()).map_err(invalid_params)?;
+    let preview_route = crate::workspace::manager::preview_slug_from_web_route(route).is_some();
+    let active_runtime = if preview_route {
+        Some(
+            workspace_threads
+                .resolve_route_runtime(route)
+                .await
+                .map_err(internal_error)?,
+        )
+    } else {
+        workspace_threads
+            .active_route_runtime(route)
+            .await
+            .map_err(internal_error)?
+    };
     if let Some(runtime) = active_runtime {
         if runtime.state().await.host_binding.agent_id == host_binding.agent_id {
             runtime
@@ -323,6 +390,8 @@ async fn switch_host(
                 plugin_host,
                 channel_target,
                 true,
+                StartupReplay::Silent,
+                None,
             )
             .await?
             {
@@ -341,6 +410,35 @@ async fn switch_host(
             );
             return Ok(());
         }
+
+        if preview_route {
+            runtime
+                .switch_host_replacing_session(host_binding.clone())
+                .await?;
+            if !start_runtime_and_notify(
+                workspace_threads,
+                &runtime,
+                plugin_host,
+                channel_target,
+                true,
+                StartupReplay::Silent,
+                None,
+            )
+            .await?
+            {
+                return Ok(());
+            }
+            send_system_text_to_target(
+                plugin_host,
+                channel_target,
+                &format!(
+                    "Switched agent to {} in thread {}.",
+                    host_binding.agent_id,
+                    runtime.state().await.thread_id
+                ),
+            );
+            return Ok(());
+        }
     }
 
     let runtime = workspace_threads
@@ -353,6 +451,8 @@ async fn switch_host(
         plugin_host,
         channel_target,
         true,
+        StartupReplay::Silent,
+        None,
     )
     .await?
     {
@@ -381,7 +481,17 @@ async fn send_agent_command(
         .resolve_route_runtime(route)
         .await
         .map_err(internal_error)?;
-    if !start_runtime_and_notify(workspace_threads, &runtime, plugin_host, target, false).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &runtime,
+        plugin_host,
+        target,
+        false,
+        StartupReplay::Silent,
+        None,
+    )
+    .await?
+    {
         return Ok(acp::PromptResponse::new(acp::StopReason::EndTurn));
     }
     let state = runtime.state().await;
@@ -445,7 +555,6 @@ async fn switch_session(
             state.host_binding.profile_id.clone(),
             session.session_id.clone(),
             PathBuf::from(&session.workspace),
-            ExternalSessionAttachMode::NewThread,
         )
         .await
     {
@@ -459,7 +568,17 @@ async fn switch_session(
             return Ok(());
         }
     };
-    if !start_runtime_and_notify(workspace_threads, &resumed, plugin_host, target, true).await? {
+    if !start_runtime_and_notify(
+        workspace_threads,
+        &resumed,
+        plugin_host,
+        target,
+        true,
+        StartupReplay::Replay,
+        None,
+    )
+    .await?
+    {
         return Ok(());
     }
     send_system_text_to_target(
@@ -480,7 +599,34 @@ pub async fn start_runtime_and_notify(
     plugin_host: &Arc<PluginHost>,
     target: &ChannelTarget,
     force_session_ready: bool,
+    replay: StartupReplay,
+    replay_sink: Option<mpsc::UnboundedSender<ChannelOutput>>,
 ) -> acp::Result<bool> {
+    start_runtime_and_notify_with_cancellation(
+        workspace_threads,
+        runtime,
+        plugin_host,
+        target,
+        force_session_ready,
+        replay,
+        replay_sink,
+        None,
+    )
+    .await
+    .map(|started| started.expect("uncancellable runtime start cannot be cancelled"))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_runtime_and_notify_with_cancellation(
+    workspace_threads: &Arc<WorkspaceThreadManager>,
+    runtime: &Arc<ThreadRuntime>,
+    plugin_host: &Arc<PluginHost>,
+    target: &ChannelTarget,
+    force_session_ready: bool,
+    replay: StartupReplay,
+    replay_sink: Option<mpsc::UnboundedSender<ChannelOutput>>,
+    cancellation: Option<watch::Receiver<bool>>,
+) -> acp::Result<Option<bool>> {
     let route = &target.route;
     let before = runtime.state().await;
     if let Err(message) =
@@ -492,7 +638,7 @@ pub async fn start_runtime_and_notify(
             "rejected non-ACP runtime agent for channel route"
         );
         send_system_text_to_target(plugin_host, target, &message);
-        return Ok(false);
+        return Ok(Some(false));
     }
     if before.initialize.is_none() {
         workspace_threads
@@ -500,11 +646,48 @@ pub async fn start_runtime_and_notify(
             .await
             .map_err(internal_error)?;
     }
-    let handler = bridge_handler(workspace_threads, plugin_host, runtime, &before);
-    let started = runtime.start(route, handler).await?;
+    let replay_capture = replay_sink
+        .as_ref()
+        .map(|_| Arc::new(StartupReplayCapture::new()));
+    let handler = bridge_handler_with_capture(
+        workspace_threads,
+        plugin_host,
+        runtime,
+        &before,
+        replay_capture.clone(),
+    );
+    let started = runtime.start(route, handler, cancellation, replay).await?;
+    let Some(started) = started else {
+        return Ok(None);
+    };
     let session_id = started.session_id;
     let after = runtime.state().await;
     let session_was_resumed = before.session_id.as_deref() == Some(session_id.as_str());
+
+    // Hand the captured transcript to the one connection that asked for it,
+    // bracketed so the client can reset and rebuild in place. When the start
+    // could not replay (gemini, IM routes, fresh sessions) no brackets are
+    // sent and the requester falls back to whatever it already renders.
+    if let (Some(sink), Some(capture)) = (&replay_sink, &replay_capture) {
+        let frames = capture.finish();
+        if started.replayed {
+            let _ = sink.send(ChannelOutput::ReplayStart {
+                route: route.clone(),
+                session_id: session_id.clone(),
+            });
+            for reply in frames {
+                let _ = sink.send(ChannelOutput::ThreadReply {
+                    route: route.clone(),
+                    reply_to: None,
+                    reply,
+                });
+            }
+            let _ = sink.send(ChannelOutput::ReplayDone {
+                route: route.clone(),
+                session_id: session_id.clone(),
+            });
+        }
+    }
 
     let agent_info = after
         .initialize
@@ -534,6 +717,7 @@ pub async fn start_runtime_and_notify(
             reply_to: target.reply_to.clone(),
             session_id: session_id.clone(),
         });
+        let updated_at = native_session_updated_at(&after, &session_id).await;
         plugin_host.send_output(ChannelOutput::SessionInfo {
             route: route.clone(),
             reply_to: target.reply_to.clone(),
@@ -553,10 +737,14 @@ pub async fn start_runtime_and_notify(
                 } else {
                     ChannelSessionStart::New
                 },
+                updated_at,
             },
         });
     }
-    if should_send_session_ready && route_allows_startup_replay(route) {
+    if should_send_session_ready
+        && replay == StartupReplay::Replay
+        && route_allows_startup_replay(route)
+    {
         send_multi_agent_state_and_replay(workspace_threads, runtime, plugin_host, route, &after)
             .await;
     }
@@ -565,7 +753,16 @@ pub async fn start_runtime_and_notify(
             .reconcile_warm_thread_pool(&after.thread_id)
             .await;
     }
-    Ok(true)
+    Ok(Some(true))
+}
+
+async fn native_session_updated_at(state: &ThreadRuntimeState, session_id: &str) -> Option<u64> {
+    crate::launch_sessions::native_session_updated_at(
+        &state.host_binding.agent_id,
+        &state.workspace,
+        session_id,
+    )
+    .await
 }
 
 pub async fn send_runtime_multi_agent_state_and_replay(
@@ -654,13 +851,24 @@ fn bridge_handler(
     runtime: &Arc<ThreadRuntime>,
     state: &ThreadRuntimeState,
 ) -> Arc<dyn AgentClientHandler> {
-    Arc::new(ChannelBridgeHandler::for_thread(
+    bridge_handler_with_capture(workspace_threads, plugin_host, runtime, state, None)
+}
+
+fn bridge_handler_with_capture(
+    workspace_threads: &Arc<WorkspaceThreadManager>,
+    plugin_host: &Arc<PluginHost>,
+    runtime: &Arc<ThreadRuntime>,
+    state: &ThreadRuntimeState,
+    startup_capture: Option<Arc<StartupReplayCapture>>,
+) -> Arc<dyn AgentClientHandler> {
+    Arc::new(ChannelBridgeHandler::for_thread_with_capture(
         Arc::clone(plugin_host),
         workspace_threads,
         state.workspace_id.clone(),
         state.thread_id.clone(),
         state.host_binding.clone(),
         runtime.active_turn_target(),
+        startup_capture,
     ))
 }
 
@@ -685,6 +893,32 @@ enum ThreadCommand {
     Unknown(String),
 }
 
+/// Commands a surface with its own pickers already answers for itself.
+/// Executing them there would leave the picker showing one thing while the
+/// route points at another.
+fn command_manages_context(command: &ThreadCommand) -> bool {
+    matches!(
+        command,
+        ThreadCommand::New
+            | ThreadCommand::Close
+            | ThreadCommand::SwitchWorkspace(_)
+            | ThreadCommand::SwitchHost { .. }
+            | ThreadCommand::Resource { .. }
+    )
+}
+
+fn preview_command_changes_context(command: &ThreadCommand) -> bool {
+    matches!(
+        command,
+        ThreadCommand::Pickup(_)
+            | ThreadCommand::SwitchWorkspace(_)
+            | ThreadCommand::Resource {
+                kind: ResourceKind::Workspace | ResourceKind::Session,
+                action: ResourceAction::Switch(_),
+            }
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResourceKind {
     Workspace,
@@ -699,9 +933,26 @@ enum ResourceAction {
     Switch(String),
 }
 
+/// Interrupting a turn cannot queue behind the turn it interrupts, so the
+/// ingress recognises this before enqueueing instead of letting it arrive here
+/// as a command. Every `/va`-style prefix works, same as any other command.
+pub(super) fn is_cancel_command(text: &str) -> bool {
+    matches!(
+        canonical_thread_command(&collapse_whitespace(text)).as_str(),
+        "/cancel" | "/stop"
+    )
+}
+
+pub(super) fn is_cancel_prompt(content_blocks: &[acp::ContentBlock]) -> bool {
+    first_text(content_blocks).is_some_and(|text| is_cancel_command(&text))
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn parse_thread_command(text: &str) -> Option<ThreadCommand> {
-    let trimmed = text.trim();
-    let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = collapse_whitespace(text);
     let normalized = canonical_thread_command(&normalized);
     let normalized = normalized.as_str();
     if !normalized.starts_with('/') {
@@ -872,10 +1123,6 @@ fn agent_command_text(rest: &str) -> String {
     }
 }
 
-fn commands_enabled_for_route(_route: &RouteKey) -> bool {
-    true
-}
-
 fn first_text(content_blocks: &[acp::ContentBlock]) -> Option<String> {
     content_blocks.iter().find_map(|block| match block {
         acp::ContentBlock::Text(text) => Some(text.text.clone()),
@@ -898,10 +1145,10 @@ fn command_help_text() -> &'static str {
 /pair <code>
 /pickup <code>
 /new
-/stop
+/cancel
 /close
 
-Bare /workspace, /agent, /profile, and /session default to --list. Prefix with /va, /vibearound, va, or vibearound when a channel cannot send slash commands. Legacy /switch commands still work."
+Bare /workspace, /agent, /profile, and /session default to --list. /stop is an alias for /cancel. Prefix with /va, /vibearound, va, or vibearound when a channel cannot send slash commands. Legacy /switch commands still work."
 }
 
 fn format_status(state: &ThreadRuntimeState) -> String {
@@ -1001,23 +1248,47 @@ async fn list_sessions_for_state(
     workspace_threads: &Arc<WorkspaceThreadManager>,
     state: &ThreadRuntimeState,
 ) -> Vec<crate::launch_sessions::LaunchSession> {
-    workspace_threads
-        .list_resumable_agent_sessions(
-            &state.host_binding.agent_id,
-            &state.workspace,
-            SESSION_LIST_LIMIT,
-            false,
-        )
+    // Query the current agent plus every agent this workspace's threads have
+    // observed sessions for — /agent switch re-points the route to a fresh
+    // thread, so filtering by the current agent alone made every pre-switch
+    // session unfindable (E2E 2026-08-29 P1).
+    let mut agent_ids = vec![state.host_binding.agent_id.clone()];
+    match workspace_threads
+        .observed_session_agent_ids_for_workspace(&state.workspace)
         .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(
-                agent_id = %state.host_binding.agent_id,
+    {
+        Ok(observed) => {
+            for agent_id in observed {
+                if !agent_ids.contains(&agent_id) {
+                    agent_ids.push(agent_id);
+                }
+            }
+        }
+        Err(error) => tracing::warn!(
+            workspace = %state.workspace.display(),
+            error = %error,
+            "failed to expand session listing across observed agents"
+        ),
+    }
+
+    let mut sessions = Vec::new();
+    for agent_id in &agent_ids {
+        match workspace_threads
+            .list_resumable_agent_sessions(agent_id, &state.workspace, SESSION_LIST_LIMIT, false)
+            .await
+        {
+            Ok(list) => sessions.extend(list),
+            Err(error) => tracing::warn!(
+                agent_id = %agent_id,
                 workspace = %state.workspace.display(),
                 error = %error,
                 "failed to list resumable sessions"
-            );
-            Vec::new()
-        })
+            ),
+        }
+    }
+    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.truncate(SESSION_LIST_LIMIT);
+    sessions
 }
 
 fn format_session_list(
@@ -1025,8 +1296,7 @@ fn format_session_list(
     sessions: &[crate::launch_sessions::LaunchSession],
 ) -> String {
     let mut lines = vec![format!(
-        "Sessions for {} in {}:",
-        state.host_binding.agent_id,
+        "Sessions in {}:",
         state.workspace.to_string_lossy()
     )];
     if sessions.is_empty() {
@@ -1034,12 +1304,19 @@ fn format_session_list(
         return lines.join("\n");
     }
     let current = state.session_id.as_deref();
+    let host_agent = state.host_binding.agent_id.as_str();
     for session in sessions {
         let short_id = crate::launch_sessions::short_id(&session.session_id);
+        let agent_note = if session.agent_id == host_agent {
+            String::new()
+        } else {
+            format!(" [{}]", session.agent_id)
+        };
         lines.push(format!(
-            "{} {} · {} · updated {}",
+            "{} {}{} · {} · updated {}",
             current_marker(current == Some(session.session_id.as_str())),
             short_id,
+            agent_note,
             session.title,
             session.updated_at
         ));
@@ -1081,10 +1358,19 @@ fn invalid_params(error: String) -> acp::Error {
     acp::Error::new(-32602, error)
 }
 
-fn resolve_host_binding(agent: &str, profile: Option<&str>) -> Result<HostBinding, String> {
+fn resolve_host_binding(
+    route: &RouteKey,
+    agent: &str,
+    profile: Option<&str>,
+) -> Result<HostBinding, String> {
     let agent_id = crate::resources::resolve_agent_id(agent)?;
-    let profile_id = crate::agent::launch::normalize_launch_profile_id(profile);
-    Ok(HostBinding::new(agent_id, Some(profile_id)))
+    // No profile named means "whatever this route would launch by default",
+    // the same answer a freshly created thread gets.
+    let profile_id = match profile {
+        Some(profile) => Some(normalize_launch_profile_id(Some(profile))),
+        None => default_profile_for_agent(&route.channel_kind, &agent_id),
+    };
+    Ok(HostBinding::new(agent_id, profile_id))
 }
 
 #[cfg(test)]
@@ -1217,13 +1503,77 @@ mod tests {
     }
 
     #[test]
-    fn slash_commands_are_enabled_for_web_chat() {
-        assert!(commands_enabled_for_route(&RouteKey::new("web", "chat-a")));
-        assert!(commands_enabled_for_route(&RouteKey::new(
-            "slack", "chat-a"
+    fn cancel_is_recognised_through_every_prefix_and_alias() {
+        for text in [
+            "/cancel",
+            "/stop",
+            "  /cancel  ",
+            "/va cancel",
+            "/vibearound stop",
+            "va cancel",
+            "vibearound stop",
+        ] {
+            assert!(is_cancel_command(text), "{text}");
+        }
+
+        for text in ["/cancelled", "/status", "cancel", "stop the build", ""] {
+            assert!(!is_cancel_command(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn only_picker_owned_commands_are_surface_gated() {
+        for command in [
+            ThreadCommand::New,
+            ThreadCommand::Close,
+            ThreadCommand::SwitchWorkspace("ws_a".to_string()),
+            ThreadCommand::SwitchHost {
+                agent: "codex".to_string(),
+                profile: None,
+            },
+            ThreadCommand::Resource {
+                kind: ResourceKind::Agent,
+                action: ResourceAction::List,
+            },
+            ThreadCommand::Resource {
+                kind: ResourceKind::Session,
+                action: ResourceAction::Switch("abc".to_string()),
+            },
+        ] {
+            assert!(command_manages_context(&command), "{command:?}");
+        }
+
+        for command in [
+            ThreadCommand::Help,
+            ThreadCommand::Status,
+            ThreadCommand::Pair("049778".to_string()),
+            ThreadCommand::Pickup("ABCD".to_string()),
+            ThreadCommand::AgentPassThrough("/compact".to_string()),
+            ThreadCommand::Unknown("/nope".to_string()),
+        ] {
+            assert!(!command_manages_context(&command), "{command:?}");
+        }
+    }
+
+    #[test]
+    fn preview_rejects_only_commands_that_replace_its_workspace_or_session() {
+        assert!(preview_command_changes_context(&ThreadCommand::Pickup(
+            "ABCD".to_string()
         )));
-        assert!(commands_enabled_for_route(&RouteKey::new(
-            "feishu", "chat-a"
-        )));
+        assert!(preview_command_changes_context(
+            &ThreadCommand::SwitchWorkspace("general".to_string())
+        ));
+        assert!(preview_command_changes_context(&ThreadCommand::Resource {
+            kind: ResourceKind::Session,
+            action: ResourceAction::Switch("session-a".to_string()),
+        }));
+        assert!(!preview_command_changes_context(&ThreadCommand::New));
+        assert!(!preview_command_changes_context(&ThreadCommand::Close));
+        assert!(!preview_command_changes_context(
+            &ThreadCommand::SwitchHost {
+                agent: "claude".to_string(),
+                profile: None,
+            }
+        ));
     }
 }

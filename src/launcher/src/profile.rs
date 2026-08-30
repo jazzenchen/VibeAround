@@ -181,7 +181,9 @@ mod tests {
   "label": "Codex Work",
   "provider": "xai",
   "auth_mode": "api_key",
-  "api_types": ["openai-responses"],
+  "api_configs": {
+    "openai-responses": { "enabled": true }
+  },
   "credentials": {
     "api_key": "secret"
   }

@@ -132,16 +132,10 @@ pub(super) fn upstream_endpoint(
             format!("unknown provider '{}'", profile.provider),
         )
     })?;
-    let api_config = schema::api_config_for(&profile, provider, target_api_type);
+    let api_config = schema::api_config_for(&profile, target_api_type);
     let endpoint_id = api_config
         .as_ref()
-        .and_then(|config| config.endpoint_id.as_deref())
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.endpoint_id.as_deref())
-        });
+        .and_then(|config| config.endpoint_id.as_deref());
     let endpoint =
         catalog::find_endpoint(provider, target_api_type, endpoint_id).ok_or_else(|| {
             let suffix = endpoint_id
@@ -158,12 +152,6 @@ pub(super) fn upstream_endpoint(
     let base_url = api_config
         .as_ref()
         .and_then(|config| config.base_url.clone())
-        .or_else(|| {
-            profile
-                .overrides
-                .get(target_api_type)
-                .and_then(|overrides| overrides.base_url.clone())
-        })
         .unwrap_or_else(|| endpoint.default_base_url.clone());
     let base_url = base_url.trim_end_matches('/');
     if base_url.is_empty() {
@@ -263,7 +251,9 @@ pub(super) fn request_stream(protocol: BridgeProtocol, request: &Value) -> bool 
     }
 }
 
-#[allow(clippy::result_large_err)]
+// When no credential is available anywhere, the request is forwarded
+// unauthenticated and the upstream judges it — auth-less endpoints (local
+// OpenAI-compatible servers) accept it, everything else returns its own 401.
 pub(super) fn apply_upstream_auth(
     request: reqwest::RequestBuilder,
     protocol: BridgeProtocol,
@@ -271,9 +261,9 @@ pub(super) fn apply_upstream_auth(
     managed_auth: bool,
     headers: &InboundHeaderMap,
     profile_api_key: Option<&str>,
-) -> Result<reqwest::RequestBuilder, Response> {
+) -> reqwest::RequestBuilder {
     if managed_auth {
-        return Ok(append_anthropic_version(request, protocol, headers));
+        return append_anthropic_version(request, protocol, headers);
     }
     let profile_api_key = profile_api_key
         .map(str::trim)
@@ -287,39 +277,26 @@ pub(super) fn apply_upstream_auth(
             None => authorization_header(headers)
                 .or_else(|| api_key.as_ref().map(|key| format!("Bearer {key}"))),
         };
-        let Some(auth) = auth else {
-            return Err(json_error(
-                StatusCode::UNAUTHORIZED,
-                "missing Authorization or x-api-key header",
-            ));
+        let request = match auth {
+            Some(auth) => request.header(reqwest::header::AUTHORIZATION, auth),
+            None => request,
         };
-        let request = request.header(reqwest::header::AUTHORIZATION, auth);
-        if protocol == BridgeProtocol::AnthropicMessages {
-            return Ok(append_anthropic_version(request, protocol, headers));
-        }
-        return Ok(request);
+        return append_anthropic_version(request, protocol, headers);
     }
 
-    let Some(api_key) = api_key else {
-        return Err(json_error(
-            StatusCode::UNAUTHORIZED,
-            "missing x-api-key or Authorization header",
-        ));
-    };
-    let mut request = if protocol == BridgeProtocol::GeminiGenerateContent {
-        request.header("x-goog-api-key", api_key)
-    } else {
-        request.header("x-api-key", api_key)
+    let mut request = match api_key {
+        Some(api_key) if protocol == BridgeProtocol::GeminiGenerateContent => {
+            request.header("x-goog-api-key", api_key)
+        }
+        Some(api_key) => request.header("x-api-key", api_key),
+        None => request,
     };
     if profile_api_key.is_none() {
         if let Some(auth) = authorization_header(headers) {
             request = request.header(reqwest::header::AUTHORIZATION, auth);
         }
     }
-    if protocol == BridgeProtocol::AnthropicMessages {
-        return Ok(append_anthropic_version(request, protocol, headers));
-    }
-    Ok(request)
+    append_anthropic_version(request, protocol, headers)
 }
 
 fn append_anthropic_version(
@@ -683,7 +660,6 @@ mod tests {
             &headers,
             Some("sk-profile"),
         )
-        .unwrap()
         .build()
         .unwrap();
 
@@ -713,7 +689,6 @@ mod tests {
             &headers,
             Some("sk-profile"),
         )
-        .unwrap()
         .build()
         .unwrap();
 
@@ -743,7 +718,6 @@ mod tests {
             &headers,
             Some("sk-profile"),
         )
-        .unwrap()
         .build()
         .unwrap();
 
@@ -779,7 +753,6 @@ mod tests {
             &headers,
             Some("sk-profile"),
         )
-        .unwrap()
         .build()
         .unwrap();
 
@@ -801,6 +774,26 @@ mod tests {
     }
 
     #[test]
+    fn missing_credentials_forward_unauthenticated() {
+        let request = apply_upstream_auth(
+            reqwest::Client::new().post("http://127.0.0.1/v1/chat/completions"),
+            BridgeProtocol::OpenAiChat,
+            false,
+            false,
+            &HeaderMap::new(),
+            None,
+        )
+        .build()
+        .unwrap();
+
+        assert!(request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .is_none());
+        assert!(request.headers().get("x-api-key").is_none());
+    }
+
+    #[test]
     fn gemini_auth_uses_google_api_key_header() {
         let request = apply_upstream_auth(
             reqwest::Client::new().post(
@@ -812,7 +805,6 @@ mod tests {
             &HeaderMap::new(),
             Some("gemini-key"),
         )
-        .unwrap()
         .build()
         .unwrap();
 
@@ -874,9 +866,7 @@ mod tests {
             label: "Profile Test".to_string(),
             provider: "custom".to_string(),
             auth_mode: AuthMode::ApiKey,
-            api_types: vec!["gemini".to_string()],
             credentials: BTreeMap::new(),
-            overrides: BTreeMap::new(),
             api_configs: BTreeMap::new(),
             use_settings_proxy: false,
             provider_settings: ProviderSettings::default(),

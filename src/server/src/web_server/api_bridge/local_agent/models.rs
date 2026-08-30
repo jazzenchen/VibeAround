@@ -10,28 +10,25 @@ use axum::Json;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{
-    json_error, launch_args_and_env, local_agent_api_disabled_response, local_agent_api_enabled,
-    request_workspace, LOCAL_AGENT_CHANNEL_KIND,
-};
+use super::{json_error, launch_args_and_env, request_workspace, LOCAL_AGENT_CHANNEL_KIND};
 use common::agent::AgentClientHandler;
 
 pub async fn local_agent_models_handler(
     AxumPath((agent_id, profile_id)): AxumPath<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if !local_agent_api_enabled() {
-        return local_agent_api_disabled_response();
+    let agent_id = match super::local_agent_gate(&agent_id) {
+        Ok(agent_id) => agent_id,
+        Err(response) => return response,
+    };
+    if let Some(response) = super::direct_profile_response(&profile_id) {
+        return response;
     }
     let workspace = request_workspace(&headers, &agent_id);
     match fetch_local_agent_models(&agent_id, &profile_id, &workspace).await {
-        Ok(models) if !models.is_empty() => {
-            local_agent_models_response(agent_id, profile_id, models)
-        }
-        Ok(_) => json_error(
-            StatusCode::BAD_GATEWAY,
-            "failed to fetch model list: ACP session did not expose a model selector",
-        ),
+        // An agent without a model selector legitimately serves zero models;
+        // relay the empty list instead of inventing a failure.
+        Ok(models) => local_agent_models_response(agent_id, profile_id, models),
         Err(message) => json_error(
             StatusCode::BAD_GATEWAY,
             &format!("failed to fetch model list: {message}"),
@@ -82,8 +79,8 @@ async fn fetch_local_agent_models(
     profile_id: &str,
     workspace: &Path,
 ) -> Result<Vec<LocalAgentModel>, String> {
-    let agent_id =
-        common::resources::resolve_agent_id(agent_id).map_err(|error| error.to_string())?;
+    // The gate already canonicalized the agent id; trust it.
+    let agent_id = agent_id.to_string();
     let route = common::routing::RouteKey::new(
         LOCAL_AGENT_CHANNEL_KIND,
         format!("api_models_{}", Uuid::new_v4().simple()),

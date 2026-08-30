@@ -373,6 +373,9 @@ impl TuiApp {
         if self.is_immediate_duplicate(command) {
             return;
         }
+        if self.intercept_reconnect_command(command) {
+            return;
+        }
         if command.starts_with('/') && self.run_slash_command(command, transport, chat_tx).await {
             return;
         }
@@ -492,8 +495,8 @@ impl TuiApp {
                 self.go_back();
                 true
             }
-            "/stop" => {
-                self.send_chat_command(ChatClientMessage::stop(), chat_tx);
+            "/cancel" | "/stop" => {
+                self.send_chat_command(ChatClientMessage::cancel(), chat_tx);
                 true
             }
             "/allow" => {
@@ -523,7 +526,7 @@ impl TuiApp {
                 }
                 true
             }
-            "/deny" | "/cancel" => {
+            "/deny" => {
                 if let Some(request_id) = self.chat_state.pending_permission_request_id.clone() {
                     if self.send_chat_command(
                         ChatClientMessage::permission_cancelled(request_id),
@@ -541,7 +544,7 @@ impl TuiApp {
     }
 
     fn push_help_message(&mut self) {
-        self.chat_messages.push(ChatMessage::new(ChatRole::Notice, "Commands\n/status runtime status\n/settings agent context settings\n/agent choose agent\n/profile choose profile\n/workspaces choose workspace\n/sessions choose or resume session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/stop stop current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail"));
+        self.chat_messages.push(ChatMessage::new(ChatRole::Notice, "Commands\n/status runtime status\n/settings agent context settings\n/agent choose agent\n/profile choose profile\n/workspaces choose workspace\n/sessions choose or resume session\n/new next message starts a new session\n/resume <session-id> resume a session\n/mode list or set permission mode\n/cancel interrupt current turn\n/allow [number|option-id] answer permission\n/deny reject permission\n/clear clear chat\nShift+Enter newline, Left/Right edit, Alt+Left/Right word, Ctrl+A/E start/end, Ctrl+U clear, Ctrl+W delete word, Ctrl+K delete tail"));
         self.follow_chat_tail();
     }
 
@@ -591,6 +594,18 @@ impl TuiApp {
             self.force_new_session = false;
         }
         sent
+    }
+
+    /// Esc during a running turn cancels it — the working indicator has
+    /// advertised "esc to interrupt" since it was added. `turn_started_at`
+    /// covers the local pre-ack window right after submit; the server-side
+    /// `turn_active` flag covers turns started from another surface.
+    pub(crate) fn escape_pressed(&mut self, chat_tx: &mpsc::UnboundedSender<ChatClientMessage>) {
+        if self.turn_started_at.is_some() || self.chat_state.turn_active {
+            self.send_chat_command(ChatClientMessage::cancel(), chat_tx);
+            return;
+        }
+        self.go_back();
     }
 
     fn send_chat_command(
@@ -685,6 +700,29 @@ impl TuiApp {
         }
     }
 
+    /// In the terminal disconnected state `reconnect` restarts the socket
+    /// loops instead of going out as a chat message; anywhere else it is
+    /// ordinary input.
+    fn intercept_reconnect_command(&mut self, command: &str) -> bool {
+        if !self.chat_disconnected || !is_reconnect_command(command) {
+            return false;
+        }
+        self.request_reconnect();
+        true
+    }
+
+    /// Leave the terminal disconnected state: wake the parked socket loops
+    /// for a fresh retry cycle and, once the chat socket is back, re-attach
+    /// the session we were on so the server rebinds the route.
+    fn request_reconnect(&mut self) {
+        self.chat_disconnected = false;
+        self.resume_after_reconnect = self.effective_session().map(str::to_string);
+        let _ = self.reconnect.send(());
+        self.clear_error(ErrorScope::Chat);
+        self.last_action = Some("reconnecting".into());
+        self.push_local_notice("Reconnecting to the daemon...");
+    }
+
     fn clear_chat_session_view(&mut self) {
         self.chat_messages.clear();
         self.chat_input.clear();
@@ -708,11 +746,20 @@ impl TuiApp {
         self.clear_error(ErrorScope::Chat);
     }
 
-    pub(crate) fn apply_chat_socket_event(&mut self, event: ChatSocketEvent) {
+    pub(crate) fn apply_chat_socket_event(
+        &mut self,
+        event: ChatSocketEvent,
+        chat_tx: &mpsc::UnboundedSender<ChatClientMessage>,
+    ) {
         match event {
             ChatSocketEvent::Connected => {
                 self.chat_connected = true;
                 self.clear_error(ErrorScope::Chat);
+                if let Some(session_id) = self.resume_after_reconnect.take() {
+                    // The daemon lost this socket's route; re-issue the resume
+                    // for the session we were attached to before `reconnect`.
+                    self.resume_chat_session(&session_id, chat_tx);
+                }
             }
             ChatSocketEvent::Closed => {
                 let duplicate_closed = self.last_notice_is("Chat websocket closed.");
@@ -720,6 +767,17 @@ impl TuiApp {
                 self.end_turn();
                 if !duplicate_closed {
                     self.push_notice("Chat websocket closed.");
+                }
+            }
+            ChatSocketEvent::Disconnected => {
+                const DISCONNECTED_NOTICE: &str = "Daemon unreachable. Type `reconnect` to retry.";
+                let duplicate_notice = self.last_notice_is(DISCONNECTED_NOTICE);
+                self.chat_connected = false;
+                self.chat_disconnected = true;
+                self.end_turn();
+                self.set_error(ErrorScope::Chat, DISCONNECTED_NOTICE);
+                if !duplicate_notice {
+                    self.push_notice(DISCONNECTED_NOTICE);
                 }
             }
             ChatSocketEvent::Error(error) => {
@@ -787,11 +845,19 @@ impl TuiApp {
                     self.end_turn();
                 }
             }
-            ChatEvent::SessionMode { .. }
+            ChatEvent::ReplayStart { .. } => {
+                // The frames that follow re-render the whole transcript, so
+                // drop what this view accumulated to keep replays idempotent.
+                self.chat_messages.clear();
+            }
+            ChatEvent::SessionInfo { .. }
+            | ChatEvent::PreviewRefresh
+            | ChatEvent::SessionMode { .. }
             | ChatEvent::CommandMenu { .. }
             | ChatEvent::MultiAgentTurn { .. }
             | ChatEvent::SubagentStatus { .. }
-            | ChatEvent::SubagentAcpNotification { .. } => {}
+            | ChatEvent::SubagentAcpNotification { .. }
+            | ChatEvent::ReplayDone { .. } => {}
         }
         self.chat_state.apply_event(event);
     }
@@ -889,6 +955,12 @@ impl TuiApp {
 
 fn short_id(value: &str) -> String {
     value.chars().take(12).collect()
+}
+
+/// The exact word that asks for a socket restart, however it was cased or
+/// padded with whitespace.
+pub(super) fn is_reconnect_command(input: &str) -> bool {
+    input.trim().eq_ignore_ascii_case("reconnect")
 }
 
 fn canonical_chat_mode(mode_id: &str) -> Option<&'static str> {

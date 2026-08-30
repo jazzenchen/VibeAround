@@ -61,6 +61,7 @@ export function ChatLaunchSelector({
         ? t("{{agent}} / {{profile}}", { agent: targetLabel, profile: selectedProfile.label })
         : targetLabel;
   const hasMenu = agents.length > 0 && (onLaunchChange || onAgentChange);
+  const directAgents = agents.filter((agent) => !agent.requires_profile);
 
   const launchProfilesForAgent = (agentId: string) =>
     profiles.flatMap((profile) => {
@@ -110,26 +111,30 @@ export function ChatLaunchSelector({
         align="start"
         className="max-h-[18rem] min-w-[210px] max-w-[min(22rem,calc(100vw-1rem))] overflow-y-auto p-0.5 text-xs"
       >
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger className={COMPACT_SUB_TRIGGER}>
-            {t("Launch without profile")}
-          </DropdownMenuSubTrigger>
-          <DropdownMenuSubContent className="min-w-[190px] p-0.5 text-xs">
-            {agents.map((agent) => (
-              <DropdownMenuItem
-                key={agent.id}
-                onClick={() => chooseLaunch(agent.id, DIRECT_PROFILE_ID)}
-                className={`flex items-center justify-between ${COMPACT_MENU_ITEM}`}
-              >
-                <span className="truncate">{agent.name}</span>
-                {currentAgentId === agent.id && activeProfileId === DIRECT_PROFILE_ID && (
-                  <span className="text-[11px] text-muted-foreground">{t("current")}</span>
-                )}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-        <DropdownMenuSeparator className={COMPACT_SEPARATOR} />
+        {directAgents.length > 0 && (
+          <>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger className={COMPACT_SUB_TRIGGER}>
+                {t("Launch without profile")}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="min-w-[190px] p-0.5 text-xs">
+                {directAgents.map((agent) => (
+                  <DropdownMenuItem
+                    key={agent.id}
+                    onClick={() => chooseLaunch(agent.id, DIRECT_PROFILE_ID)}
+                    className={`flex items-center justify-between ${COMPACT_MENU_ITEM}`}
+                  >
+                    <span className="truncate">{agent.name}</span>
+                    {currentAgentId === agent.id && activeProfileId === DIRECT_PROFILE_ID && (
+                      <span className="text-[11px] text-muted-foreground">{t("current")}</span>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator className={COMPACT_SEPARATOR} />
+          </>
+        )}
         <DropdownMenuLabel className={COMPACT_MENU_LABEL}>{t("Profiles")}</DropdownMenuLabel>
         {agents.map((agent) => {
           const entries = launchProfilesForAgent(agent.id);
@@ -161,7 +166,7 @@ export function ChatLaunchSelector({
           );
         })}
         {!profiles.length &&
-          agents.map((agent) => (
+          directAgents.map((agent) => (
             <DropdownMenuItem
               key={agent.id}
               onClick={() => chooseLaunch(agent.id, DIRECT_PROFILE_ID)}

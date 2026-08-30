@@ -151,6 +151,3 @@ fn should_forward_response_header(name: &str) -> bool {
             | "content-length"
     )
 }
-
-#[allow(dead_code)]
-fn _assert_body_stream_error_is_send(_: Result<Bytes, io::Error>) {}

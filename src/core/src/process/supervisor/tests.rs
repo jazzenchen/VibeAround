@@ -175,6 +175,34 @@ async fn force_restart_reports_spawn_failure() {
     assert!(error.to_string().contains("failed to spawn"));
 }
 
+#[tokio::test]
+async fn never_policy_spawn_failure_drops_factory_and_deregisters() {
+    let registry = Arc::new(ChildRegistry::new());
+    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let (probe_tx, probe_rx) = oneshot::channel::<()>();
+    let mut probe_tx = Some(probe_tx);
+    let id = supervisor
+        .register(
+            ProcessKind::AcpAgent,
+            "spawn-fail-never",
+            SpawnSpec::new("vibearound-program-that-does-not-exist"),
+            RestartPolicy::Never,
+            Box::new(move || {
+                // Models the ACP ready handshake: the sender must be dropped
+                // when the owner dies, or `await_agent_ready` hangs forever.
+                let _leaked_handshake = probe_tx.take();
+                unreachable!("factory must not run for a failed spawn");
+            }),
+        )
+        .await;
+
+    tokio::time::timeout(Duration::from_secs(2), probe_rx)
+        .await
+        .expect("spawn failure leaked the bridge factory (ready handshake would hang)")
+        .expect_err("factory must never fire the probe");
+    wait_for_absent(&supervisor, id).await;
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bridge_exit_terminates_helper_process_group() {

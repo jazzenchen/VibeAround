@@ -1,22 +1,25 @@
-use std::time::Duration;
+use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
-use va_client::endpoint::ServerEndpoint;
 use va_client::events::{
     chat_ws_for_channel, decode_chat_event, encode_chat_client_message, ChatClientMessage,
     ChatEvent,
 };
 
-const CHAT_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(5);
+use crate::socket_retry::{socket_retry_after_failure, SocketRetry, SOCKET_RETRY_INTERVAL};
+use crate::transport::SharedEndpoint;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum ChatSocketEvent {
     Connected,
     Closed,
+    /// Terminal state: the loop gave up retrying and is parked until the app
+    /// signals a reconnect.
+    Disconnected,
     Error(String),
     Event(ChatEvent),
 }
@@ -30,15 +33,20 @@ enum ChatSocketAction {
 }
 
 pub(crate) async fn run_chat_socket(
-    endpoint: ServerEndpoint,
+    endpoint: Arc<SharedEndpoint>,
     mut outgoing: mpsc::UnboundedReceiver<ChatClientMessage>,
     incoming: mpsc::UnboundedSender<ChatSocketEvent>,
+    mut reconnect: watch::Receiver<()>,
 ) {
-    let url = endpoint.websocket_url(&chat_ws_for_channel("tui"));
+    let socket = chat_ws_for_channel("tui");
     let mut failed_attempts = 0;
     let mut pending_message = None;
 
     loop {
+        // A daemon restart rotates the token, so re-read the auth file and
+        // recompute the URL before every attempt.
+        endpoint.refresh_token();
+        let url = endpoint.websocket_url(&socket);
         let (ws, _) = match connect_async(&url).await {
             Ok(connection) => {
                 failed_attempts = 0;
@@ -54,7 +62,21 @@ pub(crate) async fn run_chat_socket(
                 {
                     return;
                 }
-                tokio::time::sleep(chat_reconnect_delay(failed_attempts)).await;
+                match socket_retry_after_failure(failed_attempts) {
+                    SocketRetry::RetryAfter(delay) => tokio::time::sleep(delay).await,
+                    SocketRetry::GiveUp => {
+                        // Only wake for a reconnect requested after the app
+                        // has seen the terminal state.
+                        reconnect.mark_unchanged();
+                        if incoming.send(ChatSocketEvent::Disconnected).is_err() {
+                            return;
+                        }
+                        if reconnect.changed().await.is_err() {
+                            return;
+                        }
+                        failed_attempts = 0;
+                    }
+                }
                 continue;
             }
         };
@@ -115,9 +137,10 @@ pub(crate) async fn run_chat_socket(
             }
         }
 
+        // The connection itself succeeded, so a drop starts a fresh retry
+        // cycle rather than counting toward the failure limit.
         let _ = ws_tx.close().await;
-        failed_attempts += 1;
-        tokio::time::sleep(chat_reconnect_delay(failed_attempts)).await;
+        tokio::time::sleep(SOCKET_RETRY_INTERVAL).await;
     }
 }
 
@@ -179,24 +202,9 @@ fn chat_socket_action_for_frame(
     }
 }
 
-fn chat_reconnect_delay(failed_attempts: u32) -> Duration {
-    let multiplier = 1_u64 << failed_attempts.saturating_sub(1).min(3);
-    Duration::from_secs(multiplier).min(CHAT_RECONNECT_MAX_DELAY)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn chat_reconnect_delay_backs_off_and_caps() {
-        assert_eq!(chat_reconnect_delay(0), Duration::from_secs(1));
-        assert_eq!(chat_reconnect_delay(1), Duration::from_secs(1));
-        assert_eq!(chat_reconnect_delay(2), Duration::from_secs(2));
-        assert_eq!(chat_reconnect_delay(3), Duration::from_secs(4));
-        assert_eq!(chat_reconnect_delay(4), CHAT_RECONNECT_MAX_DELAY);
-        assert_eq!(chat_reconnect_delay(20), CHAT_RECONNECT_MAX_DELAY);
-    }
 
     #[test]
     fn closed_chat_frame_requests_reconnect() {

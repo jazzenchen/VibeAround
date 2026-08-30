@@ -25,10 +25,6 @@ export interface ProfileSummary {
   authMode: AuthMode;
   apiTypes: string[];
   launchTargets: LaunchTargetSummary[];
-  /** `api_type → caveat string`. Populated only for api_types whose
-   * catalog endpoint has a `compatibility_warning`. UI shows ⚠ on the
-   * matching launch button. */
-  apiTypeWarnings: Record<string, string>;
   apiTypeModels: Record<string, string>;
   apiTypeModelOptions: Record<string, ModelDef[]>;
   apiTypeHeaders: Record<string, Record<string, string>>;
@@ -38,7 +34,6 @@ export interface LaunchTargetSummary {
   id: string;
   label: string;
   apiType: string;
-  warning?: string | null;
 }
 
 export interface ProfileConnectionPreference {
@@ -49,9 +44,6 @@ export interface ProfileConnectionPreference {
 export interface ProfileBridgePreference {
   enabled?: boolean | null;
   targetApiType?: string | null;
-  /** TODO(0.7.x): remove single-model compatibility fields after migration to models[]. */
-  upstreamModel?: string | null;
-  fakeModelId?: string | null;
   models?: ProfileBridgeModelPreference[] | null;
   headers?: Record<string, string> | null;
 }
@@ -66,14 +58,6 @@ export type ProfileConnections = Record<
   string,
   Partial<Record<ConnectionAgentId, ProfileConnectionPreference>>
 >;
-
-export interface ApiTypeOverrides {
-  endpoint_id?: string | null;
-  base_url?: string | null;
-  model?: string | null;
-  reasoning_effort?: string | null;
-  capabilities?: ContentCapabilities | null;
-}
 
 export interface ProfileApiConfig {
   enabled?: boolean;
@@ -110,7 +94,6 @@ export interface ProviderSettings {
 export interface AgentLaunchPreference {
   profileId?: string | null;
   workspace?: string | null;
-  executablePath?: string | null;
   executable?: AgentExecutablePreference | null;
   launchArgs?: AgentLaunchArgs | null;
 }
@@ -140,10 +123,8 @@ export interface ProfileDef {
   label: string;
   provider: string;
   auth_mode: AuthMode;
-  api_types: string[];
   credentials: Record<string, string>;
-  overrides: Record<string, ApiTypeOverrides>;
-  api_configs?: Record<string, ProfileApiConfig>;
+  api_configs: Record<string, ProfileApiConfig>;
   use_settings_proxy?: boolean;
   provider_settings?: ProviderSettings;
   connections?: Partial<Record<ConnectionAgentId, ProfileConnectionPreference>>;
@@ -172,8 +153,7 @@ export interface AuthModeDef {
   mode: string;
   label?: string | null;
   fields: FieldDef[];
-  // `render` is a tagged-pass-through — the UI never needs to introspect
-  // it, so we keep it as `unknown` to discourage drift with the renderer.
+  // The UI passes `render` through without inspecting it.
   render?: unknown | null;
 }
 
@@ -188,7 +168,6 @@ export interface EndpointDef {
   models: ModelDef[];
   capabilities?: EndpointCapabilities | null;
   auth_modes: AuthModeDef[];
-  compatibility_warning?: string | null;
 }
 
 export interface EndpointCapabilities {

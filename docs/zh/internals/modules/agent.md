@@ -1,10 +1,10 @@
 # Module: agent
 
-`src/core/src/agent/`：到一个编程 CLI 的 live ACP connection，以及正确启动它所需的一切：launch rendering、config injection、install helpers。
+`src/core/src/agent/`：到一个编程 CLI 的 live ACP connection、launch preparation 和 install helpers。
 
 ## 职责
 
-把单个 agent subprocess 包在 typed handle（`Agent`）后面，通过 ACP 通信，并准备它运行的地面：profile-derived env/args、写入 agent 全局 config 的 VibeAround MCP + skills、启动 session 语义（fresh / load / resume）。
+把单个 agent subprocess 包在 typed ACP handle 后面，并准备 profile env/args、项目级 skills、MCP 配置和启动 session 状态。
 
 ## 关键类型
 
@@ -15,7 +15,7 @@
 | `AcpAgentBridge` | `bridge.rs` | ProcessBridge impl：驱动 ACP connection，处理 startup session attach/fallback |
 | `StartupSession` | `runtime.rs` | Fresh vs resume-by-id 启动语义 |
 | `launch` | `launch.rs` | Hosted + native launches 的 profile materialization（`DIRECT_PROFILE_ID`、credential env、profile-id env） |
-| `mcp` / `skills` | `mcp.rs`, `skills.rs` | 按 agent 注入 global + project-scoped config（路径来自 registry 的 `global_config`） |
+| `mcp` / `skills` | `mcp.rs`, `skills.rs` | 项目级 MCP 配置与保留 skill 同步 |
 | `install` | `install.rs` | Agent CLI / ACP adapter 安装（registry 中的 npm packages） |
 
 ## 交互
@@ -29,7 +29,7 @@
 
 1. **Crash 要显性暴露，不自动修复**：restart policy 是 `Never`；owning thread 决定是否 respawn。不要在这里加 silent retry。
 2. **Startup-session fallback 要清掉 stale id**：如果 resume 失败且 bridge fallback 到 fresh agent，记录的 candidate session id 必须清掉，后续才会创建真实 session，否则 prompt 会指向死 session。
-3. **Config injection 幂等且可逆**：MCP/skill 写入带 VibeAround-managed 标记，daemon down 时 launch-time cleanup 能移除。
+3. **Launch preparation 是确定性的**：每次启动替换保留 skills；MCP 配置使用 `auth.json` 中当前的 `mcp_token`。
 4. **Registry-driven identity**：新增 agent 应是 `agents.json` 变更（adapter package、pty command、config paths），不是新 match arms。尽量保持这一点。
 5. `Agent::shutdown` 返回前，supervisor 必须已经 reap child，并 join 或有界 abort 该 generation 的 bridge task。
 
