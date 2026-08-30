@@ -1,7 +1,7 @@
 {
   "name": "@va/ui",
   "private": true,
-  "version": "0.7.24",
+  "version": "0.7.25",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
