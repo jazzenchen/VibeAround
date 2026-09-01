@@ -28,7 +28,7 @@ VibeAround keeps AI coding work together without making you rebuild the environm
 - Work with the coding agents you already use, including Claude Code, Codex CLI, Gemini CLI, Pi, OpenCode, Claude Desktop, Codex Desktop, and more.
 - Launch agents directly or through third-party AI APIs, without hand-editing each agent's config files back and forth.
 - Bridge different AI API protocols so agents and model providers can work together even when their native APIs do not match.
-- Continue the same sessions across desktop, CLI, messaging apps, mobile browsers, web browsers, and a Web Terminal.
+- Continue the same sessions across desktop, CLI, messaging apps, mobile browsers, and web browsers.
 - Preview dev servers, HTML, and rendered Markdown locally or through time-scoped remote links while execution stays on your own computer.
 - Provide host-side tools like web search when the selected model provider does not offer them natively.
 - Add these capabilities around your existing configs, project permissions, and workflows while keeping them as untouched as possible.
@@ -63,7 +63,6 @@ Pick an AI agent, model profile or API endpoint, and workspace. VibeAround launc
 | Session resume | ✅ Resume and launch both CLI and desktop agents on macOS, Windows, and Linux | ⚠️ macOS terminal resume; Windows and Linux copy the command to clipboard |
 | Workspace selection | ✅ Launch agents from a specified directory | ⚠️ Only supports OpenClaw workspace |
 | IM Chat | ✅ [Remote Messaging & Session Continuity](#remote-messaging--session-continuity) through Feishu/Lark, Discord, Slack, and more | ❌ Not currently supported |
-| Web Terminal | ✅ [Web Terminal](#web-terminal) for remote CLI control | ❌ Not currently supported |
 | Web Hub | ✅ [Web Hub](#web-hub) for browser-based launch, sessions, and chat | ❌ Not currently supported |
 | Remote preview | ✅ Paired owner links + 10-minute code-gated Server/Markdown shares | ❌ Not currently supported |
 | Host-side web search | ✅ [Host-side Web Search](#host-side-web-search) via `va-search-tool` when providers do not expose native search | ❌ Not currently supported |
@@ -189,25 +188,10 @@ IM integrations are built through the [VibeAround Channel SDK](https://github.co
 | Workspace commands | ✅ `/workspace --list` and `/workspace --switch` | ✅ `/dir` and `/cd` |
 | Remote preview | ✅ Sends paired owner links and code-gated Server/Markdown shares | ❌ Not currently supported |
 | IM file attachments | ⚠️ Send-only; receiving files from IM is not currently supported | ✅ Send and receive files/images on supported platforms |
-| Web Terminal | ✅ Browser terminal for controlling local AI agent CLIs remotely | ❌ Not currently supported |
 | Web Hub | ✅ Browser launch, session continuation, and chat | ⚠️ Web admin/config dashboard; service runs separately |
 | Scheduling and rich IM commands | ❌ Not currently supported | ✅ `/timer`, `/cron`, `/cancel`, `/ps`, provider/model/mode commands |
 
 </details>
-
-## Web Terminal
-
-Control local AI agents from desktop or mobile browsers.
-
-VibeAround exposes local terminal sessions through the web dashboard so you can drive AI agent CLIs from desktop or mobile browsers while execution stays on your computer.
-
-<p align="center">
-  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/web-terminal.webp" alt="VibeAround Web Terminal for remote agent control" width="88%" />
-</p>
-
-- Access local AI agent CLIs through Web Terminal from desktop or mobile browsers.
-- Use tunnels for remote access while the daemon stays local.
-- Keep local project permissions and terminal environment in control.
 
 ## Web Hub
 
@@ -230,7 +214,7 @@ VibeAround Web Hub gives you a browser interface for choosing agents, API profil
 
 Expose VibeAround's local web surfaces only when you choose to.
 
-Remote tunnels are used by Web Hub, Web Terminal, and Preview links. VibeAround keeps the daemon local and starts the selected tunnel provider; owner surfaces require browser pairing, while each Server or Markdown Share transaction uses its own time-scoped access code.
+Remote tunnels are used by Web Hub and Preview links. VibeAround keeps the daemon local and starts the selected tunnel provider; owner surfaces require browser pairing, while each Server or Markdown Share transaction uses its own time-scoped access code.
 
 | Tunnel option | Status | Notes |
 |---|---|---|
@@ -338,7 +322,7 @@ VibeAround keeps AI coding work on your computer by default.
 3. Complete onboarding and enable the agent CLIs you use.
 4. Add API profiles if you want VibeAround to route model traffic.
 5. Pick an agent, model profile, terminal, workspace, and session from Launch or Web Hub.
-6. Continue from desktop, Web Hub, Web Terminal, CLI, or a configured messaging channel.
+6. Continue from desktop, Web Hub, CLI, or a configured messaging channel.
 
 Detailed guides live in the [Wiki](https://github.com/jazzenchen/VibeAround/wiki).
 
