@@ -14,7 +14,7 @@ use tokio::io::AsyncBufReadExt;
 
 use crate::proc_log;
 use crate::process::bridge::{BridgeExit, BridgeFuture, CancelSignal, ProcessBridge, StdioPipes};
-use crate::process::registry::ProcessKind;
+use crate::process::ProcessKind;
 
 use super::manager::TunnelManager;
 

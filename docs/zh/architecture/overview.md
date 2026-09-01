@@ -64,7 +64,7 @@
 |---|---|
 | `channels` | 插件宿主、stdio/websocket 传输、输入分发、route lanes、监控 |
 | `workspace` | Workspace、Thread、Route 附着、交接码（事件溯源状态 + 内存 pickup codes） |
-| `process` | 监督器（拉起/重启/看门狗）、子进程注册表、ACP 传输、环境增强 |
+| `process` | 监督器（拉起/重启/看门狗，持有全部子进程）、孤儿清扫、ACP 传输、环境增强 |
 | `agent` | ACP agent 句柄、启动渲染、MCP/技能配置注入 |
 | `profiles` | Profile schema、目录、渲染、Bridge 启动 URL、供应商连接 |
 | `previews` | Server/Markdown owner 与 Share URL、受限 Server Share 代理、端口清理 |

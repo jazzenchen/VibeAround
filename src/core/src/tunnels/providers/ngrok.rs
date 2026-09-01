@@ -6,7 +6,7 @@ use ngrok::tunnel::EndpointInfo;
 use url::Url;
 
 use crate::proc_log;
-use crate::process::registry::ProcessKind;
+use crate::process::ProcessKind;
 
 const PORT: u16 = crate::config::DEFAULT_PORT;
 

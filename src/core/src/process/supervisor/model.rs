@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::process::registry::ProcessKind;
+use crate::process::ProcessKind;
 
 use super::ProcessId;
 

@@ -19,7 +19,6 @@ use common::auth::{self, AuthToken, SharedAuthToken};
 use common::channels::{ChannelManager, WebChannelManager};
 use common::config;
 use common::plugins;
-use common::process::registry::{self as child_registry, ChildRegistry};
 use common::search::SearchToolRuntime;
 use common::tunnels::{self, TunnelManager};
 use common::workspace::WorkspaceThreadManager;
@@ -106,7 +105,6 @@ impl RunningDaemon {
         // supervisor-driven cancel + kill_on_drop never got polled because
         // the tokio runtime tore down first.
         common::process::Supervisor::global().kill_all_blocking();
-        ChildRegistry::global().kill_all();
 
         // Stop previewed development servers during daemon shutdown.
         common::previews::cleanup_registered_previews();
@@ -289,7 +287,7 @@ impl ServerDaemon {
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
         // Reap plugin and ACP children left by a crashed daemon.
-        child_registry::orphan_sweep();
+        common::process::orphan_sweep();
         common::previews::cleanup_registered_previews();
 
         let web_listener = bind_web_listener(self.port).await?;

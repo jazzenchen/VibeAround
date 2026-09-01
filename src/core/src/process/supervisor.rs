@@ -12,7 +12,7 @@ use crate::process::bridge::{BridgeExit, BridgeFactory, StdioPipes};
 use crate::process::env;
 use crate::process::error::{ProcessError, ProcessResult};
 use crate::process::kill;
-use crate::process::registry::ProcessKind;
+use crate::process::ProcessKind;
 
 mod generation;
 mod model;

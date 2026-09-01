@@ -24,7 +24,7 @@ use super::StdioBridgeMessage;
 use crate::proc_log;
 use crate::process::acp_transport::notifying_stdio_transport;
 use crate::process::bridge::{BridgeExit, CancelSignal};
-use crate::process::registry::ProcessKind;
+use crate::process::ProcessKind;
 
 /// Run the ACP agent-side connection for a plugin to completion. Returns
 /// when the child closes stdout or the cancel signal fires.

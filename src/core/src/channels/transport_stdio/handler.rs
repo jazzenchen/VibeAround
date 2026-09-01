@@ -16,7 +16,7 @@ use super::super::{ChannelEnvelope, ChannelInput, ConversationIngress};
 use super::StdioPluginRuntime;
 use crate::plugins::TopicConversationScope;
 use crate::proc_log;
-use crate::process::registry::ProcessKind;
+use crate::process::ProcessKind;
 use crate::routing::{ChannelTarget, RouteKey};
 
 fn route_for_prompt(

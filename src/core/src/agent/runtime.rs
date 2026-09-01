@@ -33,8 +33,8 @@ use acp::schema::v1 as schema;
 use agent_client_protocol as acp;
 
 use crate::process::bridge::{BridgeFactory, ProcessBridge};
-use crate::process::registry::ProcessKind;
 use crate::process::supervisor::{ProcessId, RestartPolicy, SpawnSpec, Supervisor};
+use crate::process::ProcessKind;
 use crate::routing::{wait_for_signal, RouteKey};
 
 use super::bridge::AcpAgentBridge;
@@ -451,8 +451,8 @@ mod lifecycle_tests {
 
     use super::{await_agent_ready, AcpSessionGeneration, PendingProcessRegistration};
     use crate::process::bridge::{BridgeExit, BridgeFuture, ProcessBridge, StdioPipes};
-    use crate::process::registry::ProcessKind;
     use crate::process::supervisor::{RestartPolicy, SpawnSpec, Supervisor};
+    use crate::process::ProcessKind;
 
     struct HangingInitializeBridge;
 

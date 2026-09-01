@@ -30,8 +30,8 @@ use super::manifest::ChannelPluginManifest;
 use super::plugin_host::PluginHost;
 use super::plugin_runner::ChannelPluginRunnerFactory;
 use super::{ChannelInput, ConversationIngress};
-use crate::process::registry::ProcessKind;
 use crate::process::supervisor::{ProcessEvent, ProcessId, RestartPolicy, SpawnSpec, Supervisor};
+use crate::process::ProcessKind;
 use crate::routing::{ChannelInstanceId, ChannelKind};
 
 // ---------------------------------------------------------------------------

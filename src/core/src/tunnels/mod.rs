@@ -18,8 +18,8 @@ pub mod status;
 pub use manager::{TunnelInfo, TunnelManager};
 pub use status::{TunnelMeta, TunnelStatus};
 
-use crate::process::registry::ProcessKind;
 use crate::process::supervisor::{ProcessStatus, RestartPolicy, SpawnSpec, Supervisor};
+use crate::process::ProcessKind;
 
 /// Tunnel provider: localtunnel, ngrok, cloudflare, or tailscale.
 #[derive(Debug, Clone, Copy, Default)]
