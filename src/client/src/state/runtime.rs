@@ -1,7 +1,6 @@
 use crate::previews::PreviewsResponse;
 use crate::runtime::{AgentRuntime, AgentsConfig, ChannelRuntime, TunnelRuntime};
 use crate::service::ServiceInfoResponse;
-use crate::sessions::SessionListItem;
 use crate::workspaces::WorkspacesResponse;
 
 /// Client-side runtime view assembled from independent server responses.
@@ -16,7 +15,6 @@ pub struct RuntimeSnapshot {
     pub channels: Vec<ChannelRuntime>,
     pub tunnels: Vec<TunnelRuntime>,
     pub agent_runtimes: Vec<AgentRuntime>,
-    pub sessions: Vec<SessionListItem>,
     pub workspaces: Option<WorkspacesResponse>,
     pub previews: Option<PreviewsResponse>,
 }
@@ -44,10 +42,6 @@ impl RuntimeSnapshot {
 
     pub fn apply_agent_runtimes(&mut self, agent_runtimes: Vec<AgentRuntime>) {
         self.agent_runtimes = agent_runtimes;
-    }
-
-    pub fn apply_sessions(&mut self, sessions: Vec<SessionListItem>) {
-        self.sessions = sessions;
     }
 
     pub fn apply_workspaces(&mut self, workspaces: WorkspacesResponse) {

@@ -53,10 +53,6 @@ pub fn runtime_shutdown_thread_host(thread_id: &str) -> Operation<()> {
     )
 }
 
-pub fn runtime_kill_pty(session_id: &str) -> Operation<()> {
-    Operation::new(crate::runtime::kill_pty(session_id), decode_success)
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::{json, Value};
