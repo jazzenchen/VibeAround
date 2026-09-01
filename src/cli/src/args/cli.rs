@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use super::{chat, launch, pair, serve, session, Command, Options};
+use super::{chat, launch, pair, serve, Command, Options};
 use crate::error::CliError;
 
 #[derive(Debug, Parser)]
@@ -39,7 +39,6 @@ enum TopCommand {
     Channels,
     Tunnels,
     Agents,
-    Sessions,
     Workspaces,
     Previews,
     Profiles,
@@ -56,10 +55,6 @@ enum TopCommand {
         command: AuthCommand,
     },
     Launch(launch::LaunchCli),
-    Tmux {
-        #[command(subcommand)]
-        command: TmuxCommand,
-    },
     Settings {
         #[command(subcommand)]
         command: SettingsCommand,
@@ -76,14 +71,6 @@ enum TopCommand {
         #[command(subcommand)]
         command: AgentCommand,
     },
-    Session {
-        #[command(subcommand)]
-        command: session::SessionCommand,
-    },
-    Pty {
-        #[command(subcommand)]
-        command: PtyCommand,
-    },
     Preview {
         #[command(subcommand)]
         command: PreviewCommand,
@@ -99,12 +86,6 @@ enum TopCommand {
 enum AuthCommand {
     Status,
     Clear,
-}
-
-#[derive(Debug, Subcommand)]
-#[command(rename_all = "kebab-case")]
-enum TmuxCommand {
-    Sessions,
 }
 
 #[derive(Debug, Subcommand)]
@@ -132,12 +113,6 @@ enum TunnelCommand {
 #[command(rename_all = "kebab-case")]
 enum AgentCommand {
     Kill { thread_id: String },
-}
-
-#[derive(Debug, Subcommand)]
-#[command(rename_all = "kebab-case")]
-enum PtyCommand {
-    Kill { session_id: String },
 }
 
 #[derive(Debug, Subcommand)]
@@ -186,7 +161,6 @@ fn top_command_into_command(command: TopCommand) -> Result<Command, CliError> {
         TopCommand::Channels => Command::Channels,
         TopCommand::Tunnels => Command::Tunnels,
         TopCommand::Agents => Command::Agents,
-        TopCommand::Sessions => Command::Sessions,
         TopCommand::Workspaces => Command::Workspaces,
         TopCommand::Previews => Command::Previews,
         TopCommand::Profiles => Command::Profiles,
@@ -197,9 +171,6 @@ fn top_command_into_command(command: TopCommand) -> Result<Command, CliError> {
             AuthCommand::Clear => Command::AuthClear,
         },
         TopCommand::Launch(command) => launch::command_into_command(command)?,
-        TopCommand::Tmux { command } => match command {
-            TmuxCommand::Sessions => Command::TmuxSessions,
-        },
         TopCommand::Settings { command } => match command {
             SettingsCommand::Reload => Command::SettingsReload,
         },
@@ -214,10 +185,6 @@ fn top_command_into_command(command: TopCommand) -> Result<Command, CliError> {
         },
         TopCommand::Agent { command } => match command {
             AgentCommand::Kill { thread_id } => Command::AgentKill { thread_id },
-        },
-        TopCommand::Session { command } => session::command_into_command(command)?,
-        TopCommand::Pty { command } => match command {
-            PtyCommand::Kill { session_id } => Command::PtyKill { session_id },
         },
         TopCommand::Preview { command } => match command {
             PreviewCommand::Delete { slug } => Command::PreviewDelete { slug },

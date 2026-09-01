@@ -1,27 +1,10 @@
 use va_client::http::AuthRequirement;
 use va_client::ops;
-use va_client::sessions::{CreateSessionBody, LaunchSessionInfo, PtyTool};
+use va_client::sessions::LaunchSessionInfo;
 
 use super::{print_json, run_unit, transport_for};
-use crate::args::{LaunchSessionMutationArgs, LaunchSessionsArgs, Options, SessionCreateArgs};
+use crate::args::{LaunchSessionMutationArgs, LaunchSessionsArgs, Options};
 use crate::error::CliError;
-
-pub(super) async fn list(options: &Options) -> Result<(), CliError> {
-    let transport = transport_for(options, AuthRequirement::BearerToken)?;
-    if options.json {
-        print_json(transport.execute_json(ops::sessions()).await?)?;
-        return Ok(());
-    }
-    for session in transport.execute(ops::sessions()).await? {
-        println!(
-            "{}\t{:?}\t{}",
-            session.session_id,
-            session.status,
-            session.project_path.unwrap_or_else(|| "-".into())
-        );
-    }
-    Ok(())
-}
 
 pub(super) async fn launch_sessions(
     options: &Options,
@@ -93,55 +76,6 @@ pub(super) async fn launch_session_mutation(
     .await
 }
 
-pub(super) async fn create(options: &Options, create: &SessionCreateArgs) -> Result<(), CliError> {
-    if create.attach && options.json {
-        return Err(CliError::Usage(
-            "session create --attach does not support --json".into(),
-        ));
-    }
-
-    let transport = transport_for(options, AuthRequirement::BearerToken)?;
-    let operation = ops::session_create(CreateSessionBody {
-        tool: create.tool,
-        profile_id: create.profile_id.as_deref(),
-        launch_target: create.launch_target.as_deref(),
-        resume_session_id: create.resume_session_id.as_deref(),
-        project_path: create.project_path.as_deref(),
-        tmux_session: create.tmux_session.as_deref(),
-        theme: create.theme.as_deref(),
-        cols: create.cols,
-        rows: create.rows,
-    })?;
-    if options.json {
-        print_json(transport.execute_json(operation).await?)?;
-        return Ok(());
-    }
-
-    let session = transport.execute(operation).await?;
-    if create.attach {
-        eprintln!("created session {}", session.session_id);
-        return crate::attach::attach_session(options, &session.session_id).await;
-    }
-
-    println!("session: {}", session.session_id);
-    println!("tool: {}", pty_tool_name(session.tool));
-    println!("created_at: {}", session.created_at);
-    if let Some(path) = session.project_path {
-        println!("project: {path}");
-    }
-    if let Some(profile) = session.profile_label.or(session.profile_id) {
-        println!("profile: {profile}");
-    }
-    if let Some(target) = session.launch_target {
-        println!("target: {target}");
-    }
-    Ok(())
-}
-
-pub(super) async fn kill(options: &Options, session_id: &str) -> Result<(), CliError> {
-    run_unit(options, ops::session_delete(session_id), "session killed").await
-}
-
 fn print_launch_session(session: LaunchSessionInfo) {
     println!("{}", launch_session_line(&session));
 }
@@ -165,20 +99,6 @@ fn launch_session_line(session: &LaunchSessionInfo) -> String {
         session.workspace,
         session.title
     )
-}
-
-fn pty_tool_name(tool: PtyTool) -> &'static str {
-    match tool {
-        PtyTool::Generic => "generic",
-        PtyTool::Claude => "claude",
-        PtyTool::Codex => "codex",
-        PtyTool::Pi => "pi",
-        PtyTool::Gemini => "gemini",
-        PtyTool::OpenCode => "opencode",
-        PtyTool::Cursor => "cursor",
-        PtyTool::Kiro => "kiro",
-        PtyTool::QwenCode => "qwen-code",
-    }
 }
 
 #[cfg(test)]

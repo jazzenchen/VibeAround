@@ -54,20 +54,6 @@ pub(super) async fn agents(options: &Options) -> Result<(), CliError> {
     Ok(())
 }
 
-pub(super) async fn tmux_sessions(options: &Options) -> Result<(), CliError> {
-    let transport = transport_for(options, AuthRequirement::BearerToken)?;
-    if options.json {
-        print_json(transport.execute_json(ops::tmux_sessions()).await?)?;
-        return Ok(());
-    }
-    let tmux = transport.execute(ops::tmux_sessions()).await?;
-    println!("available: {}", tmux.available);
-    for session in tmux.sessions {
-        println!("{session}");
-    }
-    Ok(())
-}
-
 pub(super) async fn reload_settings(options: &Options) -> Result<(), CliError> {
     run_unit(options, ops::runtime_reload_settings(), "settings reloaded").await
 }
@@ -104,8 +90,4 @@ pub(super) async fn kill_agent(options: &Options, thread_id: &str) -> Result<(),
         "host stopped",
     )
     .await
-}
-
-pub(super) async fn kill_pty(options: &Options, session_id: &str) -> Result<(), CliError> {
-    run_unit(options, ops::runtime_kill_pty(session_id), "pty killed").await
 }

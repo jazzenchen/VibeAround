@@ -5,7 +5,6 @@ mod cli;
 mod launch;
 mod pair;
 mod serve;
-mod session;
 
 #[cfg(test)]
 mod tests;
@@ -15,7 +14,6 @@ pub(crate) use cli::parse_args;
 pub(crate) use launch::{LaunchRunArgs, LaunchSessionMutationArgs, LaunchSessionsArgs};
 pub(crate) use pair::{PairStartArgs, PairWaitArgs};
 pub(crate) use serve::ServeArgs;
-pub(crate) use session::SessionCreateArgs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -27,7 +25,6 @@ pub(crate) enum Command {
     Channels,
     Tunnels,
     Agents,
-    Sessions,
     Workspaces,
     Previews,
     Profiles,
@@ -42,21 +39,16 @@ pub(crate) enum Command {
     AuthStatus,
     AuthClear,
     SettingsReload,
-    TmuxSessions,
     LaunchRun(LaunchRunArgs),
     LaunchSessions(LaunchSessionsArgs),
     LaunchSessionArchive(LaunchSessionMutationArgs),
     LaunchSessionUnarchive(LaunchSessionMutationArgs),
-    SessionCreate(SessionCreateArgs),
-    SessionAttach { session_id: String },
     ChannelSync,
     ChannelStart { kind: String },
     ChannelStop { kind: String },
     ChannelRestart { kind: String },
     TunnelKill { provider: String },
     AgentKill { thread_id: String },
-    SessionKill { session_id: String },
-    PtyKill { session_id: String },
     PreviewDelete { slug: String },
     WorkspaceAdd { path: String },
     WorkspaceRemove { path: String },
@@ -119,12 +111,6 @@ pub(crate) fn usage() -> &'static str {
         "  launch sessions              List resumable agent launch sessions\n",
         "  launch archive --agent A ID  Archive a launch session\n",
         "  launch unarchive --agent A ID Unarchive a launch session\n",
-        "  sessions                     List PTY sessions\n",
-        "  session create --tool TOOL   Create/resume a PTY session; add --attach to enter it\n",
-        "  session attach SESSION_ID    Attach to a PTY session\n",
-        "  session kill SESSION_ID      Kill and remove a PTY session\n",
-        "  pty kill SESSION_ID          Kill a PTY process by session id\n",
-        "  tmux sessions                List attachable tmux sessions\n",
         "  workspaces                   List registered workspaces\n",
         "  workspace add PATH           Register a workspace path\n",
         "  workspace remove PATH        Remove a workspace path\n",
