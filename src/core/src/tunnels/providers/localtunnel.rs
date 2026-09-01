@@ -1,4 +1,4 @@
-//! Localtunnel: expose the web dashboard (and xterm) over the internet via a public URL.
+//! Localtunnel: expose the web dashboard over the internet via a public URL.
 //! In system mode, spawns `npx localtunnel --port <DEFAULT_PORT>`.
 //! In VibeAround-managed mode, runs the managed `lt` npm entry with system Node.
 //! Parses the public URL from stdout and keeps the process alive.
