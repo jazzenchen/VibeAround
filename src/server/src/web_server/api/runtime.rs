@@ -4,7 +4,6 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use common::pty::SessionId;
 use common::state::StateSource;
 use common::workspace::threads::store::WorkspaceThreadId;
 use common::{agent_state, config};
@@ -180,29 +179,5 @@ pub async fn shutdown_thread_host_handler(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to stop host for thread {}: {}", thread_id, error),
         ),
-    }
-}
-
-/// DELETE /api/pty/:session_id -- kill a PTY session.
-///
-/// Goes through `PtySessionManager::delete_session` so the child
-/// process gets SIGKILL'd, not just the registry entry removed.
-pub async fn kill_pty_handler(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-) -> impl IntoResponse {
-    let Ok(uuid) = uuid::Uuid::parse_str(&session_id) else {
-        return (
-            StatusCode::BAD_REQUEST,
-            format!("Invalid session id: {}", session_id),
-        );
-    };
-    if state.pty_manager.delete_session(SessionId(uuid)) {
-        (StatusCode::OK, format!("Killed pty {}", session_id))
-    } else {
-        (
-            StatusCode::NOT_FOUND,
-            format!("PTY session {} not found", session_id),
-        )
     }
 }

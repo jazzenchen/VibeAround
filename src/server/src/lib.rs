@@ -20,7 +20,6 @@ use common::channels::{ChannelManager, WebChannelManager};
 use common::config;
 use common::plugins;
 use common::process::registry::{self as child_registry, ChildRegistry};
-use common::pty::{PtySessionManager, Registry, SessionId};
 use common::search::SearchToolRuntime;
 use common::tunnels::{self, TunnelManager};
 use common::workspace::WorkspaceThreadManager;
@@ -35,7 +34,6 @@ const WEB_BIND_RETRY_DELAY: Duration = Duration::from_millis(150);
 /// Both the server binary and the desktop (Tauri) binary use this.
 pub struct ServerDaemon {
     pub tunnels: Arc<TunnelManager>,
-    pub pty: Registry,
     pub port: u16,
     /// Per-session auth token, regenerated on every daemon start.
     /// Exposed so Tauri can append `?token=` when opening the dashboard.
@@ -60,7 +58,6 @@ pub struct RunningDaemon {
     pub web_dispatch_handle: JoinHandle<()>,
     pub search_runtime: Option<Arc<SearchToolRuntime>>,
     pub tunnels: Arc<TunnelManager>,
-    pub pty: Registry,
     /// Signal used to stop the channel-input task.
     channel_input_shutdown: Arc<Notify>,
     /// Signal to Axum so it can stop accepting new connections before the
@@ -84,7 +81,6 @@ impl RunningDaemon {
             web_dispatch_handle,
             search_runtime,
             tunnels,
-            pty,
             channel_input_shutdown,
             web_shutdown,
             channel_input_handle,
@@ -114,12 +110,6 @@ impl RunningDaemon {
         // Stop previewed development servers during daemon shutdown.
         common::previews::cleanup_registered_previews();
 
-        let pty_manager = PtySessionManager::from_registry(Arc::clone(&pty));
-        let session_ids: Vec<SessionId> = pty.iter().map(|entry| *entry.key()).collect();
-        for session_id in session_ids {
-            let _ = pty_manager.delete_session(session_id);
-        }
-
         web_dispatch_handle.abort();
         tunnel_handle.abort();
 
@@ -132,10 +122,9 @@ impl RunningDaemon {
         let _ = tunnel_handle.await;
         let _ = web_dispatch_handle.await;
 
-        // Clear tunnel + PTY registries so stale entries don't persist
+        // Clear the tunnel registry so stale entries don't persist
         // across restarts.
         tunnels.clear();
-        pty.clear();
     }
 }
 
@@ -239,7 +228,6 @@ impl ServerDaemon {
     pub fn new(port: u16) -> Self {
         Self {
             tunnels: TunnelManager::new(),
-            pty: common::pty::new_registry(),
             port,
             auth_token: Arc::new(AuthToken::generate()),
             mcp_token: Arc::new(AuthToken::generate()),
@@ -310,7 +298,6 @@ impl ServerDaemon {
         // been rewritten by onboarding or a manual edit since last start).
         let cfg = config::reload();
         let tunnels = Arc::clone(&self.tunnels);
-        let pty = Arc::clone(&self.pty);
 
         // Rewrite the auth file. Session tokens from the previous run go
         // invalid immediately; the agent-as-API credential is restored, not
@@ -381,7 +368,6 @@ impl ServerDaemon {
 
         // 5. Web server (Axum)
         let web_tunnels = Arc::clone(&tunnels);
-        let web_pty = Arc::clone(&pty);
         let web_channel_hub = Arc::clone(&channel_hub);
         let web_channel_manager = Arc::clone(&web_channel);
         let web_auth_token = Arc::clone(&self.auth_token);
@@ -398,7 +384,6 @@ impl ServerDaemon {
                 web_listener,
                 dist_path,
                 web_tunnels,
-                web_pty,
                 web_channel_hub,
                 web_channel_manager,
                 web_auth_token,
@@ -462,7 +447,6 @@ impl ServerDaemon {
             web_dispatch_handle,
             search_runtime,
             tunnels,
-            pty,
             channel_input_shutdown,
             web_shutdown,
             channel_input_handle,

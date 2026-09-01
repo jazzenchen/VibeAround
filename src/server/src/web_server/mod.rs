@@ -1,4 +1,4 @@
-//! Axum HTTP + WebSocket server: serves Web SPA (from given dist path), WS at /ws for xterm ↔ PTY,
+//! Axum HTTP + WebSocket server: serves Web SPA (from given dist path),
 //! agent chat WS at /ws/chat, owner/share Preview pages,
 //! and MCP endpoint at /mcp.
 
@@ -11,7 +11,6 @@ mod pair;
 mod preview;
 mod ws_chat;
 mod ws_domains;
-mod ws_pty;
 
 use axum::body::Body;
 use axum::extract::DefaultBodyLimit;
@@ -28,7 +27,6 @@ use tower_http::services::{ServeDir, ServeFile};
 use common::auth::AuthToken;
 use common::channels::{ChannelManager, WebChannelManager};
 use common::profiles::bridge_url;
-use common::pty::{PtySessionManager, Registry};
 use common::search::SearchToolRuntime;
 use common::tunnels::TunnelManager;
 
@@ -36,28 +34,9 @@ use self::auth::{require_auth, require_local_bridge, AuthState};
 
 const LOCAL_BRIDGE_BODY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 
-/// Client sends this as JSON over Text frame to resize the PTY (e.g. after xterm-addon-fit).
-#[derive(serde::Deserialize)]
-struct ResizeMessage {
-    #[serde(rename = "type")]
-    ty: String,
-    cols: u16,
-    rows: u16,
-}
-
-/// Query params for /ws. session_id=uuid = attach to session.
-#[derive(serde::Deserialize)]
-struct WsQuery {
-    session_id: Option<String>,
-    #[serde(default)]
-    #[allow(dead_code)] // consumed by the auth middleware, not the handler
-    token: Option<String>,
-}
-
 /// Shared app state: per-domain manager handles + server metadata.
 #[derive(Clone)]
 pub(crate) struct AppState {
-    pty_manager: Arc<PtySessionManager>,
     dist_for_fallback: PathBuf,
     tunnels: Arc<TunnelManager>,
     channel_hub: Arc<ChannelManager>,
@@ -190,7 +169,6 @@ pub async fn run_web_server(
     listener: tokio::net::TcpListener,
     dist_path: PathBuf,
     tunnels: Arc<TunnelManager>,
-    pty_registry: Registry,
     channel_hub: Arc<ChannelManager>,
     web_channel: Arc<WebChannelManager>,
     auth_token: Arc<AuthToken>,
@@ -222,7 +200,6 @@ pub async fn run_web_server(
     let server_proxy_state = preview::ServerProxyState::new(preview_client.clone());
     let (preview_refresh_tx, _) = broadcast::channel(32);
     let state = AppState {
-        pty_manager: Arc::new(PtySessionManager::from_registry(pty_registry)),
         dist_for_fallback: web_dist.clone(),
         tunnels,
         channel_hub,
@@ -246,8 +223,8 @@ pub async fn run_web_server(
 
     // --- Protected routes: require a valid token on every request. ----------
     //
-    // Everything that can mutate state, execute code, attach to a PTY, or
-    // surface sensitive workspace data goes behind the auth middleware.
+    // Everything that can mutate state, execute code, or surface sensitive
+    // workspace data goes behind the auth middleware.
     // The SPA shell + static assets are left open so the browser can fetch
     // the initial HTML/JS with the token supplied as `?token=...` by the
     // opener (Tauri tray). The SPA then attaches `Authorization: Bearer` on
@@ -259,14 +236,6 @@ pub async fn run_web_server(
             get(api::get_settings_handler)
                 .put(api::put_settings_handler)
                 .patch(api::patch_settings_handler),
-        )
-        .route(
-            "/api/sessions",
-            get(api::list_sessions_handler).post(api::create_session_handler),
-        )
-        .route(
-            "/api/sessions/{session_id}",
-            delete(api::delete_session_handler),
         )
         .route(
             "/api/launch-sessions",
@@ -293,7 +262,6 @@ pub async fn run_web_server(
             "/api/chat/files/download",
             get(api::download_chat_file_handler),
         )
-        .route("/api/tmux/sessions", get(api::list_tmux_sessions_handler))
         .route("/api/agents", get(api::list_agents_handler))
         .route("/api/profiles", get(api::list_profiles_handler))
         .route(
@@ -351,11 +319,9 @@ pub async fn run_web_server(
             "/api/workspace-threads/init",
             post(api::init_workspace_thread_handler),
         )
-        .route("/ws", get(ws_pty::ws_handler))
         .route("/ws/chat", get(ws_chat::ws_chat_handler))
         .route("/ws/channels", get(ws_domains::ws_channels_handler))
         .route("/ws/tunnels", get(ws_domains::ws_tunnels_handler))
-        .route("/ws/sessions", get(ws_domains::ws_sessions_handler))
         .route(
             "/ws/agents/runtime",
             get(ws_domains::ws_agents_runtime_handler),
@@ -383,7 +349,6 @@ pub async fn run_web_server(
             "/api/workspace-threads/{thread_id}/shutdown-host",
             post(api::shutdown_thread_host_handler),
         )
-        .route("/api/pty/{session_id}", delete(api::kill_pty_handler))
         .route("/api/previews", get(api::list_previews_handler))
         .route("/api/previews/{slug}", delete(api::delete_preview_handler))
         .route("/api/pair/complete", post(pair::complete_handler))

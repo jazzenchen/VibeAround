@@ -21,7 +21,6 @@ const LOCAL_BRIDGE_PROXY_ENV_KEYS: &[&str] = &[
 ];
 const VIBEAROUND_LAUNCH_ID_ENV: &str = "VIBEAROUND_LAUNCH_ID";
 const VIBEAROUND_LAUNCH_TARGET_ENV: &str = "VIBEAROUND_LAUNCH_TARGET";
-pub(crate) const WEB_PTY_TERMINAL_ID: &str = "web-pty";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

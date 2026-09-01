@@ -30,16 +30,15 @@ pub use profiles::{
     update_model_profile_handler,
 };
 pub use runtime::{
-    kill_pty_handler, kill_tunnel_handler, list_agents_handler, list_agents_runtime_handler,
-    list_channels_handler, list_tunnels_handler, reload_settings_handler, restart_channel_handler,
+    kill_tunnel_handler, list_agents_handler, list_agents_runtime_handler, list_channels_handler,
+    list_tunnels_handler, reload_settings_handler, restart_channel_handler,
     shutdown_thread_host_handler, start_channel_handler, stop_channel_handler,
     sync_channels_handler,
 };
 pub use service::{health_handler, info_handler};
 pub use sessions::{
-    archive_launch_session_handler, create_session_handler, delete_session_handler,
-    init_workspace_thread_handler, list_launch_sessions_batch_handler,
-    list_launch_sessions_handler, list_sessions_handler, list_tmux_sessions_handler,
+    archive_launch_session_handler, init_workspace_thread_handler,
+    list_launch_sessions_batch_handler, list_launch_sessions_handler,
     unarchive_launch_session_handler,
 };
 pub use settings::{get_settings_handler, patch_settings_handler, put_settings_handler};
