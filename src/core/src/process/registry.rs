@@ -46,8 +46,6 @@ pub enum ProcessKind {
     ChannelPlugin,
     /// ACP coding-agent child (node running the ACP bridge package).
     AcpAgent,
-    /// PTY-hosted interactive shell or CLI tool.
-    Pty,
     /// Tunnel provider subprocess (cloudflared, lt, tailscale, …). Not ngrok (SDK).
     Tunnel,
     /// Host-side search provider subprocess (va-search-tool stdio).
@@ -60,7 +58,6 @@ impl ProcessKind {
         match self {
             ProcessKind::ChannelPlugin => "channel_plugin",
             ProcessKind::AcpAgent => "acp_agent",
-            ProcessKind::Pty => "pty",
             ProcessKind::Tunnel => "tunnel",
             ProcessKind::SearchProvider => "search_provider",
         }

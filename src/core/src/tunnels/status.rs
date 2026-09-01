@@ -19,7 +19,12 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use tokio::task::AbortHandle;
 
-use crate::pty::unix_now_secs;
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
 /// Runtime status of a tunnel. Wire-compatible via the `state` tag.
 #[derive(Debug, Clone, Serialize)]

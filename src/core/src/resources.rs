@@ -1,5 +1,5 @@
 //! Resource loader — single source of truth for agent, tunnel, plugin,
-//! MCP tool, command, and PTY environment definitions.
+//! MCP tool, and command definitions.
 //!
 //! All data is embedded at compile time via `include_str!` and parsed
 //! once on first access via `LazyLock`.
@@ -19,7 +19,6 @@ static TUNNELS_JSON: &str = include_str!("../../resources/tunnels.json");
 static PLUGINS_JSON: &str = include_str!("../../resources/plugins.json");
 static MCP_TOOLS_JSON: &str = include_str!("../../resources/mcp-tools.json");
 static COMMANDS_JSON: &str = include_str!("../../resources/commands.json");
-static PTY_ENV_JSON: &str = include_str!("../../resources/pty-env.json");
 
 pub const CHATGPT_DESKTOP_MACOS_APP_NAME: &str = "ChatGPT";
 pub const CHATGPT_DESKTOP_MACOS_BUNDLE_ID: &str = "com.openai.codex";
@@ -449,20 +448,6 @@ pub struct CommandEntry {
     pub aliases: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PtyEnvDef {
-    pub env: HashMap<String, String>,
-    pub themes: HashMap<String, PtyTheme>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PtyTheme {
-    pub fg: String,
-    pub bg: String,
-    #[serde(rename = "COLORFGBG")]
-    pub colorfgbg: String,
-}
-
 // ---------------------------------------------------------------------------
 // Parsed statics — parsed once on first access
 // ---------------------------------------------------------------------------
@@ -485,9 +470,6 @@ pub static MCP_TOOLS: LazyLock<Vec<McpToolDef>> =
 
 pub static COMMANDS: LazyLock<CommandsDef> =
     LazyLock::new(|| serde_json::from_str(COMMANDS_JSON).expect("Failed to parse commands.json"));
-
-pub static PTY_ENV: LazyLock<PtyEnvDef> =
-    LazyLock::new(|| serde_json::from_str(PTY_ENV_JSON).expect("Failed to parse pty-env.json"));
 
 // ---------------------------------------------------------------------------
 // Lookup helpers
@@ -642,14 +624,6 @@ mod tests {
         assert!(
             !COMMANDS.system_commands.is_empty(),
             "commands.json should not be empty"
-        );
-        assert!(
-            !PTY_ENV.env.is_empty(),
-            "pty-env.json env should not be empty"
-        );
-        assert!(
-            !PTY_ENV.themes.is_empty(),
-            "pty-env.json themes should not be empty"
         );
     }
 

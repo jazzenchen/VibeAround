@@ -6,8 +6,8 @@
 //!   table so daemon shutdown can synchronously SIGKILL them regardless of
 //!   tokio task-poll order. Used by the supervisor + legacy call sites.
 //! - [`supervisor`]: the unified lifecycle layer — spawn, restart, status,
-//!   structured logging — shared by channel plugins, ACP agents, tunnels,
-//!   and (future) PTY.
+//!   structured logging — shared by channel plugins, ACP agents, and
+//!   tunnels.
 //! - [`bridge`]: manager-side trait for driving a protocol over the stdio
 //!   pipes the supervisor hands back.
 //! - [`error`]: `ProcessError` at the supervisor boundary.

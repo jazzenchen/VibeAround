@@ -1,12 +1,11 @@
 [package]
 name = "common"
 version = "0.7.25"
-description = "VibeAround shared logic: PTY, session registry, tunnel, headless CLI, IM (Telegram)"
+description = "VibeAround shared logic: agents, channels, tunnels, workspace"
 edition = "2021"
 rust-version = "1.88"
 
 [dependencies]
-portable-pty = "0.9"
 tokio = { workspace = true, features = ["process", "io-util", "sync", "rt-multi-thread", "time", "fs"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -8,7 +8,7 @@
 //! when the tunnel is enabled — via a public URL. Without auth, any browser
 //! tab the user visits can fetch from the loopback port (via DNS rebinding
 //! or plain cross-origin requests with `CorsLayer::Any`), and anyone who
-//! learns the tunnel URL can spawn a PTY as the user.
+//! learns the tunnel URL can drive coding agents as the user.
 //!
 //! ## Design
 //!
