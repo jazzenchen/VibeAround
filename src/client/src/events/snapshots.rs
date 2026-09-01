@@ -3,7 +3,6 @@ use serde_json::Value;
 use super::WebSocketSpec;
 use crate::http::AuthRequirement;
 use crate::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
-use crate::sessions::SessionListItem;
 
 pub fn channels_ws() -> WebSocketSpec {
     WebSocketSpec::new("/ws/channels", AuthRequirement::BearerToken)
@@ -17,10 +16,6 @@ pub fn agents_runtime_ws() -> WebSocketSpec {
     WebSocketSpec::new("/ws/agents/runtime", AuthRequirement::BearerToken)
 }
 
-pub fn sessions_ws() -> WebSocketSpec {
-    WebSocketSpec::new("/ws/sessions", AuthRequirement::BearerToken)
-}
-
 pub fn decode_channels_event(value: Value) -> crate::Result<Vec<ChannelRuntime>> {
     serde_json::from_value(value).map_err(crate::ClientError::Decode)
 }
@@ -30,10 +25,6 @@ pub fn decode_tunnels_event(value: Value) -> crate::Result<Vec<TunnelRuntime>> {
 }
 
 pub fn decode_agents_runtime_event(value: Value) -> crate::Result<Vec<AgentRuntime>> {
-    serde_json::from_value(value).map_err(crate::ClientError::Decode)
-}
-
-pub fn decode_sessions_event(value: Value) -> crate::Result<Vec<SessionListItem>> {
     serde_json::from_value(value).map_err(crate::ClientError::Decode)
 }
 
@@ -86,19 +77,5 @@ mod tests {
         }]))
         .expect("agents");
         assert_eq!(agents[0].channel_kind, "workspace");
-
-        let sessions = decode_sessions_event(json!([{
-            "session_id": "session-1",
-            "tool": "codex",
-            "status": { "type": "running", "tool": "codex" },
-            "created_at": 1,
-            "project_path": "/tmp/project",
-            "profile_id": "default",
-            "profile_label": "Default",
-            "launch_target": "codex",
-            "tmux_session": null
-        }]))
-        .expect("sessions");
-        assert_eq!(sessions[0].session_id, "session-1");
     }
 }

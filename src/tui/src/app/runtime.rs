@@ -18,10 +18,6 @@ impl TuiApp {
                 self.snapshot.agents = agents;
                 self.on_runtime_snapshot_updated(RuntimeStream::Agents);
             }
-            RuntimeSocketEvent::Sessions(sessions) => {
-                self.snapshot.sessions = sessions;
-                self.on_runtime_snapshot_updated(RuntimeStream::Sessions);
-            }
             RuntimeSocketEvent::Error { stream, message } => {
                 self.set_error(ErrorScope::Runtime(stream), message);
             }

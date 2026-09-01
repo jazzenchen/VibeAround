@@ -106,14 +106,6 @@ pub fn shutdown_thread_host(thread_id: &str) -> RequestSpec {
     )
 }
 
-pub fn kill_pty(session_id: &str) -> RequestSpec {
-    RequestSpec::new(
-        HttpMethod::Delete,
-        join_path("/api/pty", session_id),
-        AuthRequirement::BearerToken,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;

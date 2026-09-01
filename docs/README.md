@@ -1,6 +1,6 @@
 # VibeAround Documentation
 
-VibeAround lets you reach your local AI coding agents (Claude Code, Codex, Gemini CLI, and more) from the surfaces you already use: IM channels such as Telegram, Slack, and Feishu, a browser dashboard with a full terminal, a desktop control app, and a TUI/CLI. One local runtime, one workspace model, many doors into it.
+VibeAround lets you reach your local AI coding agents (Claude Code, Codex, Gemini CLI, and more) from the surfaces you already use: IM channels such as Telegram, Slack, and Feishu, a browser dashboard, a desktop control app, and a TUI/CLI. One local runtime, one workspace model, many doors into it.
 
 **New here?** Read in this order: [What is VibeAround](product/what-is-vibearound.md) → [Install](guides/install-and-onboarding.md) → [Quick tour](guides/quick-tour.md) → [Concepts](architecture/concepts.md). Everything else is lookup material.
 
@@ -36,7 +36,7 @@ Scenario-oriented pages (also the website's landing content): [remote coding](us
 | [Quick tour](guides/quick-tour.md) | First chat, first IM channel, first handover — in 15 minutes |
 | [CLI quick start](guides/cli-quick-start.md) | Install the npm CLI, start the daemon, and run the first terminal workflow |
 | [Desktop app](guides/desktop-app.md) | Manage profiles, launches, and services from the GUI |
-| [Web dashboard](guides/web-dashboard.md) | Web terminal, web chat, live preview |
+| [Web dashboard](guides/web-dashboard.md) | Web chat, live preview |
 | [IM usage](guides/im-usage.md) | Drive an agent from chat; full slash-command reference |
 | [Connect channels](guides/connect-channels.md) | Configure Telegram, Slack, Feishu, and the others |
 | [Model profiles](guides/model-profiles.md) | Provider credentials and model routing |

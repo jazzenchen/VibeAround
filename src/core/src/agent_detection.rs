@@ -480,7 +480,7 @@ fn agent_command_spec(
     let agent = crate::resources::agent_by_id(agent_id)
         .ok_or_else(|| anyhow::anyhow!("agent '{}' not found", agent_id))?;
     Ok(AgentCommandSpec {
-        program: program_from_command(agent.pty_command_for_current_platform())
+        program: program_from_command(agent.cli_command_for_current_platform())
             .unwrap_or_else(|| agent.id.clone()),
         version_arg: "--version".to_string(),
         sources: BTreeMap::new(),

@@ -57,10 +57,6 @@ cargo clippy --workspace -- -D warnings
 
 JS surfaces build-check with `bun run web:build` and `bun run desktop-ui:build`.
 
-## tmux integration (optional)
-
-The web terminal can attach to tmux sessions when tmux is installed — no build flag needed; it is detected at runtime. The `tmux_detach_others` setting controls whether attaching from the dashboard detaches other clients.
-
 ## What you cannot build without maintainer secrets
 
 Release packaging beyond a local unsigned build uses maintainer-private configuration that is deliberately not in the repository:

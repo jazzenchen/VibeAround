@@ -30,7 +30,7 @@ Wrap a single agent subprocess behind a typed ACP handle and prepare profile env
 1. **Crashes surface, not auto-heal**: restart policy is `Never`; the owning thread decides whether to respawn. Do not add silent retry here.
 2. **Startup-session fallback clears the stale id**: if resume fails and the bridge fell back to a fresh agent, the recorded candidate session id must be cleared so a real one is created — otherwise prompts target a dead session.
 3. **Launch preparation is deterministic**: reserved skills are replaced on every launch; MCP config uses the current `mcp_token` from `auth.json`.
-4. **Registry-driven identity**: adding an agent is an `agents.json` change (adapter package, pty command, config paths), not new match arms — keep it that way where possible.
+4. **Registry-driven identity**: adding an agent is an `agents.json` change (adapter package, CLI command, config paths), not new match arms — keep it that way where possible.
 5. `Agent::shutdown` must not return until the supervisor has reaped the child and joined or bounded-aborted that generation's bridge task.
 
 ## Known debt

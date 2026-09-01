@@ -110,7 +110,7 @@ pub struct AgentSummary {
     pub display_name: String,
     pub description: String,
     pub install_type: Option<String>,
-    pub pty_command: String,
+    pub cli_command: String,
     pub direct_only: bool,
     pub built_in: bool,
     pub acp_program: String,
@@ -193,7 +193,7 @@ pub fn list_agents() -> Vec<AgentSummary> {
             display_name: a.display_name.clone(),
             description: a.description.clone(),
             install_type: a.install.as_ref().map(|i| i.install_type.clone()),
-            pty_command: a.pty_command_for_current_platform().to_string(),
+            cli_command: a.cli_command_for_current_platform().to_string(),
             direct_only: a.direct_only,
             built_in: a.built_in,
             acp_program: a.acp.program.clone(),
@@ -331,7 +331,7 @@ async fn agent_install_report(agent: common::resources::AgentDef) -> StartkitIte
         };
     }
 
-    let program = program_from_command(agent.pty_command_for_current_platform())
+    let program = program_from_command(agent.cli_command_for_current_platform())
         .unwrap_or_else(|| agent.acp.program.clone());
     StartkitItemReport {
         id: report_id,

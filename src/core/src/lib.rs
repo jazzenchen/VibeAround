@@ -1,4 +1,4 @@
-//! VibeAround core: conversation manager, agents, channels, PTY, tunnels, workspace. No UI, no HTTP.
+//! VibeAround core: conversation manager, agents, channels, tunnels, workspace. No UI, no HTTP.
 
 pub mod agent;
 pub mod agent_availability;
@@ -17,7 +17,6 @@ pub mod plugins;
 pub mod previews;
 pub mod process;
 pub mod profiles;
-pub mod pty;
 pub mod resources;
 pub mod routing;
 pub mod search;

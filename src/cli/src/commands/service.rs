@@ -105,7 +105,6 @@ pub(super) async fn status(options: &Options) -> Result<(), CliError> {
         let channels = transport.execute_json(ops::runtime_channels()).await?;
         let tunnels = transport.execute_json(ops::runtime_tunnels()).await?;
         let agent_runtimes = transport.execute_json(ops::runtime_agent_hosts()).await?;
-        let sessions = transport.execute_json(ops::sessions()).await?;
         let workspaces = transport.execute_json(ops::workspaces()).await?;
         let previews = transport.execute_json(ops::previews()).await?;
         print_json(serde_json::json!({
@@ -113,7 +112,6 @@ pub(super) async fn status(options: &Options) -> Result<(), CliError> {
             "channels": channels,
             "tunnels": tunnels,
             "agent_runtimes": agent_runtimes,
-            "sessions": sessions,
             "workspaces": workspaces,
             "previews": previews
         }))?;
@@ -124,7 +122,6 @@ pub(super) async fn status(options: &Options) -> Result<(), CliError> {
     snapshot.apply_channels(transport.execute(ops::runtime_channels()).await?);
     snapshot.apply_tunnels(transport.execute(ops::runtime_tunnels()).await?);
     snapshot.apply_agent_runtimes(transport.execute(ops::runtime_agent_hosts()).await?);
-    snapshot.apply_sessions(transport.execute(ops::sessions()).await?);
     snapshot.apply_workspaces(transport.execute(ops::workspaces()).await?);
     snapshot.apply_previews(transport.execute(ops::previews()).await?);
 
@@ -144,7 +141,6 @@ pub(super) async fn status(options: &Options) -> Result<(), CliError> {
         snapshot.active_agents(),
         snapshot.busy_agents()
     );
-    println!("sessions: {}", snapshot.sessions.len());
     println!("tunnels: {}", snapshot.tunnels.len());
     println!(
         "workspaces: {}",

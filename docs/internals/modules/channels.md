@@ -53,4 +53,4 @@ Host channel plugins (out-of-process stdio and in-process websocket), normalize 
 *Source anchors: `src/core/src/channels/` (all files above), `src/server/src/lib.rs` (input dispatcher and ingress-first shutdown).*
 *Last verified: `codex/im-acp-route-refactor` at `4a27a1c0` (2026-07-12).*
 
-<sub>[◀ Flow: PTY terminal](../flows/web-terminal.md) · [Documentation index](../../README.md) · [Module: workspace ▶](workspace.md)</sub>
+<sub>[◀ Flow: handover](../flows/handover.md) · [Documentation index](../../README.md) · [Module: workspace ▶](workspace.md)</sub>

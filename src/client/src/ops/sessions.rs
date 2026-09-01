@@ -1,33 +1,8 @@
 use crate::operation::Operation;
-use crate::sessions::{
-    CreateSessionBody, CreateSessionResponse, LaunchSessionInfo, LaunchSessionsQuery,
-    SessionListItem, TmuxSessionsResponse,
-};
+use crate::sessions::{LaunchSessionInfo, LaunchSessionsQuery};
 use crate::Result;
 
 use super::decode_success;
-
-pub fn sessions() -> Operation<Vec<SessionListItem>> {
-    Operation::new(crate::sessions::list(), crate::sessions::decode_list)
-}
-
-pub fn session_create(body: CreateSessionBody<'_>) -> Result<Operation<CreateSessionResponse>> {
-    Ok(Operation::new(
-        crate::sessions::create(body)?,
-        crate::sessions::decode_create,
-    ))
-}
-
-pub fn session_delete(session_id: &str) -> Operation<()> {
-    Operation::new(crate::sessions::delete(session_id), decode_success)
-}
-
-pub fn tmux_sessions() -> Operation<TmuxSessionsResponse> {
-    Operation::new(
-        crate::sessions::list_tmux(),
-        crate::sessions::decode_list_tmux,
-    )
-}
 
 pub fn launch_sessions(
     agent_id: &str,

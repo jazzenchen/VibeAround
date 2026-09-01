@@ -11,7 +11,6 @@ Priority order; suggested capture at ~1440px width, light theme, redact any real
 | 3 | Model profile creation (provider picker + endpoint variant) | guides/model-profiles.md §Creating a profile | Catalog list + one provider's endpoint groups |
 | 4 | Launch screen | guides/agent-launch.md §Launching from the desktop app | Agent + workspace + profile + terminal selection |
 | 5 | Web Chat with a permission card | guides/web-dashboard.md §Web Chat | Streaming turn + inline permission card |
-| 6 | Web Terminal with tabs | guides/web-dashboard.md §Web Terminal | Two tabs, one attached session |
 | 7 | IM permission card (Telegram or Feishu) | guides/im-usage.md §The basics | Tappable card in a real chat |
 | 8 | Pairing gate on a tunneled URL | guides/tunnels-and-remote-access.md §First visit | 6-digit code screen |
 | 9 | Channel plugin manager | guides/connect-channels.md §The pattern | Installed plugins with status |

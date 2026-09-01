@@ -17,7 +17,6 @@ Flow 经过某个模块的地方会互相交叉链接。面向读者的“为什
 | [Bridge 请求](flows/bridge-request.md) | 客户端方言 → 解码 → 模型映射 → 上游 → 流式返回 |
 | [原生启动](flows/native-launch.md) | Profile → launch JSON → va-launch → 终端启动 |
 | [交接](flows/handover.md) | 签发短码 → `/pickup` → 外部 session 绑定 → route 附着 |
-| [Web 终端](flows/web-terminal.md) | 浏览器 xterm ↔ WebSocket ↔ pseudo-tty |
 
 ## Modules
 
@@ -30,7 +29,6 @@ Flow 经过某个模块的地方会互相交叉链接。面向读者的“为什
 | [process](modules/process.md) | 子进程监管：启动、重启、watchdog、清理 |
 | [agent](modules/agent.md) | 到一个编程 CLI 的 ACP 连接，以及启动准备 |
 | [profiles](modules/profiles.md) | Provider catalog、profile 存储、启动渲染 |
-| [pty](modules/pty.md) | Web 终端背后的 pseudo-terminal session |
 | [previews](modules/previews.md) | Server/Markdown owner 与 Share URL、受限 Server Share 代理 |
 | [tunnels](modules/tunnels.md) | ngrok / localtunnel / cloudflare / Tailscale Funnel 发布 |
 | [auth](modules/auth.md) | Daemon token 和配对码 |
@@ -42,7 +40,7 @@ Flow 经过某个模块的地方会互相交叉链接。面向读者的“为什
 
 | 页面 | 覆盖内容 |
 |---|---|
-| [Launch](launch.md) | 四条启动路径、每条路径的 env 组装与注入、各 OS 终端处理、参数来源、desktop 与 CLI producer 差异 |
+| [Launch](launch.md) | 三条启动路径、每条路径的 env 组装与注入、各 OS 终端处理、参数来源、desktop 与 CLI producer 差异 |
 
 ## 相关材料
 

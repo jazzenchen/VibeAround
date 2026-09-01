@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use common::previews::PreviewSnapshot;
 use common::profiles::{catalog, AuthMode};
-use common::pty::{PtyRunState, PtyTool};
 use common::routing::RouteKey;
 
 /// `GET /api/service/health` response.
@@ -255,32 +254,6 @@ pub struct TunnelRuntime {
     pub uptime_secs: u64,
 }
 
-/// One PTY session, as returned by `GET /api/sessions`.
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionListItem {
-    pub session_id: String,
-    pub tool: PtyTool,
-    pub status: PtyRunState,
-    pub created_at: u64,
-    pub project_path: Option<String>,
-    pub profile_id: Option<String>,
-    pub profile_label: Option<String>,
-    pub launch_target: Option<String>,
-    pub tmux_session: Option<String>,
-}
-
-/// `POST /api/sessions` response.
-#[derive(Debug, Clone, Serialize)]
-pub struct CreateSessionResponse {
-    pub session_id: String,
-    pub tool: PtyTool,
-    pub created_at: u64,
-    pub project_path: Option<String>,
-    pub profile_id: Option<String>,
-    pub profile_label: Option<String>,
-    pub launch_target: Option<String>,
-}
-
 /// One resumable coding-agent session discovered from a CLI-owned session store.
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchSessionInfo {
@@ -327,13 +300,6 @@ pub struct WorkspaceThreadInitResponse {
     pub profile_id: Option<String>,
     pub session_id: Option<String>,
     pub workspace: String,
-}
-
-/// `GET /api/tmux/sessions` response.
-#[derive(Debug, Clone, Serialize)]
-pub struct TmuxSessionsResponse {
-    pub available: bool,
-    pub sessions: Vec<String>,
 }
 
 /// One workspace entry, as returned by `GET /api/workspaces`.

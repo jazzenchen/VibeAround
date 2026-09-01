@@ -106,7 +106,7 @@ export interface AgentSummary {
   display_name: string;
   description: string;
   install_type: string | null;
-  pty_command: string;
+  cli_command: string;
   direct_only: boolean;
   built_in: boolean;
   acp_program: string;

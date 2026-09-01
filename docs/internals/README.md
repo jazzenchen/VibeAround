@@ -17,7 +17,6 @@ They cross-link where a flow passes through a module. The reader-level "why is i
 | [Bridge request](flows/bridge-request.md) | Client dialect → decode → model mapping → upstream → streamed back |
 | [Native launch](flows/native-launch.md) | Profile → launch JSON → va-launch → terminal spawn |
 | [Handover](flows/handover.md) | Code issued → `/pickup` → external session bound → route attached |
-| [Web terminal](flows/web-terminal.md) | Browser xterm ↔ WebSocket ↔ pseudo-tty |
 
 ## Modules
 
@@ -30,7 +29,6 @@ Fixed structure per page: responsibility · key types · interactions · invaria
 | [process](modules/process.md) | Subprocess supervision: spawn, respawn, watchdog, cleanup |
 | [agent](modules/agent.md) | One ACP connection to a coding CLI + launch preparation |
 | [profiles](modules/profiles.md) | Provider catalog, profile store, launch rendering |
-| [pty](modules/pty.md) | Pseudo-terminal sessions behind the web terminal |
 | [previews](modules/previews.md) | Server/Markdown owner and Share URLs |
 | [tunnels](modules/tunnels.md) | ngrok / localtunnel / cloudflare / Tailscale Funnel publishing |
 | [auth](modules/auth.md) | Daemon token and pairing codes |
@@ -42,7 +40,7 @@ Cross-cutting subsystems that span several modules get a dedicated page:
 
 | Page | Covers |
 |---|---|
-| [Launch](launch.md) | The four launch paths, env assembly and injection per path, per-OS terminal handling, argument sources, desktop vs CLI producers |
+| [Launch](launch.md) | The three launch paths, env assembly and injection per path, per-OS terminal handling, argument sources, desktop vs CLI producers |
 
 ## Related material
 

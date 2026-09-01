@@ -53,4 +53,4 @@
 *Source anchors: `src/core/src/channels/`，`src/server/src/lib.rs`（input dispatcher 与 ingress-first shutdown）。*
 *Last verified: `codex/im-acp-route-refactor` at `4a27a1c0`（2026-07-12）。*
 
-<sub>[◀ Flow: PTY 终端](../flows/web-terminal.md) · [文档索引](../../README.md) · [Module: workspace ▶](workspace.md)</sub>
+<sub>[◀ Flow: handover](../flows/handover.md) · [文档索引](../../README.md) · [Module: workspace ▶](workspace.md)</sub>

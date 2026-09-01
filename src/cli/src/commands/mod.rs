@@ -30,7 +30,6 @@ pub(crate) async fn dispatch(options: &Options, command: Command) -> Result<(), 
         Command::Channels => runtime::channels(options).await?,
         Command::Tunnels => runtime::tunnels(options).await?,
         Command::Agents => runtime::agents(options).await?,
-        Command::Sessions => sessions::list(options).await?,
         Command::Workspaces => workspaces::list(options).await?,
         Command::Previews => previews::list(options).await?,
         Command::Profiles => profiles::list(options).await?,
@@ -53,7 +52,6 @@ pub(crate) async fn dispatch(options: &Options, command: Command) -> Result<(), 
         Command::AuthClear => {
             crate::auth::clear(options)?;
         }
-        Command::TmuxSessions => runtime::tmux_sessions(options).await?,
         Command::LaunchRun(args) => launch::run(options, &args)?,
         Command::LaunchSessions(args) => sessions::launch_sessions(options, &args).await?,
         Command::LaunchSessionArchive(args) => {
@@ -69,12 +67,6 @@ pub(crate) async fn dispatch(options: &Options, command: Command) -> Result<(), 
         Command::ChannelRestart { kind } => runtime::restart_channel(options, &kind).await?,
         Command::TunnelKill { provider } => runtime::kill_tunnel(options, &provider).await?,
         Command::AgentKill { thread_id } => runtime::kill_agent(options, &thread_id).await?,
-        Command::SessionCreate(create) => sessions::create(options, &create).await?,
-        Command::SessionAttach { session_id } => {
-            crate::attach::attach_session(options, &session_id).await?;
-        }
-        Command::SessionKill { session_id } => sessions::kill(options, &session_id).await?,
-        Command::PtyKill { session_id } => runtime::kill_pty(options, &session_id).await?,
         Command::PreviewDelete { slug } => previews::delete(options, &slug).await?,
         Command::WorkspaceAdd { path } => workspaces::add(options, &path).await?,
         Command::WorkspaceRemove { path } => workspaces::remove(options, &path).await?,

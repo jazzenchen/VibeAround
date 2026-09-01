@@ -1,4 +1,4 @@
-//! Shared agent availability resolution for onboarding, launch, ACP, and PTY.
+//! Shared agent availability resolution for onboarding, launch, and ACP.
 
 use crate::agent_detection::{self, AgentCandidate, AgentDetection};
 

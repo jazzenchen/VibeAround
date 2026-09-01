@@ -66,9 +66,8 @@ curl http://127.0.0.1:12358/va/local-agent/claude/direct/v1/chat/completions \
 
 | 端点 | 用途 |
 |---|---|
-| `/ws?session_id=` | 终端字节 + JSON resize（Web 终端 ↔ PTY） |
 | `/ws/chat` | Web/TUI 聊天事件 |
-| `/ws/channels`、`/ws/tunnels`、`/ws/sessions`、`/ws/agents/runtime` | 实时状态：每次变化发全量快照 |
+| `/ws/channels`、`/ws/tunnels`、`/ws/agents/runtime` | 实时状态：每次变化发全量快照 |
 
 ## 预览 URL
 

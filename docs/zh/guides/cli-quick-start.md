@@ -34,7 +34,7 @@ va doctor
 va tui
 ```
 
-TUI 是终端里最快的运行时查看入口。浏览器控制台则使用 `va status` 给出的已认证 URL；它提供和桌面应用相同的 Web Chat、Web Terminal、实时预览、Workspace 列表、Profile 和运行时控制。
+TUI 是终端里最快的运行时查看入口。浏览器控制台则使用 `va status` 给出的已认证 URL；它提供和桌面应用相同的 Web Chat、实时预览、Workspace 列表、Profile 和运行时控制。
 
 ## 4. 添加 Workspace 和 Agent
 
@@ -60,7 +60,7 @@ va launch --profile my-codex-profile
 va chat send "look at ~/dev/my-app and summarize the project"
 ```
 
-长时间交互更适合用 Web Chat、Web Terminal、IM 渠道或 TUI。完整命令见 [CLI 参考](../reference/cli.md)。
+长时间交互更适合用 Web Chat、IM 渠道或 TUI。完整命令见 [CLI 参考](../reference/cli.md)。
 
 ---
 

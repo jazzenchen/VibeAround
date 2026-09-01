@@ -37,4 +37,4 @@ Track current-daemon Preview sessions (dev-server ports and Markdown files) in m
 *Source anchors: `src/core/src/previews/` (mod, store), `src/server/src/web_server/preview/` (iframe, markdown, access), `src/server/src/web_server/mcp/tools.rs` (preview tools).*
 *Last verified: v0.7.24*
 
-<sub>[◀ Module: pty](pty.md) · [Documentation index](../../README.md) · [Module: tunnels ▶](tunnels.md)</sub>
+<sub>[◀ Module: profiles](profiles.md) · [Documentation index](../../README.md) · [Module: tunnels ▶](tunnels.md)</sub>

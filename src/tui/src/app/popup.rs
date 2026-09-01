@@ -56,7 +56,6 @@ impl TuiApp {
                 0 => self.snapshot.channels.len(),
                 1 => self.snapshot.tunnels.len(),
                 2 => self.snapshot.agents.len(),
-                3 => self.snapshot.sessions.len(),
                 _ => 0,
             },
             PopupKind::Agent => match category {

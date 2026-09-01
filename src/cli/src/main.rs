@@ -1,5 +1,4 @@
 mod args;
-mod attach;
 mod auth;
 mod chat_store;
 mod commands;

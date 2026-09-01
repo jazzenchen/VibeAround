@@ -123,7 +123,6 @@ pub struct Config {
     pub default_workspace: PathBuf,
     /// User-added project folders.
     pub workspaces: Vec<PathBuf>,
-    pub tmux_detach_others: bool,
     // --- Agents ---
     pub default_agent: String,
     /// Subset of agent IDs from `resources/agents.json` the user has enabled.
@@ -480,12 +479,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
     let default_workspace = workspace_settings.default_workspace;
     let workspaces = workspace_settings.workspaces;
 
-    let tmux_detach_others = root
-        .get("tmux")
-        .and_then(|t| t.get("detach_others"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-
     let default_agent = root
         .get("default_agent")
         .and_then(|v| v.as_str())
@@ -560,7 +553,6 @@ pub fn config_from_settings_json(root: &serde_json::Value) -> Config {
         portable_toolchain,
         default_workspace,
         workspaces,
-        tmux_detach_others,
         default_agent,
         enabled_agents,
         proxy,
@@ -1246,7 +1238,6 @@ impl Default for Config {
             portable_toolchain: false,
             default_workspace: builtin_workspaces_dir(),
             workspaces: vec![],
-            tmux_detach_others: true,
             default_agent: "claude".to_string(),
             enabled_agents: crate::resources::AGENTS
                 .iter()

@@ -1,13 +1,11 @@
 mod bridge_recording;
 mod chat;
-mod pty;
 mod snapshots;
 
 use crate::http::AuthRequirement;
 
 pub use bridge_recording::*;
 pub use chat::*;
-pub use pty::*;
 pub use snapshots::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

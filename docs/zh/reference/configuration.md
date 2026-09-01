@@ -77,10 +77,7 @@ VibeAround 读写的每一个文件，可手动编辑的都附完整 schema。�
   "channels": {
     "telegram": { "bot_token": "…", "verbose": { "show_thinking": true, "show_tool_use": true } },
     "feishu":   { "app_id": "…", "app_secret": "…" }
-  },
-
-  // --- Web 终端 ---
-  "tmux": { "detach_others": true }
+  }
 }
 ```
 

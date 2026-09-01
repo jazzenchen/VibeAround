@@ -53,16 +53,6 @@ Global flags: `--auth-file PATH`, `--base-url URL`, `--token TOKEN`, `--json`.
 | `va launch sessions` | List resumable native sessions |
 | `va launch archive\|unarchive --agent A ID` | Archive / unarchive a launch session |
 
-## PTY sessions and tmux
-
-| Command | Purpose |
-|---|---|
-| `va sessions` | List PTY sessions |
-| `va session create --tool TOOL [--attach]` | Create/resume a PTY session |
-| `va session attach SESSION_ID` / `va session kill SESSION_ID` | Attach / kill |
-| `va pty kill SESSION_ID` | Kill a PTY process by session id |
-| `va tmux sessions` | List attachable tmux sessions |
-
 ## Workspaces, previews, profiles
 
 | Command | Purpose |

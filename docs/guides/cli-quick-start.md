@@ -34,7 +34,7 @@ va doctor
 va tui
 ```
 
-The TUI is the fastest terminal surface for checking runtime state. For the browser dashboard, use the authenticated URL from `va status`; it opens the same Web Chat, Web Terminal, live previews, workspace list, profiles, and runtime controls as the desktop app.
+The TUI is the fastest terminal surface for checking runtime state. For the browser dashboard, use the authenticated URL from `va status`; it opens the same Web Chat, live previews, workspace list, profiles, and runtime controls as the desktop app.
 
 ## 4. Add a workspace and agent
 
@@ -60,7 +60,7 @@ Or send a single hosted Web Chat prompt:
 va chat send "look at ~/dev/my-app and summarize the project"
 ```
 
-For long-lived interactive work, use Web Chat, the Web Terminal, an IM channel, or the TUI. The full command list is in the [CLI reference](../reference/cli.md).
+For long-lived interactive work, use Web Chat, an IM channel, or the TUI. The full command list is in the [CLI reference](../reference/cli.md).
 
 ---
 

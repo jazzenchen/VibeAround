@@ -2,8 +2,8 @@
 //!
 //! This is the contract between `common` and its shells (the axum
 //! server, the Tauri desktop, any future TUI/CLI). Every manager that
-//! holds runtime state — `ChannelMonitor`, `WorkspaceThreadManager`, `TunnelManager`,
-//! `PtyRegistry` — implements [`StateSource`] so consumers have two
+//! holds runtime state — `ChannelMonitor`, `WorkspaceThreadManager`,
+//! `TunnelManager` — implements [`StateSource`] so consumers have two
 //! ways to work with it:
 //!
 //! - **Poll**: call [`StateSource::list`] whenever you need the current
@@ -37,9 +37,9 @@
 #[allow(async_fn_in_trait)]
 pub trait StateSource {
     /// Entry type — typically `Arc<SomeRuntimeObject>` for long-lived
-    /// entities whose fields are read live (pods, PTY sessions, tunnels)
-    /// or a computed value struct for derived views (channel status with
-    /// relative timestamps).
+    /// entities whose fields are read live (pods, tunnels) or a computed
+    /// value struct for derived views (channel status with relative
+    /// timestamps).
     type Entry;
 
     /// Current state. `async` because most managers hold their entries

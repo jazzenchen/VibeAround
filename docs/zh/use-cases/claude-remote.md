@@ -4,7 +4,7 @@
 
 Claude 和 Claude Code 是 Anthropic 的产品。VibeAround 是协调本地工作流的独立软件。
 
-Claude Code 也有官方的 Remote Control 能力。当工作流需要共享的本地 Agent 工作区、供应商 Profile、Web Terminal、IM 渠道、实时预览，或想在 Claude Code、Codex CLI、Gemini CLI、OpenCode 等多个 Agent 上用同一套远程控制模式时，VibeAround 有用武之地。
+Claude Code 也有官方的 Remote Control 能力。当工作流需要共享的本地 Agent 工作区、供应商 Profile、IM 渠道、实时预览，或想在 Claude Code、Codex CLI、Gemini CLI、OpenCode 等多个 Agent 上用同一套远程控制模式时，VibeAround 有用武之地。
 
 ## 完整走一遍
 

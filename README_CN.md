@@ -28,7 +28,7 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，也尽量不�
 - 继续使用你已经熟悉的 Claude Code、Codex CLI、Gemini CLI、Pi、OpenCode、Claude Desktop、Codex Desktop 等 AI 编程 Agent。
 - 直接启动 Agent，或通过第三方 AI API 运行 Agent，不用在不同 Agent 配置文件之间来回手改。
 - 桥接不同 AI API 协议，让 Agent 和模型 provider 即使原生 API 不匹配也能配合工作。
-- 在桌面、CLI、消息应用、手机浏览器、网页浏览器和 Web Terminal 之间继续同一个会话。
+- 在桌面、CLI、消息应用、手机浏览器和网页浏览器之间继续同一个会话。
 - 在本机预览 dev server 和 HTML，并远程查看渲染后的 Markdown，同时执行环境仍留在你的电脑上。
 - 在主机端为 Agent 补上所选模型不支持的能力，例如 Web Search 和图片理解。
 - 在现有配置、项目权限和工作流之外增加能力，尽量保持原有环境干净、少改动。
@@ -63,7 +63,6 @@ VibeAround 把分散的 AI 编程工作流收拢到一个入口，也尽量不�
 | Session resume | ✅ 在 macOS、Windows 和 Linux 上继续并启动 CLI 与桌面版 Agent | ⚠️ macOS 支持 terminal resume；Windows 和 Linux 只能复制 command 到剪贴板 |
 | Workspace selection | ✅ 从指定目录 launch agent | ⚠️ 仅支持 OpenClaw workspace |
 | IM Chat | ✅ 通过 [远程消息与会话接续](#远程消息与会话接续) 接入飞书/Lark、Discord、Slack 等 | ❌ 当前不支持 |
-| Web Terminal | ✅ 通过 [Web Terminal](#web-terminal) 远程控制 CLI | ❌ 当前不支持 |
 | Web Hub | ✅ 通过 [Web Hub](#web-hub) 在电脑或手机浏览器 launch、continue sessions 和 chat | ❌ 当前不支持 |
 | Remote preview | ✅ 本地 dev-server/HTML 预览 + 远程 Markdown 链接 | ❌ 当前不支持 |
 | Host-side web search | ✅ provider 不提供原生搜索时，通过 [主机端 Web 搜索](#主机端-web-搜索) / `va-search-tool` 补上 | ❌ 当前不支持 |
@@ -189,25 +188,10 @@ IM 接入是通过 [VibeAround Channel SDK](https://github.com/jazzenchen/va-plu
 | Workspace commands | ✅ `/workspace --list` 和 `/workspace --switch` | ✅ `/dir` 和 `/cd` |
 | Remote preview | ✅ 发送本地 Web/HTML 预览和可远程分享的 Markdown 链接 | ❌ 当前不支持 |
 | IM file attachments | ⚠️ 只支持发送；暂不支持从 IM 接收文件 | ✅ 在支持的平台上可发送和接收 files/images |
-| Web Terminal | ✅ 用浏览器远程控制本地 AI Agent CLI | ❌ 当前不支持 |
 | Web Hub | ✅ 从浏览器 launch、continue sessions 和 chat | ⚠️ 提供 Web admin/config dashboard；service 需要单独运行 |
 | Scheduling 和 rich IM commands | ❌ 当前不支持 | ✅ `/timer`、`/cron`、`/cancel`、`/ps`、provider/model/mode commands |
 
 </details>
-
-## Web Terminal
-
-用电脑或手机浏览器直接控制本地 AI Agent CLI。
-
-VibeAround 通过 Web Dashboard 暴露本地 terminal session，让你可以从电脑或手机浏览器远程操作 AI Agent CLI，同时执行环境仍留在自己的电脑上。
-
-<p align="center">
-  <img src="https://pub-806a1b8456464ce7a6c110f84946697e.r2.dev/documents/v0.7.12/readme/web-terminal.webp" alt="VibeAround Web Terminal 远程控制界面" width="88%" />
-</p>
-
-- 通过电脑或手机浏览器里的 Web Terminal 访问本地 AI Agent CLI。
-- 使用 tunnel 远程访问，同时 daemon 仍在本地运行。
-- 保留本机项目权限和 terminal 环境。
 
 ## Web Hub
 
@@ -230,7 +214,7 @@ VibeAround Web Hub 提供浏览器入口，用来选择 Agent、API Profile、Wo
 
 只在你明确开启时，才把 VibeAround 的本地 Web 入口暴露出去。
 
-Remote tunnel 会被 Web Hub、Web Terminal 和 Markdown preview 链接使用。VibeAround 仍然让 daemon 留在本地运行，只负责启动你选择的 tunnel provider；owner 界面需要浏览器配对，当前 Markdown share 链接是限时例外。Live Server 预览始终仅限回环地址。
+Remote tunnel 会被 Web Hub 和 Markdown preview 链接使用。VibeAround 仍然让 daemon 留在本地运行，只负责启动你选择的 tunnel provider；owner 界面需要浏览器配对，当前 Markdown share 链接是限时例外。Live Server 预览始终仅限回环地址。
 
 | Tunnel 选项 | 状态 | 说明 |
 |---|---|---|
@@ -338,7 +322,7 @@ VibeAround 默认把 AI 编程工作留在你自己的电脑上。
 3. 跟随引导完成初始设置，并启用你常用的 Agent CLI。
 4. 如果希望 VibeAround 统一路由模型流量，添加 API Profile。
 5. 在 Launch 或 Web Hub 中选择 Agent、模型 Profile、Terminal、Workspace 和 Session。
-6. 之后，你就可以从桌面、Web Hub、Web Terminal、CLI 或配置好的消息频道继续工作。
+6. 之后，你就可以从桌面、Web Hub、CLI 或配置好的消息频道继续工作。
 
 详细文档见 [Wiki](https://github.com/jazzenchen/VibeAround/wiki)。
 

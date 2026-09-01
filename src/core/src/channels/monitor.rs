@@ -517,7 +517,7 @@ pub fn touch_weak(weak: &Weak<ChannelMonitor>, instance_id: &str) {
 
 /// Forwarder that republishes supervisor events as `()` pings, filtered
 /// to `ChannelPlugin` entries so the Dashboard WS doesn't re-render for
-/// unrelated PTY / tunnel state.
+/// unrelated tunnel state.
 async fn forward_events(mut rx: broadcast::Receiver<ProcessEvent>, tx: broadcast::Sender<()>) {
     loop {
         match rx.recv().await {

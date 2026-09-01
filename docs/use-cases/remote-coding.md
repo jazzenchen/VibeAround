@@ -2,7 +2,7 @@
 
 The scenario: a coding agent is working on a repository on your desk machine — with your credentials, your dev servers, your private network — and you need to leave. Remote coding in VibeAround means the work stays exactly where it is, and your phone or another browser becomes a controlled door back into it.
 
-This is different from moving work into a hosted cloud IDE. Nothing gets cloned into a provider-managed container; browser, mobile, Web Terminal, messaging, and preview surfaces all lead back to the same local workspace.
+This is different from moving work into a hosted cloud IDE. Nothing gets cloned into a provider-managed container; browser, mobile, messaging, and preview surfaces all lead back to the same local workspace.
 
 ## When To Use This
 
@@ -26,7 +26,6 @@ Fifteen minutes if VibeAround is already installed; add ten for a first install.
 | Surface | Best for |
 | --- | --- |
 | Web Chat | Short steering prompts and session continuation from a browser. |
-| Web Terminal | Shell-like access to the local workspace. |
 | Mobile browser | Quick review, approval, or redirection away from the desk. |
 | Messaging channels | Asynchronous check-ins through Telegram, Feishu/Lark, Discord, Slack, WeChat, DingTalk, WeCom, or QQ Bot. |
 | Live Preview | Reviewing dev servers/HTML in the host's local browser and rendered Markdown remotely. |
@@ -35,7 +34,7 @@ Fifteen minutes if VibeAround is already installed; add ten for a first install.
 
 - Confirm who can reach the session — channel membership and browser pairing are the access boundary.
 - Keep tunnels disabled until remote access is actually needed.
-- Treat Web Terminal and messaging bots as privileged control surfaces; protect them like shell access.
+- Treat Web Chat and messaging bots as privileged control surfaces; protect them like shell access.
 - Use scoped preview links instead of broad access.
 - Stop or archive sessions that should no longer accept input.
 
@@ -44,7 +43,7 @@ Review the [security model](../architecture/security-model.md) before enabling t
 ## Related Docs
 
 - [Session handover](../architecture/session-lifecycle.md)
-- [Remote Messaging & Web Terminal](../guides/im-usage.md)
+- [IM usage](../guides/im-usage.md)
 - [Codex on mobile](codex-mobile.md) · [Claude Code remote](claude-remote.md) · [Gemini CLI remote](gemini-remote.md) · [OpenCode remote](opencode-remote.md)
 
 ---

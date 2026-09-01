@@ -1,5 +1,4 @@
 import { AGENT_IDS, type AgentId } from "@va/client";
-import type { ToolType } from "@/lib/terminal-types";
 
 export type { AgentId };
 
@@ -29,25 +28,4 @@ function isAgentId(value: string): value is AgentId {
 
 export function getAgentDisplayName(agentId: string): string {
   return isAgentId(agentId) ? AGENT_DISPLAY_NAMES[agentId] : agentId;
-}
-
-export function getToolDisplayName(tool: string): string {
-  const normalized = tool.toLowerCase();
-  return isAgentId(normalized) ? AGENT_DISPLAY_NAMES[normalized] : "Terminal";
-}
-
-export function agentIdToToolType(agentId: string): ToolType {
-  const normalized = agentId.toLowerCase();
-  // ToolType is a subset of AgentId (plus "generic"). Widen here and let
-  // the theme layer treat any kind it doesn't recognize as "generic".
-  if (
-    normalized === "claude" ||
-    normalized === "codex" ||
-    normalized === "gemini" ||
-    normalized === "opencode" ||
-    normalized === "pi"
-  ) {
-    return normalized;
-  }
-  return "generic";
 }

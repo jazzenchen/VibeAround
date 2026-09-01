@@ -11,7 +11,7 @@ use crate::chat::{
     input_box_height, input_cursor_offset, input_visible_lines, visible_chat_message_lines,
     SlashCommand,
 };
-use crate::detail::{agent_detail, channel_detail, session_detail, tunnel_detail};
+use crate::detail::{agent_detail, channel_detail, tunnel_detail};
 use crate::popup::{Popup, PopupLevel};
 use crate::theme::{
     accent_style, muted_style, ACTION, BRAND, ERROR, INPUT_ACCENT, INPUT_BG, OK, WARN,
@@ -24,8 +24,8 @@ mod rows;
 use brand::{mark_lines, wordmark_lines, MARK_WIDTH, VERSION};
 use chrome::{command_bar, context_pairs, divider_line, label_value_spans};
 use rows::{
-    agent_info_row, agent_row, channel_row, launch_session_row, profile_row, session_row,
-    tunnel_row, workspace_row,
+    agent_info_row, agent_row, channel_row, launch_session_row, profile_row, tunnel_row,
+    workspace_row,
 };
 
 const INPUT_HORIZONTAL_PADDING: u16 = 2;
@@ -515,7 +515,6 @@ fn popup_category_row(
 fn status_category_trailing(app: &TuiApp, category: usize) -> Vec<Span<'static>> {
     use crate::popup::PopupKind;
     use va_client::runtime::{ChannelStatus, TunnelStatus};
-    use va_client::sessions::PtyRunState;
 
     let count = app.popup_item_count(PopupKind::Status, category);
     let mut spans = vec![Span::styled(count.to_string(), muted_style())];
@@ -565,15 +564,6 @@ fn status_category_trailing(app: &TuiApp, category: usize) -> Vec<Span<'static>>
             } else {
                 None
             }
-        }
-        3 => {
-            let running = app
-                .snapshot
-                .sessions
-                .iter()
-                .filter(|session| matches!(session.status, PtyRunState::Running { .. }))
-                .count();
-            (running > 0).then(|| (format!("{running} running"), Style::default().fg(OK)))
         }
         _ => None,
     };
@@ -682,7 +672,6 @@ fn popup_item_rows(app: &TuiApp, popup: &Popup, category: usize) -> Vec<Vec<Span
             0 => app.snapshot.channels.iter().map(channel_row).collect(),
             1 => app.snapshot.tunnels.iter().map(tunnel_row).collect(),
             2 => app.snapshot.agents.iter().map(agent_row).collect(),
-            3 => app.snapshot.sessions.iter().map(session_row).collect(),
             _ => Vec::new(),
         },
         PopupKind::Agent => match category {
@@ -725,7 +714,6 @@ fn popup_detail_lines(
         (PopupKind::Status, 0) => app.snapshot.channels.get(item).map(channel_detail),
         (PopupKind::Status, 1) => app.snapshot.tunnels.get(item).map(tunnel_detail),
         (PopupKind::Status, 2) => app.snapshot.agents.get(item).map(agent_detail),
-        (PopupKind::Status, 3) => app.snapshot.sessions.get(item).map(session_detail),
         _ => None,
     };
     match detail {

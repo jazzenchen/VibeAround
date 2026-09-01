@@ -51,7 +51,7 @@ Route 是穿过某渠道的一条对话路径的稳定地址：三元组 *(chann
 Agent 是 VibeAround 能驱动的编程 CLI：Claude Code、Codex、Gemini CLI、Cursor、Qwen Code、Kiro、OpenCode 或 Pi。VibeAround 通过 [Agent Client Protocol](https://agentclientprotocol.com)（ACP），经由各 Agent 的 ACP 适配器与之通信，每个活跃 Thread 拉起一个 Agent 进程。桌面版条目（`claude-desktop`、`codex-desktop`）只是启动目标，不是 ACP 运行时 —— 它们打开厂商的桌面应用。
 
 - `/switch host <agent>` 切到不同 Agent 会开一个带全新 Session 的**新 Thread**（上下文不在不同 Agent 产品之间传递）；只切 Profile 则保留 Thread 和 Session。
-- Agent 定义（ACP 适配器包、PTY 命令、恢复模板、配置注入路径）来自内置注册表。
+- Agent 定义（ACP 适配器包、CLI 启动命令、恢复模板、配置注入路径）来自内置注册表。
 
 *细节：[支持的 Agent 矩阵](../product/supported-matrix.md#编程-agent) · [agent 模块内幕](../internals/modules/agent.md) · [启动子系统](../internals/launch.md)（Agent 如何被启动） · [`/switch` 命令参考](../guides/im-usage.md#agent-与-profile)*
 

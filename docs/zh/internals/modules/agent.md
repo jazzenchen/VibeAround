@@ -30,7 +30,7 @@
 1. **Crash 要显性暴露，不自动修复**：restart policy 是 `Never`；owning thread 决定是否 respawn。不要在这里加 silent retry。
 2. **Startup-session fallback 要清掉 stale id**：如果 resume 失败且 bridge fallback 到 fresh agent，记录的 candidate session id 必须清掉，后续才会创建真实 session，否则 prompt 会指向死 session。
 3. **Launch preparation 是确定性的**：每次启动替换保留 skills；MCP 配置使用 `auth.json` 中当前的 `mcp_token`。
-4. **Registry-driven identity**：新增 agent 应是 `agents.json` 变更（adapter package、pty command、config paths），不是新 match arms。尽量保持这一点。
+4. **Registry-driven identity**：新增 agent 应是 `agents.json` 变更（adapter package、CLI command、config paths），不是新 match arms。尽量保持这一点。
 5. `Agent::shutdown` 返回前，supervisor 必须已经 reap child，并 join 或有界 abort 该 generation 的 bridge task。
 
 ## 已知技术债

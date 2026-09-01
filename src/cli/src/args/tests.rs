@@ -1,5 +1,3 @@
-use va_client::sessions::PtyTool;
-
 use super::*;
 use crate::error::CliError;
 
@@ -589,184 +587,6 @@ fn parses_launch_unarchive_command_with_positional_agent() {
 }
 
 #[test]
-fn parses_session_create_with_tool_and_project() {
-    let options = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--tool".to_string(),
-        "codex".to_string(),
-        "--project=/tmp/project".to_string(),
-        "--cols".to_string(),
-        "120".to_string(),
-        "--rows=40".to_string(),
-    ])
-    .expect("options");
-
-    assert_eq!(
-        options.command,
-        Some(Command::SessionCreate(SessionCreateArgs {
-            tool: Some(PtyTool::Codex),
-            project_path: Some("/tmp/project".into()),
-            cols: Some(120),
-            rows: Some(40),
-            ..Default::default()
-        }))
-    );
-}
-
-#[test]
-fn parses_session_create_with_attach() {
-    let options = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--tool".to_string(),
-        "codex".to_string(),
-        "--attach".to_string(),
-    ])
-    .expect("options");
-
-    assert_eq!(
-        options.command,
-        Some(Command::SessionCreate(SessionCreateArgs {
-            tool: Some(PtyTool::Codex),
-            attach: true,
-            ..Default::default()
-        }))
-    );
-}
-
-#[test]
-fn parses_session_create_with_explicit_attach_false() {
-    let options = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--tool".to_string(),
-        "codex".to_string(),
-        "--attach=false".to_string(),
-    ])
-    .expect("options");
-
-    assert_eq!(
-        options.command,
-        Some(Command::SessionCreate(SessionCreateArgs {
-            tool: Some(PtyTool::Codex),
-            attach: false,
-            ..Default::default()
-        }))
-    );
-}
-
-#[test]
-fn parses_session_create_with_resume() {
-    let options = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--tool=codex".to_string(),
-        "--resume".to_string(),
-        "resume-1".to_string(),
-        "--attach".to_string(),
-    ])
-    .expect("options");
-
-    assert_eq!(
-        options.command,
-        Some(Command::SessionCreate(SessionCreateArgs {
-            tool: Some(PtyTool::Codex),
-            resume_session_id: Some("resume-1".into()),
-            attach: true,
-            ..Default::default()
-        }))
-    );
-}
-
-#[test]
-fn rejects_session_create_resume_with_tmux() {
-    let error = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--resume=resume-1".to_string(),
-        "--tmux=work".to_string(),
-    ])
-    .expect_err("error");
-    assert!(matches!(error, CliError::Usage(_)));
-}
-
-#[test]
-fn parses_session_attach_command() {
-    let options = parse_args([
-        "session".to_string(),
-        "attach".to_string(),
-        "sid-1".to_string(),
-    ])
-    .expect("options");
-
-    assert_eq!(
-        options.command,
-        Some(Command::SessionAttach {
-            session_id: "sid-1".into()
-        })
-    );
-}
-
-#[test]
-fn parses_session_create_with_profile_target() {
-    let options = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--profile=p1".to_string(),
-        "--target".to_string(),
-        "claude".to_string(),
-    ])
-    .expect("options");
-
-    assert_eq!(
-        options.command,
-        Some(Command::SessionCreate(SessionCreateArgs {
-            profile_id: Some("p1".into()),
-            launch_target: Some("claude".into()),
-            ..Default::default()
-        }))
-    );
-}
-
-#[test]
-fn parses_session_create_with_tmux_defaulting_generic_tool() {
-    let options = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--tmux".to_string(),
-        "server".to_string(),
-    ])
-    .expect("options");
-
-    assert_eq!(
-        options.command,
-        Some(Command::SessionCreate(SessionCreateArgs {
-            tool: Some(PtyTool::Generic),
-            tmux_session: Some("server".into()),
-            ..Default::default()
-        }))
-    );
-}
-
-#[test]
-fn rejects_incomplete_profile_session_create() {
-    let error = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--profile=p1".to_string(),
-    ])
-    .expect_err("error");
-    assert!(matches!(error, CliError::Usage(_)));
-}
-
-#[test]
-fn parses_tmux_sessions_command() {
-    let options = parse_args(["tmux".to_string(), "sessions".to_string()]).expect("options");
-    assert_eq!(options.command, Some(Command::TmuxSessions));
-}
-
-#[test]
 fn parses_json_flag() {
     let options = parse_args(["--json".to_string(), "channels".to_string()]).expect("options");
     assert!(options.json);
@@ -783,20 +603,20 @@ fn parses_global_json_after_simple_command() {
 #[test]
 fn parses_global_json_after_command_with_local_options() {
     let options = parse_args([
-        "session".to_string(),
-        "create".to_string(),
-        "--tool".to_string(),
-        "codex".to_string(),
+        "pair".to_string(),
+        "status".to_string(),
+        "sid-1".to_string(),
+        "--save".to_string(),
         "--json".to_string(),
     ])
     .expect("options");
     assert!(options.json);
     assert_eq!(
         options.command,
-        Some(Command::SessionCreate(SessionCreateArgs {
-            tool: Some(PtyTool::Codex),
-            ..Default::default()
-        }))
+        Some(Command::PairStatus {
+            sid: "sid-1".into(),
+            save: true
+        })
     );
 }
 

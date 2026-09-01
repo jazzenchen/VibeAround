@@ -4,7 +4,7 @@ The scenario: Claude Code is deep in a task on your desk machine and you are abo
 
 Claude and Claude Code are Anthropic products. VibeAround is independent software that coordinates local workflows.
 
-Claude Code also has official Remote Control capabilities. VibeAround is useful when the workflow needs a shared local agent workspace, provider profiles, Web Terminal, messaging channels, live preview, or the same remote-control pattern across Claude Code, Codex CLI, Gemini CLI, OpenCode, and other agents.
+Claude Code also has official Remote Control capabilities. VibeAround is useful when the workflow needs a shared local agent workspace, provider profiles, messaging channels, live preview, or the same remote-control pattern across Claude Code, Codex CLI, Gemini CLI, OpenCode, and other agents.
 
 ## The Walkthrough
 
