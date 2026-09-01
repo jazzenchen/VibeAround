@@ -21,7 +21,6 @@ bytes = "1.9"
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
-dashmap = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls", "stream"] }
 chrono = "0.4"
 agent-client-protocol = { workspace = true }
