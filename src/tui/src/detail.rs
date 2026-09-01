@@ -1,7 +1,6 @@
 use va_client::runtime::{
     AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
 };
-use va_client::sessions::{PtyRunState, SessionListItem};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DetailContent {
@@ -25,13 +24,6 @@ pub(crate) fn tunnel_status_label(status: &TunnelStatus) -> &'static str {
         TunnelStatus::AwaitingApproval { .. } => "awaiting-approval",
         TunnelStatus::Stopped { .. } => "stopped",
         TunnelStatus::Failed { .. } => "failed",
-    }
-}
-
-pub(crate) fn session_status_label(status: &PtyRunState) -> &'static str {
-    match status {
-        PtyRunState::Running { .. } => "running",
-        PtyRunState::Exited { .. } => "exited",
     }
 }
 
@@ -78,44 +70,5 @@ pub(crate) fn agent_detail(agent: &AgentRuntime) -> DetailContent {
             format!("busy: {}", agent.busy),
             format!("failed: {}", agent.failed.as_deref().unwrap_or("-")),
         ],
-    }
-}
-
-pub(crate) fn session_detail(session: &SessionListItem) -> DetailContent {
-    DetailContent {
-        title: format!("session {}", short_id(&session.session_id)),
-        lines: vec![
-            format!("session_id: {}", session.session_id),
-            format!("tool: {:?}", session.tool),
-            format!("status: {}", session_status_label(&session.status)),
-            format!(
-                "project_path: {}",
-                session.project_path.as_deref().unwrap_or("-")
-            ),
-            format!(
-                "profile_id: {}",
-                session.profile_id.as_deref().unwrap_or("-")
-            ),
-            format!(
-                "profile_label: {}",
-                session.profile_label.as_deref().unwrap_or("-")
-            ),
-            format!(
-                "launch_target: {}",
-                session.launch_target.as_deref().unwrap_or("-")
-            ),
-            format!(
-                "tmux_session: {}",
-                session.tmux_session.as_deref().unwrap_or("-")
-            ),
-        ],
-    }
-}
-
-fn short_id(value: &str) -> String {
-    if value.chars().count() <= 8 {
-        value.to_string()
-    } else {
-        value.chars().take(8).collect()
     }
 }

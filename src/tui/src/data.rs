@@ -3,7 +3,7 @@ use va_client::ops;
 use va_client::profiles::ModelProfileSummary;
 use va_client::runtime::{AgentInfo, AgentRuntime, AgentsConfig, ChannelRuntime, TunnelRuntime};
 use va_client::service::ServiceInfoResponse;
-use va_client::sessions::{LaunchSessionInfo, SessionListItem};
+use va_client::sessions::LaunchSessionInfo;
 use va_client::workspaces::WorkspaceItem;
 
 use crate::transport::{HttpTransport, TuiError};
@@ -14,7 +14,6 @@ pub(crate) struct DashboardSnapshot {
     pub(crate) channels: Vec<ChannelRuntime>,
     pub(crate) tunnels: Vec<TunnelRuntime>,
     pub(crate) agents: Vec<AgentRuntime>,
-    pub(crate) sessions: Vec<SessionListItem>,
 }
 
 #[derive(Debug, Default)]
@@ -34,7 +33,6 @@ pub(crate) async fn fetch_snapshot(
         channels: transport.execute(ops::runtime_channels()).await?,
         tunnels: transport.execute(ops::runtime_tunnels()).await?,
         agents: transport.execute(ops::runtime_agent_hosts()).await?,
-        sessions: transport.execute(ops::sessions()).await?,
     })
 }
 

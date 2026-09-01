@@ -7,10 +7,9 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use va_client::events::{
     agents_runtime_ws, channels_ws, decode_agents_runtime_event, decode_channels_event,
-    decode_sessions_event, decode_tunnels_event, sessions_ws, tunnels_ws, WebSocketSpec,
+    decode_tunnels_event, tunnels_ws, WebSocketSpec,
 };
 use va_client::runtime::{AgentRuntime, ChannelRuntime, TunnelRuntime};
-use va_client::sessions::SessionListItem;
 
 use crate::socket_retry::{
     socket_retry_after_failure, SocketRetry, SOCKET_RETRY_INTERVAL, SOCKET_RETRY_LIMIT,
@@ -22,7 +21,6 @@ pub(crate) enum RuntimeStream {
     Channels,
     Tunnels,
     Agents,
-    Sessions,
 }
 
 #[derive(Debug)]
@@ -30,7 +28,6 @@ pub(crate) enum RuntimeSocketEvent {
     Channels(Vec<ChannelRuntime>),
     Tunnels(Vec<TunnelRuntime>),
     Agents(Vec<AgentRuntime>),
-    Sessions(Vec<SessionListItem>),
     Error {
         stream: RuntimeStream,
         message: String,
@@ -53,12 +50,7 @@ pub(crate) async fn run_runtime_sockets(
             incoming.clone(),
             reconnect.clone(),
         )),
-        tokio::spawn(run_agents_socket(
-            endpoint.clone(),
-            incoming.clone(),
-            reconnect.clone(),
-        )),
-        tokio::spawn(run_sessions_socket(endpoint, incoming, reconnect)),
+        tokio::spawn(run_agents_socket(endpoint, incoming, reconnect)),
     ];
     for task in tasks {
         let _ = task.await;
@@ -108,22 +100,6 @@ async fn run_agents_socket(
         agents_runtime_ws(),
         incoming,
         |value| decode_agents_runtime_event(value).map(RuntimeSocketEvent::Agents),
-        reconnect,
-    )
-    .await;
-}
-
-async fn run_sessions_socket(
-    endpoint: Arc<SharedEndpoint>,
-    incoming: mpsc::UnboundedSender<RuntimeSocketEvent>,
-    reconnect: watch::Receiver<()>,
-) {
-    run_snapshot_socket(
-        endpoint,
-        RuntimeStream::Sessions,
-        sessions_ws(),
-        incoming,
-        |value| decode_sessions_event(value).map(RuntimeSocketEvent::Sessions),
         reconnect,
     )
     .await;

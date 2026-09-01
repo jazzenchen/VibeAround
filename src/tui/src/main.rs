@@ -344,11 +344,10 @@ fn print_once(endpoint: &ServerEndpoint, snapshot: &DashboardSnapshot) {
         );
     }
     println!(
-        "channels: {} tunnels: {} agents: {} sessions: {}",
+        "channels: {} tunnels: {} agents: {}",
         snapshot.channels.len(),
         snapshot.tunnels.len(),
-        snapshot.agents.len(),
-        snapshot.sessions.len()
+        snapshot.agents.len()
     );
 }
 

@@ -22,7 +22,7 @@ impl PopupKind {
     /// The fixed top-level categories, in display order.
     pub(crate) fn categories(self) -> &'static [&'static str] {
         match self {
-            Self::Status => &["channels", "tunnels", "agents", "sessions"],
+            Self::Status => &["channels", "tunnels", "agents"],
             Self::Agent => &["agents", "profiles", "workspaces", "sessions", "done"],
         }
     }

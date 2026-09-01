@@ -4,10 +4,10 @@ use va_client::profiles::ModelProfileSummary;
 use va_client::runtime::{
     AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
 };
-use va_client::sessions::{LaunchSessionInfo, PtyRunState, SessionListItem};
+use va_client::sessions::LaunchSessionInfo;
 use va_client::workspaces::WorkspaceItem;
 
-use crate::detail::{channel_status_label, session_status_label, tunnel_status_label};
+use crate::detail::{channel_status_label, tunnel_status_label};
 use crate::theme::{muted_style, ACTION, ERROR, NEUTRAL, OK, WARN};
 
 pub(super) fn channel_row(channel: &ChannelRuntime) -> Vec<Span<'static>> {
@@ -69,23 +69,6 @@ pub(super) fn agent_row(agent: &AgentRuntime) -> Vec<Span<'static>> {
             8,
         ),
         Span::styled(name.to_string(), muted_style()),
-    ]
-}
-
-pub(super) fn session_row(session: &SessionListItem) -> Vec<Span<'static>> {
-    let status = session_status_label(&session.status);
-    let tool = format!("{:?}", session.tool).to_ascii_lowercase();
-    vec![
-        Span::styled(
-            fixed(&short_id(&session.session_id), 14),
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-        status_span(status, session_status_color(&session.status), 10),
-        Span::styled(fixed(&tool, 12), muted_style()),
-        Span::styled(
-            session.project_path.as_deref().unwrap_or("-").to_string(),
-            muted_style(),
-        ),
     ]
 }
 
@@ -154,10 +137,6 @@ fn status_span(label: &'static str, color: Color, width: usize) -> Span<'static>
     )
 }
 
-fn short_id(value: &str) -> String {
-    value.chars().take(12).collect()
-}
-
 fn channel_status_color(status: ChannelStatus) -> Color {
     match status {
         ChannelStatus::Running => OK,
@@ -173,13 +152,6 @@ fn tunnel_status_color(status: &TunnelStatus) -> Color {
         TunnelStatus::AwaitingApproval { .. } => WARN,
         TunnelStatus::Stopped { .. } => NEUTRAL,
         TunnelStatus::Failed { .. } => ERROR,
-    }
-}
-
-fn session_status_color(status: &PtyRunState) -> Color {
-    match status {
-        PtyRunState::Running { .. } => OK,
-        PtyRunState::Exited { .. } => NEUTRAL,
     }
 }
 
@@ -224,24 +196,6 @@ mod tests {
         assert_eq!(
             row_text(tunnel_row(&tunnel)),
             "cloudflare    running   https://example.test"
-        );
-
-        let session = SessionListItem {
-            session_id: "abcdef1234567890".into(),
-            tool: va_client::sessions::PtyTool::Codex,
-            status: PtyRunState::Running {
-                tool: va_client::sessions::PtyTool::Codex,
-            },
-            created_at: 1,
-            project_path: Some("/tmp/project".into()),
-            profile_id: None,
-            profile_label: None,
-            launch_target: None,
-            tmux_session: None,
-        };
-        assert_eq!(
-            row_text(session_row(&session)),
-            "abcdef123456  running   codex       /tmp/project"
         );
 
         let launch_session = LaunchSessionInfo {

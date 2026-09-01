@@ -17,7 +17,7 @@ use va_client::profiles::{AuthMode, ModelProfileSummary};
 use va_client::runtime::{
     AgentInfo, AgentRuntime, ChannelRuntime, ChannelStatus, TunnelRuntime, TunnelStatus,
 };
-use va_client::sessions::{LaunchSessionInfo, PtyRunState, PtyTool, SessionListItem};
+use va_client::sessions::LaunchSessionInfo;
 use va_client::workspaces::WorkspaceItem;
 
 fn channel(kind: &str) -> ChannelRuntime {
@@ -91,22 +91,6 @@ fn workspace(path: &str) -> WorkspaceItem {
         path: path.into(),
         is_default: false,
         is_builtin: false,
-    }
-}
-
-fn session(session_id: &str, project_path: &str, profile_id: &str) -> SessionListItem {
-    SessionListItem {
-        session_id: session_id.into(),
-        tool: PtyTool::Codex,
-        status: PtyRunState::Running {
-            tool: PtyTool::Codex,
-        },
-        created_at: 1,
-        project_path: Some(project_path.into()),
-        profile_id: Some(profile_id.into()),
-        profile_label: Some(profile_id.into()),
-        launch_target: None,
-        tmux_session: None,
     }
 }
 
@@ -210,13 +194,6 @@ fn runtime_socket_events_update_snapshot_and_clamp_popup() {
     app.apply_runtime_socket_event(RuntimeSocketEvent::Agents(vec![runtime_agent("wt_chat-2")]));
     assert_eq!(app.snapshot.agents[0].thread_id, "wt_chat-2");
 
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Sessions(vec![session(
-        "session-1",
-        "/tmp/session",
-        "session-profile",
-    )]));
-    assert_eq!(app.snapshot.sessions[0].session_id, "session-1");
-
     app.apply_runtime_socket_event(RuntimeSocketEvent::Error {
         stream: RuntimeStream::Channels,
         message: "runtime socket closed".into(),
@@ -270,24 +247,6 @@ fn runtime_socket_update_only_clears_matching_stream_error() {
 
     assert_eq!(app.snapshot.tunnels[0].provider, "cloudflare");
     assert_eq!(app.last_error, None);
-}
-
-#[test]
-fn pty_session_socket_does_not_mutate_agent_picker_sessions() {
-    let endpoint = ServerEndpoint::new(DEFAULT_BASE_URL);
-    let mut app = TuiApp::new(&endpoint);
-    app.agent_picker.sessions = vec![launch_session("launch-1", "codex", "/tmp/launch")];
-    app.selected_session = Some("launch-1".into());
-
-    app.apply_runtime_socket_event(RuntimeSocketEvent::Sessions(vec![session(
-        "new-session",
-        "/tmp/new",
-        "new-profile",
-    )]));
-
-    assert_eq!(app.agent_picker.sessions[0].session_id, "launch-1");
-    assert_eq!(app.snapshot.sessions[0].session_id, "new-session");
-    assert_eq!(app.selected_session.as_deref(), Some("launch-1"));
 }
 
 #[test]
