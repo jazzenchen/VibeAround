@@ -43,4 +43,4 @@
 *Source anchors: `src/core/src/profiles/` (schema, catalog, connections/, render, bridge_launch, runtime, google_oauth, headers), `src/resources/profile-catalog/`.*
 *Last verified: v0.7.11*
 
-<sub>[◀ Module: agent](agent.md) · [文档索引](../../README.md) · [Module: pty ▶](pty.md)</sub>
+<sub>[◀ Module: agent](agent.md) · [文档索引](../../README.md) · [Module: previews ▶](previews.md)</sub>

@@ -1,17 +1,16 @@
 # Launch subsystem
 
-Everything about starting an agent process, in one place: the four launch paths, how environment variables are assembled and injected on each, per-OS terminal handling, argument sources, and where desktop and CLI producers differ. The step-by-step walkthrough of one native launch is [flows/native-launch](flows/native-launch.md); the user guide is [guides/agent-launch](../guides/agent-launch.md).
+Everything about starting an agent process, in one place: the three launch paths, how environment variables are assembled and injected on each, per-OS terminal handling, argument sources, and where desktop and CLI producers differ. The step-by-step walkthrough of one native launch is [flows/native-launch](flows/native-launch.md); the user guide is [guides/agent-launch](../guides/agent-launch.md).
 
-## The four launch paths
+## The three launch paths
 
 | Path | Trigger | Process owner | Env injection mechanism | Dies with daemon |
 |---|---|---|---|---|
 | **Native launch** | desktop Launch / `va launch` | your terminal app | generated shell script (`export` / `$env:`) | no |
 | **Hosted ACP spawn** | IM / web chat prompt | daemon (supervisor) | process env on `Command` spawn | yes |
-| **PTY session** | web terminal / `va session create` | daemon (PTY registry) | process env on pty child | yes |
 | **Desktop-app target** | Launch with `claude-desktop` / `codex-desktop` | the vendor GUI app | `open --env` (macOS) / `Start-Process` (Windows) | no |
 
-All four converge on the same profile rendering code — a Kimi profile produces the same `ANTHROPIC_BASE_URL` whether the agent is hosted, launched, or opened as a GUI app.
+All three converge on the same profile rendering code — a Kimi profile produces the same `ANTHROPIC_BASE_URL` whether the agent is hosted, launched, or opened as a GUI app.
 
 ## Producers: desktop vs CLI
 
@@ -32,16 +31,16 @@ Env is built upstream of `va-launch` and carried in the plan's `env` map (BTreeM
 
 | Layer | Contents | Applies to |
 |---|---|---|
-| 1. Base process env | Enriched login-shell env (`process/env.rs`, cached once) so PATH matches the user's shell | hosted, PTY (native launches inherit the terminal's own login env instead) |
+| 1. Base process env | Enriched login-shell env (`process/env.rs`, cached once) so PATH matches the user's shell | hosted (native launches inherit the terminal's own login env instead) |
 | 2. Identity env | Hosted: `VIBEAROUND_CHANNEL_KIND`, `VIBEAROUND_CHAT_ID`, `VIBEAROUND_AGENT_KIND`, `VIBEAROUND_THREAD_ID`, `VIBEAROUND_WORKSPACE_ID`. Launch-materialized: `VIBEAROUND_LAUNCH_ID` (fresh UUID per render), `VIBEAROUND_PROFILE_ID` (normalized; `direct` for none/default/off), `VIBEAROUND_LAUNCH_TARGET` | all profile-driven paths |
 | 3. Profile credentials + bridge | Per-agent variable families rendered by `bridge_launch.rs`: Claude → `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL` (+custom-model-option and gateway-discovery flags); Codex → `OPENAI_API_KEY` + `-c model_providers.…` **args** rather than env; Gemini → `GEMINI_API_KEY`, `GOOGLE_GEMINI_BASE_URL`, `GEMINI_MODEL`, `GEMINI_DEFAULT_AUTH_TYPE`. For bridged routes the "API key" is a scoped placeholder and the base URL points at `127.0.0.1:12358/va/local-api/…` — real provider keys never enter the env | bridged profiles |
 | 4. Config pointer | When the profile renders settings files, they are written under `~/.vibearound/profile-state/<profile-id>/…` and a `ConfigEnvTarget` env var points there — `Directory(env)` or `File { env, rel_path }`. **Deliberately never `CODEX_HOME` / `CLAUDE_CONFIG_DIR`**: overriding agent home dirs would cut the CLI off from the user's own sessions, plugins, and skills | profiles with settings files |
 | 5. Proxy | `append_settings_proxy_env`: settings.json proxy exported for direct-to-provider routes only (bridged routes go through the daemon, which applies proxy itself) | direct provider routes |
-| 6. Terminal hygiene | Script-level: `unset NO_COLOR`, `TERM=xterm-256color` fallback, `COLORTERM`/`CLICOLOR` defaults; macOS adds terminal-update-suppression vars. PTY equivalent: `NO_COLOR` removed, `PTY_ENV` defaults + theme | native launches, PTY |
+| 6. Terminal hygiene | Script-level: `unset NO_COLOR`, `TERM=xterm-256color` fallback, `COLORTERM`/`CLICOLOR` defaults; macOS adds terminal-update-suppression vars | native launches |
 
 ## Injection mechanics per path
 
-- **Hosted / PTY:** plain process env on the spawned child (`Command::env` / pty builder) — nothing touches disk.
+- **Hosted:** plain process env on the spawned child (`Command::env`) — nothing touches disk.
 - **Native launch (macOS/Linux):** `va-launch` writes a one-shot script to `$TMPDIR/vibearound/launch/scripts/script-<uuid>.{command,sh}` (mode 0700). The script **deletes itself first** (`rm -- "$0"`), then `export`s each env pair (unix-shell-escaped), `cd`s to the workspace, and `exec`s the command. Env values therefore transit the filesystem briefly — the self-delete plus 0700 is the hygiene for that.
 - **Native launch (Windows):** same idea in PowerShell — self-deleting script with `$env:KEY = '…'` lines (single-quote escaped), window title, color env, `Set-Location`, then the command block.
 - **macOS GUI apps:** a shell can't export into a `.app`; the script rewrites `open …` into `open --env KEY=VALUE …` per pair, and an osascript probe template checks whether the app is already running (`macos_app_probe`).
@@ -77,7 +76,7 @@ App-launch wrappers (`open -a …`, `Start-Process …`) are treated as native a
 
 ---
 
-*Source anchors: `src/launcher/src/` (platform.rs — scripts and per-OS spawn, plan.rs — ExecutionPlan, executable.rs, terminal_config.rs, lib.rs — TerminalChoice), `src/core/src/agent/launch.rs` (materialize_profile_for_agent, profile-id env), `src/core/src/profiles/{render.rs,runtime.rs,bridge_launch.rs}` (env families, ConfigEnvTarget, profile-state dir), `src/core/src/agent_state.rs` (launch_args.terminal/acp), `src/desktop/src/profiles/launcher/` (desktop producer, resume plan), `src/core/src/process/env.rs` + `src/core/src/pty/runtime.rs` (hosted/PTY env).*
+*Source anchors: `src/launcher/src/` (platform.rs — scripts and per-OS spawn, plan.rs — ExecutionPlan, executable.rs, terminal_config.rs, lib.rs — TerminalChoice), `src/core/src/agent/launch.rs` (materialize_profile_for_agent, profile-id env), `src/core/src/profiles/{render.rs,runtime.rs,bridge_launch.rs}` (env families, ConfigEnvTarget, profile-state dir), `src/core/src/agent_state.rs` (launch_args.terminal/acp), `src/desktop/src/profiles/launcher/` (desktop producer, resume plan), `src/core/src/process/env.rs` (hosted env).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: server](modules/server.md) · [Documentation index](../README.md)</sub>

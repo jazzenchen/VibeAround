@@ -53,16 +53,6 @@
 | `va launch sessions` | 列出可恢复的原生会话 |
 | `va launch archive\|unarchive --agent A ID` | 归档 / 取消归档一个启动会话 |
 
-## PTY 会话与 tmux
-
-| 命令 | 用途 |
-|---|---|
-| `va sessions` | 列出 PTY 会话 |
-| `va session create --tool TOOL [--attach]` | 创建/恢复 PTY 会话 |
-| `va session attach SESSION_ID` / `va session kill SESSION_ID` | 附着 / 杀掉 |
-| `va pty kill SESSION_ID` | 按会话 id 杀掉 PTY 进程 |
-| `va tmux sessions` | 列出可附着的 tmux 会话 |
-
 ## Workspace、预览、Profile
 
 | 命令 | 用途 |

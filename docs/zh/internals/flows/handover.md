@@ -49,4 +49,4 @@ phone IM chat ──3─ /pickup CODE ──4─► consume ──5─► attach
 *Source anchors: `src/core/src/workspace/handover.rs` (codes), `src/server/src/web_server/mcp/tools.rs` (va_mcp_prepare_handover, va_mcp_get_session_id), `src/core/src/channels/prompt/handler.rs` (pickup), `src/core/src/workspace/manager.rs` (attach_external_session), `src/core/src/launch_sessions/` (session resolution).*
 *Last verified: v0.7.11*
 
-<sub>[◀ Flow: Agent 启动](native-launch.md) · [文档索引](../../README.md) · [Flow: PTY 终端 ▶](web-terminal.md)</sub>
+<sub>[◀ Flow: Agent 启动](native-launch.md) · [文档索引](../../README.md) · [Module: channels ▶](../modules/channels.md)</sub>

@@ -1,17 +1,16 @@
 # Launch 子系统
 
-所有“启动 Agent 进程”的细节放在这里：四条启动路径、每条路径如何组装和注入环境变量、各 OS 的终端处理、参数来源，以及 desktop producer 和 CLI producer 的区别。一次原生启动的逐步走读在 [flows/native-launch](flows/native-launch.md)，用户指南在 [guides/agent-launch](../guides/agent-launch.md)。
+所有“启动 Agent 进程”的细节放在这里：三条启动路径、每条路径如何组装和注入环境变量、各 OS 的终端处理、参数来源，以及 desktop producer 和 CLI producer 的区别。一次原生启动的逐步走读在 [flows/native-launch](flows/native-launch.md)，用户指南在 [guides/agent-launch](../guides/agent-launch.md)。
 
-## 四条启动路径
+## 三条启动路径
 
 | 路径 | 触发方式 | 进程归属 | Env 注入机制 | 随 daemon 退出 |
 |---|---|---|---|---|
 | **原生启动** | desktop Launch / `va launch` | 你的终端应用 | 生成 shell 脚本（`export` / `$env:`） | 否 |
 | **托管 ACP 启动** | IM / web chat prompt | daemon（supervisor） | `Command` spawn 时的 process env | 是 |
-| **PTY session** | web terminal / `va session create` | daemon（PTY registry） | pty 子进程 env | 是 |
 | **桌面应用目标** | 用 `claude-desktop` / `codex-desktop` Launch | 厂商 GUI app | `open --env`（macOS）/ `Start-Process`（Windows） | 否 |
 
-四条路径都汇到同一套 profile rendering 代码。一个 Kimi profile 无论是 hosted、launched，还是打开 GUI app，都会产生同样的 `ANTHROPIC_BASE_URL`。
+三条路径都汇到同一套 profile rendering 代码。一个 Kimi profile 无论是 hosted、launched，还是打开 GUI app，都会产生同样的 `ANTHROPIC_BASE_URL`。
 
 ## Producers：desktop vs CLI
 
@@ -32,16 +31,16 @@ Env 在 `va-launch` 上游构建，并放在 plan 的 `env` map 里（BTreeMap�
 
 | 层 | 内容 | 适用于 |
 |---|---|---|
-| 1. 基础进程 env | 加强过的 login-shell env（`process/env.rs`，缓存一次），让 PATH 和用户 shell 一致 | hosted、PTY（原生启动继承终端自己的 login env） |
+| 1. 基础进程 env | 加强过的 login-shell env（`process/env.rs`，缓存一次），让 PATH 和用户 shell 一致 | hosted（原生启动继承终端自己的 login env） |
 | 2. 身份 env | Hosted：`VIBEAROUND_CHANNEL_KIND`、`VIBEAROUND_CHAT_ID`、`VIBEAROUND_AGENT_KIND`、`VIBEAROUND_THREAD_ID`、`VIBEAROUND_WORKSPACE_ID`。Launch 物化：`VIBEAROUND_LAUNCH_ID`（每次渲染新 UUID）、`VIBEAROUND_PROFILE_ID`（归一化；无/default/off 为 `direct`）、`VIBEAROUND_LAUNCH_TARGET` | 所有 profile 驱动路径 |
 | 3. Profile 凭据 + bridge | `bridge_launch.rs` 按 agent family 渲染变量：Claude → `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL`（加 custom-model-option 和 gateway-discovery flags）；Codex → `OPENAI_API_KEY` 加 `-c model_providers.…` **args** 而不是 env；Gemini → `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`、`GEMINI_MODEL`、`GEMINI_DEFAULT_AUTH_TYPE`。对于 bridged route，“API key” 是 scoped placeholder，base URL 指向 `127.0.0.1:12358/va/local-api/…`，真实 provider key 从不进入 env | bridged profiles |
 | 4. Config 指针 | Profile 渲染 settings files 时，会写到 `~/.vibearound/profile-state/<profile-id>/…`，再用一个 `ConfigEnvTarget` env var 指过去：`Directory(env)` 或 `File { env, rel_path }`。**故意不用 `CODEX_HOME` / `CLAUDE_CONFIG_DIR`**，因为覆盖 agent home dir 会切断 CLI 对用户自身 sessions、plugins、skills 的访问 | 带 settings files 的 profiles |
 | 5. Proxy | `append_settings_proxy_env`：只为 direct-to-provider route 导出 settings.json proxy（bridged route 走 daemon，daemon 自己应用 proxy） | direct provider routes |
-| 6. 终端卫生 | 脚本层：`unset NO_COLOR`、`TERM=xterm-256color` fallback、`COLORTERM`/`CLICOLOR` 默认值；macOS 增加 terminal-update-suppression vars。PTY 对应逻辑：移除 `NO_COLOR`，加 `PTY_ENV` defaults + theme | 原生启动、PTY |
+| 6. 终端卫生 | 脚本层：`unset NO_COLOR`、`TERM=xterm-256color` fallback、`COLORTERM`/`CLICOLOR` 默认值；macOS 增加 terminal-update-suppression vars | 原生启动 |
 
 ## 各路径的注入机制
 
-- **Hosted / PTY：** 直接在 spawned child 上设置 process env（`Command::env` / pty builder），不写磁盘。
+- **Hosted：** 直接在 spawned child 上设置 process env（`Command::env`），不写磁盘。
 - **原生启动（macOS/Linux）：** `va-launch` 把一次性脚本写到 `$TMPDIR/vibearound/launch/scripts/script-<uuid>.{command,sh}`（mode 0700）。脚本会**先删除自己**（`rm -- "$0"`），然后逐个 `export` env（按 Unix shell 转义）、`cd` 到 workspace、`exec` 命令。Env value 会短暂经过文件系统；自删除 + 0700 是这里的卫生措施。
 - **原生启动（Windows）：** 同样思路，用 PowerShell 自删除脚本，包含 `$env:KEY = '…'` 行（单引号转义）、窗口标题、颜色 env、`Set-Location`，最后执行 command block。
 - **macOS GUI apps：** shell 不能把 env export 进 `.app`；脚本会把 `open …` 改写成逐个 `open --env KEY=VALUE …`，并用 osascript probe template 检查 app 是否已在运行（`macos_app_probe`）。
@@ -77,7 +76,7 @@ App-launch wrappers（`open -a …`、`Start-Process …`）视为原生 app 命
 
 ---
 
-*Source anchors: `src/launcher/src/` (platform.rs — scripts and per-OS spawn, plan.rs — ExecutionPlan, executable.rs, terminal_config.rs, lib.rs — TerminalChoice), `src/core/src/agent/launch.rs` (materialize_profile_for_agent, profile-id env), `src/core/src/profiles/{render.rs,runtime.rs,bridge_launch.rs}` (env families, ConfigEnvTarget, profile-state dir), `src/core/src/agent_state.rs` (launch_args.terminal/acp), `src/desktop/src/profiles/launcher/` (desktop producer, resume plan), `src/core/src/process/env.rs` + `src/core/src/pty/runtime.rs` (hosted/PTY env).*
+*Source anchors: `src/launcher/src/` (platform.rs — scripts and per-OS spawn, plan.rs — ExecutionPlan, executable.rs, terminal_config.rs, lib.rs — TerminalChoice), `src/core/src/agent/launch.rs` (materialize_profile_for_agent, profile-id env), `src/core/src/profiles/{render.rs,runtime.rs,bridge_launch.rs}` (env families, ConfigEnvTarget, profile-state dir), `src/core/src/agent_state.rs` (launch_args.terminal/acp), `src/desktop/src/profiles/launcher/` (desktop producer, resume plan), `src/core/src/process/env.rs` (hosted env).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Module: server](modules/server.md) · [文档索引](../README.md)</sub>

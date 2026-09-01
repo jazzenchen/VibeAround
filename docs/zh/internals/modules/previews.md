@@ -37,4 +37,4 @@
 *Source anchors: `src/core/src/previews/` (mod, store), `src/server/src/web_server/preview/` (iframe, markdown, access), `src/server/src/web_server/mcp/tools.rs` (preview tools).*
 *Last verified: v0.7.24*
 
-<sub>[◀ Module: pty](pty.md) · [文档索引](../../README.md) · [Module: tunnels ▶](tunnels.md)</sub>
+<sub>[◀ Module: profiles](profiles.md) · [文档索引](../../README.md) · [Module: tunnels ▶](tunnels.md)</sub>

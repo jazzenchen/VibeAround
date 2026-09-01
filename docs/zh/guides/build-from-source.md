@@ -57,10 +57,6 @@ cargo clippy --workspace -- -D warnings
 
 JS 部分用 `bun run web:build` 和 `bun run desktop-ui:build` 做构建检查。
 
-## tmux 集成（可选）
-
-安装了 tmux 时，Web 终端就能附着到 tmux 会话 —— 不需要构建开关，运行时检测。`tmux_detach_others` 设置控制从控制台附着时是否把其他客户端踢下线。
-
 ## 没有维护者密钥就无法构建的部分
 
 超出本地未签名构建的发布打包，用到维护者私有、刻意不入库的配置：

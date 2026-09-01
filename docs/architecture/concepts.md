@@ -51,7 +51,7 @@ A route is a stable address for one conversation path through a channel: the tri
 An agent is a coding CLI that VibeAround can drive: Claude Code, Codex, Gemini CLI, Cursor, Qwen Code, Kiro, OpenCode, or Pi. VibeAround talks to agents over the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) via each agent's ACP adapter, spawning one agent process per active thread. Desktop-only entries (`claude-desktop`, `codex-desktop`) are launch targets, not ACP runtimes — they open the vendor's desktop app instead.
 
 - `/switch host <agent>` to a different agent starts a **new thread** with a fresh session (context does not carry between agent products); switching only the profile keeps the thread and session.
-- Agent definitions (ACP adapter package, PTY command, resume template, config injection paths) come from a built-in registry.
+- Agent definitions (ACP adapter package, CLI launch command, resume template, config injection paths) come from a built-in registry.
 
 *Details: [supported agents matrix](../product/supported-matrix.md#coding-agents) · [agent module internals](../internals/modules/agent.md) · [launch subsystem](../internals/launch.md) (how agents are started) · [`/switch` command reference](../guides/im-usage.md#agents-and-profiles)*
 

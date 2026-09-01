@@ -80,10 +80,7 @@ Location: `~/.vibearound/settings.json`. Created with defaults on first run; app
   "channels": {
     "telegram": { "bot_token": "…", "verbose": { "show_thinking": true, "show_tool_use": true } },
     "feishu":   { "app_id": "…", "app_secret": "…" }
-  },
-
-  // --- Web terminal ---
-  "tmux": { "detach_others": true }
+  }
 }
 ```
 

@@ -1,6 +1,6 @@
 # VibeAround 文档
 
-VibeAround 让你从已经在用的各种界面访问本地的 AI 编程 Agent（Claude Code、Codex、Gemini CLI 等）：Telegram、Slack、飞书等 IM 渠道，带完整终端的浏览器控制台，桌面控制应用，以及 TUI/CLI。一个本地运行时，一套 Workspace 模型，多扇进入它的门。
+VibeAround 让你从已经在用的各种界面访问本地的 AI 编程 Agent（Claude Code、Codex、Gemini CLI 等）：Telegram、Slack、飞书等 IM 渠道，浏览器控制台，桌面控制应用，以及 TUI/CLI。一个本地运行时，一套 Workspace 模型，多扇进入它的门。
 
 **第一次来？** 按这个顺序读：[VibeAround 是什么](product/what-is-vibearound.md) → [安装](guides/install-and-onboarding.md) → [快速导览](guides/quick-tour.md) → [核心概念](architecture/concepts.md)。其余内容按需查阅。
 
@@ -36,7 +36,7 @@ VibeAround 让你从已经在用的各种界面访问本地的 AI 编程 Agent�
 | [快速导览](guides/quick-tour.md) | 第一次聊天、第一个 IM 渠道、第一次会话交接 —— 15 分钟 |
 | [CLI 快速开始](guides/cli-quick-start.md) | 安装 npm CLI，启动守护进程，跑通第一个终端工作流 |
 | [桌面应用](guides/desktop-app.md) | 用 GUI 管理 Profile、启动和服务 |
-| [Web 控制台](guides/web-dashboard.md) | Web 终端、Web Chat、实时预览 |
+| [Web 控制台](guides/web-dashboard.md) | Web Chat、实时预览 |
 | [IM 使用](guides/im-usage.md) | 在聊天里驱动 Agent；完整斜杠命令参考 |
 | [连接渠道](guides/connect-channels.md) | 配置 Telegram、Slack、飞书等渠道 |
 | [模型 Profile](guides/model-profiles.md) | 供应商凭据与模型路由 |

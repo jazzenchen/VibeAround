@@ -87,7 +87,7 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 
 ## 隧道暴露什么 —— 永远不暴露什么
 
-配对之后，通过隧道可达：控制台 SPA、Web Chat、Web Terminal、Server 和 Markdown owner 预览，以及各 WebSocket 端点 —— 全部有 token 把守。Preview **Share**（`/preview/s/<share_id>`）是 owner 配对的有意例外：查看者输入可重复使用的六位访问码后，获得限定作用域的浏览器授信。URL、访问码和授信只覆盖一个 Preview，并在 10 分钟后同时过期。
+配对之后，通过隧道可达：控制台 SPA、Web Chat、Server 和 Markdown owner 预览，以及各 WebSocket 端点 —— 全部有 token 把守。Preview **Share**（`/preview/s/<share_id>`）是 owner 配对的有意例外：查看者输入可重复使用的六位访问码后，获得限定作用域的浏览器授信。URL、访问码和授信只覆盖一个 Preview，并在 10 分钟后同时过期。
 
 已配对的 Server owner 会把常规 HTTP 与 WebSocket/HMR 流量透明代理到 `127.0.0.1` 上的已登记端口，`/va/*` 保留给 VibeAround。Server Share 是更窄的页面预览传输：它会原样转发已认证的 GET/HEAD 路径，包括页面的数据读取；写请求、协议升级、service worker、WebSocket 与 HMR 暂不支持，`/va/*`、owner 页面、chat 和审阅工具不进入 Share。它不承诺通用 API 兼容性，也不是 API 隔离沙盒；已接受的 GET/HEAD 路径不会按名称分类。本地 Server owner 仍然直接加载 loopback origin，保留应用原本的行为。
 
@@ -108,7 +108,6 @@ VibeAround 会启动 `cloudflared tunnel run --token …` 并用你的主机名�
 | localtunnel URL 每次启动都变 | localtunnel 就是这样；要稳定用 ngrok 保留域名或 Cloudflare |
 | Tailscale 显示“需要操作”但没有 URL | 点击“启用 Funnel”、完成 Tailscale 授权页面，并确认 Tailscale App 已登录 |
 | Tailscale 在显示 URL 前退出 | 手动运行 `tailscale funnel http://127.0.0.1:12358`，确认当前客户端和平台支持 Funnel |
-| 远程 Web Terminal 很卡 | 长链路隧道上的交互式 PTY 受延迟支配 —— 远程优先用 Web Chat，终端留在本地 |
 
 ---
 

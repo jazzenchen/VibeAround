@@ -2,7 +2,7 @@
 
 场景是这样的：一个编程 Agent 正在你桌上那台机器的仓库里干活 —— 带着你的凭据、你的 dev server、你的内网 —— 而你必须离开。VibeAround 的远程编程意味着工作原地不动，你的手机或另一个浏览器变成一扇受控的、通回那台机器的门。
 
-这和把工作搬进云端 IDE 不同。没有任何东西被克隆到供应商托管的容器里；浏览器、手机、Web Terminal、IM 和预览界面都通向同一个本地 Workspace。
+这和把工作搬进云端 IDE 不同。没有任何东西被克隆到供应商托管的容器里；浏览器、手机、IM 和预览界面都通向同一个本地 Workspace。
 
 ## 什么时候用
 
@@ -26,7 +26,6 @@ VibeAround 已装好的话十五分钟；首次安装再加十分钟。
 | 界面 | 最适合 |
 | --- | --- |
 | Web Chat | 浏览器里的简短指令和会话接续。 |
-| Web Terminal | 对本地 Workspace 的类 shell 访问。 |
 | 手机浏览器 | 离开桌子时的快速审阅、批准或调整方向。 |
 | IM 渠道 | 通过 Telegram、飞书/Lark、Discord、Slack、微信、钉钉、企业微信或 QQ 机器人的异步跟进。 |
 | Live Preview | 本地直连审阅 dev server/HTML；远端使用已配对的 owner，或限时的 Server/Markdown Share。 |
@@ -35,7 +34,7 @@ VibeAround 已装好的话十五分钟；首次安装再加十分钟。
 
 - 确认谁能触达会话 —— 渠道成员和浏览器配对就是访问边界。
 - 真正需要远程访问之前，保持隧道关闭。
-- 把 Web Terminal 和 IM bot 当作特权控制面；像保护 shell 一样保护它们。
+- 把 Web Chat 和 IM bot 当作特权控制面；像保护 shell 一样保护它们。
 - 用限定作用域的预览链接，而不是放开访问。
 - 不该再接受输入的会话，及时停止或归档。
 
@@ -44,7 +43,7 @@ VibeAround 已装好的话十五分钟；首次安装再加十分钟。
 ## 相关文档
 
 - [会话交接](../architecture/session-lifecycle.md)
-- [IM 与 Web Terminal](../guides/im-usage.md)
+- [IM 使用](../guides/im-usage.md)
 - [手机上的 Codex](codex-mobile.md) · [Claude Code 远程](claude-remote.md) · [Gemini CLI 远程](gemini-remote.md) · [OpenCode 远程](opencode-remote.md)
 
 ---

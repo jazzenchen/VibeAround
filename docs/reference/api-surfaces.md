@@ -73,9 +73,8 @@ All token-authenticated; see [architecture overview](../architecture/overview.md
 
 | Endpoint | Purpose |
 |---|---|
-| `/ws?session_id=` | Terminal bytes + JSON resize (web terminal ↔ PTY) |
 | `/ws/chat` | Web/TUI chat events |
-| `/ws/channels`, `/ws/tunnels`, `/ws/sessions`, `/ws/agents/runtime` | Live state: full-list snapshot on every change |
+| `/ws/channels`, `/ws/tunnels`, `/ws/agents/runtime` | Live state: full-list snapshot on every change |
 
 ## Preview URLs
 

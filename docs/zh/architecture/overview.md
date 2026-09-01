@@ -6,25 +6,25 @@
 
 ```text
  web SPA ───────────────┐       TUI / CLI (va)          desktop-ui (React)
-  │HTTP   │WS ×3        │             │ HTTP + WS            │ Tauri IPC
-  │/api/* │/ws (pty)    │             │ (va-client)          ▼
-  │       │/ws/chat     │             │                desktop (Tauri shell)
-  │       │/ws/* state  │             │                      │ 进程内嵌入
+  │HTTP   │WS ×2        │             │ HTTP + WS            │ Tauri IPC
+  │/api/* │/ws/chat     │             │ (va-client)          ▼
+  │       │/ws/* state  │             │                desktop (Tauri shell)
+  │       │             │             │                      │ 进程内嵌入
   ▼       ▼             ▼             ▼                      ▼
    ┌───────────────────────────────────────────────────────────────┐
    │              vibearound-server (axum daemon)                  │
-   │  REST /api/* · WS (pty, chat, live state) · MCP /mcp          │
+   │  REST /api/* · WS (chat, live state) · MCP /mcp               │
    │  api_bridge /va/local-api · preview 反向代理 · 配对           │
    ├───────────────────────────────────────────────────────────────┤
    │  core 运行时                                                  │
    │  channels · workspace threads · process supervisor ·          │
-   │  profiles · pty · previews · tunnels · auth · search          │
-   └──┬──────────────┬──────────────┬───────────────┬──────────────┘
-      │ stdio        │ stdio        │ pseudo-tty    │ 子进程 / SDK
-      │ JSON-RPC     │ JSON-RPC     ▼               ▼
-      │ (ACP)        │ (ACP)    shell / agent   隧道进程
-      ▼              ▼          CLI 会话        (cloudflared, npx
-  渠道插件进程    agent CLI     (web terminal)  localtunnel; ngrok
+   │  profiles · previews · tunnels · auth · search                │
+   └──┬──────────────┬──────────────────────────────┬──────────────┘
+      │ stdio        │ stdio                        │ 子进程 / SDK
+      │ JSON-RPC     │ JSON-RPC                     ▼
+      │ (ACP)        │ (ACP)                    隧道进程
+      ▼              ▼                          (cloudflared, npx
+  渠道插件进程    agent CLI                     localtunnel; ngrok
   (telegram, …)   进程                          走进程内 SDK)
                      │
                      │ HTTP 回环（Bridge 化的 Profile）
@@ -41,15 +41,13 @@
 | 边 | 传输 | 协议 / 负载 |
 |---|---|---|
 | web SPA → server（REST） | HTTP `/api/*` | JSON，bearer token |
-| web SPA ↔ server（终端） | WebSocket `/ws?session_id=` | 原始终端字节 + JSON resize 消息 |
 | web SPA ↔ server（聊天） | WebSocket `/ws/chat` | JSON 聊天事件：类型化输入、流式输出、权限卡片 |
-| web SPA ↔ server（实时状态） | WebSocket `/ws/channels`、`/ws/tunnels`、`/ws/sessions`、`/ws/agents/runtime` | 每次变化重发全量快照（"最后一条消息就是状态"） |
+| web SPA ↔ server（实时状态） | WebSocket `/ws/channels`、`/ws/tunnels`、`/ws/agents/runtime` | 每次变化重发全量快照（"最后一条消息就是状态"） |
 | TUI / `va` CLI → server | HTTP + `/ws/chat` | 同一套契约，经 `va-client` 协议 crate |
 | desktop-ui → 桌面外壳 | Tauri IPC | 原生命令（窗口、启动、配置页面） |
 | 桌面外壳 → 守护进程 | 进程内 | 直接嵌入 `ServerDaemon` |
 | 守护进程 ↔ 渠道插件 | 子进程 stdio | 换行分隔的 JSON-RPC（ACP 帧）：信封进；输出、权限卡片、`_va/heartbeat` 出 |
 | 守护进程 ↔ agent CLI | 子进程 stdio | ACP（JSON-RPC）：初始化、会话、提示、通知、权限请求 |
-| 守护进程 ↔ web 终端会话 | pseudo-tty | 经 PTY 注册表的字节流 |
 | agents → 守护进程（工具） | HTTP `/mcp` | MCP：streamable HTTP 上的 JSON-RPC（+ SSE） |
 | 启动的 CLI → 守护进程（模型） | HTTP 回环 `/va/local-api/…` | 客户端的供应商方言（OpenAI / Anthropic / Gemini 形状） |
 | 守护进程 → 模型供应商 | HTTPS | Bridge 转换后的供应商方言 |
@@ -69,7 +67,6 @@
 | `process` | 监督器（拉起/重启/看门狗）、子进程注册表、ACP 传输、环境增强 |
 | `agent` | ACP agent 句柄、启动渲染、MCP/技能配置注入 |
 | `profiles` | Profile schema、目录、渲染、Bridge 启动 URL、供应商连接 |
-| `pty` | PTY 会话注册表与运行时 —— Web 终端的后端 |
 | `previews` | Server/Markdown owner 与 Share URL、受限 Server Share 代理、端口清理 |
 | `tunnels` | ngrok / localtunnel / cloudflare / Tailscale Funnel 各供应商 |
 | `auth` | 守护进程 token、配对码 |
@@ -78,7 +75,7 @@
 | `search` | 宿主侧网页搜索运行时 |
 | `config`、`storage`、`state`、`routing`、`resources` | 设置、JSONL 事件存储、StateSource 契约、route key、Agent 注册表 |
 
-**`server` —— core 之上的 axum 外壳：** `web_server/api`（REST）、`ws_pty` / `ws_chat` / `ws_domains`（三族 WebSocket）、`mcp`（工具端点）、`api_bridge`（方言转换、模型映射、内容策略、上游）、`preview`（反向代理、markdown 渲染）、`auth` + `pair`（token 中间件、配对）、`boot`（守护进程装配）。
+**`server` —— core 之上的 axum 外壳：** `web_server/api`（REST）、`ws_chat` / `ws_domains`（两族 WebSocket）、`mcp`（工具端点）、`api_bridge`（方言转换、模型映射、内容策略、上游）、`preview`（反向代理、markdown 渲染）、`auth` + `pair`（token 中间件、配对）、`boot`（守护进程装配）。
 
 **其他 crate：** `client`（HTTP/WS 契约的纯 Rust 协议库）、`cli` 和 `tui`（它的消费者）、`desktop`（Tauri 外壳 + IPC 命令）、`launcher`（`va-launch` 原生启动二进制）。
 
@@ -123,7 +120,7 @@ Agent Launch 是另一条路 —— 不把 Agent 托管在守护进程里，而�
 
 ---
 
-*Source anchors: `src/server/src/lib.rs` (daemon boot, input sharding), `src/server/src/web_server/mod.rs` + `ws_pty.rs` / `ws_chat.rs` / `ws_domains.rs` (WebSocket families), `src/core/src/lib.rs` (module map), `src/core/src/channels/` (plugin transport, dispatch), `src/core/src/workspace/` (threads, attachments), `src/core/src/process/supervisor.rs` + `acp_transport.rs` (ACP framing), `src/core/src/tunnels/providers/` (tunnel process forms), `src/core/src/profiles/bridge_launch.rs` (local API URLs), `src/launcher/` (va-launch).*
+*Source anchors: `src/server/src/lib.rs` (daemon boot, input sharding), `src/server/src/web_server/mod.rs` + `ws_chat.rs` / `ws_domains.rs` (WebSocket families), `src/core/src/lib.rs` (module map), `src/core/src/channels/` (plugin transport, dispatch), `src/core/src/workspace/` (threads, attachments), `src/core/src/process/supervisor.rs` + `acp_transport.rs` (ACP framing), `src/core/src/tunnels/providers/` (tunnel process forms), `src/core/src/profiles/bridge_launch.rs` (local API URLs), `src/launcher/` (va-launch).*
 *Last verified: v0.7.11*
 
 <sub>[◀ 核心概念](concepts.md) · [文档索引](../README.md) · [会话生命周期 ▶](session-lifecycle.md)</sub>

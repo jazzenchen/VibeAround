@@ -87,7 +87,7 @@ Pairing survives browser restarts but not daemon restarts (tokens are regenerate
 
 ## What a tunnel exposes — and what it never does
 
-Through the tunnel, after pairing: the dashboard SPA, web chat, web terminal, Server and Markdown owner previews, and the WebSocket endpoints — everything token-gated. Preview **Shares** (`/preview/s/<share_id>`) are the deliberate exception to owner pairing: viewers enter the reusable six-digit access code, then receive a scoped browser grant. The URL, code, and grant cover one Preview and expire together after 10 minutes.
+Through the tunnel, after pairing: the dashboard SPA, web chat, Server and Markdown owner previews, and the WebSocket endpoints — everything token-gated. Preview **Shares** (`/preview/s/<share_id>`) are the deliberate exception to owner pairing: viewers enter the reusable six-digit access code, then receive a scoped browser grant. The URL, code, and grant cover one Preview and expire together after 10 minutes.
 
 A paired Server owner transparently proxies normal HTTP and WebSocket/HMR traffic only to the registered port on `127.0.0.1`; `/va/*` stays reserved for VibeAround. The Server Share transport is narrower and page-oriented: it forwards authenticated GET/HEAD paths unchanged, including page data reads. Writes, protocol upgrades, service workers, WebSockets, and HMR remain unsupported; `/va/*`, owner pages, chat, and review tools stay excluded. This is not general API compatibility or an API-isolation sandbox; accepted GET/HEAD paths are not classified by name. A local Server owner still loads the loopback origin directly with the app's native behavior.
 
@@ -108,7 +108,6 @@ The `va` CLI can target a remote daemon: `va --base-url https://va.example.com -
 | localtunnel URL changes every start | That is localtunnel; use ngrok reserved domains or Cloudflare for stability |
 | Tailscale shows “Action required” without a URL | Click **Enable Funnel**, complete the Tailscale approval page, and confirm the Tailscale app is signed in |
 | Tailscale exits before showing a URL | Run `tailscale funnel http://127.0.0.1:12358` manually to see whether this client/platform supports Funnel |
-| Web terminal sluggish remotely | Interactive PTY over long-haul tunnels is latency-bound — prefer web chat remotely, terminal locally |
 
 ---
 

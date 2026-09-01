@@ -25,7 +25,7 @@ VibeAround 是独立软件，不替代 OpenAI 的官方 Codex 产品。
 ## VibeAround 在哪里帮上忙
 
 - 你想让 Codex CLI 和其他 Agent 并肩 —— Claude Code、Gemini CLI、OpenCode、Cursor CLI、Qwen Code、Kiro CLI —— 同样的 Workspace、同样的远程界面。
-- 你想在同一个本地会话周围有浏览器工作区、Web Terminal、IM 渠道和预览。
+- 你想在同一个本地会话周围有浏览器工作区、IM 渠道和预览。
 - 你想要供应商 Profile 或 API Bridge 路由 —— 比如让 Codex 用第三方供应商的 key 而不是订阅（[模型 Profile 指南](../guides/model-profiles.md)）。
 - 你不想每个任务都被克隆进云容器。
 

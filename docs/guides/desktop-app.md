@@ -4,7 +4,7 @@ The desktop app (Tauri) is the management shell around the daemon: it embeds the
 
 ## Service management
 
-- The app starts the embedded daemon on launch and shows its health. Restarting the service from the tray/app performs a clean shutdown (agents, plugins, PTYs, previews all wound down) and a fresh start with a new auth token.
+- The app starts the embedded daemon on launch and shows its health. Restarting the service from the tray/app performs a clean shutdown (agents, plugins, previews all wound down) and a fresh start with a new auth token.
 - **Tray/menu bar:** open the dashboard (pre-authenticated), restart the service, quit. Closing the main window keeps the daemon running.
 - Port conflicts on restart are retried automatically on Windows, where the OS releases listeners lazily.
 

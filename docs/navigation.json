@@ -340,11 +340,6 @@
             },
             {
               "type": "page",
-              "slug": "web-terminal",
-              "source": "internals/flows/web-terminal.md"
-            },
-            {
-              "type": "page",
               "slug": "permission",
               "source": "internals/flows/permission.md"
             },
@@ -402,11 +397,6 @@
               "type": "page",
               "slug": "profiles",
               "source": "internals/modules/profiles.md"
-            },
-            {
-              "type": "page",
-              "slug": "pty",
-              "source": "internals/modules/pty.md"
             },
             {
               "type": "page",

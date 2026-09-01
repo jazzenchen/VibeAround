@@ -25,7 +25,7 @@ The concrete setup is a ten-minute path, walked through step by step in [Codex C
 ## Where VibeAround Helps
 
 - You want Codex CLI beside other agents such as Claude Code, Gemini CLI, OpenCode, Cursor CLI, Qwen Code, or Kiro CLI — same workspaces, same remote surfaces.
-- You want a browser workspace, Web Terminal, messaging channels, and previews around the same local session.
+- You want a browser workspace, messaging channels, and previews around the same local session.
 - You want provider profiles or API Bridge routes — for example running Codex against a third-party provider key instead of a subscription ([model profiles guide](../guides/model-profiles.md)).
 - You do not want every task cloned into a cloud container.
 
