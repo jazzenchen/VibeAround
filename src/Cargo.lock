@@ -824,7 +824,6 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "async-trait",
- "bytes",
  "chrono",
  "dashmap",
  "flate2",
@@ -6029,7 +6028,6 @@ name = "va-cli"
 version = "0.7.25"
 dependencies = [
  "clap",
- "crossterm",
  "futures-util",
  "reqwest 0.12.28",
  "serde",
