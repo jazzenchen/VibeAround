@@ -101,10 +101,11 @@ impl RunningDaemon {
             search_runtime.shutdown().await;
         }
 
-        // Safety net: synchronously kill any child process still registered
+        // Safety net: synchronously kill any child process still alive
         // after the graceful shutdown paths ran. Covers cases where the
         // supervisor-driven cancel + kill_on_drop never got polled because
         // the tokio runtime tore down first.
+        common::process::Supervisor::global().kill_all_blocking();
         ChildRegistry::global().kill_all();
 
         // Stop previewed development servers during daemon shutdown.

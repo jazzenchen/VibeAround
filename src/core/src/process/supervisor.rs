@@ -12,7 +12,7 @@ use crate::process::bridge::{BridgeExit, BridgeFactory, StdioPipes};
 use crate::process::env;
 use crate::process::error::{ProcessError, ProcessResult};
 use crate::process::kill;
-use crate::process::registry::{ChildRegistry, ProcessKind};
+use crate::process::registry::ProcessKind;
 
 mod generation;
 mod model;
@@ -42,6 +42,64 @@ pub struct Supervisor {
     manager_tx: mpsc::UnboundedSender<ManagerCommand>,
     snapshots: watch::Receiver<Vec<ProcessSnapshot>>,
     change_tx: broadcast::Sender<ProcessEvent>,
+    roster: Arc<EmergencyRoster>,
+}
+
+/// Synchronous side-table of live child pids, kept only so daemon shutdown
+/// (and the Tauri `RunEvent::Exit` handler, which has no tokio runtime) can
+/// SIGKILL every supervised process group without awaiting the actor. The
+/// `Child` handles themselves live solely with each `ProcessOwner`.
+pub(super) struct EmergencyRoster {
+    entries: parking_lot::Mutex<HashMap<ProcessId, RosterEntry>>,
+}
+
+struct RosterEntry {
+    pid: u32,
+    kind: ProcessKind,
+    label: String,
+}
+
+impl EmergencyRoster {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entries: parking_lot::Mutex::new(HashMap::new()),
+        })
+    }
+
+    pub(super) fn insert(&self, id: ProcessId, pid: u32, kind: ProcessKind, label: &str) {
+        self.entries.lock().insert(
+            id,
+            RosterEntry {
+                pid,
+                kind,
+                label: label.to_string(),
+            },
+        );
+    }
+
+    pub(super) fn remove(&self, id: ProcessId) {
+        self.entries.lock().remove(&id);
+    }
+
+    fn kill_all(&self) {
+        let entries = std::mem::take(&mut *self.entries.lock());
+        tracing::info!("[supervisor] kill_all: {} child(ren)", entries.len());
+        for (id, entry) in entries {
+            kill::emergency_kill_group(entry.pid);
+            tracing::info!(
+                "[supervisor] killed id={} kind={:?} label={} pid={}",
+                id,
+                entry.kind,
+                entry.label,
+                entry.pid
+            );
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.lock().len()
+    }
 }
 
 struct ProcessRegistration {
@@ -86,7 +144,7 @@ enum ManagerCommand {
 }
 
 struct ProcessManager {
-    registry: Arc<ChildRegistry>,
+    roster: Arc<EmergencyRoster>,
     processes: HashMap<ProcessId, Arc<SupervisedProcess>>,
     command_tx: mpsc::UnboundedSender<ManagerCommand>,
     command_rx: mpsc::UnboundedReceiver<ManagerCommand>,
@@ -96,18 +154,20 @@ struct ProcessManager {
 }
 
 impl Supervisor {
-    pub fn new(registry: Arc<ChildRegistry>) -> Arc<Self> {
+    pub fn new() -> Arc<Self> {
         let (change_tx, _) = broadcast::channel(64);
         let (snapshot_tx, snapshots) = watch::channel(Vec::new());
         let (manager_tx, manager_rx) = mpsc::unbounded_channel();
+        let roster = EmergencyRoster::new();
         let supervisor = Arc::new(Self {
             manager_tx: manager_tx.clone(),
             snapshots,
             change_tx: change_tx.clone(),
+            roster: Arc::clone(&roster),
         });
         tokio::spawn(
             ProcessManager {
-                registry,
+                roster,
                 processes: HashMap::new(),
                 command_tx: manager_tx,
                 command_rx: manager_rx,
@@ -124,10 +184,26 @@ impl Supervisor {
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<Arc<Supervisor>> = OnceLock::new();
         Arc::clone(INSTANCE.get_or_init(|| {
-            let supervisor = Supervisor::new(ChildRegistry::global());
+            let supervisor = Supervisor::new();
             supervisor.spawn_tick_loop();
             supervisor
         }))
+    }
+
+    /// Synchronously SIGKILL every live supervised process group. The last
+    /// line of defense on daemon shutdown and Tauri exit: it awaits nothing,
+    /// needs no runtime, and covers children whose owner tasks never get
+    /// polled to completion during teardown. Normal shutdown paths should
+    /// still stop processes through their managers first.
+    pub fn kill_all_blocking(&self) {
+        self.roster.kill_all();
+    }
+
+    /// Number of live children in the emergency roster. Test-only: asserts
+    /// that terminal exits drain the roster.
+    #[cfg(test)]
+    pub(crate) fn live_children(&self) -> usize {
+        self.roster.len()
     }
 
     pub async fn register(
@@ -421,7 +497,7 @@ impl ProcessManager {
             ProcessOwner::new(
                 self.command_tx.clone(),
                 process,
-                Arc::clone(&self.registry),
+                Arc::clone(&self.roster),
                 spec,
                 policy,
                 factory,

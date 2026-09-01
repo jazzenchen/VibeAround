@@ -156,7 +156,6 @@ pub(super) enum ProcessCommand {
     },
     BridgeExited {
         generation_id: u64,
-        registry_id: u64,
         exit: crate::process::bridge::BridgeExit,
     },
 }

@@ -81,13 +81,6 @@ struct ChildRegistryState {
 }
 
 impl ChildRegistry {
-    /// Number of live entries. Crate-private — used by `Supervisor` tests
-    /// that assert the registry gets drained on terminal bridge exits.
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.state.lock().entries.len()
-    }
-
     pub(crate) fn new() -> Self {
         Self {
             state: Mutex::new(ChildRegistryState {
