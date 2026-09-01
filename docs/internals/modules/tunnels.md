@@ -12,7 +12,7 @@ Start, track, and stop tunnel runtimes; expose the current public URL to the res
 |---|---|---|
 | `TunnelManager` | `mod.rs` | Registry of live tunnels: provider → URL, registry id, abort handle; implements `StateSource` |
 | `start_web_tunnel_with_provider` | `mod.rs` | Entry: config → provider start → (guard, public URL) |
-| ngrok provider | `providers/ngrok.rs` | In-process via the ngrok Rust SDK (session + forwarder; optional reserved domain) |
+| ngrok provider | `providers/ngrok.rs` | Spawns the ngrok agent (`ngrok http`); URL parsed from its JSON logs; optional reserved domain |
 | cloudflare provider | `providers/cloudflare.rs` | Child process: `cloudflared tunnel run --token …` |
 | localtunnel provider | `providers/localtunnel.rs` | Child process: currently `npx localtunnel --port 12358` (known target-port defect) |
 | tailscale provider | `providers/tailscale.rs` | Child process: `tailscale funnel --yes http://127.0.0.1:12358` |

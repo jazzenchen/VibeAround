@@ -276,6 +276,9 @@ impl ProcessOwner {
         if let Some(cwd) = &self.spec.cwd {
             cmd.current_dir(cwd);
         }
+        for key in &self.spec.removed_env {
+            cmd.env_remove(key);
+        }
         for (key, value) in &self.spec.extra_env {
             cmd.env(key, value);
         }

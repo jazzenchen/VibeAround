@@ -20,12 +20,12 @@
    │  channels · workspace threads · process supervisor ·          │
    │  profiles · previews · tunnels · auth · search                │
    └──┬──────────────┬──────────────────────────────┬──────────────┘
-      │ stdio        │ stdio                        │ 子进程 / SDK
+      │ stdio        │ stdio                        │ 子进程
       │ JSON-RPC     │ JSON-RPC                     ▼
       │ (ACP)        │ (ACP)                    隧道进程
-      ▼              ▼                          (cloudflared, npx
-  渠道插件进程    agent CLI                     localtunnel; ngrok
-  (telegram, …)   进程                          走进程内 SDK)
+      ▼              ▼                          (cloudflared, ngrok,
+  渠道插件进程    agent CLI                     npx localtunnel,
+  (telegram, …)   进程                          tailscale funnel)
                      │
                      │ HTTP 回环（Bridge 化的 Profile）
                      ▼
@@ -51,7 +51,7 @@
 | agents → 守护进程（工具） | HTTP `/mcp` | MCP：streamable HTTP 上的 JSON-RPC（+ SSE） |
 | 启动的 CLI → 守护进程（模型） | HTTP 回环 `/va/local-api/…` | 客户端的供应商方言（OpenAI / Anthropic / Gemini 形状） |
 | 守护进程 → 模型供应商 | HTTPS | Bridge 转换后的供应商方言 |
-| 守护进程 → 隧道 | 进程内 SDK（ngrok）或子进程（`cloudflared`、`npx localtunnel`、`tailscale funnel`） | 供应商特定 |
+| 守护进程 → 隧道 | 受监管子进程（`cloudflared`、`npx localtunnel`、`ngrok http`、`tailscale funnel`） | 供应商特定 |
 | 守护进程 → 被预览的 dev server | HTTP 反向代理 | 透传 + iframe 工具栏注入 |
 
 ## 模块地图

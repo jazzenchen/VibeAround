@@ -1,12 +1,12 @@
 //! Tunnels module: expose the web dashboard over the internet via a public URL.
 //!
-//! Process-based providers (cloudflared, localtunnel, tailscale) run as
-//! supervised children: [`launch`] registers them with the process
-//! [`Supervisor`](crate::process::Supervisor) using a
-//! [`bridge::TunnelBridge`] that parses the public URL from stdout, and a
+//! Every provider is one supervised child process: [`launch`] builds the
+//! provider's [`TunnelPlan`] (what to spawn + how its public URL becomes
+//! known), registers it with the process
+//! [`Supervisor`](crate::process::Supervisor), and a
+//! [`bridge::TunnelBridge`] parses the URL / approval link from stdout. A
 //! watcher marks the tunnel failed when the supervisor reports the process
-//! stopped — covering crashes and spawn failures alike. Ngrok is SDK-based
-//! (no child process) and is held alive by a task instead.
+//! stopped — covering crashes and spawn failures alike.
 
 use std::sync::Arc;
 
@@ -70,10 +70,8 @@ pub(crate) struct TunnelPlan {
 /// Start the configured tunnel and wire it into `manager`.
 ///
 /// The manager entry must already be registered (so the dashboard shows
-/// the tunnel as starting). Returns once the tunnel is launched: for
-/// process providers that is right after the supervisor accepts the child —
-/// the URL arrives asynchronously via the bridge; for ngrok the SDK session
-/// is connected and the URL is known on return.
+/// the tunnel as starting). Returns right after the supervisor accepts the
+/// child — the public URL arrives asynchronously via the bridge.
 pub async fn launch(
     provider: TunnelProvider,
     config: &crate::config::Config,
@@ -82,18 +80,16 @@ pub async fn launch(
     let key = provider.as_str();
     match provider {
         TunnelProvider::None => Err("Tunnel provider is 'none' — no tunnel to start".into()),
-        TunnelProvider::Ngrok => {
-            let (handle, url) = providers::ngrok::start(config).await?;
-            manager.bind_sdk(key, handle.abort_handle());
-            manager.set_url(key, &url);
-            Ok(())
-        }
-        TunnelProvider::Cloudflare | TunnelProvider::Localtunnel | TunnelProvider::Tailscale => {
+        TunnelProvider::Cloudflare
+        | TunnelProvider::Localtunnel
+        | TunnelProvider::Ngrok
+        | TunnelProvider::Tailscale => {
             let plan = match provider {
                 TunnelProvider::Cloudflare => providers::cloudflare::plan(config)?,
                 TunnelProvider::Localtunnel => providers::localtunnel::plan(config)?,
+                TunnelProvider::Ngrok => providers::ngrok::plan(config)?,
                 TunnelProvider::Tailscale => providers::tailscale::plan()?,
-                _ => unreachable!("matched process providers above"),
+                TunnelProvider::None => unreachable!("handled above"),
             };
 
             let supervisor = Supervisor::global();

@@ -9,23 +9,12 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::broadcast;
-use tokio::task::AbortHandle;
 
 use crate::process::supervisor::{ProcessId, Supervisor};
 
 use super::status::{TunnelMeta, TunnelStatus};
 
 use super::TunnelProvider;
-
-/// Handle used to stop a tunnel on demand.
-enum TunnelKillHandle {
-    /// Process-based tunnel (cloudflared / localtunnel / tailscale):
-    /// stopping means unregistering the supervised process.
-    Supervised(ProcessId),
-    /// SDK-based tunnel (ngrok): stopping aborts the task that keeps the
-    /// SDK session alive.
-    Sdk(AbortHandle),
-}
 
 /// One registered tunnel (at most one per provider in normal operation).
 /// Held internally by `TunnelManager`; external consumers see the
@@ -36,9 +25,9 @@ pub struct TunnelEntry {
     /// Public URL once the backend has finished connecting. `None` while
     /// the backend is still starting up.
     pub url: Option<String>,
-    /// Set once the launch path knows how the tunnel is held; `None` for
-    /// the brief window between `register` and the bind call.
-    kill: Option<TunnelKillHandle>,
+    /// The tunnel's supervisor node; `None` for the brief window between
+    /// `register` and `bind_supervised`. Killing the tunnel unregisters it.
+    process_id: Option<ProcessId>,
 }
 
 /// Value-typed view of a single tunnel's current state, suitable for
@@ -72,7 +61,7 @@ impl TunnelManager {
     }
 
     /// Register a tunnel that is starting up. The launch path binds the
-    /// kill handle once it knows how the tunnel is held.
+    /// supervisor node once the child is registered.
     pub fn register(&self, provider: TunnelProvider) {
         self.tunnels.insert(
             provider.as_str().to_string(),
@@ -80,23 +69,16 @@ impl TunnelManager {
                 meta: TunnelMeta::new(),
                 provider,
                 url: None,
-                kill: None,
+                process_id: None,
             },
         );
         self.notify_change();
     }
 
-    /// Bind a supervised (process-based) tunnel to its supervisor node.
+    /// Bind a tunnel to its supervisor node.
     pub fn bind_supervised(&self, provider_key: &str, process_id: ProcessId) {
         if let Some(mut entry) = self.tunnels.get_mut(provider_key) {
-            entry.kill = Some(TunnelKillHandle::Supervised(process_id));
-        }
-    }
-
-    /// Bind an SDK tunnel to the task that keeps its session alive.
-    pub fn bind_sdk(&self, provider_key: &str, abort_handle: AbortHandle) {
-        if let Some(mut entry) = self.tunnels.get_mut(provider_key) {
-            entry.kill = Some(TunnelKillHandle::Sdk(abort_handle));
+            entry.process_id = Some(process_id);
         }
     }
 
@@ -130,14 +112,10 @@ impl TunnelManager {
             return false;
         };
         entry.meta.stopped("killed");
-        match entry.kill {
-            Some(TunnelKillHandle::Supervised(process_id)) => {
-                tokio::spawn(async move {
-                    let _ = Supervisor::global().unregister(process_id).await;
-                });
-            }
-            Some(TunnelKillHandle::Sdk(abort_handle)) => abort_handle.abort(),
-            None => {}
+        if let Some(process_id) = entry.process_id {
+            tokio::spawn(async move {
+                let _ = Supervisor::global().unregister(process_id).await;
+            });
         }
         self.notify_change();
         true
