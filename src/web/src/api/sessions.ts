@@ -1,25 +1,18 @@
 /**
- * Sessions API: list, create, delete. Base URL follows current page (works with tunnel).
+ * Launch-session and workspace API. Base URL follows current page (works with tunnel).
  */
 
 import {
   browserBaseUrl,
   ChatUploadResponseSchema,
-  CreateSessionResponseSchema,
   LaunchSessionListSchema,
   ProfileLaunchOptionsSchema,
-  SessionListSchema,
-  TmuxSessionsResponseSchema,
   WorkspaceThreadInitResponseSchema,
   WorkspaceItemSchema,
   WorkspacesResponseSchema,
   type ChatUploadResponse,
-  type CreateSessionResponse,
   type LaunchSessionInfo,
   type ProfileLaunchOption,
-  type PtyTool,
-  type SessionListItem,
-  type TmuxSessionsResponse,
   type WorkspaceItem,
   type WorkspaceThreadInitResponse,
   type WorkspacesResponse,
@@ -27,30 +20,12 @@ import {
 
 export type {
   ChatUploadResponse,
-  CreateSessionResponse,
   LaunchSessionInfo,
   ProfileLaunchOption,
-  SessionListItem,
-  TmuxSessionsResponse,
   WorkspaceItem,
   WorkspaceThreadInitResponse,
   WorkspacesResponse,
 };
-
-export interface CreateSessionBody {
-  tool?: PtyTool;
-  profile_id?: string;
-  launch_target?: string;
-  resume_session_id?: string;
-  project_path?: string;
-  tmux_session?: string;
-  /** "dark" | "light" — sets COLORFGBG in PTY env as fallback for non-OSC programs. */
-  theme?: string;
-  /** Initial terminal columns (from client fit). Server falls back to 80 if absent. */
-  cols?: number;
-  /** Initial terminal rows (from client fit). Server falls back to 24 if absent. */
-  rows?: number;
-}
 
 const CreateWorkspaceResponseSchema = WorkspacesResponseSchema.extend({
   workspace: WorkspaceItemSchema,
@@ -59,12 +34,6 @@ const CreateWorkspaceResponseSchema = WorkspacesResponseSchema.extend({
 export type CreateWorkspaceResponse = WorkspacesResponse & {
   workspace: WorkspaceItem;
 };
-
-export async function getSessions(): Promise<SessionListItem[]> {
-  const res = await fetch(`${browserBaseUrl()}/api/sessions`);
-  if (!res.ok) throw new Error(`GET /api/sessions: ${res.status}`);
-  return SessionListSchema.parse(await res.json());
-}
 
 export async function getProfiles(): Promise<ProfileLaunchOption[]> {
   const res = await fetch(`${browserBaseUrl()}/api/profiles`);
@@ -182,30 +151,6 @@ export async function unarchiveLaunchSession(
     body: JSON.stringify({ workspace_path: workspacePath }),
   });
   if (!res.ok && res.status !== 204) throw new Error(`POST ${path}: ${res.status}`);
-}
-
-export async function createSession(body: CreateSessionBody): Promise<CreateSessionResponse> {
-  const res = await fetch(`${browserBaseUrl()}/api/sessions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`POST /api/sessions: ${res.status} ${text}`);
-  }
-  return CreateSessionResponseSchema.parse(await res.json());
-}
-
-export async function deleteSession(sessionId: string): Promise<void> {
-  const res = await fetch(`${browserBaseUrl()}/api/sessions/${sessionId}`, { method: "DELETE" });
-  if (!res.ok && res.status !== 204) throw new Error(`DELETE /api/sessions: ${res.status}`);
-}
-
-export async function getTmuxSessions(): Promise<TmuxSessionsResponse> {
-  const res = await fetch(`${browserBaseUrl()}/api/tmux/sessions`);
-  if (!res.ok) throw new Error(`GET /api/tmux/sessions: ${res.status}`);
-  return TmuxSessionsResponseSchema.parse(await res.json());
 }
 
 async function uploadChatFileTo(

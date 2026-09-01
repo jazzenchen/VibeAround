@@ -115,42 +115,9 @@ button:focus-visible,
   border-radius: 3px;
 }
 
-/* xterm container and viewport */
-#terminal-container,
-.xterm {
-  height: 100% !important;
-  background-color: transparent !important;
-}
-.xterm-viewport {
-  overscroll-behavior: contain !important;
-  background-color: transparent !important;
-}
-
 /* Prevent iOS auto-zoom on input focus (requires font-size >= 16px). */
 @media screen and (max-width: 767px) {
   input, select, textarea {
     font-size: 16px !important;
   }
 }
-
-/* .xterm .xterm-viewport {
-  background-color: transparent;
-  overflow-y: scroll;
-  cursor: default;
-  position: absolute;
-  right: 0;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  scrollbar-color: var(--highlight) var(--dark);
-  scrollbar-width: thin;
-}
-
-.xterm-viewport::-webkit-scrollbar {
-  background-color: var(--dark);
-  width: 5px;
-}
-
-.xterm-viewport::-webkit-scrollbar-thumb {
-  background: var(--highlight);
-} */
