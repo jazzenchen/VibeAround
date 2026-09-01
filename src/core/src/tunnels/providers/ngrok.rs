@@ -10,11 +10,11 @@ use crate::process::registry::ProcessKind;
 
 const PORT: u16 = crate::config::DEFAULT_PORT;
 
-/// Start ngrok tunnel using the Rust SDK. Returns (guard, public URL).
-/// Uses the given config for auth token and optional static domain.
-pub async fn start_web_tunnel(
+/// Start the ngrok tunnel using the Rust SDK. Returns the task that keeps
+/// the session alive (abort it to stop the tunnel) and the public URL.
+pub(crate) async fn start(
     config: &crate::config::Config,
-) -> Result<(crate::tunnels::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error + Send + Sync>> {
     let token = config.ngrok_auth_token.as_deref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -74,24 +74,5 @@ pub async fn start_web_tunnel(
         std::future::pending::<()>().await
     });
 
-    Ok((crate::tunnels::TunnelGuard::Sdk(handle), url))
-}
-
-/// Ngrok backend. Implements TunnelBackend for unified dispatch.
-pub struct NgrokBackend;
-
-#[async_trait::async_trait]
-impl crate::tunnels::TunnelBackend for NgrokBackend {
-    fn name(&self) -> &'static str {
-        "ngrok"
-    }
-
-    async fn start_web_tunnel(
-        &self,
-        config: &crate::config::Config,
-        _approval_reporter: Option<crate::tunnels::TunnelApprovalReporter>,
-    ) -> Result<(crate::tunnels::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>>
-    {
-        start_web_tunnel(config).await
-    }
+    Ok((handle, url))
 }

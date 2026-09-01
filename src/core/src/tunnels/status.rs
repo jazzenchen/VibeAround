@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use serde::Serialize;
-use tokio::task::AbortHandle;
 
 fn unix_now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -45,22 +44,25 @@ impl TunnelStatus {
     }
 }
 
-/// Runtime metadata attached to each tunnel entry: status, start
-/// timestamp, and the abort closure used by `kill`.
+/// Runtime metadata attached to each tunnel entry: status and start
+/// timestamp. Killing lives on the manager, which owns the process /
+/// SDK-task handle.
 pub struct TunnelMeta {
     pub status: Arc<RwLock<TunnelStatus>>,
     pub started_at: u64,
-    kill_fn: Option<Box<dyn Fn() + Send + Sync>>,
+}
+
+impl Default for TunnelMeta {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TunnelMeta {
-    pub fn new(abort_handle: Option<AbortHandle>) -> Self {
-        let kill_fn: Option<Box<dyn Fn() + Send + Sync>> =
-            abort_handle.map(|h| Box::new(move || h.abort()) as Box<dyn Fn() + Send + Sync>);
+    pub fn new() -> Self {
         Self {
             status: Arc::new(RwLock::new(TunnelStatus::Running)),
             started_at: unix_now_secs(),
-            kill_fn,
         }
     }
 
@@ -72,18 +74,20 @@ impl TunnelMeta {
         unix_now_secs().saturating_sub(self.started_at)
     }
 
-    pub fn kill(&self) {
-        if let Some(f) = &self.kill_fn {
-            f();
-        }
-        let mut s = self.status.write();
-        *s = TunnelStatus::Stopped {
-            reason: "killed".into(),
+    pub fn stopped(&self, reason: &str) {
+        *self.status.write() = TunnelStatus::Stopped {
+            reason: reason.to_string(),
         };
     }
 
+    /// Record a failure. A tunnel that is already stopped or failed keeps
+    /// its first terminal status — the supervisor-event watcher and the
+    /// launch error path can both report without clobbering each other.
     pub fn fail(&self, error: String) {
-        *self.status.write() = TunnelStatus::Failed { error };
+        let mut status = self.status.write();
+        if status.is_running() {
+            *status = TunnelStatus::Failed { error };
+        }
     }
 
     pub fn await_approval(&self, url: String) {
@@ -101,7 +105,7 @@ mod tests {
 
     #[test]
     fn records_failed_status() {
-        let meta = TunnelMeta::new(None);
+        let meta = TunnelMeta::new();
         meta.fail("setup failed".to_string());
 
         assert!(matches!(
@@ -112,7 +116,7 @@ mod tests {
 
     #[test]
     fn records_awaiting_approval_status() {
-        let meta = TunnelMeta::new(None);
+        let meta = TunnelMeta::new();
         meta.await_approval("https://login.tailscale.com/f/funnel?node=abc".to_string());
 
         assert!(matches!(

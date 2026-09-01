@@ -4,16 +4,16 @@
 //! The public URL comes from `tunnel.cloudflare.hostname`.
 
 use std::path::PathBuf;
-use std::process::Stdio;
 
-use crate::proc_log;
-use crate::process::registry::{ChildRegistry, ProcessKind};
+use crate::process::supervisor::SpawnSpec;
+use crate::tunnels::bridge::UrlDiscovery;
+use crate::tunnels::TunnelPlan;
 
-/// Start Cloudflare tunnel. Returns (guard, public URL).
-/// Token from config; hostname (public URL) from config since Cloudflare Named Tunnels have a fixed URL.
-pub async fn start_web_tunnel(
+/// Build the launch plan for the Cloudflare tunnel. Named Tunnels have a
+/// fixed hostname, so the public URL is known before the child starts.
+pub(crate) fn plan(
     config: &crate::config::Config,
-) -> Result<(crate::tunnels::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<TunnelPlan, Box<dyn std::error::Error + Send + Sync>> {
     let token = config.cloudflare_tunnel_token.as_deref().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -32,32 +32,10 @@ pub async fn start_web_tunnel(
         .expect("cloudflare tunnel not in tunnels.json");
     let program = tunnel_def.program.as_deref().unwrap_or("cloudflared");
     let resolved_program = resolve_cloudflared_program(tunnel_def, program, config)?;
-    let base_args: Vec<&str> = tunnel_def
+    let args: Vec<String> = tunnel_def
         .args
-        .as_ref()
-        .map(|a| a.iter().map(|s| s.as_str()).collect())
-        .unwrap_or_else(|| vec!["tunnel", "run"]);
-
-    let resolved_program_string = resolved_program.to_string_lossy().to_string();
-    let mut cmd = crate::process::env::command(&resolved_program_string);
-    cmd.args(&base_args)
-        .env("TUNNEL_TOKEN", token)
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
-
-    cmd.kill_on_drop(true);
-    let error_hint =
-        crate::resources::tunnel_spawn_error_hint(tunnel_def).unwrap_or("is it installed?");
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to spawn {} ({}): {}", program, error_hint, e))?;
-    let pid = child.id();
-
-    // Transfer Child ownership to the registry so daemon shutdown's
-    // kill_all() reaches it even if the outer task never gets a chance
-    // to reach guard.wait(). See TunnelGuard::wait for the happy-path
-    // reaper.
-    let registry_id = ChildRegistry::global().register(ProcessKind::Tunnel, "cloudflare", child);
+        .clone()
+        .unwrap_or_else(|| vec!["tunnel".to_string(), "run".to_string()]);
 
     let url = format!(
         "https://{}",
@@ -65,16 +43,13 @@ pub async fn start_web_tunnel(
             .trim_start_matches("https://")
             .trim_start_matches("http://")
     );
-    proc_log!(
-        info,
-        kind = ProcessKind::Tunnel,
-        label = "cloudflare",
-        pid = pid,
-        event = "started",
-        url = %url
-    );
 
-    Ok((crate::tunnels::TunnelGuard::Process { registry_id }, url))
+    Ok(TunnelPlan {
+        spec: SpawnSpec::new(resolved_program.to_string_lossy())
+            .args(args)
+            .env("TUNNEL_TOKEN", token),
+        url: UrlDiscovery::Known(url),
+    })
 }
 
 fn resolve_cloudflared_program(
@@ -93,23 +68,4 @@ fn resolve_cloudflared_program(
         ));
     }
     Ok(PathBuf::from(program))
-}
-
-/// Cloudflare backend. Implements TunnelBackend for unified dispatch.
-pub struct CloudflareBackend;
-
-#[async_trait::async_trait]
-impl crate::tunnels::TunnelBackend for CloudflareBackend {
-    fn name(&self) -> &'static str {
-        "cloudflare"
-    }
-
-    async fn start_web_tunnel(
-        &self,
-        config: &crate::config::Config,
-        _approval_reporter: Option<crate::tunnels::TunnelApprovalReporter>,
-    ) -> Result<(crate::tunnels::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>>
-    {
-        start_web_tunnel(config).await
-    }
 }

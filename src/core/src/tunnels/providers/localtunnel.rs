@@ -1,15 +1,13 @@
 //! Localtunnel: expose the web dashboard over the internet via a public URL.
 //! In system mode, spawns `npx localtunnel --port <DEFAULT_PORT>`.
 //! In VibeAround-managed mode, runs the managed `lt` npm entry with system Node.
-//! Parses the public URL from stdout and keeps the process alive.
+//! The public URL is parsed from stdout by the tunnel bridge.
 //! loca.lt uses the tunnel initiator's public IP as its anti-abuse password,
 //! retrieved from `https://loca.lt/mytunnelpassword`.
 
-use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
-
-use crate::proc_log;
-use crate::process::registry::{ChildRegistry, ProcessKind};
+use crate::process::supervisor::SpawnSpec;
+use crate::tunnels::bridge::UrlDiscovery;
+use crate::tunnels::TunnelPlan;
 
 const PORT: u16 = crate::config::DEFAULT_PORT;
 
@@ -40,68 +38,22 @@ fn parse_url_from_line(line: &str) -> Option<String> {
     None
 }
 
-/// Start localtunnel for the given port. Returns (guard, public URL) once the URL is printed.
-/// Caller must keep the guard and await `guard.wait()` to keep the tunnel alive.
-pub async fn start(
-    port: u16,
+/// Build the launch plan for localtunnel on the web dashboard port.
+pub(crate) fn plan(
     config: &crate::config::Config,
-) -> Result<(crate::tunnels::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<TunnelPlan, Box<dyn std::error::Error + Send + Sync>> {
     let tunnel_def =
         crate::resources::tunnel_by_id("localtunnel").expect("localtunnel not in tunnels.json");
     let (program, mut args) = localtunnel_command(tunnel_def, config)?;
-    args.push(port.to_string());
+    args.push(PORT.to_string());
 
-    let mut cmd = crate::process::env::command(&program);
-    cmd.args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    let error_hint =
-        crate::resources::tunnel_spawn_error_hint(tunnel_def).unwrap_or("is Node/npx installed?");
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to spawn {} ({}): {}", program, error_hint, e))?;
-    let pid = child.id();
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("localtunnel stdout not captured")?;
-
-    let reader = BufReader::new(stdout);
-    let mut lines = reader.lines();
-    let url = loop {
-        let line = lines
-            .next_line()
-            .await
-            .map_err(|e| format!("Reading localtunnel stdout: {}", e))?
-            .ok_or("localtunnel closed stdout before printing URL")?;
-        if let Some(u) = parse_url_from_line(&line) {
-            break u;
-        }
-    };
-
-    // Register after stdout yields the public URL.
-    let registry_id = ChildRegistry::global().register(ProcessKind::Tunnel, "localtunnel", child);
-
-    proc_log!(
-        info,
-        kind = ProcessKind::Tunnel,
-        label = "localtunnel",
-        pid = pid,
-        event = "started",
-        url = %url
-    );
-
-    Ok((crate::tunnels::TunnelGuard::Process { registry_id }, url))
-}
-
-/// Start tunnel for the default web dashboard port.
-pub async fn start_web_tunnel(
-    config: &crate::config::Config,
-) -> Result<(crate::tunnels::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>> {
-    start(PORT, config).await
+    Ok(TunnelPlan {
+        spec: SpawnSpec::new(program).args(args),
+        url: UrlDiscovery::FromStdout {
+            parse_url: parse_url_from_line,
+            parse_approval: None,
+        },
+    })
 }
 
 fn localtunnel_command(
@@ -130,21 +82,20 @@ fn localtunnel_command(
     Ok((program, args))
 }
 
-/// Localtunnel backend. Implements TunnelBackend for unified dispatch.
-pub struct LocaltunnelBackend;
+#[cfg(test)]
+mod tests {
+    use super::parse_url_from_line;
 
-#[async_trait::async_trait]
-impl crate::tunnels::TunnelBackend for LocaltunnelBackend {
-    fn name(&self) -> &'static str {
-        "localtunnel"
+    #[test]
+    fn parses_standard_url_line() {
+        assert_eq!(
+            parse_url_from_line("your url is: https://brave-cat-42.loca.lt"),
+            Some("https://brave-cat-42.loca.lt".to_string())
+        );
     }
 
-    async fn start_web_tunnel(
-        &self,
-        config: &crate::config::Config,
-        _approval_reporter: Option<crate::tunnels::TunnelApprovalReporter>,
-    ) -> Result<(crate::tunnels::TunnelGuard, String), Box<dyn std::error::Error + Send + Sync>>
-    {
-        start_web_tunnel(config).await
+    #[test]
+    fn ignores_unrelated_lines() {
+        assert_eq!(parse_url_from_line("tunnel starting on port 12358"), None);
     }
 }

@@ -1,6 +1,7 @@
-//! Concrete tunnel provider backends. Each implements
-//! [`super::TunnelBackend`]; the parent `tunnels` module dispatches via
-//! [`super::TunnelProvider::backend`].
+//! Concrete tunnel provider backends. The process-based providers
+//! (cloudflare / localtunnel / tailscale) build a [`super::TunnelPlan`]
+//! that the parent module registers with the process supervisor; ngrok is
+//! SDK-based and returns the task that keeps its session alive.
 
 pub(super) mod cloudflare;
 pub(super) mod localtunnel;
