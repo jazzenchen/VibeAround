@@ -14,7 +14,7 @@
       "npm_package": "@vibearound/agent@0.1.2",
       "bin_name": "va-agent"
     },
-    "pty": {
+    "cli": {
       "command": "va tui"
     },
     "global_config": {
@@ -32,7 +32,7 @@
       "npm_package": "@agentclientprotocol/claude-agent-acp@0.66.0",
       "bin_name": "claude-agent-acp"
     },
-    "pty": {
+    "cli": {
       "command": "claude code --permission-mode acceptEdits"
     },
     "resume_template": "cd {cwd} && claude --resume {session_id}",
@@ -54,7 +54,7 @@
     "acp": {
       "program": ""
     },
-    "pty": {
+    "cli": {
       "command": "open -a Claude",
       "platform_commands": {
         "macos": "open -a Claude",
@@ -73,7 +73,7 @@
       "npm_package": "@agentclientprotocol/codex-acp@1.1.14",
       "bin_name": "codex-acp"
     },
-    "pty": {
+    "cli": {
       "command": "codex"
     },
     "resume_template": "cd {cwd} && codex resume {session_id}",
@@ -96,7 +96,7 @@
     "acp": {
       "program": ""
     },
-    "pty": {
+    "cli": {
       "command": "open -b com.openai.codex",
       "platform_commands": {
         "macos": "open -b com.openai.codex",
@@ -115,7 +115,7 @@
       "npm_package": "pi-acp@0.0.27",
       "bin_name": "pi-acp"
     },
-    "pty": {
+    "cli": {
       "command": "pi"
     },
     "resume_template": "cd {cwd} && pi --session {session_id}"
@@ -130,7 +130,7 @@
       "program": "gemini",
       "args": ["--experimental-acp"]
     },
-    "pty": {
+    "cli": {
       "command": "gemini"
     },
     "resume_template": "cd {cwd} && gemini --resume {session_id}",
@@ -151,7 +151,7 @@
       "program": "opencode",
       "args": ["acp"]
     },
-    "pty": {
+    "cli": {
       "command": "opencode"
     },
     "resume_template": "cd {cwd} && opencode --session {session_id}"
@@ -167,7 +167,7 @@
       "args": ["acp"],
       "install_cmd": "curl -fsSL https://cursor.com/install | bash"
     },
-    "pty": {
+    "cli": {
       "command": "cursor-agent"
     },
     "resume_template": "cd {cwd} && cursor-agent --resume {session_id}",
@@ -190,7 +190,7 @@
       "args": ["acp"],
       "install_cmd": "curl -fsSL https://cli.kiro.dev/install | bash"
     },
-    "pty": {
+    "cli": {
       "command": "kiro-cli"
     },
     "global_config": {
@@ -211,7 +211,7 @@
       "program": "qwen",
       "args": ["--acp"]
     },
-    "pty": {
+    "cli": {
       "command": "qwen"
     },
     "resume_template": "cd {cwd} && qwen --resume {session_id}",

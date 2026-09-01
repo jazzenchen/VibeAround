@@ -56,7 +56,7 @@ pub struct AgentDef {
     #[serde(default)]
     pub install: Option<AgentInstallInfo>,
     pub acp: AgentAcpConfig,
-    pub pty: AgentPtyConfig,
+    pub cli: AgentCliConfig,
     #[serde(default)]
     pub resume_template: Option<String>,
     #[serde(default)]
@@ -86,8 +86,10 @@ pub struct AgentAcpConfig {
     pub install_cmd: Option<String>,
 }
 
+/// The agent's plain CLI launch command (used for install detection,
+/// onboarding display, and external-terminal launches).
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AgentPtyConfig {
+pub struct AgentCliConfig {
     pub command: String,
     #[serde(default)]
     pub platform_commands: HashMap<String, String>,
@@ -156,12 +158,12 @@ impl AgentDef {
         !self.direct_only && !self.acp.program.trim().is_empty()
     }
 
-    pub fn pty_command_for_current_platform(&self) -> &str {
-        self.pty
+    pub fn cli_command_for_current_platform(&self) -> &str {
+        self.cli
             .platform_commands
             .get(current_platform())
             .map(String::as_str)
-            .unwrap_or(self.pty.command.as_str())
+            .unwrap_or(self.cli.command.as_str())
     }
 
     pub fn launch_command_for_current_platform(&self) -> &str {
@@ -171,7 +173,7 @@ impl AgentDef {
     pub fn launch_command_for_terminal(&self, terminal_id: Option<&str>) -> &str {
         self.launch_config()
             .and_then(|launch| launch.command_for_terminal(terminal_id))
-            .unwrap_or_else(|| self.pty_command_for_current_platform())
+            .unwrap_or_else(|| self.cli_command_for_current_platform())
     }
 
     pub fn launch_args_for_current_platform(&self) -> Vec<String> {
@@ -212,7 +214,7 @@ impl AgentDef {
         let command = resume
             .command_for_terminal(terminal_id)
             .or_else(|| launch.command_for_terminal(terminal_id))
-            .unwrap_or_else(|| self.pty_command_for_current_platform())
+            .unwrap_or_else(|| self.cli_command_for_current_platform())
             .to_string();
         let args = resume
             .args_for_terminal(terminal_id)
@@ -638,10 +640,10 @@ mod tests {
     }
 
     #[test]
-    fn launch_templates_extend_without_rewriting_pty_commands() {
+    fn launch_templates_extend_without_rewriting_cli_commands() {
         let codex = agent_by_id("codex").expect("codex agent");
         assert!(agent_launch_by_id("openai-codex").is_some());
-        assert_eq!(codex.pty_command_for_current_platform(), "codex");
+        assert_eq!(codex.cli_command_for_current_platform(), "codex");
         assert_eq!(codex.launch_command_for_current_platform(), "codex");
         assert_eq!(
             codex.launch_args_for_current_platform(),
@@ -650,7 +652,7 @@ mod tests {
 
         let claude = agent_by_id("claude").expect("claude agent");
         assert_eq!(
-            claude.pty_command_for_current_platform(),
+            claude.cli_command_for_current_platform(),
             "claude code --permission-mode acceptEdits"
         );
         assert_eq!(
@@ -668,13 +670,13 @@ mod tests {
         let mut platform_terminal_commands = HashMap::new();
         platform_terminal_commands.insert(
             platform.clone(),
-            HashMap::from([("web-pty".to_string(), "platform-web".to_string())]),
+            HashMap::from([("iterm2".to_string(), "platform-iterm".to_string())]),
         );
         let launch = AgentLaunchConfig {
             command: Some("base".to_string()),
             platform_commands: HashMap::from([(platform, "platform".to_string())]),
             terminal_commands: HashMap::from([
-                ("web-pty".to_string(), "terminal-web".to_string()),
+                ("iterm2".to_string(), "terminal-iterm".to_string()),
                 ("native".to_string(), "terminal-native".to_string()),
             ]),
             platform_terminal_commands,
@@ -687,8 +689,8 @@ mod tests {
             Some("terminal-native")
         );
         assert_eq!(
-            launch.command_for_terminal(Some("web-pty")),
-            Some("platform-web")
+            launch.command_for_terminal(Some("iterm2")),
+            Some("platform-iterm")
         );
     }
 

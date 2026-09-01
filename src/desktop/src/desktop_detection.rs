@@ -83,7 +83,7 @@ pub fn refresh_known_agent_and_persist(
         return Ok(None);
     }
 
-    let launch_command = agent.pty_command_for_current_platform().to_string();
+    let launch_command = agent.cli_command_for_current_platform().to_string();
     let Some(app_name) = desktop_app_name(&launch_command) else {
         return Ok(None);
     };
@@ -127,7 +127,7 @@ pub async fn scan_desktop_apps() -> DesktopAppDetectionFile {
         if !agent.direct_only || !agent.supports_current_platform() {
             continue;
         }
-        let launch_command = agent.pty_command_for_current_platform().to_string();
+        let launch_command = agent.cli_command_for_current_platform().to_string();
         let entry = match desktop_app_name(&launch_command) {
             Some(app_name) => desktop_app_entry(&app_name).await,
             None => None,

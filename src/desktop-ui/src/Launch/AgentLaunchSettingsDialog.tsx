@@ -71,7 +71,7 @@ function commandWords(command: string): string[] {
 }
 
 function terminalCommandWords(agent: AgentSummary): string[] {
-  return commandWords(agent.pty_command ?? agent.id);
+  return commandWords(agent.cli_command ?? agent.id);
 }
 
 function acpCommandWords(agent: AgentSummary, os: ClientOs): string[] {
