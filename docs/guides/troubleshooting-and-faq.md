@@ -11,7 +11,7 @@ Expected: the auth token regenerates on every daemon start. Reopen from a truste
 The CLI was launched with a bridged profile, and the daemon is not running — the bridge at `127.0.0.1:12358` is its model endpoint. Start the desktop app or `va serve`, then retry the request in the CLI.
 
 **Port 12358 is already in use.**
-Another VibeAround instance (or a stale process from a crash) holds it. `va status` tells you if a healthy daemon is answering; otherwise find and kill the holder. The daemon sweeps orphaned child processes at startup, but a previous *daemon* process must be stopped by you.
+Another VibeAround instance (or a stale process from a crash) holds it. `va status` tells you if a healthy daemon is answering; otherwise find and kill the holder. On macOS and Linux child processes die with their daemon; on Windows the daemon sweeps orphaned child processes at startup. A previous *daemon* process must be stopped by you.
 
 **Pairing code always invalid or expired.**
 Codes live 60 seconds. Generate, then confirm immediately from a chat connected to the same daemon (`/pair <code>`) or locally. A code from machine A never works on machine B's daemon.
@@ -84,7 +84,7 @@ When reporting an issue, `va doctor` output plus the relevant slice of the curre
 
 ---
 
-*Source anchors: `src/core/src/auth/pair.rs` (code TTL), `src/core/src/channels/prompt/mod.rs` (auto-close reasons), `src/core/src/workspace/` (persistence), `src/core/src/previews/store.rs` (share TTL), `src/server/src/lib.rs` (orphan sweep, Windows bind retry), `src/core/src/logging.rs` (log destinations).*
+*Source anchors: `src/core/src/auth/pair.rs` (code TTL), `src/core/src/channels/prompt/mod.rs` (auto-close reasons), `src/core/src/workspace/` (persistence), `src/core/src/previews/store.rs` (share TTL), `src/server/src/lib.rs` (orphan sweep on Windows, Windows bind retry), `src/core/src/logging.rs` (log destinations).*
 *Last verified: v0.7.11*
 
 <sub>[◀ Build from source](build-from-source.md) · [Documentation index](../README.md) · [Concepts ▶](../architecture/concepts.md)</sub>

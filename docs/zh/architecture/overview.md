@@ -64,7 +64,7 @@
 |---|---|
 | `channels` | 插件宿主、stdio/websocket 传输、输入分发、route lanes、监控 |
 | `workspace` | Workspace、Thread、Route 附着、交接码（事件溯源状态 + 内存 pickup codes） |
-| `process` | 监督器（拉起/重启/看门狗，持有全部子进程）、孤儿清扫、ACP 传输、环境增强 |
+| `process` | 监督器（拉起/重启/看门狗，持有全部子进程）、进程租约（macOS/Linux 上子进程绝不活过守护进程；Windows 过渡期仍用花名册加清扫）、ACP 传输、环境增强 |
 | `agent` | ACP agent 句柄、启动渲染、MCP/技能配置注入 |
 | `profiles` | Profile schema、目录、渲染、Bridge 启动 URL、供应商连接 |
 | `previews` | Server/Markdown owner 与 Share URL、受限 Server Share 代理、端口清理 |
@@ -116,7 +116,7 @@ Agent Launch 是另一条路 —— 不把 Agent 托管在守护进程里，而�
 | 运行中的 Agent/插件进程 | 内存中，受监督 | 不保留 —— 按需重新拉起 |
 | 控制台认证 token | `~/.vibearound/auth.json` | 每次守护进程启动重新生成 |
 
-监督器给每个子进程（渠道插件、Agent 适配器）提供崩溃重启，插件另有心跳看门狗；守护进程关停时级联清理，不留孤儿进程。
+监督器给每个子进程（渠道插件、Agent 适配器）提供崩溃重启，插件另有心跳看门狗；在 macOS/Linux 上另有内核持有的租约保证子进程不会活过守护进程，无论它以何种方式退出。
 
 ---
 

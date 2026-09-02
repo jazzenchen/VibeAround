@@ -10,7 +10,7 @@ Expose core's managers over the wire and own daemon composition: `ServerDaemon::
 
 | Submodule | Role |
 |---|---|
-| `lib.rs` (`ServerDaemon`, `RunningDaemon`) | Boot sequence, channel input dispatcher, orphan sweep, ingress-first graceful shutdown, Windows bind retry |
+| `lib.rs` (`ServerDaemon`, `RunningDaemon`) | Boot sequence, channel input dispatcher, orphan sweep (Windows only), ingress-first graceful shutdown, Windows bind retry |
 | `web_server/mod.rs` | Router assembly: protected vs open routes, body limits, SPA fallback |
 | `web_server/api/` | REST handlers per domain (sessions, workspaces, profiles, launcher, previews, settings, files, runtime) |
 | `ws_chat` / `ws_domains` | The two WebSocket families: chat events, live-state snapshots |

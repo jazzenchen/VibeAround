@@ -275,7 +275,6 @@ async fn bridge_exit_terminates_helper_process_group() {
     };
     wait_for_absent(&supervisor, id).await;
     assert_ne!(child_pid, 0, "bridge should capture the helper pid");
-    assert_eq!(supervisor.live_children(), 0);
 
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
     let mut alive = true;
@@ -354,7 +353,6 @@ async fn register_runs_then_force_stop() {
     supervisor.force_stop(id).await.unwrap();
 
     wait_for_status(&supervisor, id, ProcessStatus::Stopped).await;
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -405,7 +403,6 @@ async fn lifecycle_commands_are_consumed_in_order() {
 
     wait_for_status(&supervisor, id, ProcessStatus::Stopped).await;
     assert_eq!(factory_count.load(Ordering::Acquire), 2);
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -439,7 +436,6 @@ async fn force_stop_aborts_a_stubborn_bridge() {
         .unwrap();
 
     assert_eq!(dropped.load(Ordering::Acquire), 1);
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
@@ -462,7 +458,6 @@ async fn unregister_stops_and_removes_restartable_process() {
     supervisor.unregister(id).await.unwrap();
 
     assert!(!supervisor.snapshot().iter().any(|process| process.id == id));
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
@@ -479,7 +474,6 @@ async fn never_policy_auto_deregisters_terminal_process() {
         .await;
 
     wait_for_absent(&supervisor, id).await;
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
@@ -654,7 +648,6 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
     supervisor.shutdown_all().await;
 
     assert!(supervisor.snapshot().is_empty());
-    assert_eq!(supervisor.live_children(), 0);
     let id = supervisor
         .register(
             ProcessKind::ChannelPlugin,
@@ -669,6 +662,280 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
         .await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
     supervisor.force_stop(id).await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn lease_covers_each_generation_from_spawn_to_reap() {
+    use std::io::Read;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
+
+    let (ours, theirs) = UnixStream::pair().expect("socket pair");
+    let supervisor =
+        Supervisor::with_test_lease(crate::process::lease::Lease::with_fd(OwnedFd::from(theirs)));
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "leased",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
+    wait_for_status(&supervisor, id, ProcessStatus::Running).await;
+    supervisor.force_stop(id).await.unwrap();
+    wait_for_status(&supervisor, id, ProcessStatus::Stopped).await;
+
+    // The owner tasks keep their lease handle, so there is no EOF to wait
+    // for: read until both lines have arrived.
+    let lines = tokio::task::spawn_blocking(move || {
+        let mut reader = ours;
+        reader
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("timeout");
+        let mut text = Vec::new();
+        let mut chunk = [0_u8; 256];
+        while text.iter().filter(|byte| **byte == b'\n').count() < 2 {
+            let read = reader.read(&mut chunk).expect("read lease lines");
+            assert_ne!(read, 0, "lease pipe closed early");
+            text.extend_from_slice(&chunk[..read]);
+        }
+        String::from_utf8(text).expect("utf8")
+    })
+    .await
+    .expect("reader");
+    let mut lines = lines.lines();
+    let add = lines.next().expect("spawn leases the group");
+    let del = lines.next().expect("reap releases the group");
+    let pid = add.strip_prefix("add ").expect("add line");
+    pid.parse::<u32>().expect("pgid");
+    assert_eq!(del, format!("del {pid}"), "reap releases the same group");
+    assert_eq!(lines.next(), None);
+}
+
+/// A spawn that fails never reaches the reaper: the next successful
+/// spawn's `add` is the first line on the pipe.
+#[cfg(unix)]
+#[tokio::test]
+async fn failed_spawn_leaves_no_lease_entry() {
+    use std::io::Read;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
+
+    let (ours, theirs) = UnixStream::pair().expect("socket pair");
+    let supervisor =
+        Supervisor::with_test_lease(crate::process::lease::Lease::with_fd(OwnedFd::from(theirs)));
+    let failed = supervisor
+        .register(
+            ProcessKind::AcpAgent,
+            "missing-program",
+            SpawnSpec::new("vibearound-program-that-does-not-exist"),
+            RestartPolicy::Never,
+            Box::new(|| unreachable!("factory must not run for a failed spawn")),
+        )
+        .await;
+    wait_for_absent(&supervisor, failed).await;
+    let id = supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "leased-after-failure",
+            cat_spec(),
+            RestartPolicy::OnCrash {
+                restart_delay: Duration::from_secs(30),
+                watchdog: None,
+            },
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
+    wait_for_status(&supervisor, id, ProcessStatus::Running).await;
+
+    let first_line = tokio::task::spawn_blocking(move || {
+        let mut reader = ours;
+        reader
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("timeout");
+        let mut text = Vec::new();
+        let mut chunk = [0_u8; 256];
+        while !text.contains(&b'\n') {
+            let read = reader.read(&mut chunk).expect("read lease lines");
+            assert_ne!(read, 0, "lease pipe closed early");
+            text.extend_from_slice(&chunk[..read]);
+        }
+        String::from_utf8(text).expect("utf8")
+    })
+    .await
+    .expect("reader");
+    assert!(
+        first_line.starts_with("add "),
+        "failed spawn must not write to the lease: {first_line:?}"
+    );
+    supervisor.force_stop(id).await.unwrap();
+}
+
+/// Bridge for the SIGKILL harness: relays the child's own pid and its
+/// grandchild's pid to the harness stdout, then waits to be cancelled.
+#[cfg(unix)]
+struct ReportPidsBridge;
+
+#[cfg(unix)]
+impl ProcessBridge for ReportPidsBridge {
+    fn run(
+        self: Box<Self>,
+        pipes: StdioPipes,
+        mut cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move {
+            use tokio::io::AsyncBufReadExt;
+
+            let mut stdout = tokio::io::BufReader::new(pipes.stdout).lines();
+            let child = stdout.next_line().await.unwrap().unwrap();
+            let grandchild = stdout.next_line().await.unwrap().unwrap();
+            println!("child {}", child.trim());
+            println!("grandchild {}", grandchild.trim());
+            let _ = cancel.wait_for(|cancelled| *cancelled).await;
+            BridgeExit::Cancelled
+        })
+    }
+}
+
+/// Body of the SIGKILL harness: a daemon stand-in that supervises one
+/// child whose whole tree ignores SIGTERM. Only runs when spawned by
+/// `sigkilled_daemon_takes_every_child_down`; otherwise it is a no-op.
+#[cfg(unix)]
+#[tokio::test]
+async fn harness_supervised_children_for_sigkill_test() {
+    if std::env::var_os("VA_LEASE_HARNESS").is_none() {
+        return;
+    }
+    let supervisor = Supervisor::new();
+    println!(
+        "reaper {}",
+        supervisor.lease().reaper_pid().expect("reaper")
+    );
+    supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "sigkill-harness",
+            SpawnSpec::new("sh").args(["-c", "trap '' TERM; echo $$; sleep 60 & echo $!; wait"]),
+            RestartPolicy::Never,
+            Box::new(|| Box::new(ReportPidsBridge)),
+        )
+        .await;
+    std::future::pending::<()>().await;
+}
+
+/// The real thing: a separate daemon process is SIGKILLed and its child,
+/// grandchild, and reaper must all be gone shortly after, with nobody in
+/// the daemon having run any cleanup code.
+#[cfg(unix)]
+#[test]
+fn sigkilled_daemon_takes_every_child_down() {
+    use std::io::BufRead;
+    use std::sync::mpsc;
+
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let harness = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "process::supervisor::tests::harness_supervised_children_for_sigkill_test",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("VA_LEASE_HARNESS", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn harness");
+    let mut harness = KillOnDrop(harness);
+    let stdout = harness.0.stdout.take().expect("harness stdout");
+    let (lines_tx, lines_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            if lines_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut reaper = None;
+    let mut child = None;
+    let mut grandchild = None;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while reaper.is_none() || child.is_none() || grandchild.is_none() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let line = lines_rx
+            .recv_timeout(remaining)
+            .expect("harness did not report its pids in time");
+        // With `--nocapture` libtest prints its own `test … ...` prefix on
+        // the same line as the first report, so scan word pairs anywhere.
+        let words: Vec<&str> = line.split_whitespace().collect();
+        for pair in words.windows(2) {
+            let Ok(pid) = pair[1].parse::<u32>() else {
+                continue;
+            };
+            match pair[0] {
+                "reaper" => reaper = Some(pid),
+                "child" => child = Some(pid),
+                "grandchild" => grandchild = Some(pid),
+                _ => {}
+            }
+        }
+    }
+    let pids = [reaper.unwrap(), child.unwrap(), grandchild.unwrap()];
+    for pid in pids {
+        assert!(
+            process_exists(pid),
+            "pid {pid} should be alive before the kill"
+        );
+    }
+
+    // SAFETY: signalling the harness process we spawned.
+    assert_eq!(
+        unsafe { libc::kill(harness.0.id() as libc::pid_t, libc::SIGKILL) },
+        0
+    );
+    let _ = harness.0.wait();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while pids.iter().any(|pid| process_exists(*pid)) {
+        if std::time::Instant::now() >= deadline {
+            let survivors: Vec<u32> = pids
+                .iter()
+                .copied()
+                .filter(|pid| process_exists(*pid))
+                .collect();
+            for pid in &survivors {
+                // SAFETY: cleanup of pids this test created.
+                unsafe { libc::kill(*pid as libc::pid_t, libc::SIGKILL) };
+            }
+            panic!("processes outlived the SIGKILLed daemon: {survivors:?} (reaper, child, grandchild = {pids:?})");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks for existence.
+    if unsafe { libc::kill(pid as libc::pid_t, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(unix)]

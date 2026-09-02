@@ -11,7 +11,7 @@
 这个 CLI 是用 Bridge 化的 Profile 启动的，而守护进程没在运行 —— `127.0.0.1:12358` 的 Bridge 就是它的模型端点。启动桌面应用或 `va serve`，然后在 CLI 里重试。
 
 **端口 12358 被占用。**
-另一个 VibeAround 实例（或崩溃留下的残留进程）占着它。`va status` 能告诉你是否有健康的守护进程在应答；否则找到并杀掉占用者。守护进程启动时会清扫孤儿子进程，但上一个*守护进程*本身要由你来停。
+另一个 VibeAround 实例（或崩溃留下的残留进程）占着它。`va status` 能告诉你是否有健康的守护进程在应答；否则找到并杀掉占用者。macOS/Linux 上子进程会随守护进程一起退出，Windows 上守护进程会在启动时清扫孤儿子进程；但上一个*守护进程*本身要由你来停。
 
 **配对码总是无效或过期。**
 码只活 60 秒。生成后立刻在连着同一个守护进程的聊天里确认（`/pair <code>`）或在本机确认。机器 A 的码在机器 B 的守护进程上永远无效。
@@ -84,7 +84,7 @@ RUST_LOG=warn,common::channels=trace va serve  # 只 trace 一个子系统
 
 ---
 
-*Source anchors: `src/core/src/auth/pair.rs` (code TTL), `src/core/src/channels/prompt/mod.rs` (auto-close reasons), `src/core/src/workspace/` (persistence), `src/core/src/previews/store.rs` (share TTL), `src/server/src/lib.rs` (orphan sweep, Windows bind retry), `src/core/src/logging.rs` (log destinations).*
+*Source anchors: `src/core/src/auth/pair.rs` (code TTL), `src/core/src/channels/prompt/mod.rs` (auto-close reasons), `src/core/src/workspace/` (persistence), `src/core/src/previews/store.rs` (share TTL), `src/server/src/lib.rs` (orphan sweep on Windows, Windows bind retry), `src/core/src/logging.rs` (log destinations).*
 *Last verified: v0.7.11*
 
 <sub>[◀ 源码构建](build-from-source.md) · [文档索引](../README.md) · [核心概念 ▶](../architecture/concepts.md)</sub>

@@ -14,7 +14,8 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 | process model | `supervisor/model.rs` | `SpawnSpec`, status/policy, pending child and generation ownership state |
 | generation engine | `supervisor/generation.rs` | One spawn/bridge/reap generation, tagged exit handling, process-tree termination |
 | `ProcessBridge` / `BridgeFactory` | `bridge.rs` | The protocol driver contract: factory invoked fresh per (re)spawn, handed the stdio pipes |
-| `orphan_sweep` | `orphan.rs` | Startup sweep that kills children left over from a previous daemon crash |
+| `Lease` | `lease.rs` | Kernel-held guarantee that no child outlives the daemon. Unix: a pipe-bound `sh` reaper; the supervisor writes `add <pgid>` right after a spawn succeeds and `del <pgid>` after reaping, and the reaper kills what is left when the pipe closes. Deliberately uncovered: the ~1 ms between the fork and the `add` write (a daemon killed exactly then leaves that one child — a bug to fix or the user's own doing), and the reaper itself being killed by hand (later children run uncovered, with a warning). Windows (interim): the previous pid roster killed from the exit handler |
+| `orphan_sweep` | `orphan.rs` (Windows only) | Startup sweep that kills children left over from a previous daemon crash, until the Windows lease is a real Job Object |
 | `AcpTransport` wrapper | `acp_transport.rs` | ACP line transport + explicit EOF signal so the supervisor observes child death |
 | `env` | `env.rs` | Enriched login-shell environment (cached once) injected into every child |
 
@@ -22,7 +23,7 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 
 - **← channels:** `ChannelMonitor` registers plugin manifests; the bridge factory re-points `PluginHost` at the new runtime each respawn.
 - **← agent:** `Agent::spawn` registers ACP adapters with policy `Never`.
-- **← server:** daemon shutdown calls `kill_all`; daemon start calls `orphan_sweep`.
+- **← server:** daemon shutdown calls `shutdown_all` (also the in-process hot-restart path, where the OS-level lease never fires); daemon start runs `orphan_sweep` on Windows only.
 - **→ nothing above it** — this module is a leaf; it must not know about threads, routes, or profiles.
 
 ## Invariants — do not break
@@ -30,7 +31,7 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 1. **Fresh bridge per spawn**: one-shot state lives in the bridge, never in the factory closure; a respawned process must not see its predecessor's state.
 2. **The supervisor never interprets pipe content** — protocol concerns stay in bridges.
 3. **One active generation record**: registry id, cancel sender and bridge task move together under a generation id. A stale bridge exit may reap only its own registry id and must not mutate a newer generation.
-4. **Two-layer cleanup**: normal stop cancels, tree-reaps and joins/aborts the bridge before returning; `Supervisor::kill_all_blocking` (a pid-only emergency roster, group-killed synchronously) remains the abrupt-runtime safety net.
+4. **Two-layer cleanup**: an orderly stop cancels, tree-reaps and joins/aborts the bridge before returning; the process lease (`lease.rs`) covers every other way the daemon can die — the kernel closes the lease when the daemon exits and the leased process groups are terminated without any daemon-side code running.
 5. **Enriched env everywhere**: children spawn through `process::env::command` so PATH matches the user's shell; bypassing it produces "works in terminal, fails in app" bugs.
 6. Heartbeat watchdog applies to plugins only; agents crash loudly by design (`Never`) so the owning thread decides.
 7. A watchdog restart uses the same bounded stop path as a manual restart: cancel, tree-reap, wait, then abort a stubborn bridge before the replacement generation can publish.
@@ -39,14 +40,15 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 
 ## Known debt
 
-- Unix descendants are terminated through a process group; Windows still needs a Job Object rather than relying on `taskkill`.
+- Windows has no kernel-held lease yet: the interim roster only covers the exit handler and the orphan sweep only runs at the next start. The fix is a Job Object with kill-on-close (assigned atomically at process creation, e.g. via `PROC_THREAD_ATTRIBUTE_JOB_LIST`, or by placing the daemon itself in the job), built and verified on a Windows machine; the roster and `orphan.rs` go with it.
+- Not leased on purpose: installer-style one-shot children (`spawn_tree_killable`: npm installs, startkit scripts) and the desktop onboarding auth script (short-lived, user-attended).
 - `Supervisor::global()` still impedes test isolation and scoped dependency ownership even though each active generation now has one owner; the next boundary is injected, scoped supervisor handles.
 - Restart has bounded exponential backoff, but still lacks jitter, a failure-window budget and an explicit circuit-breaker/manual-reset state.
 - `Running` currently means the child and bridge generation were published; channel protocol/platform readiness still needs a separate handshaking/ready signal.
 
 ---
 
-*Source anchors: `src/core/src/process/` (supervisor, supervisor/model, supervisor/generation, bridge, registry, acp_transport, env, kill, log).*
-*Last verified: `codex/im-acp-route-refactor` at `de10c0e0` (2026-07-11).*
+*Source anchors: `src/core/src/process/` (supervisor, supervisor/model, supervisor/generation, bridge, lease, acp_transport, env, kill, log).*
+*Last verified: `refactor/supervisor-lease` (2026-09-02).*
 
 <sub>[◀ Module: workspace](workspace.md) · [Documentation index](../../README.md) · [Module: agent ▶](agent.md)</sub>

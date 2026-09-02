@@ -12,6 +12,7 @@ use crate::process::bridge::{BridgeExit, BridgeFactory, StdioPipes};
 use crate::process::env;
 use crate::process::error::{ProcessError, ProcessResult};
 use crate::process::kill;
+use crate::process::lease::Lease;
 use crate::process::ProcessKind;
 
 mod generation;
@@ -42,64 +43,10 @@ pub struct Supervisor {
     manager_tx: mpsc::UnboundedSender<ManagerCommand>,
     snapshots: watch::Receiver<Vec<ProcessSnapshot>>,
     change_tx: broadcast::Sender<ProcessEvent>,
-    roster: Arc<EmergencyRoster>,
-}
-
-/// Synchronous side-table of live child pids, kept only so daemon shutdown
-/// (and the Tauri `RunEvent::Exit` handler, which has no tokio runtime) can
-/// SIGKILL every supervised process group without awaiting the actor. The
-/// `Child` handles themselves live solely with each `ProcessOwner`.
-pub(super) struct EmergencyRoster {
-    entries: parking_lot::Mutex<HashMap<ProcessId, RosterEntry>>,
-}
-
-struct RosterEntry {
-    pid: u32,
-    kind: ProcessKind,
-    label: String,
-}
-
-impl EmergencyRoster {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            entries: parking_lot::Mutex::new(HashMap::new()),
-        })
-    }
-
-    pub(super) fn insert(&self, id: ProcessId, pid: u32, kind: ProcessKind, label: &str) {
-        self.entries.lock().insert(
-            id,
-            RosterEntry {
-                pid,
-                kind,
-                label: label.to_string(),
-            },
-        );
-    }
-
-    pub(super) fn remove(&self, id: ProcessId) {
-        self.entries.lock().remove(&id);
-    }
-
-    fn kill_all(&self) {
-        let entries = std::mem::take(&mut *self.entries.lock());
-        tracing::info!("[supervisor] kill_all: {} child(ren)", entries.len());
-        for (id, entry) in entries {
-            kill::emergency_kill_group(entry.pid);
-            tracing::info!(
-                "[supervisor] killed id={} kind={:?} label={} pid={}",
-                id,
-                entry.kind,
-                entry.label,
-                entry.pid
-            );
-        }
-    }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.entries.lock().len()
-    }
+    /// Read by the Windows exit-time kill and by tests; the owners hold
+    /// their own handles for everything else.
+    #[cfg_attr(not(any(test, windows)), allow(dead_code))]
+    lease: Arc<Lease>,
 }
 
 struct ProcessRegistration {
@@ -144,7 +91,7 @@ enum ManagerCommand {
 }
 
 struct ProcessManager {
-    roster: Arc<EmergencyRoster>,
+    lease: Arc<Lease>,
     processes: HashMap<ProcessId, Arc<SupervisedProcess>>,
     command_tx: mpsc::UnboundedSender<ManagerCommand>,
     command_rx: mpsc::UnboundedReceiver<ManagerCommand>,
@@ -155,19 +102,29 @@ struct ProcessManager {
 
 impl Supervisor {
     pub fn new() -> Arc<Self> {
+        Self::with_lease(Lease::new())
+    }
+
+    /// Supervisor whose lease writes to a test sink instead of a reaper.
+    #[cfg(all(test, unix))]
+    pub(crate) fn with_test_lease(lease: Lease) -> Arc<Self> {
+        Self::with_lease(lease)
+    }
+
+    fn with_lease(lease: Lease) -> Arc<Self> {
         let (change_tx, _) = broadcast::channel(64);
         let (snapshot_tx, snapshots) = watch::channel(Vec::new());
         let (manager_tx, manager_rx) = mpsc::unbounded_channel();
-        let roster = EmergencyRoster::new();
+        let lease = Arc::new(lease);
         let supervisor = Arc::new(Self {
             manager_tx: manager_tx.clone(),
             snapshots,
             change_tx: change_tx.clone(),
-            roster: Arc::clone(&roster),
+            lease: Arc::clone(&lease),
         });
         tokio::spawn(
             ProcessManager {
-                roster,
+                lease,
                 processes: HashMap::new(),
                 command_tx: manager_tx,
                 command_rx: manager_rx,
@@ -190,20 +147,18 @@ impl Supervisor {
         }))
     }
 
-    /// Synchronously SIGKILL every live supervised process group. The last
-    /// line of defense on daemon shutdown and Tauri exit: it awaits nothing,
-    /// needs no runtime, and covers children whose owner tasks never get
-    /// polled to completion during teardown. Normal shutdown paths should
-    /// still stop processes through their managers first.
-    pub fn kill_all_blocking(&self) {
-        self.roster.kill_all();
+    /// The process lease shared by every child this supervisor spawns.
+    #[cfg(all(test, unix))]
+    pub(crate) fn lease(&self) -> &Lease {
+        &self.lease
     }
 
-    /// Number of live children in the emergency roster. Test-only: asserts
-    /// that terminal exits drain the roster.
-    #[cfg(test)]
-    pub(crate) fn live_children(&self) -> usize {
-        self.roster.len()
+    /// Windows interim: synchronously `taskkill` every live child. The
+    /// Tauri `RunEvent::Exit` handler calls it when graceful shutdown was
+    /// skipped; on Unix the reaper covers that case without any call.
+    #[cfg(windows)]
+    pub fn kill_all_blocking(&self) {
+        self.lease.kill_all();
     }
 
     pub async fn register(
@@ -499,7 +454,7 @@ impl ProcessManager {
             ProcessOwner::new(
                 self.command_tx.clone(),
                 process,
-                Arc::clone(&self.roster),
+                Arc::clone(&self.lease),
                 spec,
                 policy,
                 factory,

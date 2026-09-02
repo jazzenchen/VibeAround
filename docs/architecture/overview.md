@@ -64,7 +64,7 @@ Where each responsibility lives. Every runtime module also has a deep-dive page 
 |---|---|
 | `channels` | plugin host, stdio/websocket transports, input dispatch, route lanes, monitor |
 | `workspace` | workspaces, threads, route attachments, handover codes (event-sourced state + in-memory pickup codes) |
-| `process` | supervisor (spawn/respawn/watchdog, owns every child), orphan sweep, ACP transport, env enrichment |
+| `process` | supervisor (spawn/respawn/watchdog, owns every child), process lease (no child outlives the daemon on macOS/Linux; Windows interim roster + sweep), ACP transport, env enrichment |
 | `agent` | ACP agent handle, launch rendering, MCP/skill config injection |
 | `profiles` | profile schema, catalog, rendering, bridge launch URLs, provider connections |
 | `previews` | Server/Markdown owner and Share URLs, port cleanup |
@@ -116,7 +116,7 @@ Agent Launch is a different path — instead of hosting the agent inside the dae
 | Running agent/plugin processes | In-memory, supervised | No — respawned on demand |
 | Auth token for the dashboard | `~/.vibearound/auth.json` | Regenerated each daemon start |
 
-The supervisor gives every child process (channel plugins, agent adapters) crash-respawn with heartbeat watchdogs for plugins, and cascading cleanup on daemon shutdown so no orphan processes outlive it.
+The supervisor gives every child process (channel plugins, agent adapters) crash-respawn with heartbeat watchdogs for plugins, and, on macOS/Linux, a kernel-held lease so no child outlives the daemon, however it exits.
 
 ---
 

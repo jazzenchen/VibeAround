@@ -10,7 +10,7 @@
 
 | Submodule | Role |
 |---|---|
-| `lib.rs` (`ServerDaemon`, `RunningDaemon`) | Boot sequence、channel input dispatcher、orphan sweep、ingress-first shutdown、Windows bind retry |
+| `lib.rs` (`ServerDaemon`, `RunningDaemon`) | Boot sequence、channel input dispatcher、orphan sweep（仅 Windows）、ingress-first shutdown、Windows bind retry |
 | `web_server/mod.rs` | Router assembly：protected vs open routes、body limits、SPA fallback |
 | `web_server/api/` | 各 domain 的 REST handlers（sessions、workspaces、profiles、launcher、previews、settings、files、runtime） |
 | `ws_chat` / `ws_domains` | 两类 WebSocket：chat events、live-state snapshots |
