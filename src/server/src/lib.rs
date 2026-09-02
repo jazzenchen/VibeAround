@@ -100,12 +100,6 @@ impl RunningDaemon {
             search_runtime.shutdown().await;
         }
 
-        // Safety net: synchronously kill any child process still alive
-        // after the graceful shutdown paths ran. Covers cases where the
-        // supervisor-driven cancel + kill_on_drop never got polled because
-        // the tokio runtime tore down first.
-        common::process::Supervisor::global().kill_all_blocking();
-
         // Stop previewed development servers during daemon shutdown.
         common::previews::cleanup_registered_previews();
 
@@ -120,6 +114,13 @@ impl RunningDaemon {
         // dropped before a hot restart probes/binds the same port.
         let _ = tunnel_handle.await;
         let _ = web_dispatch_handle.await;
+
+        // Last, now that nothing can spawn any more: stop every child still
+        // registered with the supervisor, whether or not its manager
+        // remembered it. On an in-process hot restart the OS-level lease
+        // never fires, so this step is what leaves nothing behind. A daemon
+        // that dies before reaching it is covered by the lease instead.
+        common::process::Supervisor::global().shutdown_all().await;
 
         // Clear the tunnel registry so stale entries don't persist
         // across restarts.
@@ -286,8 +287,6 @@ impl ServerDaemon {
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
-        // Reap plugin and ACP children left by a crashed daemon.
-        common::process::orphan_sweep();
         common::previews::cleanup_registered_previews();
 
         let web_listener = bind_web_listener(self.port).await?;

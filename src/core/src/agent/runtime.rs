@@ -513,7 +513,9 @@ mod lifecycle_tests {
         let process_id = registered_rx.await.expect("registration published");
 
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while supervisor.live_children() == 0 {
+            while !supervisor.snapshot().iter().any(|process| {
+                process.id == process_id && process.status == crate::process::ProcessStatus::Running
+            }) {
                 tokio::task::yield_now().await;
             }
         })
@@ -524,15 +526,11 @@ mod lifecycle_tests {
         let _ = owner.await;
 
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            loop {
-                if supervisor.live_children() == 0
-                    && !supervisor
-                        .snapshot()
-                        .iter()
-                        .any(|process| process.id == process_id)
-                {
-                    break;
-                }
+            while supervisor
+                .snapshot()
+                .iter()
+                .any(|process| process.id == process_id)
+            {
                 tokio::task::yield_now().await;
             }
         })
@@ -559,7 +557,10 @@ mod lifecycle_tests {
 
         let cancel = async {
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                while supervisor.live_children() == 0 {
+                while !supervisor.snapshot().iter().any(|process| {
+                    process.id == process_id
+                        && process.status == crate::process::ProcessStatus::Running
+                }) {
                     tokio::task::yield_now().await;
                 }
             })
@@ -578,7 +579,6 @@ mod lifecycle_tests {
         );
 
         assert!(result.unwrap().is_none());
-        assert_eq!(supervisor.live_children(), 0);
         assert!(!supervisor
             .snapshot()
             .iter()

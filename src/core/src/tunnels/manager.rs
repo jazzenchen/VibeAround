@@ -121,8 +121,8 @@ impl TunnelManager {
         true
     }
 
-    /// Clear all tunnels. Called on daemon stop, after the supervisor's
-    /// blocking kill has already taken the child processes down.
+    /// Clear all tunnels. Called on daemon stop, after the supervisor has
+    /// stopped the tunnel processes.
     pub fn clear(&self) {
         self.tunnels.clear();
         self.notify_change();

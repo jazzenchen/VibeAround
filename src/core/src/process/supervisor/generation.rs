@@ -1,8 +1,8 @@
 use super::*;
 
 /// One spawned child. The owner task is the sole holder of the `Child`
-/// handle; only the pid is mirrored into the supervisor's emergency roster
-/// for the synchronous shutdown path.
+/// handle; the process group is leased to the reaper (see
+/// [`crate::process::lease`]) for as long as the child is alive.
 struct ActiveGeneration {
     id: u64,
     child: tokio::process::Child,
@@ -22,7 +22,7 @@ struct StagedGeneration {
 pub(super) struct ProcessOwner {
     manager_tx: tokio::sync::mpsc::UnboundedSender<ManagerCommand>,
     process: Arc<SupervisedProcess>,
-    roster: Arc<EmergencyRoster>,
+    lease: Arc<Lease>,
     spec: SpawnSpec,
     policy: RestartPolicy,
     factory: BridgeFactory,
@@ -41,7 +41,7 @@ impl ProcessOwner {
     pub(super) fn new(
         manager_tx: tokio::sync::mpsc::UnboundedSender<ManagerCommand>,
         process: Arc<SupervisedProcess>,
-        roster: Arc<EmergencyRoster>,
+        lease: Arc<Lease>,
         spec: SpawnSpec,
         policy: RestartPolicy,
         factory: BridgeFactory,
@@ -52,7 +52,7 @@ impl ProcessOwner {
         Self {
             manager_tx,
             process,
-            roster,
+            lease,
             spec,
             policy,
             factory,
@@ -301,10 +301,7 @@ impl ProcessOwner {
             .take()
             .ok_or(ProcessError::StdioUnavailable { what: "stderr" })?;
         let pid = child.id();
-        if let Some(pid) = pid {
-            self.roster
-                .insert(self.process.id, pid, self.process.kind, &self.process.label);
-        }
+        self.lease.attach(&child);
         let generation_id = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1);
 
@@ -427,7 +424,6 @@ impl ProcessOwner {
         mut child: tokio::process::Child,
         root_pid: Option<u32>,
     ) -> Option<std::process::ExitStatus> {
-        self.roster.remove(self.process.id);
         let observed_status =
             match kill::wait_for_exit_within(&mut child, CHILD_EXIT_OBSERVATION_TIMEOUT).await {
                 Ok(status) => status,
@@ -452,6 +448,9 @@ impl ProcessOwner {
             );
             let _ = child.start_kill();
             let _ = child.wait().await;
+        }
+        if let Some(pid) = root_pid {
+            self.lease.release(pid);
         }
         observed_status
     }

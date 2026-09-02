@@ -275,7 +275,6 @@ async fn bridge_exit_terminates_helper_process_group() {
     };
     wait_for_absent(&supervisor, id).await;
     assert_ne!(child_pid, 0, "bridge should capture the helper pid");
-    assert_eq!(supervisor.live_children(), 0);
 
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
     let mut alive = true;
@@ -354,7 +353,6 @@ async fn register_runs_then_force_stop() {
     supervisor.force_stop(id).await.unwrap();
 
     wait_for_status(&supervisor, id, ProcessStatus::Stopped).await;
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -405,7 +403,6 @@ async fn lifecycle_commands_are_consumed_in_order() {
 
     wait_for_status(&supervisor, id, ProcessStatus::Stopped).await;
     assert_eq!(factory_count.load(Ordering::Acquire), 2);
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -439,7 +436,6 @@ async fn force_stop_aborts_a_stubborn_bridge() {
         .unwrap();
 
     assert_eq!(dropped.load(Ordering::Acquire), 1);
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
@@ -462,7 +458,6 @@ async fn unregister_stops_and_removes_restartable_process() {
     supervisor.unregister(id).await.unwrap();
 
     assert!(!supervisor.snapshot().iter().any(|process| process.id == id));
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
@@ -479,7 +474,6 @@ async fn never_policy_auto_deregisters_terminal_process() {
         .await;
 
     wait_for_absent(&supervisor, id).await;
-    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
@@ -654,7 +648,6 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
     supervisor.shutdown_all().await;
 
     assert!(supervisor.snapshot().is_empty());
-    assert_eq!(supervisor.live_children(), 0);
     let id = supervisor
         .register(
             ProcessKind::ChannelPlugin,
@@ -669,6 +662,303 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
         .await;
     wait_for_status(&supervisor, id, ProcessStatus::Running).await;
     supervisor.force_stop(id).await.unwrap();
+}
+
+/// Bridge for the hard-kill harness: relays the child's own pid to the
+/// harness stdout, then tells the child to start its grandchild (the
+/// bridge only runs once the child is leased, so the grandchild is born
+/// covered), relays that pid too on Unix, and waits to be cancelled.
+struct ReportPidsBridge;
+
+impl ProcessBridge for ReportPidsBridge {
+    fn run(
+        self: Box<Self>,
+        mut pipes: StdioPipes,
+        mut cancel: CancelSignal,
+    ) -> super::super::bridge::BridgeFuture {
+        Box::pin(async move {
+            use tokio::io::AsyncBufReadExt;
+
+            let mut stdout = tokio::io::BufReader::new(pipes.stdout).lines();
+            for label in ["child", "grandchild"] {
+                let line = tokio::select! {
+                    line = stdout.next_line() => line,
+                    _ = cancel.wait_for(|cancelled| *cancelled) => break,
+                };
+                match line {
+                    Ok(Some(line)) => println!("{label} {}", line.trim()),
+                    _ => break,
+                }
+                if label == "child" {
+                    let _ = pipes.stdin.write_all(b"go\n").await;
+                }
+            }
+            let _ = cancel.wait_for(|cancelled| *cancelled).await;
+            BridgeExit::Cancelled
+        })
+    }
+}
+
+/// A child that prints its own pid, waits for a line on stdin, then starts
+/// a grandchild that ignores SIGTERM, prints its pid, and waits forever.
+#[cfg(unix)]
+fn harness_child_spec() -> SpawnSpec {
+    SpawnSpec::new("sh").args([
+        "-c",
+        "trap '' TERM; echo $$; read _; sleep 60 & echo $!; wait",
+    ])
+}
+
+/// Same shape on Windows: PowerShell prints its pid, waits for a line, then
+/// runs `cmd /C ping` with ping's output on NUL — not on a pipe back to the
+/// harness, so a broken pipe after the kill cannot end it by itself.
+#[cfg(windows)]
+fn harness_child_spec() -> SpawnSpec {
+    SpawnSpec::new("powershell").args([
+        "-NoProfile",
+        "-Command",
+        "$PID; $null = [Console]::In.ReadLine(); cmd /C 'ping -t 127.0.0.1 >NUL'",
+    ])
+}
+
+/// Body of the hard-kill harness: a daemon stand-in that supervises one
+/// child. Only runs when spawned by `hard_killed_daemon_takes_every_child_down`;
+/// otherwise it is a no-op.
+#[tokio::test]
+async fn harness_supervised_children_for_hard_kill_test() {
+    if std::env::var_os("VA_LEASE_HARNESS").is_none() {
+        return;
+    }
+    let supervisor = Supervisor::new();
+    supervisor
+        .register(
+            ProcessKind::ChannelPlugin,
+            "hard-kill-harness",
+            harness_child_spec(),
+            RestartPolicy::Never,
+            Box::new(|| Box::new(ReportPidsBridge)),
+        )
+        .await;
+    std::future::pending::<()>().await;
+}
+
+fn snapshot_processes() -> sysinfo::System {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+
+    let mut system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+    );
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    system
+}
+
+/// Direct children of `parent`: (pid, executable name, command line).
+fn children_of(system: &sysinfo::System, parent: u32) -> Vec<(u32, String, String)> {
+    system
+        .processes()
+        .values()
+        .filter(|process| process.parent() == Some(sysinfo::Pid::from_u32(parent)))
+        .map(|process| {
+            let command = process
+                .cmd()
+                .iter()
+                .map(|part| part.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            (
+                process.pid().as_u32(),
+                process.name().to_string_lossy().into_owned(),
+                command,
+            )
+        })
+        .collect()
+}
+
+/// Every descendant of `root`, breadth first.
+#[cfg(windows)]
+fn descendants_of(system: &sysinfo::System, root: u32) -> Vec<(u32, String, String)> {
+    let mut queue = vec![root];
+    let mut found = Vec::new();
+    while let Some(parent) = queue.pop() {
+        for child in children_of(system, parent) {
+            queue.push(child.0);
+            found.push(child);
+        }
+    }
+    found
+}
+
+#[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks for existence.
+    if unsafe { libc::kill(pid as libc::pid_t, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+#[cfg(windows)]
+fn process_exists(pid: u32) -> bool {
+    snapshot_processes()
+        .process(sysinfo::Pid::from_u32(pid))
+        .is_some()
+}
+
+/// The real thing: a separate daemon process is killed the hard way
+/// (SIGKILL / TerminateProcess) and its child, grandchild, and — on Unix —
+/// reaper must all be gone shortly after, with nobody in the daemon having
+/// run any cleanup code.
+#[test]
+fn hard_killed_daemon_takes_every_child_down() {
+    use std::io::BufRead;
+    use std::sync::mpsc;
+
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let harness = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "process::supervisor::tests::harness_supervised_children_for_hard_kill_test",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("VA_LEASE_HARNESS", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn harness");
+    let mut harness = KillOnDrop(harness);
+    let harness_pid = harness.0.id();
+    let stdout = harness.0.stdout.take().expect("harness stdout");
+    let (lines_tx, lines_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            if lines_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    // Collect the pids the harness reports. With `--nocapture` libtest
+    // prints its own `test … ...` prefix on the same line as the first
+    // report, so scan word pairs anywhere in each line.
+    let mut child = None;
+    let mut grandchild = None;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while child.is_none() || (cfg!(unix) && grandchild.is_none()) {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let line = lines_rx
+            .recv_timeout(remaining)
+            .expect("harness did not report its pids in time");
+        let words: Vec<&str> = line.split_whitespace().collect();
+        for pair in words.windows(2) {
+            let Ok(pid) = pair[1].parse::<u32>() else {
+                continue;
+            };
+            match pair[0] {
+                "child" => child = Some(pid),
+                "grandchild" => grandchild = Some(pid),
+                _ => {}
+            }
+        }
+    }
+    let child = child.unwrap();
+
+    // Everything the kill must take down: the child, its descendants, and
+    // on Unix the reaper (found as the harness's `sh` child). On Windows
+    // the descendants are discovered by parent pid and must include ping.
+    let mut doomed = vec![child];
+    doomed.extend(grandchild);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let system = snapshot_processes();
+        let mut found = Vec::new();
+        #[cfg(unix)]
+        found.extend(
+            children_of(&system, harness_pid)
+                .into_iter()
+                .filter(|(_, _, command)| command.contains("trap '' HUP INT"))
+                .map(|(pid, _, _)| pid),
+        );
+        #[cfg(windows)]
+        {
+            let descendants = descendants_of(&system, child);
+            if descendants
+                .iter()
+                .any(|(_, name, _)| name.to_ascii_lowercase().contains("ping"))
+            {
+                found.extend(descendants.into_iter().map(|(pid, _, _)| pid));
+            }
+        }
+        if !found.is_empty() {
+            doomed.extend(found);
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "could not find the reaper / grandchild of the harness"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    for pid in &doomed {
+        assert!(
+            process_exists(*pid),
+            "pid {pid} should be alive before the kill"
+        );
+    }
+
+    hard_kill(&mut harness.0);
+    let _ = harness.0.wait();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while doomed.iter().any(|pid| process_exists(*pid)) {
+        if std::time::Instant::now() >= deadline {
+            let survivors: Vec<u32> = doomed
+                .iter()
+                .copied()
+                .filter(|pid| process_exists(*pid))
+                .collect();
+            for pid in &survivors {
+                hard_kill_pid(*pid);
+            }
+            panic!("processes outlived the hard-killed daemon: {survivors:?} (of {doomed:?})");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(unix)]
+fn hard_kill(process: &mut std::process::Child) {
+    hard_kill_pid(process.id());
+}
+
+#[cfg(unix)]
+fn hard_kill_pid(pid: u32) {
+    // SAFETY: signalling a pid this test created.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+}
+
+/// `Child::kill` is `TerminateProcess`: no handler runs in the target.
+#[cfg(windows)]
+fn hard_kill(process: &mut std::process::Child) {
+    let _ = process.kill();
+}
+
+#[cfg(windows)]
+fn hard_kill_pid(pid: u32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status();
 }
 
 #[cfg(unix)]
