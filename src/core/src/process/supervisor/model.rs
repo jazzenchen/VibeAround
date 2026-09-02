@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::process::registry::ProcessKind;
+use crate::process::ProcessKind;
 
 use super::ProcessId;
 
@@ -14,6 +14,9 @@ pub struct SpawnSpec {
     pub args: Vec<String>,
     pub cwd: Option<std::path::PathBuf>,
     pub extra_env: Vec<(String, String)>,
+    /// Environment variables removed from the child's environment (after
+    /// the enriched login-shell env is applied, before `extra_env`).
+    pub removed_env: Vec<String>,
     /// If `true`, the bridge receives `stderr` via
     /// [`StdioPipes`](crate::process::bridge::StdioPipes). If
     /// `false` (default), the supervisor logs each line with process fields.
@@ -27,6 +30,7 @@ impl SpawnSpec {
             args: Vec::new(),
             cwd: None,
             extra_env: Vec::new(),
+            removed_env: Vec::new(),
             capture_stderr: false,
         }
     }
@@ -52,6 +56,11 @@ impl SpawnSpec {
 
     pub fn env(mut self, k: impl Into<String>, v: impl Into<String>) -> Self {
         self.extra_env.push((k.into(), v.into()));
+        self
+    }
+
+    pub fn env_remove(mut self, k: impl Into<String>) -> Self {
+        self.removed_env.push(k.into());
         self
     }
 
@@ -130,6 +139,9 @@ pub struct ProcessEvent {
     pub id: ProcessId,
     pub kind: ProcessKind,
     pub status: ProcessStatus,
+    /// Human-readable cause of the current status (spawn error, exit
+    /// status, "stopped by user"); empty while nothing has happened yet.
+    pub reason: String,
 }
 
 #[derive(Debug, Clone)]
@@ -156,7 +168,6 @@ pub(super) enum ProcessCommand {
     },
     BridgeExited {
         generation_id: u64,
-        registry_id: u64,
         exit: crate::process::bridge::BridgeExit,
     },
 }

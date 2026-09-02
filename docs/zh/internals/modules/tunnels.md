@@ -12,7 +12,7 @@
 |---|---|---|
 | `TunnelManager` | `mod.rs` | Live tunnels registry：provider → URL、registry id、abort handle；实现 `StateSource` |
 | `start_web_tunnel_with_provider` | `mod.rs` | 入口：config → provider start → (guard, public URL) |
-| ngrok provider | `providers/ngrok.rs` | 通过 ngrok Rust SDK 进程内运行（session + forwarder；可选 reserved domain） |
+| ngrok provider | `providers/ngrok.rs` | spawn ngrok agent（`ngrok http`），URL 从其 JSON 日志解析；可选 reserved domain |
 | cloudflare provider | `providers/cloudflare.rs` | 子进程：`cloudflared tunnel run --token …` |
 | localtunnel provider | `providers/localtunnel.rs` | 子进程：当前硬编码 `npx localtunnel --port 12358`（已知 target-port 缺陷） |
 | tailscale provider | `providers/tailscale.rs` | 子进程：`tailscale funnel --yes http://127.0.0.1:12358` |

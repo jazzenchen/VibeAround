@@ -14,7 +14,7 @@
 | process model | `supervisor/model.rs` | `SpawnSpec`、status/policy、pending child 和 generation ownership |
 | generation engine | `supervisor/generation.rs` | 单次 spawn/bridge/reap、tagged exit 与 process-tree terminate |
 | `ProcessBridge` / `BridgeFactory` | `bridge.rs` | 协议驱动 contract：每次 (re)spawn 都 fresh 调用 factory，并交入 stdio pipes |
-| `ChildRegistry` | `registry.rs` | Live children 全局表；`kill_all()` safety net + startup `orphan_sweep()` |
+| `orphan_sweep` | `orphan.rs` | 启动时清理上一次 daemon 崩溃残留的子进程 |
 | `AcpTransport` wrapper | `acp_transport.rs` | ACP line transport + 显式 EOF signal，让 supervisor 观察 child death |
 | `env` | `env.rs` | 加强过的 login-shell environment（缓存一次），注入每个 child |
 
@@ -30,7 +30,7 @@
 1. **每次 spawn fresh bridge**：one-shot state 放在 bridge，不放在 factory closure；respawned process 不能看到前任状态。
 2. **Supervisor 从不解释 pipe content**，协议关注点留在 bridges。
 3. **单一 active generation record**：registry id、cancel sender、bridge task 必须随 generation id 一起移动；旧 bridge exit 只能清理自己的 child。
-4. **双层清理**：正常 Stop 在返回前 cancel、tree-reap、join/有界 abort bridge；`ChildRegistry::kill_all` 仍是异常 teardown 的 safety net。
+4. **双层清理**：正常 Stop 在返回前 cancel、tree-reap、join/有界 abort bridge；`Supervisor::kill_all_blocking`（仅存 pid 的应急花名册，同步组杀）仍是异常 teardown 的 safety net。
 5. **所有 child 都用 enriched env**：通过 `process::env::command` spawn，让 PATH 和用户 shell 一致。
 6. Heartbeat watchdog 只用于 plugins；agents 设计上 loud crash（`Never`），由 owning thread 决定是否重启。
 

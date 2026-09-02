@@ -385,16 +385,6 @@ pub struct TunnelDef {
     pub args: Option<Vec<String>>,
     #[serde(default)]
     pub dependency_id: Option<String>,
-    #[serde(default)]
-    pub spawn_error_hint: Option<String>,
-    #[serde(default)]
-    pub platform_overrides: Option<HashMap<String, TunnelOverride>>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TunnelOverride {
-    #[serde(default)]
-    pub spawn_error_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -534,26 +524,6 @@ pub fn tunnel_by_id(id: &str) -> Option<&'static TunnelDef> {
 /// Find a plugin definition by ID.
 pub fn plugin_by_id(id: &str) -> Option<&'static PluginDef> {
     PLUGINS.iter().find(|p| p.id == id)
-}
-
-/// Resolve a tunnel's spawn error hint for the current platform.
-pub fn tunnel_spawn_error_hint(tunnel: &TunnelDef) -> Option<&str> {
-    // Check platform-specific override first
-    if let Some(overrides) = &tunnel.platform_overrides {
-        let platform = if cfg!(target_os = "windows") {
-            "windows"
-        } else if cfg!(target_os = "macos") {
-            "macos"
-        } else {
-            "linux"
-        };
-        if let Some(ov) = overrides.get(platform) {
-            if let Some(hint) = &ov.spawn_error_hint {
-                return Some(hint.as_str());
-            }
-        }
-    }
-    tunnel.spawn_error_hint.as_deref()
 }
 
 /// Build the MCP tools list JSON value, injecting agent IDs into enum fields.

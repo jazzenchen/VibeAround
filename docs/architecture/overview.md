@@ -20,12 +20,12 @@ This page follows the two journeys that define VibeAround: an IM message reachin
    │  channels · workspace threads · process supervisor ·          │
    │  profiles · previews · tunnels · auth · search                │
    └──┬──────────────┬──────────────────────────────┬──────────────┘
-      │ stdio        │ stdio                        │ child / SDK
+      │ stdio        │ stdio                        │ child
       │ JSON-RPC     │ JSON-RPC                     ▼
       │ (ACP)        │ (ACP)                    tunnel processes
-      ▼              ▼                          (cloudflared, npx
-  channel plugin  agent CLI                     localtunnel; ngrok
-  processes       processes                     via in-process SDK)
+      ▼              ▼                          (cloudflared, ngrok,
+  channel plugin  agent CLI                     npx localtunnel,
+  processes       processes                     tailscale funnel)
   (telegram, …)      │
                      │ HTTP loopback (bridged profiles)
                      ▼
@@ -51,7 +51,7 @@ Every edge in the picture, with its transport and payload shape:
 | agents → daemon (tools) | HTTP `/mcp` | MCP: JSON-RPC over streamable HTTP (+ SSE) |
 | launched CLIs → daemon (models) | HTTP loopback `/va/local-api/…` | the client's provider dialect (OpenAI / Anthropic / Gemini shapes) |
 | daemon → model providers | HTTPS | provider dialect after bridge translation |
-| daemon → tunnels | in-process SDK (ngrok) or child process (`cloudflared`, `npx localtunnel`, `tailscale funnel`) | provider-specific |
+| daemon → tunnels | supervised child process (`cloudflared`, `npx localtunnel`, `ngrok http`, `tailscale funnel`) | provider-specific |
 | daemon → previewed dev servers | HTTP reverse proxy | pass-through with iframe toolbar injection |
 
 ## Module map
@@ -64,7 +64,7 @@ Where each responsibility lives. Every runtime module also has a deep-dive page 
 |---|---|
 | `channels` | plugin host, stdio/websocket transports, input dispatch, route lanes, monitor |
 | `workspace` | workspaces, threads, route attachments, handover codes (event-sourced state + in-memory pickup codes) |
-| `process` | supervisor (spawn/respawn/watchdog), child registry, ACP transport, env enrichment |
+| `process` | supervisor (spawn/respawn/watchdog, owns every child), orphan sweep, ACP transport, env enrichment |
 | `agent` | ACP agent handle, launch rendering, MCP/skill config injection |
 | `profiles` | profile schema, catalog, rendering, bridge launch URLs, provider connections |
 | `previews` | Server/Markdown owner and Share URLs, port cleanup |

@@ -77,7 +77,7 @@ export function tunnelReportMatchesProvider(
         report.id === "tunnels.localtunnel.system"
       );
     case "ngrok":
-      return report.id === "tunnels.ngrok.sdk";
+      return report.id === "tunnels.ngrok.binary";
     case "tailscale":
       return report.id === "tunnels.tailscale.binary";
     default:
@@ -172,18 +172,6 @@ export function tunnelCheckingReport(
     return {
       id: "tunnels.localtunnel.package",
       label: tunnel?.display_name ?? "localtunnel",
-      group: "remote",
-      category: "tunnels",
-      status: "running",
-      message: "Checking local version",
-      actions: [],
-      secret: false,
-    };
-  }
-  if (tunnelId === "ngrok") {
-    return {
-      id: "tunnels.ngrok.sdk",
-      label: tunnel?.display_name ?? "Ngrok",
       group: "remote",
       category: "tunnels",
       status: "running",

@@ -20,12 +20,12 @@
    │  channels · workspace threads · process supervisor ·          │
    │  profiles · previews · tunnels · auth · search                │
    └──┬──────────────┬──────────────────────────────┬──────────────┘
-      │ stdio        │ stdio                        │ 子进程 / SDK
+      │ stdio        │ stdio                        │ 子进程
       │ JSON-RPC     │ JSON-RPC                     ▼
       │ (ACP)        │ (ACP)                    隧道进程
-      ▼              ▼                          (cloudflared, npx
-  渠道插件进程    agent CLI                     localtunnel; ngrok
-  (telegram, …)   进程                          走进程内 SDK)
+      ▼              ▼                          (cloudflared, ngrok,
+  渠道插件进程    agent CLI                     npx localtunnel,
+  (telegram, …)   进程                          tailscale funnel)
                      │
                      │ HTTP 回环（Bridge 化的 Profile）
                      ▼
@@ -51,7 +51,7 @@
 | agents → 守护进程（工具） | HTTP `/mcp` | MCP：streamable HTTP 上的 JSON-RPC（+ SSE） |
 | 启动的 CLI → 守护进程（模型） | HTTP 回环 `/va/local-api/…` | 客户端的供应商方言（OpenAI / Anthropic / Gemini 形状） |
 | 守护进程 → 模型供应商 | HTTPS | Bridge 转换后的供应商方言 |
-| 守护进程 → 隧道 | 进程内 SDK（ngrok）或子进程（`cloudflared`、`npx localtunnel`、`tailscale funnel`） | 供应商特定 |
+| 守护进程 → 隧道 | 受监管子进程（`cloudflared`、`npx localtunnel`、`ngrok http`、`tailscale funnel`） | 供应商特定 |
 | 守护进程 → 被预览的 dev server | HTTP 反向代理 | 透传 + iframe 工具栏注入 |
 
 ## 模块地图
@@ -64,7 +64,7 @@
 |---|---|
 | `channels` | 插件宿主、stdio/websocket 传输、输入分发、route lanes、监控 |
 | `workspace` | Workspace、Thread、Route 附着、交接码（事件溯源状态 + 内存 pickup codes） |
-| `process` | 监督器（拉起/重启/看门狗）、子进程注册表、ACP 传输、环境增强 |
+| `process` | 监督器（拉起/重启/看门狗，持有全部子进程）、孤儿清扫、ACP 传输、环境增强 |
 | `agent` | ACP agent 句柄、启动渲染、MCP/技能配置注入 |
 | `profiles` | Profile schema、目录、渲染、Bridge 启动 URL、供应商连接 |
 | `previews` | Server/Markdown owner 与 Share URL、受限 Server Share 代理、端口清理 |

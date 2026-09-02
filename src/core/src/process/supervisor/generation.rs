@@ -1,15 +1,19 @@
 use super::*;
 
+/// One spawned child. The owner task is the sole holder of the `Child`
+/// handle; only the pid is mirrored into the supervisor's emergency roster
+/// for the synchronous shutdown path.
 struct ActiveGeneration {
     id: u64,
-    registry_id: u64,
+    child: tokio::process::Child,
+    root_pid: Option<u32>,
     cancel_tx: watch::Sender<bool>,
     bridge_task: tokio::task::JoinHandle<()>,
 }
 
 struct StagedGeneration {
     id: u64,
-    registry_id: u64,
+    child: tokio::process::Child,
     pipes: StdioPipes,
     cancel_tx: watch::Sender<bool>,
     cancel_rx: watch::Receiver<bool>,
@@ -18,7 +22,7 @@ struct StagedGeneration {
 pub(super) struct ProcessOwner {
     manager_tx: tokio::sync::mpsc::UnboundedSender<ManagerCommand>,
     process: Arc<SupervisedProcess>,
-    registry: Arc<ChildRegistry>,
+    roster: Arc<EmergencyRoster>,
     spec: SpawnSpec,
     policy: RestartPolicy,
     factory: BridgeFactory,
@@ -37,7 +41,7 @@ impl ProcessOwner {
     pub(super) fn new(
         manager_tx: tokio::sync::mpsc::UnboundedSender<ManagerCommand>,
         process: Arc<SupervisedProcess>,
-        registry: Arc<ChildRegistry>,
+        roster: Arc<EmergencyRoster>,
         spec: SpawnSpec,
         policy: RestartPolicy,
         factory: BridgeFactory,
@@ -48,7 +52,7 @@ impl ProcessOwner {
         Self {
             manager_tx,
             process,
-            registry,
+            roster,
             spec,
             policy,
             factory,
@@ -99,10 +103,9 @@ impl ProcessOwner {
                 }
                 ProcessCommand::BridgeExited {
                     generation_id,
-                    registry_id,
                     exit,
                 } => {
-                    self.bridge_exited(generation_id, registry_id, exit).await;
+                    self.bridge_exited(generation_id, exit).await;
                 }
             }
         }
@@ -206,7 +209,7 @@ impl ProcessOwner {
             Ok(staged) => {
                 let StagedGeneration {
                     id: generation_id,
-                    registry_id,
+                    child,
                     pipes,
                     cancel_tx,
                     cancel_rx,
@@ -217,13 +220,14 @@ impl ProcessOwner {
                     let exit = bridge.run(pipes, cancel_rx).await;
                     let _ = command_tx.send(ProcessCommand::BridgeExited {
                         generation_id,
-                        registry_id,
                         exit,
                     });
                 });
+                let root_pid = child.id();
                 self.active = Some(ActiveGeneration {
                     id: generation_id,
-                    registry_id,
+                    child,
+                    root_pid,
                     cancel_tx,
                     bridge_task,
                 });
@@ -272,6 +276,9 @@ impl ProcessOwner {
         if let Some(cwd) = &self.spec.cwd {
             cmd.current_dir(cwd);
         }
+        for key in &self.spec.removed_env {
+            cmd.env_remove(key);
+        }
         for (key, value) in &self.spec.extra_env {
             cmd.env(key, value);
         }
@@ -294,9 +301,10 @@ impl ProcessOwner {
             .take()
             .ok_or(ProcessError::StdioUnavailable { what: "stderr" })?;
         let pid = child.id();
-        let registry_id =
-            self.registry
-                .register(self.process.kind, self.process.label.clone(), child);
+        if let Some(pid) = pid {
+            self.roster
+                .insert(self.process.id, pid, self.process.kind, &self.process.label);
+        }
         let generation_id = self.next_generation;
         self.next_generation = self.next_generation.wrapping_add(1);
 
@@ -327,7 +335,7 @@ impl ProcessOwner {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         Ok(StagedGeneration {
             id: generation_id,
-            registry_id,
+            child,
             pipes: StdioPipes {
                 stdin,
                 stdout,
@@ -338,7 +346,7 @@ impl ProcessOwner {
         })
     }
 
-    async fn bridge_exited(&mut self, generation_id: u64, registry_id: u64, exit: BridgeExit) {
+    async fn bridge_exited(&mut self, generation_id: u64, exit: BridgeExit) {
         if self
             .active
             .as_ref()
@@ -346,8 +354,10 @@ impl ProcessOwner {
         {
             return;
         }
-        self.active.take();
-        let child_status = self.terminate_and_reap(registry_id).await;
+        let generation = self.active.take().expect("checked above");
+        let child_status = self
+            .terminate_and_reap(generation.child, generation.root_pid)
+            .await;
         let (reason, was_crash) = match exit {
             BridgeExit::Clean => match child_status {
                 Some(status) if status.success() => {
@@ -394,7 +404,8 @@ impl ProcessOwner {
             return;
         };
         let _ = generation.cancel_tx.send(true);
-        self.terminate_and_reap(generation.registry_id).await;
+        self.terminate_and_reap(generation.child, generation.root_pid)
+            .await;
         if tokio::time::timeout(BRIDGE_SHUTDOWN_TIMEOUT, &mut generation.bridge_task)
             .await
             .is_err()
@@ -411,9 +422,12 @@ impl ProcessOwner {
         }
     }
 
-    async fn terminate_and_reap(&mut self, registry_id: u64) -> Option<std::process::ExitStatus> {
-        let mut child = self.registry.remove(registry_id)?;
-        let root_pid = child.id();
+    async fn terminate_and_reap(
+        &mut self,
+        mut child: tokio::process::Child,
+        root_pid: Option<u32>,
+    ) -> Option<std::process::ExitStatus> {
+        self.roster.remove(self.process.id);
         let observed_status =
             match kill::wait_for_exit_within(&mut child, CHILD_EXIT_OBSERVATION_TIMEOUT).await {
                 Ok(status) => status,

@@ -6,13 +6,12 @@ edition = "2021"
 rust-version = "1.88"
 
 [dependencies]
-tokio = { workspace = true, features = ["process", "io-util", "sync", "rt-multi-thread", "time", "fs"] }
+tokio = { workspace = true, features = ["process", "io-util", "sync", "rt-multi-thread", "time", "fs", "macros"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 dashmap = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
-ngrok = "0.18"
 url = "2.5"
 async-trait = "0.1"
 rustls = "0.23"

@@ -30,7 +30,7 @@ use agent_client_protocol::schema::v1 as acp;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::proc_log;
-use crate::process::registry::ProcessKind;
+use crate::process::ProcessKind;
 use crate::routing::{ChannelInstanceId, ChannelKind};
 
 use super::monitor::ChannelMonitor;

@@ -229,6 +229,22 @@ macos = "scripts/macos/detect-program.sh"
 windows = "scripts/windows/detect-program.ps1"
 
 [[items]]
+id = "tunnels.ngrok.binary"
+label = "Ngrok"
+group = "remote"
+category = "tunnels"
+description = "Ngrok agent used to run the web tunnel."
+platforms = ["macos", "windows"]
+include_if = ["tunnel:ngrok"]
+severity = "blocker"
+program = "ngrok"
+version_arg = "version"
+
+[items.detect]
+macos = "scripts/macos/detect-program.sh"
+windows = "scripts/windows/detect-program.ps1"
+
+[[items]]
 id = "tunnels.cloudflare.token"
 label = "Cloudflare Tunnel Token"
 group = "remote"

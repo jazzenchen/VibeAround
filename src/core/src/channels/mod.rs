@@ -200,7 +200,7 @@ impl ChannelManager {
             .register_websocket_plugin(channel_name.to_string(), outbound_tx);
         crate::proc_log!(
             info,
-            kind = crate::process::registry::ProcessKind::ChannelPlugin,
+            kind = crate::process::ProcessKind::ChannelPlugin,
             label = channel_name,
             event = "registered_internal"
         );

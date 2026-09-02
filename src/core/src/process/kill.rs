@@ -106,6 +106,32 @@ pub(crate) async fn terminate_child_tree(
     Ok(())
 }
 
+/// Synchronously SIGKILL the whole process group rooted at `root_pid`
+/// (spawned with `prepare_tree_root`, so the root is its group leader).
+/// Await-free by design: usable from shutdown paths with no runtime, such
+/// as the Tauri `RunEvent::Exit` handler. The OS reaps the killed children.
+#[cfg(unix)]
+pub(crate) fn emergency_kill_group(root_pid: u32) {
+    let _ = signal_process_group(root_pid, libc::SIGKILL);
+    // A child that called setsid() has left our group; hit the root pid
+    // directly as well (harmless when the group signal already got it).
+    // SAFETY: plain `kill(2)` syscall on a pid we spawned; errors (ESRCH,
+    // EPERM) are reported via the return value and ignored here.
+    let _ = unsafe { libc::kill(root_pid as libc::pid_t, libc::SIGKILL) };
+}
+
+#[cfg(windows)]
+pub(crate) fn emergency_kill_group(root_pid: u32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &root_pid.to_string(), "/T", "/F"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn emergency_kill_group(_root_pid: u32) {}
+
 #[cfg(unix)]
 fn signal_process_group(root_pid: u32, signal: libc::c_int) -> io::Result<()> {
     let pgid = -(root_pid as libc::pid_t);

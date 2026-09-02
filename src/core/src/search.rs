@@ -14,8 +14,8 @@ use crate::config::SearchToolConfig;
 use crate::process::bridge::{
     BridgeExit, BridgeFactory, BridgeFuture, CancelSignal, ProcessBridge,
 };
-use crate::process::registry::ProcessKind;
 use crate::process::supervisor::{ProcessId, RestartPolicy, SpawnSpec, Supervisor};
+use crate::process::ProcessKind;
 use crate::process::StdioPipes;
 
 const SEARCH_TOOL_ENV: &str = "VA_SEARCH_TOOL_STDIO";

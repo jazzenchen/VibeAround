@@ -560,23 +560,6 @@ pub(crate) async fn scan_tunnel_reports(
 ) -> anyhow::Result<Vec<StartkitItemReport>> {
     match choices.tunnel.as_str() {
         "none" => Ok(Vec::new()),
-        "ngrok" => Ok(vec![StartkitItemReport {
-            id: "tunnels.ngrok.sdk".to_string(),
-            label: "Ngrok".to_string(),
-            group: "remote".to_string(),
-            category: "tunnels".to_string(),
-            status: StartkitItemStatus::Ok,
-            severity: None,
-            version: None,
-            latest_version: None,
-            path: None,
-            message: Some("Ngrok uses the built-in SDK".to_string()),
-            actions: Vec::new(),
-            manual_command: None,
-            manual_url: None,
-            secret: false,
-            settings_key: None,
-        }]),
         "localtunnel" => {
             if is_managed_mode(choices) {
                 scan_startkit_item_reports(
@@ -1167,6 +1150,11 @@ fn manual_guidance_for_item(
             message: "Install Tailscale, sign in to your tailnet, then scan again.".to_string(),
             command: None,
             url: Some("https://tailscale.com/download".to_string()),
+        }),
+        "tunnels.ngrok.binary" => Some(ManualGuidance {
+            message: "Install the ngrok agent, then scan again.".to_string(),
+            command: Some("brew install ngrok".to_string()),
+            url: Some("https://ngrok.com/download".to_string()),
         }),
         _ => None,
     }

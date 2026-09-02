@@ -2,12 +2,12 @@
 //!
 //! - [`env`]: builds `Command`s with the user's full login-shell environment
 //!   injected, so GUI-launched Tauri apps inherit `PATH` / NVM / API keys.
-//! - [`registry`]: takes ownership of every spawned `Child` in a global
-//!   table so daemon shutdown can synchronously SIGKILL them regardless of
-//!   tokio task-poll order. Used by the supervisor + legacy call sites.
-//! - [`supervisor`]: the unified lifecycle layer — spawn, restart, status,
-//!   structured logging — shared by channel plugins, ACP agents, and
-//!   tunnels.
+//! - [`supervisor`]: the single owner of every long-lived child — spawn,
+//!   restart, status, structured logging, and the synchronous emergency
+//!   shutdown — shared by channel plugins, ACP agents, tunnels, and the
+//!   search provider.
+//! - [`orphan`]: startup sweep that kills children left over from a
+//!   previous daemon crash.
 //! - [`bridge`]: manager-side trait for driving a protocol over the stdio
 //!   pipes the supervisor hands back.
 //! - [`error`]: `ProcessError` at the supervisor boundary.
@@ -18,7 +18,7 @@ pub mod env;
 pub mod error;
 pub mod kill;
 pub mod log;
-pub mod registry;
+pub mod orphan;
 pub mod supervisor;
 
 pub use bridge::{
@@ -26,7 +26,32 @@ pub use bridge::{
 };
 pub use error::{ProcessError, ProcessResult};
 pub use kill::{spawn_tree_killable, TreeKillableChild};
-pub use registry::{ChildRegistry, ProcessKind};
+pub use orphan::orphan_sweep;
 pub use supervisor::{
     ProcessEvent, ProcessId, ProcessSnapshot, ProcessStatus, RestartPolicy, SpawnSpec, Supervisor,
 };
+
+/// Classification used for orphan detection and structured logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessKind {
+    /// Channel plugin process (node running from a discovered plugin directory).
+    ChannelPlugin,
+    /// ACP coding-agent child (node running the ACP bridge package).
+    AcpAgent,
+    /// Tunnel provider subprocess (cloudflared, lt, tailscale, …). Not ngrok (SDK).
+    Tunnel,
+    /// Host-side search provider subprocess (va-search-tool stdio).
+    SearchProvider,
+}
+
+impl ProcessKind {
+    /// Short lowercase tag used in structured logs (`kind=channel_plugin`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProcessKind::ChannelPlugin => "channel_plugin",
+            ProcessKind::AcpAgent => "acp_agent",
+            ProcessKind::Tunnel => "tunnel",
+            ProcessKind::SearchProvider => "search_provider",
+        }
+    }
+}

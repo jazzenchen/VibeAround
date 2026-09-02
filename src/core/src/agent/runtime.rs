@@ -33,8 +33,8 @@ use acp::schema::v1 as schema;
 use agent_client_protocol as acp;
 
 use crate::process::bridge::{BridgeFactory, ProcessBridge};
-use crate::process::registry::ProcessKind;
 use crate::process::supervisor::{ProcessId, RestartPolicy, SpawnSpec, Supervisor};
+use crate::process::ProcessKind;
 use crate::routing::{wait_for_signal, RouteKey};
 
 use super::bridge::AcpAgentBridge;
@@ -451,8 +451,8 @@ mod lifecycle_tests {
 
     use super::{await_agent_ready, AcpSessionGeneration, PendingProcessRegistration};
     use crate::process::bridge::{BridgeExit, BridgeFuture, ProcessBridge, StdioPipes};
-    use crate::process::registry::{ChildRegistry, ProcessKind};
     use crate::process::supervisor::{RestartPolicy, SpawnSpec, Supervisor};
+    use crate::process::ProcessKind;
 
     struct HangingInitializeBridge;
 
@@ -492,8 +492,7 @@ mod lifecycle_tests {
     #[cfg(any(unix, windows))]
     #[tokio::test]
     async fn aborted_initialize_owner_unregisters_and_reaps_child() {
-        let registry = Arc::new(ChildRegistry::new());
-        let supervisor = Supervisor::new(Arc::clone(&registry));
+        let supervisor = Supervisor::new();
         let (registered_tx, registered_rx) = tokio::sync::oneshot::channel();
         let task_supervisor = Arc::clone(&supervisor);
         let owner = tokio::spawn(async move {
@@ -514,7 +513,7 @@ mod lifecycle_tests {
         let process_id = registered_rx.await.expect("registration published");
 
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while registry.len() == 0 {
+            while supervisor.live_children() == 0 {
                 tokio::task::yield_now().await;
             }
         })
@@ -526,7 +525,7 @@ mod lifecycle_tests {
 
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
             loop {
-                if registry.len() == 0
+                if supervisor.live_children() == 0
                     && !supervisor
                         .snapshot()
                         .iter()
@@ -544,8 +543,7 @@ mod lifecycle_tests {
     #[cfg(any(unix, windows))]
     #[tokio::test]
     async fn cancelled_ready_wait_unregisters_and_reaps_child() {
-        let registry = Arc::new(ChildRegistry::new());
-        let supervisor = Supervisor::new(Arc::clone(&registry));
+        let supervisor = Supervisor::new();
         let process_id = supervisor
             .register(
                 ProcessKind::AcpAgent,
@@ -561,7 +559,7 @@ mod lifecycle_tests {
 
         let cancel = async {
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                while registry.len() == 0 {
+                while supervisor.live_children() == 0 {
                     tokio::task::yield_now().await;
                 }
             })
@@ -580,7 +578,7 @@ mod lifecycle_tests {
         );
 
         assert!(result.unwrap().is_none());
-        assert_eq!(registry.len(), 0);
+        assert_eq!(supervisor.live_children(), 0);
         assert!(!supervisor
             .snapshot()
             .iter()

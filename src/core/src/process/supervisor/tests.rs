@@ -153,9 +153,48 @@ fn restart_delay_backs_off_and_caps() {
 }
 
 #[tokio::test]
+async fn spawn_failure_event_carries_the_real_reason() {
+    let supervisor = Supervisor::new();
+    let mut events = supervisor.subscribe();
+    let id = supervisor
+        .register(
+            ProcessKind::Tunnel,
+            "missing-tunnel-binary",
+            SpawnSpec::new("vibearound-program-that-does-not-exist"),
+            RestartPolicy::Never,
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
+
+    let stopped = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match events.recv().await {
+                Ok(event) if event.id == id && event.status == ProcessStatus::Stopped => {
+                    break event;
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    panic!("supervisor events closed before Stopped")
+                }
+            }
+        }
+    })
+    .await
+    .expect("spawn failure must publish a Stopped event");
+
+    assert!(
+        stopped.reason.contains("failed to spawn"),
+        "reason should carry the spawn error, got: {}",
+        stopped.reason
+    );
+    assert!(stopped
+        .reason
+        .contains("vibearound-program-that-does-not-exist"));
+}
+
+#[tokio::test]
 async fn force_restart_reports_spawn_failure() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(registry);
+    let supervisor = Supervisor::new();
     let id = supervisor
         .register(
             ProcessKind::ChannelPlugin,
@@ -177,8 +216,7 @@ async fn force_restart_reports_spawn_failure() {
 
 #[tokio::test]
 async fn never_policy_spawn_failure_drops_factory_and_deregisters() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let supervisor = Supervisor::new();
     let (probe_tx, probe_rx) = oneshot::channel::<()>();
     let mut probe_tx = Some(probe_tx);
     let id = supervisor
@@ -206,8 +244,7 @@ async fn never_policy_spawn_failure_drops_factory_and_deregisters() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bridge_exit_terminates_helper_process_group() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let supervisor = Supervisor::new();
     let helper_pid = Arc::new(AtomicU32::new(0));
     let captured_pid = Arc::clone(&helper_pid);
     let id = supervisor
@@ -238,7 +275,7 @@ async fn bridge_exit_terminates_helper_process_group() {
     };
     wait_for_absent(&supervisor, id).await;
     assert_ne!(child_pid, 0, "bridge should capture the helper pid");
-    assert_eq!(registry.len(), 0);
+    assert_eq!(supervisor.live_children(), 0);
 
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
     let mut alive = true;
@@ -299,8 +336,7 @@ async fn wait_for_count(counter: &AtomicUsize, expected: usize) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn register_runs_then_force_stop() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let supervisor = Supervisor::new();
     let id = supervisor
         .register(
             ProcessKind::ChannelPlugin,
@@ -318,13 +354,12 @@ async fn register_runs_then_force_stop() {
     supervisor.force_stop(id).await.unwrap();
 
     wait_for_status(&supervisor, id, ProcessStatus::Stopped).await;
-    assert_eq!(registry.len(), 0);
+    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lifecycle_commands_are_consumed_in_order() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let supervisor = Supervisor::new();
     let cancel_seen = Arc::new(tokio::sync::Semaphore::new(0));
     let release = Arc::new(tokio::sync::Semaphore::new(0));
     let factory_count = Arc::new(AtomicUsize::new(0));
@@ -370,13 +405,12 @@ async fn lifecycle_commands_are_consumed_in_order() {
 
     wait_for_status(&supervisor, id, ProcessStatus::Stopped).await;
     assert_eq!(factory_count.load(Ordering::Acquire), 2);
-    assert_eq!(registry.len(), 0);
+    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn force_stop_aborts_a_stubborn_bridge() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let supervisor = Supervisor::new();
     let dropped = Arc::new(AtomicUsize::new(0));
     let id = supervisor
         .register(
@@ -405,13 +439,12 @@ async fn force_stop_aborts_a_stubborn_bridge() {
         .unwrap();
 
     assert_eq!(dropped.load(Ordering::Acquire), 1);
-    assert_eq!(registry.len(), 0);
+    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
 async fn unregister_stops_and_removes_restartable_process() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let supervisor = Supervisor::new();
     let id = supervisor
         .register(
             ProcessKind::ChannelPlugin,
@@ -429,13 +462,12 @@ async fn unregister_stops_and_removes_restartable_process() {
     supervisor.unregister(id).await.unwrap();
 
     assert!(!supervisor.snapshot().iter().any(|process| process.id == id));
-    assert_eq!(registry.len(), 0);
+    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
 async fn never_policy_auto_deregisters_terminal_process() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let supervisor = Supervisor::new();
     let id = supervisor
         .register(
             ProcessKind::AcpAgent,
@@ -447,13 +479,12 @@ async fn never_policy_auto_deregisters_terminal_process() {
         .await;
 
     wait_for_absent(&supervisor, id).await;
-    assert_eq!(registry.len(), 0);
+    assert_eq!(supervisor.live_children(), 0);
 }
 
 #[tokio::test]
 async fn crash_policy_marks_process_crashed() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(registry);
+    let supervisor = Supervisor::new();
     let id = supervisor
         .register(
             ProcessKind::ChannelPlugin,
@@ -480,8 +511,7 @@ async fn crash_policy_marks_process_crashed() {
 
 #[tokio::test]
 async fn stopped_process_does_not_respawn_until_started() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(registry);
+    let supervisor = Supervisor::new();
     let count = Arc::new(AtomicUsize::new(0));
     let id = supervisor
         .register(
@@ -515,8 +545,7 @@ async fn stopped_process_does_not_respawn_until_started() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn watchdog_restart_does_not_block_other_processes() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(registry);
+    let supervisor = Supervisor::new();
     let slow_cancel = Arc::new(tokio::sync::Semaphore::new(0));
     let slow_release = Arc::new(tokio::sync::Semaphore::new(0));
     let slow_id = supervisor
@@ -574,8 +603,7 @@ async fn watchdog_restart_does_not_block_other_processes() {
 
 #[tokio::test]
 async fn subscribe_receives_status_events() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(registry);
+    let supervisor = Supervisor::new();
     let mut events = supervisor.subscribe();
     let id = supervisor
         .register(
@@ -606,8 +634,7 @@ async fn subscribe_receives_status_events() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(Arc::clone(&registry));
+    let supervisor = Supervisor::new();
     for label in ["first", "second"] {
         let id = supervisor
             .register(
@@ -627,7 +654,7 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
     supervisor.shutdown_all().await;
 
     assert!(supervisor.snapshot().is_empty());
-    assert_eq!(registry.len(), 0);
+    assert_eq!(supervisor.live_children(), 0);
     let id = supervisor
         .register(
             ProcessKind::ChannelPlugin,
@@ -647,8 +674,7 @@ async fn shutdown_all_stops_processes_in_parallel_and_allows_reuse() {
 #[cfg(unix)]
 #[tokio::test]
 async fn real_exit_status_is_preserved() {
-    let registry = Arc::new(ChildRegistry::new());
-    let supervisor = Supervisor::new(registry);
+    let supervisor = Supervisor::new();
     let id = supervisor
         .register(
             ProcessKind::ChannelPlugin,

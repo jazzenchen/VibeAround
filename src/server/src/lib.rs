@@ -19,7 +19,6 @@ use common::auth::{self, AuthToken, SharedAuthToken};
 use common::channels::{ChannelManager, WebChannelManager};
 use common::config;
 use common::plugins;
-use common::process::registry::{self as child_registry, ChildRegistry};
 use common::search::SearchToolRuntime;
 use common::tunnels::{self, TunnelManager};
 use common::workspace::WorkspaceThreadManager;
@@ -101,11 +100,11 @@ impl RunningDaemon {
             search_runtime.shutdown().await;
         }
 
-        // Safety net: synchronously kill any child process still registered
+        // Safety net: synchronously kill any child process still alive
         // after the graceful shutdown paths ran. Covers cases where the
         // supervisor-driven cancel + kill_on_drop never got polled because
         // the tokio runtime tore down first.
-        ChildRegistry::global().kill_all();
+        common::process::Supervisor::global().kill_all_blocking();
 
         // Stop previewed development servers during daemon shutdown.
         common::previews::cleanup_registered_previews();
@@ -288,7 +287,7 @@ impl ServerDaemon {
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
         // Reap plugin and ACP children left by a crashed daemon.
-        child_registry::orphan_sweep();
+        common::process::orphan_sweep();
         common::previews::cleanup_registered_previews();
 
         let web_listener = bind_web_listener(self.port).await?;
@@ -405,34 +404,15 @@ impl ServerDaemon {
         tracing::info!(provider = %tunnel_provider.as_str(), "tunnel configured");
         let tunnel_handle = if tunnel_provider.is_enabled() {
             let tunnel_manager = Arc::clone(&tunnels);
-            let approval_manager = Arc::clone(&tunnels);
-            let approval_reporter: tunnels::TunnelApprovalReporter = Arc::new(move |url| {
-                approval_manager.set_awaiting_approval(tunnel_provider.as_str(), url);
-            });
-            let handle = tokio::spawn(async move {
-                match tunnels::start_web_tunnel_with_provider(
-                    tunnel_provider,
-                    &cfg,
-                    Some(approval_reporter),
-                )
-                .await
+            tunnels.register(tunnel_provider);
+            tokio::spawn(async move {
+                if let Err(e) =
+                    tunnels::launch(tunnel_provider, &cfg, Arc::clone(&tunnel_manager)).await
                 {
-                    Ok((guard, url)) => {
-                        tracing::info!(url = %url, "tunnel connected");
-                        tunnel_manager.set_url(tunnel_provider.as_str(), &url);
-                        if let Some(id) = guard.registry_id() {
-                            tunnel_manager.set_registry_id(tunnel_provider.as_str(), id);
-                        }
-                        guard.wait().await;
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "tunnel failed");
-                        tunnel_manager.set_failed(tunnel_provider.as_str(), e.to_string());
-                    }
+                    tracing::error!(error = %e, "tunnel failed");
+                    tunnel_manager.set_failed(tunnel_provider.as_str(), e.to_string());
                 }
-            });
-            tunnels.register(tunnel_provider, handle.abort_handle());
-            handle
+            })
         } else {
             tracing::debug!("tunnel disabled (provider=none)");
             tokio::spawn(async { /* no-op: keep the JoinHandle type consistent */ })

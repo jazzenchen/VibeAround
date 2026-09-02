@@ -144,7 +144,7 @@ function tunnelReportForProvider(
         report.id === "tunnels.localtunnel.system"
       );
     case "ngrok":
-      return reports.find((report) => report.id === "tunnels.ngrok.sdk");
+      return reports.find((report) => report.id === "tunnels.ngrok.binary");
     case "tailscale":
       return reports.find((report) => report.id === "tunnels.tailscale.binary");
     default:
