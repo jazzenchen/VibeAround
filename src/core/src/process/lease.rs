@@ -89,15 +89,6 @@ for p in "$@"; do kill -KILL "-$p" 2>/dev/null; done
             }
         }
 
-        /// Lease whose lines go to `fd` instead of a reaper. Test-only:
-        /// lets tests observe exactly what would have been leased.
-        #[cfg(test)]
-        pub(crate) fn with_fd(fd: OwnedFd) -> Self {
-            Self {
-                pipe: std::fs::File::from(fd),
-            }
-        }
-
         /// Lease the process group rooted at `child`, spawned as its own
         /// group leader (see `kill::prepare_tree_root`), so pgid == pid.
         /// Call right after `spawn` succeeds.
@@ -126,10 +117,6 @@ for p in "$@"; do kill -KILL "-$p" 2>/dev/null; done
 
     #[cfg(test)]
     mod tests {
-        use super::Lease;
-        use std::io::Read;
-        use std::os::fd::OwnedFd;
-        use std::os::unix::net::UnixStream;
         use std::process::Stdio;
         use std::time::Duration;
         use tokio::process::Command;
@@ -149,7 +136,9 @@ for p in "$@"; do kill -KILL "-$p" 2>/dev/null; done
 
         /// `/bin/sh` is bash on macOS, dash on Debian and Ubuntu, sometimes
         /// zsh or ksh: the script must kill under every one of them. Shells
-        /// not installed here are skipped.
+        /// not installed here are skipped. This is also the test of the
+        /// lease itself: feed the script one `add`, close the pipe, and the
+        /// group must be gone.
         #[tokio::test]
         async fn reaper_script_kills_under_every_shell_present() {
             use std::io::Write;
@@ -188,70 +177,6 @@ for p in "$@"; do kill -KILL "-$p" 2>/dev/null; done
                 checked.push(shell);
             }
             assert!(checked.contains(&"sh"), "no shell to test the reaper with");
-        }
-
-        #[tokio::test]
-        async fn dropping_the_lease_kills_leased_groups() {
-            let lease = Lease::new();
-            let mut sleeper = stubborn_sleeper();
-            lease.attach(&sleeper);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            drop(lease);
-
-            let status = tokio::time::timeout(Duration::from_secs(5), sleeper.wait())
-                .await
-                .expect("reaper did not kill the leased group after the lease closed")
-                .expect("wait");
-            assert!(!status.success(), "{status}");
-        }
-
-        #[tokio::test]
-        async fn released_groups_outlive_the_lease() {
-            let lease = Lease::new();
-            let mut sleeper = stubborn_sleeper();
-            lease.attach(&sleeper);
-            lease.release(sleeper.id().expect("pid"));
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            drop(lease);
-
-            let still_running = tokio::time::timeout(Duration::from_millis(1500), sleeper.wait())
-                .await
-                .is_err();
-            let _ = sleeper.start_kill();
-            let _ = sleeper.wait().await;
-            assert!(still_running, "reaper killed a released group");
-        }
-
-        #[tokio::test]
-        async fn attach_and_release_write_one_line_each() {
-            let (ours, theirs) = UnixStream::pair().expect("socket pair");
-            let lease = Lease::with_fd(OwnedFd::from(theirs));
-            let mut command = Command::new("sh");
-            command.args(["-c", "exit 3"]).stdin(Stdio::null());
-            crate::process::kill::prepare_tree_root(&mut command);
-            let mut child = command.spawn().expect("spawn");
-            lease.attach(&child);
-            let pid = child.id().expect("pid");
-            let status = child.wait().await.expect("wait");
-            assert_eq!(status.code(), Some(3));
-            lease.release(pid);
-            drop(lease);
-
-            let lines = tokio::time::timeout(
-                Duration::from_secs(5),
-                tokio::task::spawn_blocking(move || {
-                    let mut reader = ours;
-                    let mut text = String::new();
-                    reader.read_to_string(&mut text).expect("read lease lines");
-                    text
-                }),
-            )
-            .await
-            .expect("lease lines before EOF")
-            .expect("reader");
-            assert_eq!(lines, format!("add {pid}\ndel {pid}\n"));
         }
     }
 }

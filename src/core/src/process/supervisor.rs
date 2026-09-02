@@ -98,16 +98,6 @@ struct ProcessManager {
 
 impl Supervisor {
     pub fn new() -> Arc<Self> {
-        Self::with_lease(Lease::new())
-    }
-
-    /// Supervisor whose lease writes to a test sink instead of a reaper.
-    #[cfg(all(test, unix))]
-    pub(crate) fn with_test_lease(lease: Lease) -> Arc<Self> {
-        Self::with_lease(lease)
-    }
-
-    fn with_lease(lease: Lease) -> Arc<Self> {
         let (change_tx, _) = broadcast::channel(64);
         let (snapshot_tx, snapshots) = watch::channel(Vec::new());
         let (manager_tx, manager_rx) = mpsc::unbounded_channel();
@@ -118,7 +108,7 @@ impl Supervisor {
         });
         tokio::spawn(
             ProcessManager {
-                lease: Arc::new(lease),
+                lease: Arc::new(Lease::new()),
                 processes: HashMap::new(),
                 command_tx: manager_tx,
                 command_rx: manager_rx,
