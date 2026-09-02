@@ -91,7 +91,8 @@ async fn install_im_plugin(plugin_id: &str) -> Result<ManagedPluginSummary, Stri
     })
     .await
     .map_err(|error| error.to_string())?;
-    Ok(im_plugin_from_registry(plugin, false).await)
+    let installed = plugins::channel::find(&plugin.id);
+    Ok(im_plugin_from_registry(plugin, installed, false).await)
 }
 
 async fn install_acp_plugin(agent_id: &str) -> Result<ManagedPluginSummary, String> {
@@ -115,7 +116,7 @@ async fn install_search_plugin(plugin_id: &str) -> Result<ManagedPluginSummary, 
     let plugin = resources::plugin_by_id(plugin_id)
         .filter(|plugin| plugin.is_kind("search"))
         .ok_or_else(|| format!("unknown search plugin '{plugin_id}'"))?;
-    let current = search_plugin_from_registry(plugin, false).await;
+    let current = search_plugin_from_registry(plugin, plugins::find(&plugin.id), false).await;
     if matches!(
         current.source.as_ref(),
         Some(plugins::PluginSource::Project)
@@ -127,22 +128,30 @@ async fn install_search_plugin(plugin_id: &str) -> Result<ManagedPluginSummary, 
     })
     .await
     .map_err(|error| error.to_string())?;
-    Ok(search_plugin_from_registry(plugin, false).await)
+    let installed = plugins::find(&plugin.id);
+    Ok(search_plugin_from_registry(plugin, installed, false).await)
 }
 
 async fn im_plugins(include_latest: bool) -> Vec<ManagedPluginSummary> {
     let registry = resources::PLUGINS
         .iter()
         .filter(|plugin| plugin.is_kind("channel"));
+    // One discovery pass serves the whole listing; a `find` per registry
+    // entry would rescan every plugin directory for each of them.
+    let installed = plugins::channel::discover();
     let mut seen = HashSet::new();
     let mut items = Vec::new();
 
     for plugin in registry {
         seen.insert(plugin.id.clone());
-        items.push(im_plugin_from_registry(plugin, include_latest).await);
+        let discovered = installed.get(&plugin.id).cloned();
+        items.push(im_plugin_from_registry(plugin, discovered, include_latest).await);
     }
 
-    for discovered in plugins::channel::list_summaries() {
+    for discovered in installed
+        .values()
+        .map(plugins::DiscoveredPluginSummary::from)
+    {
         if seen.contains(&discovered.id) {
             continue;
         }
@@ -172,15 +181,17 @@ async fn search_plugins(include_latest: bool) -> Vec<ManagedPluginSummary> {
     let registry = resources::PLUGINS
         .iter()
         .filter(|plugin| plugin.is_kind("search"));
+    let installed = plugins::discover_plugins();
     let mut seen = HashSet::new();
     let mut items = Vec::new();
 
     for plugin in registry {
         seen.insert(plugin.id.clone());
-        items.push(search_plugin_from_registry(plugin, include_latest).await);
+        let discovered = installed.get(&plugin.id).cloned();
+        items.push(search_plugin_from_registry(plugin, discovered, include_latest).await);
     }
 
-    for discovered in plugins::discover_plugins()
+    for discovered in installed
         .into_values()
         .filter(|plugin| plugin.manifest.kind == "search")
     {
@@ -212,9 +223,9 @@ async fn search_plugins(include_latest: bool) -> Vec<ManagedPluginSummary> {
 
 async fn im_plugin_from_registry(
     plugin: &resources::PluginDef,
+    discovered: Option<plugins::DiscoveredPlugin>,
     include_latest: bool,
 ) -> ManagedPluginSummary {
-    let discovered = plugins::channel::find(&plugin.id);
     let version = discovered.as_ref().map(|plugin| plugin.installed_version());
     let latest = if include_latest {
         super::github_plugin_version(plugin).await.ok().flatten()
@@ -266,9 +277,9 @@ async fn im_plugin_from_registry(
 
 async fn search_plugin_from_registry(
     plugin: &resources::PluginDef,
+    discovered: Option<plugins::DiscoveredPlugin>,
     include_latest: bool,
 ) -> ManagedPluginSummary {
-    let discovered = plugins::find(&plugin.id);
     let version = discovered.as_ref().map(|plugin| plugin.installed_version());
     let latest = if include_latest {
         super::github_plugin_version(plugin).await.ok().flatten()
