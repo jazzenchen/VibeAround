@@ -122,18 +122,36 @@ pub async fn launch(
             // `TunnelMeta::fail` keeps an earlier terminal status, so a
             // user-killed tunnel (entry already removed) stays untouched.
             let watcher_manager = manager;
+            let watcher_supervisor = Arc::clone(&supervisor);
             tokio::spawn(async move {
                 loop {
                     match events.recv().await {
                         Ok(event) if event.id == process_id => {
                             if matches!(event.status, ProcessStatus::Stopped) {
+                                let reason = if event.reason.is_empty() {
+                                    "tunnel process exited".to_string()
+                                } else {
+                                    event.reason
+                                };
+                                watcher_manager.set_failed(key, reason);
+                                break;
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // Dropped events may include our `Stopped`; a
+                            // `Never` process leaves the snapshot when it
+                            // stops, so absence is the terminal signal.
+                            let gone = !watcher_supervisor
+                                .snapshot()
+                                .iter()
+                                .any(|process| process.id == process_id);
+                            if gone {
                                 watcher_manager
                                     .set_failed(key, "tunnel process exited".to_string());
                                 break;
                             }
                         }
-                        Ok(_) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }

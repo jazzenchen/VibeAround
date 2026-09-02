@@ -113,6 +113,11 @@ pub(crate) async fn terminate_child_tree(
 #[cfg(unix)]
 pub(crate) fn emergency_kill_group(root_pid: u32) {
     let _ = signal_process_group(root_pid, libc::SIGKILL);
+    // A child that called setsid() has left our group; hit the root pid
+    // directly as well (harmless when the group signal already got it).
+    // SAFETY: plain `kill(2)` syscall on a pid we spawned; errors (ESRCH,
+    // EPERM) are reported via the return value and ignored here.
+    let _ = unsafe { libc::kill(root_pid as libc::pid_t, libc::SIGKILL) };
 }
 
 #[cfg(windows)]

@@ -445,6 +445,7 @@ impl ProcessManager {
                             id: process.id,
                             kind: process.kind,
                             status: process.status(),
+                            reason: process.reason(),
                         });
                         self.publish_snapshots();
                     }
@@ -491,6 +492,7 @@ impl ProcessManager {
             id,
             kind,
             status: ProcessStatus::NotStarted,
+            reason: String::new(),
         });
         self.publish_snapshots();
         tokio::spawn(

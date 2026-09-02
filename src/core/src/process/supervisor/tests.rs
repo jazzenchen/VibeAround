@@ -153,6 +153,46 @@ fn restart_delay_backs_off_and_caps() {
 }
 
 #[tokio::test]
+async fn spawn_failure_event_carries_the_real_reason() {
+    let supervisor = Supervisor::new();
+    let mut events = supervisor.subscribe();
+    let id = supervisor
+        .register(
+            ProcessKind::Tunnel,
+            "missing-tunnel-binary",
+            SpawnSpec::new("vibearound-program-that-does-not-exist"),
+            RestartPolicy::Never,
+            Box::new(|| Box::new(WaitForCancelBridge)),
+        )
+        .await;
+
+    let stopped = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match events.recv().await {
+                Ok(event) if event.id == id && event.status == ProcessStatus::Stopped => {
+                    break event;
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    panic!("supervisor events closed before Stopped")
+                }
+            }
+        }
+    })
+    .await
+    .expect("spawn failure must publish a Stopped event");
+
+    assert!(
+        stopped.reason.contains("failed to spawn"),
+        "reason should carry the spawn error, got: {}",
+        stopped.reason
+    );
+    assert!(stopped
+        .reason
+        .contains("vibearound-program-that-does-not-exist"));
+}
+
+#[tokio::test]
 async fn force_restart_reports_spawn_failure() {
     let supervisor = Supervisor::new();
     let id = supervisor

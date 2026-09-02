@@ -11,8 +11,7 @@
       "localtunnel",
       "--port"
     ],
-    "dependency_id": "tunnel-localtunnel",
-    "spawn_error_hint": "Run VibeAround setup, or install Node/npx on PATH"
+    "dependency_id": "tunnel-localtunnel"
   },
   {
     "id": "cloudflare",
@@ -22,19 +21,12 @@
       "tunnel",
       "run"
     ],
-    "dependency_id": "tunnel-cloudflare",
-    "spawn_error_hint": "Run VibeAround setup, or install cloudflared on PATH",
-    "platform_overrides": {
-      "windows": {
-        "spawn_error_hint": "Run VibeAround setup, or install cloudflared on PATH"
-      }
-    }
+    "dependency_id": "tunnel-cloudflare"
   },
   {
     "id": "ngrok",
     "display_name": "Ngrok",
-    "program": "ngrok",
-    "spawn_error_hint": "Install ngrok (e.g. brew install ngrok) or put it on PATH"
+    "program": "ngrok"
   },
   {
     "id": "tailscale",
@@ -43,7 +35,6 @@
     "args": [
       "funnel",
       "--yes"
-    ],
-    "spawn_error_hint": "Install Tailscale, sign in, and make sure the tailscale CLI is on PATH"
+    ]
   }
 ]

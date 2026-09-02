@@ -139,6 +139,9 @@ pub struct ProcessEvent {
     pub id: ProcessId,
     pub kind: ProcessKind,
     pub status: ProcessStatus,
+    /// Human-readable cause of the current status (spawn error, exit
+    /// status, "stopped by user"); empty while nothing has happened yet.
+    pub reason: String,
 }
 
 #[derive(Debug, Clone)]
