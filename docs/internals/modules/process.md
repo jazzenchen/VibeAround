@@ -14,8 +14,7 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 | process model | `supervisor/model.rs` | `SpawnSpec`, status/policy, pending child and generation ownership state |
 | generation engine | `supervisor/generation.rs` | One spawn/bridge/reap generation, tagged exit handling, process-tree termination |
 | `ProcessBridge` / `BridgeFactory` | `bridge.rs` | The protocol driver contract: factory invoked fresh per (re)spawn, handed the stdio pipes |
-| `Lease` | `lease.rs` | Kernel-held guarantee that no child outlives the daemon. Unix: a pipe-bound `sh` reaper; the supervisor writes `add <pgid>` right after a spawn succeeds and `del <pgid>` after reaping, and the reaper kills what is left when the pipe closes. Deliberately uncovered: the ~1 ms between the fork and the `add` write (a daemon killed exactly then leaves that one child — a bug to fix or the user's own doing), and the reaper itself being killed by hand (later children run uncovered, with a warning). Windows (interim): the previous pid roster killed from the exit handler |
-| `orphan_sweep` | `orphan.rs` (Windows only) | Startup sweep that kills children left over from a previous daemon crash, until the Windows lease is a real Job Object |
+| `Lease` | `lease.rs` | Kernel-held guarantee that no child outlives the daemon. Unix: a pipe-bound `sh` reaper; the supervisor writes `add <pgid>` right after a spawn succeeds and `del <pgid>` after reaping, and the reaper kills what is left when the pipe closes. Windows: a kill-on-close Job Object; each child is assigned right after spawn and its descendants inherit membership. Deliberately uncovered: the ~1 ms between the spawn and the registration (a daemon killed exactly then leaves that one child — a bug to fix or the user's own doing), and on Unix the reaper itself being killed by hand (later children run uncovered, with a warning) |
 | `AcpTransport` wrapper | `acp_transport.rs` | ACP line transport + explicit EOF signal so the supervisor observes child death |
 | `env` | `env.rs` | Enriched login-shell environment (cached once) injected into every child |
 
@@ -23,7 +22,7 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 
 - **← channels:** `ChannelMonitor` registers plugin manifests; the bridge factory re-points `PluginHost` at the new runtime each respawn.
 - **← agent:** `Agent::spawn` registers ACP adapters with policy `Never`.
-- **← server:** daemon shutdown calls `shutdown_all` (also the in-process hot-restart path, where the OS-level lease never fires); daemon start runs `orphan_sweep` on Windows only.
+- **← server:** daemon shutdown calls `shutdown_all` (also the in-process hot-restart path, where the OS-level lease never fires); nothing runs at daemon start.
 - **→ nothing above it** — this module is a leaf; it must not know about threads, routes, or profiles.
 
 ## Invariants — do not break
@@ -40,7 +39,7 @@ Provide one supervised path for child processes (channel plugins, agent ACP adap
 
 ## Known debt
 
-- Windows has no kernel-held lease yet: the interim roster only covers the exit handler and the orphan sweep only runs at the next start. The fix is a Job Object with kill-on-close (assigned atomically at process creation, e.g. via `PROC_THREAD_ATTRIBUTE_JOB_LIST`, or by placing the daemon itself in the job), built and verified on a Windows machine; the roster and `orphan.rs` go with it.
+- The Windows Job Object path was written without a Windows machine; it awaits a run of `cargo test -p common process::` and a hard kill of the real daemon on Windows.
 - Not leased on purpose: installer-style one-shot children (`spawn_tree_killable`: npm installs, startkit scripts) and the desktop onboarding auth script (short-lived, user-attended).
 - `Supervisor::global()` still impedes test isolation and scoped dependency ownership even though each active generation now has one owner; the next boundary is injected, scoped supervisor handles.
 - Restart has bounded exponential backoff, but still lacks jitter, a failure-window budget and an explicit circuit-breaker/manual-reset state.

@@ -285,11 +285,6 @@ impl ServerDaemon {
     }
 
     pub async fn start_background(&self, dist_path: PathBuf) -> anyhow::Result<RunningDaemon> {
-        // Windows interim: reap children left by a crashed daemon. On Unix
-        // the process lease ends them with the daemon, so there is nothing
-        // to sweep.
-        #[cfg(windows)]
-        common::process::orphan_sweep();
         common::previews::cleanup_registered_previews();
 
         let web_listener = bind_web_listener(self.port).await?;

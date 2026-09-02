@@ -16,29 +16,29 @@
 //! and exits. The reaper is its own process group so nothing aimed at the
 //! daemon's group reaches it.
 //!
-//! Two things are deliberately not covered. The moment between the fork
-//! and the `add` write (about a millisecond): a daemon killed exactly then
-//! leaves that one child behind — a kill at that instant is either a bug
-//! to fix or the user's own doing, not something to engineer around. And
-//! the reaper itself being killed by hand: from then on new children run
-//! uncovered, with a warning in the log.
+//! **Windows.** A Job Object with kill-on-close. Each child is assigned
+//! right after it is spawned; everything it starts inherits membership.
+//! The daemon holds the only handle, so its death closes the job and the
+//! kernel terminates every member.
 //!
-//! **Windows (interim).** No kernel-held lease yet: a pid roster killed
-//! from the exit handler with `taskkill /T`, plus the startup orphan sweep
-//! for crashes — the behaviour VibeAround had before the lease. The real
-//! fix is a Job Object with kill-on-close, to be built and verified on a
-//! Windows machine.
+//! Deliberately not covered, on both platforms: the moment between the
+//! spawn and the registration (about a millisecond) — a daemon killed
+//! exactly then leaves that one child behind, and a kill at that instant
+//! is either a bug to fix or the user's own doing. On Unix, the reaper
+//! itself being killed by hand: from then on new children run uncovered,
+//! with a warning in the log.
 //!
 //! Orderly stops still go through the supervisor (`SIGTERM`, then
 //! `SIGKILL`, per child); the lease only ever acts after the daemon is gone.
 
 #[cfg(unix)]
 mod imp {
-    use std::io::{self, Write};
-    use std::os::fd::{AsRawFd, OwnedFd};
-    use std::process::Stdio;
+    use std::io::Write;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
 
-    use tokio::process::{Child, Command};
+    use tokio::process::Child;
 
     /// POSIX `sh`. Reads `add <pgid>` / `del <pgid>` lines until EOF, then
     /// signals whatever is still leased. `HUP`/`INT` are ignored so a
@@ -59,17 +59,32 @@ for p in $pg; do kill -KILL -- "-$p" 2>/dev/null; done
 "#;
 
     pub struct Lease {
-        /// Blocking, close-on-exec write end of the reaper's stdin.
+        /// Write end of the reaper's stdin (blocking, close-on-exec).
         pipe: std::fs::File,
-        #[cfg_attr(not(test), allow(dead_code))]
-        reaper_pid: u32,
     }
 
     impl Lease {
         /// Start the reaper. A daemon that cannot run `sh` cannot run any
         /// of its children either, so this is fatal.
+        // The reaper outlives this process by design, so it is never
+        // waited on; it only ever exits after we are gone.
+        #[allow(clippy::zombie_processes)]
         pub fn new() -> Self {
-            spawn_reaper().expect("process lease: failed to start the reaper (is `sh` on PATH?)")
+            let mut reaper = Command::new("sh")
+                .arg("-c")
+                .arg(REAPER_SCRIPT)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .expect("process lease: failed to start the reaper (is `sh` on PATH?)");
+            // The reaper must outlive us: its handle is dropped without
+            // waiting and it is never killed.
+            let stdin = reaper.stdin.take().expect("reaper stdin is piped");
+            Self {
+                pipe: std::fs::File::from(OwnedFd::from(stdin)),
+            }
         }
 
         /// Lease whose lines go to `fd` instead of a reaper. Test-only:
@@ -78,13 +93,7 @@ for p in $pg; do kill -KILL -- "-$p" 2>/dev/null; done
         pub(crate) fn with_fd(fd: OwnedFd) -> Self {
             Self {
                 pipe: std::fs::File::from(fd),
-                reaper_pid: 0,
             }
-        }
-
-        #[cfg(test)]
-        pub(crate) fn reaper_pid(&self) -> Option<u32> {
-            (self.reaper_pid != 0).then_some(self.reaper_pid)
         }
 
         /// Lease the process group rooted at `child`, spawned as its own
@@ -111,47 +120,6 @@ for p in $pg; do kill -KILL -- "-$p" 2>/dev/null; done
                 );
             }
         }
-    }
-
-    fn spawn_reaper() -> io::Result<Lease> {
-        let mut command = Command::new("sh");
-        command
-            .arg("-c")
-            .arg(REAPER_SCRIPT)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0);
-        let mut reaper = command.spawn()?;
-        let fd = reaper
-            .stdin
-            .take()
-            .expect("reaper stdin is piped")
-            .into_owned_fd()?;
-        set_blocking(&fd)?;
-        // The reaper must outlive us: the handle is dropped without
-        // waiting (tokio reaps it if it ever exits) and never killed.
-        let reaper_pid = reaper.id().unwrap_or(0);
-        Ok(Lease {
-            pipe: std::fs::File::from(fd),
-            reaper_pid,
-        })
-    }
-
-    /// tokio put the pipe into non-blocking mode; the lease writes are
-    /// plain blocking writes of a few bytes.
-    fn set_blocking(fd: &OwnedFd) -> io::Result<()> {
-        let raw = fd.as_raw_fd();
-        // SAFETY: fcntl on an fd we own.
-        let flags = unsafe { libc::fcntl(raw, libc::F_GETFL) };
-        if flags < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: as above.
-        if unsafe { libc::fcntl(raw, libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
     }
 
     #[cfg(test)]
@@ -245,63 +213,167 @@ for p in $pg; do kill -KILL -- "-$p" 2>/dev/null; done
 
 #[cfg(windows)]
 mod imp {
-    use std::collections::HashSet;
+    use std::ffi::c_void;
+    use std::io;
 
-    use parking_lot::Mutex;
     use tokio::process::Child;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
 
-    /// Interim Windows lease: the pid roster VibeAround had before the
-    /// lease, killed from the exit handler. A crash still relies on the
-    /// startup orphan sweep. See the module docs for the Job Object plan.
     pub struct Lease {
-        pids: Mutex<HashSet<u32>>,
+        /// The only handle to the job.
+        job: HANDLE,
     }
 
+    // SAFETY: a job handle is a kernel object reference; the Win32 job
+    // calls made through it are safe from any thread.
+    unsafe impl Send for Lease {}
+    unsafe impl Sync for Lease {}
+
     impl Lease {
+        /// Create the job. Like the Unix reaper, failing to set this up is
+        /// fatal rather than silently running uncovered.
         pub fn new() -> Self {
-            Self {
-                pids: Mutex::new(HashSet::new()),
-            }
+            let job = create_job().expect("process lease: failed to create the job object");
+            Self { job }
         }
 
+        /// Put `child` — and, transitively, everything it starts — into the
+        /// job. Call right after `spawn` succeeds.
         pub fn attach(&self, child: &Child) {
-            if let Some(pid) = child.id() {
-                self.pids.lock().insert(pid);
+            let Some(process) = child.raw_handle() else {
+                return;
+            };
+            // SAFETY: both handles are live kernel objects this process owns.
+            if unsafe { AssignProcessToJobObject(self.job, process as HANDLE) } == 0 {
+                tracing::warn!(
+                    "[lease] AssignProcessToJobObject failed for pid {:?} ({}); it will outlive a daemon crash",
+                    child.id(),
+                    io::Error::last_os_error()
+                );
             }
         }
 
-        pub fn release(&self, pid: u32) {
-            self.pids.lock().remove(&pid);
-        }
+        /// Job membership ends with the process; nothing to undo.
+        pub fn release(&self, _pid: u32) {}
+    }
 
-        /// Synchronously `taskkill /T /F` every live child. Needs no
-        /// runtime, so the Tauri `RunEvent::Exit` handler can call it.
-        pub fn kill_all(&self) {
-            let pids = std::mem::take(&mut *self.pids.lock());
-            tracing::info!("[lease] kill_all: {} child(ren)", pids.len());
-            for pid in pids {
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
+    impl Drop for Lease {
+        fn drop(&mut self) {
+            // SAFETY: closing the last handle ends the job's members, which
+            // is exactly the lease semantics.
+            unsafe { CloseHandle(self.job) };
         }
     }
-}
 
-#[cfg(not(any(unix, windows)))]
-mod imp {
-    use tokio::process::Child;
-
-    pub struct Lease;
-
-    impl Lease {
-        pub fn new() -> Self {
-            Self
+    fn create_job() -> io::Result<HANDLE> {
+        // SAFETY: no security attributes (the handle is not inheritable,
+        // so children cannot keep the job alive after the daemon is gone)
+        // and no name.
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            return Err(io::Error::last_os_error());
         }
-        pub fn attach(&self, _child: &Child) {}
-        pub fn release(&self, _pid: u32) {}
+        // SAFETY: zeroed is a valid value for this plain C struct.
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: `info` is the struct the information class expects, and
+        // the length matches it.
+        let ok = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION as *const c_void,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if ok == 0 {
+            let error = io::Error::last_os_error();
+            // SAFETY: closing the handle we just created.
+            unsafe { CloseHandle(job) };
+            return Err(error);
+        }
+        Ok(job)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Lease;
+        use std::process::Stdio;
+        use std::time::Duration;
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+        use tokio::process::Command;
+
+        fn processes() -> System {
+            let mut system = System::new_with_specifics(
+                RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+            );
+            system.refresh_processes(ProcessesToUpdate::All, true);
+            system
+        }
+
+        #[tokio::test]
+        async fn dropping_the_lease_ends_attached_children_and_their_descendants() {
+            let lease = Lease::new();
+            let mut command = Command::new("cmd");
+            command
+                .args(["/C", "ping -t 127.0.0.1 >NUL"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let mut child = command.spawn().expect("spawn cmd");
+            lease.attach(&child);
+            let cmd_pid = child.id().expect("pid");
+
+            // Wait for cmd to start ping, so a grandchild exists to check.
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            let grandchildren = loop {
+                let system = processes();
+                let found: Vec<u32> = system
+                    .processes()
+                    .values()
+                    .filter(|process| process.parent() == Some(Pid::from_u32(cmd_pid)))
+                    .map(|process| process.pid().as_u32())
+                    .collect();
+                if !found.is_empty() {
+                    break found;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "cmd never started ping"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            };
+
+            drop(lease);
+
+            let status = tokio::time::timeout(Duration::from_secs(5), child.wait())
+                .await
+                .expect("closing the job did not end the attached child")
+                .expect("wait");
+            assert!(!status.success(), "{status}");
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let system = processes();
+                let alive: Vec<u32> = grandchildren
+                    .iter()
+                    .copied()
+                    .filter(|pid| system.process(Pid::from_u32(*pid)).is_some())
+                    .collect();
+                if alive.is_empty() {
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "descendants outlived the job: {alive:?}"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
     }
 }
 

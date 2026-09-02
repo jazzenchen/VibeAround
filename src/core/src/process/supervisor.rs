@@ -43,10 +43,6 @@ pub struct Supervisor {
     manager_tx: mpsc::UnboundedSender<ManagerCommand>,
     snapshots: watch::Receiver<Vec<ProcessSnapshot>>,
     change_tx: broadcast::Sender<ProcessEvent>,
-    /// Read by the Windows exit-time kill and by tests; the owners hold
-    /// their own handles for everything else.
-    #[cfg_attr(not(any(test, windows)), allow(dead_code))]
-    lease: Arc<Lease>,
 }
 
 struct ProcessRegistration {
@@ -115,16 +111,14 @@ impl Supervisor {
         let (change_tx, _) = broadcast::channel(64);
         let (snapshot_tx, snapshots) = watch::channel(Vec::new());
         let (manager_tx, manager_rx) = mpsc::unbounded_channel();
-        let lease = Arc::new(lease);
         let supervisor = Arc::new(Self {
             manager_tx: manager_tx.clone(),
             snapshots,
             change_tx: change_tx.clone(),
-            lease: Arc::clone(&lease),
         });
         tokio::spawn(
             ProcessManager {
-                lease,
+                lease: Arc::new(lease),
                 processes: HashMap::new(),
                 command_tx: manager_tx,
                 command_rx: manager_rx,
@@ -145,20 +139,6 @@ impl Supervisor {
             supervisor.spawn_tick_loop();
             supervisor
         }))
-    }
-
-    /// The process lease shared by every child this supervisor spawns.
-    #[cfg(all(test, unix))]
-    pub(crate) fn lease(&self) -> &Lease {
-        &self.lease
-    }
-
-    /// Windows interim: synchronously `taskkill` every live child. The
-    /// Tauri `RunEvent::Exit` handler calls it when graceful shutdown was
-    /// skipped; on Unix the reaper covers that case without any call.
-    #[cfg(windows)]
-    pub fn kill_all_blocking(&self) {
-        self.lease.kill_all();
     }
 
     pub async fn register(

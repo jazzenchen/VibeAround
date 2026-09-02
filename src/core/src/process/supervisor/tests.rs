@@ -776,12 +776,11 @@ async fn failed_spawn_leaves_no_lease_entry() {
     supervisor.force_stop(id).await.unwrap();
 }
 
-/// Bridge for the SIGKILL harness: relays the child's own pid and its
-/// grandchild's pid to the harness stdout, then waits to be cancelled.
-#[cfg(unix)]
+/// Bridge for the hard-kill harness: relays the lines the child prints
+/// (its own pid, then on Unix its grandchild's pid) to the harness stdout,
+/// then waits to be cancelled.
 struct ReportPidsBridge;
 
-#[cfg(unix)]
 impl ProcessBridge for ReportPidsBridge {
     fn run(
         self: Box<Self>,
@@ -792,35 +791,52 @@ impl ProcessBridge for ReportPidsBridge {
             use tokio::io::AsyncBufReadExt;
 
             let mut stdout = tokio::io::BufReader::new(pipes.stdout).lines();
-            let child = stdout.next_line().await.unwrap().unwrap();
-            let grandchild = stdout.next_line().await.unwrap().unwrap();
-            println!("child {}", child.trim());
-            println!("grandchild {}", grandchild.trim());
+            for label in ["child", "grandchild"] {
+                let line = tokio::select! {
+                    line = stdout.next_line() => line,
+                    _ = cancel.wait_for(|cancelled| *cancelled) => break,
+                };
+                match line {
+                    Ok(Some(line)) => println!("{label} {}", line.trim()),
+                    _ => break,
+                }
+            }
             let _ = cancel.wait_for(|cancelled| *cancelled).await;
             BridgeExit::Cancelled
         })
     }
 }
 
-/// Body of the SIGKILL harness: a daemon stand-in that supervises one
-/// child whose whole tree ignores SIGTERM. Only runs when spawned by
-/// `sigkilled_daemon_takes_every_child_down`; otherwise it is a no-op.
+/// A child that prints its own pid, then (Unix) starts a grandchild that
+/// ignores SIGTERM and prints its pid too, then waits forever.
 #[cfg(unix)]
+fn harness_child_spec() -> SpawnSpec {
+    SpawnSpec::new("sh").args(["-c", "trap '' TERM; echo $$; sleep 60 & echo $!; wait"])
+}
+
+#[cfg(windows)]
+fn harness_child_spec() -> SpawnSpec {
+    SpawnSpec::new("powershell").args([
+        "-NoProfile",
+        "-Command",
+        "$PID; ping -t 127.0.0.1 | Out-Null",
+    ])
+}
+
+/// Body of the hard-kill harness: a daemon stand-in that supervises one
+/// child. Only runs when spawned by `hard_killed_daemon_takes_every_child_down`;
+/// otherwise it is a no-op.
 #[tokio::test]
-async fn harness_supervised_children_for_sigkill_test() {
+async fn harness_supervised_children_for_hard_kill_test() {
     if std::env::var_os("VA_LEASE_HARNESS").is_none() {
         return;
     }
     let supervisor = Supervisor::new();
-    println!(
-        "reaper {}",
-        supervisor.lease().reaper_pid().expect("reaper")
-    );
     supervisor
         .register(
             ProcessKind::ChannelPlugin,
-            "sigkill-harness",
-            SpawnSpec::new("sh").args(["-c", "trap '' TERM; echo $$; sleep 60 & echo $!; wait"]),
+            "hard-kill-harness",
+            harness_child_spec(),
             RestartPolicy::Never,
             Box::new(|| Box::new(ReportPidsBridge)),
         )
@@ -828,12 +844,55 @@ async fn harness_supervised_children_for_sigkill_test() {
     std::future::pending::<()>().await;
 }
 
-/// The real thing: a separate daemon process is SIGKILLed and its child,
-/// grandchild, and reaper must all be gone shortly after, with nobody in
-/// the daemon having run any cleanup code.
+fn snapshot_processes() -> sysinfo::System {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
+
+    let mut system = System::new_with_specifics(
+        RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+    );
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    system
+}
+
+fn children_of(system: &sysinfo::System, parent: u32) -> Vec<(u32, String)> {
+    system
+        .processes()
+        .values()
+        .filter(|process| process.parent() == Some(sysinfo::Pid::from_u32(parent)))
+        .map(|process| {
+            let command = process
+                .cmd()
+                .iter()
+                .map(|part| part.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            (process.pid().as_u32(), command)
+        })
+        .collect()
+}
+
 #[cfg(unix)]
+fn process_exists(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks for existence.
+    if unsafe { libc::kill(pid as libc::pid_t, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+#[cfg(windows)]
+fn process_exists(pid: u32) -> bool {
+    snapshot_processes()
+        .process(sysinfo::Pid::from_u32(pid))
+        .is_some()
+}
+
+/// The real thing: a separate daemon process is killed the hard way
+/// (SIGKILL / TerminateProcess) and its child, grandchild, and — on Unix —
+/// reaper must all be gone shortly after, with nobody in the daemon having
+/// run any cleanup code.
 #[test]
-fn sigkilled_daemon_takes_every_child_down() {
+fn hard_killed_daemon_takes_every_child_down() {
     use std::io::BufRead;
     use std::sync::mpsc;
 
@@ -848,7 +907,7 @@ fn sigkilled_daemon_takes_every_child_down() {
     let harness = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "process::supervisor::tests::harness_supervised_children_for_sigkill_test",
+            "process::supervisor::tests::harness_supervised_children_for_hard_kill_test",
             "--nocapture",
             "--test-threads=1",
         ])
@@ -859,6 +918,7 @@ fn sigkilled_daemon_takes_every_child_down() {
         .spawn()
         .expect("spawn harness");
     let mut harness = KillOnDrop(harness);
+    let harness_pid = harness.0.id();
     let stdout = harness.0.stdout.take().expect("harness stdout");
     let (lines_tx, lines_rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -872,70 +932,109 @@ fn sigkilled_daemon_takes_every_child_down() {
         }
     });
 
-    let mut reaper = None;
+    // Collect the pids the harness reports. With `--nocapture` libtest
+    // prints its own `test … ...` prefix on the same line as the first
+    // report, so scan word pairs anywhere in each line.
     let mut child = None;
     let mut grandchild = None;
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    while reaper.is_none() || child.is_none() || grandchild.is_none() {
+    while child.is_none() || (cfg!(unix) && grandchild.is_none()) {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         let line = lines_rx
             .recv_timeout(remaining)
             .expect("harness did not report its pids in time");
-        // With `--nocapture` libtest prints its own `test … ...` prefix on
-        // the same line as the first report, so scan word pairs anywhere.
         let words: Vec<&str> = line.split_whitespace().collect();
         for pair in words.windows(2) {
             let Ok(pid) = pair[1].parse::<u32>() else {
                 continue;
             };
             match pair[0] {
-                "reaper" => reaper = Some(pid),
                 "child" => child = Some(pid),
                 "grandchild" => grandchild = Some(pid),
                 _ => {}
             }
         }
     }
-    let pids = [reaper.unwrap(), child.unwrap(), grandchild.unwrap()];
-    for pid in pids {
+    let child = child.unwrap();
+
+    // Everything the kill must take down: the child, its descendants, and
+    // on Unix the reaper (found as the harness's `sh` child).
+    let mut doomed = vec![child];
+    doomed.extend(grandchild);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let system = snapshot_processes();
+        let mut found = Vec::new();
+        if cfg!(unix) {
+            found.extend(
+                children_of(&system, harness_pid)
+                    .into_iter()
+                    .filter(|(_, command)| command.contains("trap '' HUP INT"))
+                    .map(|(pid, _)| pid),
+            );
+        }
+        if cfg!(windows) {
+            found.extend(children_of(&system, child).into_iter().map(|(pid, _)| pid));
+        }
+        if !found.is_empty() {
+            doomed.extend(found);
+            break;
+        }
         assert!(
-            process_exists(pid),
+            std::time::Instant::now() < deadline,
+            "could not find the reaper / grandchild of the harness"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    for pid in &doomed {
+        assert!(
+            process_exists(*pid),
             "pid {pid} should be alive before the kill"
         );
     }
 
-    // SAFETY: signalling the harness process we spawned.
-    assert_eq!(
-        unsafe { libc::kill(harness.0.id() as libc::pid_t, libc::SIGKILL) },
-        0
-    );
+    hard_kill(&mut harness.0);
     let _ = harness.0.wait();
 
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while pids.iter().any(|pid| process_exists(*pid)) {
+    while doomed.iter().any(|pid| process_exists(*pid)) {
         if std::time::Instant::now() >= deadline {
-            let survivors: Vec<u32> = pids
+            let survivors: Vec<u32> = doomed
                 .iter()
                 .copied()
                 .filter(|pid| process_exists(*pid))
                 .collect();
             for pid in &survivors {
-                // SAFETY: cleanup of pids this test created.
-                unsafe { libc::kill(*pid as libc::pid_t, libc::SIGKILL) };
+                hard_kill_pid(*pid);
             }
-            panic!("processes outlived the SIGKILLed daemon: {survivors:?} (reaper, child, grandchild = {pids:?})");
+            panic!("processes outlived the hard-killed daemon: {survivors:?} (of {doomed:?})");
         }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
 #[cfg(unix)]
-fn process_exists(pid: u32) -> bool {
-    // SAFETY: signal 0 only checks for existence.
-    if unsafe { libc::kill(pid as libc::pid_t, 0) } == 0 {
-        return true;
-    }
-    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+fn hard_kill(process: &mut std::process::Child) {
+    hard_kill_pid(process.id());
+}
+
+#[cfg(unix)]
+fn hard_kill_pid(pid: u32) {
+    // SAFETY: signalling a pid this test created.
+    unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+}
+
+/// `Child::kill` is `TerminateProcess`: no handler runs in the target.
+#[cfg(windows)]
+fn hard_kill(process: &mut std::process::Child) {
+    let _ = process.kill();
+}
+
+#[cfg(windows)]
+fn hard_kill_pid(pid: u32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status();
 }
 
 #[cfg(unix)]

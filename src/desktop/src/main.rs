@@ -454,13 +454,10 @@ fn main() {
                         return;
                     }
                 }
-                // Final safety net if graceful daemon shutdown was skipped
-                // or interrupted. On Unix supervised children need nothing
-                // here: the process lease ends them with us. Windows keeps
-                // the synchronous roster kill until its lease is real.
+                // Final safety net for preview servers if graceful daemon
+                // shutdown was skipped or interrupted. Supervised children
+                // need nothing here: the process lease ends them with us.
                 if let tauri::RunEvent::Exit = event {
-                    #[cfg(windows)]
-                    common::process::Supervisor::global().kill_all_blocking();
                     common::previews::cleanup_registered_previews();
                 }
             }
