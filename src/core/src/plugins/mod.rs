@@ -12,8 +12,9 @@
 
 pub mod channel;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -308,16 +309,38 @@ fn load_plugin_from_dir(
     };
 
     if let Some(previous) = discovered.get(&plugin_id) {
-        tracing::info!(
-            "[plugins] plugin '{}' from {} ignored; already loaded from {}",
-            plugin_id,
-            plugin_dir.display(),
-            previous.dir.display()
-        );
+        report_shadowed(&plugin_id, plugin_dir, &previous.dir);
         return;
     }
 
     discovered.insert(plugin_id, discovered_plugin);
+}
+
+/// Shadowing decisions this process has already reported at INFO.
+///
+/// Discovery is stateless and re-run by every lookup, so without this gate
+/// the same "ignored; already loaded" line would repeat on every pass. Each
+/// distinct decision (plugin id, ignored dir, winning dir) is reported once
+/// at INFO; repeats are demoted to DEBUG.
+static REPORTED_SHADOWS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn report_shadowed(plugin_id: &str, ignored_dir: &Path, loaded_dir: &Path) {
+    let message = format!(
+        "[plugins] plugin '{}' from {} ignored; already loaded from {}",
+        plugin_id,
+        ignored_dir.display(),
+        loaded_dir.display()
+    );
+    let first_report = REPORTED_SHADOWS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("reported shadows mutex")
+        .insert(message.clone());
+    if first_report {
+        tracing::info!("{message}");
+    } else {
+        tracing::debug!("{message}");
+    }
 }
 
 fn read_plugin_manifest(path: &Path) -> Option<PluginManifest> {
@@ -348,6 +371,8 @@ fn read_package_version(path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     fn manifest_with_capabilities(capabilities: serde_json::Value) -> PluginManifest {
@@ -381,5 +406,106 @@ mod tests {
             manifest.capabilities.topic_scope,
             TopicConversationScope::Chat
         );
+    }
+
+    /// In-memory `MakeWriter` so a test can assert on formatted log lines.
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl LogBuffer {
+        fn lines(&self) -> Vec<String> {
+            String::from_utf8(self.0.lock().unwrap().clone())
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn write_channel_manifest(plugin_dir: &Path, id: &str) {
+        std::fs::create_dir_all(plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join(PLUGIN_MANIFEST_NAME),
+            serde_json::json!({
+                "id": id,
+                "name": id,
+                "version": "1.0.0",
+                "kind": "channel",
+                "runtime": "node",
+                "entry": "dist/index.js"
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
+    /// The project-then-user pass `discover_plugins` runs, from explicit roots.
+    fn discover_from(project_dir: &Path, user_dir: &Path) -> HashMap<String, DiscoveredPlugin> {
+        let mut discovered = HashMap::new();
+        load_plugins_from_dir(project_dir, PluginSource::Project, &mut discovered);
+        load_plugins_from_dir(user_dir, PluginSource::User, &mut discovered);
+        discovered
+    }
+
+    #[test]
+    fn project_plugin_shadows_user_copy_and_reports_it_once() {
+        let root = std::env::temp_dir().join(format!("va-plugins-shadow-{}", uuid::Uuid::new_v4()));
+        let project_plugin = root.join("project").join("va-plugin-channel-feishu");
+        let user_plugin = root.join("user").join("va-plugin-channel-feishu");
+        write_channel_manifest(&project_plugin, "feishu");
+        write_channel_manifest(&user_plugin, "feishu");
+
+        let logs = LogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .without_time()
+            .with_writer({
+                let logs = logs.clone();
+                move || logs.clone()
+            })
+            .finish();
+
+        let passes = tracing::subscriber::with_default(subscriber, || {
+            (0..3)
+                .map(|_| discover_from(&root.join("project"), &root.join("user")))
+                .collect::<Vec<_>>()
+        });
+
+        for discovered in &passes {
+            let feishu = &discovered["feishu"];
+            assert_eq!(feishu.dir, project_plugin);
+            assert!(matches!(feishu.source, PluginSource::Project));
+        }
+
+        let shadow_lines = logs
+            .lines()
+            .into_iter()
+            .filter(|line| line.contains("ignored; already loaded from"))
+            .collect::<Vec<_>>();
+        assert_eq!(shadow_lines.len(), 3, "{shadow_lines:#?}");
+        assert!(shadow_lines[0].contains("INFO"), "{}", shadow_lines[0]);
+        assert!(shadow_lines[0].contains(&format!(
+            "plugin 'feishu' from {} ignored; already loaded from {}",
+            user_plugin.display(),
+            project_plugin.display()
+        )));
+        assert!(
+            shadow_lines[1..].iter().all(|line| line.contains("DEBUG")),
+            "{shadow_lines:#?}"
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
