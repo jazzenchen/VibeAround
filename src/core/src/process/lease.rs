@@ -43,19 +43,21 @@ mod imp {
     /// POSIX `sh`. Reads `add <pgid>` / `del <pgid>` lines until EOF, then
     /// signals whatever is still leased. `HUP`/`INT` are ignored so a
     /// closing terminal or Ctrl-C aimed at the daemon cannot take the
-    /// reaper down before it has done its job.
+    /// reaper down before it has done its job. Written to run under
+    /// whatever `/bin/sh` is: the list lives in the positional parameters
+    /// (zsh outside sh emulation does not word-split a variable), and
+    /// `kill -SIG -pgid` carries no `--` (dash's builtin rejects it).
     const REAPER_SCRIPT: &str = r#"
 trap '' HUP INT
-pg=''
 while IFS= read -r line; do
   case "$line" in
-    "add "*) pg="$pg ${line#add }" ;;
-    "del "*) x="${line#del }"; new=''; for p in $pg; do [ "$p" = "$x" ] || new="$new $p"; done; pg="$new" ;;
+    "add "*) set -- "$@" "${line#add }" ;;
+    "del "*) x="${line#del }"; n=$#; while [ "$n" -gt 0 ]; do p=$1; shift; [ "$p" = "$x" ] || set -- "$@" "$p"; n=$((n-1)); done ;;
   esac
 done
-for p in $pg; do kill -TERM -- "-$p" 2>/dev/null; done
-[ -n "$pg" ] && sleep 1
-for p in $pg; do kill -KILL -- "-$p" 2>/dev/null; done
+for p in "$@"; do kill -TERM "-$p" 2>/dev/null; done
+[ $# -gt 0 ] && sleep 1
+for p in "$@"; do kill -KILL "-$p" 2>/dev/null; done
 "#;
 
     pub struct Lease {
@@ -133,8 +135,8 @@ for p in $pg; do kill -KILL -- "-$p" 2>/dev/null; done
         use tokio::process::Command;
 
         /// Ignores SIGTERM (the disposition survives exec) so only the
-        /// reaper's SIGKILL fallback can end it.
-        fn stubborn_sleeper(lease: &Lease) -> tokio::process::Child {
+        /// reaper's SIGKILL fallback can end it. Its own group leader.
+        fn stubborn_sleeper() -> tokio::process::Child {
             let mut command = Command::new("sh");
             command
                 .args(["-c", "trap '' TERM; exec sleep 30"])
@@ -142,15 +144,57 @@ for p in $pg; do kill -KILL -- "-$p" 2>/dev/null; done
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
             crate::process::kill::prepare_tree_root(&mut command);
-            let child = command.spawn().expect("spawn sleeper");
-            lease.attach(&child);
-            child
+            command.spawn().expect("spawn sleeper")
+        }
+
+        /// `/bin/sh` is bash on macOS, dash on Debian and Ubuntu, sometimes
+        /// zsh or ksh: the script must kill under every one of them. Shells
+        /// not installed here are skipped.
+        #[tokio::test]
+        async fn reaper_script_kills_under_every_shell_present() {
+            use std::io::Write;
+            use std::os::unix::process::CommandExt;
+
+            let mut checked = Vec::new();
+            for shell in ["sh", "dash", "bash", "zsh", "ksh", "ash", "mksh"] {
+                let Ok(mut reaper) = std::process::Command::new(shell)
+                    .arg("-c")
+                    .arg(super::REAPER_SCRIPT)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .process_group(0)
+                    .spawn()
+                else {
+                    continue;
+                };
+                let mut sleeper = stubborn_sleeper();
+                let pid = sleeper.id().expect("pid");
+                let mut stdin = reaper.stdin.take().expect("reaper stdin");
+                stdin
+                    .write_all(format!("add {pid}\n").as_bytes())
+                    .expect("lease line");
+                drop(stdin);
+
+                let status = tokio::time::timeout(Duration::from_secs(5), sleeper.wait())
+                    .await
+                    .unwrap_or_else(|_| {
+                        let _ = sleeper.start_kill();
+                        panic!("{shell}: reaper did not kill the leased group");
+                    })
+                    .expect("wait");
+                assert!(!status.success(), "{shell}: {status}");
+                let _ = reaper.wait();
+                checked.push(shell);
+            }
+            assert!(checked.contains(&"sh"), "no shell to test the reaper with");
         }
 
         #[tokio::test]
         async fn dropping_the_lease_kills_leased_groups() {
             let lease = Lease::new();
-            let mut sleeper = stubborn_sleeper(&lease);
+            let mut sleeper = stubborn_sleeper();
+            lease.attach(&sleeper);
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             drop(lease);
@@ -165,7 +209,8 @@ for p in $pg; do kill -KILL -- "-$p" 2>/dev/null; done
         #[tokio::test]
         async fn released_groups_outlive_the_lease() {
             let lease = Lease::new();
-            let mut sleeper = stubborn_sleeper(&lease);
+            let mut sleeper = stubborn_sleeper();
+            lease.attach(&sleeper);
             lease.release(sleeper.id().expect("pid"));
             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -318,16 +363,22 @@ mod imp {
 
         #[tokio::test]
         async fn dropping_the_lease_ends_attached_children_and_their_descendants() {
+            use tokio::io::AsyncWriteExt;
+
             let lease = Lease::new();
+            // cmd blocks on `set /p` until it reads a line, so ping is only
+            // started after the attach below — inside the job.
             let mut command = Command::new("cmd");
             command
-                .args(["/C", "ping -t 127.0.0.1 >NUL"])
-                .stdin(Stdio::null())
+                .args(["/C", "set /p _= & ping -t 127.0.0.1 >NUL"])
+                .stdin(Stdio::piped())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
             let mut child = command.spawn().expect("spawn cmd");
             lease.attach(&child);
             let cmd_pid = child.id().expect("pid");
+            let mut stdin = child.stdin.take().expect("cmd stdin");
+            stdin.write_all(b"\n").await.expect("release cmd");
 
             // Wait for cmd to start ping, so a grandchild exists to check.
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
@@ -337,6 +388,13 @@ mod imp {
                     .processes()
                     .values()
                     .filter(|process| process.parent() == Some(Pid::from_u32(cmd_pid)))
+                    .filter(|process| {
+                        process
+                            .name()
+                            .to_string_lossy()
+                            .to_ascii_lowercase()
+                            .contains("ping")
+                    })
                     .map(|process| process.pid().as_u32())
                     .collect();
                 if !found.is_empty() {

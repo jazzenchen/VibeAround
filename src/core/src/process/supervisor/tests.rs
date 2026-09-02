@@ -776,15 +776,16 @@ async fn failed_spawn_leaves_no_lease_entry() {
     supervisor.force_stop(id).await.unwrap();
 }
 
-/// Bridge for the hard-kill harness: relays the lines the child prints
-/// (its own pid, then on Unix its grandchild's pid) to the harness stdout,
-/// then waits to be cancelled.
+/// Bridge for the hard-kill harness: relays the child's own pid to the
+/// harness stdout, then tells the child to start its grandchild (the
+/// bridge only runs once the child is leased, so the grandchild is born
+/// covered), relays that pid too on Unix, and waits to be cancelled.
 struct ReportPidsBridge;
 
 impl ProcessBridge for ReportPidsBridge {
     fn run(
         self: Box<Self>,
-        pipes: StdioPipes,
+        mut pipes: StdioPipes,
         mut cancel: CancelSignal,
     ) -> super::super::bridge::BridgeFuture {
         Box::pin(async move {
@@ -800,6 +801,9 @@ impl ProcessBridge for ReportPidsBridge {
                     Ok(Some(line)) => println!("{label} {}", line.trim()),
                     _ => break,
                 }
+                if label == "child" {
+                    let _ = pipes.stdin.write_all(b"go\n").await;
+                }
             }
             let _ = cancel.wait_for(|cancelled| *cancelled).await;
             BridgeExit::Cancelled
@@ -807,19 +811,25 @@ impl ProcessBridge for ReportPidsBridge {
     }
 }
 
-/// A child that prints its own pid, then (Unix) starts a grandchild that
-/// ignores SIGTERM and prints its pid too, then waits forever.
+/// A child that prints its own pid, waits for a line on stdin, then starts
+/// a grandchild that ignores SIGTERM, prints its pid, and waits forever.
 #[cfg(unix)]
 fn harness_child_spec() -> SpawnSpec {
-    SpawnSpec::new("sh").args(["-c", "trap '' TERM; echo $$; sleep 60 & echo $!; wait"])
+    SpawnSpec::new("sh").args([
+        "-c",
+        "trap '' TERM; echo $$; read _; sleep 60 & echo $!; wait",
+    ])
 }
 
+/// Same shape on Windows: PowerShell prints its pid, waits for a line, then
+/// runs `cmd /C ping` with ping's output on NUL — not on a pipe back to the
+/// harness, so a broken pipe after the kill cannot end it by itself.
 #[cfg(windows)]
 fn harness_child_spec() -> SpawnSpec {
     SpawnSpec::new("powershell").args([
         "-NoProfile",
         "-Command",
-        "$PID; ping -t 127.0.0.1 | Out-Null",
+        "$PID; $null = [Console]::In.ReadLine(); cmd /C 'ping -t 127.0.0.1 >NUL'",
     ])
 }
 
@@ -854,7 +864,8 @@ fn snapshot_processes() -> sysinfo::System {
     system
 }
 
-fn children_of(system: &sysinfo::System, parent: u32) -> Vec<(u32, String)> {
+/// Direct children of `parent`: (pid, executable name, command line).
+fn children_of(system: &sysinfo::System, parent: u32) -> Vec<(u32, String, String)> {
     system
         .processes()
         .values()
@@ -866,9 +877,27 @@ fn children_of(system: &sysinfo::System, parent: u32) -> Vec<(u32, String)> {
                 .map(|part| part.to_string_lossy().into_owned())
                 .collect::<Vec<_>>()
                 .join(" ");
-            (process.pid().as_u32(), command)
+            (
+                process.pid().as_u32(),
+                process.name().to_string_lossy().into_owned(),
+                command,
+            )
         })
         .collect()
+}
+
+/// Every descendant of `root`, breadth first.
+#[cfg(windows)]
+fn descendants_of(system: &sysinfo::System, root: u32) -> Vec<(u32, String, String)> {
+    let mut queue = vec![root];
+    let mut found = Vec::new();
+    while let Some(parent) = queue.pop() {
+        for child in children_of(system, parent) {
+            queue.push(child.0);
+            found.push(child);
+        }
+    }
+    found
 }
 
 #[cfg(unix)]
@@ -958,23 +987,30 @@ fn hard_killed_daemon_takes_every_child_down() {
     let child = child.unwrap();
 
     // Everything the kill must take down: the child, its descendants, and
-    // on Unix the reaper (found as the harness's `sh` child).
+    // on Unix the reaper (found as the harness's `sh` child). On Windows
+    // the descendants are discovered by parent pid and must include ping.
     let mut doomed = vec![child];
     doomed.extend(grandchild);
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         let system = snapshot_processes();
         let mut found = Vec::new();
-        if cfg!(unix) {
-            found.extend(
-                children_of(&system, harness_pid)
-                    .into_iter()
-                    .filter(|(_, command)| command.contains("trap '' HUP INT"))
-                    .map(|(pid, _)| pid),
-            );
-        }
-        if cfg!(windows) {
-            found.extend(children_of(&system, child).into_iter().map(|(pid, _)| pid));
+        #[cfg(unix)]
+        found.extend(
+            children_of(&system, harness_pid)
+                .into_iter()
+                .filter(|(_, _, command)| command.contains("trap '' HUP INT"))
+                .map(|(pid, _, _)| pid),
+        );
+        #[cfg(windows)]
+        {
+            let descendants = descendants_of(&system, child);
+            if descendants
+                .iter()
+                .any(|(_, name, _)| name.to_ascii_lowercase().contains("ping"))
+            {
+                found.extend(descendants.into_iter().map(|(pid, _, _)| pid));
+            }
         }
         if !found.is_empty() {
             doomed.extend(found);

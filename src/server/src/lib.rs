@@ -100,11 +100,6 @@ impl RunningDaemon {
             search_runtime.shutdown().await;
         }
 
-        // Stop every child still registered with the supervisor, whether or
-        // not its manager remembered it. A daemon that dies before reaching
-        // this point is covered by the process lease instead.
-        common::process::Supervisor::global().shutdown_all().await;
-
         // Stop previewed development servers during daemon shutdown.
         common::previews::cleanup_registered_previews();
 
@@ -119,6 +114,13 @@ impl RunningDaemon {
         // dropped before a hot restart probes/binds the same port.
         let _ = tunnel_handle.await;
         let _ = web_dispatch_handle.await;
+
+        // Last, now that nothing can spawn any more: stop every child still
+        // registered with the supervisor, whether or not its manager
+        // remembered it. On an in-process hot restart the OS-level lease
+        // never fires, so this step is what leaves nothing behind. A daemon
+        // that dies before reaching it is covered by the lease instead.
+        common::process::Supervisor::global().shutdown_all().await;
 
         // Clear the tunnel registry so stale entries don't persist
         // across restarts.

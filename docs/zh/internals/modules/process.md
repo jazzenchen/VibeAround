@@ -14,7 +14,7 @@
 | process model | `supervisor/model.rs` | `SpawnSpec`、status/policy、pending child 和 generation ownership |
 | generation engine | `supervisor/generation.rs` | 单次 spawn/bridge/reap、tagged exit 与 process-tree terminate |
 | `ProcessBridge` / `BridgeFactory` | `bridge.rs` | 协议驱动 contract：每次 (re)spawn 都 fresh 调用 factory，并交入 stdio pipes |
-| `Lease` | `lease.rs` | 由内核持有的保证：子进程绝不活过 daemon。Unix：绑在管道上的 `sh` reaper；supervisor 在 spawn 成功后立刻写 `add <pgid>`，回收后写 `del <pgid>`，管道一关 reaper 就杀掉名单上剩下的。Windows：kill-on-close 的 Job Object，每个子进程 spawn 后立刻加入，它的后代自动继承成员身份。刻意不覆盖的两点：spawn 到登记之间约 1 毫秒（daemon 恰在此刻被杀会漏掉那一个子进程——那要么是该修的 bug，要么是用户自己动的手），以及 Unix 上 reaper 被人手动杀掉（此后新子进程不受保护，日志有警告） |
+| `Lease` | `lease.rs` | 由内核持有的保证：子进程绝不活过 daemon。Unix：绑在管道上的 `sh` reaper；supervisor 在 spawn 成功后立刻写 `add <pgid>`，回收后写 `del <pgid>`，管道一关 reaper 就杀掉名单上剩下的。Windows：kill-on-close 的 Job Object，每个子进程 spawn 后立刻加入，它的后代自动继承成员身份。刻意不覆盖的：spawn 到登记之间约 1 毫秒（daemon 恰在此刻被杀会漏掉那一个子进程——那要么是该修的 bug，要么是用户自己动的手）；Unix 上 reaper 被人手动杀掉，以及 Windows 上被 Job 拒绝加入的子进程（外层 Job 禁止嵌套时），这两种都不受保护，日志有警告 |
 | `AcpTransport` wrapper | `acp_transport.rs` | ACP line transport + 显式 EOF signal，让 supervisor 观察 child death |
 | `env` | `env.rs` | 加强过的 login-shell environment（缓存一次），注入每个 child |
 
