@@ -1556,6 +1556,7 @@ mod tests {
         assert!(preferred_startkit_candidate("codex", &detection, "system").is_some());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn app_bundle_paths_are_not_system_toolchain_candidates() {
         let candidate = test_candidate(
@@ -1588,6 +1589,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn homebrew_package_name_comes_from_upgrade_command() {
         assert_eq!(
