@@ -91,7 +91,7 @@ mod tests {
 
     use super::*;
 
-    async fn assert_vendored_script(response: Response, length: usize, banner: &[u8]) {
+    async fn assert_vendored_script(response: Response, normalized_length: usize, banner: &[u8]) {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get("cache-control").unwrap(),
@@ -105,7 +105,10 @@ mod tests {
             "same-origin"
         );
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(body.len(), length);
+        assert_eq!(
+            body.iter().filter(|byte| **byte != b'\r').count(),
+            normalized_length
+        );
         assert!(body.windows(banner.len()).any(|window| window == banner));
     }
 
@@ -177,7 +180,7 @@ mod tests {
             )
         );
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let script = std::str::from_utf8(&body).unwrap();
+        let script = std::str::from_utf8(&body).unwrap().replace("\r\n", "\n");
         assert!(script.contains("html2canvas-pro 1.6.6"));
         assert!(script.contains(
             "const vaPreviewHtml2canvas=module.exports.default||module.exports.html2canvas"
