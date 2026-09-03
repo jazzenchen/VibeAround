@@ -65,6 +65,10 @@ fn replace(temp: &Path, target: &Path) -> std::io::Result<()> {
 #[cfg(windows)]
 fn replace(temp: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
+    use std::time::Duration;
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION,
+    };
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
@@ -75,18 +79,36 @@ fn replace(temp: &Path, target: &Path) -> std::io::Result<()> {
 
     let temp = wide(temp);
     let target = wide(target);
-    let result = unsafe {
-        MoveFileExW(
-            temp.as_ptr(),
-            target.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
+    for attempt in 0..20 {
+        let result = unsafe {
+            MoveFileExW(
+                temp.as_ptr(),
+                target.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result != 0 {
+            return Ok(());
+        }
+
+        let error = std::io::Error::last_os_error();
+        let transient = matches!(
+            error.raw_os_error(),
+            Some(code)
+                if code == ERROR_ACCESS_DENIED as i32
+                    || code == ERROR_SHARING_VIOLATION as i32
+                    || code == ERROR_LOCK_VIOLATION as i32
+        );
+        if !transient || attempt == 19 {
+            return Err(error);
+        }
+
+        // Concurrent MoveFileExW calls can briefly observe the destination as
+        // delete-pending. Let that replacement finish, then retry our unique
+        // source file with a small bounded backoff.
+        std::thread::sleep(Duration::from_millis(1 << attempt.min(4)));
     }
+    unreachable!()
 }
 
 #[cfg(test)]
