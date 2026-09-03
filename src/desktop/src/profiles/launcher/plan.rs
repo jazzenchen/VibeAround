@@ -208,7 +208,12 @@ impl<'a> LaunchPlanBuilder<'a> {
         if agent_id == "codex-desktop" {
             let mut env = Vec::new();
             let mut args = Vec::new();
-            append_vibearound_launch_context_env(&mut env, Some(profile), launch_target, &self.launch_id);
+            append_vibearound_launch_context_env(
+                &mut env,
+                Some(profile),
+                launch_target,
+                &self.launch_id,
+            );
             if bridge::launch_uses_local_bridge(profile, launch_target)? {
                 append_local_bridge_proxy_bypass_env(&mut env);
                 args.extend(codex_desktop_local_bridge_args());
@@ -236,7 +241,12 @@ impl<'a> LaunchPlanBuilder<'a> {
             claude_desktop::apply_profile_config(profile)
                 .with_context(|| format!("prepare Claude Desktop profile '{}'", profile.id))?;
             let mut env = Vec::new();
-            append_vibearound_launch_context_env(&mut env, Some(profile), launch_target, &self.launch_id);
+            append_vibearound_launch_context_env(
+                &mut env,
+                Some(profile),
+                launch_target,
+                &self.launch_id,
+            );
             return Ok(LaunchPlan {
                 env,
                 command: direct_launch_command_for_agent(
@@ -783,11 +793,18 @@ mod tests {
             .expect("direct plan");
         assert_eq!(direct.command, "va-tui");
         assert!(direct.args.is_empty());
+        assert!(direct.env.contains(&(
+            "VIBEAROUND_LAUNCH_TARGET".to_string(),
+            "va-agent".to_string()
+        )));
         assert!(direct
             .env
-            .contains(&("VIBEAROUND_LAUNCH_TARGET".to_string(), "va-agent".to_string())));
-        assert!(direct.env.iter().all(|(key, _)| key != "VIBEAROUND_PROFILE_ID"));
-        assert!(direct.env.iter().all(|(key, _)| key != "VIBEAROUND_SESSION_ID"));
+            .iter()
+            .all(|(key, _)| key != "VIBEAROUND_PROFILE_ID"));
+        assert!(direct
+            .env
+            .iter()
+            .all(|(key, _)| key != "VIBEAROUND_SESSION_ID"));
 
         let profile = minimax_anthropic_profile();
         let resume = LaunchPlanBuilder::with_launch_id("launch-2")
@@ -796,10 +813,9 @@ mod tests {
             .build()
             .expect("resume plan");
         assert_eq!(resume.command, "va-tui");
-        assert!(resume.env.contains(&(
-            "VIBEAROUND_SESSION_ID".to_string(),
-            "session-9".to_string()
-        )));
+        assert!(resume
+            .env
+            .contains(&("VIBEAROUND_SESSION_ID".to_string(), "session-9".to_string())));
         assert!(resume.env.contains(&(
             "VIBEAROUND_PROFILE_ID".to_string(),
             "minimax-test".to_string()
@@ -821,9 +837,10 @@ mod tests {
             "VIBEAROUND_PROFILE_ID".to_string(),
             "minimax-test".to_string()
         )));
-        assert!(plan
-            .env
-            .contains(&("VIBEAROUND_LAUNCH_TARGET".to_string(), "va-agent".to_string())));
+        assert!(plan.env.contains(&(
+            "VIBEAROUND_LAUNCH_TARGET".to_string(),
+            "va-agent".to_string()
+        )));
         assert!(plan
             .env
             .iter()
