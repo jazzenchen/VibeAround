@@ -981,6 +981,12 @@ pub(super) fn resolve_launch_workspace(agent_id: &str) -> anyhow::Result<PathBuf
     workspace::resolve_launch_workspace(agent_id)
 }
 
+#[cfg(test)]
+pub(crate) fn launch_env_test_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 fn emit_launch_config_changed(app: &tauri::AppHandle) {
     let _ = app.emit(crate::tray::LAUNCH_CONFIG_CHANGED_EVENT, ());
 }
@@ -988,7 +994,7 @@ fn emit_launch_config_changed(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
-    use super::profiles_launch_direct_sync;
+    use super::{launch_env_test_lock, profiles_launch_direct_sync, resolve_launch_workspace};
     use super::{sanitize_agent_launch_args, validate_connection_agent_id};
     use common::agent_state::AgentLaunchArgs;
     #[cfg(windows)]
@@ -1047,21 +1053,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn launch_direct_invokes_va_launch_boundary() {
-        let _guard = env_test_lock().lock().expect("env test lock");
+        let _guard = launch_env_test_lock().lock().expect("launch env test lock");
         let dir = unique_test_dir("direct-va-launch");
-        let data_dir = dir.join("data");
-        let workspace = dir.join("workspace");
-        std::fs::create_dir_all(&data_dir).expect("create data dir");
-        std::fs::create_dir_all(&workspace).expect("create workspace dir");
-        std::fs::write(
-            data_dir.join("launcher.json"),
-            serde_json::json!({
-                "terminal": "powershell",
-                "workspace": workspace.to_string_lossy()
-            })
-            .to_string(),
-        )
-        .expect("write launcher prefs");
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let workspace = resolve_launch_workspace("codex").expect("resolve launch workspace");
+        let terminal = super::terminal::read_preference().id();
 
         let fake_bin = dir.join("va-launch.cmd");
         let capture = dir.join("capture.json");
@@ -1071,13 +1067,10 @@ mod tests {
         )
         .expect("write fake va-launch");
 
-        let previous_data_dir = std::env::var_os("VIBEAROUND_DATA_DIR");
         let previous_bin = std::env::var_os("VIBEAROUND_VA_LAUNCH_BIN");
         let previous_capture = std::env::var_os("VA_LAUNCH_CAPTURE");
-        std::env::set_var("VIBEAROUND_DATA_DIR", &data_dir);
         std::env::set_var("VIBEAROUND_VA_LAUNCH_BIN", &fake_bin);
         std::env::set_var("VA_LAUNCH_CAPTURE", &capture);
-        let _ = common::config::reload();
 
         profiles_launch_direct_sync("codex".to_string()).expect("direct launch calls va-launch");
 
@@ -1085,15 +1078,13 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&captured).expect("parse captured profile");
 
-        restore_env("VIBEAROUND_DATA_DIR", previous_data_dir);
         restore_env("VIBEAROUND_VA_LAUNCH_BIN", previous_bin);
         restore_env("VA_LAUNCH_CAPTURE", previous_capture);
-        let _ = common::config::reload();
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(value["agent"], "codex");
         assert_eq!(value["command"], "codex");
-        assert_eq!(value["terminal"], "powershell");
+        assert_eq!(value["terminal"], terminal);
         assert_eq!(value["workspace"], workspace.to_string_lossy().to_string());
     }
 
@@ -1126,11 +1117,5 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         std::fs::read_to_string(path).expect("read captured profile")
-    }
-
-    #[cfg(windows)]
-    fn env_test_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 }
