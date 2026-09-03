@@ -166,6 +166,25 @@ pub(crate) fn cancelled_prompt_response() -> acp::Result<acp::PromptResponse> {
     Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
 }
 
+/// Once cancellation wins the turn race, transport errors are an expected
+/// consequence of shutting the ACP host down. Preserve an agent response that
+/// already completed, but never surface a torn-down connection as a turn error.
+fn normalize_cancelled_prompt_result(
+    result: Option<acp::Result<acp::PromptResponse>>,
+) -> acp::Result<acp::PromptResponse> {
+    match result {
+        Some(Ok(response)) => Ok(response),
+        Some(Err(error)) => {
+            tracing::debug!(
+                error = %error.message,
+                "discarding ACP prompt error after cancellation"
+            );
+            cancelled_prompt_response()
+        }
+        None => cancelled_prompt_response(),
+    }
+}
+
 fn prompt_completed_successfully(result: &acp::Result<acp::PromptResponse>) -> bool {
     matches!(result, Ok(response) if response.stop_reason != acp::StopReason::Cancelled)
 }

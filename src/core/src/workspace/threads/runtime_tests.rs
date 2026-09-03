@@ -33,6 +33,27 @@ fn cancelled_prompt_is_not_a_successful_completion() {
     assert!(!prompt_completed_successfully(&failed));
 }
 
+#[test]
+fn cancelled_prompt_discards_shutdown_transport_error() {
+    let result = normalize_cancelled_prompt_result(Some(Err(acp::Error::new(
+        -32603,
+        "response to `session/prompt` never received: oneshot canceled",
+    ))))
+    .expect("cancellation should be a successful ACP result");
+
+    assert_eq!(result.stop_reason, acp::StopReason::Cancelled);
+}
+
+#[test]
+fn cancelled_prompt_preserves_completed_agent_response() {
+    let result = normalize_cancelled_prompt_result(Some(Ok(acp::PromptResponse::new(
+        acp::StopReason::EndTurn,
+    ))))
+    .expect("completed prompt should remain successful");
+
+    assert_eq!(result.stop_reason, acp::StopReason::EndTurn);
+}
+
 #[tokio::test]
 async fn cancelled_prompt_returns_real_result_without_shutdown_within_grace() {
     let (reply, result) = oneshot::channel();
