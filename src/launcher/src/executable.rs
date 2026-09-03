@@ -273,7 +273,7 @@ mod tests {
     "agents": {{
       "codex": {{
         "executable": {{
-          "path": "{}",
+          "path": {},
           "source": "manual_path",
           "source_label": "Manual path",
           "rank": 0
@@ -282,7 +282,8 @@ mod tests {
     }}
   }}
 }}"#,
-                configured.to_string_lossy()
+                serde_json::to_string(configured.to_string_lossy().as_ref())
+                    .expect("serialize configured path")
             ),
         )
         .expect("write settings config");
@@ -322,7 +323,7 @@ mod tests {
     "agents": {{
       "codex": {{
         "executable": {{
-          "path": "{}",
+          "path": {},
           "source": "path_scan",
           "source_label": "PATH scan",
           "rank": 4000
@@ -331,7 +332,8 @@ mod tests {
     }}
   }}
 }}"#,
-                configured.to_string_lossy()
+                serde_json::to_string(configured.to_string_lossy().as_ref())
+                    .expect("serialize configured path")
             ),
         )
         .expect("write settings config");
