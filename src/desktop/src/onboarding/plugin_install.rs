@@ -94,7 +94,7 @@ where
     validate_plugin_manifest(plugin, staging_dir)?;
 
     if has_step(&install_steps, "npm_install") {
-        ensure_managed_node_for_plugin(on_log, is_cancelled).await?;
+        require_node_for_plugin().await?;
         let mut install_args = npm_install_args_for(staging_dir);
         install_args.extend(common::process::env::npm_registry_args());
         let command = common::process::env::npm_process(&install_args, staging_dir).await?;
@@ -110,7 +110,7 @@ where
     }
 
     if has_step(&install_steps, "npm_build") {
-        ensure_managed_node_for_plugin(on_log, is_cancelled).await?;
+        require_node_for_plugin().await?;
         let build_args = vec!["run".to_string(), "build".to_string()];
         let command = common::process::env::npm_process(&build_args, staging_dir).await?;
         run_checked_command(
@@ -218,7 +218,7 @@ where
         .await
         .context("downloading pinned plugin archive")?;
     } else {
-        ensure_portable_git_for_plugin(on_log, is_cancelled).await?;
+        require_git_for_plugin().await?;
 
         let mut init = common::process::env::command("git");
         init.args(["init", "--quiet", "."]).current_dir(staging_dir);
@@ -305,48 +305,36 @@ where
     Ok(())
 }
 
-async fn ensure_managed_node_for_plugin<F, C>(
-    on_log: &mut F,
-    is_cancelled: &C,
-) -> anyhow::Result<()>
-where
-    F: FnMut(String),
-    C: Fn() -> bool,
-{
+/// The portable runtime is installed by startkit, not here. When a plugin needs
+/// it and it is missing, say so: silently downloading a runtime is a side effect
+/// nobody asked for, and its failures surface as an unrelated "plugin install
+/// failed".
+async fn require_node_for_plugin() -> anyhow::Result<()> {
     if !common::config::ensure_loaded().portable_toolchain {
         return Ok(());
     }
     if common::toolchain::managed_node_status(None).await.ready {
         return Ok(());
     }
-    on_log("Installing VibeAround portable Node.js".to_string());
-    common::toolchain::ensure_node_lts(
-        &common::toolchain::NodeSource::default(),
-        on_log,
-        is_cancelled,
+    bail!(
+        "VibeAround's portable Node.js is not installed, so this plugin cannot be built. \
+         Run setup to install it, or set Toolchain to System in Settings to use the \
+         Node.js already on this computer."
     )
-    .await
-    .map(|_| ())
 }
 
-async fn ensure_portable_git_for_plugin<F, C>(
-    on_log: &mut F,
-    is_cancelled: &C,
-) -> anyhow::Result<()>
-where
-    F: FnMut(String),
-    C: Fn() -> bool,
-{
+async fn require_git_for_plugin() -> anyhow::Result<()> {
     if !common::config::ensure_loaded().portable_toolchain || !cfg!(windows) {
         return Ok(());
     }
     if common::toolchain::managed_git_status().await.ready {
         return Ok(());
     }
-    on_log("Installing VibeAround portable Git".to_string());
-    common::toolchain::ensure_windows_portable_git(on_log, is_cancelled)
-        .await
-        .map(|_| ())
+    bail!(
+        "VibeAround's portable Git is not installed, so this plugin cannot be fetched. \
+         Run setup to install it, or set Toolchain to System in Settings to use the \
+         Git already on this computer."
+    )
 }
 
 fn default_install_steps() -> Vec<String> {
