@@ -19,6 +19,7 @@ pub mod process;
 pub mod profiles;
 pub mod resources;
 pub mod routing;
+pub mod script;
 pub mod search;
 pub mod sidecar;
 pub mod state;

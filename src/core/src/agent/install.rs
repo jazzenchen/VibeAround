@@ -145,7 +145,6 @@ where
     F: FnMut(String),
     C: Fn() -> bool,
 {
-    ensure_managed_node_for_npm(&mut on_log, &is_cancelled).await?;
     std::fs::create_dir_all(package_dir).with_context(|| format!("creating {:?}", package_dir))?;
 
     let pkg_json = package_dir.join("package.json");
@@ -346,28 +345,6 @@ where
         stdout: stdout_buf.into_bytes(),
         stderr: stderr_buf.into_bytes(),
     })
-}
-
-async fn ensure_managed_node_for_npm<F, C>(on_log: &mut F, is_cancelled: &C) -> anyhow::Result<()>
-where
-    F: FnMut(String),
-    C: Fn() -> bool,
-{
-    if !crate::config::ensure_loaded().portable_toolchain {
-        return Ok(());
-    }
-    let status = crate::toolchain::managed_node_status(None).await;
-    if status.ready {
-        return Ok(());
-    }
-    on_log("Installing VibeAround portable Node.js".to_string());
-    crate::toolchain::ensure_node_lts(
-        &crate::toolchain::NodeSource::default(),
-        on_log,
-        is_cancelled,
-    )
-    .await
-    .map(|_| ())
 }
 
 /// Install a native agent CLI by running its official install command.

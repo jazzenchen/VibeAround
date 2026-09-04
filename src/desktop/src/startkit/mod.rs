@@ -9,7 +9,6 @@ mod agent;
 mod channels;
 mod managed;
 mod plan;
-mod redact;
 mod script;
 
 use std::collections::{HashMap, HashSet};
@@ -29,7 +28,7 @@ use agent::agent_cli_npm_install_package;
 use agent::{agent_id_from_cli_item, execute_agent_cli_item, scan_agent_cli_item};
 use channels::run_channel_plugins_item;
 use managed::{
-    execute_managed_toolchain_item, item_uses_managed_dependency_dir, run_managed_npm_package_item,
+    item_uses_managed_dependency_dir, run_managed_npm_package_item,
     scan_managed_npm_package_item, scan_managed_toolchain_item,
 };
 use plan::{
@@ -724,11 +723,6 @@ async fn execute_item_with_cancel(
     let platform = current_platform();
     let paths = StartkitPaths::new(startkit_root());
     let item = find_item(&manifest, item_id)?;
-    if let Some(report) =
-        execute_managed_toolchain_item(&manifest, item, choices, cancelled, progress).await?
-    {
-        return Ok(report);
-    }
     if let Some(agent_id) = agent_id_from_cli_item(&item.id) {
         return execute_agent_cli_item(item, agent_id, choices, cancelled, progress).await;
     }
@@ -771,6 +765,7 @@ async fn execute_item_with_cancel(
         script_path,
         script,
         cancelled,
+        progress,
     )
     .await
     {
@@ -1053,6 +1048,7 @@ async fn scan_item(
         script_path,
         detect,
         None,
+        None,
     )
     .await
     {
@@ -1279,6 +1275,41 @@ impl<T> Pipe for T {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every script the manifest names must exist, on every platform the item
+    /// claims to support. Nothing else checks this: the scripts are data, so a
+    /// rename or a missing Windows counterpart would otherwise only surface as a
+    /// runtime "script not found" on a user's machine.
+    #[test]
+    fn every_manifest_script_exists_for_every_declared_platform() {
+        let manifest = load_manifest().expect("loading the manifest");
+        let root = startkit_root();
+        let mut missing = Vec::new();
+
+        for item in &manifest.items {
+            for (label, script) in [
+                ("detect", &item.detect),
+                ("install", &item.install),
+                ("repair", &item.repair),
+            ] {
+                let Some(script) = script else { continue };
+                for platform in &item.platforms {
+                    let relative = match platform.as_str() {
+                        "macos" => &script.macos,
+                        "windows" => &script.windows,
+                        "linux" => &script.linux,
+                        _ => continue,
+                    };
+                    let Some(relative) = relative else { continue };
+                    if !root.join(relative).exists() {
+                        missing.push(format!("{} {} ({platform}): {relative}", item.id, label));
+                    }
+                }
+            }
+        }
+
+        assert!(missing.is_empty(), "manifest scripts not found: {missing:#?}");
+    }
 
     fn ids(choices: StartkitChoices) -> Vec<String> {
         ids_for_platform(choices, "macos")
