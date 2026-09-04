@@ -7,18 +7,13 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::archive;
 
 const NODE_MANIFEST_NAME: &str = "current.json";
 const GIT_MANIFEST_NAME: &str = "current.json";
-const RUNTIME_STATE_NAME: &str = "current.env";
-const GIT_FOR_WINDOWS_STABLE_RELEASE_API: &str =
-    "https://api.github.com/repos/git-for-windows/git/releases/latest";
 
 #[derive(Debug, Clone)]
 pub struct ManagedToolStatus {
@@ -61,22 +56,7 @@ struct RuntimeManifest {
 
 
 
-#[derive(Debug, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    #[serde(default)]
-    draft: bool,
-    #[serde(default)]
-    prerelease: bool,
-    #[serde(default)]
-    assets: Vec<GitHubReleaseAsset>,
-}
 
-#[derive(Debug, Deserialize)]
-struct GitHubReleaseAsset {
-    name: String,
-    browser_download_url: String,
-}
 
 pub fn runtime_dir() -> PathBuf {
     crate::config::data_dir().join("runtime")
@@ -172,104 +152,6 @@ pub async fn managed_git_status() -> ManagedToolStatus {
     }
 }
 
-pub async fn ensure_windows_portable_git<F, C>(
-    mut on_log: F,
-    is_cancelled: C,
-) -> anyhow::Result<ManagedToolStatus>
-where
-    F: FnMut(String),
-    C: Fn() -> bool,
-{
-    if !cfg!(windows) {
-        bail!("Managed Portable Git is only enabled on Windows for now");
-    }
-
-    let release = latest_stable_git_for_windows_release().await?;
-    let current = managed_git_status().await;
-    if current.ready
-        && current
-            .version
-            .as_deref()
-            .is_some_and(|version| version.contains(release.tag_name.trim_start_matches('v')))
-    {
-        return Ok(current);
-    }
-    if is_cancelled() {
-        bail!("install cancelled");
-    }
-
-    let asset = select_portable_git_asset(&release)
-        .ok_or_else(|| anyhow!("PortableGit asset not found in {}", release.tag_name))?;
-    on_log(format!("Downloading {}", asset.name));
-    let bytes = archive::download_bytes(&asset.browser_download_url).await?;
-    if is_cancelled() {
-        bail!("install cancelled");
-    }
-
-    let download_dir = runtime_dir().join("downloads");
-    std::fs::create_dir_all(&download_dir)
-        .with_context(|| format!("creating {}", download_dir.display()))?;
-    let installer = download_dir.join(&asset.name);
-    std::fs::write(&installer, bytes)
-        .with_context(|| format!("writing {}", installer.display()))?;
-
-    let install_dir = git_version_dir(&release.tag_name);
-    let staging_dir = archive::staging_dir_for(&install_dir, "git")?;
-    archive::recreate_dir(&staging_dir)?;
-    on_log(format!("Extracting {}", asset.name));
-
-    let output = crate::process::env::silent_command(&installer)
-        .arg("-y")
-        .arg(format!("-o{}", staging_dir.display()))
-        .output()
-        .await
-        .with_context(|| format!("running {}", installer.display()))?;
-    if !output.status.success() {
-        bail!(
-            "PortableGit extractor failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    if !git_executable_in(&staging_dir).exists() {
-        bail!(
-            "PortableGit archive did not contain {}",
-            git_executable_in(&staging_dir).display()
-        );
-    }
-
-    archive::atomic_replace_dir(&staging_dir, &install_dir)?;
-    write_runtime_manifest(
-        &git_manifest_path(),
-        "git",
-        &release.tag_name,
-        &install_dir,
-        &git_bin_dir_in(&install_dir),
-    )?;
-    Ok(managed_git_status().await)
-}
-
-async fn latest_stable_git_for_windows_release() -> anyhow::Result<GitHubRelease> {
-    let bytes = archive::download_bytes(GIT_FOR_WINDOWS_STABLE_RELEASE_API).await?;
-    let release: GitHubRelease =
-        serde_json::from_slice(&bytes).context("parsing Git for Windows release")?;
-    if release.draft || release.prerelease {
-        bail!("Git for Windows release {} is not stable", release.tag_name);
-    }
-    Ok(release)
-}
-
-fn select_portable_git_asset(release: &GitHubRelease) -> Option<&GitHubReleaseAsset> {
-    let arch_marker = if cfg!(target_arch = "aarch64") {
-        "arm64"
-    } else {
-        "64-bit"
-    };
-    release.assets.iter().find(|asset| {
-        let name = asset.name.to_ascii_lowercase();
-        name.starts_with("portablegit-") && name.ends_with(".7z.exe") && name.contains(arch_marker)
-    })
-}
-
 fn node_root_dir() -> PathBuf {
     runtime_dir().join("node")
 }
@@ -298,16 +180,8 @@ fn git_root_dir() -> PathBuf {
     runtime_dir().join("git")
 }
 
-fn git_versions_dir() -> PathBuf {
-    git_root_dir().join("versions")
-}
-
 fn git_manifest_path() -> PathBuf {
     git_root_dir().join(GIT_MANIFEST_NAME)
-}
-
-fn git_version_dir(version: &str) -> PathBuf {
-    git_versions_dir().join(sanitize_version_path(version))
 }
 
 fn git_bin_dir_in(install_dir: &Path) -> PathBuf {
@@ -326,81 +200,6 @@ fn git_executable_in(install_dir: &Path) -> PathBuf {
     }
 }
 
-/// Writes `path` by rendering to a sibling temporary file and renaming over the
-/// target, so a reader never observes a half-written file. `child_env()` reads
-/// these manifests on every process spawn, and startkit scripts write them, so
-/// torn reads are reachable in normal use.
-fn write_file_atomically(path: &Path, contents: &str) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    let temporary = path.with_extension("tmp");
-    std::fs::write(&temporary, contents)
-        .with_context(|| format!("writing {}", temporary.display()))?;
-    std::fs::rename(&temporary, path).with_context(|| {
-        format!(
-            "replacing {} with {}",
-            path.display(),
-            temporary.display()
-        )
-    })?;
-    Ok(())
-}
-
-/// Quotes a value for a POSIX shell, so a path containing spaces or quotes
-/// survives `.` sourcing the state file.
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-/// Renders the shell-readable mirror of a runtime manifest.
-///
-/// Startkit scripts need the managed tool locations, and parsing JSON in POSIX
-/// `sh` degrades into `awk` guesswork, so the same facts are mirrored as
-/// `KEY='value'` lines that `sh` can source directly and PowerShell can parse
-/// with a short loop.
-fn render_runtime_state(tool: &str, version: &str, install_dir: &Path, bin_dir: &Path) -> String {
-    format!(
-        "# Generated by VibeAround. Do not edit; regenerated on every install.\n\
-         VA_TOOL={}\n\
-         VA_TOOL_VERSION={}\n\
-         VA_TOOL_INSTALL_DIR={}\n\
-         VA_TOOL_BIN_DIR={}\n",
-        shell_quote(tool),
-        shell_quote(version),
-        shell_quote(&install_dir.to_string_lossy()),
-        shell_quote(&bin_dir.to_string_lossy()),
-    )
-}
-
-fn state_path_for(manifest_path: &Path) -> PathBuf {
-    manifest_path.with_file_name(RUNTIME_STATE_NAME)
-}
-
-fn write_runtime_manifest(
-    path: &Path,
-    tool: &str,
-    version: &str,
-    install_dir: &Path,
-    bin_dir: &Path,
-) -> anyhow::Result<()> {
-    let manifest = RuntimeManifest {
-        version: version.to_string(),
-        install_dir: install_dir.to_path_buf(),
-        installed_at_unix_ms: now_unix_ms(),
-    };
-    let json = serde_json::to_string_pretty(&manifest).context("serializing runtime manifest")?;
-
-    // The shell mirror lands first: the JSON manifest is what marks a tool as
-    // installed, so once a reader can see it the mirror is already in place.
-    write_file_atomically(
-        &state_path_for(path),
-        &render_runtime_state(tool, version, install_dir, bin_dir),
-    )?;
-    write_file_atomically(path, &json)?;
-    Ok(())
-}
 
 fn read_runtime_manifest(path: &Path) -> anyhow::Result<RuntimeManifest> {
     let raw =
@@ -447,26 +246,6 @@ fn parse_version_triplet(value: &str) -> Option<(u64, u64, u64)> {
         numbers.next().unwrap_or(0),
         numbers.next().unwrap_or(0),
     ))
-}
-
-fn sanitize_version_path(version: &str) -> String {
-    version
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn now_unix_ms() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0)
 }
 
 fn prepend_path(env: &mut HashMap<String, String>, path: PathBuf) {
@@ -518,81 +297,36 @@ mod tests {
         dir
     }
 
-    #[test]
-    fn shell_quote_wraps_plain_values() {
-        assert_eq!(shell_quote("node"), "'node'");
-        assert_eq!(shell_quote("/opt/node/bin"), "'/opt/node/bin'");
-    }
 
-    #[test]
-    fn shell_quote_survives_spaces_and_quotes() {
-        assert_eq!(shell_quote("/Users/A B/bin"), "'/Users/A B/bin'");
-        assert_eq!(shell_quote("it's"), "'it'\\''s'");
-    }
 
+
+    /// The runtime manifest is written by the startkit install scripts and only
+    /// read here, so the contract worth testing is that this parses exactly what
+    /// they emit — not a Rust round-trip.
     #[test]
-    fn atomic_write_replaces_content_and_leaves_no_temp_file() {
-        let dir = scratch_dir("atomic");
-        let path = dir.join("current.json");
-        write_file_atomically(&path, "first").expect("first write");
-        write_file_atomically(&path, "second").expect("second write");
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
-        assert!(!path.with_extension("tmp").exists());
+    fn parses_a_manifest_written_by_an_install_script() {
+        let dir = std::env::temp_dir().join(format!(
+            "va-toolchain-contract-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
-    }
+        std::fs::create_dir_all(&dir).expect("creating scratch dir");
+        let path = dir.join(NODE_MANIFEST_NAME);
 
-    #[test]
-    fn writing_a_manifest_also_writes_the_shell_mirror() {
-        let dir = scratch_dir("mirror");
-        let manifest_path = dir.join(NODE_MANIFEST_NAME);
-        let install_dir = dir.join("node-v22.11.0");
-        write_runtime_manifest(
-            &manifest_path,
-            "node",
-            "v22.11.0",
-            &install_dir,
-            &node_bin_dir_in(&install_dir),
-        )
-        .expect("writing manifest");
-
-        let manifest = read_runtime_manifest(&manifest_path).expect("reading manifest back");
-        assert_eq!(manifest.version, "v22.11.0");
-        assert_eq!(manifest.install_dir, install_dir);
-
-        let state = std::fs::read_to_string(dir.join(RUNTIME_STATE_NAME)).expect("reading mirror");
-        assert!(state.contains("VA_TOOL='node'"));
-        assert!(state.contains("VA_TOOL_VERSION='v22.11.0'"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The mirror exists so POSIX `sh` can source it; prove that with a real
-    /// shell, using a path that would break naive quoting.
-    #[cfg(unix)]
-    #[test]
-    fn shell_can_source_the_mirror_for_an_awkward_path() {
-        let dir = scratch_dir("sourcing");
-        let install_dir = dir.join("it's here/node v22");
-        let bin_dir = node_bin_dir_in(&install_dir);
-        let state_path = dir.join(RUNTIME_STATE_NAME);
+        // Byte-for-byte what install-managed-node.sh prints.
         std::fs::write(
-            &state_path,
-            render_runtime_state("node", "v22.11.0", &install_dir, &bin_dir),
+            &path,
+            "{\n  \"version\": \"v24.20.0\",\n  \"install_dir\": \"/Users/a b/.vibearound/runtime/node/versions/v24.20.0\",\n  \"installed_at_unix_ms\": 1788518243000\n}\n",
         )
-        .expect("writing mirror");
+        .expect("writing script-shaped manifest");
 
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                ". {}; printf '%s' \"$VA_TOOL_BIN_DIR\"",
-                state_path.display()
-            ))
-            .output()
-            .expect("running sh");
-        assert!(output.status.success(), "sh failed: {output:?}");
+        let manifest = read_runtime_manifest(&path).expect("parsing script output");
+        assert_eq!(manifest.version, "v24.20.0");
         assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            bin_dir.to_string_lossy()
+            manifest.install_dir,
+            PathBuf::from("/Users/a b/.vibearound/runtime/node/versions/v24.20.0")
         );
+        assert_eq!(manifest.installed_at_unix_ms, 1_788_518_243_000);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -605,19 +339,5 @@ mod tests {
 
 
 
-    #[test]
-    fn selects_portable_git_asset_for_x64() {
-        let release = GitHubRelease {
-            tag_name: "v2.50.0.windows.1".to_string(),
-            draft: false,
-            prerelease: false,
-            assets: vec![GitHubReleaseAsset {
-                name: "PortableGit-2.50.0-64-bit.7z.exe".to_string(),
-                browser_download_url: "https://example.test/git.exe".to_string(),
-            }],
-        };
-        if cfg!(target_arch = "x86_64") {
-            assert!(select_portable_git_asset(&release).is_some());
-        }
-    }
+
 }

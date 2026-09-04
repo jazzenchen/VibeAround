@@ -28,7 +28,7 @@ use agent::agent_cli_npm_install_package;
 use agent::{agent_id_from_cli_item, execute_agent_cli_item, scan_agent_cli_item};
 use channels::run_channel_plugins_item;
 use managed::{
-    execute_managed_toolchain_item, item_uses_managed_dependency_dir, run_managed_npm_package_item,
+    item_uses_managed_dependency_dir, run_managed_npm_package_item,
     scan_managed_npm_package_item, scan_managed_toolchain_item,
 };
 use plan::{
@@ -723,11 +723,6 @@ async fn execute_item_with_cancel(
     let platform = current_platform();
     let paths = StartkitPaths::new(startkit_root());
     let item = find_item(&manifest, item_id)?;
-    if let Some(report) =
-        execute_managed_toolchain_item(item, choices, cancelled, progress).await?
-    {
-        return Ok(report);
-    }
     if let Some(agent_id) = agent_id_from_cli_item(&item.id) {
         return execute_agent_cli_item(item, agent_id, choices, cancelled, progress).await;
     }

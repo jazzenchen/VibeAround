@@ -55,6 +55,9 @@ version_arg = "--version"
 macos = "scripts/macos/detect-program.sh"
 windows = "scripts/windows/detect-program.ps1"
 
+[items.install]
+windows = "scripts/windows/install-managed-git.ps1"
+
 [[items]]
 id = "agents.codex.cli"
 label = "Codex CLI"
