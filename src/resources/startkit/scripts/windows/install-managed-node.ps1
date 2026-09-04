@@ -14,6 +14,13 @@ function Fail($message) {
   exit 0
 }
 
+# This installer only owns the VibeAround-managed copy. When the user chose the
+# system toolchain, installing Node.js is theirs to do.
+if ($env:STARTKIT_PORTABLE_TOOLCHAIN -ne "true") {
+  Emit @{ event = "result"; status = "blocked"; message = "VibeAround's portable toolchain is off, so Node.js has to be installed on this computer."; actions = @("manual", "verify") }
+  exit 0
+}
+
 if (-not $env:STARTKIT_HOME) { Fail "STARTKIT_HOME is required." }
 $runtimeDir = Join-Path $env:STARTKIT_HOME "runtime\node"
 $versionsDir = Join-Path $runtimeDir "versions"

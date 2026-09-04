@@ -35,6 +35,10 @@ min_version = "22.0.0"
 macos = "scripts/macos/detect-node.sh"
 windows = "scripts/windows/detect-node.ps1"
 
+[items.install]
+macos = "scripts/macos/install-managed-node.sh"
+windows = "scripts/windows/install-managed-node.ps1"
+
 [[items]]
 id = "essentials.git"
 label = "Git"

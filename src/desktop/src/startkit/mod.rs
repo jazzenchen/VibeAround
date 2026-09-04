@@ -725,7 +725,7 @@ async fn execute_item_with_cancel(
     let paths = StartkitPaths::new(startkit_root());
     let item = find_item(&manifest, item_id)?;
     if let Some(report) =
-        execute_managed_toolchain_item(&manifest, item, choices, cancelled, progress).await?
+        execute_managed_toolchain_item(item, choices, cancelled, progress).await?
     {
         return Ok(report);
     }

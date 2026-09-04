@@ -11,7 +11,8 @@ use tokio::time::sleep;
 
 use super::redact::redact;
 use super::{
-    is_managed_mode, item_uses_managed_dependency_dir, Manifest, PlatformScript, StartkitChoices,
+    is_managed_mode, item_uses_managed_dependency_dir, portable_toolchain_enabled, Manifest,
+    PlatformScript, StartkitChoices,
     StartkitItem, StartkitItemStatus, StartkitPaths, StartkitProgress,
 };
 
@@ -232,6 +233,17 @@ fn apply_startkit_env(
     command.env("STARTKIT_ROOT", &paths.root);
     command.env("STARTKIT_CACHE_DIR", &paths.cache_dir);
     command.env("STARTKIT_SOURCE", &choices.source);
+    // Scripts that can install either a system-wide or a VibeAround-managed copy
+    // of a tool need the user's toolchain choice to pick a path.
+    command.env("STARTKIT_TOOLCHAIN_MODE", &choices.toolchain_mode);
+    command.env(
+        "STARTKIT_PORTABLE_TOOLCHAIN",
+        if portable_toolchain_enabled(choices) {
+            "true"
+        } else {
+            "false"
+        },
+    );
     let managed_item_active = item_uses_managed_dependency_dir(item) && is_managed_mode(choices);
     command.env(
         "STARTKIT_ITEM_MANAGED",
