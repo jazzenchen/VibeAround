@@ -771,6 +771,7 @@ async fn execute_item_with_cancel(
         script_path,
         script,
         cancelled,
+        progress,
     )
     .await
     {
@@ -1052,6 +1053,7 @@ async fn scan_item(
         platform,
         script_path,
         detect,
+        None,
         None,
     )
     .await
